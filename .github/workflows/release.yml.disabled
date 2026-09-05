@@ -1,0 +1,31 @@
+# DISABLED intentionally. See AGENTS.md before renaming this to release.yml.
+name: Semantic release
+on:
+  workflow_run:
+    workflows: [Quality and native UI tests]
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: write
+concurrency:
+  group: semantic-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      - name: Refuse to release an untested newer commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "${{ github.event.workflow_run.head_sha }}"
+      - name: Install pinned release tooling
+        run: npm ci
+      - name: Publish version, notes, and Linux archive
+        run: npm run release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

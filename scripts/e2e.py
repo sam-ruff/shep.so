@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+"""Deterministic, non-AI equivalents of the native MCP interaction scenarios."""
+import argparse
+import json
+from pathlib import Path
+import subprocess
+import sys
+import time
+import unittest
+import math
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class McpClient:
+    def __init__(self):
+        self.process = subprocess.Popen([sys.executable, str(ROOT / "scripts/mcp_harness.py")],
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.serial = 0
+        self.rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
+                                "clientInfo": {"name": "shep-automated-e2e", "version": "1"}})
+        self.process.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+        self.process.stdin.flush()
+
+    def rpc(self, method, params=None):
+        self.serial += 1
+        self.process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": self.serial, "method": method, "params": params or {}}) + "\n")
+        self.process.stdin.flush()
+        line = self.process.stdout.readline()
+        if not line:
+            raise RuntimeError("MCP server exited unexpectedly")
+        response = json.loads(line)
+        if "error" in response:
+            raise RuntimeError(response["error"])
+        result = response["result"]
+        if result.get("isError"):
+            raise AssertionError(result["content"][0]["text"])
+        return result
+
+    def call(self, name, **arguments):
+        result = self.rpc("tools/call", {"name": name, "arguments": arguments})
+        return result.get("structuredContent", result)
+
+    def batch(self, *actions):
+        return self.call("desktop.batch", actions=list(actions))
+
+    def close(self):
+        if self.process.poll() is None:
+            self.call("desktop.stop")
+            self.process.stdin.close()
+            self.process.wait(timeout=10)
+            self.process.stdout.close()
+
+
+def click(x, y): return {"type": "click", "x": x, "y": y}
+def double_click(x, y): return {"type": "double_click", "x": x, "y": y}
+def drag(x, y, end_x, end_y): return {"type": "drag", "x": x, "y": y, "end_x": end_x, "end_y": end_y, "duration_ms": 200}
+def key(value): return {"type": "key", "key": value}
+def type_text(value): return {"type": "type", "text": value}
+def wait(ms=150): return {"type": "wait", "ms": ms}
+def check(path, value, op="eq"): return {"type": "wait_for", "path": path, "value": value, "op": op}
+def shot(name): return {"type": "screenshot", "name": name}
+
+
+class NativeFlows(unittest.TestCase):
+    def setUp(self):
+        self.mcp = McpClient()
+        result = self.mcp.call("desktop.start")
+        self.addCleanup(self.mcp.close)
+        print(f"\nEvidence: {result['artifacts']}", flush=True)
+
+    def test_layout_gallery(self):
+        self.mcp.batch(shot("compact-mail-header"), key("ctrl+comma"), check("tab", "Preferences"), shot("preferences-general"),
+                       click(645, 156), check("settings_tab", "Shortcuts"), shot("shortcuts-layout"),
+                       key("ctrl+1"), check("tab", "Mail"), key("c"), check("dialog", "Compose"), shot("compose-layout"), key("Escape"), check("dialog", None),
+                       key("m"), check("dialog", "Move"), shot("move-layout"), key("Escape"), check("dialog", None),
+                       key("ctrl+2"), check("tab", "Calendar"), click(1340, 84), check("dialog", "Event"), shot("event-layout"), key("Escape"), check("dialog", None),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80), key("ctrl+k"), check("focused_input", "search"), type_text("prototype"), check("total", 1), key("Escape"), check("dialog", None),
+                       check("reply_count", 1), check("attachment_count", 4), shot("reply-layout"))
+
+    def test_read_search_preload_and_mouse_navigation(self):
+        self.mcp.batch(check("selected", "A little more room to think"), check("cache_entries", 3, "gte"),
+                       check("page_prefetched", True), shot("mail-light"),
+                       click(403, 450), check("selected", "Coffee next Thursday?"),
+                       key("ctrl+k"), check("focused_input", "search"), type_text("prototype"), check("total", 1),
+                       check("selected", "Re: A few thoughts on the prototype"), shot("search-results"),
+                       key("ctrl+a"), type_text("no-match-938481"), check("total", 0),
+                       key("ctrl+a"), key("BackSpace"), check("total", 120), key("Escape"))
+
+    def test_move_mouse_and_keyboard_and_typing_protection(self):
+        self.mcp.batch(key("m"), check("dialog", "Move"), shot("move-dialog"), key("Escape"), check("dialog", None),
+                       key("ctrl+k"), check("focused_input", "search"), type_text("m"), check("query", "m"), check("dialog", None), key("ctrl+a"), key("BackSpace"), check("query", ""),
+                       check("total", 120), check("selected", "A little more room to think"), key("Escape"), wait(80), key("m"), check("dialog", "Move"),
+                       click(600, 407), check("dialog", None), check("total", 119),
+                       click(85, 398), check("folder", "Archive"), check("total", 1), shot("archived-message"))
+
+    def test_appearance_toggle_and_calendar_with_mouse(self):
+        self.mcp.batch(click(187, 867), check("tab", "Preferences"), shot("preferences-light"),
+                       click(690, 366), check("dark", True), shot("preferences-dark"),
+                       click(90, 159), check("tab", "Calendar"), shot("calendar-dark"),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(399, 366), check("dark", False),
+                       click(90, 159), check("tab", "Calendar"), shot("calendar-light"))
+
+    def test_remapping_persists_and_works(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(645, 156),
+                       check("settings_tab", "Shortcuts"), click(1086, 340), key("alt+m"),
+                       check("shortcuts.Move", "Alt+M"), shot("remapped-shortcut"),
+                       key("ctrl+1"), check("tab", "Mail"), key("m"), wait(), check("dialog", None),
+                       key("alt+m"), check("dialog", "Move"), key("Escape"))
+
+    def test_compose_save_and_reopen_draft(self):
+        self.mcp.batch(click(101, 214), check("dialog", "Compose"), shot("compose"))
+        # Actual typing, including M, must remain in the input field.
+        self.mcp.batch(click(654, 344), type_text("friend@example.com"),
+                       click(650, 426), type_text("Meet me Monday"), check("dialog", "Compose"),
+                       click(650, 485), type_text("A message written with the mouse and keyboard."),
+                       click(580, 736), check("draft_count", 1), check("dialog", None), shot("saved-draft"),
+                       click(98, 478), check("dialog", "Compose"),
+                       check("fields.to", "friend@example.com"), check("fields.subject", "Meet me Monday"),
+                       check("editor", "A message written with the mouse and keyboard.", "contains"), shot("reopened-draft"))
+
+    def test_compose_autosaves_and_move_accepts_typed_folder(self):
+        self.mcp.batch(key("c"), check("dialog", "Compose"),
+                       click(650, 426), type_text("Autosaved thought"),
+                       check("draft_count", 1), key("Escape"), check("dialog", None),
+                       key("m"), check("dialog", "Move"), check("focused_input", "folder-search"), type_text("Archive"), key("Return"),
+                       check("dialog", None), check("total", 119), shot("keyboard-move-complete"))
+
+    def test_calendar_event_creation(self):
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80), double_click(700, 474),
+                       check("dialog", "Event"), check("fields.all_day", "true"), shot("new-calendar-event"),
+                       wait(80), type_text("A real calendar flow"), check("fields.title", "A real calendar flow"),
+                       click(510, 677), check("dialog", None), check("events", 6), shot("saved-calendar-event"))
+
+    def test_keyboard_pane_navigation_and_full_reader(self):
+        self.mcp.batch(key("Down"), check("selected", "Your weekly workspace digest"),
+                       key("Up"), check("selected", "A little more room to think"),
+                       double_click(420, 243), check("full_reader", True), shot("full-reader"),
+                       key("Escape"), check("full_reader", False),
+                       key("Tab"), check("sidebar_focus", True), key("Down"), check("filter", "Flagged"),
+                       key("Tab"), check("sidebar_focus", False), click(80, 278), check("filter", "All"),
+                       check("selected", "A little more room to think"), click(420, 244), check("sidebar_focus", False))
+        for _ in range(12): self.mcp.batch(key("Down"), wait(25))
+        self.mcp.batch(check("inbox_scroll", 200, "gte"), shot("keyboard-scrolled-inbox"))
+
+    def test_mouse_flagging_and_unified_expansion(self):
+        self.mcp.batch(click(570, 215), check("starred", False), click(570, 215), check("starred", True),
+                       click(186, 278), check("inbox_expanded", True), shot("expanded-unified-inbox"),
+                       click(104, 357), check("account", "preview-personal"), check("total", 2),
+                       click(186, 278), check("inbox_expanded", False), shot("account-inbox"))
+
+    def test_empty_calendar_offers_connection(self):
+        self.mcp.call("desktop.start", empty_calendars=True)
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80), double_click(700, 474),
+                       check("dialog", "Event"), check("calendar_connected", False), shot("empty-calendar-event"))
+
+    def test_reply_history_sender_attachments_and_image_exceptions(self):
+        for index, x in enumerate([701, 800, 910]):
+            if index: self.mcp.call("desktop.start")
+            self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prottoype"), check("total", 1), key("Escape"),
+                           check("reply_count", 1), check("attachment_count", 4), check("images_allowed", False),
+                           click(740, 475), check("expanded_replies", 0, "contains"), shot("expanded-reply"),
+                           click(740, 475), check("expanded_replies", []),
+                           click(740, 223), check("dialog", "Sender"), shot("sender-details"), key("Escape"), check("dialog", None),
+                           click(x, 360), check("images_allowed", True), shot(f"image-exception-{index}"))
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(730, 156), check("settings_tab", "Privacy"), shot("privacy-preferences"))
+
+    def test_reading_preferences_and_cross_account_move(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(286, 737), check("unified", False), click(286, 737), check("unified", True),
+                       click(286, 773), check("cross_account_moves", True),
+                       click(1145, 566), wait(80), shot("font-size-menu"), click(1140, 173), check("reader_size", 11),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80), key("m"), check("dialog", "Move"), shot("cross-account-destination"),
+                       click(710, 327), wait(80), click(710, 403), check("fields.move_account", "preview-personal"),
+                       click(670, 385), type_text("archvie"), key("Return"), check("dialog", None), check("total", 119),
+                       click(104, 596), check("account", "preview-personal"), click(85, 399), check("folder", "Archive"),
+                       check("total", 1), check("selected", "A little more room to think"), shot("transferred-message"))
+
+    def test_account_wizard_security_and_connection_testing(self):
+        self.mcp.batch(click(78, 689), check("dialog", "Account"), shot("account-identity"),
+                       click(674, 444), type_text("Fastmail"), check("fields.name", "Fastmail"), click(664, 524), type_text("test@example.com"), check("fields.email", "test@example.com"),
+                       click(572, 580), check("fields.host", "imap.fastmail.com"), click(936, 635), check("fields.setup_step", "1"), shot("account-incoming"),
+                       click(690, 408), wait(80), click(690, 482), check("fields.incoming_security", "StartTls"), check("fields.port", "143"),
+                       click(560, 701), check("fields.test_incoming", "Test workspaces do not connect", "contains"), shot("tested-incoming"), click(683, 179), check("fields.setup_step", "2"), shot("account-smtp"), click(686, 425), wait(80), click(686, 498),
+                       check("fields.smtp_security", "StartTls"), check("fields.smtp_port", "587"),
+                       click(544, 677), check("fields.test_smtp", "Test workspaces do not connect", "contains"), shot("tested-smtp"))
+
+    def test_background_sync_keeps_navigation_responsive(self):
+        self.mcp.batch(click(1370, 34), check("busy", "sync", "contains"),
+                       click(87, 159), check("tab", "Calendar"),
+                       shot("responsive-during-sync"))
+
+    def test_native_navigation_performance_gate(self):
+        timings = []
+        for index in range(30):
+            started = time.monotonic()
+            expected = "Calendar" if index % 2 == 0 else "Mail"
+            self.mcp.batch(key("ctrl+2" if index % 2 == 0 else "ctrl+1"), check("tab", expected))
+            timings.append((time.monotonic() - started) * 1000)
+        timings.sort()
+        p95 = timings[math.ceil(len(timings) * .95) - 1]
+        state = self.mcp.call("desktop.state")
+        report = {"samples": len(timings), "metrics_ms": {
+            "ui_handler_p95": state["update_p95_ms"], "native_navigation_p95": p95}}
+        directory = ROOT / "artifacts" / "performance"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "ui.json").write_text(json.dumps(report, indent=2))
+        self.assertLess(p95, 150, f"Native navigation p95 was {p95:.2f} ms")
+        self.assertLess(state["update_p95_ms"], 8)
+
+    def test_resize_divider_with_mouse_and_persist(self):
+        self.mcp.batch(drag(616, 500, 785, 500), check("reader_split", .44, "gte"),
+                       check("saved_reader_split", .44, "gte"), shot("resized-inbox"),
+                       key("ctrl+2"), check("tab", "Calendar"), key("ctrl+1"), check("tab", "Mail"),
+                       check("reader_split", .44, "gte"),
+                       wait(400), drag(785, 500, 450, 500), check("reader_split", .3, "lte"), shot("narrow-inbox"))
+
+    def test_flag_filter_sort_and_paging(self):
+        self.mcp.batch(key("s"), check("starred", False), key("s"), check("starred", True), shot("flagged-message"),
+                       click(84, 320), check("filter", "Flagged"), check("total", 1, "gte"),
+                       click(80, 278), check("folder", "INBOX"),
+                       click(350, 100), wait(250), shot("filter-menu"), click(350, 155), check("filter", "Unread"),
+                       shot("unread-filter"),
+                       click(350, 100), wait(250), click(350, 125), check("filter", "All"),
+                       click(531, 100), wait(250), shot("sort-menu"), click(531, 155), check("sort", "Oldest"),
+                       shot("oldest-first"),
+                       click(583, 884), check("offset", 50), shot("next-page"))
+
+    def test_compact_window_layout(self):
+        self.mcp.call("desktop.start", width=900, height=640)
+        self.mcp.batch(check("ready", True), shot("mail-compact"),
+                       key("ctrl+2"), check("tab", "Calendar"), shot("calendar-compact"),
+                       key("ctrl+comma"), check("tab", "Preferences"), shot("preferences-compact"))
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--capture-only", action="store_true")
+    parser.add_argument("--functional-only", action="store_true", help="Defer performance measurements on a busy machine")
+    args, rest = parser.parse_known_args()
+    if args.capture_only:
+        client = McpClient()
+        try:
+            print(json.dumps(client.call("desktop.start"), indent=2))
+            print(json.dumps(client.batch(wait(400), shot("initial")), indent=2))
+        finally:
+            client.close()
+    elif args.functional_only:
+        names = [name for name in unittest.defaultTestLoader.getTestCaseNames(NativeFlows) if "performance" not in name]
+        suite = unittest.TestSuite(NativeFlows(name) for name in names)
+        result = unittest.TextTestRunner(verbosity=2).run(suite)
+        sys.exit(0 if result.wasSuccessful() else 1)
+    else:
+        unittest.main(argv=[sys.argv[0], *rest], verbosity=2)
+
+
+if __name__ == "__main__":
+    main()

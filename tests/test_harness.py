@@ -1,0 +1,84 @@
+import importlib.util
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import Mock, patch
+
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location("harness", ROOT / "scripts/mcp_harness.py")
+harness = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(harness)
+
+
+class HarnessTests(unittest.TestCase):
+    def test_mcp_initialize_discovery_and_unknown_tool(self):
+        messages = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "does-not-exist"}},
+        ]
+        result = subprocess.run([sys.executable, str(ROOT / "scripts/mcp_harness.py")],
+                                input="\n".join(json.dumps(m) for m in messages) + "\n",
+                                text=True, capture_output=True, timeout=10, check=True)
+        responses = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(len(responses), 3)
+        self.assertEqual(responses[0]["result"]["protocolVersion"], "2025-11-25")
+        names = {t["name"] for t in responses[1]["result"]["tools"]}
+        self.assertIn("desktop.batch", names)
+        self.assertTrue(responses[2]["result"]["isError"])
+
+    def test_assertions_observe_state_and_fail_on_wrong_value(self):
+        with tempfile.TemporaryDirectory() as directory:
+            desktop = harness.Desktop()
+            desktop.directory = Path(directory)
+            (desktop.directory / "state.json").write_text(json.dumps({"dialog": "Move", "cache": {"entries": 3}}))
+            self.assertEqual(desktop.assertion({"path": "cache.entries", "op": "gte", "value": 2}), 3)
+            with self.assertRaises(AssertionError):
+                desktop.assertion({"path": "dialog", "value": "Compose"})
+            with self.assertRaises(ValueError):
+                desktop.screenshot("../../outside")
+
+    def test_drag_releases_mouse_after_a_failed_move_and_batch_stops(self):
+        desktop = harness.Desktop()
+        desktop.app = Mock()
+        desktop.app.poll.return_value = None
+        desktop.window = "123"
+        desktop.screenshot = Mock()
+        commands = []
+        def command(*args):
+            commands.append(args)
+            if args[1] == "mousemove" and len(commands) > 2:
+                raise RuntimeError("test input failure")
+        desktop.command = command
+        with patch.object(harness.time, "sleep"), self.assertRaises(RuntimeError):
+            desktop.batch([{"type": "drag", "x": 1, "y": 2, "end_x": 4, "end_y": 2},
+                           {"type": "click", "x": 10, "y": 10}])
+        self.assertEqual(commands[-1], ("xdotool", "mouseup", "1"))
+        self.assertEqual(len(commands), 4)
+        desktop.app = None
+
+    def test_batch_limits_reject_excessive_waits_and_actions(self):
+        desktop = harness.Desktop()
+        desktop.app = Mock()
+        desktop.app.poll.return_value = None
+        with self.assertRaises(ValueError):
+            desktop.batch([{"type": "wait", "ms": 2000}] * 6)
+        with self.assertRaises(ValueError):
+            desktop.batch([{"type": "state"}] * 101)
+        desktop.app = None
+
+    def test_invalid_requests_stay_valid_json_rpc(self):
+        result = subprocess.run([sys.executable, str(ROOT / "scripts/mcp_harness.py")],
+                                input='bad json\n{"jsonrpc":"2.0","id":2,"method":"unknown"}\n',
+                                text=True, capture_output=True, timeout=10, check=True)
+        responses = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(responses[0]["error"]["code"], -32600)
+        self.assertEqual(responses[1]["error"]["code"], -32601)
+
+
+if __name__ == "__main__":
+    unittest.main()

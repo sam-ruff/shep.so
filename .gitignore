@@ -1,0 +1,10 @@
+/target/
+*.log
+.env
+*.shepbackup
+*.sqlite*
+/artifacts/
+/node_modules/
+/dist/
+__pycache__/
+*.pyc
