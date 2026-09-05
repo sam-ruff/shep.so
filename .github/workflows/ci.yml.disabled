@@ -1,0 +1,53 @@
+# DISABLED intentionally. See AGENTS.md before renaming this to ci.yml.
+name: Quality and native UI tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: [self-hosted, Linux, X64]
+            e2e: true
+          - runner: [self-hosted, Windows, X64]
+            e2e: false
+          - runner: [self-hosted, macOS, ARM64]
+            e2e: false
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust quality gates
+        shell: bash
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-features
+          cargo build --release --no-default-features
+      - name: Harness unit tests
+        shell: bash
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Performance budgets and MCP end-to-end tests
+        if: matrix.e2e
+        shell: bash
+        run: |
+          cargo bench --bench responsiveness
+          cargo build --profile test-ui --features test-support
+          python3 scripts/e2e.py
+          python3 scripts/performance_gate.py
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.e2e
+        with:
+          name: native-ui-evidence
+          path: |
+            artifacts/e2e/
+            artifacts/performance/

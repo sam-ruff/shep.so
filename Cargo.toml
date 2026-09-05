@@ -1,0 +1,71 @@
+[package]
+name = "shep"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A calm email and calendar client with excellent mouse and keyboard support"
+license = "MIT"
+
+[features]
+default = []
+test-support = []
+
+[dependencies]
+iced = { version = "0.14", default-features = false, features = ["tiny-skia", "tokio", "svg", "image-without-codecs", "advanced", "x11", "wayland", "linux-theme-detection"] }
+image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
+rfd = "0.17"
+scraper = "0.27"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs"] }
+futures = "0.3"
+async-trait = "0.1"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.38", features = ["bundled"] }
+directories = "6"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+uuid = { version = "1", features = ["v4", "serde"] }
+async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
+tokio-native-tls = "0.3"
+native-tls = "0.2"
+mailparse = "0.16"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-native-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+secrecy = { version = "0.10", features = ["serde"] }
+aes-gcm = "0.10"
+argon2 = "0.5"
+rand = "0.8"
+sha2 = "0.10"
+base64 = "0.22"
+zeroize = { version = "1", features = ["derive"] }
+zstd = "0.13"
+url = "2"
+webbrowser = "1"
+roxmltree = "0.21"
+ical = "0.11"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bench]]
+name = "responsiveness"
+harness = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[profile.dev]
+debug = 1
+
+[profile.test-ui]
+inherits = "release"
+debug = 1
+lto = false
+codegen-units = 16
+strip = false

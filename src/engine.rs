@@ -1,0 +1,905 @@
+use crate::{
+    backup::{self, BackupCopy, BackupProvider, Snapshot},
+    model::*,
+    providers::{self, CalendarProvider},
+    store::{Store, Workspace},
+};
+use anyhow::Context;
+use futures::{SinkExt, Stream, StreamExt};
+use secrecy::{ExposeSecret, SecretString};
+use std::{
+    collections::HashSet,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tokio::sync::mpsc;
+
+#[derive(Debug, Clone)]
+pub enum Command {
+    Query(u64, MailQuery, bool),
+    LoadImages(Vec<String>),
+    Detail(String, bool),
+    SaveAccount(Account, SecretString, SecretString),
+    TestConnection(Account, SecretString, SecretString, ConnectionTarget),
+    SavePreferences(Preferences),
+    Sync,
+    Move(Mail, String),
+    Transfer(Mail, String, String),
+    Flags(Mail),
+    SaveDraft(Draft),
+    AutoSaveDraft(Draft),
+    SaveBeforeClose(Draft),
+    Send(Draft),
+    GoogleLogin(Preferences),
+    SaveCalendar(CalendarSource, SecretString),
+    SyncCalendar,
+    SaveEvent(CalendarEvent),
+    DeleteEvent(CalendarEvent),
+    Backup(SecretString),
+    ListBackups,
+    Restore(String, SecretString),
+    ExportAttachment(String, usize, String),
+    ExportMessage(String, String),
+}
+impl Command {
+    fn key(&self) -> Option<String> {
+        match self {
+            Self::TestConnection(_, _, _, target) => Some(format!("test:{target:?}")),
+            Self::Sync => Some("sync".into()),
+            Self::SyncCalendar => Some("calendar".into()),
+            Self::GoogleLogin(_) => Some("google".into()),
+            Self::Backup(_) | Self::Restore(..) => Some("backup".into()),
+            Self::Send(d) => Some(format!("send:{}", d.id)),
+            Self::SaveEvent(e) | Self::DeleteEvent(e) => Some(format!("event:{}", e.id)),
+            Self::Flags(m) | Self::Move(m, _) | Self::Transfer(m, _, _) => {
+                Some(format!("message:{}", m.id))
+            }
+            _ => None,
+        }
+    }
+}
+#[derive(Debug, Clone)]
+pub enum Event {
+    Ready(mpsc::Sender<Command>, Arc<Workspace>, bool),
+    RemoteImage(String, Result<Vec<u8>, String>),
+    Workspace(Arc<Workspace>),
+    Page(u64, Arc<MailPage>, bool),
+    Detail(Arc<MailDetail>, bool),
+    Changed,
+    Calendar(Arc<Vec<CalendarEvent>>),
+    Backups(Arc<Vec<BackupCopy>>),
+    Busy(String, bool),
+    Notice(String),
+    Error(String),
+    GoogleConnected,
+    AccountSaved,
+    CalendarSaved,
+    Sent(String),
+    ReadyToClose,
+    CalendarEventSaved,
+    ConnectionTest(ConnectionTarget, Result<String, String>),
+}
+type AccountLocks =
+    Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>>;
+#[derive(Clone)]
+struct Engine {
+    store: Store,
+    google: providers::google::Google,
+    demo: bool,
+    account_locks: AccountLocks,
+}
+type Output = futures::channel::mpsc::Sender<Event>;
+
+pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
+    let demo = *demo;
+    iced::stream::channel(CHANNEL_CAPACITY, move |mut output: Output| async move {
+        let (tx, mut input) = mpsc::channel(CHANNEL_CAPACITY);
+        let store = tokio::task::spawn_blocking(move || {
+            if demo {
+                Store::memory()
+            } else {
+                let path = directories::ProjectDirs::from("so", "shep", "Shep")
+                    .context("Could not locate the app data directory")?
+                    .data_local_dir()
+                    .to_path_buf();
+                std::fs::create_dir_all(&path)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
+                }
+                Store::open(path.join("shep.sqlite"))
+            }
+        })
+        .await;
+        let store = match store {
+            Ok(Ok(s)) => s,
+            other => {
+                let _ = output
+                    .send(Event::Error(format!(
+                        "Could not open local storage: {}",
+                        match other {
+                            Ok(Err(e)) => e.to_string(),
+                            Err(e) => e.to_string(),
+                            _ => String::new(),
+                        }
+                    )))
+                    .await;
+                futures::future::pending::<()>().await;
+                return;
+            }
+        };
+        #[cfg(feature = "test-support")]
+        if demo && let Err(e) = crate::test_support::seed_demo(&store).await {
+            let _ = output.send(Event::Error(e.to_string())).await;
+        }
+        let engine = Engine {
+            store,
+            google: Default::default(),
+            demo,
+            account_locks: Default::default(),
+        };
+        let workspace = match engine.store.workspace().await {
+            Ok(w) => w,
+            Err(e) => {
+                let _ = output.send(Event::Error(e.to_string())).await;
+                return;
+            }
+        };
+        let connected = !demo
+            && !workspace.preferences.google_client_id.is_empty()
+            && engine.google.connected().await;
+        let _ = output
+            .send(Event::Ready(tx, Arc::new(workspace), connected))
+            .await;
+        if let Ok(events) = engine.store.events().await {
+            let _ = output.send(Event::Calendar(Arc::new(events))).await;
+        }
+        let mut jobs = tokio::task::JoinSet::new();
+        let mut busy = HashSet::new();
+        let mut timer = tokio::time::interval(Duration::from_secs(60));
+        timer.tick().await;
+        let mut last_sync = Instant::now();
+        loop {
+            tokio::select! {
+                biased;
+                result=jobs.join_next(),if !jobs.is_empty()=>{
+                    if let Some(Ok((key,result)))=result{
+                        if let Some(key)=key{busy.remove(&key);let _=output.send(Event::Busy(key,false)).await;}
+                        if let Err(e)=result{let _=output.send(Event::Error(format!("{e:#}"))).await;}
+                    }
+                }
+                command=input.recv(),if jobs.len()<8=>{
+                    let Some(command)=command else{break;};
+                    if matches!(command, Command::SavePreferences(_) | Command::SaveDraft(_) | Command::AutoSaveDraft(_) | Command::SaveBeforeClose(_)) {
+                        if let Err(error)=engine.execute(command, output.clone()).await {
+                            let _=output.send(Event::Error(format!("{error:#}"))).await;
+                        }
+                        continue;
+                    }
+                    let key=command.key();
+                    if key.as_ref().is_some_and(|k|busy.contains(k)){continue;}
+                    if let Some(key)=&key{busy.insert(key.clone());let _=output.send(Event::Busy(key.clone(),true)).await;}
+                    let engine=engine.clone();let output=output.clone();
+                    jobs.spawn(async move {let result=tokio::time::timeout(Duration::from_secs(600),engine.execute(command,output)).await.context("The operation timed out. Try again.").and_then(|r|r);(key,result)});
+                }
+                _=timer.tick(),if !demo=>{
+                    if let Ok(prefs)=engine.store.get::<Preferences>("preferences").await{
+                        if last_sync.elapsed()>=Duration::from_secs(prefs.sync_minutes*60)&&!busy.contains("sync"){
+                            last_sync=Instant::now();busy.insert("sync".into());let _=output.send(Event::Busy("sync".into(),true)).await;
+                            let worker=engine.clone();let events=output.clone();jobs.spawn(async move{(Some("sync".into()),worker.execute(Command::Sync,events).await)});
+                            if !busy.contains("calendar") && jobs.len()<7 {
+                                busy.insert("calendar".into());
+                                let worker=engine.clone();let events=output.clone();jobs.spawn(async move{(Some("calendar".into()),worker.execute(Command::SyncCalendar,events).await)});
+                            }
+                        }
+                        if prefs.auto_backup&&chrono::Utc::now().timestamp()-prefs.last_backup.unwrap_or(0)>=(prefs.backup_hours*3600)as i64&&!busy.contains("backup")
+                            && let Ok(secret)=providers::read_secret("backup-passphrase").await{
+                                busy.insert("backup".into());let _=output.send(Event::Busy("backup".into(),true)).await;
+                                let engine=engine.clone();let output=output.clone();jobs.spawn(async move{(Some("backup".into()),engine.execute(Command::Backup(secret),output).await)});
+                            }
+                    }
+                }
+            }
+        }
+    })
+}
+
+impl Engine {
+    async fn account_lock(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = self
+            .account_locks
+            .lock()
+            .expect("account lock map poisoned")
+            .entry(id.into())
+            .or_default()
+            .clone();
+        lock.lock_owned().await
+    }
+
+    async fn workspace(&self, output: &mut Output) -> anyhow::Result<()> {
+        output
+            .send(Event::Workspace(Arc::new(self.store.workspace().await?)))
+            .await?;
+        Ok(())
+    }
+    async fn account(&self, id: &str) -> anyhow::Result<Account> {
+        self.store
+            .get::<Vec<Account>>("accounts")
+            .await?
+            .into_iter()
+            .find(|a| a.id == id)
+            .context("This account is no longer available")
+    }
+    async fn calendar_provider(
+        &self,
+        source: &CalendarSource,
+    ) -> anyhow::Result<Box<dyn CalendarProvider>> {
+        Ok(match source.kind {
+            CalendarKind::Google => Box::new(providers::calendar::GoogleCalendar {
+                google: self.google.clone(),
+                preferences: self.store.get("preferences").await?,
+            }),
+            CalendarKind::CalDav => Box::new(providers::calendar::CalDav {
+                http: self.google.http.clone(),
+            }),
+        })
+    }
+    async fn backup_provider(
+        &self,
+        prefs: &Preferences,
+    ) -> anyhow::Result<Box<dyn BackupProvider>> {
+        Ok(match prefs.backup_destination {
+            BackupDestination::Local => {
+                anyhow::ensure!(
+                    !prefs.backup_folder.trim().is_empty(),
+                    "Choose a backup folder in Preferences."
+                );
+                Box::new(backup::LocalBackup {
+                    directory: prefs.backup_folder.clone().into(),
+                })
+            }
+            BackupDestination::GoogleDrive => Box::new(backup::DriveBackup {
+                google: self.google.clone(),
+                preferences: prefs.clone(),
+            }),
+        })
+    }
+    async fn execute(&self, command: Command, mut output: Output) -> anyhow::Result<()> {
+        let explicit_draft = matches!(&command, Command::SaveDraft(_));
+        let closing = matches!(&command, Command::SaveBeforeClose(_));
+        let deleting_event = matches!(&command, Command::DeleteEvent(_));
+        match command {
+            Command::LoadImages(urls) => {
+                let results = futures::stream::iter(urls.into_iter().take(8))
+                    .map(|url| async move {
+                        let result = if self.demo {
+                            Ok(include_bytes!("../assets/logo-light.webp").to_vec())
+                        } else {
+                            crate::remote_images::fetch(&url)
+                                .await
+                                .map_err(|e| format!("{e:#}"))
+                        };
+                        (url, result)
+                    })
+                    .buffer_unordered(2);
+                futures::pin_mut!(results);
+                while let Some((url, result)) = results.next().await {
+                    output.send(Event::RemoteImage(url, result)).await?;
+                }
+            }
+            Command::Query(generation, query, prefetch) => {
+                output
+                    .send(Event::Page(
+                        generation,
+                        Arc::new(self.store.query(query).await?),
+                        prefetch,
+                    ))
+                    .await?;
+            }
+            Command::Detail(id, prefetch) => {
+                output
+                    .send(Event::Detail(
+                        Arc::new(self.store.detail(id).await?),
+                        prefetch,
+                    ))
+                    .await?;
+            }
+            Command::TestConnection(account, password, smtp_password, target) => {
+                let result = async {
+                    account.validate()?;
+                    anyhow::ensure!(!self.demo, "Connection tests require a real account. Test workspaces do not connect to mail servers.");
+                    let secret = if target == ConnectionTarget::Smtp && account.smtp_auth == SmtpAuth::None { SecretString::from("") }
+                    else if target == ConnectionTarget::Smtp && account.smtp_separate_password {
+                        if smtp_password.expose_secret().is_empty() { providers::read_secret(&format!("{}:smtp", account.id)).await? } else { smtp_password }
+                    } else if password.expose_secret().is_empty() { providers::read_secret(&account.id).await.context("Enter a password before testing a new account")? } else { password };
+                    match target { ConnectionTarget::Incoming => providers::mail::test_incoming(&account, &secret).await, ConnectionTarget::Smtp => providers::mail::test_smtp(&account, &secret).await }
+                }.await;
+                output
+                    .send(Event::ConnectionTest(
+                        target,
+                        result.map_err(|e| format!("{e:#}")),
+                    ))
+                    .await?;
+            }
+            Command::SaveAccount(account, password, smtp_password) => {
+                anyhow::ensure!(
+                    !self.demo,
+                    "Account changes are disabled in preview. Relaunch without --demo to add an account."
+                );
+                account.validate()?;
+                let password = if password.expose_secret().is_empty() {
+                    providers::read_secret(&account.id)
+                        .await
+                        .context("Enter an account password or app password")?
+                } else {
+                    password
+                };
+                if account.smtp_separate_password {
+                    let smtp_id = format!("{}:smtp", account.id);
+                    let smtp_password = if smtp_password.expose_secret().is_empty() {
+                        providers::read_secret(&smtp_id)
+                            .await
+                            .context("Enter the separate SMTP password")?
+                    } else {
+                        smtp_password
+                    };
+                    providers::write_secret(&smtp_id, smtp_password).await?;
+                }
+                providers::write_secret(&account.id, password)
+                    .await
+                    .context("Could not save the account credential")?;
+                self.store.save_account(account).await?;
+                self.workspace(&mut output).await?;
+                output.send(Event::AccountSaved).await?;
+                output
+                    .send(Event::Notice(
+                        "Account saved. Use Sync to receive your mail.".into(),
+                    ))
+                    .await?;
+            }
+            Command::SavePreferences(prefs) => {
+                prefs.validate()?;
+                self.store.put("preferences", prefs).await?;
+                self.workspace(&mut output).await?;
+            }
+            Command::Sync => {
+                if self.demo {
+                    tokio::time::sleep(Duration::from_millis(1500)).await;
+                    output.send(Event::Notice("Preview messages are stored locally. Add an account outside preview to sync.".into())).await?;
+                    return Ok(());
+                }
+                let accounts: Vec<Account> = self.store.get("accounts").await?;
+                let results: Vec<_> = futures::stream::iter(accounts)
+                    .map(|a| {
+                        let engine = self.clone();
+                        let output = output.clone();
+                        async move {
+                            let name = a.name.clone();
+                            engine
+                                .sync_account(a, output)
+                                .await
+                                .with_context(|| format!("{name} sync failed"))
+                        }
+                    })
+                    .buffer_unordered(3)
+                    .collect()
+                    .await;
+                for result in results {
+                    if let Err(e) = result {
+                        output.send(Event::Error(format!("{e:#}"))).await?;
+                    }
+                }
+                self.workspace(&mut output).await?;
+                output.send(Event::Changed).await?;
+            }
+            Command::Transfer(mail, destination, folder) => {
+                let preferences: Preferences = self.store.get("preferences").await?;
+                anyhow::ensure!(
+                    preferences.cross_account_moves,
+                    "Enable moving between accounts in Preferences first."
+                );
+                anyhow::ensure!(
+                    mail.account_id != destination,
+                    "Choose a different destination account."
+                );
+                // Always lock in the same order to prevent opposing transfers deadlocking.
+                let mut ids = [mail.account_id.clone(), destination.clone()];
+                ids.sort();
+                let first = self.account_lock(&ids[0]).await;
+                let second = self.account_lock(&ids[1]).await;
+                let source = self.account(&mail.account_id).await?;
+                let destination = self.account(&destination).await?;
+                anyhow::ensure!(
+                    source.protocol == Protocol::Imap && destination.protocol == Protocol::Imap,
+                    "Moving between accounts requires two IMAP accounts. POP3 keeps server originals."
+                );
+                let raw = self.store.raw_message(mail.id.clone()).await?;
+                if self.demo {
+                    let moved = parse_mail(
+                        &destination.id,
+                        &format!("local-sent-transfer-{}", uuid::Uuid::new_v4()),
+                        &folder,
+                        raw,
+                        mail.unread,
+                        mail.starred,
+                    )?;
+                    self.store.upsert(vec![moved]).await?;
+                } else {
+                    let source_secret = providers::read_secret(&source.id).await?;
+                    let destination_secret = providers::read_secret(&destination.id).await?;
+                    let journal_key = format!("transfer:{}", mail.id);
+                    let journal: Option<(String, String, String)> =
+                        self.store.get(&journal_key).await?;
+                    if let Some((account, target, stage)) = &journal {
+                        anyhow::ensure!(
+                            account == &destination.id && target == &folder,
+                            "A transfer is already pending for this message. Resume with the same destination."
+                        );
+                        anyhow::ensure!(
+                            stage == "copied",
+                            "The previous upload was interrupted. The original is safe. Check the destination in webmail before moving it there manually; Shep will not upload a possible duplicate."
+                        );
+                    }
+                    tokio::time::timeout(
+                        Duration::from_secs(35),
+                        providers::mail::prepare_transfer(&source, &source_secret, &mail),
+                    )
+                    .await??;
+                    if journal.is_none() {
+                        self.store
+                            .put(
+                                &journal_key,
+                                Some((
+                                    destination.id.clone(),
+                                    folder.clone(),
+                                    "uploading".to_owned(),
+                                )),
+                            )
+                            .await?;
+                        tokio::time::timeout(Duration::from_secs(60), providers::mail::append_transfer(&destination, &destination_secret, &mail, &folder, raw)).await
+                            .context("Upload timed out; the source is retained. Check the destination before retrying.")??;
+                        self.store
+                            .put(
+                                &journal_key,
+                                Some((destination.id.clone(), folder.clone(), "copied".to_owned())),
+                            )
+                            .await?;
+                    }
+                    tokio::time::timeout(Duration::from_secs(35), providers::mail::finish_transfer(&source, &source_secret, &mail)).await
+                        .context("The destination has a copy; source removal timed out. Retry the same destination to finish without uploading again.")?
+                        .context("The destination has a copy; source removal could not be confirmed. Retry the same destination to finish.")?;
+                }
+                let journal_key = format!("transfer:{}", mail.id);
+                self.store.remove(mail.id).await?;
+                self.store
+                    .put(&journal_key, Option::<(String, String, String)>::None)
+                    .await?;
+                drop(second);
+                drop(first);
+                output.send(Event::Changed).await?;
+                output
+                    .send(Event::Notice(format!(
+                        "Moved to {} / {folder}.",
+                        destination.name
+                    )))
+                    .await?;
+                if !self.demo {
+                    self.sync_account(destination, output.clone()).await?;
+                }
+            }
+            Command::Move(mail, folder) => {
+                let guard = self.account_lock(&mail.account_id).await;
+                if !self.demo && !mail.remote_id.starts_with("local-sent-") {
+                    let account = self.account(&mail.account_id).await?;
+                    let password = providers::read_secret(&account.id).await?;
+                    tokio::time::timeout(
+                        Duration::from_secs(45),
+                        providers::mail::provider(account.protocol)
+                            .move_mail(&account, &password, &mail, &folder),
+                    )
+                    .await??;
+                    if account.protocol == Protocol::Imap
+                        && !mail.remote_id.starts_with("local-sent-")
+                    {
+                        self.store.remove(mail.id).await?;
+                        output.send(Event::Changed).await?;
+                        drop(guard);
+                        self.sync_account(account, output.clone()).await?;
+                    } else {
+                        self.store.move_local(mail.id, folder.clone()).await?;
+                    }
+                } else {
+                    self.store.move_local(mail.id, folder.clone()).await?;
+                }
+                output.send(Event::Changed).await?;
+                output
+                    .send(Event::Notice(format!("Moved to {folder}.")))
+                    .await?;
+            }
+            Command::Flags(mail) => {
+                let _guard = self.account_lock(&mail.account_id).await;
+                if !self.demo && !mail.remote_id.starts_with("local-sent-") {
+                    let account = self.account(&mail.account_id).await?;
+                    if account.protocol == Protocol::Imap {
+                        let password = providers::read_secret(&account.id).await?;
+                        tokio::time::timeout(
+                            Duration::from_secs(45),
+                            providers::mail::provider(account.protocol)
+                                .set_flags(&account, &password, &mail),
+                        )
+                        .await??;
+                    }
+                }
+                self.store.flags(mail).await?;
+                output.send(Event::Changed).await?;
+            }
+            Command::SaveDraft(draft)
+            | Command::AutoSaveDraft(draft)
+            | Command::SaveBeforeClose(draft) => {
+                self.store.save_draft(draft).await?;
+                self.workspace(&mut output).await?;
+                if explicit_draft {
+                    output
+                        .send(Event::Notice("Draft saved on this device.".into()))
+                        .await?;
+                }
+                if closing {
+                    output.send(Event::ReadyToClose).await?;
+                }
+            }
+            Command::Send(draft) => {
+                self.store.save_draft(draft.clone()).await?;
+                anyhow::ensure!(
+                    !self.demo,
+                    "Sending is disabled in preview. Your draft is saved locally."
+                );
+                let account = self.account(&draft.account_id).await?;
+                let password = providers::read_secret(&account.id).await?;
+                let password = if account.smtp_separate_password {
+                    providers::read_secret(&format!("{}:smtp", account.id)).await?
+                } else {
+                    password
+                };
+                let raw = providers::mail::send(&account, &password, &draft).await?;
+                let mail = parse_mail(
+                    &account.id,
+                    &format!("local-sent-{}", draft.id),
+                    "Sent",
+                    raw,
+                    false,
+                    false,
+                )?;
+                self.store.upsert(vec![mail]).await?;
+                self.store.delete_draft(draft.id.clone()).await?;
+                self.workspace(&mut output).await?;
+                output.send(Event::Sent(draft.id)).await?;
+                output.send(Event::Changed).await?;
+                output.send(Event::Notice("Message sent.".into())).await?;
+            }
+            Command::GoogleLogin(prefs) => {
+                anyhow::ensure!(!self.demo, "Google sign-in is disabled in preview.");
+                prefs.validate()?;
+                self.store.put("preferences", prefs.clone()).await?;
+                self.google.login(&prefs).await?;
+                for source in self.google.calendars(&prefs).await? {
+                    self.store.save_source(source).await?;
+                }
+                self.workspace(&mut output).await?;
+                output.send(Event::GoogleConnected).await?;
+                output
+                    .send(Event::Notice(
+                        "Google connected. Drive backup is optional; calendars are ready to sync."
+                            .into(),
+                    ))
+                    .await?;
+            }
+            Command::SaveCalendar(source, password) => {
+                anyhow::ensure!(!self.demo, "Calendar connections are disabled in preview.");
+                providers::calendar::validate_caldav_url(&source.url)?;
+                anyhow::ensure!(
+                    !source.name.is_empty() && !source.username.is_empty(),
+                    "Enter a calendar name and username."
+                );
+                providers::write_secret(&source.id, password).await?;
+                self.store.save_source(source).await?;
+                self.workspace(&mut output).await?;
+                output.send(Event::CalendarSaved).await?;
+                output
+                    .send(Event::Notice(
+                        "CalDAV calendar saved. Use Sync calendar to connect.".into(),
+                    ))
+                    .await?;
+            }
+            Command::SyncCalendar => {
+                if !self.demo {
+                    let sources: Vec<CalendarSource> = self.store.get("calendars").await?;
+                    let now = chrono::Utc::now();
+                    for source in sources {
+                        let result = async {
+                            let events = self
+                                .calendar_provider(&source)
+                                .await?
+                                .events(
+                                    &source,
+                                    now - chrono::Duration::days(90),
+                                    now + chrono::Duration::days(365),
+                                )
+                                .await?;
+                            self.store.replace_events(source.id.clone(), events).await
+                        }
+                        .await;
+                        if let Err(e) = result {
+                            output
+                                .send(Event::Error(format!("{}: {e:#}", source.name)))
+                                .await?;
+                        }
+                    }
+                }
+                output
+                    .send(Event::Calendar(Arc::new(self.store.events().await?)))
+                    .await?;
+            }
+            Command::SaveEvent(event) | Command::DeleteEvent(event) => {
+                anyhow::ensure!(
+                    event.end > event.start,
+                    "The event must end after it starts."
+                );
+                if self.demo {
+                    let mut events = self.store.events().await?;
+                    events.retain(|e| e.id != event.id);
+                    if !deleting_event {
+                        events.push(event.clone());
+                    }
+                    self.store
+                        .replace_events(event.source_id.clone(), events)
+                        .await?;
+                } else {
+                    let source = self
+                        .store
+                        .get::<Vec<CalendarSource>>("calendars")
+                        .await?
+                        .into_iter()
+                        .find(|s| s.id == event.source_id)
+                        .context("Choose a connected calendar")?;
+                    let provider = self.calendar_provider(&source).await?;
+                    if deleting_event {
+                        provider.delete_event(&source, &event).await?;
+                    } else {
+                        provider.save_event(&source, &event).await?;
+                    }
+                    let now = chrono::Utc::now();
+                    let events = provider
+                        .events(
+                            &source,
+                            now - chrono::Duration::days(90),
+                            now + chrono::Duration::days(365),
+                        )
+                        .await?;
+                    self.store.replace_events(source.id, events).await?;
+                }
+                output
+                    .send(Event::Calendar(Arc::new(self.store.events().await?)))
+                    .await?;
+                output.send(Event::CalendarEventSaved).await?;
+                output
+                    .send(Event::Notice(
+                        if deleting_event {
+                            "Event deleted."
+                        } else {
+                            "Event saved."
+                        }
+                        .into(),
+                    ))
+                    .await?;
+            }
+            Command::Backup(passphrase) => {
+                anyhow::ensure!(!self.demo, "Backup is disabled in preview.");
+                let mut prefs: Preferences = self.store.get("preferences").await?;
+                prefs.validate()?;
+                let provider = self.backup_provider(&prefs).await?;
+                let accounts: Vec<Account> = self.store.get("accounts").await?;
+                let calendars: Vec<CalendarSource> = self.store.get("calendars").await?;
+                let mut credentials = Vec::new();
+                if prefs.backup_accounts {
+                    for id in accounts.iter().map(|a| &a.id).chain(
+                        calendars
+                            .iter()
+                            .filter(|c| c.kind == CalendarKind::CalDav)
+                            .map(|c| &c.id),
+                    ) {
+                        credentials.push((
+                            id.clone(),
+                            providers::read_secret(id)
+                                .await?
+                                .expose_secret()
+                                .to_string(),
+                        ));
+                    }
+                }
+                if prefs.backup_accounts {
+                    for account in accounts.iter().filter(|a| a.smtp_separate_password) {
+                        let id = format!("{}:smtp", account.id);
+                        credentials.push((
+                            id.clone(),
+                            providers::read_secret(&id).await?.expose_secret().into(),
+                        ));
+                    }
+                }
+                let snapshot = Snapshot {
+                    version: 1,
+                    created_at: chrono::Utc::now().timestamp(),
+                    messages: self.store.export().await?,
+                    accounts,
+                    calendars,
+                    preferences: prefs.clone(),
+                    credentials,
+                };
+                let secret = passphrase.clone();
+                let bytes =
+                    tokio::task::spawn_blocking(move || backup::encrypt(&snapshot, &secret))
+                        .await??;
+                let name = format!(
+                    "shep-{}-{}.shepbackup",
+                    chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
+                    uuid::Uuid::new_v4()
+                );
+                provider.upload(&name, bytes).await?;
+                // Only prune after the new encrypted copy was successfully committed.
+                backup::retain(provider.as_ref(), prefs.backup_copies).await?;
+                prefs.last_backup = Some(chrono::Utc::now().timestamp());
+                if prefs.auto_backup {
+                    providers::write_secret("backup-passphrase", passphrase).await?;
+                }
+                self.store.put("preferences", prefs).await?;
+                self.workspace(&mut output).await?;
+                output
+                    .send(Event::Backups(Arc::new(provider.list().await?)))
+                    .await?;
+                output
+                    .send(Event::Notice(
+                        "Encrypted backup saved and retention applied.".into(),
+                    ))
+                    .await?;
+            }
+            Command::ListBackups => {
+                let prefs = self.store.get("preferences").await?;
+                output
+                    .send(Event::Backups(Arc::new(
+                        self.backup_provider(&prefs).await?.list().await?,
+                    )))
+                    .await?;
+            }
+            Command::Restore(id, passphrase) => {
+                anyhow::ensure!(!self.demo, "Restore is disabled in preview.");
+                let prefs = self.store.get("preferences").await?;
+                let bytes = self.backup_provider(&prefs).await?.download(&id).await?;
+                let snapshot =
+                    tokio::task::spawn_blocking(move || backup::decrypt(&bytes, &passphrase))
+                        .await??;
+                for (id, secret) in snapshot.credentials {
+                    providers::write_secret(&id, SecretString::from(secret)).await?;
+                }
+                for account in snapshot.accounts {
+                    self.store.save_account(account).await?;
+                }
+                for source in snapshot.calendars {
+                    self.store.save_source(source).await?;
+                }
+                for chunk in snapshot.messages.chunks(50) {
+                    self.store.upsert(chunk.to_vec()).await?;
+                }
+                self.workspace(&mut output).await?;
+                output.send(Event::Changed).await?;
+                output.send(Event::Notice("Backup restored. Accounts without included passwords need their passwords entered again.".into())).await?;
+            }
+            Command::ExportAttachment(id, index, path) => {
+                let detail = self.store.detail(id).await?;
+                let attachment = detail
+                    .attachments
+                    .get(index)
+                    .context("Attachment no longer exists")?;
+                write_new(&path, &attachment.bytes).await?;
+                output
+                    .send(Event::Notice("Attachment saved.".into()))
+                    .await?;
+            }
+            Command::ExportMessage(id, path) => {
+                let raw = self
+                    .store
+                    .run(move |c| {
+                        Ok(
+                            c.query_row("SELECT raw FROM messages WHERE id=?", [id], |r| {
+                                r.get::<_, Vec<u8>>(0)
+                            })?,
+                        )
+                    })
+                    .await?;
+                write_new(&path, &raw).await?;
+                output
+                    .send(Event::Notice("Original email saved as .eml.".into()))
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+    async fn sync_account(&self, account: Account, mut output: Output) -> anyhow::Result<()> {
+        let _guard = self.account_lock(&account.id).await;
+        let password = providers::read_secret(&account.id).await?;
+        let known = self.store.known(account.id.clone()).await?;
+        let (tx, mut rx) = mpsc::channel(8);
+        let store = self.store.clone();
+        let receive = async {
+            let mut last = Instant::now();
+            let mut skipped = 0;
+            while let Some(mail) = rx.recv().await {
+                if matches!(mail, MailSyncItem::SkippedLarge) {
+                    skipped += 1;
+                }
+                let folders_changed = matches!(&mail, MailSyncItem::Folders(..));
+                store.apply_sync(mail).await?;
+                if folders_changed {
+                    output
+                        .send(Event::Workspace(Arc::new(store.workspace().await?)))
+                        .await?;
+                }
+                if last.elapsed() > Duration::from_millis(250) {
+                    output.send(Event::Changed).await?;
+                    last = Instant::now();
+                }
+            }
+            if skipped > 0 {
+                output
+                    .send(Event::Notice(format!(
+                        "Skipped {skipped} messages larger than the 25 MiB download limit."
+                    )))
+                    .await?;
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        let provider = providers::mail::provider(account.protocol);
+        let sync = tokio::time::timeout(
+            Duration::from_secs(480),
+            provider.sync(&account, &password, &known, tx),
+        );
+        let (folders, ()) = tokio::try_join!(
+            async { sync.await.context("Account sync timed out")? },
+            receive
+        )?;
+        self.store
+            .run(move |c| {
+                use rusqlite::OptionalExtension;
+                let old: Option<String> = c
+                    .query_row("SELECT value FROM kv WHERE key='folders'", [], |r| r.get(0))
+                    .optional()?;
+                let mut all: Vec<String> = old
+                    .map(|s| serde_json::from_str(&s))
+                    .transpose()?
+                    .unwrap_or_default();
+                for f in folders {
+                    if !all.contains(&f) {
+                        all.push(f);
+                    }
+                }
+                c.execute(
+                    "INSERT OR REPLACE INTO kv VALUES('folders',?)",
+                    [serde_json::to_string(&all)?],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+}
+async fn write_new(path: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .await
+        .context("Could not create the file. Choose a new filename in an existing folder.")?;
+    file.write_all(bytes).await?;
+    file.sync_all().await?;
+    Ok(())
+}

@@ -1,0 +1,12 @@
+{
+  "dataset_messages": 100000,
+  "minimum_samples": 20,
+  "budgets_ms": {
+    "inbox_page_p95": 50.0,
+    "account_page_p95": 50.0,
+    "search_p95": 50.0,
+    "cached_body_p95": 10.0,
+    "ui_handler_p95": 8.0,
+    "native_navigation_p95": 150.0
+  }
+}
