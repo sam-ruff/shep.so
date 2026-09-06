@@ -164,11 +164,43 @@ class Desktop:
         if path is None:
             self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "Escape")
         else:
+            self.enter_picker_path(window, path)
+            self.command("import", "-window", "root", "-quality", "90", str(self.directory / "native-file-picker.webp"))
+        deadline = time.monotonic() + 3
+        confirm_after = time.monotonic()
+        while True:
+            try:
+                visible = self.command("xdotool", "search", "--onlyvisible", "--class", "zenity").splitlines()
+            except subprocess.CalledProcessError:
+                visible = []
+            if window not in visible:
+                break
+            if path is not None and time.monotonic() >= confirm_after:
+                # GTK validates the entered file asynchronously. Return may
+                # initially complete its path without accepting the dialog.
+                # Target only this picker so a close cannot send a key to Shep.
+                try:
+                    self.command("xdotool", "key", "--window", window, "--clearmodifiers", "--delay", "1", "Return")
+                except subprocess.CalledProcessError:
+                    pass  # It may have closed after the visibility check.
+                confirm_after = time.monotonic() + .3
+            if time.monotonic() >= deadline:
+                self.command("import", "-window", "root", "-quality", "90", str(self.directory / "native-file-picker-failed.webp"))
+                raise RuntimeError("The native file picker did not accept the selected file.")
+            time.sleep(.05)
+        # Xvfb has no window manager to return focus after closing a native dialog.
+        self.command("xdotool", "windowfocus", "--sync", self.window)
+        return {"selected": str(path) if path else None}
+
+    def enter_picker_path(self, window, path):
+        # A mapped GTK picker can still ignore its first location shortcut.
+        # Verify text copied back by GTK before Return; the old clipboard owner
+        # must exit, otherwise reading our own pasted value proves nothing.
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            self.command("xdotool", "windowfocus", "--sync", window)
             self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+l")
-            time.sleep(.1)
             self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+a")
-            # Paste in one native input operation. GTK path completion can alter
-            # partially typed paths; the clipboard belongs only to our Xvfb.
             if self.clipboard and self.clipboard.poll() is None:
                 self.clipboard.terminate()
                 self.clipboard.wait(timeout=3)
@@ -176,9 +208,6 @@ class Desktop:
                 env=self.env, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=self.log)
             self.clipboard.stdin.write(str(path).encode())
             self.clipboard.stdin.close()
-            # Wait for this X selection owner to serve the complete path before
-            # asking GTK to paste it. Process creation alone is not readiness.
-            deadline = time.monotonic() + 3
             while True:
                 try:
                     if self.command("xclip", "-selection", "clipboard", "-out") == str(path):
@@ -189,23 +218,18 @@ class Desktop:
                     raise RuntimeError("The isolated clipboard did not accept the fixture path.")
                 time.sleep(.02)
             self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v")
-            time.sleep(.15)
-            self.command("import", "-window", window, "-quality", "90", str(self.directory / "native-file-picker.webp"))
-            self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "Return")
-        deadline = time.monotonic() + 3
-        while True:
-            try:
-                visible = self.command("xdotool", "search", "--onlyvisible", "--class", "zenity").splitlines()
-            except subprocess.CalledProcessError:
-                visible = []
-            if window not in visible:
-                break
-            if time.monotonic() >= deadline:
-                raise RuntimeError("The native file picker did not accept the selected file.")
-            time.sleep(.05)
-        # Xvfb has no window manager to return focus after closing a native dialog.
-        self.command("xdotool", "windowfocus", "--sync", self.window)
-        return {"selected": str(path) if path else None}
+            self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+a", "ctrl+c")
+            copied_deadline = min(deadline, time.monotonic() + .3)
+            while time.monotonic() < copied_deadline:
+                if self.clipboard.poll() is not None:
+                    try:
+                        if self.command("xclip", "-selection", "clipboard", "-out") == str(path):
+                            return
+                    except subprocess.CalledProcessError:
+                        pass
+                    break
+                time.sleep(.02)
+        raise RuntimeError("The native file picker's location field did not accept the fixture path.")
 
     def assertion(self, action):
         value = self.state()

@@ -11,6 +11,8 @@ pub enum Message {
     Pump,
     Plain(bool),
     Quotes,
+    Scroll(u64, f32),
+    ScrollEnd(u64, bool),
     LinkResult(Result<(), String>),
     Scale(f32),
 }
@@ -254,6 +256,32 @@ impl App {
                     self.html_reader.enqueue(command);
                 }
             }
+            Message::Scroll(id, amount) if id == self.html_reader.generation => {
+                let target = if self.conversation_visible() {
+                    "conversation-reader"
+                } else {
+                    "message-reader"
+                };
+                return widget::operation::scroll_by(
+                    target,
+                    widget::scrollable::AbsoluteOffset { x: 0., y: amount },
+                );
+            }
+            Message::ScrollEnd(id, end) if id == self.html_reader.generation => {
+                let target = if self.conversation_visible() {
+                    "conversation-reader"
+                } else {
+                    "message-reader"
+                };
+                return widget::operation::snap_to(
+                    target,
+                    widget::scrollable::RelativeOffset {
+                        x: 0.,
+                        y: if end { 1. } else { 0. },
+                    },
+                );
+            }
+            Message::Scroll(..) | Message::ScrollEnd(..) => {}
             Message::Pump => self.html_reader.pumping = false,
             Message::LinkResult(Err(error)) => {
                 self.notice(format!("The link could not be opened: {error}"), true)

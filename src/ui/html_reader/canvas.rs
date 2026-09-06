@@ -145,6 +145,31 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
                 shell.capture_event();
             }
         }
+        if state.focused
+            && let Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(key),
+                modifiers,
+                ..
+            }) = event
+            && !modifiers.alt()
+            && !modifiers.shift()
+        {
+            use iced::keyboard::key::Named;
+            let id = self.state.generation;
+            let navigation = match key {
+                Named::ArrowUp if !modifiers.command() => Some(HtmlMessage::Scroll(id, -40.)),
+                Named::ArrowDown if !modifiers.command() => Some(HtmlMessage::Scroll(id, 40.)),
+                Named::PageUp => Some(HtmlMessage::Scroll(id, -viewport.height * 0.8)),
+                Named::PageDown => Some(HtmlMessage::Scroll(id, viewport.height * 0.8)),
+                Named::Home => Some(HtmlMessage::ScrollEnd(id, false)),
+                Named::End => Some(HtmlMessage::ScrollEnd(id, true)),
+                _ => None,
+            };
+            if let Some(message) = navigation {
+                shell.publish(Message::Html(message));
+                shell.capture_event();
+            }
+        }
     }
     fn draw(
         &self,
