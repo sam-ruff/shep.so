@@ -58,7 +58,7 @@ impl App {
             (ReplyAll, "Reply all", "reply", Some(Action::ReplyAll)),
             (
                 Read,
-                if menu.mail.unread {
+                if self.mail_actions.effective(&menu.mail).unread {
                     "Mark as read"
                 } else {
                     "Mark as unread"
@@ -68,7 +68,7 @@ impl App {
             ),
             (
                 Flag,
-                if menu.mail.starred {
+                if self.mail_actions.effective(&menu.mail).starred {
                     "Remove flag"
                 } else {
                     "Flag message"
@@ -135,15 +135,11 @@ impl App {
         let Some(menu) = self.context_menu.take() else {
             return Task::none();
         };
-        let mut mail = menu.mail;
+        let mail = self.mail_actions.effective(&menu.mail).clone();
         if self.busy.contains(&format!("message:{}", mail.id))
             && matches!(
                 action,
-                MailAction::Read
-                    | MailAction::Flag
-                    | MailAction::Move
-                    | MailAction::Archive
-                    | MailAction::Trash
+                MailAction::Move | MailAction::Archive | MailAction::Trash
             )
         {
             self.notice(
@@ -154,15 +150,10 @@ impl App {
         }
         match action {
             MailAction::Read | MailAction::Flag => {
-                if action == MailAction::Read {
-                    mail.unread = !mail.unread;
-                } else {
-                    mail.starred = !mail.starred;
-                }
-                self.send(Command::Flags(mail));
+                self.toggle_mail_flag(mail, action == MailAction::Read);
             }
             MailAction::Archive | MailAction::Trash => {
-                self.send(Command::Move(
+                self.move_mail(
                     mail,
                     if action == MailAction::Archive {
                         "Archive"
@@ -170,7 +161,7 @@ impl App {
                         "Trash"
                     }
                     .into(),
-                ));
+                );
             }
             MailAction::CopySender => {
                 return iced::clipboard::write(

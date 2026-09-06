@@ -397,6 +397,7 @@ fn icon_color<'a>(name: &str, size: f32, bright: bool, is_flagged: bool) -> Elem
     static ICONS: OnceLock<HashMap<&'static str, svg::Handle>> = OnceLock::new();
     let icons=ICONS.get_or_init(||[
         ("image",r#"<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="2"/><path d="m21 15-5-5L5 21"/>"#),
+        ("mail-open",r#"<path d="m3 9 9-6 9 6v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"/><path d="m3 9 9 6 9-6M3 20l6-7m12 7-6-7"/>"#),
         ("mail",r#"<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/>"#),
         ("inbox",r#"<path d="M4 4h16l2 11v5H2v-5L4 4Z"/><path d="M2 15h6l2 3h4l2-3h6"/>"#),
         ("calendar",r#"<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h2M14 15h2"/>"#),

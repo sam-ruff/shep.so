@@ -176,7 +176,8 @@ impl App {
             .map(|mail| mail.subject.as_str())
             .unwrap_or("Conversation");
         let mut cards = column![].spacing(10);
-        for mail in &page.rows {
+        for original in &page.rows {
+            let mail = self.mail_actions.effective(original);
             let active = self.reader_id() == Some(&mail.id);
             let expanded = active && !self.conversation.collapsed;
             let date = chrono::DateTime::from_timestamp(mail.timestamp, 0)

@@ -470,3 +470,14 @@ async fn seed_outgoing(store: &Store) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// Fault injection is confined to the isolated non-production fixture binary.
+pub async fn mail_action_delay() -> anyhow::Result<()> {
+    let mode =
+        std::env::args().find_map(|arg| arg.strip_prefix("--mail-actions=").map(str::to_owned));
+    if let Some(mode) = mode {
+        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+        anyhow::ensure!(mode != "fail", "Fixture server rejected this change.");
+    }
+    Ok(())
+}

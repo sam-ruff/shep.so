@@ -2,6 +2,7 @@ pub mod backup;
 pub mod compose;
 pub mod engine;
 pub mod fuzzy;
+pub mod mail_actions;
 pub mod model;
 pub mod outgoing;
 pub mod providers;

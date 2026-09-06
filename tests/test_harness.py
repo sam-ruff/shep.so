@@ -14,6 +14,11 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_invalid_mail_action_fault_mode_is_rejected_before_launch(self):
+        desktop = harness.Desktop()
+        with self.assertRaisesRegex(ValueError, "Unknown mail actions"):
+            desktop.start(mail_actions="live")
+
     def test_display_readiness_retries_only_before_launch_and_reports_failure(self):
         desktop = harness.Desktop()
         desktop.directory = Path("/tmp/isolated")

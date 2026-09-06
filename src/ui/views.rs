@@ -507,6 +507,7 @@ impl App {
         .into()
     }
     pub(super) fn reader_toolbar<'a>(&'a self, detail: &'a MailDetail) -> Element<'a, Message> {
+        let summary = self.mail_actions.effective(&detail.summary);
         let toolbar = row![
             self.icon_action(
                 "archive",
@@ -519,8 +520,8 @@ impl App {
                 Message::Move("Trash".into())
             ),
             self.icon_action(
-                "mail",
-                if detail.summary.unread {
+                if summary.unread { "mail" } else { "mail-open" },
+                if summary.unread {
                     "Mark as read"
                 } else {
                     "Mark as unread"
@@ -530,14 +531,14 @@ impl App {
             self.toggle_icon_action(
                 "flag",
                 self.shortcut_hint(
-                    if detail.summary.starred {
+                    if summary.starred {
                         "Remove flag"
                     } else {
                         "Flag message"
                     },
                     Action::Star
                 ),
-                detail.summary.starred,
+                summary.starred,
                 Message::ToggleStar
             ),
             space().width(Length::Fill),
@@ -1530,8 +1531,8 @@ impl App {
         let mut actions = column![
             row![
                 space().width(Length::Fill),
-                muted("Primary").width(138),
-                muted("Secondary").width(168)
+                muted("Primary").width(156),
+                muted("Secondary").width(156)
             ]
             .spacing(8)
         ]
@@ -1557,38 +1558,29 @@ impl App {
                 };
                 let control = button(text(label).size(12))
                     .padding([10, 12])
-                    .width(138)
+                    .width(112)
                     .style(if active { selected } else { outline })
                     .on_press(Message::Remap(action, slot));
                 bindings = bindings.push(control);
-                if slot == Slot::Secondary {
-                    bindings = bindings.push(
-                        button(icon("close", 14.))
-                            .padding(6)
-                            .style(ghost)
-                            .on_press_maybe(
-                                (!binding.is_empty() || active)
-                                    .then_some(Message::ClearShortcut(action, slot)),
-                            ),
-                    );
-                }
+                bindings = bindings.push(self.icon_action(
+                    "close",
+                    format!(
+                        "Clear {} {} shortcut",
+                        action.label(),
+                        if slot == Slot::Primary {
+                            "primary"
+                        } else {
+                            "secondary"
+                        }
+                    ),
+                    Message::ClearShortcut(action, slot),
+                ));
             }
             actions = actions
                 .push(
                     row![
                         text(action.label()).size(12),
                         space().width(Length::Fill),
-                        if action == Action::Inbox
-                            && !self.preferences.shortcuts.key(action).is_empty()
-                        {
-                            button(text("Disable").size(11))
-                                .padding(6)
-                                .style(ghost)
-                                .on_press(Message::ClearShortcut(action, Slot::Primary))
-                                .into()
-                        } else {
-                            Element::from(space())
-                        },
                         bindings
                     ]
                     .spacing(8)
@@ -1602,7 +1594,7 @@ impl App {
             .push(action("Reset shortcuts", Message::ResetShortcuts));
         self.settings_card(
             "Keyboard shortcuts",
-            "Click a binding, then press its replacement. Add a second key with Disabled; × clears it.",
+            "Click a binding, then press its replacement. Each × clears the binding beside it. Click Disabled to assign a key.",
             actions.into(),
         )
     }
@@ -1669,8 +1661,7 @@ impl App {
                     body = body.push(column![text("Destination account").size(12), pick_list(choices, chosen, |c:Choice| Message::Field("move_account", c.0)).text_size(12).padding(11).style(select_input).menu_style(select_menu).width(Length::Fill)].spacing(8));
                 }
                 let folders = crate::fuzzy::ranked(self.field("folder_search"), self.move_folders());
-                let destination = folders.first().cloned();
-                body=body.push(input("Find a folder…",self.field("folder_search"),|v|Message::Field("folder_search",v)).id("folder-search").on_submit_maybe(destination.map(Message::Move)));
+                body=body.push(input("Find a folder…",self.field("folder_search"),|v|Message::Field("folder_search",v)).id("folder-search").on_submit(Message::MoveFirst));
                 for (index, folder) in folders.iter().enumerate() {
                     let target = index == 0;
                     let trailing: Element<'_, Message> = if target { muted("Enter ↵").size(11).into() } else { icon("chevron", 14.) };

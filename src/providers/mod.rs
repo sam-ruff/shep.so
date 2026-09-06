@@ -30,6 +30,7 @@ pub trait MailProvider: Send + Sync {
         account: &Account,
         password: &SecretString,
         mail: &Mail,
+        changes: crate::mail_actions::Flags,
     ) -> anyhow::Result<()>;
 }
 

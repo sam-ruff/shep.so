@@ -702,3 +702,20 @@ async fn sidebar_unread_counts_ignore_search_and_folder_scope_and_follow_changes
     assert!(!updated.inbox_unread.contains_key("a"));
     assert_eq!(updated.inbox_unread.get("b"), Some(&1));
 }
+
+#[test]
+fn every_shortcut_slot_can_be_cleared_and_stays_disabled_after_reload() {
+    use shep::shortcuts::Slot;
+    let mut keys = Keymap::default();
+    for action in Action::ALL {
+        for slot in [Slot::Primary, Slot::Secondary] {
+            keys.remap_slot(action, slot, String::new()).unwrap();
+            keys = serde_json::from_str(&serde_json::to_string(&keys).unwrap()).unwrap();
+            assert!(keys.binding(action, slot).is_empty());
+        }
+    }
+    assert!(keys.0.values().chain(keys.1.values()).all(String::is_empty));
+    keys.remap_slot(Action::Move, Slot::Primary, "M".into())
+        .unwrap();
+    assert_eq!(keys.resolve("M"), Some(Action::Move));
+}
