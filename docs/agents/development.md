@@ -14,7 +14,7 @@ python3 scripts/e2e.py
 python3 scripts/performance_gate.py
 ```
 
-Linux native E2E additionally needs `xvfb`, `xdotool`, `zenity`, `xclip`, and ImageMagick with WebP support. The optimized `test-ui` profile avoids measuring debug rendering. `scripts/check.sh` runs the full suite; `SHEP_SKIP_E2E=1` explicitly omits GUI tests when X11 is unavailable.
+Linux native E2E additionally needs `xvfb`, `xdotool`, `zenity`, `xclip`, and ImageMagick with WebP support. Print tests also need Chrome/Chromium and Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`); they use an isolated X11 browser profile and Save as PDF, never a physical printer. The optimized `test-ui` profile avoids measuring debug rendering. `scripts/check.sh` runs the full suite; `SHEP_SKIP_E2E=1` explicitly omits GUI tests when X11 is unavailable.
 
 The native MCP server is configured in `.mcp.json`. Read [the repository E2E skill](https://github.com/sam-ruff/shep.so/blob/main/.agents/skills/shep-e2e/SKILL.md). Its batch tool performs real clicks, double-clicks, drags, typing and shortcuts, plus bounded waits, observed-state assertions and WebP screenshots. Every AI-driven scenario must have an equivalent automated test. Fixture mail exists only behind the nondefault `test-support` feature. The production application does not launch fixture workspaces.
 

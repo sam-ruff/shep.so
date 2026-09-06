@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Shep · Print message</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f3f6;color:#25232b;font:14px system-ui,sans-serif}header{display:flex;align-items:center;gap:18px;padding:16px 24px;background:white;border-bottom:1px solid #e3e0e8}h1{font-size:16px;margin:0}p{margin:0;color:#66616e;flex:1}button{background:#7353ba;color:white;border:0;border-radius:8px;padding:10px 22px;font:inherit;cursor:pointer}button:active{transform:translateY(1px)}button:disabled{opacity:.5}iframe{display:block;background:white;width:min(100%,1000px);height:calc(100vh - 75px);margin:0 auto;border:0}noscript{display:block;padding:24px}
+</style></head><body><header><h1>Print message</h1><p id="status">Preparing your message…</p><button id="print" disabled>Print</button></header><noscript>Enable browser scripting to open the print dialog, then choose Print in Shep again.</noscript><iframe title="Message to print" sandbox="allow-same-origin allow-modals" referrerpolicy="no-referrer" srcdoc="{{DOCUMENT}}"></iframe>
+<script nonce="{{NONCE}}">
+const frame=document.querySelector('iframe'),button=document.querySelector('#print'),status=document.querySelector('#status');
+const [headers,files]={{HEADERS}};
+let ready=false;
+async function prepare(){
+ if(ready||!frame.contentDocument?.body)return;ready=true;
+ const doc=frame.contentDocument;
+ // Shadow DOM keeps the email stylesheet from hiding or restyling the header.
+ const host=doc.createElement('div');host.setAttribute('style','display:block!important;position:static!important;visibility:visible!important;opacity:1!important;height:auto!important;margin:0 0 24px!important');
+ const root=host.attachShadow({mode:'closed'}),style=doc.createElement('style');
+ style.textContent=':host{all:initial}section{font:13px/1.6 system-ui;color:#25232b;background:white;padding:0 0 18px;border-bottom:1px solid #ddd;overflow-wrap:anywhere}h1{font-size:22px;line-height:1.3;margin:0 0 12px}div{margin:2px 0}b{display:inline-block;min-width:54px}';root.append(style);
+ const section=doc.createElement('section');
+ for(const [name,value] of headers){const row=doc.createElement(name==='Subject'?'h1':'div');if(name!=='Subject'){const label=doc.createElement('b');label.textContent=name+': ';row.append(label);}row.append(doc.createTextNode(value));section.append(row);}
+ if(files.length){const row=doc.createElement('div');row.textContent='Attachments: '+files.join(', ');section.append(row);}
+ root.append(section);doc.body.prepend(host);
+ for(const event of ['click','auxclick','submit'])doc.addEventListener(event,e=>e.preventDefault(),true);
+ await Promise.all([...doc.images].map(img=>img.decode().catch(()=>{})));
+ button.disabled=false;status.textContent='Choose a printer or save as PDF. Close this tab when finished.';
+ requestAnimationFrame(()=>requestAnimationFrame(()=>frame.contentWindow.print()));
+}
+frame.addEventListener('load',prepare);if(frame.contentDocument?.URL==='about:srcdoc'&&frame.contentDocument.readyState==='complete')prepare();
+button.addEventListener('click',()=>frame.contentWindow.print());
+</script></body></html>

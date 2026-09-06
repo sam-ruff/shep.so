@@ -27,6 +27,7 @@ pub struct CommandSender {
     persistence: mpsc::Sender<Command>,
     network: mpsc::Sender<Command>,
     sync: mpsc::Sender<Command>,
+    printing: mpsc::Sender<Command>,
 }
 
 pub(super) struct Inputs {
@@ -35,6 +36,7 @@ pub(super) struct Inputs {
     persistence: mpsc::Receiver<Command>,
     network: mpsc::Receiver<Command>,
     sync: mpsc::Receiver<Command>,
+    printing: mpsc::Receiver<Command>,
 }
 
 impl CommandSender {
@@ -56,6 +58,7 @@ impl CommandSender {
         let (persistence, persistence_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (network, network_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (sync, sync_input) = mpsc::channel(1);
+        let (printing, print_input) = mpsc::channel(2);
         (
             Self {
                 reads,
@@ -63,6 +66,7 @@ impl CommandSender {
                 persistence,
                 network,
                 sync,
+                printing,
             },
             Inputs {
                 reads: read_input,
@@ -70,6 +74,7 @@ impl CommandSender {
                 persistence: persistence_input,
                 network: network_input,
                 sync: sync_input,
+                printing: print_input,
             },
         )
     }
@@ -88,6 +93,7 @@ impl CommandSender {
             };
         }
         let channel = match &command {
+            Command::Print(..) => &self.printing,
             Command::Query(_, _, true) | Command::Detail { prefetch: true, .. } => &self.prefetch,
             Command::Query(..)
             | Command::Detail { .. }
@@ -123,6 +129,7 @@ impl Engine {
                 .run_mail_sync(input.sync, output.clone(), background),
             self.clone().run_reads(input.reads, output.clone(), 2),
             self.clone().run_reads(input.prefetch, output.clone(), 1),
+            self.clone().run_reads(input.printing, output.clone(), 1),
             self.clone()
                 .run_persistence(input.persistence, output.clone()),
             self.run_network(input.network, output),
@@ -285,6 +292,7 @@ mod tests {
             backup_uploads: Default::default(),
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),
+            printing: Default::default(),
         };
         let (sender, input) = CommandSender::channel();
         let (output, mut events) = futures::channel::mpsc::channel(32);
@@ -414,7 +422,10 @@ mod tests {
         .expect("Discard waited for blocked provider jobs");
         assert!(store.workspace().await.unwrap().drafts.is_empty());
         sender
-            .try_send(Command::ForwardDraft(id, "forward-without-network".into()))
+            .try_send(Command::ForwardDraft(
+                id.clone(),
+                "forward-without-network".into(),
+            ))
             .unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -429,6 +440,29 @@ mod tests {
         })
         .await
         .expect("Forward waited for blocked provider jobs");
+        sender
+            .try_send(Command::Print(77, id, Default::default()))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Event::Print(request, result) =
+                    events.next().await.expect("Dispatcher stopped")
+                {
+                    assert_eq!(request, 77);
+                    let preview = result.unwrap();
+                    let response = reqwest::get(&preview.url)
+                        .await
+                        .unwrap()
+                        .text()
+                        .await
+                        .unwrap();
+                    assert!(response.contains("Still readable"));
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("Print waited for blocked provider jobs");
         release.notify_waiters();
     }
 }

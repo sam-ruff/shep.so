@@ -883,6 +883,18 @@ impl App {
                     self.shortcut_hint("Forward", Action::Forward),
                     Message::Forward,
                 )
+            },
+            if self.printing.pending {
+                button(icon("print", 20.))
+                    .style(ghost)
+                    .padding([8, 10])
+                    .into()
+            } else {
+                self.icon_action(
+                    "print",
+                    self.shortcut_hint("Print", Action::Print),
+                    Message::Print(super::printing::Message::Open),
+                )
             }
         ]
         .spacing(8)

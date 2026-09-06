@@ -52,6 +52,7 @@ pub enum Command {
     AutoSaveDraft(Draft),
     DeleteDraft(String),
     ForwardDraft(String, String),
+    Print(u64, String, crate::printing::Options),
     AddDraftFiles(Draft, Vec<std::path::PathBuf>),
     RemoveDraftFile(String, String),
     Send(Draft),
@@ -170,6 +171,7 @@ pub enum Event {
     DraftDeleted(String, Result<Arc<crate::store::DraftState>, String>),
     DraftFiles(String, Result<Arc<crate::store::DraftState>, String>),
     ForwardDraft(String, Result<Arc<crate::store::DraftState>, String>),
+    Print(u64, Result<Arc<crate::printing::Preview>, String>),
     Sent(String, u64),
     SubmissionQueued(String, u64),
     OutgoingPage(u64, Result<Arc<crate::outgoing::OutgoingPage>, String>),
@@ -197,6 +199,7 @@ struct Engine {
     backup_uploads: Arc<tokio::sync::OnceCell<backup::journal::Journal>>,
     mail_sync_settings: mail_sync::Settings,
     provider_slots: dispatch::Slots,
+    printing: crate::printing::Service,
 }
 type Output = futures::channel::mpsc::Sender<Event>;
 
@@ -259,6 +262,7 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             backup_uploads: Default::default(),
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),
+            printing: Default::default(),
         };
         let workspace = match engine.store.workspace().await {
             Ok(w) => w,
@@ -758,6 +762,19 @@ impl Engine {
                     ))
                     .await?;
             }
+            Command::Print(request, source, options) => {
+                let result = async {
+                    #[cfg(feature = "test-support")]
+                    if self.demo {
+                        crate::test_support::print_delay(&self.store).await?;
+                    }
+                    self.printing.prepare(&self.store, &source, options).await
+                }
+                .await;
+                output
+                    .send(Event::Print(request, result.map_err(|e| e.to_string())))
+                    .await?;
+            }
             Command::ForwardDraft(source, id) => {
                 let result = async {
                     #[cfg(feature = "test-support")]
@@ -1162,6 +1179,7 @@ mod calendar_tests {
             backup_uploads: Default::default(),
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),
+            printing: Default::default(),
         }
     }
     pub(super) fn event(source: &str) -> CalendarEvent {
