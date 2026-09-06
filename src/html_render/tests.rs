@@ -77,8 +77,44 @@ fn start() -> (
 ) {
     let (tx, input) = commands::channel(16);
     let (output, rx) = mpsc::channel(4);
-    let thread = std::thread::spawn(move || worker(input, output));
+    let thread = std::thread::spawn(move || worker(input, output, Arc::new(AtomicU64::new(0))));
     (tx, rx, thread)
+}
+#[tokio::test]
+async fn superseded_loads_are_discarded_before_parsing_or_reporting_an_error() {
+    let (tx, input) = commands::channel(16);
+    let (output, mut rx) = mpsc::channel(4);
+    tx.send(Input::Load {
+        generation: 1,
+        body: body("Obsolete"),
+        viewport: Viewport {
+            scale: f32::NAN,
+            ..viewport()
+        },
+        font_size: 14,
+        hide_quotes: false,
+        images: vec![],
+    })
+    .await
+    .unwrap();
+    tx.send(Input::Load {
+        generation: 2,
+        body: body("<p>Newest message</p>"),
+        viewport: viewport(),
+        font_size: 14,
+        hide_quotes: false,
+        images: vec![],
+    })
+    .await
+    .unwrap();
+    let thread = std::thread::spawn(move || worker(input, output, Arc::new(AtomicU64::new(2))));
+    assert!(matches!(next(&mut rx).await, Event::Frame(frame) if frame.generation == 2));
+    tx.send(Input::SelectAll(2)).await.unwrap();
+    assert!(
+        matches!(next(&mut rx).await, Event::Selection(2, text, ..) if text == "Newest message")
+    );
+    drop(tx);
+    thread.join().unwrap();
 }
 #[tokio::test]
 async fn html_table_styles_render_and_long_documents_keep_viewport_sized_frames() {

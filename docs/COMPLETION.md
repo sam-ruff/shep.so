@@ -396,3 +396,50 @@ readiness work, and the full-product goal remains active. The verified Linux
 installation is already in place; personal windows were not terminated.
 
 [Documentation run 34057767845](https://github.com/sam-ruff/shep.so/actions/runs/34057767845) passes for the shipped code commit.
+
+## HTML control placement and compact reading space — R69 follow-up
+
+Image-policy metadata now includes CSS/legacy backgrounds and base-relative image
+URLs, prepared alongside the parsed HTML on the backend. The blocked-image bar
+exists before rendering, including a CSS-only image fixture. The renderer still
+requests only resources used by the document, and existing image permissions and
+network validation still govern downloads. Metadata discovery does not fetch.
+
+Wide-message panning now uses a track inside the visible body, with a small band
+reserved from the initial layout. It no longer inserts a control above rendered
+text. The thumb responds to input before the worker repaints; obsolete horizontal
+frames cannot move it back. Dragging, Shift+wheel and focused Left/Right support
+panning, while Find input retains its own arrow keys. Selection and Find
+highlights are clipped above the track.
+
+Compact readers use a shorter sender header with measured address ellipses,
+two-column attachment buttons and a combined action/navigation row. The 900×640
+dark Prototype fixture now has readable body space with all four attachment
+controls visible. Full sender addresses remain available through the sender
+dialog. Reply all uses its icon and existing shortcut-aware tooltip in this view.
+
+Superseded document loads are discarded before unnecessary parsing. A native
+resize regression also exposed Find results arriving before a usable layout
+frame: one current-query result is now retained until its matching frame arrives,
+with stale query/document rejection. The regression is covered by both a Rust
+ordering test and the existing real-input compact Find flow.
+
+The new automated native scenarios use a controlled renderer delay to compare
+loading/ready body origins and exercise the in-body track, and a compact preview
+to check visible reading space and forwarded attachment retention. Reviewed WebP
+evidence includes `artifacts/e2e/7ef264c09b04/html-css-loading.webp` and
+`html-css-ready.webp`, `artifacts/e2e/3bbd2c4fa8f0/html-compact-reading-space.webp`,
+`artifacts/e2e/3aeebf82797e/find-wide-dark-compact.webp`, and
+`artifacts/e2e/fc35200f7734/html-compact-image-menu.webp`.
+
+All 100 native functional scenarios pass in one full run, alongside formatting,
+Clippy with warnings denied, 299 Rust tests (two opt-in live diagnostics ignored),
+and 25 Python tests. The optimized production package passes checksum, extraction
+and bundled-installer verification. Logs are under `artifacts/logs/html-layout-*`;
+no root logs were created. R69 remains active for preserving reading position when late images change document
+dimensions and the remaining readiness review. Performance measurements remain
+deferred; controlled fixture delays are correctness evidence only.
+
+The user installation matches the tested optimized binary at SHA-256
+`8de511f5d3f57cf511b8219fc10e5db1a01ea035cd537f54c3aaa7b4d7257483`.
+Personal windows were left running. Strict documentation validation passes.

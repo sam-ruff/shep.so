@@ -70,6 +70,47 @@ class NativeFlows(unittest.TestCase):
         self.artifacts = Path(result["artifacts"])
         print(f"\nEvidence: {result['artifacts']}", flush=True)
 
+    def toggle_html_quotes(self, hidden):
+        # Bounds are in parent content coordinates; reset its scroll before use.
+        self.mcp.batch({"type":"hover","x":1050,"y":500}, {"type":"scroll","amount":-30},
+                       check("html_view_current", True), wait(80))
+        x, y, _, height = self.mcp.call("desktop.state")["html_body_bounds"]
+        self.mcp.batch(click(int(x+65), int(y+height+34)),
+                       check("html_quotes_hidden", hidden), check("html_view_current", True))
+
+    def test_html_loading_keeps_body_origin_stable_with_css_images_and_horizontal_controls(self):
+        result = self.mcp.call("desktop.start", html_mail=True, html_delay_ms=1200)
+        print(f"HTML layout evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("html_view_current", True), click(85,398),
+                       check("selected", "CSS background report"), check("html_body_bounds", None, "ne"),
+                       check("html_ready", False), check("images_allowed", False), shot("html-css-loading"))
+        loading = self.mcp.call("desktop.state")
+        self.mcp.batch(check("html_view_current",True), check("html_width",1000,"gte"),
+                       wait(120), shot("html-css-ready"))
+        ready = self.mcp.call("desktop.state")
+        self.assertEqual(loading["html_body_bounds"][1], ready["html_body_bounds"][1], "Rendering must not insert controls above the body")
+        x, y, width, height = ready["html_body_visible"]
+        self.mcp.batch(drag(int(x+100), int(y+height-8), int(x+width-4), int(y+height-8)),
+                       check("html_pan",100,"gte"), check("html_view_current",True), wait(100), shot("html-css-panned"),
+                       click(int(x+140),int(y+35)), key("Left"), check("html_view_current",True),
+                       key("ctrl+f"), check("focused_input","find-message"), type_text("Last report column"),
+                       check("find_count",1), check("html_view_current",True))
+        pan = self.mcp.call("desktop.state")["html_pan"]
+        self.mcp.batch(key("Left"), key("Right"), wait(80), check("html_pan",pan), shot("html-css-find"),
+                       key("Escape"), check("find_open",False))
+
+    def test_html_compact_preview_preserves_readable_body_and_all_attachment_controls(self):
+        result = self.mcp.call("desktop.start", width=900, height=640)
+        print(f"Compact HTML evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab","Preferences"), wait(100), click(563,366), check("dark",True),
+                       key("ctrl+1"), check("tab","Mail"), key("ctrl+k"), check("focused_input","search"),
+                       type_text("prototype"), check("total",1), key("Escape"), check("html_view_current",True),
+                       check("attachment_count",4), wait(120), shot("html-compact-reading-space"))
+        state = self.mcp.call("desktop.state")
+        self.assertGreaterEqual(state["html_body_visible"][3], min(120.,state["html_body_bounds"][3]))
+        self.mcp.batch(key("f"), check("dialog","Compose"), check("draft_attachments.3.name",None,"ne"),
+                       key("Escape"), check("dialog",None))
+
     def test_refresh_icons_in_mail_calendar_and_compact_dark(self):
         self.mcp.batch(check("reader_text_ready", True), wait(150), shot("refresh-mail-light"),
                        click(1400,36), check("refreshing",True), {"type":"hover","x":1100,"y":35},
@@ -305,10 +346,12 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prototype"), check("total", 1),
                        key("Escape"), check("html_ready", True), check("html_quotes_hidden", True),
                        key("ctrl+f"), check("focused_input", "find-message"), type_text("updated"),
-                       check("find_pending", False), check("find_count", 0), key("Escape"), check("find_open", False), wait(80),
-                       click(713,574), check("html_quotes_hidden", False), key("ctrl+f"), check("focused_input", "find-message"),
-                       check("find_count", 1), shot("find-html-quote"), key("Escape"), check("find_open", False), wait(80),
-                       click(712,623), check("html_quotes_hidden", True), key("ctrl+f"), check("find_open", True), check("focused_input", "find-message"), check("find_pending", False),
+                       check("find_pending", False), check("find_count", 0), key("Escape"), check("find_open", False))
+        self.toggle_html_quotes(False)
+        self.mcp.batch(key("ctrl+f"), check("focused_input", "find-message"),
+                       check("find_count", 1), shot("find-html-quote"), key("Escape"), check("find_open", False))
+        self.toggle_html_quotes(True)
+        self.mcp.batch(key("ctrl+f"), check("find_open", True), check("focused_input", "find-message"), check("find_pending", False),
                        check("find_count", 0), key("Escape"), check("find_open", False), wait(80),
                        {"type":"hover","x":1050,"y":500}, {"type":"scroll","amount":-30}, wait(100), click(770,320), check("html_formatted", False), check("reader_text_ready", True),
                        key("ctrl+f"), check("find_open", True), check("focused_input", "find-message"), check("find_pending", False), check("find_count", 0), key("Escape"), check("find_open", False), wait(80),
@@ -351,12 +394,12 @@ class NativeFlows(unittest.TestCase):
                        double_click(400, 245), check("full_reader", True), check("html_ready", True),
                        wait(150), shot("html-dark-full-reader"),
                        {"type": "hover", "x": 1100, "y": 600}, {"type": "scroll", "amount": 12}, wait(100),
-                       shot("html-dark-full-bottom"), click(150, 614), check("html_link", "https://example.test/help"),
+                       shot("html-dark-full-bottom"), click(150, 598), check("html_link", "https://example.test/help"),
                        {"type": "resize", "width": 900, "height": 640}, check("window_size", [900,640]),
                        check("html_error", None), wait(150), shot("html-dark-compact-full"),
                        key("Escape"), check("full_reader", False), wait(150), shot("html-dark-compact-preview"),
-                       click(787,349), wait(100), shot("html-compact-image-menu"),
-                       click(783,266), check("images_allowed", True), check("html_loaded_images", 1),
+                       click(807,296), wait(100), shot("html-compact-image-menu"),
+                       click(800,328), check("images_allowed", True), check("html_loaded_images", 1),
                        wait(100), shot("html-compact-images-allowed"),
                        {"type": "hover", "x": 750, "y": 460}, {"type": "scroll", "amount": 8},
                        check("html_scroll", 1, "gte"), wait(100), shot("html-dark-compact-body"))
@@ -364,9 +407,11 @@ class NativeFlows(unittest.TestCase):
     def test_html_wide_table_can_scroll_horizontally_and_select_its_right_column(self):
         self.mcp.call("desktop.start", html_mail=True)
         self.mcp.batch(click(100, 536), check("folder", "Projects"), check("selected", "Wide HTML report"),
-                       check("html_ready", True), check("html_width", 1000, "gte"), wait(100), shot("html-wide-table"),
-                       drag(800, 357, 1372, 357), check("html_pan", 100, "gte"), wait(100), shot("html-wide-table-right"),
-                       drag(904,415,1061,415), check("html_selected_text", "Right report column"),
+                       check("html_view_current", True), check("html_width", 1000, "gte"), wait(100), shot("html-wide-table"))
+        x, y, width, height = self.mcp.call("desktop.state")["html_body_visible"]
+        self.mcp.batch(drag(int(x+150),int(y+height-8),int(x+width-4),int(y+height-8)),
+                       check("html_pan", 100, "gte"), check("html_view_current",True), wait(100), shot("html-wide-table-right"),
+                       drag(904,int(y+32),1061,int(y+32)), check("html_selected_text", "Right report column"),
                        key("ctrl+a"), check("html_selected_text", "Right report column", "contains"),
                        shot("html-wide-table-selection"))
 
@@ -1293,15 +1338,16 @@ class NativeFlows(unittest.TestCase):
                        check("dialog", "Event"), check("calendar_connected", False), shot("empty-calendar-event"))
 
     def test_reply_history_sender_attachments_and_image_exceptions(self):
-        for index, x in enumerate([701, 800, 910]):
+        for index, x in enumerate([1115, 1218, 1324]):
             if index: self.mcp.call("desktop.start")
             self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prottoype"), check("total", 1), key("Escape"),
                            check("reply_count", 1), check("attachment_count", 4), check("images_allowed", False),
-                           check("html_ready", True), wait(100), shot("prototype-html-layout"),
-                           click(713, 574), check("html_quotes_hidden", False), wait(100), shot("expanded-html-reply"),
-                           click(712, 623), check("html_quotes_hidden", True),
-                           click(740, 243), check("dialog", "Sender"), shot("sender-details"), key("Escape"), check("dialog", None),
-                           click(x, 408), check("images_allowed", True), wait(100), shot(f"image-exception-{index}"))
+                           check("html_ready", True), wait(100), shot("prototype-html-layout"))
+            self.toggle_html_quotes(False)
+            self.mcp.batch(wait(100), shot("expanded-html-reply"))
+            self.toggle_html_quotes(True)
+            self.mcp.batch(click(740, 243), check("dialog", "Sender"), shot("sender-details"), key("Escape"), check("dialog", None),
+                           click(x, 376), check("images_allowed", True), wait(100), shot(f"image-exception-{index}"))
         self.mcp.batch(click(770,320), check("html_formatted", False), check("reader_text_ready", True),
                        wait(100), shot("plain-quoted-history"), click(740,419), check("expanded_replies", 0, "contains"),
                        wait(100), shot("plain-quoted-history-expanded"))

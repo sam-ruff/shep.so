@@ -19,6 +19,7 @@ struct Highlights<'a> {
     id: &'a str,
     block: usize,
     pan: Option<f32>,
+    content_width: Option<f32>,
 }
 pub(super) fn wrap<'a>(
     child: Element<'a, Message>,
@@ -26,6 +27,7 @@ pub(super) fn wrap<'a>(
     id: &'a str,
     block: usize,
     pan: Option<f32>,
+    content_width: Option<f32>,
 ) -> Element<'a, Message> {
     Element::new(Highlights {
         child,
@@ -33,6 +35,7 @@ pub(super) fn wrap<'a>(
         id,
         block,
         pan,
+        content_width,
     })
 }
 impl Widget<Message, Theme, Renderer> for Highlights<'_> {
@@ -151,9 +154,15 @@ impl Widget<Message, Theme, Renderer> for Highlights<'_> {
             viewport,
         );
         let bounds = layout.bounds();
-        let Some(clip) = bounds.intersection(viewport) else {
+        let Some(mut clip) = bounds.intersection(viewport) else {
             return;
         };
+        if self
+            .content_width
+            .is_some_and(|width| width > bounds.width + 1.)
+        {
+            clip.height = (clip.height - crate::ui::html_reader::SCROLLBAR_SPACE).max(0.);
+        }
         let Some(results) = &self.find.results else {
             return;
         };

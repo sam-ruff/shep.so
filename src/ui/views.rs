@@ -571,20 +571,17 @@ impl App {
             .center_y(Length::Fill)
             .into();
         };
-        let footer = column![self.reader_actions(detail), self.reader_navigation()].spacing(4);
+        let mut footer = column![self.reader_actions(detail)].spacing(4);
+        if !self.compact_reader() {
+            footer = footer.push(self.reader_navigation());
+        }
         column![
             container(self.reader_toolbar(detail)).padding([10, 18]),
             line(),
             self.find_bar(),
-            scrollable(
-                container(self.reader_body(detail, true)).padding(if self.size.width < 1200. {
-                    22.
-                } else {
-                    35.
-                })
-            )
-            .id("message-reader")
-            .height(Length::Fill),
+            scrollable(container(self.reader_body(detail, true)).padding(self.reader_padding()))
+                .id("message-reader")
+                .height(Length::Fill),
             container(footer).padding([10, 20])
         ]
         .width(Length::Fill)
@@ -675,24 +672,37 @@ impl App {
         detail: &'a MailDetail,
         subject: bool,
     ) -> iced::widget::Column<'a, Message> {
-        let gap = if detail.html.is_some() && self.size.width < 1000. {
-            12
-        } else {
-            18
-        };
+        let compact = self.compact_reader();
+        let gap = if compact { 8 } else { 18 };
         let sender = sender_name(&detail.summary.sender);
         let date = chrono::DateTime::from_timestamp(detail.summary.timestamp, 0)
             .unwrap_or_default()
             .with_timezone(&chrono::Local);
         let sender_header = row![
             avatar(&sender, 0, 41.),
-            column![
-                text(sender.clone()).font(BOLD).size(13),
-                muted(&detail.summary.sender).size(10),
-                muted(format!("To: {}", detail.summary.recipient)).size(10)
-            ]
-            .spacing(5)
-            .width(Length::Fill),
+            if compact {
+                column![
+                    super::ellipsis::Ellipsis::new(sender.clone(), 13.).font(BOLD),
+                    container(super::ellipsis::Ellipsis::new(
+                        format!("To: {}", detail.summary.recipient),
+                        10.
+                    ))
+                    .style(|theme| container::Style {
+                        text_color: Some(colors(theme).muted),
+                        ..Default::default()
+                    })
+                ]
+                .spacing(5)
+                .width(Length::Fill)
+            } else {
+                column![
+                    text(sender.clone()).font(BOLD).size(13),
+                    muted(&detail.summary.sender).size(10),
+                    muted(format!("To: {}", detail.summary.recipient)).size(10)
+                ]
+                .spacing(5)
+                .width(Length::Fill)
+            },
             column![
                 muted(date.format("%d %b %Y").to_string()).size(10),
                 muted(date.format("%H:%M").to_string()).size(10)
@@ -711,8 +721,13 @@ impl App {
         ]
         .spacing(gap);
         if subject {
-            reading =
-                column![text(&detail.summary.subject).size(25).font(BOLD), reading].spacing(gap);
+            reading = column![
+                text(&detail.summary.subject)
+                    .size(if compact { 21 } else { 25 })
+                    .font(BOLD),
+                reading
+            ]
+            .spacing(gap);
         }
         let formatted = self.formatted(detail);
         if detail.html.is_some() {
@@ -731,32 +746,12 @@ impl App {
             );
         }
         if formatted
-            && (!detail.remote_images.is_empty() || !self.html_reader.resources.is_empty())
+            && !detail.remote_images.is_empty()
             && !crate::remote_images::allowed(&self.preferences, &detail.summary)
         {
             reading = reading.push(self.image_bar());
         }
         if formatted {
-            if let Some(frame) = &self.html_reader.frame
-                && frame.content_width > frame.viewport.width as f32 + 1.
-            {
-                let generation = self.html_reader.generation;
-                reading = reading.push(
-                    scrollable(space().width(frame.content_width).height(1))
-                        .horizontal()
-                        .id("html-horizontal")
-                        .width(Length::Fill)
-                        .height(12)
-                        .on_scroll(move |viewport| {
-                            Message::Html(super::html_reader::Message::Input(
-                                crate::html_render::Input::Pan(
-                                    generation,
-                                    viewport.absolute_offset().x,
-                                ),
-                            ))
-                        }),
-                );
-            }
             if let Some(error) = &self.html_reader.error {
                 reading = reading.push(muted(error));
             } else {
@@ -868,7 +863,15 @@ impl App {
             .padding([10, 14])
             .style(primary)
             .on_press(Message::Reply),
-            action("Reply all", Message::ReplyAll),
+            if self.compact_reader() {
+                self.icon_action(
+                    "reply-all",
+                    self.shortcut_hint("Reply all", Action::ReplyAll),
+                    Message::ReplyAll,
+                )
+            } else {
+                action("Reply all", Message::ReplyAll).into()
+            },
             if self.composer.forward_pending.is_some() {
                 button(text("Preparing…").size(12))
                     .padding([10, 12])
@@ -894,24 +897,44 @@ impl App {
                 )
             }
         ]
-        .spacing(8)
+        .spacing(if self.compact_reader() { 4 } else { 8 })
         .align_y(Alignment::Center);
+        if self.compact_reader() && !self.conversation_visible() {
+            footer = footer
+                .push(self.icon_action(
+                    "left",
+                    self.shortcut_hint("Previous inbox message", Action::Previous),
+                    Message::PreviousMessage(true),
+                ))
+                .push(self.icon_action(
+                    "chevron",
+                    self.shortcut_hint("Next inbox message", Action::Next),
+                    Message::PreviousMessage(false),
+                ));
+        }
         for (index, attachment) in detail.attachments.iter().enumerate() {
-            footer = footer.push(
-                button(
-                    row![
-                        icon("clip", 18.),
-                        text(truncate(&attachment.name, 24))
-                            .size(12)
-                            .line_height(1.)
-                    ]
+            let compact = self.compact_reader();
+            let label: Element<'_, Message> = if compact {
+                super::ellipsis::Ellipsis::new(attachment.name.clone(), 12.).into()
+            } else {
+                text(truncate(&attachment.name, 24))
+                    .size(12)
+                    .line_height(1.)
+                    .into()
+            };
+            let attachment_button = button(
+                row![icon("clip", 18.), label]
                     .spacing(7)
                     .align_y(Alignment::Center),
-                )
-                .padding([10, 12])
-                .style(outline)
-                .on_press(Message::ExportAttachment(index)),
-            );
+            )
+            .padding([10, 12])
+            .style(outline)
+            .on_press(Message::ExportAttachment(index));
+            footer = footer.push(if compact {
+                attachment_button.width(((self.reader_width() - 64.) / 2.).max(100.))
+            } else {
+                attachment_button
+            });
         }
         footer.wrap().into()
     }

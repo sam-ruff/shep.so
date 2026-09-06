@@ -15,6 +15,7 @@ iced = { version = "0.14", default-features = false, features = ["tiny-skia", "t
 image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 rfd = "0.17"
 scraper = "0.27"
+cssparser = "0.37"
 litehtml = "=0.2.6"
 shep-html-pixbuf = { path = "vendor/shep-html-pixbuf" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs"] }

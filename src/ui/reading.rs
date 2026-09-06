@@ -5,6 +5,28 @@ use iced::{
 };
 
 impl App {
+    pub(super) fn reader_width(&self) -> f32 {
+        let width = self.size.width / (self.preferences.interface_scale as f32 / 100.);
+        if self.full_reader {
+            return width - 32.;
+        }
+        let available = (width - self.sidebar_width() - 41.).max(1.);
+        let minimum = 300_f32.min(available / 2.);
+        available - (available * self.preferences.reader_split).clamp(minimum, available - minimum)
+    }
+    pub(super) fn compact_reader(&self) -> bool {
+        self.reader_width() < 500.
+            || self.size.height / (self.preferences.interface_scale as f32 / 100.) < 720.
+    }
+    pub(super) fn reader_padding(&self) -> f32 {
+        if self.compact_reader() {
+            14.
+        } else if self.size.width < 1200. {
+            22.
+        } else {
+            35.
+        }
+    }
     pub(super) fn reading_settings(&self) -> Element<'_, Message> {
         column![
             text("Reading and layout").size(17).font(BOLD),
@@ -88,12 +110,7 @@ impl App {
         ].spacing(16)).padding(23).style(card).into()
     }
     pub(super) fn image_bar(&self) -> Element<'_, Message> {
-        let width = self.size.width / (self.preferences.interface_scale as f32 / 100.);
-        let compact = if self.full_reader {
-            width < 650.
-        } else {
-            (width - self.sidebar_width() - 57.) * (1. - self.preferences.reader_split) < 480.
-        };
+        let compact = self.reader_width() - self.reader_padding() * 2. < 540.;
         if compact {
             return container(
                 row![
@@ -120,24 +137,19 @@ impl App {
             .into();
         }
         container(
-            column![
-                row![
-                    icon("image", 18.),
-                    text("External images are blocked").size(12)
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-                row![
-                    action("This email", Message::AllowImages(0)),
-                    action("This sender", Message::AllowImages(1)),
-                    action("This domain", Message::AllowImages(2))
-                ]
-                .spacing(6)
-                .wrap(),
+            row![
+                icon("image", 16.),
+                text("Images blocked").size(11),
+                space().width(Length::Fill),
+                action("This email", Message::AllowImages(0)),
+                action("This sender", Message::AllowImages(1)),
+                action("This domain", Message::AllowImages(2))
             ]
-            .spacing(8),
+            .spacing(8)
+            .align_y(Alignment::Center),
         )
-        .padding(12)
+        .padding([6, 10])
+        .width(Length::Fill)
         .style(subtle)
         .into()
     }

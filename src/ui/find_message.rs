@@ -254,16 +254,10 @@ impl App {
                     widget::scrollable::AbsoluteOffset { x: 0., y: delta },
                 );
                 let horizontal = if let Some(pan) = pan {
-                    Task::batch([
-                        self.handle_html(super::html_reader::Message::Input(Input::Pan(
-                            self.html_reader.generation,
-                            pan,
-                        ))),
-                        widget::operation::scroll_to(
-                            "html-horizontal",
-                            widget::scrollable::AbsoluteOffset { x: pan, y: 0. },
-                        ),
-                    ])
+                    self.handle_html(super::html_reader::Message::Input(Input::Pan(
+                        self.html_reader.generation,
+                        pan,
+                    )))
                 } else {
                     Task::none()
                 };
@@ -363,6 +357,12 @@ impl App {
             block,
             self.formatted(detail)
                 .then(|| self.html_reader.frame.as_ref().map_or(0., |f| f.pan)),
+            self.formatted(detail).then(|| {
+                self.html_reader
+                    .frame
+                    .as_ref()
+                    .map_or(0., |f| f.content_width)
+            }),
         )
     }
 }

@@ -2,12 +2,15 @@
 //! to the renderer worker. Geometry/hover requests coalesce under backpressure.
 mod cache;
 mod canvas;
+mod pan;
+pub(super) const SCROLLBAR_SPACE: f32 = 16.;
 use super::*;
 use crate::html_render::{self, Input, Viewport};
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Backend(html_render::Event),
+    Geometry(u64, [f32; 4], Option<[f32; 4]>),
     Prepared(html_render::preparation::Event),
     Input(Input),
     Pump,
@@ -18,22 +21,32 @@ pub enum Message {
     LinkResult(Result<(), String>),
     Scale(f32),
 }
+struct PendingFind {
+    revision: u64,
+    layout: u64,
+    result: Result<Arc<crate::message_find::Results>, String>,
+}
 #[derive(Default)]
 pub(super) struct State {
     tx: Option<tokio::sync::mpsc::Sender<Input>>,
     queue: VecDeque<Input>,
     pumping: bool,
     pending: bool,
+    current: Option<Arc<std::sync::atomic::AtomicU64>>,
     pub cache: cache::Cache,
     pub generation: u64,
     key: Option<(String, [u8; 32], u16, bool, bool, u16)>,
     plain: Option<String>,
     quote_override: Option<(String, bool)>,
     pub frame: Option<Arc<html_render::Frame>>,
+    pending_find: Option<PendingFind>,
     pub handle: Option<widget::image::Handle>,
     pub selection: String,
     pub rectangles: Vec<[f32; 4]>,
     pub link: bool,
+    pub pan: f32,
+    pub body_bounds: Option<[f32; 4]>,
+    pub body_visible: Option<[f32; 4]>,
     pub error: Option<String>,
     pub resources: HashSet<String>,
     pub supplied: HashSet<String>,
@@ -46,6 +59,7 @@ impl State {
         self.frame.as_ref().is_some_and(|frame| {
             self.viewport
                 .is_some_and(|(size, top)| frame.matches_view(size, top))
+                && (frame.pan - self.pan).abs() < 1.
         })
     }
 
@@ -136,8 +150,12 @@ impl App {
         if reset_horizontal {
             let state = &mut self.html_reader;
             state.generation += 1;
+            if let Some(current) = &state.current {
+                current.store(state.generation, std::sync::atomic::Ordering::Relaxed);
+            }
             state.queue.clear();
             state.frame = None;
+            state.pending_find = None;
             state.handle = None;
             state.selection.clear();
             state.rectangles.clear();
@@ -146,6 +164,9 @@ impl App {
             state.error = None;
             state.last_link = None;
             state.link = false;
+            state.pan = 0.;
+            state.body_bounds = None;
+            state.body_visible = None;
             state.key = key;
             state.viewport = None;
             state.pending = detail.is_some();
@@ -160,16 +181,17 @@ impl App {
         } else {
             Task::none()
         };
-        let horizontal = if reset_horizontal {
-            widget::operation::snap_to("html-horizontal", widget::scrollable::RelativeOffset::START)
-        } else {
-            Task::none()
-        };
-        Task::batch([self.html_reader.pump(), scroll, horizontal])
+        Task::batch([self.html_reader.pump(), scroll])
     }
     pub(super) fn handle_html(&mut self, message: Message) -> Task<super::Message> {
         use html_render::Event;
         match message {
+            Message::Geometry(generation, bounds, visible) => {
+                if generation == self.html_reader.generation {
+                    self.html_reader.body_bounds = Some(bounds);
+                    self.html_reader.body_visible = visible;
+                }
+            }
             Message::Prepared(html_render::preparation::Event::Ready(tx)) => {
                 self.html_reader.cache.tx = Some(tx);
             }
@@ -180,19 +202,39 @@ impl App {
             }
             Message::Backend(Event::Found(generation, revision, layout, result))
                 if generation == self.html_reader.generation
-                    && self
-                        .html_reader
-                        .frame
-                        .as_ref()
-                        .is_some_and(|f| f.layout_revision == layout) =>
+                    && self.find_message.open
+                    && revision == self.find_message.revision =>
             {
-                self.find_message.accept(revision, result);
+                let shown = self
+                    .html_reader
+                    .frame
+                    .as_ref()
+                    .map_or(0, |f| f.layout_revision);
+                if shown == layout {
+                    self.find_message.accept(revision, result);
+                } else if layout > shown {
+                    // A resize frame can be superseded by a requested pan before
+                    // presentation. Keep its Find geometry until a compatible
+                    // frame arrives; the worker need not repeat the same search.
+                    self.html_reader.pending_find = Some(PendingFind {
+                        revision,
+                        layout,
+                        result,
+                    });
+                }
             }
             Message::Backend(Event::PlainFound(revision, result)) => {
                 self.find_message.accept(revision, result)
             }
             Message::Scale(scale) => self.html_reader.system_scale = scale,
-            Message::Backend(Event::Ready(tx)) => self.html_reader.tx = Some(tx),
+            Message::Backend(Event::Ready(tx, current)) => {
+                current.store(
+                    self.html_reader.generation,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                self.html_reader.current = Some(current);
+                self.html_reader.tx = Some(tx);
+            }
             Message::Backend(Event::Frame(frame))
                 if frame.generation == self.html_reader.generation =>
             {
@@ -205,6 +247,13 @@ impl App {
                     .html_reader
                     .viewport
                     .is_none_or(|(viewport, top)| !frame.matches_view(viewport, top))
+                    || (frame.pan
+                        - self
+                            .html_reader
+                            .pan
+                            .min((frame.content_width - frame.viewport.width as f32).max(0.)))
+                    .abs()
+                        >= 1.
                 {
                     return Task::none();
                 }
@@ -215,10 +264,20 @@ impl App {
                     .is_some_and(|previous| previous.layout_revision != frame.layout_revision)
                 {
                     self.find_message.results = None;
+                    self.find_message.pending =
+                        self.find_message.open && !self.find_message.query.trim().is_empty();
                     self.html_reader.selection.clear();
                     self.html_reader.rectangles.clear();
                 }
                 self.html_reader.handle = Some(cache::handle(&frame));
+                self.html_reader.pan = frame.pan;
+                if let Some(found) = self.html_reader.pending_find.take() {
+                    if found.layout == frame.layout_revision {
+                        self.find_message.accept(found.revision, found.result);
+                    } else if found.layout > frame.layout_revision {
+                        self.html_reader.pending_find = Some(found);
+                    }
+                }
                 self.html_reader.frame = Some(frame);
             }
             Message::Backend(Event::Selection(id, text, rects, link))
@@ -278,6 +337,22 @@ impl App {
                 if let Some(detail) = &self.detail {
                     self.html_reader.quote_override =
                         Some((detail.summary.id.clone(), !self.html_quotes_hidden(detail)));
+                }
+            }
+            Message::Input(Input::Pan(id, pan)) => {
+                if id == self.html_reader.generation && pan.is_finite() {
+                    self.html_reader.pan =
+                        self.html_reader
+                            .frame
+                            .as_ref()
+                            .map_or(pan.max(0.), |frame| {
+                                pan.clamp(
+                                    0.,
+                                    (frame.content_width - frame.viewport.width as f32).max(0.),
+                                )
+                            });
+                    self.html_reader
+                        .enqueue(Input::Pan(id, self.html_reader.pan));
                 }
             }
             Message::Input(command) => {
@@ -562,6 +637,101 @@ mod tests {
         ] {
             assert!(app.html_reader.cache.get(&key, 3).is_none());
         }
+    }
+    #[tokio::test]
+    async fn horizontal_feedback_precedes_paint_and_rejects_superseded_pan_frames() {
+        let mut app = app().await;
+        let _ = app.prepare_html();
+        let generation = app.html_reader.generation;
+        let size = Viewport {
+            width: 400,
+            height: 200,
+            scale: 1.,
+        };
+        let _ = app.handle_html(Message::Input(Input::View(generation, size, 0.)));
+        let mut first = frame(generation, size, 0.);
+        Arc::make_mut(&mut first).content_width = 1000.;
+        let _ = app.handle_html(Message::Backend(html_render::Event::Frame(first.clone())));
+        let _ = app.handle_html(Message::Input(Input::Pan(generation, 300.)));
+        assert_eq!(app.html_reader.pan, 300.);
+        assert_eq!(app.html_reader.frame.as_ref().unwrap().pan, 0.);
+        assert!(!app.html_reader.view_current());
+        let _ = app.handle_html(Message::Backend(html_render::Event::Frame(first.clone())));
+        assert_eq!(
+            app.html_reader.pan, 300.,
+            "An obsolete paint cannot move the scrollbar back"
+        );
+        let current = Arc::new(html_render::Frame {
+            pan: 300.,
+            ..(*first).clone()
+        });
+        let _ = app.handle_html(Message::Backend(html_render::Event::Frame(current)));
+        assert!(app.html_reader.view_current());
+    }
+    #[tokio::test]
+    async fn find_results_survive_resize_paint_superseded_by_horizontal_reveal() {
+        let mut app = app().await;
+        let _ = app.prepare_html();
+        let generation = app.html_reader.generation;
+        let size = Viewport {
+            width: 400,
+            height: 200,
+            scale: 1.,
+        };
+        let _ = app.handle_html(Message::Input(Input::View(generation, size, 0.)));
+        let mut first = frame(generation, size, 0.);
+        Arc::make_mut(&mut first).content_width = 1000.;
+        let _ = app.handle_html(Message::Backend(html_render::Event::Frame(first.clone())));
+        app.find_message.open = true;
+        app.find_message.query = "Right column".into();
+        app.find_message.revision = 7;
+        let _ = app.handle_html(Message::Input(Input::Pan(generation, 300.)));
+        let mut resized = (*first).clone();
+        resized.layout_revision = 2;
+        let _ = app.handle_html(Message::Backend(html_render::Event::Frame(Arc::new(
+            resized.clone(),
+        ))));
+        let result = Arc::new(crate::message_find::Results::new(vec![
+            crate::message_find::Match {
+                block: 0,
+                rectangles: vec![[500., 20., 90., 16.]],
+            },
+        ]));
+        let _ = app.handle_html(Message::Backend(html_render::Event::Found(
+            generation,
+            7,
+            2,
+            Ok(result.clone()),
+        )));
+        assert!(
+            app.find_message.results.is_none(),
+            "Never highlight a different layout"
+        );
+        assert!(app.html_reader.pending_find.is_some());
+        resized.pan = 300.;
+        let _ = app.handle_html(Message::Backend(html_render::Event::Frame(Arc::new(
+            resized,
+        ))));
+        assert_eq!(app.find_message.results.as_ref().unwrap().matches.len(), 1);
+        assert!(!app.find_message.pending);
+        assert!(app.html_reader.pending_find.is_none());
+        let _ = app.handle_html(Message::Backend(html_render::Event::Found(
+            generation,
+            6,
+            3,
+            Ok(result.clone()),
+        )));
+        let _ = app.handle_html(Message::Backend(html_render::Event::Found(
+            generation - 1,
+            7,
+            3,
+            Ok(result),
+        )));
+        assert!(
+            app.html_reader.pending_find.is_none(),
+            "Old queries/documents cannot be retained"
+        );
+        assert_eq!(app.find_message.results.as_ref().unwrap().matches.len(), 1);
     }
     #[tokio::test]
     async fn metadata_refresh_preserves_html_but_policy_revocation_and_plain_mode_clear_it() {
