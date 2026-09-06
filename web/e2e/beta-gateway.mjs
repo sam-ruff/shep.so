@@ -5,7 +5,7 @@ import { chromium, expect } from "@playwright/test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import https from "node:https";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -22,6 +22,7 @@ if (
 }
 const output = path.join(root, "../artifacts/beta-browser");
 await mkdir(output, { recursive: true });
+await rm(path.join(output, "result.json"), { force: true });
 const proxy = https.createServer(
   {
     key: await readFile(

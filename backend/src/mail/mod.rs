@@ -1,7 +1,10 @@
 //! Authenticated, transient mail operations. Browser storage owns durable state.
 mod outgoing;
 pub mod policy;
-pub use outgoing::receipt_routes;
+mod sent;
+pub fn receipt_routes() -> Router<AppState> {
+    outgoing::receipt_routes().merge(sent::receipt_routes())
+}
 #[cfg(test)]
 mod tests;
 
@@ -84,6 +87,12 @@ pub trait HostedMail: Send + Sync {
     ) -> anyhow::Result<Mail> {
         anyhow::bail!("Move recovery is unavailable.")
     }
+    async fn sent(
+        &self,
+        _connection: &Connection,
+    ) -> anyhow::Result<Box<dyn shep_mail_core::providers::mail::sent::SentConnection>> {
+        anyhow::bail!("Sent recovery is unavailable.")
+    }
     async fn send(
         &self,
         connection: &Connection,
@@ -154,6 +163,14 @@ impl HostedMail for Servers {
             .await?
             .summary)
     }
+    async fn sent(
+        &self,
+        c: &Connection,
+    ) -> anyhow::Result<Box<dyn shep_mail_core::providers::mail::sent::SentConnection>> {
+        Ok(Box::new(
+            self.client(c, false)?.sent(&c.account, &c.password).await?,
+        ))
+    }
     async fn send(
         &self,
         c: &Connection,
@@ -173,6 +190,7 @@ pub struct MailHub {
     slots: Arc<Semaphore>,
     users: Mutex<HashMap<String, Arc<Semaphore>>>,
     outgoing: Mutex<HashMap<String, outgoing::Submission>>,
+    copies: Mutex<HashMap<String, sent::Copy>>,
 }
 impl MailHub {
     pub fn new(endpoints: Vec<policy::Endpoint>) -> Self {
@@ -181,6 +199,7 @@ impl MailHub {
             slots: Arc::new(Semaphore::new(8)),
             users: Default::default(),
             outgoing: Default::default(),
+            copies: Default::default(),
         }
     }
     async fn admit(&self, subject: &str) -> Result<Arc<Admission>, ()> {
@@ -211,6 +230,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/mail/move", post(move_mail))
         .route("/api/mail/resolve-move", post(resolve_move))
         .merge(outgoing::routes())
+        .merge(sent::routes())
         // Admission runs before JSON is buffered, bounding body memory as well
         // as connections. Eight global/two identity operations; no waiting queue.
         .layer(axum::extract::DefaultBodyLimit::max(36 * 1024 * 1024))

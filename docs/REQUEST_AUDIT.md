@@ -108,3 +108,7 @@ The user explicitly requested pushing all current work as soon as possible. Comm
 ### R67/R68 continuation — stable native Sent handover
 
 Atomic native Sent adoption retains local and previous-provider IDs, protects local edits, preserves physical Undo destinations and groups known provider Sent folders. The completion log records 39 native Rust tests, 27 Flutter host tests, eleven Android scenarios, five Appium and five Flutter browser stages, plus reviewed screenshots. These are synthetic protocol/cache/control results, not live-provider or full parity evidence. Copy labels/history cleanup, independent reader retention and equivalent browser provider Sent recovery remain active.
+
+### R67/R71/R74 — Browser provider Sent recovery
+
+Browser Outbox now checks provider Sent, saves exact copies using client-owned reservations, retains acknowledgments through storage/HTTP failure and requires explicit review before an uncertain retry. Account Sent preferences persist independently of reconnect. The Rust service uses authenticated, pinned shared transport and transient receipts without a persistent mail/password database. The completion log records route/model/real HTTPS control evidence; local/provider identity handover/grouping, bounded history and the wider parity goal remain open. Desktop Print independently shipped in `b120721` / `c800256`; its client equivalents and deliberate integration are retained in TODO.

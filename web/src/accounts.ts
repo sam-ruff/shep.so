@@ -71,7 +71,7 @@ function connect(
     smtp_security: smtp?.port === 587 ? "StartTls" : "Tls",
     smtp_auth: "Automatic",
     smtp_separate_password: false,
-    sent_copy: "ServerManaged",
+    sent_copy: "Automatic",
     sent_folder: "",
   };
   const dialog = node("dialog");
@@ -86,7 +86,7 @@ function connect(
   );
   const description = node(
     "p",
-    "Passwords stay in this tab until you sign out or reload. Mail and drafts are saved on this browser. The beta does not save Sent copies; use a mail server that saves them automatically.",
+    "Passwords stay in this tab until you sign out or reload. Mail and drafts are saved on this browser. Configure Sent copies separately in Mail accounts.",
   );
   description.className = "muted";
   form.append(description);
@@ -231,6 +231,75 @@ function connect(
   document.body.append(dialog);
   dialog.showModal();
 }
+function sentPreferences(
+  repo: GatewayRepository,
+  account: Account,
+  changed: () => void,
+) {
+  const dialog = node("dialog");
+  dialog.className = "account-dialog sent-preferences";
+  dialog.setAttribute("aria-label", `Sent copies for ${account.email}`);
+  const form = node("form");
+  const title = node("h2", "Sent copies");
+  const policy = control("Sent-copy policy", account.sent_copy, [
+    "Automatic",
+    "ServerManaged",
+    "LocalOnly",
+  ]);
+  const select = policy.querySelector("select")!;
+  const labels = [
+    "Save a copy on the mail server",
+    "My server saves Sent automatically",
+    "Keep Sent copies on this browser",
+  ];
+  [...select.options].forEach((option, i) => (option.textContent = labels[i]));
+  const destination = control("Server Sent folder", account.sent_folder);
+  const input = destination.querySelector("input")!;
+  input.required = false;
+  const hint = node(
+    "p",
+    account.protocol === "Pop3"
+      ? "POP3 keeps Sent copies on this browser."
+      : "Leave the folder empty to discover the server's Sent folder. Copying a message does not resend it to recipients.",
+  );
+  hint.className = "muted";
+  const status = node("p");
+  status.role = "status";
+  const actions = node("div");
+  actions.className = "dialog-actions";
+  const cancel = button("Cancel", () => dialog.close());
+  const save = node("button", "Save Sent preferences");
+  save.type = "submit";
+  save.className = "button primary";
+  actions.append(cancel, save);
+  form.append(title, policy, destination, hint, status, actions);
+  dialog.append(form);
+  dialog.addEventListener("close", () => dialog.remove());
+  let busy = false;
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    if (busy) return;
+    busy = true;
+    save.disabled = select.disabled = input.disabled = true;
+    try {
+      await repo.saveSentPreferences(
+        account.id,
+        select.value as Account["sent_copy"],
+        input.value,
+      );
+      dialog.close();
+      changed();
+    } catch (error) {
+      status.textContent =
+        error instanceof Error ? error.message : "Could not save. Retry.";
+    } finally {
+      busy = false;
+      save.disabled = select.disabled = input.disabled = false;
+    }
+  };
+  document.body.append(dialog);
+  dialog.showModal();
+}
 export function accountPanel(repo: GatewayRepository, changed: () => void) {
   const panel = node("section");
   panel.className = "settings-card";
@@ -252,6 +321,15 @@ export function accountPanel(repo: GatewayRepository, changed: () => void) {
         ),
         button(`Reconnect ${account.email}`, () =>
           connect(repo, endpoints, changed, account),
+        ),
+      );
+      row.append(
+        button(`Sent copies for ${account.email}`, () =>
+          sentPreferences(
+            repo,
+            repo.accounts.find((a) => a.id === account.id) ?? account,
+            changed,
+          ),
         ),
       );
       panel.append(row);
