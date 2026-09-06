@@ -11,7 +11,6 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Mail reading, search and bulk actions
 
-- [ ] **R41 — Forward:** in progress: add a forward control and remappable shortcut to the preview actions. Prepare complete original content/HTML, inline images and attachments off-thread, save an independent draft with empty recipients, and cover editing, stale results, failures and reopening through native/protocol tests before shipping.
 - [ ] **R41 — Print:** add a print control and a usable cross-platform print flow, with isolated automated equivalents.
 - [ ] **R42 — Multi-selection:** Ctrl+A for all emails in the focused list, Ctrl-click toggles, Shift-click ranges, and a Select button beside conversation search for checkbox selection. Preserve scope across pages and distinguish list focus from text selection.
 - [ ] **R42 — Bulk actions:** preview toolbar and keybinds act on selected messages. Review multi-message actions with Y/N/Enter/Escape support, accurate scope/count and clear partial-failure handling.
