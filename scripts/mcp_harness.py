@@ -23,6 +23,7 @@ ARTIFACTS = ROOT / "artifacts" / "e2e"
 class Desktop:
     def __init__(self):
         self.app = None
+        self.clipboard = None
         self.xvfb = None
         self.window = None
         self.env = os.environ.copy()
@@ -31,7 +32,7 @@ class Desktop:
         atexit.register(self.stop)
 
     def stop(self):
-        for process in (self.app, self.xvfb):
+        for process in (self.clipboard, self.app, self.xvfb):
             if process and process.poll() is None:
                 process.terminate()
                 try:
@@ -40,6 +41,7 @@ class Desktop:
                     process.kill()
                     process.wait(timeout=3)
         self.app = self.xvfb = None
+        self.clipboard = None
         if self.log:
             self.log.close()
             self.log = None
@@ -53,7 +55,7 @@ class Desktop:
         self.stop()
         if not 900 <= width <= 2560 or not 640 <= height <= 1600:
             raise ValueError("Test window must be 900–2560 × 640–1600.")
-        for tool in ("Xvfb", "xdotool", "import"):
+        for tool in ("Xvfb", "xdotool", "import", "zenity", "xclip"):
             if not shutil.which(tool):
                 raise RuntimeError(f"Install {tool}; this native harness currently supports Linux/X11.")
         binary = ROOT / "target" / "test-ui" / "shep"
@@ -71,6 +73,13 @@ class Desktop:
         if not number.isdigit():
             raise RuntimeError("Xvfb did not allocate a display.")
         self.env.update(DISPLAY=f":{number}", WINIT_UNIX_BACKEND="x11")
+        # Keep native file selection on our display, never the user's portal.
+        # rfd falls back to the real GTK/Zenity picker when no portal is available.
+        self.env.update(DBUS_SESSION_BUS_ADDRESS=f"unix:path={self.directory}/no-session-bus",
+                        GDK_BACKEND="x11", GTK_USE_PORTAL="0", GSETTINGS_BACKEND="memory",
+                        XDG_DATA_HOME=str(self.directory / "data"),
+                        XDG_CONFIG_HOME=str(self.directory / "config"),
+                        XDG_CACHE_HOME=str(self.directory / "cache"))
         self.env.pop("WAYLAND_DISPLAY", None)
         self.log = (self.directory / "app.log").open("w")
         self.app = subprocess.Popen(
@@ -109,6 +118,61 @@ class Desktop:
         path = self.directory / f"{name}.webp"
         self.command("import", "-window", self.window, "-quality", "90", str(path))
         return path
+
+    def choose_file(self, path=None):
+        """Select an isolated fixture through the actual native picker, or cancel it."""
+        if path is not None:
+            path = Path(path).resolve(strict=True)
+            if not path.is_relative_to(self.directory.resolve()) or not path.is_file():
+                raise ValueError("Choose a fixture file inside this run's artifact directory.")
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                windows = self.command("xdotool", "search", "--onlyvisible", "--class", "zenity")
+                if windows:
+                    window = windows.splitlines()[-1]
+                    break
+            except subprocess.CalledProcessError:
+                pass
+            if time.monotonic() >= deadline:
+                raise RuntimeError("The native file picker did not open on the isolated display.")
+            time.sleep(.05)
+        self.command("xdotool", "windowfocus", window)
+        time.sleep(.15)
+        if path is None:
+            self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "Escape")
+        else:
+            self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+l")
+            time.sleep(.1)
+            self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+a")
+            # Paste in one native input operation. GTK path completion can alter
+            # partially typed paths; the clipboard belongs only to our Xvfb.
+            if self.clipboard and self.clipboard.poll() is None:
+                self.clipboard.terminate()
+                self.clipboard.wait(timeout=3)
+            self.clipboard = subprocess.Popen(["xclip", "-selection", "clipboard", "-quiet"],
+                env=self.env, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=self.log)
+            self.clipboard.stdin.write(str(path).encode())
+            self.clipboard.stdin.close()
+            time.sleep(.05)
+            self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v")
+            time.sleep(.15)
+            self.command("import", "-window", window, "-quality", "90", str(self.directory / "native-file-picker.webp"))
+            self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "Return")
+        deadline = time.monotonic() + 3
+        while True:
+            try:
+                visible = self.command("xdotool", "search", "--onlyvisible", "--class", "zenity").splitlines()
+            except subprocess.CalledProcessError:
+                visible = []
+            if window not in visible:
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError("The native file picker did not accept the selected file.")
+            time.sleep(.05)
+        # Xvfb has no window manager to return focus after closing a native dialog.
+        self.command("xdotool", "windowfocus", self.window)
+        return {"selected": str(path) if path else None}
 
     def assertion(self, action):
         value = self.state()
@@ -166,6 +230,8 @@ class Desktop:
                     self.command("xdotool", "type", "--clearmodifiers", "--delay", "1", "--", action["text"])
                 elif kind == "key":
                     self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "--", action["key"])
+                elif kind == "choose_file":
+                    result = self.choose_file(action.get("path"))
                 elif kind == "scroll":
                     amount = int(action.get("amount", 3))
                     if not 1 <= abs(amount) <= 30:
@@ -208,7 +274,7 @@ TOOLS = [
     {"name": "desktop.start", "description": "Launch an isolated Shep fixture workspace on Xvfb. Requires cargo build --profile test-ui --features test-support. No real credentials or network writes.",
      "inputSchema": {"type": "object", "properties": {"empty_calendars": {"type": "boolean", "default": False}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
     {"name": "desktop.batch", "description": "Run 1–100 real mouse/keyboard actions in order, including short waits, state assertions and WebP screenshots. Stops at first failure and captures evidence. Prefer batches to one call per action.",
-     "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"type": {"enum": ["click", "double_click", "drag", "type", "key", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "x": {"type": "integer"}, "y": {"type": "integer"}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
+     "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"type": {"enum": ["click", "double_click", "drag", "type", "key", "choose_file", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "x": {"type": "integer"}, "y": {"type": "integer"}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
     {"name": "desktop.state", "description": "Read observed UI state, cache counts, shortcuts and handler timings; does not change app state.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "desktop.screenshot", "description": "Capture the actual iced window as WebP. Returns image and artifact path.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}}},
     {"name": "desktop.stop", "description": "Stop only the isolated app and Xvfb processes created by this harness.", "inputSchema": {"type": "object", "properties": {}}},

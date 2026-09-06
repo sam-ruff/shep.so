@@ -1,6 +1,6 @@
 use super::MailProvider;
 use crate::model::*;
-use anyhow::{Context, bail};
+use anyhow::Context;
 use async_trait::async_trait;
 use futures::TryStreamExt;
 use secrecy::{ExposeSecret, SecretString};
@@ -489,31 +489,30 @@ impl MailProvider for Pop3 {
 pub async fn send(
     account: &Account,
     password: &SecretString,
-    draft: &Draft,
+    message: lettre::Message,
 ) -> anyhow::Result<Vec<u8>> {
-    use lettre::AsyncTransport;
     anyhow::ensure!(
         !account.smtp_host.trim().is_empty(),
         "Add an SMTP server to this account before sending."
     );
-    let mut builder = lettre::Message::builder()
-        .from(account.email.parse()?)
-        .subject(&draft.subject);
-    let mut count = 0;
-    for recipient in draft.to.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-        builder = builder.to(recipient.parse()?);
-        count += 1;
-    }
-    if count == 0 {
-        bail!("Enter at least one recipient.");
-    }
-    let message = builder.body(draft.body.clone())?;
     let transport = smtp_transport(account, password)?;
-    transport
-        .send(message.clone())
-        .await
-        .context("SMTP delivery failed; your draft has been kept")?;
-    Ok(message.formatted())
+    deliver(transport, message).await
+}
+
+async fn deliver(
+    transport: lettre::AsyncSmtpTransport<lettre::Tokio1Executor>,
+    message: lettre::Message,
+) -> anyhow::Result<Vec<u8>> {
+    use lettre::AsyncTransport;
+    let raw = message.formatted();
+    transport.send_raw(message.envelope(), &raw).await.map_err(|error| {
+        if error.is_transient() || error.is_permanent() {
+            anyhow::anyhow!("The SMTP server rejected the message. Your draft has been kept. {error}")
+        } else {
+            anyhow::anyhow!("SMTP could not confirm delivery. Your draft has been kept; check Sent before trying again. {error}")
+        }
+    })?;
+    Ok(raw)
 }
 
 /// Read-only handshake/authentication probe. Never sends mail or modifies messages.
@@ -670,6 +669,9 @@ pub async fn sync_inbox(
     .await
 }
 
+#[cfg(test)]
+#[path = "smtp_tests.rs"]
+mod smtp_tests;
 #[cfg(test)]
 mod tests {
     use super::*;

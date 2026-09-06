@@ -3,7 +3,7 @@ use iced::{
     Alignment, Border, Length,
     widget::{
         button, checkbox, column, container, image, mouse_area, opaque, pick_list, row, scrollable,
-        space, stack, text, text_editor,
+        space, stack, text,
     },
 };
 
@@ -597,7 +597,8 @@ impl App {
             )
             .padding([10, 14])
             .style(primary)
-            .on_press(Message::Reply)
+            .on_press(Message::Reply),
+            action("Reply all", Message::ReplyAll)
         ]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -979,11 +980,7 @@ impl App {
             );
         }
         column![
-            settings_card(
-                "Appearance",
-                "",
-                choices.into()
-            ),
+            settings_card("Appearance", "", choices.into()),
             container(self.reading_settings()).padding(23).style(card),
             settings_card(
                 "Mail & performance",
@@ -1008,13 +1005,6 @@ impl App {
                         icon("check", 16.),
                         muted("Next messages and the next page preload automatically.")
                     ]
-                    .spacing(10),
-                    row![
-                        icon("shield", 16.),
-                        muted(
-                            "Remote email images are blocked. Attachments are cached locally; remote images never load."
-                        )
-                    ]
                     .spacing(10)
                 ]
                 .spacing(19)
@@ -1035,8 +1025,7 @@ impl App {
                         text(format!("Shep {}", env!("CARGO_PKG_VERSION")))
                             .size(13)
                             .font(BOLD),
-                        muted("")
-                            .size(11)
+                        muted("").size(11)
                     ]
                     .spacing(5)
                 ]
@@ -1340,14 +1329,7 @@ impl App {
                 body=body.push(input("Find a folder…",self.field("folder_search"),|v|Message::Field("folder_search",v)).id("folder-search").on_submit_maybe(destination.map(Message::Move)));
                 for folder in folders.iter(){body=body.push(button(row![icon("folder",18.),text(folder.clone()).size(13),space().width(Length::Fill),icon("chevron",14.)].spacing(12).align_y(Alignment::Center)).padding(13).width(Length::Fill).style(outline).on_press(Message::Move(folder.clone())));}
             }
-            Dialog::Compose=>{
-                let choices:Vec<_>=self.workspace.accounts.iter().map(|a|Choice(a.id.clone(),a.email.clone())).collect();let chosen=choices.iter().find(|a|a.0==self.field("account")).cloned();
-                body=body.push(row![muted("From").width(45),pick_list(choices,chosen,|c:Choice|Message::Field("account",c.0)).style(select_input).menu_style(select_menu).text_size(12).padding(10).width(Length::Fill)].align_y(Alignment::Center))
-                    .push(form_field("To","name@example.com, another@example.com",self.field("to"),"to",false))
-                    .push(form_field("Subject","A quick thought…",self.field("subject"),"subject",false))
-                    .push(text_editor(&self.editor).on_action(Message::Editor).placeholder("Write your message…").style(editor_field).size(13).padding(15).height(230))
-                    .push(row![button(text(if self.busy.contains(&format!("send:{}",self.draft_id)){"Sending…"}else{"Send message"}).size(12)).padding([12,18]).style(primary).on_press_maybe((!self.busy.contains(&format!("send:{}",self.draft_id))).then_some(Message::Send)),action("Save draft",Message::SaveDraft),space().width(Length::Fill),muted("").size(10)].spacing(12).align_y(Alignment::Center));
-            }
+            Dialog::Compose => body = body.spacing(14).push(self.compose_form()),
             Dialog::Event=>{
                 let choices:Vec<_>=self.workspace.calendars.iter().map(|a|Choice(a.id.clone(),a.name.clone())).collect();let chosen=choices.iter().find(|a|a.0==self.field("source")).cloned();
                 body=body.spacing(14).push(column![text("Title").size(12).font(BOLD),input("Event title",self.field("title"),|v|Message::Field("title",v)).id("event-title")].spacing(8)).push(column![text("Calendar").size(12).font(BOLD), if choices.is_empty() {
@@ -1430,7 +1412,7 @@ fn event_day(e: &CalendarEvent) -> NaiveDate {
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Choice(String, String);
+pub(super) struct Choice(pub(super) String, pub(super) String);
 impl std::fmt::Display for Choice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.1)

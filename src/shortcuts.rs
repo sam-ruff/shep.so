@@ -17,9 +17,10 @@ pub enum Action {
     Settings,
     OpenMessage,
     ClosePreview,
+    ReplyAll,
 }
 impl Action {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Move,
         Self::Compose,
         Self::Reply,
@@ -34,6 +35,7 @@ impl Action {
         Self::Settings,
         Self::OpenMessage,
         Self::ClosePreview,
+        Self::ReplyAll,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -51,6 +53,7 @@ impl Action {
             Self::Settings => "Open settings",
             Self::OpenMessage => "Open full-window reader",
             Self::ClosePreview => "Close full-window reader",
+            Self::ReplyAll => "Reply to all",
         }
     }
 }
@@ -72,7 +75,7 @@ impl Default for Keymap {
                 .into_iter()
                 .zip([
                     "M", "C", "R", "E", "S", "Mod+K", "Mod+R", "J", "K", "Mod+1", "Mod+2", "Mod+,",
-                    "Enter", "Escape",
+                    "Enter", "Escape", "Shift+R",
                 ])
                 .map(|(a, k)| (a, k.into()))
                 .collect(),

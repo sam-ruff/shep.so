@@ -67,6 +67,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp = McpClient()
         result = self.mcp.call("desktop.start")
         self.addCleanup(self.mcp.close)
+        self.artifacts = Path(result["artifacts"])
         print(f"\nEvidence: {result['artifacts']}", flush=True)
 
     def test_layout_gallery(self):
@@ -125,20 +126,72 @@ class NativeFlows(unittest.TestCase):
     def test_compose_save_and_reopen_draft(self):
         self.mcp.batch(click(101, 214), check("dialog", "Compose"), shot("compose"))
         # Actual typing, including M, must remain in the input field.
-        self.mcp.batch(click(654, 344), type_text("friend@example.com"),
-                       click(650, 426), type_text("Meet me Monday"), check("dialog", "Compose"),
+        self.mcp.batch(click(654, 312), type_text("friend@example.com"),
+                       click(650, 362), type_text("Meet me Monday"), check("dialog", "Compose"),
                        click(650, 485), type_text("A message written with the mouse and keyboard."),
-                       click(580, 736), check("draft_count", 1), check("dialog", None), shot("saved-draft"),
+                       click(990, 720), check("draft_count", 1), check("dialog", None), shot("saved-draft"),
                        click(98, 478), check("dialog", "Compose"),
                        check("fields.to", "friend@example.com"), check("fields.subject", "Meet me Monday"),
                        check("editor", "A message written with the mouse and keyboard.", "contains"), shot("reopened-draft"))
 
     def test_compose_autosaves_and_move_accepts_typed_folder(self):
         self.mcp.batch(key("c"), check("dialog", "Compose"),
-                       click(650, 426), type_text("Autosaved thought"),
+                       click(650, 362), type_text("Autosaved thought"),
                        check("draft_count", 1), key("Escape"), check("dialog", None),
                        key("m"), check("dialog", "Move"), check("focused_input", "folder-search"), type_text("Archive"), key("Return"),
                        check("dialog", None), check("total", 119), shot("keyboard-move-complete"))
+
+    def test_compose_recipients_and_native_file_picker(self):
+        fixture = self.artifacts / "planning notes.txt"
+        fixture.write_text("These exact bytes must survive reopening the draft.")
+        self.mcp.batch(key("c"), check("dialog", "Compose"), wait(80),
+                       click(650, 312), type_text("friend@example.com"), click(1003, 312), wait(80), shot("compose-recipients"),
+                       click(650, 312), type_text("copy@example.com"), click(650, 361), type_text("hidden@example.com"),
+                       click(650, 411), type_text("Planning with attachments"),
+                       click(650, 470), type_text("Please read the attached notes."),
+                       click(583, 769), {"type": "choose_file", "path": str(fixture)},
+                       check("draft_io", False), check("draft_attachments.0.name", fixture.name), wait(400), shot("compose-attached-file"))
+        second = self.artifacts / "review checklist with a long name.txt"
+        third = self.artifacts / "project reference materials.bin"
+        second.write_text("Second attachment")
+        third.write_bytes(bytes([0, 255, 1, 128]))
+        self.mcp.batch(click(583, 790), {"type": "choose_file", "path": str(second)},
+                       check("draft_io", False), check("draft_attachments.1.name", second.name), wait(400),
+                       click(583, 790), {"type": "choose_file", "path": str(third)},
+                       check("draft_io", False), check("draft_attachments.2.name", third.name), wait(400), shot("compose-wrapped-attachments"))
+        self.mcp.batch(click(575, 726), check("draft_io", False), check("draft_attachments.0.name", second.name),
+                       check("draft_attachments.1.name", third.name), wait(150), click(990, 790), check("dialog", None))
+        fixture.unlink(); second.unlink(); third.unlink()
+        self.mcp.batch(click(98, 478), check("dialog", "Compose"), check("fields.cc", "copy@example.com"),
+                       check("fields.bcc", "hidden@example.com"), check("draft_attachments.0.name", second.name),
+                       check("editor", "Please read the attached notes.", "contains"), shot("reopened-attachments"),
+                       click(465, 790), check("notice", "Sending is disabled in preview", "contains"),
+                       check("dialog", "Compose"), check("draft_attachments.1.name", third.name), shot("send-failure-keeps-draft"),
+                       key("Escape"), check("dialog", None), key("ctrl+comma"), check("tab", "Preferences"),
+                       click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
+                       click(98, 478), check("dialog", "Compose"), shot("composer-dark-attachments"),
+                       click(583, 790), {"type": "choose_file"}, check("draft_io", False),
+                       check("draft_attachments.1.name", third.name), key("Escape"), check("dialog", None))
+
+
+    def test_reply_all_mouse_and_remappable_shortcut(self):
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prototype"),
+                       check("total", 1), key("Escape"), wait(80), click(766, 830), check("dialog", "Compose"),
+                       check("fields.to", "Daniel Park <team@example.com>, colleague@example.com"),
+                       check("fields.cc", "copy@example.com"), check("fields.bcc", ""),
+                       check("draft_in_reply_to", "<prototype@example.com>"), shot("reply-all-mouse"),
+                       key("Escape"), check("dialog", None), key("r"), check("dialog", "Compose"),
+                       check("fields.to", "Daniel Park <team@example.com>"), check("fields.cc", ""),
+                       key("Escape"), check("dialog", None), key("shift+r"), check("dialog", "Compose"),
+                       check("fields.cc", "copy@example.com"), shot("reply-all-keyboard"))
+
+    def test_compact_composer_layout(self):
+        self.mcp.call("desktop.start", width=900, height=640)
+        self.mcp.batch(key("c"), check("dialog", "Compose"), shot("compose-compact"),
+                       click(450, 207), type_text("friend@example.com"), click(733, 207), wait(80),
+                       click(450, 257), type_text("copy@example.com"), click(450, 306), type_text("hidden@example.com"),
+                       click(450, 355), type_text("Compact composer"), click(450, 400), type_text("Room to write."),
+                       shot("compose-compact-recipients"), click(720, 548), check("dialog", None), check("draft_count", 1))
 
     def test_calendar_event_creation(self):
         self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80), double_click(700, 474),

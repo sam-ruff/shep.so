@@ -1,6 +1,7 @@
 mod account;
 mod backups;
 mod components;
+mod composing;
 mod preference_sync;
 mod reading;
 #[cfg(test)]
@@ -90,6 +91,11 @@ pub enum Message {
     ToggleStar,
     ToggleRead,
     Reply,
+    ReplyAll,
+    ChooseAttachments,
+    ChosenAttachments(Draft, Vec<std::path::PathBuf>),
+    RemoveDraftAttachment(String),
+    ShowRecipients,
     SaveDraft,
     Send,
     Field(&'static str, String),
@@ -166,7 +172,7 @@ pub struct App {
     list_revision: u64,
     last_list_query: MailQuery,
     draft_dirty: Option<Instant>,
-    closing_window: Option<iced::window::Id>,
+    composer: composing::Composer,
     inbox_expanded: bool,
     sidebar_focus: bool,
     sidebar_index: usize,
@@ -277,7 +283,7 @@ impl App {
                 list_revision: 0,
                 last_list_query: MailQuery::default(),
                 draft_dirty: None,
-                closing_window: None,
+                composer: Default::default(),
                 inbox_expanded: false,
                 sidebar_focus: false,
                 sidebar_index: 0,
@@ -402,6 +408,9 @@ impl App {
     }
 
     fn send(&mut self, command: Command) {
+        self.try_command(command);
+    }
+    fn try_command(&mut self, command: Command) -> bool {
         if let Some(tx) = &self.tx {
             if let Err(error) = tx.try_send(command) {
                 match (*error).into_inner() {
@@ -416,10 +425,13 @@ impl App {
                         true,
                     ),
                 }
+                return false;
             }
         } else {
             self.notice("Opening your local workspace…", false);
+            return false;
         }
+        true
     }
     fn notice(&mut self, message: impl Into<String>, error: bool) {
         self.notice = Some((message.into(), error, Instant::now()));
@@ -520,6 +532,8 @@ impl App {
                 self.fields.insert("smtp_auth", "Automatic".into());
             }
             Dialog::Compose => {
+                self.composer.draft = Draft::default();
+                self.composer.show_recipients = false;
                 self.draft_id = uuid::Uuid::new_v4().to_string();
                 self.editor = text_editor::Content::new();
                 if let Some(account) = self
@@ -598,7 +612,13 @@ impl App {
                         },
                         &mut self.preferences,
                     );
-                    self.workspace = workspace;
+                    let mut workspace = (*workspace).clone();
+                    if workspace.drafts_revision < self.workspace.drafts_revision {
+                        workspace.drafts = self.workspace.drafts.clone();
+                        workspace.drafts_revision = self.workspace.drafts_revision;
+                    }
+                    self.workspace = Arc::new(workspace);
+                    self.observe_draft_files();
                     self.update_saved_preferences();
                 }
                 Event::PreferencesSaved(request, snapshot) => {
@@ -724,9 +744,25 @@ impl App {
                     self.fields.clear();
                     self.send(Command::SyncCalendar);
                 }
-                Event::Sent(id) => {
-                    if self.draft_id == id {
+                Event::DraftSaved(id, revision, result) => {
+                    return self.draft_saved(id, revision, result);
+                }
+                Event::DraftFiles(id, result) => {
+                    if self.composer.io.as_deref() == Some(&id) {
+                        self.composer.io = None;
+                    }
+                    match result {
+                        Ok(state) => self.observe_drafts(&state),
+                        Err(error) => self.notice(error, true),
+                    }
+                }
+                Event::Sent(id, revision) => {
+                    if self.draft_id == id
+                        && self.composer.draft.revision == revision
+                        && self.dialog == Some(Dialog::Compose)
+                    {
                         self.dialog = None;
+                        self.draft_dirty = None;
                         self.editor = text_editor::Content::new();
                         self.fields.clear();
                     }
@@ -780,11 +816,6 @@ impl App {
                         self.editing_event = None;
                     }
                 }
-                Event::ReadyToClose => {
-                    if let Some(window) = self.closing_window.take() {
-                        return iced::window::close(window);
-                    }
-                }
                 Event::Backups(request, target, result) => {
                     if request == self.backups_generation
                         && target == self.configured_backup_target()
@@ -826,9 +857,15 @@ impl App {
                         "A message is being sent. Wait for delivery to finish before closing.",
                         true,
                     );
+                } else if self.composer.io.is_some() {
+                    self.notice(
+                        "Wait for the selected files to finish attaching before closing.",
+                        true,
+                    );
                 } else if self.dialog == Some(Dialog::Compose) {
-                    self.closing_window = Some(window);
-                    self.send(Command::SaveBeforeClose(self.current_draft()));
+                    if !self.defer_draft_exit(composing::Exit::Window(window)) {
+                        return iced::window::close(window);
+                    }
                 } else {
                     return iced::window::close(window);
                 }
@@ -836,9 +873,9 @@ impl App {
             Message::Tick => {
                 if self.dialog == Some(Dialog::Compose)
                     && self.draft_dirty.is_some_and(|t| t.elapsed().as_secs() >= 1)
+                    && self.try_command(Command::AutoSaveDraft(self.current_draft()))
                 {
                     self.draft_dirty = None;
-                    self.send(Command::AutoSaveDraft(self.current_draft()));
                 }
                 if self
                     .notice
@@ -849,7 +886,9 @@ impl App {
                 }
             }
             Message::Tab(tab) => {
-                self.preserve_draft();
+                if self.defer_draft_exit(composing::Exit::Tab(tab)) {
+                    return Task::none();
+                }
                 self.tab = tab;
                 self.dialog = None;
                 if tab == Tab::Preferences {
@@ -872,7 +911,9 @@ impl App {
             Message::Close => {
                 self.pending_focus = None;
                 self.focused_input = None;
-                self.preserve_draft();
+                if self.defer_draft_exit(composing::Exit::Dialog) {
+                    return Task::none();
+                }
                 self.dialog = None;
                 self.remapping = None;
                 return widget::operation::focus("unfocused");
@@ -1100,53 +1141,42 @@ impl App {
                     self.send(Command::Flags(mail));
                 }
             }
-            Message::Reply => {
+            Message::Reply | Message::ReplyAll => {
                 if let Some(detail) = self.detail.clone() {
-                    self.open(Dialog::Compose);
-                    self.fields
-                        .insert("account", detail.summary.account_id.clone());
-                    self.fields.insert("to", detail.summary.sender.clone());
-                    self.fields.insert(
-                        "subject",
-                        format!("Re: {}", detail.summary.subject.trim_start_matches("Re: ")),
+                    let draft = detail.reply.draft(
+                        &detail,
+                        &self.workspace.accounts,
+                        matches!(message, Message::ReplyAll),
                     );
-                    self.editor = text_editor::Content::with_text(&format!(
-                        "\n\nOn {}, {} wrote:\n> {}",
-                        chrono::DateTime::from_timestamp(detail.summary.timestamp, 0)
-                            .unwrap_or_default()
-                            .format("%d %b %Y"),
-                        detail.summary.sender,
-                        detail
-                            .body
-                            .lines()
-                            .take(40)
-                            .collect::<Vec<_>>()
-                            .join("\n> ")
-                    ));
+                    self.load_draft(draft);
                 }
             }
-            Message::SaveDraft | Message::Send => {
-                let draft = self.current_draft();
-                self.send(if matches!(message, Message::Send) {
-                    Command::Send(draft)
-                } else {
-                    Command::SaveDraft(draft)
-                });
-                if matches!(message, Message::SaveDraft) {
-                    self.dialog = None;
+            Message::ChooseAttachments => return self.choose_attachments(),
+            Message::ChosenAttachments(draft, paths) => self.attach_chosen(draft, paths),
+            Message::RemoveDraftAttachment(id) => self.remove_draft_attachment(id),
+            Message::ShowRecipients => {
+                self.composer.show_recipients = !self.composer.show_recipients
+            }
+            Message::SaveDraft => {
+                self.save_and_exit(composing::Exit::Dialog);
+            }
+            Message::Send => {
+                if !self.compose_locked() && self.composer.io.as_deref() != Some(&self.draft_id) {
+                    let draft = self.current_draft();
+                    if self.try_command(Command::Send(draft)) {
+                        self.busy.insert(format!("send:{}", self.draft_id));
+                    }
                 }
             }
             Message::Draft(id) => {
-                if let Some(d) = self.workspace.drafts.iter().find(|d| d.id == id).cloned() {
-                    self.open(Dialog::Compose);
-                    self.draft_id = d.id;
-                    self.fields.insert("account", d.account_id);
-                    self.fields.insert("to", d.to);
-                    self.fields.insert("subject", d.subject);
-                    self.editor = text_editor::Content::with_text(&d.body);
+                if let Some(draft) = self.workspace.drafts.iter().find(|d| d.id == id).cloned() {
+                    self.load_draft(draft);
                 }
             }
             Message::Field(key, value) => {
+                if self.compose_locked() {
+                    return Task::none();
+                }
                 if self.dialog == Some(Dialog::Account) && key != "setup_step" {
                     self.fields.remove("test_incoming");
                     self.fields.remove("test_smtp");
@@ -1167,7 +1197,7 @@ impl App {
                 }
                 self.fields.insert(key, value);
                 if self.dialog == Some(Dialog::Compose) {
-                    self.draft_dirty = Some(Instant::now());
+                    self.draft_edited();
                 }
             }
             Message::Protocol(protocol) => {
@@ -1363,8 +1393,11 @@ impl App {
                 self.save_preferences();
             }
             Message::Editor(action) => {
+                if self.compose_locked() {
+                    return Task::none();
+                }
                 if action.is_edit() {
-                    self.draft_dirty = Some(Instant::now());
+                    self.draft_edited();
                 }
                 self.editor.perform(action);
             }
@@ -1713,24 +1746,6 @@ impl App {
             MailFilter::All
         }
     }
-    fn current_draft(&self) -> Draft {
-        Draft {
-            id: self.draft_id.clone(),
-            account_id: self.field("account").into(),
-            to: self.field("to").into(),
-            subject: self.field("subject").into(),
-            body: self.editor.text(),
-        }
-    }
-    fn preserve_draft(&mut self) {
-        if self.dialog == Some(Dialog::Compose)
-            && (!self.field("to").is_empty()
-                || !self.field("subject").is_empty()
-                || !self.editor.text().trim().is_empty())
-        {
-            self.send(Command::AutoSaveDraft(self.current_draft()));
-        }
-    }
     fn connection_security(&self, key: &str) -> ConnectionSecurity {
         if self.field(key) == "StartTls" {
             ConnectionSecurity::StartTls
@@ -1995,6 +2010,7 @@ impl App {
                 }
                 Action::Compose => self.handle(Message::Open(Dialog::Compose)),
                 Action::Reply => self.handle(Message::Reply),
+                Action::ReplyAll => self.handle(Message::ReplyAll),
                 Action::Archive => self.handle(Message::Move("Archive".into())),
                 Action::Star => self.handle(Message::ToggleStar),
                 Action::Sync => self.handle(Message::Sync),
@@ -2023,6 +2039,9 @@ impl App {
         let mut samples: Vec<_> = self.update_samples.iter().copied().collect();
         samples.sort_by(f64::total_cmp);
         let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|d.summary.starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
+        data["draft_attachments"] = serde_json::json!(self.composer.draft.attachments);
+        data["draft_io"] = serde_json::json!(self.composer.io.is_some());
+        data["draft_in_reply_to"] = serde_json::json!(self.composer.draft.in_reply_to);
         data["focused_input"] = serde_json::json!(self.focused_input);
         data["auto_backup"] = serde_json::json!(self.preferences.auto_backup);
         data["backup_ready"] = serde_json::json!(self.preferences.backup_ready);
