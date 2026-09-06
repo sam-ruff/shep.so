@@ -5,6 +5,7 @@ mod calendar_connections;
 mod dispatch;
 mod google_lifecycle;
 mod mail_actions;
+mod mail_sync;
 mod outgoing;
 mod removals;
 mod restore;
@@ -123,8 +124,11 @@ pub enum Event {
         result: Result<Arc<MailDetail>, String>,
         prefetch: bool,
     },
+    MailSyncFinished(Result<(), String>),
     FlagsFinished(u64, Mail, Result<(), String>),
     MoveFinished(u64, Mail, String, Result<(), String>),
+    #[cfg(feature = "test-support")]
+    PreviewSync(u64),
     Changed,
     Calendar(u64, Arc<Vec<CalendarEvent>>),
     Backups(u64, BackupTarget, Result<Arc<Vec<BackupCopy>>, String>),
@@ -170,6 +174,8 @@ struct Engine {
     passphrases: Arc<dyn backup::PassphraseStore>,
     restore_credentials: Arc<dyn backup::restore::CredentialRestorer>,
     backup_uploads: Arc<tokio::sync::OnceCell<backup::journal::Journal>>,
+    mail_sync_settings: mail_sync::Settings,
+    provider_slots: dispatch::Slots,
 }
 type Output = futures::channel::mpsc::Sender<Event>;
 
@@ -230,6 +236,8 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             passphrases: Arc::new(backup::OsPassphraseStore),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
             backup_uploads: Default::default(),
+            mail_sync_settings: Default::default(),
+            provider_slots: Default::default(),
         };
         let workspace = match engine.store.workspace().await {
             Ok(w) => w,
@@ -238,6 +246,9 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
                 return;
             }
         };
+        engine
+            .mail_sync_settings
+            .set(workspace.preferences.mail_check_seconds);
         if !demo && workspace.preferences.google_lifecycle.cleanup_pending {
             let _ = tx.try_send(Command::CleanupGoogle);
         } else if !demo && !workspace.preferences.active_google_client().is_empty() {
@@ -546,41 +557,54 @@ impl Engine {
             }
             Command::SavePreferences(request, prefs) => {
                 let event = match self.store.save_preferences(prefs).await {
-                    Ok(snapshot) => Event::PreferencesSaved(request, Arc::new(snapshot)),
+                    Ok(snapshot) => {
+                        self.mail_sync_settings
+                            .set(snapshot.value.mail_check_seconds);
+                        Event::PreferencesSaved(request, Arc::new(snapshot))
+                    }
                     Err(error) => Event::PreferencesSaveFailed(request, error.to_string()),
                 };
                 output.send(event).await?;
             }
             Command::Sync => {
                 if self.demo {
+                    #[cfg(feature = "test-support")]
+                    {
+                        let round = crate::test_support::sync_mail(&self.store).await?;
+                        output.send(Event::PreviewSync(round)).await?;
+                    }
+                    #[cfg(not(feature = "test-support"))]
                     tokio::time::sleep(Duration::from_millis(1500)).await;
                     output.send(Event::Changed).await?;
-                    output.send(Event::Notice("Preview messages are stored locally. Add an account outside preview to sync.".into())).await?;
                     return Ok(());
                 }
                 let accounts: Vec<Account> = self.store.get("accounts").await?;
                 let results: Vec<_> = futures::stream::iter(accounts)
                     .map(|a| {
                         let engine = self.clone();
-                        let output = output.clone();
+                        let mut output = output.clone();
                         async move {
                             let name = a.name.clone();
-                            engine
-                                .sync_account(a, output)
+                            let result = engine
+                                .sync_account(a, output.clone())
                                 .await
-                                .with_context(|| format!("{name} sync failed"))
+                                .with_context(|| format!("{name} sync failed"));
+                            // Flush even a short account check's final cache
+                            // changes without waiting for a slower account.
+                            output.send(Event::Changed).await?;
+                            result
                         }
                     })
                     .buffer_unordered(3)
                     .collect()
                     .await;
-                for result in results {
-                    if let Err(e) = result {
-                        output.send(Event::Error(format!("{e:#}"))).await?;
-                    }
-                }
+                let failures: Vec<_> = results
+                    .into_iter()
+                    .filter_map(|result| result.err().map(|error| format!("{error:#}")))
+                    .collect();
                 self.workspace(&mut output).await?;
                 output.send(Event::Changed).await?;
+                anyhow::ensure!(failures.is_empty(), "{}", failures.join("\n"));
             }
             Command::Transfer(mail, destination, folder) => {
                 let preferences: Preferences = self.store.get("preferences").await?;
@@ -1119,6 +1143,8 @@ mod calendar_tests {
             passphrases: Arc::new(backup::OsPassphraseStore),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
             backup_uploads: Default::default(),
+            mail_sync_settings: Default::default(),
+            provider_slots: Default::default(),
         }
     }
     pub(super) fn event(source: &str) -> CalendarEvent {

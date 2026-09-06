@@ -24,7 +24,7 @@ const SETTINGS: &[Setting] = &[
     Setting {
         title: "Mail & performance",
         tab: SettingsTab::General,
-        keywords: "sync interval minutes preload background speed",
+        keywords: "sync interval seconds minutes refresh preload background speed",
     },
     Setting {
         title: "Tooltips",

@@ -163,6 +163,7 @@ async fn preferences_revision_survives_reopen_and_failed_validation_is_atomic() 
     let saved = store
         .save_preferences(Preferences {
             reader_font_size: 19,
+            mail_check_seconds: 5,
             sidebar_width: Some(312.),
             window_size: Some(shep::model::WindowSize {
                 width: 1234.,
@@ -186,6 +187,7 @@ async fn preferences_revision_survives_reopen_and_failed_validation_is_atomic() 
     let workspace = store.workspace().await.unwrap();
     assert_eq!(workspace.preferences_revision, saved.revision);
     assert_eq!(workspace.preferences.reader_font_size, 19);
+    assert_eq!(workspace.preferences.mail_check_seconds, 5);
     assert_eq!(workspace.preferences.sidebar_width, Some(312.));
     assert_eq!(
         workspace.preferences.window_size,
@@ -236,4 +238,18 @@ async fn connect_google(
             sources,
         )
         .await
+}
+
+#[test]
+fn older_settings_gain_frequent_mail_checks_and_new_values_round_trip() {
+    let old = serde_json::json!({"sync_minutes": 5});
+    let mut preferences: shep::model::Preferences = serde_json::from_value(old).unwrap();
+    assert_eq!(preferences.mail_check_seconds, 15);
+    preferences.mail_check_seconds = 5;
+    preferences.validate().unwrap();
+    let reloaded: shep::model::Preferences =
+        serde_json::from_str(&serde_json::to_string(&preferences).unwrap()).unwrap();
+    assert_eq!(reloaded.mail_check_seconds, 5);
+    preferences.mail_check_seconds = 0;
+    assert!(preferences.validate().is_err());
 }

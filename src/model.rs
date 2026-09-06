@@ -503,6 +503,7 @@ pub struct Preferences {
     pub google_grant: GoogleGrant,
     pub google_lifecycle: GoogleLifecycle,
     pub sync_minutes: u64,
+    pub mail_check_seconds: u64,
     pub google_client_id: String,
     pub google_client_secret: String,
     pub shortcuts: crate::shortcuts::Keymap,
@@ -541,6 +542,7 @@ impl Default for Preferences {
             google_grant: Default::default(),
             google_lifecycle: Default::default(),
             sync_minutes: 5,
+            mail_check_seconds: 15,
             google_client_id: std::env::var("SHEP_GOOGLE_CLIENT_ID").unwrap_or_default(),
             google_client_secret: std::env::var("SHEP_GOOGLE_CLIENT_SECRET").unwrap_or_default(),
             shortcuts: Default::default(),
@@ -639,7 +641,11 @@ impl Preferences {
         );
         anyhow::ensure!(
             (1..=60).contains(&self.sync_minutes),
-            "Sync interval must be 1–60 minutes."
+            "Calendar sync interval must be 1–60 minutes."
+        );
+        anyhow::ensure!(
+            (5..=3600).contains(&self.mail_check_seconds),
+            "Mail check interval must be 5–3600 seconds."
         );
         anyhow::ensure!(
             (11..=26).contains(&self.reader_font_size),

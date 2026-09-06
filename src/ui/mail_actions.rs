@@ -457,7 +457,13 @@ mod tests {
     #[tokio::test]
     async fn a_full_queue_cannot_hide_an_unaccepted_archive() {
         let (mut app, _commands, _) = fixture().await;
-        while app.tx.as_ref().unwrap().try_send(Command::Sync).is_ok() {}
+        while app
+            .tx
+            .as_ref()
+            .unwrap()
+            .try_send(Command::LoadImages(Vec::new()))
+            .is_ok()
+        {}
         let _ = app.handle(Message::Move("Archive".into()));
         assert_eq!(app.page.total, 1);
         assert_eq!(app.mail_actions.pending(), 0);
@@ -542,7 +548,13 @@ mod tests {
     #[tokio::test]
     async fn full_queue_restores_flags_and_close_waits_for_accepted_changes() {
         let (mut app, mut commands, _) = fixture().await;
-        while app.tx.as_ref().unwrap().try_send(Command::Sync).is_ok() {}
+        while app
+            .tx
+            .as_ref()
+            .unwrap()
+            .try_send(Command::LoadImages(Vec::new()))
+            .is_ok()
+        {}
         let _ = app.handle(Message::ToggleRead);
         assert!(app.page.rows[0].unread);
         assert_eq!(app.mail_actions.pending(), 0);

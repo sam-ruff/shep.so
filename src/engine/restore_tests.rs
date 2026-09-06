@@ -65,6 +65,8 @@ fn engine(credentials: Arc<Credentials>) -> Engine {
         passphrases: Arc::new(backup::OsPassphraseStore),
         restore_credentials: credentials,
         backup_uploads: Default::default(),
+        mail_sync_settings: Default::default(),
+        provider_slots: Default::default(),
     }
 }
 
