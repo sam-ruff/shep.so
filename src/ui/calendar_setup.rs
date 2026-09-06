@@ -81,6 +81,7 @@ impl App {
         let request = self.calendar_setup.generation;
         if self.try_command(Command::ConnectCalendars(
             request,
+            self.workspace.connections_revision,
             sources,
             self.field("password").to_string().into(),
         )) {

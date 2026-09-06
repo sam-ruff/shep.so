@@ -234,6 +234,58 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(check("conversation_total", 3), check("loaded_message_id", "preview-work:INBOX:launch-2"),
                        wait(150), shot("conversation-compact"))
 
+    def test_connection_removal_review_and_cancel(self):
+        self.mcp.batch(key("c"), check("dialog", "Compose"),
+                       click(650, 362), type_text("A draft to review before removal"),
+                       check("draft_count", 1), key("Escape"), check("dialog", None),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(383, 156),
+                       check("settings_tab", "Accounts"), shot("accounts-removal-controls"),
+                       click(1150, 334), check("dialog", "Removal"), check("removal.messages", 118),
+                       check("removal.drafts", 1), shot("account-removal-light"), key("Escape"),
+                       check("dialog", None), check("account_count", 2), check("draft_count", 1),
+                       click(290, 156), check("settings_tab", "General"), click(690, 366), check("dark", True),
+                       click(383, 156), check("settings_tab", "Accounts"), click(1150, 334),
+                       check("removal.messages", 118), check("removal.drafts", 1), shot("account-removal-dark"),
+                       click(890, 555), check("dialog", None), check("account_count", 1), check("draft_count", 0),
+                       check("credential_cleanup", 0), shot("account-removed"),
+                       key("ctrl+1"), check("tab", "Mail"), check("total", 2),
+                       check("selected", "Coffee next Thursday?"), key("Down"),
+                       check("selected", "Weekend plans"), shot("remaining-account-mail"))
+
+    def test_calendar_removal_review_and_reconnect(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(445, 156),
+                       check("settings_tab", "Calendars"), shot("calendar-removal-controls"),
+                       click(1150, 334), check("dialog", "Removal"), check("removal.target.id", "preview-calendar"),
+                       check("removal.events", 4), shot("calendar-removal-light"),
+                       click(495, 550), check("dialog", None), check("calendar_count", 2), check("events", 5),
+                       click(1150, 334), check("removal.events", 4), click(890, 550),
+                       check("dialog", None), check("calendar_count", 1), check("events", 1),
+                       check("removed_google_calendars", 1), check("credential_cleanup", 0), shot("calendar-removed"),
+                       click(420, 493), check("calendar_count", 2), check("removed_google_calendars", 0),
+                       check("events", 1), shot("calendar-restored"))
+
+    def test_connection_removal_compact(self):
+        self.mcp.call("desktop.start", width=900, height=640)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(383, 156),
+                       check("settings_tab", "Accounts"), click(834, 334), check("dialog", "Removal"),
+                       check("removal.messages", 118), shot("account-removal-compact"),
+                       key("Escape"), check("dialog", None), check("account_count", 2),
+                       click(290, 156), check("settings_tab", "General"), click(563, 366), check("dark", True),
+                       click(445, 156), check("settings_tab", "Calendars"), click(834, 334),
+                       check("removal.events", 4), shot("calendar-removal-dark-compact"),
+                       key("Escape"), check("dialog", None), check("calendar_count", 2))
+
+    def test_account_removal_with_unfinished_move(self):
+        self.mcp.call("desktop.start", pending_transfer=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(383, 156),
+                       check("settings_tab", "Accounts"), click(1150, 334), check("dialog", "Removal"),
+                       check("removal.transfers", 1), shot("account-removal-pending-move"),
+                       click(890, 602), wait(80), check("dialog", "Removal"), check("account_count", 2),
+                       click(482, 548), check("removal_cancel_transfers", True), shot("account-removal-move-confirmed"),
+                       click(890, 602), check("dialog", None), check("account_count", 1),
+                       key("ctrl+1"), check("tab", "Mail"), check("total", 2),
+                       shot("remaining-account-after-cancelled-move"))
+
     def test_calendar_connection_discovery(self):
         self.mcp.call("desktop.start", empty_calendars=True)
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(467, 156),

@@ -51,6 +51,7 @@ fn sent(c: &Connection, draft: &Draft) -> anyhow::Result<bool> {
     Ok(revision.is_some_and(|revision| revision >= 0 && revision as u64 >= draft.revision))
 }
 pub(super) fn save(c: &Connection, mut draft: Draft) -> anyhow::Result<()> {
+    connections::allow(c, ConnectionKind::Account, &draft.account_id)?;
     anyhow::ensure!(
         !draft.id.is_empty() && draft.id.len() <= 256 && draft.revision <= i64::MAX as u64,
         "The draft has an invalid identity or revision."

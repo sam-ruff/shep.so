@@ -1084,7 +1084,15 @@ impl App {
                         ]
                         .spacing(4),
                         space().width(Length::Fill),
-                        action("Edit account", Message::EditAccount(account.id.clone()))
+                        action("Edit account", Message::EditAccount(account.id.clone())),
+                        icon_action(
+                            "trash",
+                            "Remove account",
+                            Message::ReviewRemoval(crate::store::ConnectionRef {
+                                kind: crate::store::ConnectionKind::Account,
+                                id: account.id.clone()
+                            })
+                        )
                     ]
                     .spacing(12)
                     .align_y(Alignment::Center),
@@ -1092,6 +1100,9 @@ impl App {
                 .push(line());
         }
         accounts = accounts.push(action("Add mail account", Message::Open(Dialog::Account)));
+        if self.workspace.credential_cleanup > 0 {
+            accounts = accounts.push(self.cleanup_preferences());
+        }
         column![
             settings_card(
                 "Your accounts",
@@ -1131,13 +1142,32 @@ impl App {
                             })
                             .size(11)
                         ]
-                        .spacing(4)
+                        .spacing(4),
+                        space().width(Length::Fill),
+                        icon_action(
+                            "trash",
+                            "Remove calendar",
+                            Message::ReviewRemoval(crate::store::ConnectionRef {
+                                kind: crate::store::ConnectionKind::Calendar,
+                                id: source.id.clone()
+                            })
+                        )
                     ]
-                    .spacing(14),
+                    .spacing(14)
+                    .align_y(Alignment::Center),
                 )
                 .push(line());
         }
         sources=sources.push(action("Add CalDAV calendar",Message::Open(Dialog::Calendar))).push(muted("Enter your server address to find calendars, or use a calendar collection URL.").size(11));
+        if self.workspace.removed_google_calendars > 0 {
+            sources = sources.push(action(
+                "Restore removed Google calendars",
+                Message::RestoreGoogleCalendars,
+            ));
+        }
+        if self.workspace.credential_cleanup > 0 {
+            sources = sources.push(self.cleanup_preferences());
+        }
         column![
             settings_card(
                 "Connected calendars",
@@ -1323,6 +1353,7 @@ impl App {
     }
     fn dialog_view(&self, dialog: Dialog) -> Element<'_, Message> {
         let (title, subtitle) = match dialog {
+            Dialog::Removal => ("Remove connection?", ""),
             Dialog::Account => ("Mail account", ""),
             Dialog::Sender => ("Sender details", ""),
             Dialog::Calendar => (
@@ -1357,6 +1388,7 @@ impl App {
         .align_y(Alignment::Center);
         let mut body = column![header, line()].spacing(20);
         match dialog {
+            Dialog::Removal => body = body.push(self.removal_form()),
             Dialog::Sender => body = body.push(self.sender_dialog()),
             Dialog::Account => body = body.push(self.account_wizard()),
             Dialog::Calendar => body = body.push(self.calendar_connection_form()),

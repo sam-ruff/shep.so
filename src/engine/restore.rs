@@ -30,6 +30,7 @@ impl Engine {
             Ok::<_, anyhow::Error>(snapshot)
         })
         .await??;
+        let _lifecycle = self.connection_lifecycle_lock.lock().await;
         // Match transfer's sorted account-lock order. Syncs, flags, moves and
         // connection edits cannot race the import or its missing-password pass.
         let mut accounts: Vec<_> = snapshot

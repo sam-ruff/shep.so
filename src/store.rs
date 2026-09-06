@@ -1,5 +1,7 @@
 use crate::model::*;
+mod connections;
 mod conversations;
+pub use connections::{ConnectionKind, ConnectionRef, CredentialCleanup, RemovalPreview};
 mod drafts;
 mod restore;
 use anyhow::Context;
@@ -25,6 +27,9 @@ pub struct Workspace {
     pub account_folders: std::collections::HashMap<String, Vec<String>>,
     pub drafts: Vec<Draft>,
     pub drafts_revision: u64,
+    pub connections_revision: u64,
+    pub credential_cleanup: usize,
+    pub removed_google_calendars: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -76,6 +81,7 @@ impl Store {
             CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, source TEXT NOT NULL, start INTEGER NOT NULL, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS event_start ON events(start);")?;
         conversations::schema(&conn)?;
+        connections::schema(&conn)?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 2 {
             let tx = conn.transaction()?;
@@ -255,6 +261,17 @@ impl Store {
                 folders,
                 drafts: drafts.drafts,
                 drafts_revision: drafts.revision,
+                connections_revision: get(c, "connections_revision")?,
+                credential_cleanup: c.query_row(
+                    "SELECT COUNT(*) FROM credential_cleanup",
+                    [],
+                    |r| r.get::<_, i64>(0).map(|v| v as usize),
+                )?,
+                removed_google_calendars: c.query_row(
+                    "SELECT COUNT(*) FROM connection_tombstones WHERE google_data IS NOT NULL",
+                    [],
+                    |r| r.get::<_, i64>(0).map(|v| v as usize),
+                )?,
             })
         })
         .await
@@ -263,6 +280,7 @@ impl Store {
         self.run(move |c| {
             let tx = c.transaction()?;
             for message in messages {
+                connections::allow(&tx, ConnectionKind::Account, &message.summary.account_id)?;
                 let m = &message.summary;
                 tx.execute("INSERT INTO messages(id,account,folder,sender,subject,body,timestamp,unread,starred,data,raw)
                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
@@ -378,20 +396,32 @@ impl Store {
     }
     pub async fn save_account(&self, account: Account) -> anyhow::Result<()> {
         self.run(move |c| {
+            let tx = c.transaction()?;
+            let c = &tx;
+            connections::allow(c, ConnectionKind::Account, &account.id)?;
             let mut accounts: Vec<Account> = get(c, "accounts")?;
             accounts.retain(|a| a.id != account.id);
             accounts.push(account);
-            put(c, "accounts", &accounts)
+            put(c, "accounts", &accounts)?;
+            connections::changed(c)?;
+            tx.commit()?;
+            Ok(())
         })
         .await
     }
 
     pub async fn save_folders(&self, account: String, folders: Vec<String>) -> anyhow::Result<()> {
         self.run(move |c| {
+            let tx = c.transaction()?;
+            let c = &tx;
+            connections::allow(c, ConnectionKind::Account, &account)?;
             let mut mapping: std::collections::HashMap<String, Vec<String>> =
                 get(c, "account_folders")?;
             mapping.insert(account, folders);
-            put(c, "account_folders", &mapping)
+            put(c, "account_folders", &mapping)?;
+            connections::changed(c)?;
+            tx.commit()?;
+            Ok(())
         })
         .await
     }
@@ -448,12 +478,18 @@ impl Store {
     }
     pub async fn save_sources(&self, sources: Vec<CalendarSource>) -> anyhow::Result<()> {
         self.run(move |c| {
+            let tx = c.transaction()?;
+            let c = &tx;
             let mut current: Vec<CalendarSource> = get(c, "calendars")?;
             for source in sources {
+                connections::revive(c, ConnectionKind::Calendar, &source.id)?;
                 current.retain(|s| s.id != source.id);
                 current.push(source);
             }
-            put(c, "calendars", &current)
+            put(c, "calendars", &current)?;
+            connections::changed(c)?;
+            tx.commit()?;
+            Ok(())
         })
         .await
     }
@@ -463,6 +499,8 @@ impl Store {
             "Invalid Google calendar list."
         );
         self.run(move |c| {
+            let tx = c.transaction()?;
+            let c = &tx;
             let mut current: Vec<CalendarSource> = get(c, "calendars")?;
             // Keep cached events when access disappears, but never preserve a
             // stale grant to edit a calendar absent from a complete listing.
@@ -472,10 +510,16 @@ impl Store {
                 }
             }
             for source in sources {
+                if connections::removed(c, ConnectionKind::Calendar, &source.id)?.is_some() {
+                    continue;
+                }
                 current.retain(|s| s.id != source.id);
                 current.push(source);
             }
-            put(c, "calendars", &current)
+            put(c, "calendars", &current)?;
+            connections::changed(c)?;
+            tx.commit()?;
+            Ok(())
         })
         .await
     }
@@ -512,6 +556,7 @@ impl Store {
                 "Calendar sync returned events from a different calendar."
             );
             let tx = c.transaction()?;
+            connections::allow(&tx, ConnectionKind::Calendar, &source)?;
             tx.execute("DELETE FROM events WHERE source=?", [source])?;
             for e in events {
                 tx.execute(
@@ -524,6 +569,7 @@ impl Store {
                     ],
                 )?;
             }
+            calendar_changed(&tx)?;
             tx.commit()?;
             Ok(())
         })
@@ -531,6 +577,7 @@ impl Store {
     }
     pub async fn save_event(&self, event: CalendarEvent) -> anyhow::Result<()> {
         self.run(move |c| {
+            connections::allow(c, ConnectionKind::Calendar, &event.source_id)?;
             let tx = c.transaction()?;
             // Also remove the legacy key on the first edit of an existing cache.
             tx.execute(
@@ -546,6 +593,7 @@ impl Store {
                     serde_json::to_string(&event)?
                 ],
             )?;
+            calendar_changed(&tx)?;
             tx.commit()?;
             Ok(())
         })
@@ -553,20 +601,28 @@ impl Store {
     }
     pub async fn delete_event(&self, source: String, id: String) -> anyhow::Result<()> {
         self.run(move |c| {
-            c.execute(
+            let tx = c.transaction()?;
+            tx.execute(
                 "DELETE FROM events WHERE source=? AND json_extract(data, '$.id')=?",
                 params![source, id],
             )?;
+            calendar_changed(&tx)?;
+            tx.commit()?;
             Ok(())
         })
         .await
     }
     pub async fn events(&self) -> anyhow::Result<Vec<CalendarEvent>> {
+        Ok(self.calendar_snapshot().await?.1)
+    }
+    pub async fn calendar_snapshot(&self) -> anyhow::Result<(u64, Vec<CalendarEvent>)> {
         self.run(|c| {
-            c.prepare("SELECT data FROM events ORDER BY start LIMIT 5000")?
+            let events = c
+                .prepare("SELECT data FROM events ORDER BY start LIMIT 5000")?
                 .query_map([], |r| r.get::<_, String>(0))?
                 .map(|r| Ok(serde_json::from_str(&r?)?))
-                .collect()
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            Ok((get(c, "calendar_revision")?, events))
         })
         .await
     }
@@ -613,4 +669,15 @@ pub fn fts_query(input: &str) -> String {
         .map(|word| format!("\"{}\"*", word.replace('"', "\"\"")))
         .collect::<Vec<_>>()
         .join(" AND ")
+}
+
+pub(super) fn calendar_changed(c: &Connection) -> anyhow::Result<()> {
+    let revision: u64 = get(c, "calendar_revision")?;
+    put(
+        c,
+        "calendar_revision",
+        &revision
+            .checked_add(1)
+            .context("Calendar revision overflow")?,
+    )
 }
