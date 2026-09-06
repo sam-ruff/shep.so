@@ -7,7 +7,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R01 | Native cross-platform Rust + iced client; multiple saved accounts; IMAP, POP3 and SMTP; extensible account backends | Core delivered; remaining provider/platform checks in TODO. `model.rs`, `providers/`, `engine.rs`, `store.rs` |
 | R02 | Optional Google login to save account details to Drive | OAuth and encrypted account backups delivered; continuous account sync remains open (R49) |
 | R03 | Extremely responsive UI; bounded channels/background work; strict speed/usability requirements; regular tests and CI performance gates; defer measurements until the end because PC is busy | Architecture, requirements, tests and dormant gates delivered; final measurements explicitly deferred |
-| R04 | Good mouse use, not keyboard-first; native remappable shortcuts, especially M for Move | Delivered baseline; new defaults/secondary/sidebar actions in progress (R39/R48) |
+| R04 | Good mouse use, not keyboard-first; native remappable shortcuts, especially M for Move | Delivered with mouse parity; 590ab10 adds secondary bindings and sidebar-only Inbox key |
 | R05 | Drive email backup with configurable rolling copies; easily add account/backup providers | Local/Drive provider interfaces and rolling encrypted copies delivered; expanded destinations in R32 |
 | R06 | Calendar tab; Google Calendar and home-server CalDAV sync | Delivered with local/native/wire evidence; live and cross-platform verification remains open |
 | R07 | Clean shadcn-like iced components; flat Swiss Shepherd side-profile logo generated with image skill; approved logo preserved; WebP assets and dark logo; easy appearance preference | Delivered; palette editor remains open (R25) |
@@ -29,7 +29,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R23 | Arbitrary email length/size; remove 25 MiB incoming, 256 MiB snapshot and 32k preview limits; background large downloads so other mail proceeds | Open; no higher-cap workaround is considered completion |
 | R24 | Sidebar fits horizontally; sidebar/inbox/reader widths draggable; window dimensions persist across sessions | Delivered; long labels ellipsize and drag/layout state persists |
 | R25 | Flagged outline red and entire UI palette configurable in Preferences | Red outline delivered; palette editor open |
-| R26 | Ctrl-click folder multi-selection | Delivered; native-event modifier snapshot improvement in progress |
+| R26 | Ctrl-click folder multi-selection | Delivered, including native-event modifier snapshots and saved Ctrl-click flows in 590ab10 |
 | R27 | Add account only in Preferences; clicking account heading collapses its folders with arrow | Delivered |
 | R28 | Calendar sync refresh icon; remove Google/CalDAV sync caption and Workspace/Calendar breadcrumb; free calendar space | Delivered |
 | R29 | Persist window and pane sizes | Delivered and SQLite reopen/close-order tests |
@@ -41,24 +41,24 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R35 | Compose in preview pane, autosave while typing, read other mail and work on several replies/drafts | Autosave delivered; inline/multiple-draft UX open |
 | R36 | Collapsible Drafts group, right-click delete, discard bin in draft editor | Open; must prevent stale saves from restoring deleted drafts |
 | R37 | Shortcut hints for buttons | Superseded by R51/R52: icon-only tooltip, primary key only and toggles |
-| R38 | Render HTML like supplied example, not flattened text plus appended images; select/copy email text | Faithful HTML open; native plain/quote text selection in progress |
-| R39 | Delete shortcut and optional second binding; final defaults Ctrl+D → Trash, Backspace + Delete → Archive; all remappable | In progress with model migration, conflict and native tests; earlier Delete-to-Trash default superseded |
-| R40 | Clicking Mail while already open from another folder returns to unified/first Inbox | In progress, native test passes |
+| R38 | Render HTML like supplied example, not flattened text plus appended images; select/copy email text | Native plain/quoted text selection delivered in 590ab10; faithful HTML remains open |
+| R39 | Delete shortcut and optional second binding; final defaults Ctrl+D → Trash, Backspace + Delete → Archive; all remappable | Delivered in 590ab10: versioned slots/migration, conflict and native tests; older Delete-to-Trash default superseded |
+| R40 | Clicking Mail while already open from another folder returns to unified/first Inbox | Delivered in 590ab10, native unified/first-account Inbox tests |
 | R41 | Add Forward and Print controls in preview | Open |
 | R42 | Ctrl+A list selection, Ctrl-click, Shift-click, checkbox Select mode beside search, bulk toolbar/keybind actions and Y/N/Enter/Esc confirmations | Open |
-| R43 | Inbox (unread count) in sidebar | In progress; cache counts ignore current query/filter |
+| R43 | Inbox (unread count) in sidebar | Delivered in 590ab10; cache counts ignore query/filter scope, with storage/native tests |
 | R44 | Ctrl+F within email; fast search; fuzzy matching library and exact body “test” ranked first | Open; regression and library implementation still required |
 | R45 | Drag messages/selection from list into sidebar folders | Open |
-| R46 | Highlight Move target used by Enter | In progress; native visual evidence |
+| R46 | Highlight Move target used by Enter | Delivered in 590ab10; highlighted Inbox/Enter target and native visual evidence |
 | R47 | Cannot move out of A. Keep into Inbox; display Inbox rather than INBOX | In progress; local metadata confirms folders exist, native return-move and wire/logout tests exist; actual reported personal-account cause not confirmed |
-| R48 | I goes to Inbox only with sidebar focus; remappable and disableable | In progress, including native disable/remap tests |
+| R48 | I goes to Inbox only with sidebar focus; remappable and disableable | Delivered in 590ab10, including sidebar/list focus and native disable/remap tests |
 | R49 | Drive appDataFolder continuously syncs accounts and as many settings as possible; first-time offer/toggle; existing cloud setup automatically loads on another PC | Open; credential-protection preference question pending |
 | R50 | Flagging immediately reflects UI intent before database/network save; apply same treatment elsewhere appropriate | Open; must handle rapid edits, failures and stale acknowledgments |
-| R51 | Remove newly added tooltips from text-labeled controls; tooltips only on icons | In progress |
-| R52 | Tooltip shows primary shortcut only; disable all tooltips or keyboard hints independently; searchable Preferences | In progress; source and native coverage incomplete |
-| R53 | Sync mail becomes refresh icon at top right | In progress |
-| R54 | Right-click menu immediately disappears; fix and add tests | Newly recorded, open |
-| R55 | Audit whole conversation; maintain TODO.md immediately for every request; update AGENTS and remove items only when complete | Audit created; verify remaining code/evidence and enforce ongoing rule |
+| R51 | Remove newly added tooltips from text-labeled controls; tooltips only on icons | Delivered in 590ab10, labeled controls unwrapped and native visual checks |
+| R52 | Tooltip shows primary shortcut only; disable all tooltips or keyboard hints independently; searchable Preferences | Delivered in 590ab10; both tooltip toggles, primary-only hints, settings index/direct section navigation and native light/dark/compact tests |
+| R53 | Sync mail becomes refresh icon at top right | Delivered in 590ab10; mouse sync/busy/navigation native tests |
+| R54 | Right-click menu immediately disappears; fix and add tests | Delivered in 590ab10: background Changed no longer dismisses the menu; target refresh, mouse release, sync completion, action and dismissal tests |
+| R55 | Audit whole conversation; maintain TODO.md immediately for every request; update AGENTS and remove items only when complete | Delivered: TODO.md and full audit plus immediate-tracking/removal rules in AGENTS.md; ongoing maintenance required |
 | R56 | No root log files; delete accidental ones | Ongoing requirement; all current agent logs use ignored artifacts/logs |
 | R57 | Preload messages, adjacent emails and next pages; WebP for image loading | Delivered baseline; maintain while large-mail/HTML work proceeds |
 | R58 | Additional useful features required | Existing sender actions, outgoing recovery, conversations, connection removal and calendar discovery delivered; Forward/Print/selection/settings sync remain explicit open requests |

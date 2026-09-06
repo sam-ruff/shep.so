@@ -4,18 +4,8 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Current UI and interaction work
 
-- [ ] **R54 — Right-click menu dismissal:** reproduce and fix the inbox menu immediately disappearing. Add native mouse press/release, persistence, action-selection and outside/Escape-dismissal regressions; preserve clicked-message identity.
 - [ ] **R50 — Immediate feedback:** flags and read/unread state update before network/SQLite completion. Coalesce rapid edits, reject stale acknowledgments, roll back failed changes and show an error. Audit other reversible controls for the same delay.
-- [ ] **R39 — Two shortcut slots:** Ctrl+D moves mail to Trash; Backspace and Delete archive. Secondary bindings start disabled except Archive. Remap either slot, reject conflicts and preserve existing custom mappings. Code is in progress; complete validation and shipping.
-- [ ] **R48 — Sidebar Inbox shortcut:** I only while the sidebar is focused, remappable and disableable; verify mouse/Tab focus and typing protection. Code is in progress.
-- [ ] **R40 — Mail navigation:** clicking Mail while already in Mail returns to unified Inbox, or the first account Inbox if unified is disabled. Code is in progress.
-- [ ] **R43 — Unread labels:** show Inbox (n) and account Inbox unread totals independently of the current filter/search. Code is in progress.
-- [ ] **R46 — Move selection:** visibly highlight the destination Enter will use. Display INBOX as Inbox while retaining server identifiers. Code is in progress.
-- [ ] **R47 — A. Keep → Inbox:** investigate the reported failed move, verify the actual provider path and destination refresh. A local protocol test covers a spaced folder and logout failure after acknowledgment; the personal-account root cause is not yet confirmed.
-- [ ] **R51/R52 — Tooltips:** icon-only controls, only the primary shortcut, preferences to disable all tooltips or only shortcut hints. Remove newly added labeled-button/sidebar tooltips. Code is in progress.
-- [ ] **R52 — Preferences search:** searchable settings with direct navigation to the matching controls, including keyboard/compact-window coverage. Code is in progress.
-- [ ] **R53 — Sync control:** replace Sync mail with one refresh icon at the top right, retaining visible busy/error feedback. Code is in progress.
-- [ ] **R38 — Selectable mail text:** native selection/copy in preview and full reader, including quoted messages; preserve typing/shortcut focus rules. Plain-text implementation is in progress; formatted HTML remains below.
+- [ ] **R47 — A. Keep → Inbox:** investigate the reported failed move, verify the actual provider path and destination refresh. Commit 590ab10 ships Inbox labeling, send-queue feedback and a spaced-folder protocol test preserving acknowledgment after logout failure; the personal-account root cause is not yet confirmed.
 
 ## Mail reading, search and bulk actions
 
@@ -51,4 +41,3 @@ Active requests from this chat. Add new requests here immediately, including cor
 - [ ] **R01/R06 — Provider/platform completeness:** close remaining POP3 protocol/lifecycle gaps, Google/CalDAV/SMTP integration evidence, independent-process coordination and Windows/macOS execution/distribution checks. Do not present fixture evidence as live-provider verification.
 - [ ] **R03/R09 — Final performance gates:** keep measurements deferred while the host is busy; run backend/native gates at the end on an idle host. Do not weaken budgets. Keep quality/release CI disabled until requested; documentation publishing has a separately recorded exception in AGENTS.md.
 - [ ] **R08/R10 — Ship verified work:** fmt, Clippy, Rust/Python and relevant native tests; optimized release/installer verification; install for the Linux user and push main at sam-ruff/shep.so. Keep logs/artifacts out of the root and preserve personal data.
-- [ ] **R55 — Request audit:** audit and AGENTS tracking rule are written; verify/build the current changes, then commit the audit and continue maintaining this list.
