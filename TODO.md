@@ -11,7 +11,6 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Mail reading, search and bulk actions
 
-- [ ] **R38 — Faithful HTML:** render layout, typography, tables, backgrounds, links and inline images in their intended positions. Keep selectable text, a plain-text option, current remote-image controls and no active email scripts. The latest screenshot also exposes raw XHTML tags in the reader: fix MIME/plain-vs-HTML handling, including mislabeled/escaped HTML, with synthetic regressions. Use fictional versions of the supplied examples; never copy authorization codes into fixtures. In progress: native HTML layout, MIME/XHTML selection, visible-text copy, plain mode, image sizing/privacy and quote controls are implemented; final native visual/regression review and shipping remain.
 - [ ] **R44 — Find in message:** Ctrl+F within the open email, fast background searching, visible matches and next/previous navigation.
 - [ ] **R41 — Forward:** add a forward control to the preview actions; preserve message content/attachments and correct draft semantics.
 - [ ] **R41 — Print:** add a print control and a usable cross-platform print flow, with isolated automated equivalents.
