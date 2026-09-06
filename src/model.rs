@@ -204,9 +204,17 @@ pub enum MailSort {
     Oldest,
     Sender,
     Subject,
+    Relevance,
 }
 impl MailSort {
-    pub const ALL: [Self; 4] = [Self::Newest, Self::Oldest, Self::Sender, Self::Subject];
+    pub const BROWSE: [Self; 4] = [Self::Newest, Self::Oldest, Self::Sender, Self::Subject];
+    pub const SEARCH: [Self; 5] = [
+        Self::Relevance,
+        Self::Newest,
+        Self::Oldest,
+        Self::Sender,
+        Self::Subject,
+    ];
 }
 impl fmt::Display for MailSort {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -215,6 +223,7 @@ impl fmt::Display for MailSort {
             Self::Oldest => "Oldest first",
             Self::Sender => "Sender A–Z",
             Self::Subject => "Subject A–Z",
+            Self::Relevance => "Best match",
         })
     }
 }

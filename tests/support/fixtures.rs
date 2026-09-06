@@ -158,6 +158,24 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
             .await?;
     }
     store.upsert(mails).await?;
+    if std::env::args().any(|arg| arg == "--search-mail") {
+        let mut messages = Vec::new();
+        for (index, subject, body) in [
+            (0, "Quick note", "test".to_owned()),
+            (
+                1,
+                "Project testing plan",
+                "Here is the test plan. Other project notes. ".repeat(50),
+            ),
+            (2, "Camping equipment", "tent".to_owned()),
+            (3, "Testing checklist", "testing".to_owned()),
+        ] {
+            let mut mail = parse_mail("preview-work", &format!("search-{index}"), "INBOX", format!("From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: {subject}\r\n\r\n{body}").into_bytes(), true, false)?;
+            mail.summary.timestamp = chrono::Utc::now().timestamp() + 60 - (3 - index) * 3600;
+            messages.push(mail);
+        }
+        store.upsert(messages).await?;
+    }
     if std::env::args().any(|a| a == "--outgoing-mail") {
         seed_outgoing(store).await?;
     }
@@ -199,6 +217,24 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
                 .await?;
         }
         store.save_folders("preview-work".into(), folders).await?;
+    }
+    if std::env::args().any(|arg| arg == "--search-mail") {
+        store
+            .save_folders(
+                "preview-work".into(),
+                [
+                    "INBOX",
+                    "Archive",
+                    "Projects",
+                    "Projects/Archive",
+                    "Café",
+                    "Sent",
+                    "Trash",
+                ]
+                .map(str::to_owned)
+                .to_vec(),
+            )
+            .await?;
     }
     if std::env::args().any(|a| a == "--empty-calendars") {
         return Ok(());

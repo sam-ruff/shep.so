@@ -16,7 +16,7 @@ fn main() {
         println!("Responsiveness budget: {count} cached messages, 4 accounts, page size {PAGE_SIZE}");
         let inbox=measure(&store,MailQuery{folder:"INBOX".into(),..Default::default()},"Inbox page",50.).await;
         let account=measure(&store,MailQuery{folder:"INBOX".into(),account:Some("account-1".into()),..Default::default()},"Account page",50.).await;
-        let search=measure(&store,MailQuery{search:"milestone 17".into(),..Default::default()},"FTS search",50.).await;
+        let search=measure(&store,MailQuery{search:"milestone 17".into(),sort:MailSort::Relevance,..Default::default()},"FTS search",50.).await;
         let mut times=Vec::new();for i in 0..100{let start=Instant::now();store.detail(format!("bench:{i}")).await.unwrap();times.push(start.elapsed().as_secs_f64()*1000.);}
         times.sort_by(f64::total_cmp);println!("Cached body: p95={:.2}ms budget=10ms",times[95]);assert!(times[95]<10.);
         let report=serde_json::json!({"dataset_messages":count,"samples":60,"metrics_ms":{"inbox_page_p95":inbox,"account_page_p95":account,"search_p95":search,"cached_body_p95":times[95]}});

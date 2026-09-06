@@ -178,6 +178,8 @@ impl App {
             return;
         }
         self.dialog = None;
+        self.focused_input = None;
+        self.pending_focus = None;
         self.project_mail_flags();
         if self.selected.as_ref() == Some(&id) || self.reader_id() == Some(id.as_str()) {
             self.selected = None;
@@ -362,6 +364,59 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn metadata_actions_work_without_a_body_and_never_target_a_stale_body() {
+        for stale in [false, true] {
+            let (mut app, mut commands, original) = fixture().await;
+            app.detail = if stale {
+                let mut old = (*original).clone();
+                old.summary.id = "another-message".into();
+                Some(Arc::new(old))
+            } else {
+                None
+            };
+            let _ = app.handle(Message::ToggleRead);
+            assert!(!app.page.rows[0].unread);
+            let Command::Flags(request, mail, _) = commands.try_recv().unwrap() else {
+                panic!("Expected read change");
+            };
+            assert_eq!(mail.id, original.summary.id);
+            let _ = app.flags_finished(request, mail, Ok(()));
+            let _ = app.key(
+                Key::Character("m".into()),
+                keyboard::Modifiers::empty(),
+                false,
+            );
+            assert_eq!(app.dialog, Some(Dialog::Move));
+            app.focused_input = Some("folder-search");
+            let _ = app.handle(Message::Move("Archive".into()));
+            let Command::Move(_, mail, destination) = commands.try_recv().unwrap() else {
+                panic!("Expected move");
+            };
+            assert_eq!(mail.id, original.summary.id);
+            assert_eq!(destination, "Archive");
+            assert!(app.focused_input.is_none());
+            assert!(app.dialog.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_conversation_body_actions_keep_the_expanded_message_identity() {
+        let (mut app, mut commands, original) = fixture().await;
+        let mut older = original.summary.clone();
+        older.id = "older-reply".into();
+        older.folder = "Archive".into();
+        app.conversation.focus = Some(older.id.clone());
+        Arc::make_mut(&mut app.conversation.page).rows = vec![older.clone()];
+        // The old anchor body is still cached while the expanded reply loads.
+        let _ = app.handle(Message::ToggleRead);
+        let Command::Flags(_, mail, _) = commands.try_recv().unwrap() else {
+            panic!("Expected read change");
+        };
+        assert_eq!(mail.id, older.id);
+        assert_eq!(mail.folder, "Archive");
+    }
+
     async fn fixture() -> (App, tokio::sync::mpsc::Receiver<Command>, Arc<MailDetail>) {
         let store = crate::store::Store::memory().unwrap();
         let mail = parse_mail(

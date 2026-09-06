@@ -19,6 +19,24 @@ pub(super) struct Conversation {
 }
 
 impl App {
+    pub(super) fn action_mail(&self) -> Option<&Mail> {
+        let id = self.reader_id()?;
+        let mail = self
+            .detail
+            .as_ref()
+            .filter(|detail| detail.summary.id == id)
+            .map(|detail| &detail.summary)
+            .or_else(|| {
+                self.conversation
+                    .page
+                    .rows
+                    .iter()
+                    .find(|mail| mail.id == id)
+            })
+            .or_else(|| self.page.rows.iter().find(|mail| mail.id == id))?;
+        Some(self.mail_actions.effective(mail))
+    }
+
     pub(super) fn reader_id(&self) -> Option<&str> {
         self.selected.as_ref()?;
         self.conversation

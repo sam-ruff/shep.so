@@ -3,6 +3,36 @@
 use super::*;
 
 #[test]
+fn search_uses_relevance_without_overwriting_browse_sort_and_rejects_stale_pages() {
+    let (mut app, _) = App::new();
+    app.preferences.mail_sort = MailSort::Oldest;
+    app.query.sort = MailSort::Oldest;
+    let _ = app.handle(Message::Query("test".into()));
+    assert_eq!(app.query.sort, MailSort::Relevance);
+    let old_generation = app.generation;
+    let _ = app.handle(Message::Sort(MailSort::Sender));
+    assert_eq!(app.preferences.mail_sort, MailSort::Oldest);
+    let _ = app.handle(Message::Query("other".into()));
+    assert_eq!(app.query.sort, MailSort::Sender);
+    let _ = app.handle(Message::Backend(Event::Page(
+        old_generation,
+        Arc::new(MailPage {
+            total: 42,
+            ..Default::default()
+        }),
+        false,
+    )));
+    assert_ne!(app.page.total, 42);
+    let _ = app.handle(Message::Query("".into()));
+    assert_eq!(app.query.sort, MailSort::Oldest);
+    let _ = app.handle(Message::Query("new search".into()));
+    assert_eq!(app.query.sort, MailSort::Relevance);
+    let _ = app.handle(Message::Tab(Tab::Mail));
+    assert!(app.query.search.is_empty());
+    assert_eq!(app.query.sort, MailSort::Oldest);
+}
+
+#[test]
 fn recovered_mail_sync_clears_its_error_but_preserves_other_action_errors() {
     let (mut app, _) = App::new();
     let _ = app.handle(Message::Backend(Event::MailSyncFinished(Err(

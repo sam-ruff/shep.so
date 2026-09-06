@@ -1269,7 +1269,7 @@ impl App {
                     };
                     self.query = MailQuery {
                         account: self.query.account.take(),
-                        sort: self.query.sort,
+                        sort: self.preferences.mail_sort,
                         ..Default::default()
                     };
                     self.full_reader = false;
@@ -1338,6 +1338,11 @@ impl App {
                 return widget::operation::focus("unfocused");
             }
             Message::Query(query) => {
+                if query.trim().is_empty() {
+                    self.query.sort = self.preferences.mail_sort;
+                } else if self.query.search.trim().is_empty() {
+                    self.query.sort = MailSort::Relevance;
+                }
                 self.query.search = query;
                 self.query.offset = 0;
                 self.generation += 1;
@@ -1373,12 +1378,14 @@ impl App {
             }
             Message::Sort(sort) => {
                 self.query.sort = sort;
-                self.preferences.mail_sort = sort;
+                if self.query.search.trim().is_empty() && sort != MailSort::Relevance {
+                    self.preferences.mail_sort = sort;
+                    self.save_preferences();
+                }
                 self.query.offset = 0;
                 self.selected = None;
                 self.detail = None;
                 self.request_page();
-                self.save_preferences();
             }
             Message::Filter(filter) => {
                 self.query.unread_only = filter == MailFilter::Unread;
@@ -1529,14 +1536,16 @@ impl App {
                 }
             }
             Message::Move(folder) => {
-                if let Some(d) = &self.detail {
+                if let Some(mail) = self.action_mail().cloned() {
                     let destination = self.field("move_account");
                     let transfer = self.dialog == Some(Dialog::Move)
                         && self.preferences.cross_account_moves
                         && !destination.is_empty()
-                        && destination != d.summary.account_id;
-                    if !transfer && d.summary.folder == folder {
+                        && destination != mail.account_id;
+                    if !transfer && mail.folder == folder {
                         self.dialog = None;
+                        self.focused_input = None;
+                        self.pending_focus = None;
                         return Task::none();
                     }
                     let label = if folder.eq_ignore_ascii_case("INBOX") {
@@ -1546,13 +1555,15 @@ impl App {
                     }
                     .to_owned();
                     let command = if transfer {
-                        Command::Transfer(d.summary.clone(), destination.to_owned(), folder)
+                        Command::Transfer(mail, destination.to_owned(), folder)
                     } else {
-                        self.move_mail(d.summary.clone(), folder);
+                        self.move_mail(mail, folder);
                         return Task::none();
                     };
                     if self.try_command(command) {
                         self.dialog = None;
+                        self.focused_input = None;
+                        self.pending_focus = None;
                         self.notice(format!("Moving to {label}…"), false);
                         self.selected = None;
                         self.detail = None;
@@ -1560,11 +1571,8 @@ impl App {
                 }
             }
             Message::ToggleStar | Message::ToggleRead => {
-                if let Some(detail) = &self.detail {
-                    self.toggle_mail_flag(
-                        detail.summary.clone(),
-                        matches!(message, Message::ToggleRead),
-                    );
+                if let Some(mail) = self.action_mail().cloned() {
+                    self.toggle_mail_flag(mail, matches!(message, Message::ToggleRead));
                 }
             }
             Message::Reply | Message::ReplyAll => {
@@ -2289,9 +2297,8 @@ impl App {
     }
     fn move_folders(&self) -> Vec<String> {
         let account = if self.field("move_account").is_empty() {
-            self.detail
-                .as_ref()
-                .map(|d| d.summary.account_id.as_str())
+            self.action_mail()
+                .map(|mail| mail.account_id.as_str())
                 .unwrap_or("")
         } else {
             self.field("move_account")
@@ -2655,7 +2662,7 @@ impl App {
                     focus_after_layout("search")
                 }
                 Action::Move => {
-                    if self.detail.is_some() {
+                    if self.action_mail().is_some() {
                         self.open(Dialog::Move);
                         return focus_after_layout("folder-search");
                     }
