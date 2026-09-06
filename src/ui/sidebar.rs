@@ -49,6 +49,8 @@ impl App {
                 icon,
                 action: if folder.is_empty() {
                     Message::Starred
+                } else if folder == "Sent" {
+                    Message::SentFolder
                 } else {
                     Message::Folder(folder.into())
                 },
@@ -61,7 +63,22 @@ impl App {
                 section: false,
             });
         }
-        for draft in &self.workspace.drafts {
+        if self.workspace.outgoing_pending > 0 {
+            items.push(SidebarItem {
+                label: format!("Outbox · {}", self.workspace.outgoing_pending),
+                icon: "send",
+                action: Message::OpenOutbox,
+                active: self.dialog == Some(Dialog::Outbox),
+                depth: 0,
+                section: false,
+            });
+        }
+        for draft in self
+            .workspace
+            .drafts
+            .iter()
+            .filter(|d| !self.workspace.outgoing_drafts.contains(&d.id))
+        {
             items.push(SidebarItem {
                 label: if draft.subject.is_empty() {
                     "Untitled draft".into()

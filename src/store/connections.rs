@@ -29,6 +29,7 @@ pub struct RemovalPreview {
     pub drafts: usize,
     pub events: usize,
     pub transfers: usize,
+    pub outgoing: usize,
     pub fingerprint: String,
 }
 #[derive(Debug, Clone)]
@@ -133,6 +134,7 @@ fn preview(c: &Connection, target: ConnectionRef) -> anyhow::Result<RemovalPrevi
         drafts: 0,
         events: 0,
         transfers: 0,
+        outgoing: 0,
         fingerprint: String::new(),
     };
     match out.target.kind {
@@ -155,6 +157,18 @@ fn preview(c: &Connection, target: ConnectionRef) -> anyhow::Result<RemovalPrevi
                 // serializer. Removal must also review the current file list.
                 digest.update(serde_json::to_vec(&draft.attachments)?);
                 out.drafts += 1;
+            }
+            let deliveries = c
+                .prepare("SELECT data,stage FROM outgoing WHERE account=? ORDER BY attempt")?
+                .query_map([&out.target.id], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            for (data, stage) in deliveries {
+                digest.update(data);
+                if !matches!(stage.as_str(), "Complete" | "Released") {
+                    out.outgoing += 1;
+                }
             }
             let pending = transfers(c, &out.target.id)?;
             out.transfers = pending.len();
@@ -201,6 +215,10 @@ impl Store {
                     put(&tx, "accounts", &accounts)?;
                     keys.extend([target.id.clone(),format!("{}:smtp",target.id)]);
                     for (key,_) in transfers(&tx, &target.id)? { tx.execute("DELETE FROM kv WHERE key=?", [key])?; }
+                    tx.execute("DELETE FROM draft_sent WHERE id IN (SELECT draft FROM outgoing WHERE account=?)",[&target.id])?;
+                    tx.execute("DELETE FROM outgoing WHERE account=?",[&target.id])?;
+                    tx.execute("DELETE FROM sent_folders WHERE account=?",[&target.id])?;
+                    outgoing::changed(&tx)?;
                     tx.execute("DELETE FROM messages WHERE account=?", [&target.id])?;
                     tx.execute("DELETE FROM conversation_tokens WHERE account=?", [&target.id])?;
                     let mut folder_map: std::collections::HashMap<String,Vec<String>> = get(&tx, "account_folders")?;

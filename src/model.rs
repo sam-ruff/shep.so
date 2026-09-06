@@ -73,6 +73,23 @@ pub enum ConnectionTarget {
     Smtp,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SentCopyPolicy {
+    #[default]
+    Automatic,
+    ServerManaged,
+    LocalOnly,
+}
+impl std::fmt::Display for SentCopyPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Automatic => "Save a copy on the mail server",
+            Self::ServerManaged => "My server saves Sent automatically",
+            Self::LocalOnly => "Keep Sent copies only on this device",
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Account {
     pub id: String,
@@ -96,6 +113,10 @@ pub struct Account {
     pub smtp_username: String,
     #[serde(default)]
     pub smtp_separate_password: bool,
+    #[serde(default)]
+    pub sent_copy: SentCopyPolicy,
+    #[serde(default)]
+    pub sent_folder: String,
 }
 impl Account {
     pub fn smtp_security(&self) -> ConnectionSecurity {
@@ -114,6 +135,10 @@ impl Account {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.sent_folder.len() <= 1024 && !self.sent_folder.contains(['\r', '\n', '\0']),
+            "Choose a valid Sent folder."
+        );
         anyhow::ensure!(!self.name.trim().is_empty(), "Give this account a name.");
         self.email
             .parse::<lettre::message::Mailbox>()
@@ -225,6 +250,7 @@ impl fmt::Display for MailFilter {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MailQuery {
+    pub sent_only: bool,
     pub account: Option<String>,
     pub folder: String,
     pub search: String,
@@ -311,6 +337,7 @@ pub enum MailSyncItem {
     },
     SkippedLarge,
     Folders(String, Vec<String>),
+    SentFolder(String, Option<String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

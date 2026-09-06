@@ -234,6 +234,44 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(check("conversation_total", 3), check("loaded_message_id", "preview-work:INBOX:launch-2"),
                        wait(150), shot("conversation-compact"))
 
+    def test_outbox_delivery_review_and_copy_recovery(self):
+        self.mcp.call("desktop.start", outgoing_mail=True)
+        self.mcp.batch(check("outgoing_pending", 2), click(91, 478), check("dialog", "Outbox"),
+                       check("outgoing_rows.0.subject", "Delivery needs review"),
+                       check("outgoing_rows.0.delivery", "Uncertain"), shot("outbox-delivery-review-light"),
+                       click(650, 600), check("outgoing_pending", 2), check("outgoing_confirmed", False),
+                       click(538, 522), check("notice", "Checking server copies is disabled in preview", "contains"),
+                       check("busy", []), wait(150), shot("outbox-after-server-check"),
+                       click(482, 532), check("outgoing_confirmed", True), click(650, 570),
+                       check("outgoing_pending", 1), check("outgoing_rows.0.subject", "Sent copy needs review"),
+                       check("outgoing_confirmed", False), check("busy", []), wait(150), shot("outbox-copy-recovery-light"),
+                       click(671, 614), check("outgoing_confirmed", False), check("outgoing_pending", 1),
+                       click(482, 574), check("outgoing_confirmed", True), click(671, 614),
+                       check("notice", "disabled in preview", "contains"), check("busy", []),
+                       check("outgoing_pending", 1), wait(150), shot("outbox-copy-retry-error"),
+                       click(799, 584), check("outgoing_pending", 0), check("outgoing_rows", []),
+                       shot("outbox-empty-light"), key("Escape"), check("dialog", None),
+                       click(100, 478), check("dialog", "Compose"),
+                       check("fields.subject", "Delivery needs review"),
+                       check("editor", "A saved message for the outgoing recovery flow.", "contains"),
+                       check("draft_count", 1), shot("reviewed-delivery-returned-draft"))
+
+    def test_outbox_compact_dark(self):
+        self.mcp.call("desktop.start", width=900, height=640, outgoing_mail=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"), click(91, 478), check("dialog", "Outbox"),
+                       check("outgoing_rows.0.delivery", "Uncertain"), shot("outbox-delivery-review-dark-compact"),
+                       click(260, 462), check("outgoing_pending", 2), check("outgoing_confirmed", False),
+                       click(212, 423), check("outgoing_confirmed", True), click(260, 462),
+                       check("outgoing_rows.0.delivery", "Accepted"), check("outgoing_confirmed", False),
+                       check("draft_count", 0), check("busy", []), wait(150), shot("outbox-recorded-sent-compact"),
+                       click(529, 390), check("outgoing_pending", 1),
+                       check("outgoing_rows.0.subject", "Sent copy needs review"),
+                       check("busy", []), wait(150), shot("outbox-copy-recovery-compact"),
+                       click(529, 474), check("outgoing_pending", 0), check("outgoing_rows", []),
+                       shot("outbox-empty-compact"), key("Escape"), check("dialog", None),
+                       click(87, 359), check("folder", "Sent"), check("total", 2), shot("local-sent-copies-compact"))
+
     def test_connection_removal_review_and_cancel(self):
         self.mcp.batch(key("c"), check("dialog", "Compose"),
                        click(650, 362), type_text("A draft to review before removal"),
@@ -394,9 +432,17 @@ class NativeFlows(unittest.TestCase):
                        click(674, 444), type_text("Fastmail"), check("fields.name", "Fastmail"), click(664, 524), type_text("test@example.com"), check("fields.email", "test@example.com"),
                        click(572, 580), check("fields.host", "imap.fastmail.com"), click(936, 635), check("fields.setup_step", "1"), shot("account-incoming"),
                        click(690, 408), wait(80), click(690, 482), check("fields.incoming_security", "StartTls"), check("fields.port", "143"),
-                       click(560, 701), check("fields.test_incoming", "Test workspaces do not connect", "contains"), shot("tested-incoming"), click(683, 179), check("fields.setup_step", "2"), shot("account-smtp"), click(686, 425), wait(80), click(686, 498),
+                       click(560, 701), check("fields.test_incoming", "Test workspaces do not connect", "contains"), shot("tested-incoming"), click(683, 179), check("fields.setup_step", "2"), shot("account-smtp"), click(686, 347), wait(80), click(686, 420),
                        check("fields.smtp_security", "StartTls"), check("fields.smtp_port", "587"),
-                       click(544, 677), check("fields.test_smtp", "Test workspaces do not connect", "contains"), shot("tested-smtp"))
+                       click(544, 598), check("fields.test_smtp", "Test workspaces do not connect", "contains"), shot("tested-smtp"),
+                       click(700, 772), type_text("Sent Mail"), check("fields.sent_folder", "Sent Mail"),
+                       click(704, 692), wait(100), shot("sent-copy-policy-menu"),
+                       click(664, 620), check("fields.sent_copy", "ServerManaged"),
+                       click(704, 692), wait(100), click(664, 655), check("fields.sent_copy", "LocalOnly"),
+                       check("fields.sent_folder", "Sent Mail"), shot("local-sent-policy"),
+                       click(923, 788), check("notice", "Account changes are disabled in preview", "contains"),
+                       check("dialog", "Account"), check("fields.sent_copy", "LocalOnly"),
+                       check("fields.sent_folder", "Sent Mail"), check("account_count", 2))
 
     def test_background_sync_keeps_navigation_responsive(self):
         for appearance in ("light", "dark"):

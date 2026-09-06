@@ -40,7 +40,7 @@ fn attachments(c: &Connection, id: &str) -> anyhow::Result<Vec<DraftAttachment>>
     })?
     .collect::<Result<_, _>>()?)
 }
-fn sent(c: &Connection, draft: &Draft) -> anyhow::Result<bool> {
+pub(super) fn sent(c: &Connection, draft: &Draft) -> anyhow::Result<bool> {
     let revision: Option<i64> = c
         .query_row(
             "SELECT revision FROM draft_sent WHERE id=?",
@@ -85,20 +85,13 @@ impl Store {
     }
     pub async fn finish_draft_send(&self, draft: Draft) -> anyhow::Result<DraftState> {
         self.run(move |c| {
-            let revision = i64::try_from(draft.revision).context("Invalid draft revision")?;
             let tx = c.transaction()?;
-            tx.execute("INSERT INTO draft_sent(id,revision) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET revision=MAX(revision,excluded.revision)", params![draft.id, revision])?;
-            let mut drafts: Vec<Draft> = get(&tx, "drafts")?;
-            drafts.retain(|current| current.id != draft.id || current.revision > draft.revision);
-            if !drafts.iter().any(|current| current.id == draft.id) {
-                tx.execute("DELETE FROM draft_attachments WHERE draft=?", [&draft.id])?;
-            }
-            put(&tx, "drafts", &drafts)?;
-            changed(&tx)?;
+            finish(&tx, draft)?;
             let state = snapshot(&tx)?;
             tx.commit()?;
             Ok(state)
-        }).await
+        })
+        .await
     }
     pub async fn add_draft_files(
         &self,
@@ -213,4 +206,17 @@ fn read_files(paths: Vec<PathBuf>) -> anyhow::Result<Vec<FilePart>> {
         });
     }
     Ok(files)
+}
+
+pub(super) fn finish(c: &Connection, draft: Draft) -> anyhow::Result<()> {
+    let revision = i64::try_from(draft.revision).context("Invalid draft revision")?;
+    c.execute("INSERT INTO draft_sent(id,revision) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET revision=MAX(revision,excluded.revision)", params![draft.id, revision])?;
+    let mut drafts: Vec<Draft> = get(c, "drafts")?;
+    drafts.retain(|current| current.id != draft.id || current.revision > draft.revision);
+    if !drafts.iter().any(|current| current.id == draft.id) {
+        c.execute("DELETE FROM draft_attachments WHERE draft=?", [&draft.id])?;
+    }
+    put(c, "drafts", &drafts)?;
+    changed(c)?;
+    Ok(())
 }

@@ -3,6 +3,7 @@ mod connections;
 mod conversations;
 pub use connections::{ConnectionKind, ConnectionRef, CredentialCleanup, RemovalPreview};
 mod drafts;
+mod outgoing;
 mod restore;
 use anyhow::Context;
 pub use conversations::{CONVERSATION_PAGE_SIZE, ConversationPage};
@@ -29,6 +30,9 @@ pub struct Workspace {
     pub drafts_revision: u64,
     pub connections_revision: u64,
     pub credential_cleanup: usize,
+    pub outgoing_pending: usize,
+    pub outgoing_revision: u64,
+    pub outgoing_drafts: std::collections::HashSet<String>,
     pub removed_google_calendars: usize,
 }
 
@@ -82,6 +86,7 @@ impl Store {
             CREATE INDEX IF NOT EXISTS event_start ON events(start);")?;
         conversations::schema(&conn)?;
         connections::schema(&conn)?;
+        outgoing::schema(&conn)?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 2 {
             let tx = conn.transaction()?;
@@ -262,6 +267,9 @@ impl Store {
                 drafts: drafts.drafts,
                 drafts_revision: drafts.revision,
                 connections_revision: get(c, "connections_revision")?,
+                outgoing_pending: outgoing::pending(c)?,
+                outgoing_revision: get(c, "outgoing_revision")?,
+                outgoing_drafts:c.prepare("SELECT draft FROM outgoing WHERE stage IN ('Submitting','Uncertain','Accepted')")?.query_map([],|r|r.get::<_,String>(0))?.collect::<Result<_,_>>()?,
                 credential_cleanup: c.query_row(
                     "SELECT COUNT(*) FROM credential_cleanup",
                     [],
@@ -280,23 +288,21 @@ impl Store {
         self.run(move |c| {
             let tx = c.transaction()?;
             for message in messages {
-                connections::allow(&tx, ConnectionKind::Account, &message.summary.account_id)?;
-                let m = &message.summary;
-                tx.execute("INSERT INTO messages(id,account,folder,sender,subject,body,timestamp,unread,starred,data,raw)
-                    VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
-                    ON CONFLICT(id) DO UPDATE SET unread=excluded.unread,starred=excluded.starred",
-                    params![m.id,m.account_id,m.folder,m.sender,m.subject,message.text,m.timestamp,m.unread,m.starred,serde_json::to_string(m)?,message.raw])?;
-                conversations::index_message(&tx, &m.id)?;
+                upsert_message(&tx, &message)?;
             }
-            tx.commit()?; Ok(())
-        }).await
+            tx.commit()?;
+            Ok(())
+        })
+        .await
     }
     pub async fn query(&self, query: MailQuery) -> anyhow::Result<MailPage> {
         self.run(move |c| {
             let mut filters = vec!["1=1".to_string()];
             let mut values: Vec<rusqlite::types::Value> = Vec::new();
             if let Some(account) = query.account { filters.push("account=?".into()); values.push(account.into()); }
-            if !query.folder.is_empty() { filters.push("folder=?".into()); values.push(query.folder.into()); }
+            if query.sent_only {
+                filters.push("((folder='Sent' AND (id LIKE '%:local-sent-%' OR account NOT IN (SELECT account FROM sent_folders))) OR (account,folder) IN (SELECT account,folder FROM sent_folders))".into());
+            } else if !query.folder.is_empty() { filters.push("folder=?".into()); values.push(query.folder.into()); }
             if query.unread_only { filters.push("unread=1".into()); }
             if query.read_only { filters.push("unread=0".into()); }
             if query.attachments_only { filters.push("json_extract(data,'$.attachment_count')>0".into()); }
@@ -401,6 +407,8 @@ impl Store {
             connections::allow(c, ConnectionKind::Account, &account.id)?;
             let mut accounts: Vec<Account> = get(c, "accounts")?;
             accounts.retain(|a| a.id != account.id);
+            if !account.sent_folder.is_empty() {c.execute("INSERT INTO sent_folders(account,folder) VALUES(?,?) ON CONFLICT(account) DO UPDATE SET folder=excluded.folder",params![account.id,account.sent_folder])?;}
+            else {c.execute("DELETE FROM sent_folders WHERE account=?",[&account.id])?;}
             accounts.push(account);
             put(c, "accounts", &accounts)?;
             connections::changed(c)?;
@@ -417,6 +425,17 @@ impl Store {
             connections::allow(c, ConnectionKind::Account, &account)?;
             let mut mapping: std::collections::HashMap<String, Vec<String>> =
                 get(c, "account_folders")?;
+            use rusqlite::OptionalExtension;
+            let sent: Option<String> = c
+                .query_row(
+                    "SELECT folder FROM sent_folders WHERE account=?",
+                    [&account],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if sent.is_some_and(|folder| !folders.contains(&folder)) {
+                c.execute("DELETE FROM sent_folders WHERE account=?", [&account])?;
+            }
             mapping.insert(account, folders);
             put(c, "account_folders", &mapping)?;
             connections::changed(c)?;
@@ -470,6 +489,12 @@ impl Store {
                 .await
             }
             MailSyncItem::Folders(account, folders) => self.save_folders(account, folders).await,
+            MailSyncItem::SentFolder(account,folder)=>self.run(move |c| {
+                connections::allow(c,ConnectionKind::Account,&account)?;
+                if let Some(folder)=folder { c.execute("INSERT INTO sent_folders(account,folder) VALUES(?,?) ON CONFLICT(account) DO UPDATE SET folder=excluded.folder",params![account,folder])?; }
+
+                Ok(())
+            }).await,
             MailSyncItem::SkippedLarge => Ok(()),
         }
     }
@@ -680,4 +705,16 @@ pub(super) fn calendar_changed(c: &Connection) -> anyhow::Result<()> {
             .checked_add(1)
             .context("Calendar revision overflow")?,
     )
+}
+
+fn upsert_message(c: &Connection, message: &StoredMail) -> anyhow::Result<()> {
+    connections::allow(c, ConnectionKind::Account, &message.summary.account_id)?;
+    let m = &message.summary;
+    c.execute("INSERT INTO messages(id,account,folder,sender,subject,body,timestamp,unread,starred,data,raw)
+        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+        ON CONFLICT(id) DO UPDATE SET unread=excluded.unread,starred=excluded.starred",
+        params![m.id,m.account_id,m.folder,m.sender,m.subject,message.text,m.timestamp,m.unread,m.starred,serde_json::to_string(m)?,message.raw])?;
+    conversations::index_message(c, &m.id)?;
+    outgoing::reconcile(c, m)?;
+    Ok(())
 }

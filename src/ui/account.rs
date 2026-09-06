@@ -218,6 +218,43 @@ impl App {
                 if !self.field("test_smtp").is_empty() {
                     body = body.push(text(self.field("test_smtp")).size(12));
                 }
+                if self.protocol == Protocol::Imap {
+                    let policy = match self.field("sent_copy") {
+                        "ServerManaged" => SentCopyPolicy::ServerManaged,
+                        "LocalOnly" => SentCopyPolicy::LocalOnly,
+                        _ => SentCopyPolicy::Automatic,
+                    };
+                    body = body.push(
+                        column![
+                            text("Sent copies").size(12),
+                            pick_list(
+                                [
+                                    SentCopyPolicy::Automatic,
+                                    SentCopyPolicy::ServerManaged,
+                                    SentCopyPolicy::LocalOnly
+                                ],
+                                Some(policy),
+                                |p| Message::Field("sent_copy", format!("{p:?}"))
+                            )
+                            .text_size(12)
+                            .padding(10)
+                            .width(Length::Fill)
+                            .style(select_input)
+                            .menu_style(select_menu)
+                        ]
+                        .spacing(8),
+                    );
+                    if policy != SentCopyPolicy::LocalOnly {
+                        body = body.push(self.account_field(
+                            "Sent folder (optional)",
+                            "Detect the server's Sent folder",
+                            "sent_folder",
+                            false,
+                        ));
+                    }
+                } else {
+                    body = body.push(muted("POP3 keeps Sent copies locally.").size(11));
+                }
             }
         }
         body.push(

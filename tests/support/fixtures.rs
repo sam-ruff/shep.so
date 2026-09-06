@@ -26,6 +26,8 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
         smtp_auth: SmtpAuth::Automatic,
         smtp_username: String::new(),
         smtp_separate_password: false,
+        sent_copy: Default::default(),
+        sent_folder: String::new(),
     };
     store.save_account(account.clone()).await?;
     store
@@ -156,6 +158,9 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
             .await?;
     }
     store.upsert(mails).await?;
+    if std::env::args().any(|a| a == "--outgoing-mail") {
+        seed_outgoing(store).await?;
+    }
     if std::env::args().any(|arg| arg == "--conversation-mail") {
         seed_conversations(store).await?;
     }
@@ -336,4 +341,82 @@ pub fn discover_calendars(
             access: CalendarAccess::READ_ONLY,
         },
     ])
+}
+
+async fn seed_outgoing(store: &Store) -> anyhow::Result<()> {
+    use crate::outgoing::{DeliveryState, SentState, Submission};
+    let account = store
+        .workspace()
+        .await?
+        .accounts
+        .into_iter()
+        .find(|a| a.id == "preview-work")
+        .unwrap();
+    for (index, subject) in ["Delivery needs review", "Sent copy needs review"]
+        .into_iter()
+        .enumerate()
+    {
+        let draft = Draft {
+            id: format!("preview-outgoing-{index}"),
+            account_id: account.id.clone(),
+            to: "friend@example.test".into(),
+            subject: subject.into(),
+            body: "A saved message for the outgoing recovery flow.".into(),
+            revision: 1,
+            ..Default::default()
+        };
+        store.save_draft(draft.clone()).await?;
+        let mut submission = Submission::new(
+            account.clone(),
+            &draft,
+            crate::compose::build(&account, &draft, vec![])?,
+        )?;
+        submission.info.created = chrono::Utc::now().timestamp() + (1 - index) as i64;
+        let info = store.begin_outgoing(submission, draft).await?;
+        if index == 0 {
+            store
+                .record_delivery(
+                    info.attempt,
+                    DeliveryState::Uncertain,
+                    Some("The connection closed before delivery was acknowledged.".into()),
+                )
+                .await?;
+        } else {
+            store
+                .record_delivery(info.attempt.clone(), DeliveryState::Accepted, None)
+                .await?;
+            let saved = store.outgoing_submission(info.attempt.clone()).await?;
+            let mail = parse_mail(
+                &account.id,
+                &info.local_remote_id(),
+                "Sent",
+                saved.raw,
+                false,
+                false,
+            )?;
+            store
+                .outgoing_local_sent(info.attempt.clone(), mail)
+                .await?;
+            store
+                .record_sent_copy(
+                    info.attempt.clone(),
+                    SentState::Appending,
+                    Some("Sent".into()),
+                    None,
+                )
+                .await?;
+            store
+                .record_sent_copy(
+                    info.attempt,
+                    SentState::Uncertain,
+                    Some("Sent".into()),
+                    Some(
+                        "Delivery succeeded, but the server did not acknowledge the Sent copy."
+                            .into(),
+                    ),
+                )
+                .await?;
+        }
+    }
+    Ok(())
 }

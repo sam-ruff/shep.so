@@ -3,6 +3,7 @@ mod backups;
 mod backups_tests;
 mod calendar_connections;
 mod dispatch;
+mod outgoing;
 mod removals;
 mod restore;
 #[cfg(test)]
@@ -48,6 +49,9 @@ pub enum Command {
     AddDraftFiles(Draft, Vec<std::path::PathBuf>),
     RemoveDraftFile(String, String),
     Send(Draft),
+    OutgoingPage(u64, usize),
+    ResolveOutgoing(String, crate::outgoing::RecoveryAction, bool),
+    RepairOutgoing,
     GoogleLogin(Preferences),
     CheckGoogleConnection,
     DiscoverCalendars(u64, String, String, SecretString),
@@ -75,6 +79,8 @@ impl Command {
     fn key(&self) -> Option<String> {
         match self {
             Self::TestConnection(_, _, _, target) => Some(format!("test:{target:?}")),
+            Self::ResolveOutgoing(id, ..) => Some(format!("outgoing:{id}")),
+            Self::RepairOutgoing => Some("outgoing-repair".into()),
             Self::Sync => Some("sync".into()),
             Self::SyncCalendar => Some("calendar".into()),
             Self::CleanupCredentials => Some("credential-cleanup".into()),
@@ -131,6 +137,10 @@ pub enum Event {
     DraftSaved(String, u64, Result<Arc<crate::store::DraftState>, String>),
     DraftFiles(String, Result<Arc<crate::store::DraftState>, String>),
     Sent(String, u64),
+    SubmissionQueued(String, u64),
+    OutgoingPage(u64, Result<Arc<crate::outgoing::OutgoingPage>, String>),
+    OutgoingChanged,
+    ReviewOutgoing(String, u64),
     CalendarEventSaved(String),
     ConnectionTest(ConnectionTarget, Result<String, String>),
 }
@@ -146,6 +156,7 @@ struct Engine {
     calendar_setup_lock: Arc<tokio::sync::Mutex<()>>,
     connection_lifecycle_lock: Arc<tokio::sync::Mutex<()>>,
     secret_remover: Arc<dyn removals::SecretRemover>,
+    outbound: Arc<dyn providers::outgoing::Outbound>,
     google_connection_lock: Arc<tokio::sync::Mutex<()>>,
     passphrases: Arc<dyn backup::PassphraseStore>,
     restore_credentials: Arc<dyn backup::restore::CredentialRestorer>,
@@ -205,6 +216,7 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             calendar_setup_lock: Default::default(),
             connection_lifecycle_lock: Default::default(),
             secret_remover: Arc::new(removals::OsSecretRemover),
+            outbound: Arc::new(providers::outgoing::Servers),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
@@ -224,6 +236,7 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
         }
         let _ = tx.try_send(Command::IndexConversations);
         let _ = tx.try_send(Command::CleanupCredentials);
+        let _ = tx.try_send(Command::RepairOutgoing);
         let _ = output
             .send(Event::Ready(tx, Arc::new(workspace), false))
             .await;
@@ -549,6 +562,10 @@ impl Engine {
                     mail.account_id != destination,
                     "Choose a different destination account."
                 );
+                anyhow::ensure!(
+                    !mail.remote_id.starts_with("local-sent-"),
+                    "This copy is stored locally. Save and sync its server Sent copy before moving it to another account."
+                );
                 // Always lock in the same order to prevent opposing transfers deadlocking.
                 let mut ids = [mail.account_id.clone(), destination.clone()];
                 ids.sort();
@@ -645,9 +662,7 @@ impl Engine {
                             .move_mail(&account, &password, &mail, &folder),
                     )
                     .await??;
-                    if account.protocol == Protocol::Imap
-                        && !mail.remote_id.starts_with("local-sent-")
-                    {
+                    if account.protocol == Protocol::Imap {
                         self.store.remove(mail.id).await?;
                         output.send(Event::Changed).await?;
                         drop(guard);
@@ -717,65 +732,26 @@ impl Engine {
                     ))
                     .await?;
             }
-            Command::Send(draft) => {
-                let _guard = self.account_lock(&draft.account_id).await;
-                self.store.ensure_draft_unsent(draft.clone()).await?;
-                self.store.save_draft(draft.clone()).await?;
-                let state = self.store.draft_state().await?;
-                output
-                    .send(Event::DraftSaved(
-                        draft.id.clone(),
-                        draft.revision,
-                        Ok(Arc::new(state)),
-                    ))
-                    .await?;
-                let account = self.account(&draft.account_id).await?;
-                let files = self.store.draft_files(draft.clone()).await?;
-                let (build_account, build_draft) = (account.clone(), draft.clone());
-                let message = tokio::task::spawn_blocking(move || {
-                    crate::compose::build(&build_account, &build_draft, files)
-                })
-                .await??;
-                anyhow::ensure!(
-                    !self.demo,
-                    "Sending is disabled in preview. Your draft is saved locally."
-                );
-                let password = providers::read_secret(&account.id).await?;
-                let password = if account.smtp_separate_password {
-                    providers::read_secret(&format!("{}:smtp", account.id)).await?
-                } else {
-                    password
-                };
-                let raw = providers::mail::send(&account, &password, message).await?;
-                // Delivery is acknowledged independently of local cleanup failures.
-                output
-                    .send(Event::Sent(draft.id.clone(), draft.revision))
-                    .await?;
-                let cleanup = async {
-                    let state = self.store.finish_draft_send(draft.clone()).await?;
-                    output
-                        .send(Event::DraftSaved(
-                            draft.id.clone(),
-                            draft.revision,
-                            Ok(Arc::new(state)),
-                        ))
-                        .await?;
-                    let remote = format!("local-sent-{}-{}", draft.id, draft.revision);
-                    let mail = tokio::task::spawn_blocking(move || {
-                        parse_mail(&account.id, &remote, "Sent", raw, false, false)
-                    })
-                    .await??;
-                    self.store.upsert(vec![mail]).await
-                }
-                .await;
-                if let Err(error) = cleanup {
-                    anyhow::bail!(
-                        "The message was sent, but its local Sent copy or draft cleanup failed: {error:#}. Do not resend this draft."
-                    );
-                }
-                output.send(Event::Changed).await?;
-                output.send(Event::Notice("Message sent.".into())).await?;
+            Command::Send(draft) => self.send_draft(draft, &mut output).await?,
+            Command::OutgoingPage(request, offset) => {
+                let result = self
+                    .store
+                    .outgoing_page(offset)
+                    .await
+                    .map(Arc::new)
+                    .map_err(|e| e.to_string());
+                output.send(Event::OutgoingPage(request, result)).await?;
             }
+            Command::ResolveOutgoing(attempt, action, confirmed) => {
+                let result = self
+                    .resolve_outgoing(attempt, action, confirmed, &mut output)
+                    .await;
+                self.workspace(&mut output).await?;
+                output.send(Event::OutgoingChanged).await?;
+                output.send(Event::Changed).await?;
+                result?;
+            }
+            Command::RepairOutgoing => self.repair_outgoing(&mut output).await?,
             Command::GoogleLogin(prefs) => {
                 anyhow::ensure!(!self.demo, "Google sign-in is disabled in preview.");
                 prefs.validate()?;
@@ -1104,6 +1080,7 @@ mod calendar_tests {
             calendar_setup_lock: Default::default(),
             connection_lifecycle_lock: Default::default(),
             secret_remover: Arc::new(removals::OsSecretRemover),
+            outbound: Arc::new(providers::outgoing::Servers),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),

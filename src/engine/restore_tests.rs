@@ -60,6 +60,7 @@ fn engine(credentials: Arc<Credentials>) -> Engine {
         calendar_setup_lock: Default::default(),
         connection_lifecycle_lock: Default::default(),
         secret_remover: Arc::new(removals::OsSecretRemover),
+        outbound: Arc::new(providers::outgoing::Servers),
         google_connection_lock: Default::default(),
         passphrases: Arc::new(backup::OsPassphraseStore),
         restore_credentials: credentials,

@@ -1,3 +1,4 @@
+pub mod sent;
 use super::MailProvider;
 use crate::model::*;
 use anyhow::Context;
@@ -163,7 +164,23 @@ async fn sync_imap_session<
     output: Sender<MailSyncItem>,
     only_folder: Option<&str>,
 ) -> anyhow::Result<Vec<String>> {
-    let names: Vec<_> = session.list(None, Some("*")).await?.try_collect().await?;
+    let capabilities = session.capabilities().await?;
+    let pattern = if capabilities.has_str("SPECIAL-USE") {
+        "\"*\" RETURN (SPECIAL-USE)"
+    } else {
+        "*"
+    };
+    let names: Vec<_> = session
+        .list(None, Some(pattern))
+        .await?
+        .try_collect()
+        .await?;
+    output
+        .send(MailSyncItem::SentFolder(
+            account.id.clone(),
+            sent::choose_folder(&names, &account.sent_folder).ok(),
+        ))
+        .await?;
     let mut folders: Vec<String> = names
         .iter()
         .filter(|n| {
@@ -503,16 +520,61 @@ async fn deliver(
     transport: lettre::AsyncSmtpTransport<lettre::Tokio1Executor>,
     message: lettre::Message,
 ) -> anyhow::Result<Vec<u8>> {
-    use lettre::AsyncTransport;
     let raw = message.formatted();
-    transport.send_raw(message.envelope(), &raw).await.map_err(|error| {
-        if error.is_transient() || error.is_permanent() {
-            anyhow::anyhow!("The SMTP server rejected the message. Your draft has been kept. {error}")
+    deliver_raw(transport, message.envelope(), &raw).await?;
+    Ok(raw)
+}
+
+#[derive(Debug, Clone)]
+pub enum DeliveryFailure {
+    Rejected(String),
+    Uncertain,
+}
+
+impl std::fmt::Display for DeliveryFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Rejected(reason)=>write!(f,"Message was not sent. Your draft has been kept. {reason}"),
+            Self::Uncertain=>f.write_str("SMTP could not confirm delivery. Review this message in Outbox before trying again."),
+        }
+    }
+}
+impl std::error::Error for DeliveryFailure {}
+
+pub async fn send_raw(
+    account: &Account,
+    password: &SecretString,
+    envelope: &lettre::address::Envelope,
+    raw: &[u8],
+) -> Result<(), DeliveryFailure> {
+    let transport = smtp_transport(account, password).map_err(|_| {
+        DeliveryFailure::Rejected("Check your SMTP server and security settings.".into())
+    })?;
+    deliver_raw(transport, envelope, raw).await
+}
+async fn deliver_raw(
+    transport: lettre::AsyncSmtpTransport<lettre::Tokio1Executor>,
+    envelope: &lettre::address::Envelope,
+    raw: &[u8],
+) -> Result<(), DeliveryFailure> {
+    use lettre::AsyncTransport;
+    if raw.is_empty() || raw.len() > MAX_MESSAGE_BYTES {
+        return Err(DeliveryFailure::Rejected(
+            "The message exceeds the sending size limit.".into(),
+        ));
+    }
+    transport.send_raw(envelope, raw).await.map_err(|error| {
+        if let Some(code) = error.status() {
+            DeliveryFailure::Rejected(format!("The SMTP server rejected it (status {code})."))
+        } else if error.is_tls() || error.is_client() || error.is_transport_shutdown() {
+            DeliveryFailure::Rejected(
+                "Check the SMTP connection and authentication settings.".into(),
+            )
         } else {
-            anyhow::anyhow!("SMTP could not confirm delivery. Your draft has been kept; check Sent before trying again. {error}")
+            DeliveryFailure::Uncertain
         }
     })?;
-    Ok(raw)
+    Ok(())
 }
 
 /// Read-only handshake/authentication probe. Never sends mail or modifies messages.
@@ -682,7 +744,7 @@ mod tests {
         let (client, server) = tokio::io::duplex(8192);
         let server = tokio::spawn(async move {
             let mut server = BufReader::new(server);
-            for stage in 0..7 {
+            for stage in 0..8 {
                 let mut line = String::new();
                 server.read_line(&mut line).await.unwrap();
                 let (tag, command) = line.trim_end().split_once(' ').unwrap();
@@ -692,18 +754,22 @@ mod tests {
                         String::new()
                     }
                     1 => {
+                        assert_eq!(command, "CAPABILITY");
+                        "* CAPABILITY IMAP4rev1\r\n".into()
+                    }
+                    2 => {
                         assert_eq!(command, "LIST \"\" *");
                         "* LIST () \"/\" \"INBOX\"\r\n".into()
                     }
-                    2 => {
+                    3 => {
                         assert_eq!(command, "SELECT \"INBOX\"");
                         "* 2 EXISTS\r\n* OK [UIDVALIDITY 12] valid\r\n".into()
                     }
-                    3 => {
+                    4 => {
                         assert_eq!(command, "UID SEARCH ALL");
                         "* SEARCH 7 8\r\n".into()
                     }
-                    4 => {
+                    5 => {
                         assert_eq!(command, "UID FETCH 8,7 (UID FLAGS RFC822.SIZE)");
                         format!(
                             "* 1 FETCH (UID 8 FLAGS () RFC822.SIZE {})\r\n* 2 FETCH (UID 7 FLAGS (\\Seen \\Flagged) RFC822.SIZE {})\r\n",
@@ -711,7 +777,7 @@ mod tests {
                             raw.len()
                         )
                     }
-                    5 => {
+                    6 => {
                         assert_eq!(command, "UID FETCH 8,7 (UID FLAGS BODY.PEEK[])");
                         format!(
                             "* 1 FETCH (UID 8 FLAGS () BODY[] {{{}}}\r\n{})\r\n* 2 FETCH (UID 7 FLAGS (\\Seen \\Flagged) BODY[] {{{}}}\r\n{})\r\n",

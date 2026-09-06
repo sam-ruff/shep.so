@@ -49,7 +49,8 @@ impl CommandSender {
             Command::Query(..)
             | Command::Detail { .. }
             | Command::Conversation(..)
-            | Command::RemovalPreview(..) => &self.reads,
+            | Command::RemovalPreview(..)
+            | Command::OutgoingPage(..) => &self.reads,
             Command::SavePreferences(..)
             | Command::SaveDraft(_)
             | Command::AutoSaveDraft(_)
@@ -138,7 +139,7 @@ impl Engine {
                         // merely because the whole archive takes over ten minutes.
                         // Restore also must observe its blocking SQLite commit;
                         // dropping its future cannot cancel that transaction.
-                        let result = if matches!(&command, Command::Backup(..) | Command::AutomaticBackup(_) | Command::Restore(..) | Command::Send(_) | Command::IndexConversations | Command::ConnectCalendars(..) | Command::SaveAccount(..) | Command::RemoveConnection(..) | Command::CleanupCredentials | Command::RestoreGoogleCalendars) {
+                        let result = if matches!(&command, Command::Backup(..) | Command::AutomaticBackup(_) | Command::Restore(..) | Command::Send(_) | Command::ResolveOutgoing(..) | Command::RepairOutgoing | Command::IndexConversations | Command::ConnectCalendars(..) | Command::SaveAccount(..) | Command::RemoveConnection(..) | Command::CleanupCredentials | Command::RestoreGoogleCalendars) {
                             engine.execute(command, output).await
                         } else {
                             tokio::time::timeout(Duration::from_secs(600), engine.execute(command, output)).await
@@ -199,6 +200,7 @@ mod tests {
             calendar_setup_lock: Default::default(),
             connection_lifecycle_lock: Default::default(),
             secret_remover: Arc::new(removals::OsSecretRemover),
+            outbound: Arc::new(providers::outgoing::Servers),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),

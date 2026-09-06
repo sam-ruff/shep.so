@@ -3,6 +3,7 @@ pub mod compose;
 pub mod engine;
 pub mod fuzzy;
 pub mod model;
+pub mod outgoing;
 pub mod providers;
 pub mod remote_images;
 pub mod replies;
