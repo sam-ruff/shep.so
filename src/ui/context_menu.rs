@@ -207,12 +207,14 @@ impl App {
 pub(super) struct ContextArea<'a> {
     content: Element<'a, Message>,
     mail: Option<String>,
+    draft: Option<String>,
 }
 impl<'a> ContextArea<'a> {
     pub fn new(content: impl Into<Element<'a, Message>>, mail: String) -> Self {
         Self {
             content: content.into(),
             mail: Some(mail),
+            draft: None,
         }
     }
 }
@@ -221,6 +223,14 @@ impl<'a> ContextArea<'a> {
         Self {
             content: content.into(),
             mail: None,
+            draft: None,
+        }
+    }
+    pub fn draft(content: impl Into<Element<'a, Message>>, id: String) -> Self {
+        Self {
+            content: content.into(),
+            mail: None,
+            draft: Some(id),
         }
     }
 }
@@ -285,10 +295,14 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
             iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right))
         ) && cursor.is_over(layout.bounds())
             && cursor.is_over(*viewport)
-            && let Some(mail) = &self.mail
+            && (self.mail.is_some() || self.draft.is_some())
             && let Some(position) = cursor.position()
         {
-            shell.publish(Message::MailContext(mail.clone(), position));
+            if let Some(mail) = &self.mail {
+                shell.publish(Message::MailContext(mail.clone(), position));
+            } else if let Some(draft) = &self.draft {
+                shell.publish(Message::DraftContext(draft.clone(), position));
+            }
             shell.capture_event();
             return;
         }

@@ -48,16 +48,19 @@ class HarnessTests(unittest.TestCase):
             fixture.write_text("Fixture")
             windows = iter(["123", "", "123", ""])
             desktop.window = "main"
-            desktop.command = Mock(side_effect=lambda *args: next(windows) if args[1] == "search" else "")
+            clipboard_reads = iter(["previous path", str(fixture)])
+            desktop.command = Mock(side_effect=lambda *args: next(windows) if args[1] == "search" else next(clipboard_reads) if args[0] == "xclip" else "")
             with patch.object(harness.time, "sleep"), patch.object(harness.subprocess, "Popen") as clipboard:
                 self.assertEqual(desktop.choose_file(str(fixture)), {"selected": str(fixture)})
                 commands = [call.args for call in desktop.command.call_args_list]
-                self.assertIn(("xdotool", "windowfocus", "123"), commands)
+                self.assertIn(("xdotool", "windowfocus", "--sync", "123"), commands)
+                self.assertEqual(commands.count(("xclip", "-selection", "clipboard", "-out")), 2)
+                self.assertLess(max(i for i, command in enumerate(commands) if command[0] == "xclip"), commands.index(("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v")))
                 self.assertIn(("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v"), commands)
                 clipboard.return_value.stdin.write.assert_called_once_with(str(fixture).encode())
                 desktop.choose_file()
                 self.assertIn(("xdotool", "key", "--clearmodifiers", "--delay", "1", "Escape"), [call.args for call in desktop.command.call_args_list])
-                self.assertEqual(desktop.command.call_args.args, ("xdotool", "windowfocus", "main"))
+                self.assertEqual(desktop.command.call_args.args, ("xdotool", "windowfocus", "--sync", "main"))
             desktop.command.reset_mock()
             with self.assertRaises(ValueError):
                 desktop.choose_file(str(ROOT / "Cargo.toml"))

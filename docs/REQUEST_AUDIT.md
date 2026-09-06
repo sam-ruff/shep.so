@@ -39,9 +39,9 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R33 | Separate Contacts Preferences section | Delivered |
 | R34 | Save-success toast and slightly depressed button state | Delivered, with acknowledgment-based toast and failure preservation |
 | R35 | Compose in preview pane, autosave while typing, read other mail and work on several replies/drafts | Autosave delivered; inline/multiple-draft UX open |
-| R36 | Collapsible Drafts group, right-click delete, discard bin in draft editor | Open; must prevent stale saves from restoring deleted drafts |
+| R36 | Collapsible Drafts group, right-click delete, discard bin in draft editor; red discard confirmation button | Open; must prevent stale saves from restoring deleted drafts |
 | R37 | Shortcut hints for buttons | Superseded by R51/R52: icon-only tooltip, primary key only and toggles |
-| R38 | Render HTML like supplied example, not flattened text plus appended images; select/copy email text | Native plain/quoted text selection delivered in 590ab10; faithful HTML remains open |
+| R38 | Render HTML like supplied examples, including the later raw-XHTML tags; preserve layout/images and selectable text | Native plain/quoted text selection delivered in 590ab10; faithful HTML remains open |
 | R39 | Delete shortcut and optional second binding; final defaults Ctrl+D → Trash, Backspace + Delete → Archive; all remappable | Delivered in 590ab10: versioned slots/migration, conflict and native tests; older Delete-to-Trash default superseded |
 | R40 | Clicking Mail while already open from another folder returns to unified/first Inbox | Delivered in 590ab10, native unified/first-account Inbox tests |
 | R41 | Add Forward and Print controls in preview | Open |
@@ -70,6 +70,8 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R63 | Fix shortcut × and extend native E2E coverage across functionality paths | Clear controls delivered 742b21e with per-slot persistence and native tests; final functionality coverage audit remains open |
 | R65 | Frequent background sync (user prioritizes rapid arrival), immediate startup check and independent manual Refresh | Delivered d4ecb21; 15-second default, saved seconds interval, independent coalescing refresh, virtual-time and native arrival/retry tests |
 | R66 | Record Dungeonwalk vectoriser/remove.bg credential discovery in AGENTS.md | Delivered 742b21e; discovery pointer only, no keys copied |
+| R67 | Select an inbox message, then click away to count it as read | Open; tracked in TODO with optimistic save and explicit-unread protection |
+| R68 | Refreshing counted toast with Undo for archive, delete and move | Open; immediate feedback, repeated-action counts and failure reconciliation in TODO |
 | R59 | Investigate and fix the newly failed CI build | Delivered eea1dfb; strict local build and GitHub run 34026001754 passed |
 
 The main omissions were already present in the completion log but were not an adequate live checklist: faithful HTML, local encryption/large-mail streaming, folder trees/mutations, inline multiple drafts/discard, palette editing, multiple backup targets and continuous settings/account sync. The newer bulk-selection, drag/drop, find, optimistic feedback, tooltip/settings-search and context-menu requests are now explicit TODO entries. Passing the existing suite does not close them.

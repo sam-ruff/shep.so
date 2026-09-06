@@ -79,9 +79,13 @@ impl Store {
     }
     pub async fn ensure_draft_unsent(&self, draft: Draft) -> anyhow::Result<()> {
         self.run(move |c| {
-            anyhow::ensure!(!sent(c, &draft)?, "This version of the draft was already sent. Compose a new message to send another copy.");
+            anyhow::ensure!(
+                !sent(c, &draft)?,
+                "This draft was sent or discarded. Compose a new message to send another copy."
+            );
             Ok(())
-        }).await
+        })
+        .await
     }
     pub async fn finish_draft_send(&self, draft: Draft) -> anyhow::Result<DraftState> {
         self.run(move |c| {
@@ -101,7 +105,7 @@ impl Store {
         let files = tokio::task::spawn_blocking(move || read_files(paths)).await??;
         self.run(move |c| {
             let tx = c.transaction()?;
-            anyhow::ensure!(!sent(&tx, &draft)?, "This draft was already sent; files were not attached.");
+            anyhow::ensure!(!sent(&tx, &draft)?, "This draft was sent or discarded; files were not attached.");
             let existing = attachments(&tx, &draft.id)?;
             anyhow::ensure!(existing.len() + files.len() <= MAX_ATTACHMENTS, "Attach at most 32 files to one message.");
             let size: usize = existing.iter().map(|file| file.size).chain(files.iter().map(|file| file.bytes.len())).sum();

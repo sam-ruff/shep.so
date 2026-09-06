@@ -97,6 +97,7 @@ impl CommandSender {
             Command::SavePreferences(..)
             | Command::SaveDraft(_)
             | Command::AutoSaveDraft(_)
+            | Command::DeleteDraft(_)
             | Command::RemoveDraftFile(..) => &self.persistence,
             _ => &self.network,
         };
@@ -394,6 +395,23 @@ mod tests {
         assert_eq!(workspace.preferences.reader_font_size, 18);
         assert_eq!(workspace.drafts.len(), 1);
         assert_eq!(workspace.drafts[0].body, "Latest text");
+        sender
+            .try_send(Command::DeleteDraft("saved-draft".into()))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Event::DraftDeleted(id, result) =
+                    events.next().await.expect("Dispatcher stopped")
+                {
+                    assert_eq!(id, "saved-draft");
+                    assert!(result.unwrap().drafts.is_empty());
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("Discard waited for blocked provider jobs");
+        assert!(store.workspace().await.unwrap().drafts.is_empty());
         release.notify_waiters();
     }
 }

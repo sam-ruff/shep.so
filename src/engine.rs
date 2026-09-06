@@ -49,6 +49,7 @@ pub enum Command {
     Flags(u64, Mail, crate::mail_actions::Flags),
     SaveDraft(Draft),
     AutoSaveDraft(Draft),
+    DeleteDraft(String),
     AddDraftFiles(Draft, Vec<std::path::PathBuf>),
     RemoveDraftFile(String, String),
     Send(Draft),
@@ -148,6 +149,7 @@ pub enum Event {
     ),
     CalendarsConnected(u64, Result<(), String>),
     DraftSaved(String, u64, Result<Arc<crate::store::DraftState>, String>),
+    DraftDeleted(String, Result<Arc<crate::store::DraftState>, String>),
     DraftFiles(String, Result<Arc<crate::store::DraftState>, String>),
     Sent(String, u64),
     SubmissionQueued(String, u64),
@@ -747,6 +749,33 @@ impl Engine {
                     .await?;
                 if saved && explicit_draft {
                     output.send(Event::Notice("Draft saved.".into())).await?;
+                }
+            }
+            Command::DeleteDraft(id) => {
+                let result = async {
+                    #[cfg(feature = "test-support")]
+                    if self.demo
+                        && std::env::args().any(|arg| arg == "--discard-failure-once")
+                        && !self.store.get::<bool>("preview_discard_failed").await?
+                    {
+                        self.store.put("preview_discard_failed", true).await?;
+                        anyhow::bail!("Preview storage failure. Your draft is intact; try again.");
+                    }
+                    self.store.delete_draft(id.clone()).await
+                }
+                .await;
+                let deleted = result.is_ok();
+                output
+                    .send(Event::DraftDeleted(
+                        id,
+                        result
+                            .map(Arc::new)
+                            .map_err(|e| format!("Could not discard the draft: {e:#}")),
+                    ))
+                    .await?;
+                if deleted {
+                    self.workspace(&mut output).await?;
+                    output.send(Event::OutgoingChanged).await?;
                 }
             }
             Command::AddDraftFiles(draft, paths) => {

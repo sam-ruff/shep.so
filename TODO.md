@@ -4,6 +4,10 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Current UI and interaction work
 
+- [ ] **R68 — Action toasts:** archive, delete and move show an immediate toast in the same optimistic UI update, before any database/server acknowledgment; repeated actions immediately refresh its timeout and increment a counter (user explicitly reiterated responsiveness). Include Undo for archive, delete and move, restoring each message to its original folder even when the initial operation is still pending. Keep destination/action scope accurate and reconcile failures without hiding their errors. Cover grouped Undo, mouse/shortcut input and slow/failing backend results.
+
+- [ ] **R67 — Read after leaving:** selecting an inbox message and then clicking away marks it read with immediate visual feedback and background persistence. Preserve explicit mark-unread intent, avoid marking hover/prefetch or an unseen initial selection, and test inbox/sidebar/navigation plus slow/failing saves.
+
 
 - [ ] **R63 — E2E coverage audit:** primary/secondary clear controls, remapping, capture cancellation and persistence are shipped in 742b21e. Continue mapping every remaining visible feature to realistic native happy/error/recovery scenarios as the TODO features land; complete a final functionality-path coverage audit.
 
@@ -13,7 +17,7 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Mail reading, search and bulk actions
 
-- [ ] **R38 — Faithful HTML:** render layout, typography, tables, backgrounds, links and inline images in their intended positions. Keep selectable text, a plain-text option, current remote-image controls and no active email scripts. Use synthetic versions of the supplied examples in tests.
+- [ ] **R38 — Faithful HTML:** render layout, typography, tables, backgrounds, links and inline images in their intended positions. Keep selectable text, a plain-text option, current remote-image controls and no active email scripts. The latest screenshot also exposes raw XHTML tags in the reader: fix MIME/plain-vs-HTML handling, including mislabeled/escaped HTML, with synthetic regressions. Use fictional versions of the supplied examples; never copy authorization codes into fixtures.
 - [ ] **R44 — Find in message:** Ctrl+F within the open email, fast background searching, visible matches and next/previous navigation.
 - [ ] **R41 — Forward:** add a forward control to the preview actions; preserve message content/attachments and correct draft semantics.
 - [ ] **R41 — Print:** add a print control and a usable cross-platform print flow, with isolated automated equivalents.
@@ -26,7 +30,7 @@ Active requests from this chat. Add new requests here immediately, including cor
 - [ ] **R30 — Folder trees:** nested folders form collapsible groups, collapsed by default, honoring each IMAP hierarchy delimiter and nonselectable parents.
 - [ ] **R30 — Folder context menus:** delete folders and move them inside another folder; review destructive scope, keep account/server/cache state consistent, and test failure/retry behavior.
 - [ ] **R35 — Inline composer:** new messages/replies open in the preview pane; autosave while typing and support switching among multiple drafts and received mail without losing content, recipients or attachments.
-- [ ] **R36 — Draft navigation:** a collapsible Drafts group, right-click deletion, and a discard bin in the draft editor. Delete cached attachments and prevent delayed autosaves from resurrecting discarded drafts.
+- [ ] **R36 — Draft navigation:** a collapsible Drafts group, right-click deletion, and a discard bin in the draft editor. The discard confirmation button must be red (latest screenshot correction). Delete cached attachments and prevent delayed autosaves from resurrecting discarded drafts.
 
 ## Account/settings sync and backups
 
