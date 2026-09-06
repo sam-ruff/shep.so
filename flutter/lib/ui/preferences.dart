@@ -208,16 +208,21 @@ class PreferencesView extends StatelessWidget {
               if (removal.pendingCredentialCleanup > 0)
                 ListTile(
                   leading: const Icon(Icons.key_off_outlined),
-                  title: const Text('Removed account passwords need cleanup'),
-                  subtitle: const Text(
-                    'Local account data is removed. Unlock device credential storage, then retry cleanup.',
-                  ),
-                  trailing: TextButton(
-                    onPressed: () async {
-                      await removal.cleanupCredentials();
-                      await workspace.loadPage();
-                    },
-                    child: const Text('Retry cleanup'),
+                  title: const Text('Saved passwords need cleanup'),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Unlock device credential storage, then retry.',
+                      ),
+                      TextButton(
+                        onPressed: () async {
+                          await removal.cleanupCredentials();
+                          await workspace.loadPage();
+                        },
+                        child: const Text('Retry cleanup'),
+                      ),
+                    ],
                   ),
                 ),
             ListTile(

@@ -121,6 +121,12 @@
       "contract": "review current local message/draft/file/delivery counts before local account removal; stale reviews abort atomically, occupied provider work remains protected, unfinished recovery requires explicit acknowledgement, server mail is untouched, and late saves cannot resurrect the removed identity; retain only tombstones and retryable native credential cleanup jobs",
       "mobile": "accounts_tests.rs transaction/FTS rollback, stale draft/file review, occupied capacity, restart/tombstones; native_repository_test.dart locked cleanup/reconnect; incoming_android_test.dart real Preferences cancel/light/dark/remove/cleanup-retry; incoming_test.dart late mutation; Apple execution OPEN",
       "browser": "account_removal.test.ts review/ownership/tombstone contracts; real IndexedDB storage.spec.ts atomic stale review, rollback, held Web Lock and late writes; model.test.ts late mutation; Rust HTTPS provider-flows.mjs cancellation, stale review/reload, compact light/dark axe, stale-tab reconnect/refresh and reopen; wider lifecycle/large-cache performance OPEN"
+    },
+    {
+      "id": "credential-activation",
+      "contract": "Save a candidate credential pair independently, activate its account configuration atomically, retain the committed connection through failed or lost acknowledgments, clean only unused keys, and reject obsolete credentials before provider work. Preserve effective TLS defaults when migrating legacy accounts.",
+      "mobile": "connections_tests.rs activation rollback/restart/migration/current and stale provider bindings; native_repository_test.dart lost OS/bridge acknowledgments and FIFO cleanup; native_mail_test.dart actual reconnect fields, failure/retry and cleanup, plus device secure-storage roundtrip; full connection editing and Apple execution OPEN",
+      "browser": "Tab passwords are replaced after the IndexedDB account commit; durable remembered credentials and reviewed connection editing remain OPEN. Native device-key slots are platform-specific."
     }
   ]
 }

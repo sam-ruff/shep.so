@@ -137,3 +137,8 @@ Both clients now implement the desktop's local removal review, including accurat
 
 
 Reviewed account removal shipped as [`18bf033`](https://github.com/sam-ruff/shep.so/commit/18bf0332ec4075004d5ce3ae42eb1a3271722f77) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), with the remote commit verified. Required formatting, Clippy and all **215 root/shared tests** passed; the two opt-in personal-account diagnostics remain intentionally ignored. Final pinned strict documentation validation passed. R77's prompt-push request is fulfilled for this increment. Full parity, Apple execution and VPS deployment remain active; quality/release workflows remain disabled and main was not changed by this work.
+
+
+### R67/R69/R73 — Native credential handover prerequisite
+
+Reconnect now stages a separate device credential pair and atomically activates the matching account configuration. Failed writes/activation preserve the previous pair; lost activation responses retain the committed new pair. Durable cleanup excludes active keys, and provider requests reject stale credential bindings under the account lock. Legacy SMTP TLS defaults are preserved. The native/host and saved Android control evidence is recorded in the completion log. Full connection editing, reviewed mailbox-identity migration, broader lifecycle/browser parity and Apple execution remain open. This is concrete progress toward the complete clients, not a claim that account management or the product is complete. R75/R76 remain TODOs and R77 continues to authorize prompt review-branch pushes.

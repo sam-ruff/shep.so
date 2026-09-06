@@ -68,7 +68,9 @@ class MailAccount {
     security: json['incoming_security'],
     authentication: json['incoming_auth'],
     smtpUsername: json['smtp_username'],
-    smtpSecurity: json['smtp_security'] ?? 'Tls',
+    smtpSecurity:
+        json['smtp_security'] ??
+        (json['smtp_port'] == 465 ? 'Tls' : 'StartTls'),
     smtpAuthentication: json['smtp_auth'],
     separatePassword: json['smtp_separate_password'],
     sentCopy: json['sent_copy'],

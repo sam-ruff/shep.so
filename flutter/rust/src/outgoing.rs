@@ -257,11 +257,11 @@ pub(crate) async fn send(
     id: String,
     revision: u64,
     file_revision: u64,
-    passwords: (SecretString, Option<SecretString>),
+    passwords: (SecretString, Option<SecretString>, Option<String>),
     slot: OwnedSemaphorePermit,
     admission: OwnedSemaphorePermit,
 ) -> Result<Value> {
-    let (password, incoming_password) = passwords;
+    let (password, incoming_password, credential_slot) = passwords;
     let prior = delivery(profile, id.clone()).await?;
     if !prior.is_null() {
         return Ok(prior);
@@ -279,6 +279,14 @@ pub(crate) async fn send(
         })
         .await?;
     let guard = profile.operations.account(&account.id).await;
+    let id_for_binding = account.id.clone();
+    let account = profile
+        .database
+        .read(move |db| {
+            crate::connections::check_binding(db, &id_for_binding, credential_slot.as_deref())?;
+            operations::stored_account(db, &id_for_binding)
+        })
+        .await?;
     let account_copy = account.clone();
     let reserved = profile
         .database

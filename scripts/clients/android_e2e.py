@@ -100,7 +100,7 @@ def main(device, flutter='flutter', compose_only=False, outbox_only=False, incom
     incoming(device,flutter,env)
     outbox(device,flutter,env)
     captures=ROOT/'artifacts/flutter/native';captures.mkdir(parents=True,exist_ok=True)
-    for name in ['native-account-removal-light','native-account-removal-dark','native-account-removal-cleanup','native-incoming-saved','native-sent-handover','sent-handover-reader','sent-handover-undo','native-draft-reopened','native-account-retry','native-production-startup','paged-swipe-undo','native-reply-attachments','native-outbox-review-light','native-outbox-review-dark','native-outbox-recovered-draft','native-outbox-empty','native-outbox-local-sent', 'native-sent-copy-review', 'native-sent-preferences', 'native-imap-local-sent-offline', 'native-imap-local-sent-reopened', 'native-imap-credential-recovery']:
+    for name in ['native-credential-activation-failure','native-credential-cleanup-retry','native-account-removal-light','native-account-removal-dark','native-account-removal-cleanup','native-incoming-saved','native-sent-handover','sent-handover-reader','sent-handover-undo','native-draft-reopened','native-account-retry','native-production-startup','paged-swipe-undo','native-reply-attachments','native-outbox-review-light','native-outbox-review-dark','native-outbox-recovered-draft','native-outbox-empty','native-outbox-local-sent', 'native-sent-copy-review', 'native-sent-preferences', 'native-imap-local-sent-offline', 'native-imap-local-sent-reopened', 'native-imap-credential-recovery']:
         png=captures/f'{name}.png'
         subprocess.run(['convert',str(png),str(png.with_suffix('.webp'))],check=True)
         png.unlink()

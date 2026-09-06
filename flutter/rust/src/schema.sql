@@ -44,5 +44,7 @@ CREATE TABLE IF NOT EXISTS removed_accounts(id TEXT PRIMARY KEY, fingerprint TEX
 CREATE TRIGGER IF NOT EXISTS refuse_removed_account BEFORE INSERT ON accounts WHEN EXISTS(SELECT 1 FROM removed_accounts WHERE id=new.id) BEGIN SELECT RAISE(ABORT,'This account was removed. Add a new account.'); END;
 CREATE TRIGGER IF NOT EXISTS refuse_removed_draft BEFORE INSERT ON drafts WHEN EXISTS(SELECT 1 FROM removed_accounts WHERE id=json_extract(new.content,'$.account_id')) BEGIN SELECT RAISE(ABORT,'This account was removed. Choose a connected account.'); END;
 CREATE TRIGGER IF NOT EXISTS refuse_removed_draft_edit BEFORE UPDATE ON drafts WHEN EXISTS(SELECT 1 FROM removed_accounts WHERE id=json_extract(new.content,'$.account_id')) BEGIN SELECT RAISE(ABORT,'This account was removed. Choose a connected account.'); END;
-PRAGMA user_version=7;
+CREATE TABLE IF NOT EXISTS credential_slots(slot TEXT PRIMARY KEY, account_id TEXT NOT NULL, settings TEXT, expected TEXT, state TEXT NOT NULL CHECK(state IN ('prepared','active','cleanup')));
+CREATE TABLE IF NOT EXISTS account_credentials(account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE, slot TEXT NOT NULL UNIQUE REFERENCES credential_slots(slot));
+PRAGMA user_version=8;
 COMMIT;
