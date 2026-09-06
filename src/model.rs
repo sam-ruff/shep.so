@@ -250,6 +250,7 @@ impl fmt::Display for MailFilter {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MailQuery {
+    pub folders: Option<Vec<FolderSelection>>,
     pub sent_only: bool,
     pub account: Option<String>,
     pub folder: String,
@@ -260,6 +261,13 @@ pub struct MailQuery {
     pub sort: MailSort,
     pub starred_only: bool,
     pub offset: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FolderSelection {
+    pub account: Option<String>,
+    pub folder: String,
+    pub sent_only: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -454,13 +462,22 @@ impl fmt::Display for BackupDestination {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WindowSize {
+    pub width: f32,
+    pub height: f32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
     pub appearance: Appearance,
     pub reader_split: f32,
+    pub sidebar_width: Option<f32>,
+    pub window_size: Option<WindowSize>,
     pub mail_sort: MailSort,
     pub unified_inbox: bool,
+    pub collapsed_accounts: Vec<String>,
     pub cross_account_moves: bool,
     pub reader_font_size: u16,
     pub interface_scale: u16,
@@ -492,8 +509,11 @@ impl Default for Preferences {
         Self {
             appearance: Appearance::System,
             reader_split: 0.315,
+            sidebar_width: None,
+            window_size: None,
             mail_sort: MailSort::Newest,
             unified_inbox: true,
+            collapsed_accounts: Vec::new(),
             cross_account_moves: false,
             reader_font_size: 14,
             interface_scale: 100,
@@ -588,6 +608,18 @@ impl fmt::Display for Appearance {
 }
 impl Preferences {
     pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.sidebar_width
+                .is_none_or(|w| w.is_finite() && (160.0..=480.0).contains(&w)),
+            "Sidebar width must be between 160 and 480."
+        );
+        anyhow::ensure!(
+            self.window_size.is_none_or(|s| s.width.is_finite()
+                && s.height.is_finite()
+                && s.width > 0.
+                && s.height > 0.),
+            "Window dimensions must be positive and finite."
+        );
         anyhow::ensure!(
             self.reader_split.is_finite() && (0.2..=0.7).contains(&self.reader_split),
             "Pane split must be between 20% and 70%."

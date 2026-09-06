@@ -567,3 +567,53 @@ fn full_reader_open_close_shortcuts_are_remappable_and_persist() {
     assert_eq!(restored.resolve("Escape"), None);
     assert!(restored.validate().is_ok());
 }
+
+#[tokio::test]
+async fn combined_folder_queries_keep_account_scope_filters_and_empty_selection() {
+    let store = Store::memory().unwrap();
+    let mut messages = Vec::new();
+    for (account, folder, count) in [
+        ("a", "Projects", 3),
+        ("a", "Archive", 2),
+        ("b", "Projects", 4),
+        ("b", "Sent", 1),
+    ] {
+        for i in 0..count {
+            messages.push(parse_mail(account, &format!("{folder}-{i}"), folder, format!("From: Fixture <f@example.test>\r\nSubject: selection {i}\r\n\r\nCombined folders").into_bytes(), i == 0, i == 0).unwrap());
+        }
+    }
+    store.upsert(messages).await.unwrap();
+    let selection = |account: Option<&str>, folder: &str, sent_only| FolderSelection {
+        account: account.map(str::to_string),
+        folder: folder.into(),
+        sent_only,
+    };
+    let mut query = MailQuery {
+        folders: Some(vec![
+            selection(Some("a"), "Projects", false),
+            selection(Some("b"), "Sent", true),
+        ]),
+        ..Default::default()
+    };
+    let page = store.query(query.clone()).await.unwrap();
+    assert_eq!((page.total, page.unread), (4, 2));
+    assert!(
+        !page
+            .rows
+            .iter()
+            .any(|m| m.account_id == "b" && m.folder == "Projects")
+    );
+    query.starred_only = true;
+    assert_eq!(store.query(query.clone()).await.unwrap().total, 2);
+    query.starred_only = false;
+    query
+        .folders
+        .as_mut()
+        .unwrap()
+        .push(selection(None, "Projects", false));
+    assert_eq!(store.query(query.clone()).await.unwrap().total, 8); // overlapping scopes never duplicate mail
+    query.search = "selection 2".into();
+    assert_eq!(store.query(query.clone()).await.unwrap().total, 2);
+    query.folders = Some(vec![]);
+    assert_eq!(store.query(query).await.unwrap().total, 0);
+}

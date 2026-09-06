@@ -21,6 +21,10 @@ impl PreferenceSync {
         self.local
     }
 
+    pub fn generation(&self) -> u64 {
+        self.local
+    }
+
     pub fn dirty(&self) -> bool {
         self.local != self.acknowledged
     }

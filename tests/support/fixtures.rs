@@ -178,6 +178,28 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
             )
             .await?;
     }
+    if std::env::args().any(|a| a == "--long-folders") {
+        let folders = vec![
+            "Projects".to_string(),
+            "Mailspring/Snoozed/Worldwide correspondence and scheduled delivery".to_string(),
+            "WWW MMM WWW MMM WWW MMM WWW MMM".to_string(),
+            "家族のカレンダーと旅行の計画と写真".to_string(),
+        ];
+        for (index, folder) in folders.iter().enumerate() {
+            let raw = format!("From: Fixture <fixture@example.test>\r\nTo: alex@studio.example\r\nSubject: Folder sample {index}\r\n\r\nSidebar fixture {index}").into_bytes();
+            store
+                .upsert(vec![parse_mail(
+                    "preview-work",
+                    &format!("folder-{index}"),
+                    folder,
+                    raw,
+                    true,
+                    false,
+                )?])
+                .await?;
+        }
+        store.save_folders("preview-work".into(), folders).await?;
+    }
     if std::env::args().any(|a| a == "--empty-calendars") {
         return Ok(());
     }

@@ -163,6 +163,11 @@ async fn preferences_revision_survives_reopen_and_failed_validation_is_atomic() 
     let saved = store
         .save_preferences(Preferences {
             reader_font_size: 19,
+            sidebar_width: Some(312.),
+            window_size: Some(shep::model::WindowSize {
+                width: 1234.,
+                height: 789.,
+            }),
             ..Default::default()
         })
         .await
@@ -181,6 +186,14 @@ async fn preferences_revision_survives_reopen_and_failed_validation_is_atomic() 
     let workspace = store.workspace().await.unwrap();
     assert_eq!(workspace.preferences_revision, saved.revision);
     assert_eq!(workspace.preferences.reader_font_size, 19);
+    assert_eq!(workspace.preferences.sidebar_width, Some(312.));
+    assert_eq!(
+        workspace.preferences.window_size,
+        Some(shep::model::WindowSize {
+            width: 1234.,
+            height: 789.
+        })
+    );
     let next = store
         .save_preferences(Preferences {
             reader_font_size: 22,

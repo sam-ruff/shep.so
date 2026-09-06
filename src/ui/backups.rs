@@ -74,7 +74,19 @@ impl App {
             target,
             action,
         });
-        self.send(Command::SavePreferences(request, self.preferences.clone()));
+        if !self.try_command(Command::SavePreferences(request, self.preferences.clone())) {
+            self.pending_backup = None;
+        }
+    }
+
+    pub(super) fn cancel_backup_save(&mut self, request: u64) {
+        if self
+            .pending_backup
+            .as_ref()
+            .is_some_and(|p| p.request == request)
+        {
+            self.pending_backup = None;
+        }
     }
 
     pub(super) fn continue_backup_request(&mut self, request: u64) {
@@ -176,6 +188,8 @@ mod tests {
     #[test]
     fn backup_action_waits_for_its_save_and_cancels_when_the_destination_changes() {
         let (mut app, _) = App::new();
+        let (sender, _receiver) = engine::CommandSender::persistence_test_channel();
+        app.tx = Some(sender);
         app.tab = Tab::Preferences;
         app.settings_fields();
         let first = std::env::temp_dir()

@@ -19,6 +19,12 @@ pub(super) struct Inputs {
 }
 
 impl CommandSender {
+    #[cfg(test)]
+    pub(crate) fn persistence_test_channel() -> (Self, mpsc::Receiver<Command>) {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.persistence)
+    }
+
     pub(super) fn channel() -> (Self, Inputs) {
         let (reads, read_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (prefetch, prefetch_input) = mpsc::channel(8);

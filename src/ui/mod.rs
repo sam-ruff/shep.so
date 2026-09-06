@@ -3,9 +3,12 @@ mod backups;
 mod calendar_setup;
 mod components;
 mod composing;
+mod context_menu;
 mod conversations;
+mod ellipsis;
 #[cfg(test)]
 mod google_lifecycle_tests;
+mod layout;
 mod outgoing;
 mod preference_sync;
 mod reading;
@@ -49,6 +52,7 @@ pub enum SettingsTab {
     Backups,
     Shortcuts,
     Privacy,
+    Contacts,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
@@ -157,6 +161,11 @@ pub enum Message {
     ExportAttachment(usize),
     SystemTheme(iced::theme::Mode),
     Resize(Size),
+    SidebarResize(f32),
+    DismissToast,
+    MailContext(String, iced::Point),
+    MailContextAction(context_menu::MailAction),
+    DismissContext,
     Dismiss,
     BrowseBackup,
     BrowseExport,
@@ -167,6 +176,8 @@ pub enum Message {
     WindowClose(iced::window::Id),
     SidebarAction(usize),
     ToggleInboxExpanded,
+    ToggleAccountFolders(String),
+    Modifiers(keyboard::Modifiers),
     AccountFolder(String, String),
     AccountFolderUnified,
     PrefUnified(bool),
@@ -195,6 +206,12 @@ pub struct App {
     panes: widget::pane_grid::State<MailPane>,
     reader_split: widget::pane_grid::Split,
     layout_generation: u64,
+    pending_preference_save: Option<(u64, Preferences)>,
+    pending_close: Option<iced::window::Id>,
+    confirm_save: Option<u64>,
+    saved_toast: Option<Instant>,
+    context_menu: Option<context_menu::Menu>,
+    pending_mail_action: Option<(String, context_menu::MailAction)>,
     inbox_scroll: f32,
     last_click: Option<(String, Instant)>,
     pending_focus: Option<&'static str>,
@@ -209,6 +226,7 @@ pub struct App {
     inbox_expanded: bool,
     sidebar_focus: bool,
     sidebar_index: usize,
+    modifiers: keyboard::Modifiers,
     pending_resize: Option<widget::pane_grid::ResizeEvent>,
     full_reader: bool,
     expanded_replies: HashSet<usize>,
@@ -312,6 +330,12 @@ impl App {
                 panes,
                 reader_split,
                 layout_generation: 0,
+                pending_preference_save: None,
+                pending_close: None,
+                confirm_save: None,
+                saved_toast: None,
+                context_menu: None,
+                pending_mail_action: None,
                 inbox_scroll: 0.,
                 last_click: None,
                 pending_focus: None,
@@ -326,6 +350,7 @@ impl App {
                 inbox_expanded: false,
                 sidebar_focus: false,
                 sidebar_index: 0,
+                modifiers: keyboard::Modifiers::default(),
                 pending_resize: None,
                 full_reader: false,
                 expanded_replies: HashSet::new(),
@@ -430,6 +455,12 @@ impl App {
                 iced::Event::Window(iced::window::Event::CloseRequested) => {
                     Some(Message::WindowClose(id))
                 }
+                iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+                    Some(Message::Modifiers(modifiers))
+                }
+                iced::Event::Window(iced::window::Event::Unfocused) => {
+                    Some(Message::Modifiers(keyboard::Modifiers::default()))
+                }
                 iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => Some(
                     Message::Key(key, modifiers, status == event::Status::Captured),
                 ),
@@ -442,7 +473,7 @@ impl App {
     }
     fn save_preferences(&mut self) {
         let request = self.preference_sync.changed();
-        self.send(Command::SavePreferences(request, self.preferences.clone()));
+        self.persist_preferences(request, self.preferences.clone());
     }
 
     fn update_saved_preferences(&mut self) {
@@ -455,6 +486,11 @@ impl App {
         self.try_command(command);
     }
     fn try_command(&mut self, command: Command) -> bool {
+        let preferences_request = if let Command::SavePreferences(request, _) = &command {
+            Some(*request)
+        } else {
+            None
+        };
         if let Some(tx) = &self.tx {
             if let Err(error) = tx.try_send(command) {
                 match (*error).into_inner() {
@@ -474,6 +510,13 @@ impl App {
         } else {
             self.notice("Opening your local workspace…", false);
             return false;
+        }
+        if preferences_request.is_some_and(|request| {
+            self.pending_preference_save
+                .as_ref()
+                .is_some_and(|(pending, _)| request >= *pending)
+        }) {
+            self.pending_preference_save = None;
         }
         true
     }
@@ -531,6 +574,7 @@ impl App {
         });
     }
     fn select(&mut self, id: String) {
+        self.pending_mail_action = None;
         if self.selected.as_deref() != Some(&id) {
             self.expanded_replies.clear();
             self.conversation.page = Default::default();
@@ -621,6 +665,21 @@ impl App {
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Noop => return Task::none(),
+            Message::DismissContext => self.context_menu = None,
+            Message::MailContext(id, position) => {
+                if self.dialog.is_none()
+                    && let Some(mail) = self.page.rows.iter().find(|m| m.id == id).cloned()
+                {
+                    self.context_menu = Some(context_menu::Menu {
+                        mail,
+                        position,
+                        index: 0,
+                    });
+                    self.sidebar_focus = false;
+                    self.select(id);
+                }
+            }
+            Message::MailContextAction(action) => return self.choose_mail_context(action),
             Message::Backend(event) => match event {
                 Event::Ready(tx, workspace, google) => {
                     self.tx = Some(tx);
@@ -639,6 +698,13 @@ impl App {
                     self.workspace = workspace;
                     self.google_connected = google;
                     self.request_page();
+                    if let Some(size) = self.preferences.window_size {
+                        return iced::window::oldest().then(move |window| {
+                            window.map_or_else(Task::none, |id| {
+                                iced::window::resize(id, Size::new(size.width, size.height))
+                            })
+                        });
+                    }
                 }
                 Event::Workspace(workspace) => {
                     self.preference_sync.observe(
@@ -675,6 +741,20 @@ impl App {
                         workspace.drafts_revision = self.workspace.drafts_revision;
                     }
                     self.workspace = Arc::new(workspace);
+                    if let Some(folders) = &mut self.query.folders {
+                        let before = folders.len();
+                        folders.retain(|s| {
+                            s.account.as_ref().is_none_or(|id| {
+                                self.workspace.accounts.iter().any(|a| &a.id == id)
+                            })
+                        });
+                        if folders.len() != before {
+                            self.query.offset = 0;
+                            self.selected = None;
+                            self.detail = None;
+                            self.request_page();
+                        }
+                    }
                     if self
                         .query
                         .account
@@ -687,7 +767,10 @@ impl App {
                         self.query.offset = 0;
                         self.request_page();
                     }
-                    if !self.preferences.unified_inbox && self.query.account.is_none() {
+                    if !self.preferences.unified_inbox
+                        && self.query.account.is_none()
+                        && self.query.folders.is_none()
+                    {
                         self.query.account = self.workspace.accounts.first().map(|a| a.id.clone());
                         self.request_page();
                     }
@@ -706,6 +789,24 @@ impl App {
                         true,
                     ),
                 },
+                Event::PreferencesSaveFailed(request, error) => {
+                    if self
+                        .pending_google_login
+                        .as_ref()
+                        .is_some_and(|(id, _, _)| *id == request)
+                    {
+                        self.pending_google_login = None;
+                    }
+                    self.cancel_backup_save(request);
+                    if self.confirm_save == Some(request) {
+                        self.confirm_save = None;
+                    }
+                    self.pending_close = None;
+                    self.notice(
+                        format!("Changes could not be saved: {error}. Try Save changes again."),
+                        true,
+                    );
+                }
                 Event::PreferencesSaved(request, snapshot) => {
                     self.preference_sync.acknowledge(
                         request,
@@ -713,6 +814,15 @@ impl App {
                         &mut self.preferences,
                     );
                     self.update_saved_preferences();
+                    if !self.preference_sync.dirty() {
+                        if self.confirm_save.is_some_and(|id| request >= id) {
+                            self.confirm_save = None;
+                            self.saved_toast = Some(Instant::now());
+                        }
+                        if let Some(window) = self.pending_close.take() {
+                            return self.handle(Message::WindowClose(window));
+                        }
+                    }
                     self.continue_backup_request(request);
                     if self
                         .pending_google_login
@@ -784,14 +894,19 @@ impl App {
                                 self.cache_detail(detail);
                             }
                             self.load_remote_images();
+                            if self.pending_mail_action.is_some() {
+                                return self.finish_mail_context();
+                            }
                         }
                         Err(error) if !prefetch && self.reader_id() == Some(&id) => {
+                            self.pending_mail_action = None;
                             self.notice(format!("Could not load this message: {error}"), true)
                         }
                         Err(_) => {}
                     }
                 }
                 Event::Changed => {
+                    self.context_menu = None;
                     self.detail_revision += 1;
                     self.prefetch_page = None;
                     self.detail_cache.clear();
@@ -1017,15 +1132,23 @@ impl App {
                         "Wait for the selected files to finish attaching before closing.",
                         true,
                     );
-                } else if self.dialog == Some(Dialog::Compose) {
-                    if !self.defer_draft_exit(composing::Exit::Window(window)) {
+                } else {
+                    self.flush_pane_resize();
+                    if self.preference_sync.dirty() {
+                        self.pending_close = Some(window);
+                        self.save_preferences();
+                    } else if !self.defer_draft_exit(composing::Exit::Window(window)) {
                         return iced::window::close(window);
                     }
-                } else {
-                    return iced::window::close(window);
                 }
             }
             Message::Tick => {
+                if let Some((request, prefs)) = self.pending_preference_save.take() {
+                    self.persist_preferences(request, prefs);
+                }
+                if self.saved_toast.is_some_and(|t| t.elapsed().as_secs() >= 4) {
+                    self.saved_toast = None;
+                }
                 if self.dialog == Some(Dialog::Compose)
                     && self.draft_dirty.is_some_and(|t| t.elapsed().as_secs() >= 1)
                     && self.try_command(Command::AutoSaveDraft(self.current_draft()))
@@ -1104,6 +1227,7 @@ impl App {
             Message::Folder(folder) => self.open_mail_folder(folder, false),
             Message::SentFolder => self.open_mail_folder("Sent".into(), true),
             Message::Account(account) => {
+                self.query.folders = None;
                 self.query.account = account.or_else(|| {
                     if self.preferences.unified_inbox {
                         None
@@ -1136,6 +1260,7 @@ impl App {
                 self.request_page();
             }
             Message::Starred => {
+                self.query.folders = None;
                 self.tab = Tab::Mail;
                 self.query.starred_only = true;
                 self.query.unread_only = false;
@@ -1521,7 +1646,11 @@ impl App {
                 }
             }
             Message::SavePreferences => match self.read_preferences() {
-                Ok(()) => self.save_preferences(),
+                Ok(()) => {
+                    self.save_preferences();
+                    self.confirm_save = Some(self.preference_sync.generation());
+                    self.saved_toast = None;
+                }
                 Err(e) => self.notice(e.to_string(), true),
             },
             Message::Appearance(appearance) => {
@@ -1546,7 +1675,11 @@ impl App {
                 } else {
                     let request = self.preference_sync.changed();
                     self.pending_google_login = Some((request, self.preferences.clone(), retry));
-                    self.send(Command::SavePreferences(request, self.preferences.clone()));
+                    if !self
+                        .try_command(Command::SavePreferences(request, self.preferences.clone()))
+                    {
+                        self.pending_google_login = None;
+                    }
                 }
             }
             Message::ReviewGoogleDisconnect => self.open(Dialog::GoogleDisconnect),
@@ -1726,7 +1859,21 @@ impl App {
                 }
             }
             Message::SystemTheme(mode) => self.system_dark = mode == iced::theme::Mode::Dark,
-            Message::Resize(size) => self.size = size,
+            Message::Resize(size) => {
+                self.size = size;
+                if self.tx.is_some() && size.width > 0. && size.height > 0. {
+                    self.preferences.window_size = Some(WindowSize {
+                        width: size.width,
+                        height: size.height,
+                    });
+                    return self.debounce_layout();
+                }
+            }
+            Message::SidebarResize(width) => {
+                self.preferences.sidebar_width = Some(width.clamp(160., self.max_sidebar_width()));
+                return self.debounce_layout();
+            }
+            Message::DismissToast => self.saved_toast = None,
             Message::Dismiss => self.notice = None,
             Message::BrowseBackup => {
                 return Task::perform(
@@ -1763,12 +1910,29 @@ impl App {
                     self.fields.insert(key, path);
                 }
             }
+            Message::Modifiers(modifiers) => self.modifiers = modifiers,
+            Message::ToggleAccountFolders(account) => {
+                if self.preferences.collapsed_accounts.contains(&account) {
+                    self.preferences
+                        .collapsed_accounts
+                        .retain(|id| id != &account);
+                } else {
+                    self.preferences.collapsed_accounts.push(account);
+                }
+                self.save_preferences();
+            }
             Message::ToggleInboxExpanded => self.inbox_expanded = !self.inbox_expanded,
             Message::SidebarAction(index) => {
                 self.sidebar_focus = true;
                 self.sidebar_index = index;
                 if let Some(item) = self.sidebar_items().get(index) {
-                    return self.handle(item.action.clone());
+                    if (self.modifiers.control() || self.modifiers.command())
+                        && let Some(folder) = self.sidebar_folder(&item.action)
+                    {
+                        self.toggle_folder_selection(folder);
+                    } else {
+                        return self.handle(item.action.clone());
+                    }
                 }
             }
             Message::AccountFolderUnified => {
@@ -1780,6 +1944,7 @@ impl App {
                 return self.handle(Message::Folder(folder));
             }
             Message::PrefUnified(value) => {
+                self.query.folders = None;
                 self.preferences.unified_inbox = value;
                 self.query.account = if value {
                     None
@@ -1923,22 +2088,9 @@ impl App {
                 }
             }
             Message::ApplyPaneResize => {
-                let Some(event) = self.pending_resize.take() else {
-                    return Task::none();
-                };
-                let ratio = event.ratio.clamp(0.2, 0.7);
-                self.panes.resize(event.split, ratio);
-                self.preferences.reader_split = ratio;
-                self.preference_sync.changed();
-                self.layout_generation += 1;
-                let generation = self.layout_generation;
-                return Task::perform(
-                    async move {
-                        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-                        generation
-                    },
-                    Message::SaveLayout,
-                );
+                if self.flush_pane_resize() {
+                    return self.debounce_layout();
+                }
             }
             Message::SaveLayout(generation) => {
                 if generation == self.layout_generation {
@@ -2015,6 +2167,7 @@ impl App {
     }
     fn open_mail_folder(&mut self, folder: String, sent_only: bool) {
         self.tab = Tab::Mail;
+        self.query.folders = None;
         self.query.folder = folder;
         self.query.sent_only = sent_only;
         self.query.starred_only = false;
@@ -2199,6 +2352,40 @@ impl App {
         })
     }
     fn key(&mut self, key: Key, modifiers: keyboard::Modifiers, captured: bool) -> Task<Message> {
+        if self.context_menu.is_some() {
+            use keyboard::key::Named;
+            match key {
+                Key::Named(Named::Escape) => self.context_menu = None,
+                Key::Named(Named::ArrowDown) | Key::Named(Named::ArrowUp) => {
+                    let count = self.mail_menu_items().len();
+                    let menu = self.context_menu.as_mut().unwrap();
+                    menu.index = if key == Key::Named(Named::ArrowDown) {
+                        (menu.index + 1) % count
+                    } else {
+                        (menu.index + count - 1) % count
+                    };
+                }
+                Key::Named(Named::Enter) => {
+                    let action =
+                        self.mail_menu_items()[self.context_menu.as_ref().unwrap().index].0;
+                    return self.choose_mail_context(action);
+                }
+                _ => {}
+            }
+            return Task::none();
+        }
+        if !captured
+            && self.dialog.is_none()
+            && self.tab == Tab::Mail
+            && modifiers.shift()
+            && key == Key::Named(keyboard::key::Named::F10)
+            && let Some(id) = self.selected.clone()
+        {
+            return self.handle(Message::MailContext(
+                id,
+                iced::Point::new(self.sidebar_width() + 50., 220.),
+            ));
+        }
         let chord = chord(&key, modifiers);
         #[cfg(feature = "test-support")]
         if self.demo && chord.is_some() {
@@ -2250,6 +2437,13 @@ impl App {
             return Task::none();
         }
         if self.tab == Tab::Mail
+            && self.sidebar_focus
+            && key == Key::Named(keyboard::key::Named::Enter)
+            && modifiers.is_empty()
+        {
+            return self.handle(Message::SidebarAction(self.sidebar_index));
+        }
+        if self.tab == Tab::Mail
             && matches!(
                 key,
                 Key::Named(keyboard::key::Named::ArrowUp | keyboard::key::Named::ArrowDown)
@@ -2263,6 +2457,13 @@ impl App {
                 } else {
                     (self.sidebar_index + 1).min(len.saturating_sub(1))
                 };
+                if self
+                    .sidebar_items()
+                    .get(self.sidebar_index)
+                    .is_some_and(|s| s.section)
+                {
+                    return Task::none();
+                }
                 return self.handle(Message::SidebarAction(self.sidebar_index));
             }
             return self.handle(Message::PreviousMessage(previous));
@@ -2364,6 +2565,23 @@ impl App {
             serde_json::json!(format!("{:?}", self.workspace.preferences.appearance));
         data["attachment_count"] =
             serde_json::json!(self.detail.as_ref().map(|d| d.attachments.len()));
+        data["selected_folders"] = serde_json::json!(self.query.folders);
+        data["collapsed_accounts"] = serde_json::json!(self.preferences.collapsed_accounts);
+        data["sidebar_width"] = serde_json::json!(self.sidebar_width());
+        data["saved_sidebar_width"] = serde_json::json!(self.workspace.preferences.sidebar_width);
+        data["window_size"] = serde_json::json!([self.size.width, self.size.height]);
+        data["saved_window_size"] = serde_json::json!(self.workspace.preferences.window_size);
+        data["context_menu"] = serde_json::json!(self.context_menu.as_ref().map(|m| &m.mail.id));
+        data["context_subject"] =
+            serde_json::json!(self.context_menu.as_ref().map(|m| &m.mail.subject));
+        data["saved_toast"] = serde_json::json!(self.saved_toast.is_some());
+        data["contacts"] = serde_json::json!(self.preferences.contacts);
+        data["sidebar_labels"] = serde_json::json!(
+            self.sidebar_items()
+                .iter()
+                .map(|s| &s.label)
+                .collect::<Vec<_>>()
+        );
         data["account"] = serde_json::json!(self.query.account);
         #[cfg(feature = "test-support")]
         {

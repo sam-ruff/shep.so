@@ -292,7 +292,7 @@ impl App {
                             return match exit {
                                 Exit::Dialog => widget::operation::focus("unfocused"),
                                 Exit::Tab(tab) => self.handle(Message::Tab(tab)),
-                                Exit::Window(window) => iced::window::close(window),
+                                Exit::Window(window) => self.handle(Message::WindowClose(window)),
                             };
                         }
                     }

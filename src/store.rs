@@ -295,10 +295,19 @@ impl Store {
         self.run(move |c| {
             let mut filters = vec!["1=1".to_string()];
             let mut values: Vec<rusqlite::types::Value> = Vec::new();
-            if let Some(account) = query.account { filters.push("account=?".into()); values.push(account.into()); }
-            if query.sent_only {
-                filters.push("((folder='Sent' AND (id LIKE '%:local-sent-%' OR account NOT IN (SELECT account FROM sent_folders))) OR (account,folder) IN (SELECT account,folder FROM sent_folders))".into());
-            } else if !query.folder.is_empty() { filters.push("folder=?".into()); values.push(query.folder.into()); }
+            let sent = "((folder='Sent' AND (id LIKE '%:local-sent-%' OR account NOT IN (SELECT account FROM sent_folders))) OR (account,folder) IN (SELECT account,folder FROM sent_folders))";
+            let prefix = if let Some(folders) = query.folders {
+                values.push(serde_json::to_string(&folders)?.into());
+                // One bound JSON value avoids SQLite parameter/expression-depth
+                // limits. IN subqueries keep indexed account/folder lookups possible.
+                filters.push(format!("((account,folder) IN (SELECT account,folder FROM selected_folders WHERE account IS NOT NULL AND NOT sent_only) OR folder IN (SELECT folder FROM selected_folders WHERE account IS NULL AND NOT sent_only) OR ({sent} AND EXISTS(SELECT 1 FROM selected_folders s WHERE s.sent_only AND (s.account IS NULL OR s.account=messages.account))))"));
+                "WITH selected_folders AS (SELECT json_extract(value,'$.account') AS account,json_extract(value,'$.folder') AS folder,json_extract(value,'$.sent_only') AS sent_only FROM json_each(?)) "
+            } else {
+                if let Some(account) = query.account { filters.push("account=?".into()); values.push(account.into()); }
+                if query.sent_only { filters.push(sent.into()); }
+                else if !query.folder.is_empty() { filters.push("folder=?".into()); values.push(query.folder.into()); }
+                ""
+            };
             if query.unread_only { filters.push("unread=1".into()); }
             if query.read_only { filters.push("unread=0".into()); }
             if query.attachments_only { filters.push("json_extract(data,'$.attachment_count')>0".into()); }
@@ -306,8 +315,8 @@ impl Store {
             let search = crate::fuzzy::mail_query(c, &query.search)?;
             if !search.is_empty() { filters.push("rowid IN (SELECT rowid FROM mail_search WHERE mail_search MATCH ?)".into()); values.push(search.into()); }
             let condition = filters.join(" AND ");
-            let total: i64 = c.query_row(&format!("SELECT COUNT(*) FROM messages WHERE {condition}"), rusqlite::params_from_iter(&values), |r| r.get(0))?;
-            let unread: i64 = c.query_row(&format!("SELECT COUNT(*) FROM messages WHERE {condition} AND unread=1"), rusqlite::params_from_iter(&values), |r| r.get(0))?;
+            let total: i64 = c.query_row(&format!("{prefix}SELECT COUNT(*) FROM messages WHERE {condition}"), rusqlite::params_from_iter(&values), |r| r.get(0))?;
+            let unread: i64 = c.query_row(&format!("{prefix}SELECT COUNT(*) FROM messages WHERE {condition} AND unread=1"), rusqlite::params_from_iter(&values), |r| r.get(0))?;
             values.push((PAGE_SIZE as i64).into()); values.push((query.offset as i64).into());
             let order = match query.sort {
                 MailSort::Newest => "timestamp DESC,id",
@@ -315,7 +324,7 @@ impl Store {
                 MailSort::Sender => "sender COLLATE NOCASE,timestamp DESC,id",
                 MailSort::Subject => "subject COLLATE NOCASE,timestamp DESC,id",
             };
-            let mut stmt = c.prepare(&format!("SELECT data,unread,starred,folder FROM messages WHERE {condition} ORDER BY {order} LIMIT ? OFFSET ?"))?;
+            let mut stmt = c.prepare(&format!("{prefix}SELECT data,unread,starred,folder FROM messages WHERE {condition} ORDER BY {order} LIMIT ? OFFSET ?"))?;
             let rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?)))?
                 .map(|r| { let (data,unread,starred,folder)=r?; let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
             Ok(MailPage { rows, total:total as usize, unread:unread as usize })
