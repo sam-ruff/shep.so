@@ -1,5 +1,6 @@
 mod drive;
 pub(crate) mod journal;
+pub(crate) mod restore;
 
 use crate::{model::*, providers::google::Google};
 use aes_gcm::{
@@ -239,14 +240,7 @@ pub fn decrypt(bytes: &[u8], passphrase: &SecretString) -> anyhow::Result<Snapsh
         "The backup exceeds the restore size limit."
     );
     let snapshot: Snapshot = serde_json::from_slice(&decoded)?;
-    anyhow::ensure!(
-        snapshot.version == 1,
-        "This backup was made by a newer version of Shep."
-    );
-    snapshot.preferences.validate()?;
-    for account in &snapshot.accounts {
-        account.validate()?;
-    }
+    snapshot.validate()?;
     Ok(snapshot)
 }
 

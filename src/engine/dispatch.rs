@@ -133,7 +133,9 @@ impl Engine {
                         // Uploads have bounded HTTP requests and progress checks,
                         // plus a durable journal. Do not cancel a healthy transfer
                         // merely because the whole archive takes over ten minutes.
-                        let result = if matches!(&command, Command::Backup(..) | Command::AutomaticBackup(_)) {
+                        // Restore also must observe its blocking SQLite commit;
+                        // dropping its future cannot cancel that transaction.
+                        let result = if matches!(&command, Command::Backup(..) | Command::AutomaticBackup(_) | Command::Restore(..)) {
                             engine.execute(command, output).await
                         } else {
                             tokio::time::timeout(Duration::from_secs(600), engine.execute(command, output)).await
@@ -193,6 +195,7 @@ mod tests {
             calendar_locks: Default::default(),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore),
+            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
             backup_uploads: Default::default(),
         };
         let (sender, input) = CommandSender::channel();

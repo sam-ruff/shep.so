@@ -1,4 +1,5 @@
 use crate::model::*;
+mod restore;
 use anyhow::Context;
 use rusqlite::{Connection, params};
 use serde::{Serialize, de::DeserializeOwned};
@@ -60,6 +61,8 @@ impl Store {
             CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE OF sender,subject,body ON messages BEGIN
                 INSERT INTO mail_search(mail_search,rowid,sender,subject,body) VALUES('delete',old.rowid,old.sender,old.subject,old.body);
                 INSERT INTO mail_search(rowid,sender,subject,body) VALUES(new.rowid,new.sender,new.subject,new.body); END;
+            CREATE TABLE IF NOT EXISTS restored_messages (
+                id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE);
             CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, source TEXT NOT NULL, start INTEGER NOT NULL, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS event_start ON events(start);")?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -401,12 +404,18 @@ impl Store {
             } => {
                 self.run(move |c| {
                     let tx = c.transaction()?;
-                    let ids: Vec<String> = tx
-                        .prepare("SELECT id FROM messages WHERE account=? AND folder=? AND id NOT LIKE '%:local-sent-%'")?
-                        .query_map(params![account, folder], |r| r.get(0))?
+                    let ids: Vec<(String, bool)> = tx
+                        .prepare("SELECT id,EXISTS(SELECT 1 FROM restored_messages WHERE restored_messages.id=messages.id) FROM messages WHERE account=? AND folder=? AND id NOT LIKE '%:local-sent-%'")?
+                        .query_map(params![account, folder], |r| Ok((r.get(0)?, r.get(1)?)))?
                         .collect::<Result<_, _>>()?;
-                    for id in ids {
-                        if !live_ids.contains(&id) {
+                    for (id, restored) in ids {
+                        let live = live_ids.contains(&id);
+                        if live && restored {
+                            // A complete server listing confirmed this identity.
+                            tx.execute("DELETE FROM restored_messages WHERE id=?", [id])?;
+                        } else if !live && !restored {
+                            // A backup may be the only remaining copy of deleted
+                            // server mail. A sync must not erase that recovery.
                             tx.execute("DELETE FROM messages WHERE id=?", [id])?;
                         }
                     }

@@ -139,7 +139,14 @@ fn authenticated_encryption_detects_wrong_password_and_tampering() {
         version: 1,
         created_at: 1,
         messages: vec![mail(0)],
-        accounts: vec![],
+        accounts: vec![
+            serde_json::from_value(serde_json::json!({
+                "id": "account", "name": "Test", "email": "sam@example.com", "protocol": "Imap",
+                "host": "imap.example.com", "port": 993, "username": "sam@example.com",
+                "smtp_host": "smtp.example.com", "smtp_port": 465
+            }))
+            .unwrap(),
+        ],
         calendars: vec![],
         preferences: Preferences::default(),
         credentials: vec![("account".into(), "private-password".into())],

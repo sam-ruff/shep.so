@@ -327,7 +327,7 @@ pub enum CalendarKind {
     CalDav,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CalendarSource {
     pub id: String,
     pub name: String,
