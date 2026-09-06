@@ -385,3 +385,14 @@ verification. The user installation matches `target/release/shep` at SHA-256
 Existing personal windows remain open and need reopening for the new build.
 Strict documentation validation passes. No root logs were created. Publication
 is recorded below after the authorized main push.
+
+
+Shipped to main as `cd8f7321aa0360c8ad05cb7648f4f86359a2636e`. The native refresh-control
+interpretation of R71 is complete: both Mail and Calendar use the corrected SVG,
+with normal/scaled/light/dark/compact visual evidence and saved native tests.
+R71 is removed from TODO on that basis; the browser crop itself was not reproduced
+as a separate browser UI defect. R69 remains in TODO for its remaining layout and
+readiness work, and the full-product goal remains active. The verified Linux
+installation is already in place; personal windows were not terminated.
+
+[Documentation run 34057767845](https://github.com/sam-ruff/shep.so/actions/runs/34057767845) passes for the shipped code commit.
