@@ -1,8 +1,11 @@
+mod backups;
+#[cfg(test)]
+mod backups_tests;
 mod dispatch;
 pub use dispatch::CommandSender;
 
 use crate::{
-    backup::{self, BackupCopy, BackupProvider, Snapshot},
+    backup::{self, BackupCopy, BackupProvider, BackupTarget, Snapshot},
     model::*,
     providers::{self, CalendarProvider},
     store::{Store, Workspace},
@@ -43,9 +46,10 @@ pub enum Command {
     SyncCalendar,
     SaveEvent(CalendarEvent),
     DeleteEvent(CalendarEvent),
-    Backup(SecretString),
-    ListBackups,
-    Restore(String, SecretString),
+    Backup(BackupTarget, SecretString),
+    AutomaticBackup(BackupTarget),
+    ListBackups(u64, BackupTarget),
+    Restore(BackupTarget, String, SecretString),
     ExportAttachment(String, usize, String),
     ExportMessage(String, String),
     #[cfg(test)]
@@ -61,7 +65,9 @@ impl Command {
             Self::Sync => Some("sync".into()),
             Self::SyncCalendar => Some("calendar".into()),
             Self::GoogleLogin(_) => Some("google".into()),
-            Self::Backup(_) | Self::Restore(..) => Some("backup".into()),
+            Self::Backup(..) | Self::AutomaticBackup(_) | Self::Restore(..) => {
+                Some("backup".into())
+            }
             Self::Send(d) => Some(format!("send:{}", d.id)),
             Self::SaveEvent(e) | Self::DeleteEvent(e) => Some(format!("event:{}", e.key())),
             Self::Flags(m) | Self::Move(m, _) | Self::Transfer(m, _, _) => {
@@ -86,7 +92,9 @@ pub enum Event {
     },
     Changed,
     Calendar(Arc<Vec<CalendarEvent>>),
-    Backups(Arc<Vec<BackupCopy>>),
+    Backups(u64, BackupTarget, Result<Arc<Vec<BackupCopy>>, String>),
+    BackupSaved(BackupTarget, BackupCopy),
+    BackupFinished(BackupTarget),
     Busy(String, bool),
     Notice(String),
     Error(String),
@@ -107,6 +115,8 @@ struct Engine {
     demo: bool,
     account_locks: AccountLocks,
     calendar_locks: AccountLocks,
+    google_connection_lock: Arc<tokio::sync::Mutex<()>>,
+    passphrases: Arc<dyn backup::PassphraseStore>,
 }
 type Output = futures::channel::mpsc::Sender<Event>;
 
@@ -159,6 +169,8 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             demo,
             account_locks: Default::default(),
             calendar_locks: Default::default(),
+            google_connection_lock: Default::default(),
+            passphrases: Arc::new(backup::OsPassphraseStore),
         };
         let workspace = match engine.store.workspace().await {
             Ok(w) => w,
@@ -281,8 +293,8 @@ impl Engine {
         Ok(match prefs.backup_destination {
             BackupDestination::Local => {
                 anyhow::ensure!(
-                    !prefs.backup_folder.trim().is_empty(),
-                    "Choose a backup folder in Preferences."
+                    std::path::Path::new(&prefs.backup_folder).is_absolute(),
+                    "Choose an absolute backup folder path in Preferences."
                 );
                 Box::new(backup::LocalBackup {
                     directory: prefs.backup_folder.clone().into(),
@@ -632,7 +644,17 @@ impl Engine {
                 prefs.validate()?;
                 // The UI starts OAuth only after the corresponding preferences save
                 // is acknowledged. A delayed provider job must not overwrite settings.
+                let _guard = self.google_connection_lock.lock().await;
                 self.google.login(&prefs).await?;
+                self.store
+                    .update_preferences(|current| {
+                        current.google_connection_id = uuid::Uuid::new_v4().to_string();
+                        if current.backup_destination == BackupDestination::GoogleDrive {
+                            current.last_backup = None;
+                            current.backup_ready = false;
+                        }
+                    })
+                    .await?;
                 for source in self.google.calendars(&prefs).await? {
                     self.store.save_source(source).await?;
                 }
@@ -725,89 +747,35 @@ impl Engine {
                 )
                 .await?;
             }
-            Command::Backup(passphrase) => {
-                anyhow::ensure!(!self.demo, "Backup is disabled in preview.");
-                let prefs: Preferences = self.store.get("preferences").await?;
-                prefs.validate()?;
-                let provider = self.backup_provider(&prefs).await?;
-                let accounts: Vec<Account> = self.store.get("accounts").await?;
-                let calendars: Vec<CalendarSource> = self.store.get("calendars").await?;
-                let mut credentials = Vec::new();
-                if prefs.backup_accounts {
-                    for id in accounts.iter().map(|a| &a.id).chain(
-                        calendars
-                            .iter()
-                            .filter(|c| c.kind == CalendarKind::CalDav)
-                            .map(|c| &c.id),
-                    ) {
-                        credentials.push((
-                            id.clone(),
-                            providers::read_secret(id)
-                                .await?
-                                .expose_secret()
-                                .to_string(),
-                        ));
-                    }
-                }
-                if prefs.backup_accounts {
-                    for account in accounts.iter().filter(|a| a.smtp_separate_password) {
-                        let id = format!("{}:smtp", account.id);
-                        credentials.push((
-                            id.clone(),
-                            providers::read_secret(&id).await?.expose_secret().into(),
-                        ));
-                    }
-                }
-                let snapshot = Snapshot {
-                    version: 1,
-                    created_at: chrono::Utc::now().timestamp(),
-                    messages: self.store.export().await?,
-                    accounts,
-                    calendars,
-                    preferences: prefs.clone(),
-                    credentials,
-                };
-                let secret = passphrase.clone();
-                let bytes =
-                    tokio::task::spawn_blocking(move || backup::encrypt(&snapshot, &secret))
-                        .await??;
-                let name = format!(
-                    "shep-{}-{}.shepbackup",
-                    chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
-                    uuid::Uuid::new_v4()
-                );
-                provider.upload(&name, bytes).await?;
-                // Only prune after the new encrypted copy was successfully committed.
-                backup::retain(provider.as_ref(), prefs.backup_copies).await?;
-                if prefs.auto_backup {
-                    providers::write_secret("backup-passphrase", passphrase).await?;
-                }
-                self.store
-                    .update_preferences(|current| {
-                        current.last_backup = Some(chrono::Utc::now().timestamp());
-                    })
+            Command::Backup(target, passphrase) => {
+                self.run_backup(target, Some(passphrase), &mut output)
                     .await?;
-                self.workspace(&mut output).await?;
+            }
+            Command::AutomaticBackup(target) => {
+                self.run_backup(target, None, &mut output).await?;
+            }
+            Command::ListBackups(request, target) => {
+                let result: anyhow::Result<Vec<BackupCopy>> = async {
+                    anyhow::ensure!(!self.demo, "Backup listing is disabled in preview.");
+                    let _guard = self.backup_connection_guard(&target).await;
+                    let prefs = self.store.get("preferences").await?;
+                    Self::check_backup_target(&target, &prefs)?;
+                    self.backup_provider(&prefs).await?.list().await
+                }
+                .await;
                 output
-                    .send(Event::Backups(Arc::new(provider.list().await?)))
-                    .await?;
-                output
-                    .send(Event::Notice(
-                        "Encrypted backup saved and retention applied.".into(),
+                    .send(Event::Backups(
+                        request,
+                        target,
+                        result.map(Arc::new).map_err(|error| format!("{error:#}")),
                     ))
                     .await?;
             }
-            Command::ListBackups => {
-                let prefs = self.store.get("preferences").await?;
-                output
-                    .send(Event::Backups(Arc::new(
-                        self.backup_provider(&prefs).await?.list().await?,
-                    )))
-                    .await?;
-            }
-            Command::Restore(id, passphrase) => {
+            Command::Restore(target, id, passphrase) => {
                 anyhow::ensure!(!self.demo, "Restore is disabled in preview.");
+                let _guard = self.backup_connection_guard(&target).await;
                 let prefs = self.store.get("preferences").await?;
+                Self::check_backup_target(&target, &prefs)?;
                 let bytes = self.backup_provider(&prefs).await?.download(&id).await?;
                 let snapshot =
                     tokio::task::spawn_blocking(move || backup::decrypt(&bytes, &passphrase))
@@ -950,6 +918,8 @@ mod calendar_tests {
             demo: true,
             account_locks: Default::default(),
             calendar_locks: Default::default(),
+            google_connection_lock: Default::default(),
+            passphrases: Arc::new(backup::OsPassphraseStore),
         }
     }
     fn event(source: &str) -> CalendarEvent {

@@ -1,4 +1,5 @@
 mod account;
+mod backups;
 mod components;
 mod preference_sync;
 mod reading;
@@ -8,7 +9,7 @@ mod sidebar;
 mod views;
 
 use crate::{
-    backup::BackupCopy,
+    backup::{BackupCopy, BackupTarget},
     engine::{self, Command, Event},
     model::*,
     shortcuts::Action,
@@ -181,6 +182,7 @@ pub struct App {
     preferences: Preferences,
     preference_sync: preference_sync::PreferenceSync,
     pending_google_login: Option<(u64, Preferences)>,
+    pending_backup: Option<backups::PendingBackup>,
     tab: Tab,
     settings_tab: SettingsTab,
     dialog: Option<Dialog>,
@@ -211,7 +213,10 @@ pub struct App {
     light_logo: widget::image::Handle,
     dark_logo: widget::image::Handle,
     backups: Arc<Vec<BackupCopy>>,
+    backups_target: Option<BackupTarget>,
+    backups_generation: u64,
     restore_id: String,
+    restore_target: Option<BackupTarget>,
     export_index: Option<usize>,
     started: Instant,
     update_samples: VecDeque<f64>,
@@ -288,6 +293,7 @@ impl App {
                 preferences: Preferences::default(),
                 preference_sync: Default::default(),
                 pending_google_login: None,
+                pending_backup: None,
                 tab: Tab::Mail,
                 settings_tab: SettingsTab::General,
                 dialog: None,
@@ -325,7 +331,10 @@ impl App {
                     include_bytes!("../../assets/logo-dark.webp").as_slice(),
                 ),
                 backups: Arc::new(Vec::new()),
+                backups_target: None,
+                backups_generation: 0,
                 restore_id: String::new(),
+                restore_target: None,
                 export_index: None,
                 started: Instant::now(),
                 update_samples: VecDeque::new(),
@@ -599,6 +608,7 @@ impl App {
                         &mut self.preferences,
                     );
                     self.update_saved_preferences();
+                    self.continue_backup_request(request);
                     if self
                         .pending_google_login
                         .as_ref()
@@ -775,7 +785,39 @@ impl App {
                         return iced::window::close(window);
                     }
                 }
-                Event::Backups(copies) => self.backups = copies,
+                Event::Backups(request, target, result) => {
+                    if request == self.backups_generation
+                        && target == self.configured_backup_target()
+                    {
+                        match result {
+                            Ok(copies) => {
+                                self.backups = copies;
+                                self.backups_target = Some(target);
+                            }
+                            Err(error) => self
+                                .notice(format!("Could not refresh saved copies: {error}"), true),
+                        }
+                    }
+                }
+                Event::BackupSaved(target, copy) => {
+                    if target == self.configured_backup_target() {
+                        self.backups_generation += 1;
+                        if self.backups_target.as_ref() != Some(&target) {
+                            self.backups = Arc::new(Vec::new());
+                        }
+                        let copies = Arc::make_mut(&mut self.backups);
+                        copies.retain(|saved| saved.id != copy.id);
+                        copies.insert(0, copy);
+                        self.backups_target = Some(target);
+                    }
+                }
+                Event::BackupFinished(target)
+                    if target == self.configured_backup_target()
+                        && self.tab == Tab::Preferences
+                        && self.settings_tab == SettingsTab::Backups =>
+                {
+                    self.request_backup_copies(target);
+                }
                 _ => {}
             },
             Message::WindowClose(window) => {
@@ -1285,20 +1327,32 @@ impl App {
                     self.send(Command::SavePreferences(request, self.preferences.clone()));
                 }
             }
-            Message::Backup => self.send(Command::Backup(secrecy::SecretString::from(
-                self.field("passphrase").to_string(),
-            ))),
-            Message::ListBackups => self.send(Command::ListBackups),
+            Message::Backup => self.begin_backup_request(backups::BackupAction::Save(
+                secrecy::SecretString::from(self.field("passphrase").to_string()),
+            )),
+            Message::ListBackups => self.begin_backup_request(backups::BackupAction::List),
             Message::Restore(id) => {
-                self.restore_id = id;
-                self.dialog = Some(Dialog::Restore);
+                if self.visible_backups().iter().any(|copy| copy.id == id) {
+                    self.restore_id = id;
+                    self.restore_target = self.backups_target.clone();
+                    self.dialog = Some(Dialog::Restore);
+                } else {
+                    self.notice(
+                        "Refresh the saved copies for this destination before restoring.",
+                        true,
+                    );
+                }
             }
             Message::ConfirmRestore => {
-                self.send(Command::Restore(
-                    self.restore_id.clone(),
-                    secrecy::SecretString::from(self.field("passphrase").to_string()),
-                ));
-                self.dialog = None;
+                if self.restore_target.as_ref() == Some(&self.configured_backup_target()) {
+                    self.begin_backup_request(backups::BackupAction::Restore(
+                        self.restore_id.clone(),
+                        secrecy::SecretString::from(self.field("passphrase").to_string()),
+                    ));
+                    self.dialog = None;
+                } else {
+                    self.notice("The backup destination changed. Close this dialog and refresh copies before restoring.", true);
+                }
             }
             Message::Key(key, modifiers, captured) => return self.key(key, modifiers, captured),
             Message::Remap(action) => {
@@ -1970,6 +2024,11 @@ impl App {
         samples.sort_by(f64::total_cmp);
         let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|d.summary.starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
         data["focused_input"] = serde_json::json!(self.focused_input);
+        data["auto_backup"] = serde_json::json!(self.preferences.auto_backup);
+        data["backup_ready"] = serde_json::json!(self.preferences.backup_ready);
+        data["saved_backup_folder"] = serde_json::json!(self.workspace.preferences.backup_folder);
+        data["saved_backup_copies"] = serde_json::json!(self.workspace.preferences.backup_copies);
+        data["saved_auto_backup"] = serde_json::json!(self.workspace.preferences.auto_backup);
         data["preferences_saved"] = serde_json::json!(!self.preference_sync.dirty());
         data["saved_preferences_revision"] = serde_json::json!(self.workspace.preferences_revision);
         data["saved_appearance"] =

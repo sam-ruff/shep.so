@@ -168,18 +168,16 @@ async fn rolling_retention_keeps_newest_and_leaves_unrelated_files() {
     tokio::fs::write(dir.path().join("important.txt"), "keep me")
         .await
         .unwrap();
-    for i in 0..5 {
-        provider
-            .upload(&format!("shep-2026090{i}T120000Z.shepbackup"), vec![i])
-            .await
-            .unwrap();
+    let name = |i| format!("shep-2026090{i}T120000Z-{}.shepbackup", uuid::Uuid::nil());
+    for i in 1..=5 {
+        provider.upload(&name(i), vec![i]).await.unwrap();
     }
-    assert_eq!(backup::retain(&provider, 2).await.unwrap(), 3);
+    assert_eq!(backup::retain(&provider, 2, &name(5)).await.unwrap(), 3);
     let copies = provider.list().await.unwrap();
     assert_eq!(copies.len(), 2);
-    assert!(copies[0].name.contains("0904"));
+    assert!(copies[0].name.contains("0905"));
     assert!(dir.path().join("important.txt").exists());
-    assert!(backup::retain(&provider, 0).await.is_err());
+    assert!(backup::retain(&provider, 0, &name(5)).await.is_err());
     assert!(provider.download("../important.txt").await.is_err());
     assert!(provider.delete("important.txt").await.is_err());
 }

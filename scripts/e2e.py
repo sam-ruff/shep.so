@@ -223,6 +223,24 @@ class NativeFlows(unittest.TestCase):
                            click(87, 159), check("tab", "Calendar"),
                            shot(f"responsive-during-sync-{appearance}"), check("busy", []))
 
+    def test_backup_preferences_and_setup(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(559, 156), check("settings_tab", "Backups"), shot("backup-setup"),
+                       click(525, 744), check("notice", "at least 12 characters", "contains"),
+                       click(520, 642), type_text("a fixture backup passphrase"),
+                       click(500, 414), type_text("relative-folder"), click(525, 744),
+                       check("notice", "absolute backup folder", "contains"),
+                       click(500, 414), key("ctrl+a"), type_text("/tmp/shep-e2e-backup-preview"),
+                       click(400, 494), key("ctrl+a"), type_text("12"), click(525, 744),
+                       check("notice", "Backup is disabled in preview.", "contains"),
+                       check("preferences_saved", True), check("saved_backup_folder", "/tmp/shep-e2e-backup-preview"),
+                       check("saved_backup_copies", 12), shot("backup-settings-saved-before-action"),
+                       click(288, 539), check("auto_backup", True), click(1340, 87),
+                       check("preferences_saved", True), check("saved_auto_backup", True), check("backup_ready", False),
+                       shot("automatic-backup-needs-first-copy"),
+                       click(290, 156), check("settings_tab", "General"), click(690, 366), check("dark", True),
+                       click(559, 156), check("settings_tab", "Backups"), shot("backup-setup-dark"))
+
     def test_native_navigation_performance_gate(self):
         timings = []
         for index in range(30):
@@ -266,7 +284,8 @@ class NativeFlows(unittest.TestCase):
                        click(400, 245), check("selected", "A little more room to think"),
                        key("Down"), check("selected", "Your weekly workspace digest"),
                        key("ctrl+2"), check("tab", "Calendar"), shot("calendar-compact"),
-                       key("ctrl+comma"), check("tab", "Preferences"), shot("preferences-compact"))
+                       key("ctrl+comma"), check("tab", "Preferences"), shot("preferences-compact"),
+                       click(559, 156), check("settings_tab", "Backups"), shot("backups-compact"))
 
 
 def main():

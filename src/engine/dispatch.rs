@@ -113,6 +113,7 @@ impl Engine {
         let mut timer = tokio::time::interval(Duration::from_secs(60));
         timer.tick().await;
         let mut last_sync = Instant::now();
+        let mut last_backup_attempt: Option<(BackupTarget, Instant)> = None;
         loop {
             tokio::select! {
                 biased;
@@ -140,10 +141,13 @@ impl Engine {
                                 let worker=engine.clone();let events=output.clone();jobs.spawn(async move{(Some("calendar".into()),worker.execute(Command::SyncCalendar,events).await)});
                             }
                         }
-                        if prefs.auto_backup&&chrono::Utc::now().timestamp()-prefs.last_backup.unwrap_or(0)>=(prefs.backup_hours*3600)as i64&&!busy.contains("backup")&&jobs.len()<NETWORK_CONCURRENCY
-                            && let Ok(secret)=providers::read_secret("backup-passphrase").await{
+                        let target = BackupTarget::from_preferences(&prefs);
+                        let interval = Duration::from_secs(prefs.backup_hours * 3600);
+                        let retry_due = last_backup_attempt.as_ref().is_none_or(|(previous, at)| *previous != target || at.elapsed() >= interval);
+                        if prefs.auto_backup && prefs.backup_ready && retry_due && chrono::Utc::now().timestamp()-prefs.last_backup.unwrap_or(0)>=interval.as_secs()as i64&&!busy.contains("backup")&&jobs.len()<NETWORK_CONCURRENCY {
+                                last_backup_attempt = Some((target.clone(), Instant::now()));
                                 busy.insert("backup".into());let _=output.send(Event::Busy("backup".into(),true)).await;
-                                let engine=engine.clone();let output=output.clone();jobs.spawn(async move{(Some("backup".into()),engine.execute(Command::Backup(secret),output).await)});
+                                let engine=engine.clone();let output=output.clone();jobs.spawn(async move{(Some("backup".into()),engine.execute(Command::AutomaticBackup(target),output).await)});
                             }
                     }
                 }
@@ -176,6 +180,8 @@ mod tests {
             demo: true,
             account_locks: Default::default(),
             calendar_locks: Default::default(),
+            google_connection_lock: Default::default(),
+            passphrases: Arc::new(backup::OsPassphraseStore),
         };
         let (sender, input) = CommandSender::channel();
         let (output, mut events) = futures::channel::mpsc::channel(32);
