@@ -113,7 +113,7 @@ class NativeFlows(unittest.TestCase):
                        click(690, 366), check("dark", True),
                        click(286, 737), check("unified", False),
                        click(286, 773), check("cross_account_moves", True),
-                       key("ctrl+1"), check("tab", "Mail"),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80),
                        drag(616, 500, 785, 500), check("reader_split", .44, "gte"),
                        key("ctrl+comma"), check("tab", "Preferences"), click(399, 366), check("dark", False),
                        check("preferences_saved", True), check("saved_appearance", "Light"),
@@ -212,9 +212,16 @@ class NativeFlows(unittest.TestCase):
                        click(544, 677), check("fields.test_smtp", "Test workspaces do not connect", "contains"), shot("tested-smtp"))
 
     def test_background_sync_keeps_navigation_responsive(self):
-        self.mcp.batch(click(1370, 34), check("busy", "sync", "contains"),
-                       click(87, 159), check("tab", "Calendar"),
-                       shot("responsive-during-sync"))
+        for appearance in ("light", "dark"):
+            if appearance == "dark":
+                self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                               click(690, 366), check("dark", True),
+                               key("ctrl+1"), check("tab", "Mail"))
+            self.mcp.batch(shot(f"compact-header-{appearance}"),
+                           click(1370, 34), check("busy", "sync", "contains"),
+                           shot(f"compact-header-syncing-{appearance}"),
+                           click(87, 159), check("tab", "Calendar"),
+                           shot(f"responsive-during-sync-{appearance}"), check("busy", []))
 
     def test_native_navigation_performance_gate(self):
         timings = []
@@ -255,6 +262,9 @@ class NativeFlows(unittest.TestCase):
     def test_compact_window_layout(self):
         self.mcp.call("desktop.start", width=900, height=640)
         self.mcp.batch(check("ready", True), shot("mail-compact"),
+                       click(852, 34), check("busy", "sync", "contains"), shot("mail-compact-syncing"),
+                       click(400, 245), check("selected", "A little more room to think"),
+                       key("Down"), check("selected", "Your weekly workspace digest"),
                        key("ctrl+2"), check("tab", "Calendar"), shot("calendar-compact"),
                        key("ctrl+comma"), check("tab", "Preferences"), shot("preferences-compact"))
 
