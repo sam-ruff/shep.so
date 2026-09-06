@@ -593,15 +593,25 @@ The existing Mail/Calendar refresh scenarios pass again, including 120% interfac
 size and compact dark mode. The native icons were visually reviewed in
 `artifacts/e2e/1741714f5abe/` and `artifacts/e2e/7480b4601efe/`; their geometry is
 correct. This verifies the native icon already shipped for R71, not the browser
-chrome in the original crop. The full native run, release installation and push
-are being completed for this checkpoint; no performance timings were measured.
+chrome in the original crop. No performance timings were measured.
 
 The first full run completed 109 scenarios with two failures: the Google
 permissions flow clicked Backups before the returned Preferences layout was
 ready, and rapid HTML navigation queued subsequent clicks without observing each
 intermediate selection. Both saved flows now observe native UI state before the
 next click. They pass individually; HTML navigation still does not wait for
-intermediate body rendering. A final complete functional rerun is in progress.
+intermediate body rendering. The final complete rerun passes all 109 functional
+scenarios. Reviewed final preference evidence is in
+`artifacts/e2e/fae64a84b9dc/`, and rapid HTML navigation/resize evidence is in
+`artifacts/e2e/84a416a2c2e2/`. Logs are under `artifacts/logs/preferences-clip-*`.
+
+Shipped to main: `0d2feb1ab5cf4885aa8a02ec3cb24134204072de`. Formatting,
+Clippy, all Rust/Python tests and strict documentation validation pass. The
+optimized archive passes checksum, extraction and bundled-installer checks.
+The installed user binary matches the release at SHA-256
+`e3f8577cd11b9671874179cf6663bf9fd7d40801b3494641287751449b0cdc28`.
+Personal windows were left running. Quality/release workflows remain disabled;
+performance and the remaining product TODO stay open.
 
 Built-in imagegen was used for transparent logo extraction. Light and dark
 candidates and prompt provenance are saved under ignored
