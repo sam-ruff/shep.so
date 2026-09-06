@@ -13,13 +13,16 @@ pub(super) struct Toast {
     folder: String,
     items: HashSet<u64>,
     updated: Instant,
+    restored: bool,
 }
 
 impl Toast {
     pub fn label(&self) -> String {
         let count = self.items.len();
         let noun = if count == 1 { "message" } else { "messages" };
-        if self.folder.eq_ignore_ascii_case("Archive") {
+        if self.restored {
+            format!("Restored {count} {noun}")
+        } else if self.folder.eq_ignore_ascii_case("Archive") {
             format!("Archived {count} {noun}")
         } else if self.folder.eq_ignore_ascii_case("Trash") {
             format!("Deleted {count} {noun}")
@@ -31,6 +34,17 @@ impl Toast {
             };
             format!("Moved {count} {noun} to {folder}")
         }
+    }
+    pub fn undo_tokens(&self) -> Vec<u64> {
+        if self.restored {
+            return vec![];
+        }
+        let mut tokens: Vec<_> = self.items.iter().copied().collect();
+        tokens.sort_unstable();
+        tokens
+    }
+    pub fn contains(&self, token: u64) -> bool {
+        self.items.contains(&token)
     }
     #[cfg(feature = "test-support")]
     pub fn count(&self) -> usize {
@@ -48,6 +62,7 @@ impl ActionToasts {
             folder: folder.into(),
             items: HashSet::new(),
             updated: now,
+            restored: false,
         });
         let standard_folder =
             folder.eq_ignore_ascii_case("Archive") || folder.eq_ignore_ascii_case("Trash");
@@ -56,17 +71,27 @@ impl ActionToasts {
         } else {
             toast.folder == folder
         };
-        if !same_folder || (!standard_folder && toast.account != account) {
+        if toast.restored || !same_folder || (!standard_folder && toast.account != account) {
             *toast = Toast {
                 account: account.into(),
                 folder: folder.into(),
                 items: HashSet::new(),
                 updated: now,
+                restored: false,
             };
         }
         toast.items.insert(token);
         toast.updated = now;
         token
+    }
+    pub fn restored(&mut self, tokens: Vec<u64>, now: Instant) {
+        self.current = (!tokens.is_empty()).then(|| Toast {
+            account: String::new(),
+            folder: String::new(),
+            items: tokens.into_iter().collect(),
+            updated: now,
+            restored: true,
+        });
     }
     pub fn failed(&mut self, token: u64) {
         if let Some(toast) = &mut self.current {

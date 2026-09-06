@@ -46,6 +46,7 @@ pub enum Command {
     Sync,
     Move(u64, Mail, String),
     Transfer(u64, Mail, String, String),
+    UndoMove(u64, Mail, Arc<crate::mail_actions::MoveReceipt>),
     Flags(u64, Mail, crate::mail_actions::Flags),
     SaveDraft(Draft),
     AutoSaveDraft(Draft),
@@ -99,6 +100,7 @@ impl Command {
             Self::Send(d) => Some(format!("send:{}", d.id)),
             Self::SaveEvent(e) | Self::DeleteEvent(e) => Some(format!("event:{}", e.key())),
             Self::Flags(request, m, _) => Some(format!("flags:{}:{request}", m.id)),
+            Self::UndoMove(request, m, _) => Some(format!("undo:{}:{request}", m.id)),
             Self::Move(request, m, _) => Some(format!("move:{}:{request}", m.id)),
             Self::Transfer(request, m, _, _) => Some(format!("transfer:{}:{request}", m.id)),
             _ => None,
@@ -127,8 +129,22 @@ pub enum Event {
     },
     MailSyncFinished(Result<(), String>),
     FlagsFinished(u64, Mail, Result<(), String>),
-    MoveFinished(u64, Mail, String, Result<(), String>),
-    TransferFinished(u64, Mail, Result<(), String>),
+    MoveFinished(
+        u64,
+        Mail,
+        String,
+        Result<Arc<crate::mail_actions::MoveReceipt>, String>,
+    ),
+    TransferFinished(
+        u64,
+        Mail,
+        Result<Arc<crate::mail_actions::MoveReceipt>, String>,
+    ),
+    UndoFinished(
+        u64,
+        Mail,
+        Result<Arc<crate::mail_actions::MoveReceipt>, String>,
+    ),
     #[cfg(feature = "test-support")]
     PreviewSync(u64),
     Changed,
@@ -613,12 +629,14 @@ impl Engine {
                 let result = self
                     .transfer_message(&mail, destination, folder, output.clone())
                     .await;
-                let refresh = result.as_ref().ok().cloned();
+                let refresh = result.as_ref().ok().map(|(account, _)| account.clone());
                 output
                     .send(Event::TransferFinished(
                         request,
                         mail,
-                        result.map(|_| ()).map_err(|e| format!("{e:#}")),
+                        result
+                            .map(|(_, receipt)| Arc::new(receipt))
+                            .map_err(|e| format!("{e:#}")),
                     ))
                     .await?;
                 if !self.demo
@@ -630,19 +648,48 @@ impl Engine {
             }
             Command::Move(request, mail, folder) => {
                 let result = self.change_folder(&mail, &folder, output.clone()).await;
-                let refresh = result.as_ref().ok().cloned().flatten();
+                let refresh = result
+                    .as_ref()
+                    .ok()
+                    .and_then(|(account, _)| account.clone());
                 output
                     .send(Event::MoveFinished(
                         request,
                         mail,
                         folder,
-                        result.map(|_| ()).map_err(|e| format!("{e:#}")),
+                        result
+                            .map(|(_, receipt)| Arc::new(receipt))
+                            .map_err(|e| format!("{e:#}")),
                     ))
                     .await?;
                 if let Some(account) = refresh
                     && let Err(error) = self.sync_account(account, output.clone()).await
                 {
                     output.send(Event::Error(format!("The message was moved, but refreshing folders failed. Try Refresh. {error:#}"))).await?;
+                }
+            }
+            Command::UndoMove(request, original, receipt) => {
+                let result = self
+                    .undo_move(original.clone(), &receipt, output.clone())
+                    .await;
+                let refresh = result
+                    .as_ref()
+                    .ok()
+                    .and_then(|(account, _)| account.clone());
+                output
+                    .send(Event::UndoFinished(
+                        request,
+                        original,
+                        result
+                            .map(|(_, receipt)| Arc::new(receipt))
+                            .map_err(|e| format!("{e:#}")),
+                    ))
+                    .await?;
+                if !self.demo
+                    && let Some(account) = refresh
+                    && let Err(error) = self.sync_account(account, output.clone()).await
+                {
+                    output.send(Event::Error(format!("The message was restored, but refreshing folders failed. Try Refresh. {error:#}"))).await?;
                 }
             }
             Command::Flags(request, mail, changes) => {

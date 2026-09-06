@@ -21,6 +21,9 @@ pub(super) struct Conversation {
 impl App {
     pub(super) fn action_mail(&self) -> Option<&Mail> {
         let id = self.reader_id()?;
+        if self.mail_actions.restoring(id) {
+            return None;
+        }
         let mail = self
             .detail
             .as_ref()
@@ -46,7 +49,12 @@ impl App {
     }
     pub(super) fn request_conversation(&mut self, offset: Option<usize>) {
         self.conversation.generation += 1;
-        if !self.preferences.group_conversations {
+        if !self.preferences.group_conversations
+            || self
+                .selected
+                .as_ref()
+                .is_some_and(|id| self.mail_actions.restoring(id))
+        {
             return;
         }
         if let Some(anchor) = self.selected.clone() {
@@ -107,6 +115,7 @@ impl App {
     ) -> Task<Message> {
         if generation != self.conversation.generation
             || self.selected.as_deref() != Some(&anchor)
+            || self.mail_actions.restoring(&anchor)
             || !self.preferences.group_conversations
         {
             return Task::none();

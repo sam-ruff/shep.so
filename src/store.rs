@@ -1,3 +1,4 @@
+mod mail_actions;
 use crate::model::*;
 mod connections;
 mod conversations;

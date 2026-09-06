@@ -130,7 +130,43 @@ impl App {
                         row![
                             icon("check", 18.),
                             text(toast.label()).size(13),
+                            if toast.undo_tokens().is_empty() {
+                                Element::from(space().width(0))
+                            } else {
+                                Element::from(
+                                    button(text("Undo").size(13))
+                                        .style(ghost)
+                                        .on_press(Message::UndoActions(toast.undo_tokens()))
+                                        .padding([6, 10]),
+                                )
+                            },
                             self.icon_action("close", "Dismiss", Message::DismissActionToast)
+                        ]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding([8, 14])
+                    .max_width(580)
+                    .style(card),
+                ));
+            }
+            let undo_failures = self.mail_actions.undo_failures();
+            if !undo_failures.is_empty() {
+                let count = undo_failures.len();
+                toasts = toasts.push(opaque(
+                    container(
+                        row![
+                            text(format!(
+                                "Undo failed for {count} {}",
+                                if count == 1 { "message" } else { "messages" }
+                            ))
+                            .size(13),
+                            action("Retry Undo", Message::UndoActions(undo_failures.clone())),
+                            self.icon_action(
+                                "close",
+                                "Dismiss",
+                                Message::DismissUndoErrors(undo_failures)
+                            )
                         ]
                         .spacing(10)
                         .align_y(Alignment::Center),
@@ -155,7 +191,10 @@ impl App {
                     .style(card),
                 ));
             }
-            if self.saved_toast.is_some() || self.action_toasts.current.is_some() {
+            if self.saved_toast.is_some()
+                || self.action_toasts.current.is_some()
+                || !self.mail_actions.undo_failures().is_empty()
+            {
                 layers = layers.push(
                     container(toasts)
                         .align_right(Length::Fill)
@@ -356,10 +395,16 @@ impl App {
                 button(flag_icon(mail.starred, 18.))
                     .padding(6)
                     .style(if mail.starred { flagged } else { ghost })
-                    .on_press(Message::FlagRow(mail.id.clone()))
+                    .on_press_maybe(
+                        (!self.mail_actions.restoring(&mail.id))
+                            .then(|| Message::FlagRow(mail.id.clone()))
+                    )
             ]
             .spacing(9)
             .align_y(Alignment::Center);
+            if self.mail_actions.restoring(&mail.id) {
+                top = top.push(muted("Restoring…").size(10));
+            }
             if unread {
                 top = top.push(
                     container(space())

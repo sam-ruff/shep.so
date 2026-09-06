@@ -4,7 +4,7 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Current UI and interaction work
 
-- [ ] **R68 — Action toast Undo:** immediate counted archive/delete/move toasts are delivered in 9c907d2, including refreshed timeout, unified-account counts, dismissal and correlated failure handling. Remaining: Undo for archive, delete and move, restoring every message to its original folder even when the initial operation is pending. Preserve acknowledged server identities and cover grouped Undo, mouse/shortcut input and slow/failing reversal.
+- [ ] **R68 — Action toast Undo:** immediate counted archive/delete/move toasts are delivered in 9c907d2, including refreshed timeout, unified-account counts, dismissal and correlated failure handling. Undo now passes protocol/cache/UI tests and four native scenarios within the complete 76-flow functional run, including grouped pending operations, cross-account reversal, slow success and retry after failure. Optimized packaging and user installation also pass. Remaining for R68: main publication verification; record evidence before removing this entry.
 
 - [ ] **R63 — E2E coverage audit:** primary/secondary clear controls, remapping, capture cancellation and persistence are shipped in 742b21e. Continue mapping every remaining visible feature to realistic native happy/error/recovery scenarios as the TODO features land; complete a final functionality-path coverage audit.
 
