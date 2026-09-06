@@ -16,7 +16,7 @@ Keep the restrained shadcn-inspired design: clear hierarchy, comfortable spacing
 
 ## Documentation CI is enabled; quality and release are DISABLED
 
-**The user authorized the public repository and automatic Zensical documentation publishing to GitHub Pages.** Repository: `sam-ruff/shep.so`, public, default branch `main`. Direct pushes to `main` are currently authorized. `.github/workflows/docs.yml` builds documentation on GitHub-hosted Linux runners and deploys changes from `main`; pull requests only build. Repository Actions must be enabled for this workflow.
+**The user authorized the public repository and automatic Zensical documentation publishing to GitHub Pages.** Repository: `sam-ruff/shep.so`, public, default branch `main`. Direct pushes to `main` are currently authorized. `.github/workflows/docs.yml` builds documentation on GitHub-hosted Linux runners and deploys changes from `main`; pull requests only build. Repository Actions must be enabled for this workflow. Before pushing documentation changes, run the pinned Zensical builder with `zensical build --clean --strict`, matching CI. Links from published docs to files outside `docs/` (such as root TODO.md and AGENTS.md) must use their GitHub URLs; relative links cannot escape the published site.
 
 Use `Sam R <sam@technesci.co.uk>` for this owner's Git author/committer identity. Do not add the owner's private contact details or exact workstation hardware to public documentation. Keep old private history backups and audit reports under ignored `artifacts/`.
 
@@ -66,6 +66,8 @@ Test/demo fixtures live in `tests/support/fixtures.rs`, gated by the nondefault 
 Artifacts go to ignored `artifacts/e2e/<run>/`: WebP screenshots, state, action timings and app log. Do not commit personal inbox screenshots, OAuth tokens, passwords or local databases. Harness tests are reproducible with Python and MCP; there is no web frontend requiring Playwright.
 
 ## Strict responsiveness and usability requirements
+
+**Optimistic interaction is an app-wide requirement.** For reversible actions, show the expected successful result immediately and reconcile persistence/server state in the background. Archive/move removes a message from the current folder immediately; flags and read/unread indicators update immediately. Do not wait for SQLite, credentials, network requests or account sync before displaying that change. If an operation fails, restore the affected state and show an actionable error. Preserve newer user intent when older results arrive; keep pending changes through background refreshes and test slow success, failure/rollback and rapid repeated input. Responsiveness takes priority over waiting for confirmation, while correctness must converge and failures remain visible. This does not turn a pending operation into a confirmed server success.
 
 - UI update handlers: p95 < 8 ms, target < 2 ms. No filesystem, credential-store, SQL, network, compression, crypto or MIME parsing in iced `update`/`view`.
 - Cached inbox/search page on 100,000 messages: p95 < 50 ms. Cached body load: p95 < 10 ms. Search debounces for 100 ms; stale results must not overwrite newer queries.

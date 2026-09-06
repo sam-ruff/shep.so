@@ -21,7 +21,7 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 ## Active request tracking
 
-[TODO.md](../TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
+[TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
 ## Remaining implementation audit
 
@@ -139,3 +139,9 @@ Validation: formatting, Clippy with warnings denied, 191 Rust tests (two opt-in 
 The complete conversation is mapped in REQUEST_AUDIT.md. TODO.md is the active checklist; the AGENTS rule requires immediate updates for new requests and retains incomplete work through compaction. Faithful HTML, Ctrl+F/relevance search, optimistic flags, bulk/drag actions and the larger storage/sync/draft/backend features are not claimed complete by these tests.
 
 Shipped as `590ab1091f45a5bc4d02ac665684cd68b3aa1e9d` (`feat: refine mail interactions and track all requests`) on main. The optimized production binary is installed for the Linux user; its SHA-256 matches the release artifact: `6393dc749d61495ceb69363ef230ee1793c289564bdbcd0317adabf65427fe33`. Existing windows must be reopened to load it; no personal window was terminated. The corresponding completed TODO entries have been removed while this evidence and the audit remain. The larger full-product goal remains active.
+
+## Documentation CI repair and interaction requirements
+
+The failed Documentation run [34024807937](https://github.com/sam-ruff/shep.so/actions/runs/34024807937) rejected two links to root TODO.md outside the published docs tree. Both now point to the repository file. The pinned `zensical build --clean --strict` passes locally; strict validation remains enabled. Contributing instructions and AGENTS.md require the same strict build before docs pushes. Remote deployment verification is pending the repair push.
+
+AGENTS.md now records immediate optimistic feedback as an app-wide requirement, including archive removal and failure rollback. R50/R60 and R62 track implementation and read/unread integration coverage; R61 tracks the requested three-platform download installers and prominent installation commands. These requests are not claimed implemented by this documentation change.
