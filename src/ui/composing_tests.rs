@@ -17,6 +17,7 @@ fn delayed_file_and_workspace_snapshots_preserve_current_edits() {
     app.load_draft(saved.clone());
     let _ = app.handle(Message::Field("subject", "New thought".into()));
     saved.attachments.push(DraftAttachment {
+        content_id: None,
         id: "file".into(),
         name: "notes.txt".into(),
         media_type: "text/plain".into(),
@@ -178,5 +179,95 @@ fn draft_context_survives_refresh_and_collapse_keeps_account_folders() {
         app.sidebar_items()
             .iter()
             .any(|i| matches!(i.action, Message::ToggleDrafts))
+    );
+}
+
+#[test]
+fn forward_completion_targets_only_its_request_and_does_not_replace_another_editor() {
+    let (mut app, _) = App::new();
+    app.selected = Some("original".into());
+    app.composer.forward_pending = Some(("forward".into(), "original".into(), app.detail_revision));
+    let forward = draft("forward");
+    let state = Arc::new(DraftState {
+        revision: 2,
+        drafts: vec![forward.clone()],
+    });
+    let _ = app.forward_ready("obsolete".into(), Ok(state.clone()));
+    assert!(app.composer.forward_pending.is_some());
+    assert!(app.dialog.is_none());
+    let _ = app.forward_ready("forward".into(), Ok(state));
+    assert_eq!(app.dialog, Some(Dialog::Compose));
+    assert_eq!(app.draft_id, "forward");
+    assert!(app.composer.forward_pending.is_none());
+
+    app.composer.forward_pending = Some(("older".into(), "original".into(), app.detail_revision));
+    app.load_draft(draft("newer"));
+    let state = Arc::new(DraftState {
+        revision: 3,
+        drafts: vec![draft("older"), draft("newer")],
+    });
+    let _ = app.forward_ready("older".into(), Ok(state));
+    assert_eq!(app.draft_id, "newer");
+    assert_eq!(app.dialog, Some(Dialog::Compose));
+    assert!(app.workspace.drafts.iter().any(|d| d.id == "older"));
+}
+
+#[test]
+fn failed_or_navigated_forward_keeps_navigation_and_retry_available() {
+    let (mut app, _) = App::new();
+    app.selected = Some("new-selection".into());
+    app.composer.forward_pending = Some((
+        "forward".into(),
+        "old-selection".into(),
+        app.detail_revision,
+    ));
+    let _ = app.forward_ready(
+        "forward".into(),
+        Ok(Arc::new(DraftState {
+            revision: 1,
+            drafts: vec![draft("forward")],
+        })),
+    );
+    assert!(app.dialog.is_none());
+    assert_eq!(app.selected.as_deref(), Some("new-selection"));
+    assert!(app.notice.as_ref().unwrap().0.contains("Drafts"));
+    app.composer.forward_pending =
+        Some(("retry".into(), "new-selection".into(), app.detail_revision));
+    let _ = app.forward_ready(
+        "retry".into(),
+        Err("Storage unavailable. Try again.".into()),
+    );
+    assert!(app.composer.forward_pending.is_none());
+    assert!(app.notice.as_ref().unwrap().1);
+    assert_eq!(app.workspace.drafts.len(), 1);
+}
+
+#[test]
+fn forwarding_formatting_survives_native_editor_roundtrip_and_new_note() {
+    let (mut app, _) = App::new();
+    let (draft, _) = crate::compose::prepare_forward("fwd".into(), "work".into(), b"Subject: Sample\r\nContent-Type: text/html\r\n\r\n<p>First paragraph.</p><p>Second paragraph.</p>").unwrap();
+    app.load_draft(draft);
+    let draft = app.current_draft();
+    assert!(
+        draft
+            .forward
+            .as_ref()
+            .unwrap()
+            .render(&draft.body)
+            .is_some()
+    );
+    app.editor
+        .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+            Arc::new("New note.\n".into()),
+        )));
+    let draft = app.current_draft();
+    assert!(
+        draft
+            .forward
+            .as_ref()
+            .unwrap()
+            .render(&draft.body)
+            .unwrap()
+            .contains("New note.")
     );
 }

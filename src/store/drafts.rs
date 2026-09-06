@@ -28,10 +28,11 @@ pub(super) fn snapshot(c: &Connection) -> anyhow::Result<DraftState> {
 }
 fn attachments(c: &Connection, id: &str) -> anyhow::Result<Vec<DraftAttachment>> {
     Ok(c.prepare(
-        "SELECT id,name,media_type,size FROM draft_attachments WHERE draft=? ORDER BY rowid",
+        "SELECT a.id,a.name,a.media_type,a.size,i.content_id FROM draft_attachments a LEFT JOIN draft_inline i ON i.attachment=a.id WHERE draft=? ORDER BY a.rowid",
     )?
     .query_map([id], |r| {
         Ok(DraftAttachment {
+            content_id: r.get(4)?,
             id: r.get(0)?,
             name: r.get(1)?,
             media_type: r.get(2)?,
@@ -74,6 +75,30 @@ pub(super) fn save(c: &Connection, mut draft: Draft) -> anyhow::Result<()> {
 }
 
 impl Store {
+    pub async fn forward_draft(&self, source: String, id: String) -> anyhow::Result<DraftState> {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            let (account, raw): (String, Vec<u8>) = tx.query_row(
+                "SELECT account,raw FROM messages WHERE id=?", [&source], |r| Ok((r.get(0)?, r.get(1)?)))
+                .context("The original message is no longer in this folder. Refresh and try again.")?;
+            let (draft, files) = crate::compose::prepare_forward(id.clone(), account, &raw)?;
+            anyhow::ensure!(!sent(&tx, &draft)? && !snapshot(&tx)?.drafts.iter().any(|d| d.id == id),
+                "This forward already has a draft. Open it from Drafts.");
+            save(&tx, draft)?;
+            for file in files {
+                let info = file.attachment;
+                tx.execute("INSERT INTO draft_attachments(id,draft,name,media_type,size,data) VALUES(?,?,?,?,?,?)",
+                    params![info.id,id,info.name,info.media_type,info.size as i64,file.bytes])?;
+                if let Some(cid) = info.content_id {
+                    tx.execute("INSERT INTO draft_inline(attachment,content_id) VALUES(?,?)", params![info.id,cid])?;
+                }
+            }
+            changed(&tx)?;
+            let state = snapshot(&tx)?;
+            tx.commit()?;
+            Ok(state)
+        }).await
+    }
     pub async fn draft_state(&self) -> anyhow::Result<DraftState> {
         self.run(|c| snapshot(c)).await
     }
@@ -145,12 +170,12 @@ impl Store {
             let mut files = Vec::new();
             let mut total = 0usize;
             for expected in draft.attachments {
-                let (name, media_type, size, actual): (String,String,u32,u32) = c.query_row(
-                    "SELECT name,media_type,size,length(data) FROM draft_attachments WHERE draft=? AND id=?",
-                    params![draft.id,expected.id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))
+                let (name, media_type, size, actual, cid): (String,String,u32,u32,Option<String>) = c.query_row(
+                    "SELECT name,media_type,size,length(data),(SELECT content_id FROM draft_inline WHERE attachment=id) FROM draft_attachments WHERE draft=? AND id=?",
+                    params![draft.id,expected.id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))
                     .context("An attachment is missing. Reopen the draft and attach it again.")?;
                 total = total.checked_add(size as usize).context("Attachment size overflow")?;
-                anyhow::ensure!(actual == size && total <= MAX_ATTACHMENT_BYTES && name == expected.name && media_type == expected.media_type && size as usize == expected.size, "An attachment changed. Reopen the draft and check its files.");
+                anyhow::ensure!(cid == expected.content_id && actual == size && total <= MAX_ATTACHMENT_BYTES && name == expected.name && media_type == expected.media_type && size as usize == expected.size, "An attachment changed. Reopen the draft and check its files.");
                 let bytes = c.query_row("SELECT data FROM draft_attachments WHERE draft=? AND id=?", params![draft.id,expected.id], |r| r.get(0))?;
                 files.push(FilePart { attachment:expected, bytes });
             }
@@ -199,6 +224,7 @@ fn read_files(paths: Vec<PathBuf>) -> anyhow::Result<Vec<FilePart>> {
         );
         files.push(FilePart {
             attachment: DraftAttachment {
+                content_id: None,
                 id: uuid::Uuid::new_v4().to_string(),
                 name,
                 media_type: mime_guess::from_path(path)

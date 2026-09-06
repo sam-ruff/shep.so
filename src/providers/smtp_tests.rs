@@ -68,6 +68,7 @@ async fn smtp_wire_keeps_bcc_in_envelope_and_distinguishes_rejection_from_lost_a
         let account: Account = serde_json::from_value(serde_json::json!({"id":"a", "name":"Work", "email":"sender@example.com", "protocol":"Imap", "host":"imap.example.com", "port":993, "username":"sender", "smtp_host":"smtp.example.com", "smtp_port":465})).unwrap();
         let bytes = vec![0, 255, 1, 13, 10];
         let attachment = DraftAttachment {
+            content_id: None,
             id: "file".into(),
             name: "notes.bin".into(),
             media_type: "application/octet-stream".into(),

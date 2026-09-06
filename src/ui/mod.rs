@@ -124,6 +124,7 @@ pub enum Message {
     ToggleRead,
     Reply,
     ReplyAll,
+    Forward,
     ChooseAttachments,
     ChosenAttachments(Draft, Vec<std::path::PathBuf>),
     RemoveDraftAttachment(String),
@@ -1168,6 +1169,7 @@ impl App {
                     return self.draft_saved(id, revision, result);
                 }
                 Event::DraftDeleted(id, result) => self.draft_deleted(id, result),
+                Event::ForwardDraft(id, result) => return self.forward_ready(id, result),
                 Event::DraftFiles(id, result) => {
                     if self.composer.io.as_deref() == Some(&id) {
                         self.composer.io = None;
@@ -1332,6 +1334,11 @@ impl App {
                     self.notice(
                         "Wait for the draft to finish discarding before closing.",
                         true,
+                    );
+                } else if self.composer.forward_pending.is_some() {
+                    self.notice(
+                        "Wait for the forward to finish preparing before closing.",
+                        false,
                     );
                 } else if self.composer.io.is_some() {
                     self.notice(
@@ -1619,6 +1626,7 @@ impl App {
                     }
                     "folder-search" => self.dialog == Some(Dialog::Move),
                     "event-title" => self.dialog == Some(Dialog::Event),
+                    "to" => self.dialog == Some(Dialog::Compose),
                     "search" => self.tab == Tab::Mail && self.dialog.is_none() && !self.full_reader,
                     _ => false,
                 };
@@ -1703,6 +1711,11 @@ impl App {
                         matches!(message, Message::ReplyAll),
                     );
                     self.load_draft(draft);
+                }
+            }
+            Message::Forward => {
+                if let Some(mail) = self.action_mail().cloned() {
+                    self.begin_forward(mail.id);
                 }
             }
             Message::ChooseAttachments => return self.choose_attachments(),
@@ -2925,6 +2938,7 @@ impl App {
                 Action::Compose => self.handle(Message::Open(Dialog::Compose)),
                 Action::Reply => self.handle(Message::Reply),
                 Action::ReplyAll => self.handle(Message::ReplyAll),
+                Action::Forward => self.handle(Message::Forward),
                 Action::Archive => self.handle(Message::Move("Archive".into())),
                 Action::Delete => self.handle(Message::Move("Trash".into())),
                 Action::Star => self.handle(Message::ToggleStar),
@@ -3048,6 +3062,16 @@ impl App {
         );
         data["discard_pending"] = serde_json::json!(self.composer.discard_pending);
         data["draft_io"] = serde_json::json!(self.composer.io.is_some());
+        data["forward_pending"] = serde_json::json!(self.composer.forward_pending.is_some());
+        data["draft_forward"] = serde_json::json!(self.composer.draft.forward.is_some());
+        data["draft_forward_html"] = serde_json::json!(
+            self.composer
+                .draft
+                .forward
+                .as_ref()
+                .is_some_and(|quote| !quote.html_body.is_empty()
+                    && self.editor.text().ends_with(&quote.text))
+        );
         data["draft_in_reply_to"] = serde_json::json!(self.composer.draft.in_reply_to);
         data["focused_input"] = serde_json::json!(self.focused_input);
         data["auto_backup"] = serde_json::json!(self.preferences.auto_backup);

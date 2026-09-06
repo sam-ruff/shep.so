@@ -84,6 +84,9 @@ impl Store {
                 id TEXT PRIMARY KEY, draft TEXT NOT NULL, name TEXT NOT NULL,
                 media_type TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL);
             CREATE INDEX IF NOT EXISTS draft_attachment_owner ON draft_attachments(draft);
+            CREATE TABLE IF NOT EXISTS draft_inline (
+                attachment TEXT PRIMARY KEY REFERENCES draft_attachments(id) ON DELETE CASCADE,
+                content_id TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS draft_sent (id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, source TEXT NOT NULL, start INTEGER NOT NULL, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS event_start ON events(start);")?;

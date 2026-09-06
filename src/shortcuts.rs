@@ -21,9 +21,10 @@ pub enum Action {
     Delete,
     Inbox,
     Find,
+    Forward,
 }
 impl Action {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::Move,
         Self::Compose,
         Self::Reply,
@@ -42,6 +43,7 @@ impl Action {
         Self::Delete,
         Self::Inbox,
         Self::Find,
+        Self::Forward,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -63,6 +65,7 @@ impl Action {
             Self::Delete => "Move to Trash",
             Self::Inbox => "Go to Inbox (sidebar)",
             Self::Find => "Find in message",
+            Self::Forward => "Forward message",
         }
     }
 }
@@ -174,6 +177,7 @@ impl Default for Keymap {
                     "Mod+D",
                     "I",
                     "Mod+F",
+                    "F",
                 ])
                 .map(|(a, k)| (a, k.into()))
                 .collect(),
