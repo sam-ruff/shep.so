@@ -192,6 +192,7 @@ async fn rolling_retention_keeps_newest_and_leaves_unrelated_files() {
 #[test]
 fn caldav_parses_namespaces_escaped_text_timezone_and_recurrence() {
     let source = CalendarSource {
+        access: Default::default(),
         id: "home".into(),
         name: "Home".into(),
         kind: CalendarKind::CalDav,

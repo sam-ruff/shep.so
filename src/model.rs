@@ -357,6 +357,34 @@ pub struct CalendarSource {
     pub kind: CalendarKind,
     pub url: String,
     pub username: String,
+    #[serde(default)]
+    pub access: CalendarAccess,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalendarAccess {
+    pub create: bool,
+    pub update: bool,
+    pub delete: bool,
+}
+impl CalendarAccess {
+    pub const READ_ONLY: Self = Self {
+        create: false,
+        update: false,
+        delete: false,
+    };
+    pub fn read_only(self) -> bool {
+        !self.create && !self.update && !self.delete
+    }
+}
+impl Default for CalendarAccess {
+    fn default() -> Self {
+        Self {
+            create: true,
+            update: true,
+            delete: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

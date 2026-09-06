@@ -6,6 +6,7 @@ use shep::{
 
 fn source() -> CalendarSource {
     CalendarSource {
+        access: Default::default(),
         id: "home".into(),
         name: "Home".into(),
         kind: CalendarKind::CalDav,
@@ -159,4 +160,71 @@ async fn calendar_cache_migrates_legacy_keys_once_and_preserves_events() {
         })
         .await
         .unwrap();
+}
+
+#[test]
+fn calendar_access_preserves_legacy_sources_and_distinguishes_each_mutation() {
+    use shep::model::CalendarAccess;
+    let mut source = source();
+    let mut json = serde_json::to_value(&source).unwrap();
+    json.as_object_mut().unwrap().remove("access");
+    let legacy: CalendarSource = serde_json::from_value(json).unwrap();
+    assert_eq!(legacy.access, CalendarAccess::default());
+    let mut event = event("home", "a");
+    event.etag = Some("\"a\"".into());
+    event.remote_url = Some("/home/a.ics".into());
+    source.access = CalendarAccess {
+        create: false,
+        update: true,
+        delete: false,
+    };
+    assert!(shep::providers::calendar::ensure_event_access(&source, &event, false).is_ok());
+    assert!(shep::providers::calendar::ensure_event_access(&source, &event, true).is_err());
+    event.etag = None;
+    event.remote_url = None;
+    assert!(shep::providers::calendar::ensure_event_access(&source, &event, false).is_err());
+    source.access = CalendarAccess::READ_ONLY;
+    assert!(shep::providers::calendar::ensure_event_access(&source, &event, false).is_err());
+}
+
+#[tokio::test]
+async fn google_calendar_permission_refresh_revokes_missing_grants_without_erasing_cached_events() {
+    let store = Store::memory().unwrap();
+    let home = source();
+    let mut google = home.clone();
+    google.kind = CalendarKind::Google;
+    google.id = "google:work".into();
+    google.url = "work".into();
+    store
+        .save_sources(vec![home.clone(), google.clone()])
+        .await
+        .unwrap();
+    store.save_event(event(&google.id, "cached")).await.unwrap();
+    store.refresh_google_sources(Vec::new()).await.unwrap();
+    let sources: Vec<CalendarSource> = store.get("calendars").await.unwrap();
+    assert_eq!(sources.iter().find(|s| s.id == home.id).unwrap(), &home);
+    assert!(
+        sources
+            .iter()
+            .find(|s| s.id == google.id)
+            .unwrap()
+            .access
+            .read_only()
+    );
+    assert_eq!(store.events().await.unwrap().len(), 1);
+    store
+        .refresh_google_sources(vec![google.clone()])
+        .await
+        .unwrap();
+    assert!(
+        store
+            .get::<Vec<CalendarSource>>("calendars")
+            .await
+            .unwrap()
+            .iter()
+            .find(|s| s.id == google.id)
+            .unwrap()
+            .access
+            .update
+    );
 }

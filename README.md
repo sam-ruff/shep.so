@@ -52,7 +52,11 @@ bash scripts/install-linux.sh --uninstall    # keeps accounts, mail, drafts and 
 
 ## Calendar
 
-The Calendar tab combines a month grid with an agenda. Connect Google Calendar or enter your homeserver's **CalDAV calendar collection URL** under Preferences → Calendars. CalDAV currently requires the collection URL itself, rather than automatic principal discovery; Nextcloud URLs commonly end with `/remote.php/dav/calendars/USER/CALENDAR/`.
+The Calendar tab combines a month grid with an agenda. Connect Google Calendar or choose **Add CalDAV calendar** under Preferences → Calendars. Enter your server URL, username and app password, then choose **Find calendars**. Shep tests authentication, discovers calendar homes and lists event calendars for you to select. Direct collection URLs also work. Reconnecting the same URL and username updates the existing connection without duplicating it.
+
+CalDAV discovery follows same-server redirects, `/.well-known/caldav`, the current user's principal and calendar-home properties. It verifies HTTPS certificates and stops before forwarding credentials to another server; enter that server's address explicitly when needed. Plain HTTP remains limited to localhost. Servers that advertise only task collections do not appear as event calendars.
+
+Calendar permissions distinguish creating, editing and deleting events. Read-only calendars remain available to view, and new events default to a writable calendar. Google permissions refresh during calendar sync; calendars exposing only free/busy information are not imported as event calendars. If a previously connected Google calendar disappears from a complete list, its cached events remain available and editing is disabled. CalDAV permissions come from discovery when the server reports them; otherwise the server enforces access on each request.
 
 Sync covers the previous 90 days and next 365 days. Double-click a day to add an all-day event. Create, edit and delete timed, multiday and all-day events. The last date in the all-day editor is inclusive. Existing remote events use ETags to detect conflicting writes. Expanded CalDAV recurring occurrences can be viewed; edit their series using the server's calendar interface. Calendar creation and edits are synchronized through the background engine. See Google's [calendar concepts](https://developers.google.com/workspace/calendar/api/concepts/events-calendars) for calendar and recurrence terminology.
 
@@ -91,7 +95,7 @@ Drive reserves each file ID before transferring a copy and uploads in 1 MiB resu
 - The reader renders plain text with a basic HTML-to-text fallback. Remote images load only after the privacy policy allows them, with bounded downloads, address validation and WebP conversion. Scripts never execute. Related messages are linked by Message-ID, References and In-Reply-To within each account; matching subjects alone do not form a conversation. Only downloaded mail can appear. Full HTML layout, invitations and general offline mutation queues are not implemented yet.
 - Gmail mail access currently needs an app password and compatible account settings; Google login connects Drive/Calendar, not Gmail OAuth. OAuth-only IMAP servers are not supported yet.
 - Same-account IMAP moves require MOVE; cross-account moves require two IMAP accounts and source UIDPLUS. An upload interrupted before its acknowledgement is retained for manual destination inspection, while a confirmed copy can resume source removal without uploading again. POP3 requires UIDL and never deletes server originals. Periodic background sync is configurable from 1–60 minutes; IMAP IDLE is not implemented yet.
-- SMTP sends retain a local Sent copy; server-side Sent APPEND is not implemented yet. CalDAV discovery and editing recurring series are not implemented.
+- SMTP sends retain a local Sent copy; server-side Sent APPEND is not implemented yet. Editing recurring CalDAV series is not implemented. Account/calendar removal and disconnect controls remain in development.
 - Automated UI testing currently runs on Linux/X11. Windows/macOS builds are in the dormant CI matrix but have not been executed here. Signed/notarized installers are not included.
 
 ## Development, tests and releases

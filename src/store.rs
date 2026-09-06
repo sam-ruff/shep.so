@@ -444,11 +444,38 @@ impl Store {
         }
     }
     pub async fn save_source(&self, source: CalendarSource) -> anyhow::Result<()> {
+        self.save_sources(vec![source]).await
+    }
+    pub async fn save_sources(&self, sources: Vec<CalendarSource>) -> anyhow::Result<()> {
         self.run(move |c| {
-            let mut sources: Vec<CalendarSource> = get(c, "calendars")?;
-            sources.retain(|s| s.id != source.id);
-            sources.push(source);
-            put(c, "calendars", &sources)
+            let mut current: Vec<CalendarSource> = get(c, "calendars")?;
+            for source in sources {
+                current.retain(|s| s.id != source.id);
+                current.push(source);
+            }
+            put(c, "calendars", &current)
+        })
+        .await
+    }
+    pub async fn refresh_google_sources(&self, sources: Vec<CalendarSource>) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            sources.iter().all(|s| s.kind == CalendarKind::Google),
+            "Invalid Google calendar list."
+        );
+        self.run(move |c| {
+            let mut current: Vec<CalendarSource> = get(c, "calendars")?;
+            // Keep cached events when access disappears, but never preserve a
+            // stale grant to edit a calendar absent from a complete listing.
+            for source in &mut current {
+                if source.kind == CalendarKind::Google {
+                    source.access = CalendarAccess::READ_ONLY;
+                }
+            }
+            for source in sources {
+                current.retain(|s| s.id != source.id);
+                current.push(source);
+            }
+            put(c, "calendars", &current)
         })
         .await
     }

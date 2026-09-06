@@ -3,13 +3,36 @@ use anyhow::Context;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
 
 mod caldav;
+pub mod discovery;
 mod google_calendar;
+mod google_sources;
+pub(crate) use google_sources::list as google_sources;
 #[cfg(test)]
 mod test_server;
 pub use caldav::CalDav;
 pub use google_calendar::GoogleCalendar;
 
+pub fn ensure_event_access(
+    source: &CalendarSource,
+    event: &CalendarEvent,
+    deleting: bool,
+) -> anyhow::Result<()> {
+    let allowed = if deleting {
+        source.access.delete
+    } else if event.etag.is_some() || event.remote_url.is_some() {
+        source.access.update
+    } else {
+        source.access.create
+    };
+    anyhow::ensure!(
+        allowed,
+        "This calendar does not allow this change. Choose a writable calendar or ask its owner for access."
+    );
+    Ok(())
+}
+
 pub fn validate_caldav_url(input: &str) -> anyhow::Result<url::Url> {
+    anyhow::ensure!(input.len() <= 8192, "The calendar URL is too long.");
     let url = url::Url::parse(input).context("Enter the full CalDAV calendar collection URL")?;
     anyhow::ensure!(
         url.scheme() == "https"
@@ -20,6 +43,10 @@ pub fn validate_caldav_url(input: &str) -> anyhow::Result<url::Url> {
     anyhow::ensure!(
         url.username().is_empty() && url.password().is_none(),
         "Enter the CalDAV username and password in their separate fields."
+    );
+    anyhow::ensure!(
+        url.fragment().is_none(),
+        "Remove the fragment after # from the calendar URL."
     );
     Ok(url)
 }

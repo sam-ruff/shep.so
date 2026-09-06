@@ -1,6 +1,7 @@
 mod backups;
 #[cfg(test)]
 mod backups_tests;
+mod calendar_connections;
 mod dispatch;
 mod restore;
 #[cfg(test)]
@@ -48,7 +49,8 @@ pub enum Command {
     Send(Draft),
     GoogleLogin(Preferences),
     CheckGoogleConnection,
-    SaveCalendar(CalendarSource, SecretString),
+    DiscoverCalendars(u64, String, String, SecretString),
+    ConnectCalendars(u64, Vec<CalendarSource>, SecretString),
     SyncCalendar,
     SaveEvent(CalendarEvent),
     DeleteEvent(CalendarEvent),
@@ -112,7 +114,11 @@ pub enum Event {
     Error(String),
     GoogleConnected,
     AccountSaved,
-    CalendarSaved,
+    CalendarsDiscovered(
+        u64,
+        Result<Vec<providers::calendar::discovery::DiscoveredCalendar>, String>,
+    ),
+    CalendarsConnected(u64, Result<(), String>),
     DraftSaved(String, u64, Result<Arc<crate::store::DraftState>, String>),
     DraftFiles(String, Result<Arc<crate::store::DraftState>, String>),
     Sent(String, u64),
@@ -128,6 +134,7 @@ struct Engine {
     demo: bool,
     account_locks: AccountLocks,
     calendar_locks: AccountLocks,
+    calendar_setup_lock: Arc<tokio::sync::Mutex<()>>,
     google_connection_lock: Arc<tokio::sync::Mutex<()>>,
     passphrases: Arc<dyn backup::PassphraseStore>,
     restore_credentials: Arc<dyn backup::restore::CredentialRestorer>,
@@ -184,6 +191,7 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             demo,
             account_locks: Default::default(),
             calendar_locks: Default::default(),
+            calendar_setup_lock: Default::default(),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
@@ -751,9 +759,9 @@ impl Engine {
                 self.store
                     .record_google_connection(prefs.google_client_id.clone(), identity)
                     .await?;
-                for source in self.google.calendars(&prefs).await? {
-                    self.store.save_source(source).await?;
-                }
+                self.store
+                    .refresh_google_sources(self.google.calendars(&prefs).await?)
+                    .await?;
                 self.workspace(&mut output).await?;
                 output.send(Event::GoogleConnected).await?;
                 output
@@ -763,26 +771,47 @@ impl Engine {
                     ))
                     .await?;
             }
-            Command::SaveCalendar(source, password) => {
-                anyhow::ensure!(!self.demo, "Calendar connections are disabled in preview.");
-                let _guard = self.calendar_lock(&source.id).await;
-                providers::calendar::validate_caldav_url(&source.url)?;
-                anyhow::ensure!(
-                    !source.name.is_empty() && !source.username.is_empty(),
-                    "Enter a calendar name and username."
-                );
-                providers::write_secret(&source.id, password).await?;
-                self.store.save_source(source).await?;
-                self.workspace(&mut output).await?;
-                output.send(Event::CalendarSaved).await?;
+            Command::DiscoverCalendars(request, url, username, password) => {
+                let result = self
+                    .discover_calendars(url, username, password)
+                    .await
+                    .map_err(|e| format!("{e:#}"));
                 output
-                    .send(Event::Notice(
-                        "CalDAV calendar saved. Use Sync calendar to connect.".into(),
-                    ))
+                    .send(Event::CalendarsDiscovered(request, result))
                     .await?;
+            }
+            Command::ConnectCalendars(request, sources, password) => {
+                let result = self
+                    .connect_calendars(sources, password)
+                    .await
+                    .map_err(|e| format!("{e:#}"));
+                let saved = result.is_ok();
+                output
+                    .send(Event::CalendarsConnected(request, result))
+                    .await?;
+                if saved {
+                    self.workspace(&mut output).await?;
+                }
             }
             Command::SyncCalendar => {
                 if !self.demo {
+                    let sources: Vec<CalendarSource> = self.store.get("calendars").await?;
+                    if sources.iter().any(|s| s.kind == CalendarKind::Google) {
+                        let prefs: Preferences = self.store.get("preferences").await?;
+                        match self.google.calendars(&prefs).await {
+                            Ok(updated) => {
+                                self.store.refresh_google_sources(updated).await?;
+                                self.workspace(&mut output).await?;
+                            }
+                            Err(error) => {
+                                output
+                                    .send(Event::Error(format!(
+                                        "Could not refresh Google calendar access: {error:#}"
+                                    )))
+                                    .await?;
+                            }
+                        }
+                    }
                     let sources: Vec<CalendarSource> = self.store.get("calendars").await?;
                     let now = chrono::Utc::now();
                     for source in sources {
@@ -817,16 +846,17 @@ impl Engine {
                     "The event must end after it starts."
                 );
                 let _guard = self.calendar_lock(&event.source_id).await;
+                let source = self
+                    .store
+                    .get::<Vec<CalendarSource>>("calendars")
+                    .await?
+                    .into_iter()
+                    .find(|s| s.id == event.source_id)
+                    .context("Choose a connected calendar")?;
+                providers::calendar::ensure_event_access(&source, &event, deleting_event)?;
                 let saved = if self.demo {
                     event.clone()
                 } else {
-                    let source = self
-                        .store
-                        .get::<Vec<CalendarSource>>("calendars")
-                        .await?
-                        .into_iter()
-                        .find(|s| s.id == event.source_id)
-                        .context("Choose a connected calendar")?;
                     let provider = self.calendar_provider(&source).await?;
                     if deleting_event {
                         provider.delete_event(&source, &event).await?;
@@ -987,20 +1017,21 @@ async fn write_new(path: &str, bytes: &[u8]) -> anyhow::Result<()> {
 mod calendar_tests {
     use super::*;
 
-    fn engine() -> Engine {
+    pub(super) fn engine() -> Engine {
         Engine {
             store: Store::memory().unwrap(),
             google: Default::default(),
             demo: true,
             account_locks: Default::default(),
             calendar_locks: Default::default(),
+            calendar_setup_lock: Default::default(),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
             backup_uploads: Default::default(),
         }
     }
-    fn event(source: &str) -> CalendarEvent {
+    pub(super) fn event(source: &str) -> CalendarEvent {
         let start = chrono::Utc::now();
         CalendarEvent {
             id: "shared-uid".into(),
@@ -1019,6 +1050,20 @@ mod calendar_tests {
     #[tokio::test]
     async fn calendar_engine_save_and_delete_keep_other_calendars_with_same_uid() {
         let engine = engine();
+        for id in ["home", "work"] {
+            engine
+                .store
+                .save_source(CalendarSource {
+                    id: id.into(),
+                    name: id.into(),
+                    kind: CalendarKind::CalDav,
+                    url: "https://calendar.example.test/".into(),
+                    username: "test".into(),
+                    access: Default::default(),
+                })
+                .await
+                .unwrap();
+        }
         let (output, mut events) = futures::channel::mpsc::channel(32);
         let home = event("home");
         let work = event("work");

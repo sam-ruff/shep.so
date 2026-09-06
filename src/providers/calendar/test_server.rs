@@ -3,6 +3,7 @@ pub use crate::providers::test_http::{Reply, Server, client};
 
 pub fn source(url: &url::Url) -> crate::model::CalendarSource {
     crate::model::CalendarSource {
+        access: Default::default(),
         id: "test-calendar".into(),
         name: "Local test calendar".into(),
         kind: crate::model::CalendarKind::CalDav,

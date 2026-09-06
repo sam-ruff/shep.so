@@ -135,7 +135,7 @@ impl Engine {
                         // merely because the whole archive takes over ten minutes.
                         // Restore also must observe its blocking SQLite commit;
                         // dropping its future cannot cancel that transaction.
-                        let result = if matches!(&command, Command::Backup(..) | Command::AutomaticBackup(_) | Command::Restore(..) | Command::Send(_) | Command::IndexConversations) {
+                        let result = if matches!(&command, Command::Backup(..) | Command::AutomaticBackup(_) | Command::Restore(..) | Command::Send(_) | Command::IndexConversations | Command::ConnectCalendars(..)) {
                             engine.execute(command, output).await
                         } else {
                             tokio::time::timeout(Duration::from_secs(600), engine.execute(command, output)).await
@@ -193,6 +193,7 @@ mod tests {
             demo: true,
             account_locks: Default::default(),
             calendar_locks: Default::default(),
+            calendar_setup_lock: Default::default(),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),

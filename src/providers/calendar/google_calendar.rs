@@ -90,6 +90,7 @@ impl Api<'_> {
         source: &CalendarSource,
         event: &CalendarEvent,
     ) -> anyhow::Result<CalendarEvent> {
+        super::ensure_event_access(source, event, false)?;
         anyhow::ensure!(
             source.id == event.source_id,
             "This event belongs to another calendar."
@@ -155,6 +156,7 @@ impl Api<'_> {
     }
 
     async fn delete(&self, source: &CalendarSource, event: &CalendarEvent) -> anyhow::Result<()> {
+        super::ensure_event_access(source, event, true)?;
         anyhow::ensure!(
             source.id == event.source_id,
             "This event belongs to another calendar."

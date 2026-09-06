@@ -39,6 +39,7 @@ fn engine(secrets: Arc<Secrets>) -> Engine {
         demo: false,
         account_locks: Default::default(),
         calendar_locks: Default::default(),
+        calendar_setup_lock: Default::default(),
         google_connection_lock: Default::default(),
         passphrases: secrets,
         restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),

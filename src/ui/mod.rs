@@ -1,5 +1,6 @@
 mod account;
 mod backups;
+mod calendar_setup;
 mod components;
 mod composing;
 mod conversations;
@@ -107,6 +108,9 @@ pub enum Message {
     ConnectCalendarFromEvent,
     EditAccount(String),
     SaveCalendar,
+    DiscoverCalendars,
+    ChooseCalendar(String),
+    CalendarBack,
     SavePreferences,
     Appearance(Appearance),
     BackupDestination(BackupDestination),
@@ -216,6 +220,7 @@ pub struct App {
     month: NaiveDate,
     day: NaiveDate,
     editing_event: Option<CalendarEvent>,
+    calendar_setup: calendar_setup::CalendarSetup,
     editor: text_editor::Content,
     draft_id: String,
     remapping: Option<Action>,
@@ -331,6 +336,7 @@ impl App {
                 month: today.with_day(1).unwrap(),
                 day: today,
                 editing_event: None,
+                calendar_setup: Default::default(),
                 editor: text_editor::Content::new(),
                 draft_id: String::new(),
                 remapping: None,
@@ -521,6 +527,7 @@ impl App {
         self.fields.clear();
         self.remapping = None;
         match dialog {
+            Dialog::Calendar => self.calendar_setup.invalidate(),
             Dialog::Account => {
                 self.protocol = Protocol::Imap;
                 self.fields.insert("port", "993".into());
@@ -554,7 +561,7 @@ impl App {
                 self.fields.insert("all_day", "true".into());
                 self.fields.insert("start", "09:00".into());
                 self.fields.insert("end", "10:00".into());
-                if let Some(source) = self.workspace.calendars.first() {
+                if let Some(source) = self.workspace.calendars.iter().find(|s| s.access.create) {
                     self.fields.insert("source", source.id.clone());
                 }
             }
@@ -752,10 +759,11 @@ impl App {
                     self.fields.clear();
                     self.send(Command::Sync);
                 }
-                Event::CalendarSaved => {
-                    self.dialog = None;
-                    self.fields.clear();
-                    self.send(Command::SyncCalendar);
+                Event::CalendarsDiscovered(request, result) => {
+                    self.calendars_discovered(request, result)
+                }
+                Event::CalendarsConnected(request, result) => {
+                    self.calendars_connected(request, result)
                 }
                 Event::DraftSaved(id, revision, result) => {
                     return self.draft_saved(id, revision, result);
@@ -865,7 +873,12 @@ impl App {
                 _ => {}
             },
             Message::WindowClose(window) => {
-                if self.busy.iter().any(|key| key.starts_with("send:")) {
+                if self.calendar_setup.saving.is_some() {
+                    self.notice(
+                        "Wait for the calendar connection to finish saving before closing.",
+                        true,
+                    );
+                } else if self.busy.iter().any(|key| key.starts_with("send:")) {
                     self.notice(
                         "A message is being sent. Wait for delivery to finish before closing.",
                         true,
@@ -922,6 +935,13 @@ impl App {
                 }
             }
             Message::Close => {
+                if self.dialog == Some(Dialog::Calendar) {
+                    self.calendar_setup.invalidate();
+                    self.fields.clear();
+                    if self.tab == Tab::Preferences {
+                        self.settings_fields();
+                    }
+                }
                 self.pending_focus = None;
                 self.focused_input = None;
                 if self.defer_draft_exit(composing::Exit::Dialog) {
@@ -1187,6 +1207,12 @@ impl App {
                 }
             }
             Message::Field(key, value) => {
+                if self.dialog == Some(Dialog::Calendar) {
+                    if self.calendar_setup.saving.is_some() {
+                        return Task::none();
+                    }
+                    self.calendar_setup.invalidate();
+                }
                 if self.compose_locked() {
                     return Task::none();
                 }
@@ -1324,22 +1350,20 @@ impl App {
                     }
                 }
             }
-            Message::SaveCalendar => {
-                let mut url = self.field("url").trim().to_string();
-                if !url.ends_with('/') {
-                    url.push('/');
+            Message::DiscoverCalendars => self.discover_calendars(),
+            Message::SaveCalendar => self.connect_calendars(),
+            Message::CalendarBack => {
+                if self.calendar_setup.saving.is_none() {
+                    self.calendar_setup.invalidate();
                 }
-                let source = CalendarSource {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    name: self.field("name").into(),
-                    kind: CalendarKind::CalDav,
-                    url,
-                    username: self.field("username").into(),
-                };
-                self.send(Command::SaveCalendar(
-                    source,
-                    secrecy::SecretString::from(self.field("password").to_string()),
-                ));
+            }
+            Message::ChooseCalendar(url) => {
+                if self.calendar_setup.saving.is_none()
+                    && self.calendar_setup.choices.iter().any(|c| c.url == url)
+                    && !self.calendar_setup.selected.remove(&url)
+                {
+                    self.calendar_setup.selected.insert(url);
+                }
             }
             Message::SavePreferences => match self.read_preferences() {
                 Ok(()) => self.save_preferences(),
@@ -1505,6 +1529,10 @@ impl App {
                 Err(e) => self.notice(e.to_string(), true),
             },
             Message::DeleteEvent => {
+                if !self.event_access().delete {
+                    self.notice("This calendar does not allow deleting this event.", true);
+                    return Task::none();
+                }
                 if let Some(event) = &self.editing_event {
                     self.send(Command::DeleteEvent(event.clone()));
                 }
@@ -1908,6 +1936,14 @@ impl App {
     }
     fn event_form(&self) -> anyhow::Result<CalendarEvent> {
         anyhow::ensure!(
+            if self.editing_event.is_some() {
+                self.event_access().update
+            } else {
+                self.event_access().create
+            },
+            "Choose a calendar that allows this event to be saved."
+        );
+        anyhow::ensure!(
             !self.field("title").trim().is_empty(),
             "Give your event a title."
         );
@@ -2105,6 +2141,13 @@ impl App {
         data["loaded_message_id"] =
             serde_json::json!(self.detail.as_ref().map(|detail| &detail.summary.id));
         data["reader_message_id"] = serde_json::json!(self.reader_id());
+        data["calendar_discovering"] = serde_json::json!(self.calendar_setup.discovering);
+        data["calendar_saving"] = serde_json::json!(self.calendar_setup.saving.is_some());
+        data["calendar_choices"] = serde_json::json!(self.calendar_setup.choices);
+        data["calendar_selected"] = serde_json::json!(self.calendar_setup.selected.len());
+        data["calendar_error"] = serde_json::json!(self.calendar_setup.error);
+        data["calendar_sources"] = serde_json::json!(self.workspace.calendars);
+        data["event_access"] = serde_json::json!(self.event_access());
         data["group_conversations"] = serde_json::json!(self.preferences.group_conversations);
         data["draft_attachments"] = serde_json::json!(self.composer.draft.attachments);
         data["draft_io"] = serde_json::json!(self.composer.io.is_some());
