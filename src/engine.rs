@@ -318,7 +318,12 @@ impl Engine {
         let deleting_event = matches!(&command, Command::DeleteEvent(_));
         match command {
             Command::CheckGoogleConnection => {
-                if !self.demo && self.google.connected().await {
+                if !self.demo
+                    && self
+                        .google
+                        .connected(&self.store.get("preferences").await?)
+                        .await?
+                {
                     output.send(Event::GoogleConnected).await?;
                 }
             }

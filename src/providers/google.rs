@@ -3,28 +3,26 @@ use anyhow::Context;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::RngCore;
 use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{sync::Arc, time::Duration};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    sync::Mutex,
-};
+use tokio::sync::Mutex;
+
+mod callback;
+#[cfg(test)]
+mod tests;
+mod tokens;
+use tokens::{CredentialStore, OsCredentialStore, State};
+
+const SCOPES: &str = "https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly";
 
 #[derive(Clone)]
 pub struct Google {
     pub http: reqwest::Client,
-    tokens: Arc<Mutex<Option<Tokens>>>,
+    state: Arc<Mutex<State>>,
+    credentials: Arc<dyn CredentialStore>,
+    // Private, object-scoped endpoint injection for loopback protocol tests.
+    token_endpoint: url::Url,
 }
-#[derive(Clone, Serialize, Deserialize)]
-struct Tokens {
-    #[serde(default)]
-    client_id: String,
-    access_token: String,
-    refresh_token: Option<String>,
-    expires_at: i64,
-}
-
 impl Default for Google {
     fn default() -> Self {
         Self {
@@ -34,19 +32,37 @@ impl Default for Google {
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("valid HTTP configuration"),
-            tokens: Default::default(),
+            state: Default::default(),
+            credentials: Arc::new(OsCredentialStore::default()),
+            token_endpoint: url::Url::parse("https://oauth2.googleapis.com/token")
+                .expect("official Google token endpoint"),
         }
     }
 }
 impl Google {
-    pub async fn connected(&self) -> bool {
-        super::read_secret("google-oauth").await.is_ok()
+    pub async fn connected(&self, prefs: &Preferences) -> anyhow::Result<bool> {
+        if prefs.google_client_id.trim().is_empty() {
+            return Ok(false);
+        }
+        let mut state = self.state.lock().await;
+        self.load_tokens(&mut state).await?;
+        Ok(state.pending_login.is_none()
+            && state.active.as_ref().is_some_and(|cached| {
+                cached.value.client_id == prefs.google_client_id
+                    && !cached.invalidated
+                    && !cached.pending_save
+            }))
     }
     pub async fn login(&self, prefs: &Preferences) -> anyhow::Result<()> {
         anyhow::ensure!(
             !prefs.google_client_id.trim().is_empty(),
             "Add your Google Desktop OAuth client ID in Preferences first."
         );
+        // Authorization codes are single-use. Finish a pending keychain save
+        // without exchanging a received code again or opening another browser.
+        if self.finish_pending_login(prefs).await? {
+            return Ok(());
+        }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let redirect = format!(
             "http://127.0.0.1:{}/callback",
@@ -57,87 +73,60 @@ impl Google {
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
         let mut url = url::Url::parse("https://accounts.google.com/o/oauth2/v2/auth")?;
         url.query_pairs_mut().extend_pairs([
-            ("client_id",prefs.google_client_id.as_str()),("redirect_uri",redirect.as_str()),("response_type","code"),
-            ("scope","https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly"),
-            ("code_challenge",challenge.as_str()),("code_challenge_method","S256"),("state",state.as_str()),("access_type","offline"),("prompt","consent")]);
+            ("client_id", prefs.google_client_id.as_str()),
+            ("redirect_uri", redirect.as_str()),
+            ("response_type", "code"),
+            ("scope", SCOPES),
+            ("code_challenge", challenge.as_str()),
+            ("code_challenge_method", "S256"),
+            ("state", state.as_str()),
+            ("access_type", "offline"),
+            ("prompt", "consent"),
+        ]);
         let link = url.to_string();
         tokio::task::spawn_blocking(move || webbrowser::open(&link)).await??;
-        let code=tokio::time::timeout(Duration::from_secs(180),async {
-            loop {
-                let(mut stream,_)=listener.accept().await?;
-                let mut buf=vec![0u8;8192];
-                let n=tokio::time::timeout(Duration::from_secs(5),stream.read(&mut buf)).await??;
-                let request=String::from_utf8_lossy(&buf[..n]);
-                let path=request.lines().next().and_then(|l|l.split_whitespace().nth(1)).unwrap_or("/");
-                let url=url::Url::parse(&format!("http://127.0.0.1{path}"))?;
-                let args:std::collections::HashMap<_,_>=url.query_pairs().into_owned().collect();
-                if url.path()!="/callback" || args.get("state")!=Some(&state) {
-                    stream.write_all(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nInvalid sign-in response.").await?;continue;
-                }
-                let code=args.get("code").cloned().context("Google sign-in was cancelled or denied")?;
-                stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nSign-in received. You can return to Shep.").await?;
-                return Ok::<_,anyhow::Error>(code);
-            }
-        }).await.context("Google sign-in expired. Try again.")??;
-        let mut form = vec![
-            ("client_id", prefs.google_client_id.as_str()),
-            ("code", code.as_str()),
-            ("code_verifier", verifier.as_str()),
-            ("redirect_uri", redirect.as_str()),
-            ("grant_type", "authorization_code"),
-        ];
-        if !prefs.google_client_secret.is_empty() {
-            form.push(("client_secret", prefs.google_client_secret.as_str()));
-        }
-        let data: serde_json::Value = self
-            .http
-            .post("https://oauth2.googleapis.com/token")
-            .form(&form)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        let tokens = Tokens {
-            client_id: prefs.google_client_id.clone(),
-            access_token: data["access_token"]
-                .as_str()
-                .context("Google did not return an access token")?
-                .into(),
-            refresh_token: data["refresh_token"].as_str().map(str::to_owned),
-            expires_at: chrono::Utc::now().timestamp()
-                + data["expires_in"].as_i64().unwrap_or(3600),
-        };
-        super::write_secret(
-            "google-oauth",
-            SecretString::from(serde_json::to_string(&tokens)?),
+        let code = tokio::time::timeout(
+            Duration::from_secs(180),
+            callback::receive(listener, &state),
         )
-        .await?;
-        *self.tokens.lock().await = Some(tokens);
-        Ok(())
+        .await
+        .context("Google sign-in expired. Try again.")??;
+        self.exchange_code(prefs, code.expose_secret(), &redirect, &verifier)
+            .await
     }
     pub async fn token(&self, prefs: &Preferences) -> anyhow::Result<SecretString> {
         anyhow::ensure!(
             !prefs.google_client_id.trim().is_empty(),
             "Connect Google in Preferences before syncing or backing up to Drive."
         );
-        let mut guard = self.tokens.lock().await;
-        if guard.is_none() {
-            let secret = super::read_secret("google-oauth")
-                .await
-                .context("Connect Google in Preferences first")?;
-            *guard = Some(serde_json::from_str(secret.expose_secret())?);
-        }
-        let tokens = guard.as_mut().context("Google is not connected")?;
+        let mut state = self.state.lock().await;
         anyhow::ensure!(
-            tokens.client_id == prefs.google_client_id && !tokens.client_id.is_empty(),
+            state.pending_login.is_none(),
+            "Finish Google sign-in in Preferences before syncing. Unlock the OS keychain, then choose Reconnect Google."
+        );
+        self.load_tokens(&mut state).await?;
+        let cached = state
+            .active
+            .as_mut()
+            .context("Connect Google in Preferences first.")?;
+        anyhow::ensure!(
+            cached.value.client_id == prefs.google_client_id && !cached.value.client_id.is_empty(),
             "Reconnect Google in Preferences to verify access for this OAuth application."
         );
-        if tokens.expires_at < chrono::Utc::now().timestamp() + 60 {
-            let refresh = tokens
+        anyhow::ensure!(
+            !cached.invalidated,
+            "Google access expired or was revoked. Reconnect Google in Preferences."
+        );
+        // Retry a failed save before using or renewing a rotated credential.
+        if cached.pending_save {
+            self.persist_refresh(cached).await?;
+        }
+        if cached.value.expires_at <= chrono::Utc::now().timestamp() + 60 {
+            let refresh = cached
+                .value
                 .refresh_token
                 .as_deref()
-                .context("Sign in to Google again to renew access")?;
+                .context("Reconnect Google in Preferences to renew access.")?;
             let mut form = vec![
                 ("client_id", prefs.google_client_id.as_str()),
                 ("refresh_token", refresh),
@@ -146,29 +135,32 @@ impl Google {
             if !prefs.google_client_secret.is_empty() {
                 form.push(("client_secret", prefs.google_client_secret.as_str()));
             }
-            let data: serde_json::Value = self
-                .http
-                .post("https://oauth2.googleapis.com/token")
-                .form(&form)
-                .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await?;
-            tokens.access_token = data["access_token"]
-                .as_str()
-                .context("Google session expired; sign in again")?
-                .into();
-            tokens.expires_at =
-                chrono::Utc::now().timestamp() + data["expires_in"].as_i64().unwrap_or(3600);
-            super::write_secret(
-                "google-oauth",
-                SecretString::from(serde_json::to_string(tokens)?),
-            )
-            .await?;
+            let reply = match self.exchange(&form).await {
+                Ok(reply) => reply,
+                Err(error) => {
+                    if error
+                        .downcast_ref::<tokens::ExchangeError>()
+                        .is_some_and(|kind| matches!(kind, tokens::ExchangeError::InvalidGrant))
+                    {
+                        cached.invalidated = true;
+                    }
+                    return Err(error);
+                }
+            };
+            cached.value = tokens::Tokens::from_reply(prefs, reply, Some(&cached.value))?;
+            cached.pending_save = true;
+            self.persist_refresh(cached).await?;
         }
-        Ok(SecretString::from(tokens.access_token.clone()))
+        Ok(SecretString::from(cached.value.access_token.clone()))
     }
+}
+fn random() -> String {
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+impl Google {
     pub async fn calendars(
         &self,
         prefs: &Preferences,
@@ -206,69 +198,5 @@ impl Google {
             }
         }
         Ok(sources)
-    }
-}
-fn random() -> String {
-    let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    URL_SAFE_NO_PAD.encode(bytes)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[tokio::test]
-    async fn cached_google_tokens_cannot_be_used_by_another_oauth_application() {
-        let google = Google {
-            http: crate::providers::test_http::client(),
-            tokens: Arc::new(Mutex::new(Some(Tokens {
-                client_id: "issuing-client".into(),
-                access_token: "fixture-access".into(),
-                refresh_token: None,
-                expires_at: chrono::Utc::now().timestamp() + 3600,
-            }))),
-        };
-        let mut prefs = Preferences {
-            google_client_id: "other-client".into(),
-            ..Default::default()
-        };
-        assert!(
-            google
-                .token(&prefs)
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("Reconnect Google")
-        );
-        prefs.google_client_id = "issuing-client".into();
-        assert_eq!(
-            google.token(&prefs).await.unwrap().expose_secret(),
-            "fixture-access"
-        );
-        google
-            .tokens
-            .lock()
-            .await
-            .as_mut()
-            .unwrap()
-            .client_id
-            .clear();
-        assert!(
-            google
-                .token(&prefs)
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("Reconnect Google")
-        );
-        prefs.google_client_id.clear();
-        assert!(
-            google
-                .token(&prefs)
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("Connect Google")
-        );
     }
 }

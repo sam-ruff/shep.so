@@ -38,6 +38,12 @@ impl Reply {
     pub fn disconnect() -> Self {
         Self::new(0, "")
     }
+    pub fn chunked(status: u16, body: Vec<u8>) -> Self {
+        let mut bytes = format!("{:X}\r\n", body.len()).into_bytes();
+        bytes.extend(body);
+        bytes.extend_from_slice(b"\r\n0\r\n\r\n");
+        Self::binary(status, bytes).header("Transfer-Encoding", "chunked")
+    }
 }
 
 pub struct Server {
@@ -103,11 +109,10 @@ impl Server {
                 }
                 let mut response =
                     format!("HTTP/1.1 {} Test\r\nConnection: close\r\n", reply.status);
-                if !reply
-                    .headers
-                    .iter()
-                    .any(|(k, _)| k.eq_ignore_ascii_case("content-length"))
-                {
+                if !reply.headers.iter().any(|(k, _)| {
+                    k.eq_ignore_ascii_case("content-length")
+                        || k.eq_ignore_ascii_case("transfer-encoding")
+                }) {
                     response.push_str(&format!("Content-Length: {}\r\n", reply.body.len()));
                 }
                 for (key, value) in reply.headers {
