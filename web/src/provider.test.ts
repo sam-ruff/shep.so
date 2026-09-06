@@ -796,6 +796,9 @@ describe("Outbox review and recovery", () => {
     expect(await s.db.get("drafts", draft.id)).toBeUndefined();
     await expect(s.repo.send(draft)).rejects.toThrow("already reviewed");
     await expect(s.repo.saveDraft(draft)).rejects.toThrow("already reviewed");
+    // Manual delivery review remains available for a separate provider Sent copy.
+    expect(await s.repo.outgoing()).toHaveLength(1);
+    await s.repo.recoverOutgoing(id, "local");
     expect(await s.repo.outgoing()).toEqual([]);
     expect(s.sends()).toBe(1);
   });

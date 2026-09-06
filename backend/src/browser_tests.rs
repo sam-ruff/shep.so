@@ -8,7 +8,7 @@ use crate::mail::{
 use async_trait::async_trait;
 use shep_mail_core::{mail_actions::Flags, model::*, providers::mail::DeliveryFailure};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use tokio::sync::{Mutex, mpsc};
@@ -21,6 +21,7 @@ struct BrowserMail {
     sends: AtomicUsize,
     moves: AtomicUsize,
     location: Mutex<Option<(String, String)>>,
+    sent: Arc<BrowserSent>,
 }
 #[async_trait]
 impl HostedMail for BrowserMail {
@@ -138,6 +139,20 @@ impl HostedMail for BrowserMail {
         )?
         .summary)
     }
+    async fn sent(
+        &self,
+        c: &Connection,
+    ) -> anyhow::Result<Box<dyn shep_mail_core::providers::mail::sent::SentConnection>> {
+        self.probe(c, false).await?;
+        Ok(Box::new(BrowserSentMailbox {
+            data: self.sent.clone(),
+            folder: if c.account.sent_folder.is_empty() {
+                "Sent Mail".into()
+            } else {
+                c.account.sent_folder.clone()
+            },
+        }))
+    }
     async fn send(
         &self,
         c: &Connection,
@@ -146,6 +161,12 @@ impl HostedMail for BrowserMail {
     ) -> Result<(), DeliveryFailure> {
         assert!(self.probe(c, true).await.is_ok());
         self.sends.fetch_add(1, Ordering::SeqCst);
+        use mailparse::MailHeaderMap;
+        let (headers, _) = mailparse::parse_headers(&bytes).unwrap();
+        self.sent.original.lock().await.insert(
+            headers.get_first_value("Message-ID").unwrap(),
+            bytes.clone(),
+        );
         assert!(!String::from_utf8_lossy(&bytes).contains("Bcc:"));
         if String::from_utf8_lossy(&bytes).contains("Uncertain delivery fixture") {
             Err(DeliveryFailure::Uncertain)
@@ -186,6 +207,58 @@ impl HostedMail for BrowserMail {
             );
             Ok(())
         }
+    }
+}
+
+#[derive(Default)]
+struct BrowserSent {
+    original: Mutex<HashMap<String, Vec<u8>>>,
+    copies: Mutex<HashMap<String, Vec<u8>>>,
+    appends: AtomicUsize,
+}
+struct BrowserSentMailbox {
+    data: Arc<BrowserSent>,
+    folder: String,
+}
+#[async_trait]
+impl shep_mail_core::providers::mail::sent::SentConnection for BrowserSentMailbox {
+    fn folder(&self) -> &str {
+        &self.folder
+    }
+    async fn find(
+        &mut self,
+        id: &str,
+    ) -> anyhow::Result<Option<shep_mail_core::providers::mail::sent::SentReceipt>> {
+        Ok(self.data.copies.lock().await.contains_key(id).then(|| {
+            shep_mail_core::providers::mail::sent::SentReceipt {
+                folder: self.folder.clone(),
+                remote_id: Some("91.4".into()),
+            }
+        }))
+    }
+    async fn append(
+        &mut self,
+        raw: &[u8],
+        _: i64,
+    ) -> anyhow::Result<shep_mail_core::providers::mail::sent::SentReceipt> {
+        use mailparse::MailHeaderMap;
+        let (headers, _) = mailparse::parse_headers(raw)?;
+        let id = headers.get_first_value("Message-ID").unwrap();
+        assert_eq!(
+            self.data.original.lock().await.get(&id).unwrap(),
+            raw,
+            "APPEND uses the immutable bytes originally submitted to SMTP"
+        );
+        self.data.appends.fetch_add(1, Ordering::SeqCst);
+        self.data.copies.lock().await.insert(id, raw.to_vec());
+        anyhow::ensure!(
+            !String::from_utf8_lossy(raw).contains("Uncertain delivery fixture reviewed"),
+            "Synthetic lost APPEND acknowledgment"
+        );
+        Ok(shep_mail_core::providers::mail::sent::SentReceipt {
+            folder: self.folder.clone(),
+            remote_id: None,
+        })
     }
 }
 
@@ -297,6 +370,11 @@ async fn real_browser_beta_gate() {
         transport.moves.load(Ordering::SeqCst),
         4,
         "Queued Undo and refresh Undo use the acknowledged destination identity"
+    );
+    assert_eq!(
+        transport.sent.appends.load(Ordering::SeqCst),
+        2,
+        "One delivered and one explicitly reviewed Sent copy; receipt recovery and lookup never repeat APPEND"
     );
     assert_eq!(
         transport.sends.load(Ordering::SeqCst),

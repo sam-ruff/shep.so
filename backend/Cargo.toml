@@ -7,6 +7,7 @@ license = "MIT"
 description = "Authenticated Shep browser beta gateway"
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 mailparse = "0.16"
 shep-mail-core = { path = "../shared/mail-core" }
 axum = "0.8.9"

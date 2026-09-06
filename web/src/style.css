@@ -1023,3 +1023,12 @@ dialog > .field,
 .outbox .form-status:empty {
   display: none;
 }
+
+.sent-preferences form > .field {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+}
+.sent-preferences .muted {
+  margin: 12px 0;
+}

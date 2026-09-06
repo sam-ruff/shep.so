@@ -355,6 +355,123 @@ export async function providerFlows(page, context, origin, output, session) {
     .fill("synthetic-password");
   await dialog.getByRole("button", { name: "Verify and save account" }).click();
   await expect(dialog).toHaveCount(0);
+  await page
+    .getByRole("button", {
+      name: "Sent copies for mailbox@example.test",
+      exact: true,
+    })
+    .click();
+  await dialog
+    .getByLabel("Sent-copy policy", { exact: true })
+    .selectOption("Automatic");
+  await dialog
+    .getByLabel("Server Sent folder", { exact: true })
+    .fill("Sent Mail");
+  await dialog
+    .getByRole("button", { name: "Save Sent preferences", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Outbox", exact: true }).click();
+  const deliveredCopy = () =>
+    dialog.locator(".settings-card").filter({
+      has: page.getByRole("heading", {
+        name: "Lost response fixture",
+        exact: true,
+      }),
+    });
+  await deliveredCopy()
+    .getByRole("button", { name: "Check server Sent", exact: true })
+    .click();
+  await expect(deliveredCopy()).toContainText(
+    "No matching provider Sent copy found yet",
+  );
+  const loseCopyResponse = async (route) => {
+    const submitted = route.request().postDataJSON();
+    const copyId = new URL(route.request().url()).pathname.split("/").at(-2);
+    const saved = await page.evaluate(
+      async ({ user, copyId }) => {
+        const db = await new Promise((resolve, reject) => {
+          const r = indexedDB.open(`shep.mail.v1.${user}`);
+          r.onsuccess = () => resolve(r.result);
+          r.onerror = reject;
+        });
+        return await new Promise((resolve, reject) => {
+          const tx = db.transaction("outgoing");
+          const r = tx.objectStore("outgoing").getAll();
+          tx.oncomplete = () => {
+            db.close();
+            resolve(r.result.find((record) => record.sent?.copyId === copyId));
+          };
+          tx.onabort = reject;
+        });
+      },
+      { user: session.user_id, copyId },
+    );
+    assert.equal(saved.sent.state, "copying");
+    assert.equal(saved.sent.folder, "Sent Mail");
+    assert.deepEqual(saved.sent.copyAccount, submitted.connection.account);
+    assert.deepEqual(saved.wire, submitted.wire);
+    await route.fetch();
+    await route.abort("connectionreset");
+  };
+  await context.route(`${origin}/api/mail/sent/*/copy`, loseCopyResponse);
+  await deliveredCopy()
+    .getByRole("button", { name: "Save copy to server Sent", exact: true })
+    .click();
+  await expect(dialog.getByRole("status")).toContainText(
+    "Sent upload is not confirmed",
+  );
+  await context.unroute(`${origin}/api/mail/sent/*/copy`, loseCopyResponse);
+  await page.reload();
+  await page.getByRole("button", { name: "Outbox", exact: true }).click();
+  await deliveredCopy()
+    .getByRole("button", { name: "Check server Sent", exact: true })
+    .click();
+  await expect(deliveredCopy()).toContainText(
+    "Provider Sent copy acknowledged",
+  );
+  await page.screenshot({
+    path: path.join(output, "provider-sent-recovered-after-reload.png"),
+  });
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "Preferences", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "Sent copies for mailbox@example.test",
+      exact: true,
+    })
+    .click();
+  await expect(
+    dialog.getByLabel("Server Sent folder", { exact: true }),
+  ).toHaveValue("Sent Mail");
+  await expect(
+    dialog.getByLabel("Sent-copy policy", { exact: true }),
+  ).toHaveValue("Automatic");
+  for (const [width, height] of [
+    [1440, 920],
+    [900, 640],
+  ]) {
+    await page.setViewportSize({ width, height });
+    const axe = await new AxeBuilder({ page })
+      .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+      .analyze();
+    assert.deepEqual(axe.violations, []);
+    await page.screenshot({
+      path: path.join(output, `provider-sent-preferences-${width}.png`),
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 920 });
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "Reconnect mailbox@example.test",
+      exact: true,
+    })
+    .click();
+  await dialog
+    .getByLabel("Incoming password", { exact: true })
+    .fill("synthetic-password");
+  await dialog.getByRole("button", { name: "Verify and save account" }).click();
+  await expect(dialog).toHaveCount(0);
   await page.getByRole("button", { name: "New message", exact: true }).click();
   await dialog.getByLabel("To", { exact: true }).fill("recipient@example.test");
   await dialog
@@ -410,6 +527,7 @@ export async function providerFlows(page, context, origin, output, session) {
     await expect(
       uncertain.getByRole("button", { name: "Record as sent", exact: true }),
     ).toBeDisabled();
+    await uncertain.scrollIntoViewIfNeeded();
     const actionBox = await uncertain
       .getByRole("button", { name: "Return to drafts", exact: true })
       .boundingBox();
@@ -417,14 +535,17 @@ export async function providerFlows(page, context, origin, output, session) {
       actionBox && actionBox.y >= 0 && actionBox.y + actionBox.height <= height,
       "Recovery actions remain visible in the compact Outbox",
     );
-    const scrollBox = await dialog.locator(".outbox-entries").boundingBox();
-    const cardBox = await uncertain.boundingBox();
-    assert.ok(
-      scrollBox &&
-        cardBox &&
-        cardBox.y + cardBox.height <= scrollBox.y + scrollBox.height,
-      "Recovery card is not clipped inside its scrolling container",
-    );
+    await expect(async () => {
+      const scrollBox = await dialog.locator(".outbox-entries").boundingBox();
+      const cardBox = await uncertain.boundingBox();
+      assert.ok(
+        scrollBox &&
+          cardBox &&
+          cardBox.y >= scrollBox.y &&
+          cardBox.y + cardBox.height <= scrollBox.y + scrollBox.height,
+        `Recovery card is not clipped inside its scrolling container: ${JSON.stringify({ scrollBox, cardBox })}`,
+      );
+    }).toPass({ timeout: 2000 });
     const closeBox = await dialog
       .getByRole("button", { name: "Close", exact: true })
       .boundingBox();
@@ -480,6 +601,47 @@ export async function providerFlows(page, context, origin, output, session) {
   await reviewed.getByLabel(reviewLabel, { exact: true }).check();
   await reviewed
     .getByRole("button", { name: "Record as sent", exact: true })
+    .click();
+  await expect(
+    reviewed.getByRole("button", {
+      name: "Save copy to server Sent",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  await reviewed
+    .getByRole("button", { name: "Save copy to server Sent", exact: true })
+    .click();
+  await expect(reviewed).toContainText("Sent upload not confirmed");
+  await expect(
+    reviewed.getByRole("button", {
+      name: "Save copy to server Sent",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  for (const [theme, width, height] of [
+    ["light", 1440, 920],
+    ["dark", 900, 640],
+  ]) {
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Preferences", exact: true })
+      .click();
+    await page.getByLabel("Theme", { exact: true }).selectOption(theme);
+    await page.setViewportSize({ width, height });
+    await openOutbox();
+    await reviewed
+      .getByRole("button", { name: "Check server Sent", exact: true })
+      .scrollIntoViewIfNeeded();
+    const axe = await new AxeBuilder({ page })
+      .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+      .analyze();
+    assert.deepEqual(axe.violations, []);
+    await page.screenshot({
+      path: path.join(output, `provider-sent-review-${theme}-${width}.png`),
+    });
+  }
+  await reviewed
+    .getByRole("button", { name: "Check server Sent", exact: true })
     .click();
   await expect(
     dialog.getByText("No outgoing messages need attention.", { exact: true }),
@@ -623,6 +785,11 @@ export async function providerFlows(page, context, origin, output, session) {
     "outbox-explicit-new-send-and-manual-mark",
     "outbox-rejected-return",
     "outbox-lost-preparation-cancel-reopen",
+    "provider-Sent-preferences-reopen",
+    "Sent-reservation-durable-before-APPEND",
+    "Sent-lost-response-reopen-without-credentials",
+    "Sent-reviewed-uncertain-copy-no-repeat",
+    "Sent-light-dark-compact-axe",
     "browser-only-storage-no-secrets",
   ];
 }

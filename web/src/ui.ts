@@ -229,7 +229,13 @@ export function mount(
           };
           card.append(
             el("h3", "", entry.draft.subject || "Untitled message"),
-            el("p", "muted", labels[entry.state] || "Review delivery"),
+            el(
+              "p",
+              "muted",
+              entry.recovery?.action === "marked"
+                ? "SMTP delivery unconfirmed; recorded as sent after your review"
+                : labels[entry.state] || "Review delivery",
+            ),
             el(
               "p",
               "",
@@ -246,7 +252,9 @@ export function mount(
               "I reviewed delivery; another send could create a duplicate",
             ),
           );
-          const uncertain = ["uncertain", "unknown"].includes(entry.state);
+          const uncertain =
+            ["uncertain", "unknown"].includes(entry.state) &&
+            entry.recovery?.action !== "marked";
           if (uncertain)
             card.append(
               el(
@@ -257,7 +265,13 @@ export function mount(
               review,
             );
           async function recover(
-            action: "check" | "return" | "mark" | "local",
+            action:
+              | "check"
+              | "return"
+              | "mark"
+              | "local"
+              | "sent-check"
+              | "sent-copy",
           ) {
             if (busy || !gateway) return;
             busy = true;
@@ -269,11 +283,18 @@ export function mount(
             refresh.disabled = true;
             confirmed.disabled = true;
             try {
-              const draft = await gateway.recoverOutgoing(
-                entry.id,
-                action,
-                confirmed.checked,
-              );
+              const draft =
+                action === "sent-check" || action === "sent-copy"
+                  ? await gateway.recoverSent(
+                      entry.id,
+                      action === "sent-copy" ? "copy" : "check",
+                      copyConfirmed.checked,
+                    )
+                  : await gateway.recoverOutgoing(
+                      entry.id,
+                      action,
+                      confirmed.checked,
+                    );
               await gateway.load();
               w.drafts = new Map(gateway.drafts.map((d) => [d.id, d]));
               w.addCachedMail(gateway.cached);
@@ -283,7 +304,9 @@ export function mount(
                   ? "Recorded as sent after your review."
                   : action === "local"
                     ? "Sent copy kept locally."
-                    : "Delivery status checked.";
+                    : action.startsWith("sent-")
+                      ? "Sent recovery checked. See Outbox for the saved result."
+                      : "Delivery status checked.";
               w.changed();
               await draw();
             } catch (error) {
@@ -299,10 +322,78 @@ export function mount(
               refresh.disabled = false;
             }
           }
+          const copyConfirmed = el("input");
+          copyConfirmed.type = "checkbox";
+          const copyReview = el("label", "checkbox-field");
+          copyReview.append(
+            copyConfirmed,
+            document.createTextNode(
+              "I checked the server folder; another Sent upload could create a duplicate",
+            ),
+          );
+          if (entry.sentError)
+            card.append(el("p", "form-status", entry.sentError));
+          const copyLabels: Record<string, string> = {
+            pending: "Sent copy pending",
+            missing: "No matching provider Sent copy found yet",
+            reserved: "Sent copy reserved; upload not confirmed",
+            copying: "Sent upload in progress or awaiting its receipt",
+            saved: "Provider Sent copy acknowledged",
+            failed: "Sent copy needs attention",
+            uncertain: "Sent upload not confirmed",
+            unknown: "Sent upload receipt unavailable",
+            local: "Sent copy kept on this browser",
+          };
+          if (entry.sent)
+            card.append(
+              el(
+                "p",
+                "muted",
+                copyLabels[entry.sent.state] ?? "Review Sent copy",
+              ),
+            );
+          if (
+            ["delivered", "uncertain", "unknown"].includes(entry.state) &&
+            entry.account &&
+            entry.wire
+          ) {
+            actions.append(
+              button(
+                entry.sent?.state === "saved"
+                  ? "Finish saving Sent copy"
+                  : "Check server Sent",
+                () => void recover("sent-check"),
+              ),
+            );
+            if (
+              entry.sent?.state !== "saved" &&
+              entry.sent?.state !== "local" &&
+              (entry.state === "delivered" ||
+                entry.recovery?.action === "marked")
+            ) {
+              const requiresReview =
+                !!entry.sent?.copyId && entry.sent.state !== "reserved";
+              const upload = button(
+                "Save copy to server Sent",
+                () => void recover("sent-copy"),
+              );
+              upload.disabled = requiresReview;
+              if (requiresReview) {
+                card.append(copyReview);
+                copyConfirmed.onchange = () =>
+                  (upload.disabled = !copyConfirmed.checked || busy);
+              }
+              actions.append(upload);
+            }
+          }
           actions.append(
             button("Check delivery status", () => void recover("check")),
           );
-          if (entry.state === "delivered")
+          if (
+            entry.state === "delivered" ||
+            entry.sent?.state === "saved" ||
+            entry.recovery?.action === "marked"
+          )
             actions.append(
               button("Keep local copy", () => void recover("local")),
             );

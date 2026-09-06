@@ -4,8 +4,12 @@ use axum::http::Request as HttpRequest;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tower::ServiceExt;
 
+#[path = "sent_tests.rs"]
+mod sent;
+
 #[derive(Default)]
 struct FakeMail {
+    sent: Arc<sent::Fixture>,
     calls: AtomicUsize,
     sends: AtomicUsize,
     fail: AtomicBool,
@@ -73,6 +77,23 @@ impl HostedMail for FakeMail {
             .current
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Synthetic missing copy"))
+    }
+    async fn sent(
+        &self,
+        c: &Connection,
+    ) -> anyhow::Result<Box<dyn shep_mail_core::providers::mail::sent::SentConnection>> {
+        anyhow::ensure!(
+            !self.fail.load(Ordering::SeqCst),
+            "synthetic private connection error"
+        );
+        Ok(Box::new(sent::Mailbox {
+            fixture: self.sent.clone(),
+            folder: if c.account.sent_folder.is_empty() {
+                "Sent Mail".into()
+            } else {
+                c.account.sent_folder.clone()
+            },
+        }))
     }
     async fn send(
         &self,

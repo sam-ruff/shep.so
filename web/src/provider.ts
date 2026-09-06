@@ -1,3 +1,4 @@
+import { recoverSent, type SentWork } from "./sent";
 import { envelope, replyDraft, type ReplyEnvelope } from "./reply";
 import type { Session } from "./auth";
 import { MutationFailure } from "./model";
@@ -27,7 +28,7 @@ export interface Account {
   smtp_security: "Tls" | "StartTls";
   smtp_auth: "Automatic" | "Plain" | "Login";
   smtp_separate_password: boolean;
-  sent_copy: "ServerManaged";
+  sent_copy: "Automatic" | "ServerManaged" | "LocalOnly";
   sent_folder: string;
 }
 export interface Endpoint {
@@ -101,6 +102,9 @@ interface PreparedWire {
   raw: string;
 }
 export interface Outgoing {
+  account?: Account;
+  sent?: SentWork;
+  sentError?: string;
   recovery?: { action: "returned" | "local" | "marked"; draftId?: string };
   wire?: PreparedWire;
   mail?: RecordMail;
@@ -208,6 +212,7 @@ export class GatewayRepository implements Repository {
   warning: string | null = null;
   private secrets = new Map<string, { incoming: string; smtp: string }>();
   private records = new Map<string, RecordMail>();
+  private sentAcknowledgments = new Map<string, SentWork>();
   constructor(
     private session: Session,
     private store: LocalStore,
@@ -310,10 +315,23 @@ export class GatewayRepository implements Repository {
     await this.exclusive(`account.${account.id}`, async () => {
       // A connection edit cannot silently reassign cached remote identities.
       const existing = await this.store.get<Account>("accounts", account.id);
-      if (existing && JSON.stringify(existing) !== JSON.stringify(account))
+      if (
+        existing &&
+        JSON.stringify({
+          ...existing,
+          sent_copy: account.sent_copy,
+          sent_folder: account.sent_folder,
+        }) !== JSON.stringify(account)
+      )
         throw new Error(
           "Add changed server settings as a new account to preserve this account's cached mail.",
         );
+      if (existing)
+        account = {
+          ...account,
+          sent_copy: existing.sent_copy,
+          sent_folder: existing.sent_folder,
+        };
       await this.json("/api/mail/probe", {
         connection: { account, password },
         smtp: false,
@@ -877,6 +895,8 @@ export class GatewayRepository implements Repository {
           id: reservation.id,
           draft: structuredClone(draft),
           state: "preparing",
+          account: structuredClone(account),
+          sent: { state: "pending" },
         };
         // Save the immutable content and submission ID atomically before POST.
         await this.store.commit([
@@ -979,10 +999,142 @@ export class GatewayRepository implements Repository {
               : "Delivery remains unconfirmed. Check Sent or the recipient before composing a new message. This draft was not resent.",
         );
     });
+    // Independent Sent work cannot make acknowledged SMTP depend on another
+    // cache read. Its recovery record remains visible in Outbox on failure.
+    void this.store
+      .get<Outgoing>("outgoing", draft.id)
+      .then((delivered) => {
+        if (
+          delivered?.state === "delivered" &&
+          delivered.account &&
+          !delivered.recovery
+        )
+          return this.recoverSent(delivered.id, "copy", false, true);
+      })
+      .catch((error) => {
+        this.warning =
+          error instanceof Error
+            ? error.message
+            : "Sent needs attention. Open Outbox to retry.";
+      });
+  }
+  async saveSentPreferences(
+    id: string,
+    policy: Account["sent_copy"],
+    folder: string,
+  ) {
+    if (
+      !["Automatic", "ServerManaged", "LocalOnly"].includes(policy) ||
+      folder.length > 1024 ||
+      /[\r\n\0]/.test(folder)
+    )
+      throw new Error("Choose a valid Sent policy and folder.");
+    await this.exclusive(`account.${id}`, async () => {
+      const current = await this.store.get<Account>("accounts", id);
+      if (!current)
+        throw new Error("This account was removed. Reopen Preferences.");
+      const value = {
+        ...current,
+        sent_copy: policy,
+        sent_folder: folder.trim(),
+      };
+      await this.store.commit([{ store: "accounts", key: id, value }]);
+      this.accounts = this.accounts.map((a) => (a.id === id ? value : a));
+    });
+  }
+  private async finishSentLocal(record: Outgoing) {
+    if (!record.mail || !record.wire)
+      throw new Error(
+        "The original Sent message is unavailable. Keep this delivery record.",
+      );
+    const id = record.mail.core.id;
+    const existing = await this.store.get<RecordMail>("mail", id);
+    await this.store.commit([
+      { store: "drafts", key: record.draft.id },
+      ...(!existing
+        ? [
+            { store: "mail" as const, key: id, value: record.mail },
+            { store: "raw" as const, key: id, value: record.wire.raw },
+          ]
+        : []),
+    ]);
+    await this.reloadMail();
+  }
+  async recoverSent(
+    id: string,
+    action: "check" | "copy",
+    confirmed = false,
+    automatic = false,
+  ) {
+    const initial = (await this.store.all<Outgoing>("outgoing")).find(
+      (r) => r.id === id,
+    );
+    if (!initial)
+      throw new Error("This Outbox entry is unavailable. Refresh Outbox.");
+    await this.exclusive(`draft.${initial.draft.id}`, async () => {
+      const record = await this.store.get<Outgoing>(
+        "outgoing",
+        initial.draft.id,
+      );
+      if (!record || record.id !== id)
+        throw new Error("This Outbox entry changed. Refresh Outbox.");
+      await this.exclusive(`account.${record.draft.accountId}`, async () => {
+        try {
+          await recoverSent(
+            {
+              store: this.store,
+              pending: this.sentAcknowledgments,
+              response: (path, body) => this.response(path, body),
+              json: (path, body) => this.json(path, body),
+              connection: (account) => this.connection(account),
+              finishLocal: (record) => this.finishSentLocal(record),
+            },
+            record,
+            action,
+            confirmed,
+            automatic,
+          );
+          // Read the committed result again: an acknowledgment may still be
+          // pending after a storage failure and must not be hidden by metadata.
+          const current = await this.store.get<Outgoing>(
+            "outgoing",
+            record.draft.id,
+          );
+          if (current?.sentError) {
+            delete current.sentError;
+            await this.store.commit([
+              { store: "outgoing", key: current.draft.id, value: current },
+            ]);
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Could not finish Sent. Retry from Outbox.";
+          this.warning = message;
+          const current = await this.store
+            .get<Outgoing>("outgoing", record.draft.id)
+            .catch(() => undefined);
+          if (current) {
+            current.sentError = message;
+            await this.store
+              .commit([
+                { store: "outgoing", key: current.draft.id, value: current },
+              ])
+              .catch(() => {});
+          }
+          throw error;
+        }
+      });
+    });
   }
   async outgoing(): Promise<Outgoing[]> {
     return (await this.store.all<Outgoing>("outgoing")).filter(
-      (r) => !r.recovery,
+      (r) =>
+        !r.recovery ||
+        (r.recovery.action === "marked" &&
+          r.sent?.state !== "saved" &&
+          r.sent?.state !== "local"),
     );
   }
   async recoverOutgoing(
@@ -1003,7 +1155,11 @@ export class GatewayRepository implements Repository {
       );
       if (!record || record.id !== id)
         throw new Error("This Outbox entry changed. Refresh Outbox.");
-      if (record.recovery) {
+      if (record.sent?.state === "saved" && action === "return")
+        throw new Error(
+          "A matching provider Sent copy is acknowledged. Keep it instead of returning this message to drafts.",
+        );
+      if (record.recovery && record.recovery.action !== "marked") {
         if (record.recovery.draftId) {
           const draft = await this.store.get<Draft>(
             "drafts",
@@ -1086,7 +1242,11 @@ export class GatewayRepository implements Repository {
           throw new Error(
             "Confirm your delivery review before recording this message as sent.",
           );
-      } else if (record.state !== "delivered")
+      } else if (
+        record.state !== "delivered" &&
+        record.sent?.state !== "saved" &&
+        record.recovery?.action !== "marked"
+      )
         throw new Error(
           "Delivery has not been confirmed. Review it before keeping a Sent copy.",
         );
