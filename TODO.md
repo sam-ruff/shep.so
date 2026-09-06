@@ -6,12 +6,10 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 - [ ] **R65 — Background mail freshness:** investigate infrequent background syncing, use responsive background scheduling and independent manual refresh behavior. Clicking Refresh during background sync must register/queue a refresh, not silently drop it; preserve navigation and optimistic actions. Cover timer, overlap, errors and recovery with integration/native tests.
 
-- [ ] **R63 — Shortcut clear button:** fix the nonworking × in Shortcuts; verify primary/secondary clearing, disabled state, persistence, remapping and conflict handling through actual native clicks. Expand saved E2E coverage across visible functionality, including error paths, rather than relying only on state-level tests.
-
-- [ ] **R62 — Read/unread regression:** diagnose and fix the reported nonworking read/unread action. Add integration tests for basic mail actions through production UI/cache/provider paths, including delayed success, failure rollback and stale refreshes.
+- [ ] **R63 — E2E coverage audit:** primary/secondary clear controls, remapping, capture cancellation and persistence are shipped in 742b21e. Continue mapping every remaining visible feature to realistic native happy/error/recovery scenarios as the TODO features land; complete a final functionality-path coverage audit.
 
 
-- [ ] **R50/R60 — Immediate feedback:** archive/move, flags, read/unread and other reversible actions show their expected result immediately, before network/SQLite completion. Archiving removes the mail from the current list immediately; restore it with an actionable error on failure. This is the app-wide optimistic interaction principle, recorded in AGENTS.md. Current implementation covers immediate flags/read and same-account moves, coalescing, stale results and rollback; validation/shipping is in progress. Remaining: audit cross-account moves and other reversible controls, reconcile optimistic membership/counts when switching filtered folders, and durable restart recovery for pending actions.
+- [ ] **R50/R60 — Immediate feedback:** archive/move, flags, read/unread and other reversible actions show their expected result immediately, before network/SQLite completion. Archiving removes the mail from the current list immediately; restore it with an actionable error on failure. This is the app-wide optimistic interaction principle, recorded in AGENTS.md. Commit 742b21e ships immediate flags/read and same-account moves, coalescing, stale results and rollback with unit/protocol/native verification. Remaining: audit cross-account moves and other reversible controls, reconcile optimistic membership/counts when switching filtered folders, and durable restart recovery for pending actions.
 - [ ] **R47 — A. Keep → Inbox:** investigate the reported failed move, verify the actual provider path and destination refresh. Commit 590ab10 ships Inbox labeling, send-queue feedback and a spaced-folder protocol test preserving acknowledgment after logout failure; the personal-account root cause is not yet confirmed.
 
 ## Mail reading, search and bulk actions
@@ -40,8 +38,6 @@ Active requests from this chat. Add new requests here immediately, including cor
 - [ ] **R32 — Backup options:** compression and chosen passcode encryption at setup, password prompt on restore, multiple destinations enabled together, independent upload results and configurable per-destination rolling copies (e.g. ten unreadable encrypted archives).
 
 ## Storage, appearance and final quality
-
-- [ ] **R66 — Asset tooling reference:** record the user-provided Dungeonwalk tools repository vectoriser/remove.bg credential discovery pointer in AGENTS.md, without copying or exposing credentials; ship the documentation change.
 
 - [ ] **R64 — GNOME launcher icon:** install the approved dog mark with a transparent background, matching the system theme; verify desktop/dash integration and theme changes without replacing the approved design.
 
