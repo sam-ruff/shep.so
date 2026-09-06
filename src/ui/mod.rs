@@ -173,7 +173,7 @@ pub struct App {
     requested_images: HashSet<String>,
     image_errors: HashMap<String, String>,
     demo: bool,
-    tx: Option<tokio::sync::mpsc::Sender<Command>>,
+    tx: Option<engine::CommandSender>,
     workspace: Arc<Workspace>,
     preferences: Preferences,
     tab: Tab,
@@ -374,11 +374,17 @@ impl App {
     }
     fn send(&mut self, command: Command) {
         if let Some(tx) = &self.tx {
-            if tx.try_send(command).is_err() {
-                self.notice(
-                    "The work queue is full. Please try that action again.",
-                    true,
-                );
+            if let Err(error) = tx.try_send(command) {
+                match (*error).into_inner() {
+                    Command::Detail(id, true) => {
+                        self.pending_details.remove(&id);
+                    }
+                    Command::Query(_, _, true) => self.prefetch_query = None,
+                    _ => self.notice(
+                        "The work queue is full. Please try that action again.",
+                        true,
+                    ),
+                }
             }
         } else {
             self.notice("Opening your local workspace…", false);
