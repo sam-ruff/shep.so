@@ -12,6 +12,7 @@ import 'package:shep_mobile/main.dart' as production;
 import '../test/native_repository_test.dart' show FixtureCredentials;
 import '../test/workspace_test.dart' show MemorySettings;
 import '../test/support/paged_repository.dart';
+import '../test/support/connection_repository.dart';
 
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -263,6 +264,111 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       workspace.dispose();
+    },
+  );
+
+  testWidgets(
+    'native reconnect keeps the committed pair through activation and cleanup failures',
+    (tester) async {
+      final directory = await Directory.systemTemp.createTemp(
+        'shep-reconnect-ui-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final path = '${directory.path}/mail.sqlite';
+      final credentials = FixtureCredentials();
+      final native = await NativeRepository.open(
+        path,
+        credentials: credentials,
+      );
+      final repository = ConnectionFixtureRepository(
+        native.profile,
+        credentials,
+      );
+      const account = MailAccount(
+        id: 'reconnect-fixture',
+        name: 'Connection fixture',
+        email: 'alex@example.test',
+        host: '127.0.0.1',
+        port: 1,
+        username: 'fixture',
+        smtpHost: '127.0.0.1',
+        smtpPort: 1,
+        separatePassword: true,
+      );
+      await repository.call({
+        'op': 'save_account',
+        'account': account.toJson(),
+      });
+      credentials.values[account.id] = ['prior-incoming', 'prior-smtp'];
+      final workspace = Workspace(repository, MemorySettings());
+      addTearDown(workspace.dispose);
+      await workspace.initialize();
+      workspace.setForeground(false);
+      await tester.pumpWidget(ShepApp(key: UniqueKey(), workspace: workspace));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Preferences').last);
+      await tester.pumpAndSettle();
+      Future<void> show(Finder target, {double delta = -400}) async {
+        for (var i = 0; i < 20 && target.evaluate().isEmpty; i++) {
+          await tester.drag(find.byType(ListView).last, Offset(0, delta));
+          await tester.pumpAndSettle();
+        }
+        await tester.ensureVisible(target);
+        await tester.pumpAndSettle();
+      }
+
+      await show(find.text('Connection fixture'));
+      await tester.tap(find.text('Connection fixture'));
+      await tester.pumpAndSettle();
+      final fields = find.byType(TextFormField);
+      await tester.enterText(fields.at(0), 'candidate-incoming');
+      await tester.enterText(fields.at(1), 'candidate-smtp');
+      repository.refuseActivation = true;
+      await tester.tap(find.text('Reconnect'));
+      await wait(
+        tester,
+        () => find
+            .textContaining('Synthetic activation failure')
+            .evaluate()
+            .isNotEmpty,
+      );
+      expect(credentials.values, {
+        account.id: ['prior-incoming', 'prior-smtp'],
+      });
+      await capture(tester, 'native-credential-activation-failure');
+      repository.refuseActivation = false;
+      credentials.removeUnavailable = true;
+      await tester.tap(find.text('Reconnect'));
+      await tester.pumpAndSettle();
+      await wait(
+        tester,
+        () => find.text('Reconnect account').evaluate().isEmpty,
+      );
+      expect(await repository.password(account), 'candidate-incoming');
+      expect(await repository.password(account, smtp: true), 'candidate-smtp');
+      final appearance = find.byType(DropdownButton<ThemeMode>);
+      await show(appearance, delta: 400);
+      await tester.tap(appearance);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Dark').last);
+      await tester.pumpAndSettle();
+      await show(find.text('Retry cleanup'));
+      expect(repository.pendingCredentialCleanup, 1);
+      await capture(tester, 'native-credential-cleanup-retry');
+      credentials.removeUnavailable = false;
+      await tester.tap(find.text('Retry cleanup'));
+      await tester.pumpAndSettle();
+      await wait(tester, () => repository.pendingCredentialCleanup == 0);
+      expect(credentials.values, hasLength(1));
+      final reopened = await NativeRepository.open(
+        path,
+        credentials: credentials,
+      );
+      await reopened.initialize();
+      expect(await reopened.password(account), 'candidate-incoming');
+      expect(await reopened.password(account, smtp: true), 'candidate-smtp');
+      expect(find.text('Saved passwords need cleanup'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
     },
   );
 

@@ -84,6 +84,16 @@ impl Operations {
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
     Accounts,
+    PrepareAccount {
+        account: Account,
+        expected: Option<Account>,
+    },
+    ActivateAccount {
+        slot: String,
+    },
+    CredentialTarget {
+        account: Account,
+    },
     CheckAccount {
         id: String,
     },
@@ -135,10 +145,14 @@ pub enum Request {
         file: String,
     },
     Sync {
+        #[serde(default)]
+        credential_slot: Option<String>,
         account: String,
         password: SecretString,
     },
     Mutate {
+        #[serde(default)]
+        credential_slot: Option<String>,
         id: String,
         #[serde(default)]
         password: Option<SecretString>,
@@ -171,6 +185,8 @@ pub enum Request {
         revision: u64,
     },
     Send {
+        #[serde(default)]
+        credential_slot: Option<String>,
         id: String,
         revision: u64,
         #[serde(default)]
@@ -183,6 +199,8 @@ pub enum Request {
         id: String,
     },
     SentOutgoing {
+        #[serde(default)]
+        credential_slot: Option<String>,
         id: String,
         copy: bool,
         #[serde(default)]
@@ -382,15 +400,20 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             db.write(move|db|crate::accounts::remove(db,review,discard_unresolved)).await?;
             Ok(json!({"removed":true}))
         }
-        Request::CredentialCleanup => db.read(|db|{
-            let mut q=db.prepare("SELECT id FROM removed_accounts WHERE cleanup=1 ORDER BY id")?;
-            let ids=q.query_map([],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(json!(ids))
-        }).await,
-        Request::CredentialCleanupDone{id} => db.write(move|db|{
-            let allowed:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM removed_accounts WHERE id=?1) AND NOT EXISTS(SELECT 1 FROM accounts WHERE id=?1)",[&id],|r|r.get(0))?; anyhow::ensure!(allowed,"This account is still connected; its credential cleanup was refused.");
-            db.execute("UPDATE removed_accounts SET cleanup=0 WHERE id=?1",[id])?;Ok(json!({"cleaned":true}))
-        }).await,
+        Request::PrepareAccount{account,expected} => {
+            let _guard=profile.operations.try_account(&account.id).await?;
+            db.write(move|db|crate::connections::prepare(db,account,expected)).await
+        }
+        Request::ActivateAccount{slot} => {
+            let lookup=slot.clone();
+            let id=db.read(move|db|crate::connections::owner(db,&lookup)).await?;
+            let _guard=profile.operations.account(&id).await;
+            db.write(move|db|crate::connections::activate(db,&slot)).await?;
+            Ok(json!({"saved":true}))
+        }
+        Request::CredentialTarget{account} => db.read(move|db|Ok(json!({"slot":crate::connections::target(db,account)?}))).await,
+        Request::CredentialCleanup => db.read(|db|Ok(json!(crate::connections::cleanup(db)?))).await,
+        Request::CredentialCleanupDone{id} => db.write(move|db|{crate::connections::cleanup_done(db,&id)?;Ok(json!({"cleaned":true}))}).await,
         Request::Accounts => value(db.read(|db| {
             let mut statement=db.prepare("SELECT settings FROM accounts ORDER BY id")?;
             let accounts=statement.query_map([], |r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
@@ -415,6 +438,8 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             let _guard=profile.operations.account(&account.id).await;
             db.write(move |db| {
                 crate::accounts::available(db,&account.id)?;
+                let bound:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM account_credentials WHERE account_id=?1) OR EXISTS(SELECT 1 FROM credential_slots WHERE slot=?1)",[&account.id],|r|r.get(0))?;
+                anyhow::ensure!(!bound,"Reconnect through Preferences to preserve the saved credential binding.");
                 if let Ok(old)=stored_account(db,&account.id) {
                     if preserve_sent {account.sent_copy=old.sent_copy;account.sent_folder=old.sent_folder.clone();}
                     anyhow::ensure!(old.host==account.host && old.port==account.port && old.username==account.username && old.protocol==account.protocol,"Add changed incoming server settings as a new account to preserve cached identities.");
@@ -510,7 +535,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
         Request::Outbox{offset} => crate::outgoing::page(profile, offset).await,
         Request::RecoverOutgoing{id,action,confirmed} => crate::outgoing::recover(profile,id,action,confirmed).await,
         request @ Request::Mutate{..} => {
-            if let Request::Mutate{id,password,folder,unread,starred} = &request {
+            if let Request::Mutate{id,password,folder,unread,starred,..} = &request {
                 let (id,folder,unread,starred,has_password)=(id.clone(),folder.clone(),*unread,*starred,password.is_some());
                 let local=db.write(move |db| {
                     // A local edit and the handover eligibility marker commit
@@ -585,10 +610,15 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
             result.map_err(|_|anyhow::anyhow!("Could not verify the connection. Check the hostname, TLS, username and password, then retry."))?;
             Ok(json!({"connected":true,"sent":false}))
         }
-        Request::Sync { account, password } => {
+        Request::Sync {
+            account,
+            password,
+            credential_slot,
+        } => {
             let _guard = operations.account(&account).await;
             let (account, known) = db
                 .read(move |db| {
+                    crate::connections::check_binding(db,&account,credential_slot.as_deref())?;
                     let settings = stored_account(db, &account)?;
                     let mut statement = db.prepare(if settings.protocol == Protocol::Pop3 {"SELECT id FROM mail WHERE account_id=?1"} else {"SELECT account_id || ':' || folder || ':' || remote_id FROM mail WHERE account_id=?1 AND moved=0"})?;
                     let known = statement
@@ -657,6 +687,7 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
             Ok(json!({"synced":true,"account":account_id,"skipped_large":skipped}))
         }
         Request::Mutate {
+            credential_slot,
             id,
             password,
             folder,
@@ -714,6 +745,13 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
             // may obtain the account's credential and make the same request.
             if remote && password.is_none() {
                 return Ok(json!({"requires_credentials":account.id}));
+            }
+            if remote {
+                let id = account.id.clone();
+                db.read(move |db| {
+                    crate::connections::check_binding(db, &id, credential_slot.as_deref())
+                })
+                .await?;
             }
             if remote && let Some(receipt) = previous {
                 let password = password
@@ -844,12 +882,14 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
             Ok(json!({"committed":true}))
         }
         Request::SentOutgoing {
+            credential_slot,
             id,
             copy,
             confirmed,
             password,
-        } => crate::sent::recover(profile, id, copy, confirmed, password).await,
+        } => crate::sent::recover(profile, id, copy, confirmed, password, credential_slot).await,
         Request::Send {
+            credential_slot,
             id,
             password,
             revision,
@@ -861,7 +901,7 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                 id,
                 revision,
                 file_revision,
-                (password, incoming_password),
+                (password, incoming_password, credential_slot),
                 slot,
                 _admission,
             )

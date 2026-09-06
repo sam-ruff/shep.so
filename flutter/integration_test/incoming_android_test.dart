@@ -136,7 +136,7 @@ void main() {
       await tester.tap(retryCleanup);
       await tester.pumpAndSettle();
       await wait(() => repository.pendingCredentialCleanup == 0);
-      expect(find.text('Removed account passwords need cleanup'), findsNothing);
+      expect(find.text('Saved passwords need cleanup'), findsNothing);
       expect(workspace.visible, isEmpty);
       expect(workspace.drafts, isEmpty);
       await tester.pumpWidget(const SizedBox());

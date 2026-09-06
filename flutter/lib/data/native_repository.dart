@@ -95,6 +95,8 @@ class NativeRepository
     ),
   );
   Future<void> _cleanupCredentials() async {
+    // This query checks every current owner before deletion. The lifecycle
+    // FIFO remains held until the OS operation and acknowledgment finish.
     final ids = (await call({'op': 'credential_cleanup'}) as List)
         .cast<String>();
     pendingCredentialCleanup = ids.length;
@@ -139,39 +141,59 @@ class NativeRepository
     String incoming,
     String smtp,
   ) async {
-    await call({'op': 'check_account', 'id': account.id});
-    await call({
-      'op': 'probe',
+    final prepared = await call({
+      'op': 'prepare_account',
       'account': account.toJson(),
-      'password': incoming,
-      'smtp': false,
+      'expected': mailAccounts
+          .where((a) => a.id == account.id)
+          .firstOrNull
+          ?.toJson(),
     });
-    await call({
-      'op': 'probe',
-      'account': account.toJson(),
-      'password': smtp,
-      'smtp': true,
-    });
-    // No account-save success is reported before the platform credential store
-    // has acknowledged both independent credentials.
+    final slot = prepared['slot'] as String;
+    final savedAccount = MailAccount.fromJson(prepared['account']);
     try {
-      await credentials.save(account.id, incoming, smtp);
+      for (final outgoing in [false, true]) {
+        await call({
+          'op': 'probe',
+          'account': savedAccount.toJson(),
+          'password': outgoing ? smtp : incoming,
+          'smtp': outgoing,
+        });
+      }
+      try {
+        await credentials.save(slot, incoming, smtp);
+      } catch (_) {
+        throw const MailOperationFailure(
+          'The device could not save the passwords. Unlock its credential storage and retry connecting. The previous connection is preserved.',
+        );
+      }
+      // The previous pair is untouched until this database pointer commits.
+      await call({'op': 'activate_account', 'slot': slot});
+    } finally {
+      // An activated slot is excluded by the durable journal. A failed probe,
+      // keychain save, activation or lost response never erases the active pair.
+      try {
+        await _cleanupCredentials();
+      } catch (_) {
+        /* Retry in Preferences. */
+      }
+    }
+    mailAccounts = [
+      ...mailAccounts.where((a) => a.id != account.id),
+      savedAccount,
+    ];
+    try {
+      await initialize();
     } catch (_) {
       throw const MailOperationFailure(
-        'The device could not save the passwords. Unlock its credential storage and retry connecting.',
+        'The connection was saved, but the account list could not reload. Reopen Preferences or refresh mail.',
       );
     }
-    await call({
-      'op': 'save_account',
-      'account': account.toJson(),
-      'preserve_sent': mailAccounts.any((a) => a.id == account.id),
-    });
-    await initialize();
   }
 
-  Future<String> password(MailAccount account, {bool smtp = false}) async {
+  Future<String> _readPassword(String slot, {bool smtp = false}) async {
     try {
-      final value = await credentials.read(account.id, smtp);
+      final value = await credentials.read(slot, smtp);
       if (value == null) {
         throw const MailOperationFailure(
           'The saved password is missing. Reconnect this account in Preferences.',
@@ -185,6 +207,21 @@ class NativeRepository
         'The device credential store is unavailable. Unlock the device and retry; cached mail is available.',
       );
     }
+  }
+
+  Future<String> _credentialSlot(MailAccount account) async =>
+      (await call({
+            'op': 'credential_target',
+            'account': account.toJson(),
+          }))['slot']
+          as String;
+
+  Future<String> password(MailAccount account, {bool smtp = false}) async =>
+      _readPassword(await _credentialSlot(account), smtp: smtp);
+
+  Future<Map<String, Object?>> _incoming(MailAccount account) async {
+    final slot = await _credentialSlot(account);
+    return {'credential_slot': slot, 'password': await _readPassword(slot)};
   }
 
   Mail mailFrom(
@@ -322,7 +359,7 @@ class NativeRepository
         final result = await call({
           'op': 'sync',
           'account': account.id,
-          'password': await password(account),
+          ...await _incoming(account),
         });
         if ((result['skipped_large'] as int) > 0) {
           errors.add('Some mail exceeds the current 25 MiB download limit.');
@@ -355,7 +392,7 @@ class NativeRepository
           'This account changed. Reopen Preferences and refresh its folders.',
         );
       }
-      result = await call({...request, 'password': await password(account)});
+      result = await call({...request, ...await _incoming(account)});
     }
     if (result['warning'] case final String message) {
       throw MailOperationFailure(
@@ -408,7 +445,7 @@ class NativeRepository
   }) async {
     final remote =
         action == OutgoingAction.checkSent || action == OutgoingAction.copySent;
-    String? incoming;
+    Map<String, Object?> incoming = {};
     if (remote) {
       final context = await call({'op': 'outgoing_account', 'id': id});
       final account = mailAccounts
@@ -422,9 +459,9 @@ class NativeRepository
       // A known provider acknowledgment can be persisted without credentials.
       // A missing credential remains a recoverable provider error in Outbox.
       try {
-        incoming = await password(account);
+        incoming = await _incoming(account);
       } on MailOperationFailure {
-        incoming = null;
+        incoming = {};
       }
     }
     final result = OutgoingResult.fromJson(
@@ -435,7 +472,7 @@ class NativeRepository
                 'id': id,
                 'copy': action == OutgoingAction.copySent,
                 'confirmed': confirmed,
-                'password': incoming,
+                ...incoming,
               }
             : {
                 'op': 'recover_outgoing',
@@ -488,10 +525,11 @@ class NativeRepository
       throw const MailOperationFailure('Choose a sending account.');
     }
     await saveDraft(draft);
+    final slot = await _credentialSlot(account);
     String? incoming;
     if (account.protocol == 'Imap' && account.sentCopy != 'LocalOnly') {
       try {
-        incoming = await password(account);
+        incoming = await _readPassword(slot);
       } on MailOperationFailure {
         incoming = null;
       }
@@ -502,7 +540,10 @@ class NativeRepository
       'revision': draft.revision,
       'file_revision': draft.fileRevision,
       'id': draft.id,
-      'password': await password(account, smtp: true),
+      'credential_slot': slot,
+      'password': account.smtpAuthentication == 'None'
+          ? ''
+          : await _readPassword(slot, smtp: true),
     });
     if (result['warning'] case final String message) {
       throw MailOperationFailure(message);

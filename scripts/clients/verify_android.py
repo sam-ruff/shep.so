@@ -7,7 +7,8 @@ from pathlib import Path
 import zipfile
 
 ABIS = ('arm64-v8a', 'armeabi-v7a', 'x86_64')
-MARKERS = (b'A little room for good ideas', b'Native durable draft',
+MARKERS = (b'ConnectionFixtureRepository', b'Synthetic activation failure',
+           b'Synthetic lost credential save acknowledgment', b'A little room for good ideas', b'Native durable draft',
            b'fixture-only-not-a-real-password', b'test/support/preview_repository.dart',
            b'shep-e2e-first.txt', b'Pending text survives removing a file.',
            b'Sent handover fixture', b'Native Outbox return', b'Native IMAP credential fixture', b'Native Sent fixture', b'Original native copy-saved body.', b'Original native return body.')

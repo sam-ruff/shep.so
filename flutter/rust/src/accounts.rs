@@ -35,6 +35,7 @@ pub fn preview(db: &Connection, id: &str) -> Result<Removal> {
     let account = crate::operations::stored_account(db, id)?;
     let mut digest = Sha256::new();
     digest.update(serde_json::to_vec(&account)?);
+    digest.update(crate::connections::target(db, account.clone())?);
     // Hash bounded metadata one row at a time. Mail/attachment bytes are not
     // loaded into the review, and draft-file revisions capture changed content.
     for query in [
@@ -120,6 +121,7 @@ pub fn remove(db: &mut Connection, expected: Removal, discard_unresolved: bool) 
     tx.execute("DELETE FROM outgoing WHERE account_id=?1", [id])?;
     tx.execute("DELETE FROM mail WHERE account_id=?1", [id])?;
     tx.execute("DELETE FROM folders WHERE account_id=?1", [id])?;
+    tx.execute("UPDATE credential_slots SET state='cleanup',settings=NULL,expected=NULL WHERE account_id=?1", [id])?;
     tx.execute("DELETE FROM accounts WHERE id=?1", [id])?;
     tx.execute(
         "INSERT INTO removed_accounts(id,fingerprint,cleanup) VALUES(?1,?2,1)",

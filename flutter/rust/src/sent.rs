@@ -289,6 +289,7 @@ pub(crate) async fn recover(
     copy: bool,
     confirmed: bool,
     password: Option<SecretString>,
+    credential_slot: Option<String>,
 ) -> Result<Value> {
     let attempt = id.clone();
     let account = profile
@@ -302,6 +303,14 @@ pub(crate) async fn recover(
         })
         .await?;
     let _guard = profile.operations.try_account(&account).await?;
+    if password.is_some() {
+        profile
+            .database
+            .read(move |db| {
+                crate::connections::check_binding(db, &account, credential_slot.as_deref())
+            })
+            .await?;
+    }
     run_locked(profile, &id, copy, confirmed, password, false).await
 }
 

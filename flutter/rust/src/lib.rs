@@ -19,3 +19,7 @@ mod sent_tests;
 mod accounts;
 #[cfg(test)]
 mod accounts_tests;
+
+mod connections;
+#[cfg(test)]
+mod connections_tests;
