@@ -234,6 +234,47 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(check("conversation_total", 3), check("loaded_message_id", "preview-work:INBOX:launch-2"),
                        wait(150), shot("conversation-compact"))
 
+    def test_calendar_connection_discovery(self):
+        self.mcp.call("desktop.start", empty_calendars=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(467, 156),
+                       check("settings_tab", "Calendars"), shot("calendar-connections-empty"), click(365, 335), check("dialog", "Calendar"), shot("calendar-connection-form"),
+                       click(690, 410), type_text("https://calendar.example.test/"), click(690, 489), type_text("alex"),
+                       click(690, 569), type_text("fixture-password"), click(520, 625),
+                       check("calendar_discovering", False), check("calendar_choices.0.name", "Personal plans"),
+                       check("calendar_choices.1.access.create", False), check("calendar_selected", 2), shot("calendar-discovered-choices"),
+                       click(482, 438), click(482, 510), check("calendar_selected", 0), click(932, 610),
+                       check("dialog", "Calendar"), check("calendar_saving", False),
+                       click(482, 438), click(482, 510), check("calendar_selected", 2), click(932, 610),
+                       check("dialog", None), check("calendar_sources.0.name", "Personal plans"),
+                       check("calendar_sources.1.name", "Team holidays"), check("calendar_sources.1.access.create", False),
+                       shot("calendar-connected-choices"))
+        self.mcp.batch(click(365, 474), check("dialog", "Calendar"), click(520, 625),
+                       check("calendar_error", "Preview connection failed", "contains"), shot("calendar-connection-error"),
+                       key("Escape"), check("dialog", None), click(293, 156), check("settings_tab", "General"),
+                       click(690, 366), check("dark", True), click(467, 156), check("settings_tab", "Calendars"),
+                       click(365, 474), check("dialog", "Calendar"), shot("calendar-connection-dark"),
+                       click(690, 410), type_text("https://calendar.example.test/"), click(690, 489), type_text("alex"),
+                       click(690, 569), type_text("fixture-password"), click(520, 625),
+                       check("calendar_choices.0.name", "Personal plans"), shot("calendar-choices-dark"),
+                       click(932, 610), check("dialog", None), check("calendar_saving", False))
+        self.assertEqual(len(self.mcp.call("desktop.state")["calendar_sources"]), 2)
+
+    def test_calendar_discovery_compact(self):
+        self.mcp.call("desktop.start", width=900, height=640, empty_calendars=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(445, 156),
+                       check("settings_tab", "Calendars"), click(343, 335), check("dialog", "Calendar"),
+                       shot("calendar-connection-compact"), click(450, 270), type_text("https://calendar.example.test/"),
+                       click(450, 349), type_text("alex"), click(450, 429), type_text("fixture-password"),
+                       click(250, 485), check("calendar_choices.0.name", "Personal plans"), shot("calendar-choices-compact"))
+
+    def test_calendar_read_only_event(self):
+        self.mcp.call("desktop.start", readonly_calendars=True)
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80), click(1260, 395),
+                       check("dialog", "Event"), check("fields.source", "preview-home-calendar"),
+                       check("event_access.update", False), check("event_access.delete", False), shot("calendar-read-only-event"),
+                       key("Escape"), check("dialog", None), double_click(700, 474), check("dialog", "Event"),
+                       check("fields.source", "preview-calendar"), check("event_access.create", True), shot("calendar-writable-default"))
+
     def test_calendar_event_creation(self):
         self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80), double_click(700, 474),
                        check("dialog", "Event"), check("fields.all_day", "true"), shot("new-calendar-event"),

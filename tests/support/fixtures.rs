@@ -165,6 +165,7 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
         return Ok(());
     }
     let source = CalendarSource {
+        access: Default::default(),
         id: "preview-calendar".into(),
         name: "Studio calendar".into(),
         kind: CalendarKind::Google,
@@ -173,6 +174,11 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
     };
     store.save_source(source.clone()).await?;
     let home = CalendarSource {
+        access: if std::env::args().any(|a| a == "--readonly-calendars") {
+            CalendarAccess::READ_ONLY
+        } else {
+            CalendarAccess::default()
+        },
         id: "preview-home-calendar".into(),
         name: "Home calendar".into(),
         ..source.clone()
@@ -293,4 +299,29 @@ async fn seed_conversations(store: &Store) -> anyhow::Result<()> {
         )?);
     }
     store.upsert(messages).await
+}
+
+pub fn discover_calendars(
+    url: &str,
+    username: &str,
+    password: &str,
+) -> anyhow::Result<Vec<crate::providers::calendar::discovery::DiscoveredCalendar>> {
+    anyhow::ensure!(
+        url == "https://calendar.example.test/"
+            && username == "alex"
+            && password == "fixture-password",
+        "Preview connection failed. Use the fixture calendar server and credentials."
+    );
+    Ok(vec![
+        crate::providers::calendar::discovery::DiscoveredCalendar {
+            name: "Personal plans".into(),
+            url: format!("{url}personal/"),
+            access: CalendarAccess::default(),
+        },
+        crate::providers::calendar::discovery::DiscoveredCalendar {
+            name: "Team holidays".into(),
+            url: format!("{url}holidays/"),
+            access: CalendarAccess::READ_ONLY,
+        },
+    ])
 }

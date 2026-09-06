@@ -34,10 +34,10 @@ fn fixture() -> Snapshot {
             "host": "imap.example.com", "port": 993, "username": "sam@example.com",
             "smtp_host": "smtp.example.com", "smtp_port": 465, "smtp_separate_password": true
         })).unwrap()],
-        calendars: vec![CalendarSource {
+        calendars: vec![CalendarSource { access: Default::default(),
             id: "home".into(), name: "Home".into(), kind: CalendarKind::CalDav,
             url: "https://calendar.example.com/dav/sam/".into(), username: "sam".into(),
-        }, CalendarSource {
+        }, CalendarSource { access: Default::default(),
             id: "google:work@example.com".into(), name: "Shared".into(), kind: CalendarKind::Google,
             url: "work@example.com".into(), username: String::new(),
         }],
@@ -57,6 +57,7 @@ fn engine(credentials: Arc<Credentials>) -> Engine {
         demo: false,
         account_locks: Default::default(),
         calendar_locks: Default::default(),
+        calendar_setup_lock: Default::default(),
         google_connection_lock: Default::default(),
         passphrases: Arc::new(backup::OsPassphraseStore),
         restore_credentials: credentials,

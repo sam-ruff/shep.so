@@ -1116,8 +1116,18 @@ impl App {
                         column![
                             text(&source.name).font(BOLD).size(13),
                             muted(match source.kind {
-                                CalendarKind::Google => "Google Calendar",
-                                CalendarKind::CalDav => "CalDAV · home server",
+                                CalendarKind::Google =>
+                                    if source.access.read_only() {
+                                        "Google Calendar · read only"
+                                    } else {
+                                        "Google Calendar"
+                                    },
+                                CalendarKind::CalDav =>
+                                    if source.access.read_only() {
+                                        "CalDAV · read only"
+                                    } else {
+                                        "CalDAV · home server"
+                                    },
                             })
                             .size(11)
                         ]
@@ -1127,11 +1137,11 @@ impl App {
                 )
                 .push(line());
         }
-        sources=sources.push(action("Add CalDAV calendar",Message::Open(Dialog::Calendar))).push(muted("Use the calendar collection URL from Nextcloud, Radicale, Baïkal, or another CalDAV server. HTTPS certificates are verified.").size(11));
+        sources=sources.push(action("Add CalDAV calendar",Message::Open(Dialog::Calendar))).push(muted("Enter your server address to find calendars, or use a calendar collection URL.").size(11));
         column![
             settings_card(
                 "Connected calendars",
-                "Your events are cached locally for fast browsing.",
+                "Choose which calendars you use in Shep.",
                 sources.into()
             ),
             self.google_settings()
@@ -1349,7 +1359,7 @@ impl App {
         match dialog {
             Dialog::Sender => body = body.push(self.sender_dialog()),
             Dialog::Account => body = body.push(self.account_wizard()),
-            Dialog::Calendar=>body=body.push(form_field("Calendar name","Home calendar",self.field("name"),"name",false)).push(form_field("CalDAV calendar collection URL","https://cloud.example.com/remote.php/dav/calendars/user/personal/",self.field("url"),"url",false)).push(form_field("Username","Your server username",self.field("username"),"username",false)).push(form_field("Password / app password","Your server password",self.field("password"),"password",true)).push(button(text("Connect CalDAV").size(12)).padding([12,18]).style(primary).on_press(Message::SaveCalendar)),
+            Dialog::Calendar => body = body.push(self.calendar_connection_form()),
             Dialog::Move=>{
                 if self.preferences.cross_account_moves {
                     let choices: Vec<_> = self.workspace.accounts.iter().filter(|a| a.protocol == Protocol::Imap).map(|a| Choice(a.id.clone(), a.name.clone())).collect();
@@ -1364,16 +1374,17 @@ impl App {
                 for folder in folders.iter(){body=body.push(button(row![icon("folder",18.),text(folder.clone()).size(13),space().width(Length::Fill),icon("chevron",14.)].spacing(12).align_y(Alignment::Center)).padding(13).width(Length::Fill).style(outline).on_press(Message::Move(folder.clone())));}
             }
             Dialog::Compose => body = body.spacing(14).push(self.compose_form()),
+            Dialog::Event if self.editing_event.is_some() && !self.event_access().update => body = body.push(self.read_only_event()),
             Dialog::Event=>{
-                let choices:Vec<_>=self.workspace.calendars.iter().map(|a|Choice(a.id.clone(),a.name.clone())).collect();let chosen=choices.iter().find(|a|a.0==self.field("source")).cloned();
+                let choices:Vec<_>=self.workspace.calendars.iter().filter(|s| if let Some(event) = &self.editing_event { s.id == event.source_id } else { s.access.create }).map(|a|Choice(a.id.clone(),a.name.clone())).collect();let chosen=choices.iter().find(|a|a.0==self.field("source")).cloned();
                 body=body.spacing(14).push(column![text("Title").size(12).font(BOLD),input("Event title",self.field("title"),|v|Message::Field("title",v)).id("event-title")].spacing(8)).push(column![text("Calendar").size(12).font(BOLD), if choices.is_empty() {
-                        Element::from(column![text("No calendar connected").size(12), action("Connect calendar", Message::ConnectCalendarFromEvent)].spacing(10))
+                        Element::from(column![text(if self.workspace.calendars.is_empty() { "No calendar connected" } else { "No writable calendar connected" }).size(12), action("Connect calendar", Message::ConnectCalendarFromEvent)].spacing(10))
                     } else {
                         Element::from(pick_list(choices,chosen,|c:Choice|Message::Field("source",c.0)).placeholder("Choose a calendar").text_size(12).padding(12).style(select_input).menu_style(select_menu).width(Length::Fill))
                     }].spacing(8))
                     .push(checkbox(self.field("all_day")=="true").label("All day").on_toggle(|v|Message::Field("all_day",v.to_string())))
                     .push(row![form_field("Start date · YYYY-MM-DD","2026-09-05",self.field("date"),"date",false),form_field("Last date · YYYY-MM-DD","2026-09-05",self.field("end_date"),"end_date",false)].spacing(15)).push(if self.field("all_day")=="true" { Element::from(space()) } else { Element::from(row![form_field("From · HH:MM","09:00",self.field("start"),"start",false),form_field("To · HH:MM","10:00",self.field("end"),"end",false)].spacing(15)) }).push(form_field("Location","Somewhere lovely",self.field("location"),"location",false))
-                    .push(row![button(text("Save event").size(12)).padding([12,18]).style(primary).on_press_maybe((!self.field("source").is_empty()).then_some(Message::SaveEvent)),space().width(Length::Fill),if self.editing_event.is_some(){Element::from(action("Delete event",Message::DeleteEvent))}else{Element::from(space())}].spacing(10));
+                    .push(row![button(text("Save event").size(12)).padding([12,18]).style(primary).on_press_maybe((!self.field("source").is_empty()).then_some(Message::SaveEvent)),space().width(Length::Fill),if self.editing_event.is_some() && self.event_access().delete {Element::from(action("Delete event",Message::DeleteEvent))}else{Element::from(space())}].spacing(10));
             }
             Dialog::Export=>body=body.push(form_field("Full destination path","/home/you/Downloads/message.eml",self.field("path"),"path",false)).push(action("Browse…",Message::BrowseExport)).push(button(text("Save file").size(12)).padding([12,18]).style(primary).on_press(Message::SaveExport)),
             Dialog::Restore=>body=body.push(form_field("Backup passphrase","Enter the original passphrase",self.field("passphrase"),"passphrase",true)).push(muted("Existing mail, connection settings and passwords are kept. Missing account passwords are filled from the copy when available. Google sign-in and preferences stay unchanged.").size(11)).push(row![action("Cancel",Message::Close),button(text("Restore & merge").size(12)).padding([12,18]).style(primary).on_press(Message::ConfirmRestore)].spacing(10)),

@@ -166,37 +166,11 @@ impl Google {
         prefs: &Preferences,
     ) -> anyhow::Result<Vec<crate::model::CalendarSource>> {
         let token = self.token(prefs).await?;
-        let mut next = String::new();
-        let mut sources = Vec::new();
-        loop {
-            let data: serde_json::Value = self
-                .http
-                .get("https://www.googleapis.com/calendar/v3/users/me/calendarList")
-                .bearer_auth(token.expose_secret())
-                .query(&[("maxResults", "250"), ("pageToken", next.as_str())])
-                .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await?;
-            if let Some(items) = data["items"].as_array() {
-                for item in items {
-                    if let Some(id) = item["id"].as_str() {
-                        sources.push(crate::model::CalendarSource {
-                            id: format!("google:{id}"),
-                            name: item["summary"].as_str().unwrap_or("Google Calendar").into(),
-                            kind: crate::model::CalendarKind::Google,
-                            url: id.into(),
-                            username: String::new(),
-                        });
-                    }
-                }
-            }
-            match data["nextPageToken"].as_str() {
-                Some(n) => next = n.into(),
-                None => break,
-            }
-        }
-        Ok(sources)
+        super::calendar::google_sources(
+            &self.http,
+            url::Url::parse("https://www.googleapis.com/calendar/v3/users/me/calendarList")?,
+            token.expose_secret(),
+        )
+        .await
     }
 }

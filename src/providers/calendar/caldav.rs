@@ -71,6 +71,7 @@ impl CalDav {
         event: &CalendarEvent,
         secret: &str,
     ) -> anyhow::Result<CalendarEvent> {
+        super::ensure_event_access(source, event, false)?;
         anyhow::ensure!(
             source.id == event.source_id,
             "This event belongs to another calendar."
@@ -154,6 +155,7 @@ impl CalDav {
         event: &CalendarEvent,
         secret: &str,
     ) -> anyhow::Result<()> {
+        super::ensure_event_access(source, event, true)?;
         anyhow::ensure!(
             source.id == event.source_id,
             "This event belongs to another calendar."
