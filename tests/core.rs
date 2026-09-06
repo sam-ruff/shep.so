@@ -617,3 +617,88 @@ async fn combined_folder_queries_keep_account_scope_filters_and_empty_selection(
     query.folders = Some(vec![]);
     assert_eq!(store.query(query).await.unwrap().total, 0);
 }
+
+#[test]
+fn shortcut_slots_defaults_conflicts_and_legacy_customizations() {
+    use shep::shortcuts::Slot;
+    let mut keys = Keymap::default();
+    assert_eq!(keys.resolve("Mod+D"), Some(Action::Delete));
+    assert_eq!(keys.resolve("Backspace"), Some(Action::Archive));
+    assert_eq!(keys.resolve("Delete"), Some(Action::Archive));
+    assert_eq!(keys.binding(Action::Move, Slot::Secondary), "");
+    let before = keys.clone();
+    assert!(
+        keys.remap_slot(Action::Move, Slot::Secondary, "delete".into())
+            .is_err()
+    );
+    assert_eq!(keys, before);
+    keys.remap_slot(Action::Move, Slot::Secondary, "Alt+M".into())
+        .unwrap();
+    assert!(keys.remap(Action::Reply, "Alt+M".into()).is_err());
+    let restored: Keymap = serde_json::from_str(&serde_json::to_string(&keys).unwrap()).unwrap();
+    assert_eq!(restored.resolve("Alt+M"), Some(Action::Move));
+    assert_eq!(restored.resolve("M"), Some(Action::Move));
+    keys.remap_slot(Action::Move, Slot::Secondary, String::new())
+        .unwrap();
+    assert_eq!(keys.resolve("Alt+M"), None);
+
+    let migrated: Keymap = serde_json::from_str(r#"{"Archive":"E","Move":"Alt+M"}"#).unwrap();
+    assert_eq!(migrated.resolve("Backspace"), Some(Action::Archive));
+    assert_eq!(migrated.resolve("Delete"), Some(Action::Archive));
+    assert_eq!(migrated.resolve("Alt+M"), Some(Action::Move));
+    let custom: Keymap =
+        serde_json::from_str(r#"{"Archive":"Alt+E","Move":"Delete","Reply":"Mod+D"}"#).unwrap();
+    custom.validate().unwrap();
+    assert_eq!(custom.resolve("Delete"), Some(Action::Move));
+    assert_eq!(custom.resolve("Alt+E"), Some(Action::Archive));
+    assert_eq!(custom.resolve("Mod+D"), Some(Action::Reply));
+    assert_eq!(custom.key(Action::Delete), "");
+    assert_eq!(custom.binding(Action::Archive, Slot::Secondary), "");
+}
+
+#[tokio::test]
+async fn sidebar_unread_counts_ignore_search_and_folder_scope_and_follow_changes() {
+    let store = Store::memory().unwrap();
+    let mut originals = Vec::new();
+    for (account, id, folder, unread) in [
+        ("a", "1", "INBOX", true),
+        ("a", "2", "INBOX", true),
+        ("b", "3", "INBOX", true),
+        ("a", "4", "Archive", true),
+        ("a", "5", "INBOX", false),
+    ] {
+        originals.push(
+            parse_mail(
+                account,
+                id,
+                folder,
+                b"From: fixture@example.com\r\nSubject: Fixture\r\n\r\nCached mail".to_vec(),
+                unread,
+                false,
+            )
+            .unwrap(),
+        );
+    }
+    store.upsert(originals.clone()).await.unwrap();
+    let page = store
+        .query(MailQuery {
+            folder: "Archive".into(),
+            search: "no-such-message".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(page.total, 0);
+    assert_eq!(page.inbox_unread.get("a"), Some(&2));
+    assert_eq!(page.inbox_unread.get("b"), Some(&1));
+    let mut read = originals[0].summary.clone();
+    read.unread = false;
+    store.flags(read).await.unwrap();
+    store
+        .move_local(originals[1].summary.id.clone(), "Archive".into())
+        .await
+        .unwrap();
+    let updated = store.query(MailQuery::default()).await.unwrap();
+    assert!(!updated.inbox_unread.contains_key("a"));
+    assert_eq!(updated.inbox_unread.get("b"), Some(&1));
+}

@@ -85,6 +85,34 @@ class NativeFlows(unittest.TestCase):
                        click(400, 156), check("settings_tab", "General"), click(693, 366), check("dark", True),
                        key("ctrl+1"), check("tab", "Mail"), shot("resized-sidebar-dark"))
 
+    def test_context_menu_survives_mouse_release_and_sync_refresh(self):
+        self.mcp.batch(key("ctrl+r"), check("busy", "sync", "contains"),
+                       {"type": "click", "x": 403, "y": 450, "button": 3}, check("context_subject", "Coffee next Thursday?"),
+                       wait(100), check("context_subject", "Coffee next Thursday?"), check("busy", []),
+                       check("context_subject", "Coffee next Thursday?"), shot("context-after-background-refresh"),
+                       click(485, 624), check("context_menu", None), check("starred", True),
+                       {"type": "click", "x": 403, "y": 450, "button": 3}, check("context_subject", "Coffee next Thursday?"),
+                       key("Escape"), check("context_menu", None),
+                       {"type": "click", "x": 403, "y": 450, "button": 3}, check("context_subject", "Coffee next Thursday?"),
+                       click(1380, 730), check("context_menu", None))
+
+    def test_preferences_search_and_tooltip_options(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(1150, 88), type_text("tooltip"),
+                       check("settings_matches", ["Tooltips"]), shot("settings-search-results"),
+                       click(500, 289), check("settings_group", "Tooltips"), shot("tooltip-settings"),
+                       click(288, 342), check("tooltips", False), check("preferences_saved", True),
+                       key("ctrl+1"), check("tab", "Mail"), {"type": "hover", "x": 651, "y": 100}, wait(550), shot("all-tooltips-disabled"),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(288, 342), check("tooltips", True),
+                       click(288, 379), check("shortcut_tooltips", False), check("preferences_saved", True),
+                       key("ctrl+1"), check("tab", "Mail"), {"type": "hover", "x": 651, "y": 100}, wait(550), shot("tooltip-without-shortcut"),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(288, 379), check("shortcut_tooltips", True),
+                       key("ctrl+1"), check("tab", "Mail"), {"type": "hover", "x": 651, "y": 100}, wait(550), shot("tooltip-primary-only"),
+                       {"type": "hover", "x": 90, "y": 112}, wait(550), shot("no-labeled-control-tooltip"))
+        self.mcp.call("desktop.start", width=900, height=640)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       click(650, 88), type_text("font"), check("settings_matches", ["Reading and layout"]), shot("settings-search-compact-dark"),
+                       click(450, 289), check("settings_group", "Reading and layout"), shot("settings-font-search-destination"))
+
     def test_inbox_context_menu_targets_clicked_message(self):
         self.mcp.batch({"type": "click", "x": 403, "y": 450, "button": 3},
                        check("context_subject", "Coffee next Thursday?"), shot("inbox-context-light"),
@@ -112,6 +140,20 @@ class NativeFlows(unittest.TestCase):
                        check("fields.subject", "Re: Coffee next Thursday?"), shot("context-reply-target"),
                        key("Escape"), check("dialog", None),
                        key("ctrl+comma"), check("tab", "Preferences"), shot("contacts-tabs-compact"))
+
+    def test_email_text_selection_and_copy(self):
+        self.mcp.batch(check("reader_text_ready", True),
+                       drag(650, 314, 714, 314), check("reader_selected_text", "Hey Alex", "contains"),
+                       key("ctrl+c"), shot("selected-email-text"),
+                       key("ctrl+k"), check("focused_input", "search"), key("ctrl+v"), check("query", "Hey Alex", "contains"),
+                       key("ctrl+a"), key("BackSpace"), check("total", 120), key("Escape"),
+                       double_click(420, 243), check("full_reader", True), check("reader_text_ready", True),
+                       click(95, 310), key("ctrl+a"), check("reader_selected_text", "Design lead", "contains"),
+                       key("ctrl+c"), shot("full-reader-selectable"), key("m"), check("dialog", "Move"),
+                       key("Escape"), check("dialog", None), key("Escape"), check("full_reader", False),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(690, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80), drag(650, 314, 714, 314),
+                       check("reader_selected_text", "Hey Alex", "contains"), shot("selected-email-text-dark"))
 
     def test_documentation_screenshots(self):
         self.mcp.batch(check("selected", "A little more room to think"),
@@ -155,10 +197,60 @@ class NativeFlows(unittest.TestCase):
 
     def test_remapping_persists_and_works(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(645, 156),
-                       check("settings_tab", "Shortcuts"), click(1086, 340), key("alt+m"),
+                       check("settings_tab", "Shortcuts"), click(946, 350), key("alt+m"),
                        check("shortcuts.Move", "Alt+M"), shot("remapped-shortcut"),
                        key("ctrl+1"), check("tab", "Mail"), key("m"), wait(), check("dialog", None),
                        key("alt+m"), check("dialog", "Move"), key("Escape"))
+
+    def test_delete_archive_defaults_and_mail_returns_to_inbox(self):
+        self.mcp.batch(check("shortcuts.Delete", "Mod+D"), check("shortcuts.Archive", "Backspace"),
+                       check("shortcut_secondary.Archive", "Delete"),
+                       key("BackSpace"), check("total", 119), key("Delete"), check("total", 118),
+                       key("ctrl+d"), check("total", 117),
+                       click(85, 398), check("folder", "Archive"), check("total", 2),
+                       click(85, 115), check("folder", "INBOX"), check("total", 117),
+                       key("ctrl+k"), check("focused_input", "search"), type_text("invoice"), check("query", "invoice"), check("total", 1),
+                       key("ctrl+d"), check("folder", "INBOX"), check("query", "invoice"), check("total", 1),
+                       key("ctrl+a"), key("BackSpace"), check("total", 117), key("Escape"),
+                       click(85, 438), check("folder", "Trash"), check("total", 1), shot("trash-shortcut-result"),
+                       click(85, 115), check("folder", "INBOX"), check("total", 117),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(286, 737), check("unified", False),
+                       key("ctrl+1"), check("tab", "Mail"), click(85, 358), check("folder", "Archive"),
+                       click(85, 115), check("folder", "INBOX"), check("account", "preview-work"), shot("account-inbox-unread-count"))
+
+    def test_sidebar_inbox_shortcut_and_highlighted_return_move(self):
+        self.mcp.call("desktop.start", long_folders=True)
+        self.mcp.batch(click(100, 537), check("folder", "Projects"), check("sidebar_focus", True),
+                       key("i"), check("folder", "INBOX"),
+                       click(100, 537), check("folder", "Projects"), click(420, 244), check("sidebar_focus", False),
+                       key("i"), check("folder", "Projects"), key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
+                       type_text("inbox"), check("move_enter_destination", "INBOX"), shot("move-inbox-enter-highlight"),
+                       key("Return"), check("dialog", None), check("total", 0),
+                       click(85, 115), check("folder", "INBOX"), check("total", 121),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(645, 156), check("settings_tab", "Shortcuts"),
+                       {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(150), shot("sidebar-inbox-key-settings"),
+                       click(817, 738), check("shortcuts.Inbox", ""), check("preferences_saved", True),
+                       key("ctrl+1"), check("tab", "Mail"), click(100, 537), check("folder", "Projects"),
+                       key("i"), wait(80), check("folder", "Projects"),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(120),
+                       click(920, 738), key("alt+i"), check("shortcuts.Inbox", "Alt+I"), check("preferences_saved", True),
+                       key("ctrl+1"), check("tab", "Mail"), click(100, 537), check("folder", "Projects"), key("alt+i"), check("folder", "INBOX"))
+
+    def test_secondary_shortcut_remap_conflict_and_disable(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(645, 156),
+                       check("settings_tab", "Shortcuts"), shot("two-shortcut-slots"),
+                       click(1100, 350), key("Delete"), check("notice", "assigned more than once", "contains"),
+                       key("alt+m"), check("shortcut_secondary.Move", "Alt+M"), check("preferences_saved", True),
+                       key("ctrl+1"), check("tab", "Mail"), key("alt+m"), check("dialog", "Move"), key("Escape"),
+                       key("m"), check("dialog", "Move"), key("Escape"),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(645, 156),
+                       click(1157, 353), check("shortcut_secondary.Move", ""), check("preferences_saved", True),
+                       shot("secondary-shortcut-disabled"))
+        self.mcp.call("desktop.start", width=900, height=640)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       click(620, 156), check("settings_tab", "Shortcuts"), shot("shortcuts-compact-dark"),
+                       {"type": "hover", "x": 800, "y": 500}, {"type": "scroll", "amount": 20}, wait(120), shot("shortcuts-compact-trash-default"))
 
     def test_preferences_and_resize_keep_latest_changes(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
@@ -277,7 +369,7 @@ class NativeFlows(unittest.TestCase):
                        check("conversation_rows.19.remote_id", "long-19"), shot("conversation-first-page"),
                        click(1377, 194), check("conversation_offset", 20), check("loaded_message_id", "preview-work:Projects:long-20"),
                        check("conversation_rows.4.remote_id", "long-24"), shot("conversation-later-page"),
-                       click(1378, 34), check("busy", "sync", "contains"),
+                       click(1400, 36), check("busy", "sync", "contains"),
                        check("loaded_message_id", "preview-work:Projects:long-20"), shot("conversation-during-sync"))
 
     def test_conversation_compact_layout(self):
@@ -511,7 +603,7 @@ class NativeFlows(unittest.TestCase):
                        {"type": "click", "x": 100, "y": 615, "modifiers": ["ctrl"]}, check("selected_folders", []), check("total", 0),
                        click(100, 498), check("collapsed_accounts", ["preview-work"]), check("preferences_saved", True), shot("sidebar-account-collapsed"),
                        click(100, 498), check("collapsed_accounts", []), check("preferences_saved", True),
-                       {"type": "hover", "x": 125, "y": 576}, wait(600), shot("sidebar-long-name-tooltip"),
+                       {"type": "hover", "x": 125, "y": 576}, wait(600), shot("sidebar-long-name-truncation"),
                        click(78, 278), check("folder", "INBOX"), check("selected_folders", None), check("total", 120))
 
     def test_sidebar_long_labels_compact_dark(self):
@@ -579,7 +671,7 @@ class NativeFlows(unittest.TestCase):
                                click(690, 366), check("dark", True),
                                key("ctrl+1"), check("tab", "Mail"))
             self.mcp.batch(shot(f"compact-header-{appearance}"),
-                           click(1370, 34), check("busy", "sync", "contains"),
+                           click(1400, 36), check("busy", "sync", "contains"),
                            shot(f"compact-header-syncing-{appearance}"),
                            click(87, 159), check("tab", "Calendar"),
                            shot(f"responsive-during-sync-{appearance}"), check("busy", []))

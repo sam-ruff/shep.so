@@ -29,6 +29,7 @@ class Desktop:
         self.env = os.environ.copy()
         self.directory = None
         self.log = None
+        self.xvfb_log = None
         atexit.register(self.stop)
 
     def stop(self):
@@ -45,6 +46,9 @@ class Desktop:
         if self.log:
             self.log.close()
             self.log = None
+        if self.xvfb_log:
+            self.xvfb_log.close()
+            self.xvfb_log = None
         return {"stopped": True}
 
     def command(self, *args):
@@ -65,16 +69,18 @@ class Desktop:
             raise RuntimeError("Run cargo build --profile test-ui --features test-support before starting the harness.")
         self.directory = ARTIFACTS / uuid.uuid4().hex[:12]
         self.directory.mkdir(parents=True)
+        self.xvfb_log = (self.directory / "xvfb.log").open("w")
         read_fd, write_fd = os.pipe()
         self.xvfb = subprocess.Popen(
-            ["Xvfb", "-displayfd", str(write_fd), "-screen", "0", f"{width}x{height}x24", "-nolisten", "tcp"],
-            pass_fds=(write_fd,), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ["Xvfb", "-displayfd", str(write_fd), "-screen", "0", f"{width}x{height}x24", "-nolisten", "tcp", "-noreset"],
+            pass_fds=(write_fd,), stdout=subprocess.DEVNULL, stderr=self.xvfb_log)
         os.close(write_fd)
         with os.fdopen(read_fd) as display:
             number = display.readline().strip()
         if not number.isdigit():
             raise RuntimeError("Xvfb did not allocate a display.")
         self.env.update(DISPLAY=f":{number}", WINIT_UNIX_BACKEND="x11")
+        self.wait_display()
         # Keep native file selection on our display, never the user's portal.
         # rfd falls back to the real GTK/Zenity picker when no portal is available.
         self.env.update(DBUS_SESSION_BUS_ADDRESS=f"unix:path={self.directory}/no-session-bus",
@@ -106,6 +112,18 @@ class Desktop:
                 pass
             time.sleep(0.05)
         raise RuntimeError("Shep was not ready within 20 seconds; check the app log and test-support feature.")
+
+    def wait_display(self):
+        deadline = time.monotonic() + 5
+        while self.xvfb.poll() is None:
+            try:
+                self.command("xdotool", "getdisplaygeometry")
+                return
+            except subprocess.SubprocessError:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(.05)
+        raise RuntimeError(f"Isolated X display is unavailable. See {self.directory / 'xvfb.log'}")
 
     def state(self):
         if not self.directory:
@@ -187,7 +205,7 @@ class Desktop:
         op = action.get("op", "eq")
         passed = {"eq": lambda: value == expected,
                   "ne": lambda: value != expected,
-                  "contains": lambda: expected in value,
+                  "contains": lambda: value is not None and expected in value,
                   "gte": lambda: value is not None and value >= expected,
                   "lte": lambda: value is not None and value <= expected}[op]()
         if not passed:

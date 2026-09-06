@@ -551,6 +551,7 @@ impl Engine {
             Command::Sync => {
                 if self.demo {
                     tokio::time::sleep(Duration::from_millis(1500)).await;
+                    output.send(Event::Changed).await?;
                     output.send(Event::Notice("Preview messages are stored locally. Add an account outside preview to sync.".into())).await?;
                     return Ok(());
                 }
@@ -701,7 +702,14 @@ impl Engine {
                 }
                 output.send(Event::Changed).await?;
                 output
-                    .send(Event::Notice(format!("Moved to {folder}.")))
+                    .send(Event::Notice(format!(
+                        "Moved to {}.",
+                        if folder.eq_ignore_ascii_case("INBOX") {
+                            "Inbox"
+                        } else {
+                            &folder
+                        }
+                    )))
                     .await?;
             }
             Command::Flags(mail) => {

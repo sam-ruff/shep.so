@@ -327,7 +327,10 @@ impl Store {
             let mut stmt = c.prepare(&format!("{prefix}SELECT data,unread,starred,folder FROM messages WHERE {condition} ORDER BY {order} LIMIT ? OFFSET ?"))?;
             let rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?)))?
                 .map(|r| { let (data,unread,starred,folder)=r?; let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
-            Ok(MailPage { rows, total:total as usize, unread:unread as usize })
+            let inbox_unread = c.prepare("SELECT account,COUNT(*) FROM messages WHERE folder='INBOX' AND unread=1 GROUP BY account")?
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))?
+                .collect::<rusqlite::Result<_>>()?;
+            Ok(MailPage { rows, total:total as usize, unread:unread as usize, inbox_unread })
         }).await
     }
     pub async fn detail(&self, id: String) -> anyhow::Result<MailDetail> {

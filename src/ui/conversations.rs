@@ -188,12 +188,12 @@ impl App {
                     row![
                         muted(&mail.folder).size(11),
                         space().width(Length::Fill),
-                        icon_action(
+                        self.icon_action(
                             "down",
                             "Collapse message",
                             Message::ConversationMessage(mail.id.clone())
                         ),
-                        toggle_icon_action(
+                        self.toggle_icon_action(
                             "flag",
                             if mail.starred {
                                 "Remove flag"
@@ -244,7 +244,7 @@ impl App {
                         .width(Length::Fill)
                         .style(ghost)
                         .on_press(Message::ConversationMessage(mail.id.clone())),
-                        toggle_icon_action(
+                        self.toggle_icon_action(
                             "flag",
                             if mail.starred {
                                 "Remove flag"

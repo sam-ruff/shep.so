@@ -27,33 +27,23 @@ pub(super) struct Menu {
 }
 impl App {
     pub(super) fn shortcut_hint(&self, label: &str, action: Action) -> String {
-        format!(
-            "{label} · {}",
+        let keys = if self.preferences.shortcut_tooltips {
             self.preferences.shortcuts.key(action).replace(
                 "Mod",
                 if cfg!(target_os = "macos") {
                     "⌘"
                 } else {
                     "Ctrl"
-                }
+                },
             )
-        )
-    }
-    pub(super) fn with_shortcut<'a>(
-        &self,
-        content: impl Into<Element<'a, Message>>,
-        label: &str,
-        action: Action,
-    ) -> Element<'a, Message> {
-        iced::widget::tooltip(
-            content,
-            container(text(self.shortcut_hint(label, action)).size(12))
-                .padding(8)
-                .style(card),
-            iced::widget::tooltip::Position::Bottom,
-        )
-        .gap(5)
-        .into()
+        } else {
+            String::new()
+        };
+        if keys.is_empty() {
+            label.into()
+        } else {
+            format!("{label} · {keys}")
+        }
     }
     pub(super) fn mail_menu_items(
         &self,
@@ -88,7 +78,7 @@ impl App {
             ),
             (Move, "Move to folder…", "move", Some(Action::Move)),
             (Archive, "Archive", "archive", Some(Action::Archive)),
-            (Trash, "Move to Trash", "trash", None),
+            (Trash, "Move to Trash", "trash", Some(Action::Delete)),
             (CopySender, "Copy sender address", "copy", None),
             (Export, "Export message…", "download", None),
         ]
@@ -110,8 +100,8 @@ impl App {
                         space().width(Length::Fill),
                         muted(
                             shortcut
-                                .map(|a| self.preferences.shortcuts.key(a))
-                                .unwrap_or("")
+                                .map(|a| self.preferences.shortcuts.label(a))
+                                .unwrap_or_default()
                         )
                         .size(11),
                     ]
@@ -225,17 +215,31 @@ impl App {
 /// Captures the click's real position without subscribing the app to every mouse move.
 pub(super) struct ContextArea<'a> {
     content: Element<'a, Message>,
-    mail: String,
+    mail: Option<String>,
 }
 impl<'a> ContextArea<'a> {
     pub fn new(content: impl Into<Element<'a, Message>>, mail: String) -> Self {
         Self {
             content: content.into(),
-            mail,
+            mail: Some(mail),
+        }
+    }
+}
+impl<'a> ContextArea<'a> {
+    pub fn sidebar(content: impl Into<Element<'a, Message>>) -> Self {
+        Self {
+            content: content.into(),
+            mail: None,
         }
     }
 }
 impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
+    fn tag(&self) -> iced::advanced::widget::tree::Tag {
+        iced::advanced::widget::tree::Tag::of::<keyboard::Modifiers>()
+    }
+    fn state(&self) -> iced::advanced::widget::tree::State {
+        iced::advanced::widget::tree::State::new(keyboard::Modifiers::default())
+    }
     fn children(&self) -> Vec<Tree> {
         vec![Tree::new(&self.content)]
     }
@@ -277,17 +281,28 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        let modifiers = tree.state.downcast_mut::<keyboard::Modifiers>();
+        if let iced::Event::Keyboard(keyboard::Event::ModifiersChanged(value)) = event {
+            *modifiers = *value;
+        }
+        if matches!(event, iced::Event::Window(iced::window::Event::Unfocused)) {
+            *modifiers = keyboard::Modifiers::default();
+        }
+        let modifiers = *modifiers;
         if matches!(
             event,
             iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right))
         ) && cursor.is_over(layout.bounds())
             && cursor.is_over(*viewport)
+            && let Some(mail) = &self.mail
             && let Some(position) = cursor.position()
         {
-            shell.publish(Message::MailContext(self.mail.clone(), position));
+            shell.publish(Message::MailContext(mail.clone(), position));
             shell.capture_event();
             return;
         }
+        let mut messages = Vec::new();
+        let mut child = Shell::new(&mut messages);
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -295,9 +310,14 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
             cursor,
             renderer,
             clipboard,
-            shell,
+            &mut child,
             viewport,
         );
+        shell.merge(child, |message| match message {
+            Message::SidebarAction(index) => Message::SidebarClick(index, modifiers),
+            Message::Select(id) => Message::SelectClick(id, modifiers),
+            other => other,
+        });
     }
     fn mouse_interaction(
         &self,

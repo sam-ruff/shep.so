@@ -14,6 +14,20 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_display_readiness_retries_only_before_launch_and_reports_failure(self):
+        desktop = harness.Desktop()
+        desktop.directory = Path("/tmp/isolated")
+        desktop.xvfb = Mock()
+        desktop.xvfb.poll.return_value = None
+        desktop.command = Mock(side_effect=[subprocess.CalledProcessError(1, "xdotool"), "1440 920"])
+        with patch.object(harness.time, "sleep"):
+            desktop.wait_display()
+        self.assertEqual(desktop.command.call_count, 2)
+        desktop.xvfb.poll.return_value = 1
+        with self.assertRaisesRegex(RuntimeError, "xvfb.log"):
+            desktop.wait_display()
+        desktop.xvfb = None
+
     def test_google_permission_fixtures_reject_unknown_values_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:
@@ -67,6 +81,9 @@ class HarnessTests(unittest.TestCase):
             desktop.directory = Path(directory)
             (desktop.directory / "state.json").write_text(json.dumps({"dialog": "Move", "cache": {"entries": 3}}))
             self.assertEqual(desktop.assertion({"path": "cache.entries", "op": "gte", "value": 2}), 3)
+            (desktop.directory / "state.json").write_text(json.dumps({"selection": None}))
+            with self.assertRaises(AssertionError):
+                desktop.assertion({"path": "selection", "op": "contains", "value": "text"})
             with self.assertRaises(AssertionError):
                 desktop.assertion({"path": "dialog", "value": "Compose"})
             with self.assertRaises(ValueError):

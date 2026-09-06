@@ -42,7 +42,7 @@ impl App {
                     row![
                         text(message).size(12),
                         space().width(Length::Fill),
-                        icon_action("close", "Dismiss", Message::Dismiss)
+                        self.icon_action("close", "Dismiss", Message::Dismiss)
                     ]
                     .align_y(Alignment::Center)
                     .spacing(10),
@@ -126,7 +126,7 @@ impl App {
                             row![
                                 icon("check", 18.),
                                 text("Changes saved").size(13),
-                                icon_action("close", "Dismiss", Message::DismissToast)
+                                self.icon_action("close", "Dismiss", Message::DismissToast)
                             ]
                             .spacing(10)
                             .align_y(Alignment::Center),
@@ -191,17 +191,18 @@ impl App {
             } else {
                 space().into()
             },
-            self.with_shortcut(
-                action(
+            self.toggle_icon_action(
+                "sync",
+                self.shortcut_hint(
                     if self.busy.contains("sync") {
-                        "Syncing…"
+                        "Syncing mail…"
                     } else {
                         "Sync mail"
                     },
-                    Message::Sync
+                    Action::Sync
                 ),
-                "Sync mail",
-                Action::Sync
+                self.busy.contains("sync"),
+                Message::Sync
             )
         ]
         .spacing(14)
@@ -507,13 +508,17 @@ impl App {
     }
     pub(super) fn reader_toolbar<'a>(&'a self, detail: &'a MailDetail) -> Element<'a, Message> {
         let toolbar = row![
-            icon_action(
+            self.icon_action(
                 "archive",
                 self.shortcut_hint("Archive", Action::Archive),
                 Message::Move("Archive".into())
             ),
-            icon_action("trash", "Move to Trash", Message::Move("Trash".into())),
-            icon_action(
+            self.icon_action(
+                "trash",
+                self.shortcut_hint("Move to Trash", Action::Delete),
+                Message::Move("Trash".into())
+            ),
+            self.icon_action(
                 "mail",
                 if detail.summary.unread {
                     "Mark as read"
@@ -522,7 +527,7 @@ impl App {
                 },
                 Message::ToggleRead
             ),
-            toggle_icon_action(
+            self.toggle_icon_action(
                 "flag",
                 self.shortcut_hint(
                     if detail.summary.starred {
@@ -542,7 +547,7 @@ impl App {
                 * (1. - self.preferences.reader_split)
                 < 440.
             {
-                icon_action(
+                self.icon_action(
                     "move",
                     self.shortcut_hint("Move to folder", Action::Move),
                     Message::Open(Dialog::Move),
@@ -564,7 +569,7 @@ impl App {
                 .on_press(Message::Open(Dialog::Move))
                 .into()
             },
-            icon_action(
+            self.icon_action(
                 "download",
                 "Export original email",
                 Message::Open(Dialog::Export)
@@ -618,11 +623,7 @@ impl App {
         {
             reading = reading.push(self.image_bar());
         }
-        reading = reading.push(
-            text(body)
-                .size(u32::from(self.preferences.reader_font_size))
-                .line_height(1.5),
-        );
+        reading = reading.push(self.selectable_body(detail, 0, body));
         if self.preferences.reply_display != ReplyDisplay::LatestOnly {
             for (index, reply) in detail.replies.iter().enumerate() {
                 let expanded = self.expanded_replies.contains(&index)
@@ -642,11 +643,7 @@ impl App {
                 ]
                 .spacing(8);
                 if expanded {
-                    section = section.push(
-                        text(&reply.body)
-                            .size(u32::from(self.preferences.reader_font_size))
-                            .line_height(1.5),
-                    );
+                    section = section.push(self.selectable_body(detail, index + 1, &reply.body));
                 }
                 reading = reading.push(
                     container(section)
@@ -688,26 +685,18 @@ impl App {
     }
     pub(super) fn reader_actions<'a>(&'a self, detail: &'a MailDetail) -> Element<'a, Message> {
         let mut footer = row![
-            self.with_shortcut(
-                button(
-                    row![
-                        icon_bright("reply", 20.),
-                        text("Reply").size(12).line_height(1.)
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                )
-                .padding([10, 14])
-                .style(primary)
-                .on_press(Message::Reply),
-                "Reply",
-                Action::Reply
-            ),
-            self.with_shortcut(
-                action("Reply all", Message::ReplyAll),
-                "Reply all",
-                Action::ReplyAll
+            button(
+                row![
+                    icon_bright("reply", 20.),
+                    text("Reply").size(12).line_height(1.)
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center)
             )
+            .padding([10, 14])
+            .style(primary)
+            .on_press(Message::Reply),
+            action("Reply all", Message::ReplyAll)
         ]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -733,12 +722,12 @@ impl App {
     pub(super) fn reader_navigation(&self) -> Element<'_, Message> {
         row![
             space().width(Length::Fill),
-            icon_action(
+            self.icon_action(
                 "left",
                 self.shortcut_hint("Previous inbox message", Action::Previous),
                 Message::PreviousMessage(true)
             ),
-            icon_action(
+            self.icon_action(
                 "chevron",
                 self.shortcut_hint("Next inbox message", Action::Next),
                 Message::PreviousMessage(false)
@@ -752,7 +741,7 @@ impl App {
             "Calendar",
             "",
             row![
-                icon_action("sync", "Refresh calendar", Message::SyncCalendar),
+                self.icon_action("sync", "Refresh calendar", Message::SyncCalendar),
                 button(text("New event").size(13))
                     .padding([10, 16])
                     .style(primary)
@@ -767,8 +756,8 @@ impl App {
                 .font(BOLD),
             space().width(Length::Fill),
             action("Today", Message::Today),
-            icon_action("left", "Previous month", Message::Month(-1)),
-            icon_action("chevron", "Next month", Message::Month(1))
+            self.icon_action("left", "Previous month", Message::Month(-1)),
+            self.icon_action("chevron", "Next month", Message::Month(1))
         ]
         .spacing(9)
         .align_y(Alignment::Center);
@@ -946,7 +935,19 @@ impl App {
         let header = self.page_header(
             "Preferences",
             "Make Shep feel like home.",
-            action("Save changes", Message::SavePreferences).into(),
+            row![
+                input(
+                    "Search settings…",
+                    &self.settings_search,
+                    Message::SettingsSearch
+                )
+                .id("settings-search")
+                .width(if self.size.width < 1100. { 170 } else { 230 }),
+                action("Save changes", Message::SavePreferences)
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into(),
         );
         let mut tabs = row![].spacing(7);
         for (tab, label) in [
@@ -969,14 +970,25 @@ impl App {
                     .on_press(Message::SettingsTab(tab)),
             );
         }
-        let content = match self.settings_tab {
-            SettingsTab::General => self.general_settings(),
-            SettingsTab::Accounts => self.account_settings(),
-            SettingsTab::Calendars => self.calendar_settings(),
-            SettingsTab::Backups => self.backup_settings(),
-            SettingsTab::Shortcuts => self.shortcut_settings(),
-            SettingsTab::Privacy => self.privacy_settings(),
-            SettingsTab::Contacts => self.contacts_settings(),
+        let content = if !self.settings_search.trim().is_empty() {
+            self.settings_results()
+        } else {
+            match self.settings_tab {
+                SettingsTab::General => self.general_settings(),
+                SettingsTab::Accounts => self.account_settings(),
+                SettingsTab::Calendars => self.calendar_settings(),
+                SettingsTab::Backups => self.backup_settings(),
+                SettingsTab::Shortcuts => self.shortcut_settings(),
+                SettingsTab::Privacy => self.privacy_settings(),
+                SettingsTab::Contacts => self.contacts_settings(),
+            }
+        };
+        let content: Element<'_, Message> = if self.settings_group.is_some() {
+            column![action("All settings", Message::ShowAllSettings), content]
+                .spacing(12)
+                .into()
+        } else {
+            content
         };
         container(
             column![
@@ -1092,9 +1104,16 @@ impl App {
             );
         }
         column![
-            settings_card("Appearance", "", choices.into()),
-            container(self.reading_settings()).padding(23).style(card),
-            settings_card(
+            self.settings_card("Appearance", "", choices.into()),
+            if self
+                .settings_group
+                .is_none_or(|g| g == "Reading and layout")
+            {
+                Element::from(container(self.reading_settings()).padding(23).style(card))
+            } else {
+                space().into()
+            },
+            self.settings_card(
                 "Mail & performance",
                 "Choose how often to check for new messages.",
                 column![
@@ -1122,7 +1141,21 @@ impl App {
                 .spacing(19)
                 .into()
             ),
-            settings_card(
+            self.settings_card(
+                "Tooltips",
+                "",
+                column![
+                    checkbox(self.preferences.tooltips)
+                        .label("Show tooltips on icons")
+                        .on_toggle(Message::PrefTooltips),
+                    checkbox(self.preferences.shortcut_tooltips)
+                        .label("Show primary shortcut in tooltips")
+                        .on_toggle(Message::PrefShortcutTooltips)
+                ]
+                .spacing(16)
+                .into()
+            ),
+            self.settings_card(
                 "About Shep",
                 "",
                 row![
@@ -1146,7 +1179,7 @@ impl App {
                 .into()
             )
         ]
-        .spacing(22)
+        .spacing(if self.settings_group.is_some() { 0 } else { 22 })
         .into()
     }
     fn account_settings(&self) -> Element<'_, Message> {
@@ -1163,7 +1196,7 @@ impl App {
                         .spacing(4),
                         space().width(Length::Fill),
                         action("Edit account", Message::EditAccount(account.id.clone())),
-                        icon_action(
+                        self.icon_action(
                             "trash",
                             "Remove account",
                             Message::ReviewRemoval(crate::store::ConnectionRef {
@@ -1182,14 +1215,14 @@ impl App {
             accounts = accounts.push(self.cleanup_preferences());
         }
         column![
-            settings_card(
+            self.settings_card(
                 "Your accounts",
                 "Use IMAP or POP3 with an app password. Add as many accounts as you need.",
                 accounts.into()
             ),
             self.google_settings()
         ]
-        .spacing(22)
+        .spacing(if self.settings_group.is_some() { 0 } else { 22 })
         .into()
     }
     fn google_settings(&self) -> Element<'_, Message> {
@@ -1290,7 +1323,7 @@ impl App {
             );
         }
         body = body.push(muted("Enable the Drive and Calendar APIs in your Google Cloud project. Sign-in opens your browser; backups stay off until you enable them.").size(11));
-        settings_card(
+        self.settings_card(
             "Google connection",
             "Connect Google Calendar and optionally save encrypted copies to Drive.",
             body.into(),
@@ -1325,7 +1358,7 @@ impl App {
                         ]
                         .spacing(4),
                         space().width(Length::Fill),
-                        icon_action(
+                        self.icon_action(
                             "trash",
                             "Remove calendar",
                             Message::ReviewRemoval(crate::store::ConnectionRef {
@@ -1350,14 +1383,14 @@ impl App {
             sources = sources.push(self.cleanup_preferences());
         }
         column![
-            settings_card(
+            self.settings_card(
                 "Connected calendars",
                 "Choose which calendars you use in Shep.",
                 sources.into()
             ),
             self.google_settings()
         ]
-        .spacing(22)
+        .spacing(if self.settings_group.is_some() { 0 } else { 22 })
         .into()
     }
     fn backup_settings(&self) -> Element<'_, Message> {
@@ -1479,45 +1512,86 @@ impl App {
             );
         }
         column![
-            settings_card(
+            self.settings_card(
                 "Backups",
                 "Choose a destination, schedule and number of copies to keep.",
                 form.into()
             ),
-            settings_card(
+            self.settings_card(
                 "Restore a copy",
                 "Restoring merges messages and accounts into this device. Existing mail is kept.",
                 copies.into()
             )
         ]
-        .spacing(22)
+        .spacing(if self.settings_group.is_some() { 0 } else { 22 })
         .into()
     }
     fn shortcut_settings(&self) -> Element<'_, Message> {
-        let mut actions = column![].spacing(3);
+        let mut actions = column![
+            row![
+                space().width(Length::Fill),
+                muted("Primary").width(138),
+                muted("Secondary").width(168)
+            ]
+            .spacing(8)
+        ]
+        .spacing(3);
         for action in Action::ALL {
+            let mut bindings = row![].spacing(8);
+            for slot in [Slot::Primary, Slot::Secondary] {
+                let active = self.remapping == Some((action, slot));
+                let binding = self.preferences.shortcuts.binding(action, slot);
+                let label = if active {
+                    "Press a key…".into()
+                } else if binding.is_empty() {
+                    "Disabled".into()
+                } else {
+                    binding.replace(
+                        "Mod",
+                        if cfg!(target_os = "macos") {
+                            "⌘"
+                        } else {
+                            "Ctrl"
+                        },
+                    )
+                };
+                let control = button(text(label).size(12))
+                    .padding([10, 12])
+                    .width(138)
+                    .style(if active { selected } else { outline })
+                    .on_press(Message::Remap(action, slot));
+                bindings = bindings.push(control);
+                if slot == Slot::Secondary {
+                    bindings = bindings.push(
+                        button(icon("close", 14.))
+                            .padding(6)
+                            .style(ghost)
+                            .on_press_maybe(
+                                (!binding.is_empty() || active)
+                                    .then_some(Message::ClearShortcut(action, slot)),
+                            ),
+                    );
+                }
+            }
             actions = actions
                 .push(
                     row![
                         text(action.label()).size(12),
                         space().width(Length::Fill),
-                        button(
-                            text(if self.remapping == Some(action) {
-                                "Press a new shortcut…"
-                            } else {
-                                self.preferences.shortcuts.key(action)
-                            })
-                            .size(12)
-                        )
-                        .padding([10, 15])
-                        .width(170)
-                        .style(if self.remapping == Some(action) {
-                            selected
+                        if action == Action::Inbox
+                            && !self.preferences.shortcuts.key(action).is_empty()
+                        {
+                            button(text("Disable").size(11))
+                                .padding(6)
+                                .style(ghost)
+                                .on_press(Message::ClearShortcut(action, Slot::Primary))
+                                .into()
                         } else {
-                            outline
-                        })
-                        .on_press(Message::Remap(action))
+                            Element::from(space())
+                        },
+                        bindings
                     ]
+                    .spacing(8)
                     .align_y(Alignment::Center)
                     .padding([7, 0]),
                 )
@@ -1526,9 +1600,9 @@ impl App {
         actions = actions
             .push(space().height(12))
             .push(action("Reset shortcuts", Message::ResetShortcuts));
-        settings_card(
+        self.settings_card(
             "Keyboard shortcuts",
-            "Click a shortcut, then press its replacement. Mod is Command on macOS and Control elsewhere. Typing in a field never moves or archives your mail.",
+            "Click a binding, then press its replacement. Add a second key with Disabled; × clears it.",
             actions.into(),
         )
     }
@@ -1565,7 +1639,7 @@ impl App {
         let header = row![
             labels,
             space().width(Length::Fill),
-            icon_action("close", "Close dialog", Message::Close)
+            self.icon_action("close", "Close dialog", Message::Close)
         ]
         .spacing(12)
         .align_y(Alignment::Center);
@@ -1597,7 +1671,11 @@ impl App {
                 let folders = crate::fuzzy::ranked(self.field("folder_search"), self.move_folders());
                 let destination = folders.first().cloned();
                 body=body.push(input("Find a folder…",self.field("folder_search"),|v|Message::Field("folder_search",v)).id("folder-search").on_submit_maybe(destination.map(Message::Move)));
-                for folder in folders.iter(){body=body.push(button(row![icon("folder",18.),text(folder.clone()).size(13),space().width(Length::Fill),icon("chevron",14.)].spacing(12).align_y(Alignment::Center)).padding(13).width(Length::Fill).style(outline).on_press(Message::Move(folder.clone())));}
+                for (index, folder) in folders.iter().enumerate() {
+                    let target = index == 0;
+                    let trailing: Element<'_, Message> = if target { muted("Enter ↵").size(11).into() } else { icon("chevron", 14.) };
+                    body = body.push(button(row![icon("folder",18.), text(if folder.eq_ignore_ascii_case("INBOX") { "Inbox".to_owned() } else { folder.clone() }).size(13), space().width(Length::Fill), trailing].spacing(12).align_y(Alignment::Center)).padding(13).width(Length::Fill).style(if target { selected } else { outline }).on_press(Message::Move(folder.clone())));
+                }
             }
             Dialog::Compose => body = body.spacing(14).push(self.compose_form()),
             Dialog::Event if self.editing_event.is_some() && !self.event_access().update => body = body.push(self.read_only_event()),
@@ -1629,20 +1707,26 @@ impl App {
             .into()
     }
 }
-fn settings_card<'a>(
-    title: &'a str,
-    description: &'a str,
-    content: Element<'a, Message>,
-) -> Element<'a, Message> {
-    let mut body = column![text(title).font(BOLD).size(16)].spacing(16);
-    if !description.is_empty() {
-        body = body.push(muted(description).size(12));
+impl App {
+    fn settings_card<'a>(
+        &self,
+        title: &'a str,
+        description: &'a str,
+        content: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        if self.settings_group.is_some_and(|group| group != title) {
+            return space().into();
+        }
+        let mut body = column![text(title).font(BOLD).size(16)].spacing(16);
+        if !description.is_empty() {
+            body = body.push(muted(description).size(12));
+        }
+        container(body.push(content))
+            .padding(25)
+            .width(Length::Fill)
+            .style(card)
+            .into()
     }
-    container(body.push(content))
-        .padding(25)
-        .width(Length::Fill)
-        .style(card)
-        .into()
 }
 fn form_field<'a>(
     label: &'a str,

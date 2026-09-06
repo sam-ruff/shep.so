@@ -14,7 +14,7 @@ Drag the pane edges to give your inbox or reader more room.
 
 ## Reply and organize
 
-Use the visible message controls or right-click a message to reply, flag, move, archive, send to Trash or export it. The default Move shortcut is `M`. Change shortcuts in **Preferences → Shortcuts**.
+Use the visible message controls or right-click a message to reply, flag, move, archive, send to Trash or export it. Use `M` to move, `Ctrl+D` to send to Trash, and `Backspace` or `Delete` to archive. With the sidebar focused, `I` returns to Inbox. Change either shortcut slot, or disable the sidebar key, in **Preferences → Shortcuts**. On macOS, Command replaces Ctrl for the defaults.
 
 Drafts save automatically. Attached files are copied into the draft, so moving the originals will not break it. Interrupted sends appear in **Outbox** for review; they are not retried automatically.
 
@@ -23,3 +23,5 @@ Drafts save automatically. Attached files are copied into the draft, so moving t
 Choose appearance, text size and quoted-history display in **Preferences → General**. External images are blocked by default; manage exceptions in **Privacy** and trusted addresses in **Contacts**.
 
 See [current limits](limits.md) for provider restrictions and size limits.
+
+Select email text with the mouse and copy it normally. Search Preferences to jump to a settings section. Icon tooltips can show the primary shortcut; both tooltips and their key hints can be turned off.
