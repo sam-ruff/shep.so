@@ -103,7 +103,7 @@ Offline local Sent continuation for R67/R69/R50: native Flutter actions use Rust
 
 ### R77 — Prompt checkpoint push
 
-The user explicitly requested pushing all current work as soon as possible. Commit and push the combined `feat/mobile-web-clients` review branch after its required checks; full parity remains an active goal. This changes the previous unpublished-worktree checkpoint assumption without authorizing a merge into main. Shipping evidence will identify the actual commit and remote branch.
+The user explicitly requested pushing all current work as soon as possible. Commit and push the combined `feat/mobile-web-clients` review branch after its required checks; full parity remains an active goal. This changes the previous unpublished-worktree checkpoint assumption without authorizing a merge into main. Completed by commit [`d80f539`](https://github.com/sam-ruff/shep.so/commit/d80f539ba56c0dd9631d4305d453c841bcfe5901), pushed to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients) with the remote SHA verified. Required commit hooks, strict docs and final targeted Android/APK checks pass; the completion log records their evidence and limits. Main remains unchanged and full parity remains active.
 
 ### R67/R68 continuation — stable native Sent handover
 

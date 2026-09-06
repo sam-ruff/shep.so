@@ -1,6 +1,6 @@
 # Client parity
 
-The root Rust + iced app remains the reference. Android/iOS live in `flutter/`; the desktop-style browser client lives separately in `web/`. `website/` promotes all clients. Development stays in review worktrees; the user has authorized pushing the combined review branch promptly. No main merge has occurred. The requested VPS installation awaits the supplied server and OAuth configuration.
+The root Rust + iced app remains the reference. Android/iOS live in `flutter/`; the desktop-style browser client lives separately in `web/`. `website/` promotes all clients. Development stays in review worktrees; the combined checkpoint is pushed to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients). No main merge has occurred. The requested VPS installation awaits the supplied server and OAuth configuration.
 
 **The new clients are not feature-complete.** Flutter production has a Rust bridge, SQLite cache/drafts, device credentials, mail setup and reviewed Outbox recovery. Eleven Android integration scenarios plus five Appium stages pass; full protocol-success/recovery coverage remains open. The separate browser connects to the Rust gateway, with account verification, an IndexedDB mail/draft cache and reserved SMTP sends; complete provider/recovery parity remains open. Preview builds acknowledge fictional state only. No personal account or credential is used by these tests.
 
