@@ -51,6 +51,7 @@ pub enum Command {
     SaveDraft(Draft),
     AutoSaveDraft(Draft),
     DeleteDraft(String),
+    ForwardDraft(String, String),
     AddDraftFiles(Draft, Vec<std::path::PathBuf>),
     RemoveDraftFile(String, String),
     Send(Draft),
@@ -168,6 +169,7 @@ pub enum Event {
     DraftSaved(String, u64, Result<Arc<crate::store::DraftState>, String>),
     DraftDeleted(String, Result<Arc<crate::store::DraftState>, String>),
     DraftFiles(String, Result<Arc<crate::store::DraftState>, String>),
+    ForwardDraft(String, Result<Arc<crate::store::DraftState>, String>),
     Sent(String, u64),
     SubmissionQueued(String, u64),
     OutgoingPage(u64, Result<Arc<crate::outgoing::OutgoingPage>, String>),
@@ -753,6 +755,24 @@ impl Engine {
                     .send(Event::DraftFiles(
                         id,
                         result.map(Arc::new).map_err(|e| format!("{e:#}")),
+                    ))
+                    .await?;
+            }
+            Command::ForwardDraft(source, id) => {
+                let result = async {
+                    #[cfg(feature = "test-support")]
+                    if self.demo {
+                        crate::test_support::forward_delay(&self.store).await?;
+                    }
+                    self.store.forward_draft(source, id.clone()).await
+                }
+                .await;
+                output
+                    .send(Event::ForwardDraft(
+                        id,
+                        result
+                            .map(Arc::new)
+                            .map_err(|e| format!("Could not prepare the forward: {e:#}")),
                     ))
                     .await?;
             }

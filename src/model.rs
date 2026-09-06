@@ -376,6 +376,8 @@ pub struct Draft {
     pub in_reply_to: Option<String>,
     #[serde(default)]
     pub references: Vec<String>,
+    #[serde(default)]
+    pub forward: Option<crate::compose::ForwardQuote>,
     // File bytes and associations have separate storage; saving text cannot
     // undo a file import/removal that finished while the user was typing.
     #[serde(default, skip_serializing)]
@@ -388,6 +390,8 @@ pub struct DraftAttachment {
     pub name: String,
     pub media_type: String,
     pub size: usize,
+    #[serde(default)]
+    pub content_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

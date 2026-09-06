@@ -871,7 +871,19 @@ impl App {
             .padding([10, 14])
             .style(primary)
             .on_press(Message::Reply),
-            action("Reply all", Message::ReplyAll)
+            action("Reply all", Message::ReplyAll),
+            if self.composer.forward_pending.is_some() {
+                button(text("Preparing…").size(12))
+                    .padding([10, 12])
+                    .style(ghost)
+                    .into()
+            } else {
+                self.icon_action(
+                    "forward",
+                    self.shortcut_hint("Forward", Action::Forward),
+                    Message::Forward,
+                )
+            }
         ]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -1784,7 +1796,14 @@ impl App {
                 "Bring your home server calendar into Shep with CalDAV.",
             ),
             Dialog::Move => ("Move message", "Choose a destination folder."),
-            Dialog::Compose => ("New message", ""),
+            Dialog::Compose => (
+                if self.composer.draft.forward.is_some() {
+                    "Forward message"
+                } else {
+                    "New message"
+                },
+                "",
+            ),
             Dialog::DiscardDraft => ("Discard draft?", ""),
             Dialog::Event => ("Calendar event", "Times use this device's timezone."),
             Dialog::Export => (

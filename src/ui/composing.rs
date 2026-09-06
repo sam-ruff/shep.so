@@ -26,6 +26,8 @@ pub(super) struct Composer {
     discard: Option<Draft>,
     discard_return: Option<Dialog>,
     pub discard_pending: bool,
+    pub forward_pending: Option<(String, String, u64)>,
+    forward_error: Option<String>,
 }
 
 pub(super) struct DraftMenu {
@@ -35,6 +37,64 @@ pub(super) struct DraftMenu {
 }
 
 impl App {
+    pub(super) fn begin_forward(&mut self, source: String) {
+        if self.dialog.is_some() || self.composer.forward_pending.is_some() {
+            return;
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        if self.try_command(Command::ForwardDraft(source.clone(), id.clone())) {
+            self.composer.forward_pending = Some((id, source, self.detail_revision));
+        }
+    }
+
+    pub(super) fn forward_ready(
+        &mut self,
+        id: String,
+        result: Result<Arc<DraftState>, String>,
+    ) -> Task<Message> {
+        let Some((request, source, revision)) = self.composer.forward_pending.as_ref() else {
+            return Task::none();
+        };
+        if request != &id {
+            return Task::none();
+        }
+        let open = self.tab == Tab::Mail
+            && self.dialog.is_none()
+            && self.reader_id() == Some(source.as_str())
+            && self.detail_revision == *revision;
+        self.composer.forward_pending = None;
+        match result {
+            Ok(state) => {
+                if let Some(error) = self.composer.forward_error.take()
+                    && self
+                        .notice
+                        .as_ref()
+                        .is_some_and(|notice| notice.1 && notice.0 == error)
+                {
+                    self.notice = None;
+                }
+                self.observe_drafts(&state);
+                if open
+                    && let Some(draft) = self
+                        .workspace
+                        .drafts
+                        .iter()
+                        .find(|draft| draft.id == id)
+                        .cloned()
+                {
+                    self.load_draft(draft);
+                    return focus_after_layout("to");
+                }
+                self.notice("Forward saved in Drafts.", false);
+            }
+            Err(error) => {
+                self.composer.forward_error = Some(error.clone());
+                self.notice(error, true);
+            }
+        }
+        Task::none()
+    }
+
     pub(super) fn review_discard_draft(&mut self, id: String) {
         if self.compose_locked() || self.composer.discard_pending {
             return;

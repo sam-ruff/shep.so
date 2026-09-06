@@ -523,6 +523,20 @@ pub async fn mail_action_delay() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Forward preparation fails once in the isolated failure fixture, then retries.
+pub async fn forward_delay(store: &Store) -> anyhow::Result<()> {
+    let mode =
+        std::env::args().find_map(|arg| arg.strip_prefix("--mail-actions=").map(str::to_owned));
+    if let Some(mode) = mode {
+        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+        if mode == "fail" && !store.get::<bool>("preview-forward-failed").await? {
+            store.put("preview-forward-failed", true).await?;
+            anyhow::bail!("Fixture storage failure. Try Forward again.");
+        }
+    }
+    Ok(())
+}
+
 /// A new arrival proves that an automatic cycle reaches the ordinary cache/UI.
 pub async fn sync_mail(store: &Store) -> anyhow::Result<u64> {
     let background = std::env::args().any(|arg| arg == "--background-sync");

@@ -98,6 +98,7 @@ impl CommandSender {
             | Command::SaveDraft(_)
             | Command::AutoSaveDraft(_)
             | Command::DeleteDraft(_)
+            | Command::ForwardDraft(..)
             | Command::RemoveDraftFile(..) => &self.persistence,
             _ => &self.network,
         };
@@ -319,7 +320,7 @@ mod tests {
         sender
             .try_send(Command::Detail {
                 revision: 0,
-                id,
+                id: id.clone(),
                 prefetch: false,
             })
             .unwrap();
@@ -412,6 +413,22 @@ mod tests {
         .await
         .expect("Discard waited for blocked provider jobs");
         assert!(store.workspace().await.unwrap().drafts.is_empty());
+        sender
+            .try_send(Command::ForwardDraft(id, "forward-without-network".into()))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Event::ForwardDraft(id, result) =
+                    events.next().await.expect("Dispatcher stopped")
+                {
+                    assert_eq!(id, "forward-without-network");
+                    assert_eq!(result.unwrap().drafts[0].subject, "Fwd: Still readable");
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("Forward waited for blocked provider jobs");
         release.notify_waiters();
     }
 }

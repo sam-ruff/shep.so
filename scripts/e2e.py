@@ -70,6 +70,75 @@ class NativeFlows(unittest.TestCase):
         self.artifacts = Path(result["artifacts"])
         print(f"\nEvidence: {result['artifacts']}", flush=True)
 
+    def test_forward_mouse_preserves_attachments_and_reopens_as_an_independent_draft(self):
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prototype"),
+                       check("total", 1), key("Escape"), check("html_ready", True), wait(100),
+                       shot("forward-reader-actions"), click(835,784), check("dialog", "Compose"),
+                       check("draft_forward", True), check("draft_forward_html", True), check("fields.subject", "Fwd: Re: A few thoughts on the prototype"),
+                       check("fields.to", ""), check("fields.cc", ""), check("fields.bcc", ""),
+                       check("draft_in_reply_to", None), check("draft_attachments.3.name", "review-checklist.txt"),
+                       check("editor", "Can you send the updated prototype?", "contains"),
+                       check("focused_input", "to"), type_text("reviewer@example.test"), wait(250),
+                       shot("forward-composer-files"), key("Escape"), check("dialog", None), check("draft_count", 1),
+                       click(98,517), check("dialog", "Compose"), check("fields.to", "reviewer@example.test"),
+                       check("draft_forward", True), check("draft_forward_html", True), check("draft_attachments.3.name", "review-checklist.txt"),
+                       shot("forward-reopened"))
+
+    def test_forward_preparation_keeps_navigation_available_and_does_not_replace_newer_edits(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch(key("f"), check("forward_pending", True), check("dialog", None),
+                       key("f"), click(400,350), check("selected", "Your weekly workspace digest"),
+                       key("c"), check("dialog", "Compose"), wait(100),
+                       click(650,362), type_text("A different draft"),
+                       {**check("forward_pending", False), "timeout_ms":5000},
+                       check("dialog", "Compose"), check("fields.subject", "A different draft"),
+                       check("draft_forward", False), check("notice", "Forward saved in Drafts.", "contains"),
+                       check("draft_count", 2), shot("forward-pending-preserves-editor"),
+                       key("Escape"), check("dialog", None), check("draft_count", 2))
+
+    def test_forward_failure_retry_and_compact_dark_layout(self):
+        self.mcp.call("desktop.start", mail_actions="fail")
+        self.mcp.batch(key("f"), check("forward_pending", True),
+                       {**check("forward_pending", False), "timeout_ms":5000}, check("dialog", None),
+                       check("draft_count", 0), check("notice", "Try Forward again", "contains"),
+                       key("f"), check("forward_pending", True),
+                       {**check("dialog", "Compose"), "timeout_ms":5000}, check("draft_count", 1),
+                       check("fields.subject", "Fwd: A little more room to think"), key("Escape"), check("dialog", None),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(690,366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"), {"type":"resize", "width":900, "height":640}, wait(150),
+                       click(98,517), check("dialog", "Compose"), check("draft_forward", True),
+                       check("fields.to", ""), shot("forward-dark-compact"))
+
+    def test_forward_targets_the_expanded_message_in_a_conversation(self):
+        self.mcp.call("desktop.start", conversation_mail=True)
+        self.mcp.batch(check("conversation_total",3), check("loaded_message_id","preview-work:INBOX:launch-2"),
+                       wait(100), click(800,344), check("loaded_message_id","preview-work:Sent:launch-1"),
+                       check("selected_id","preview-work:INBOX:launch-2"), check("attachment_count",1),
+                       key("f"), check("dialog","Compose"), check("fields.subject","Launch schedule","contains"),
+                       check("draft_attachments.0.size",1,"gte"), check("fields.to",""), check("draft_in_reply_to",None),
+                       shot("forward-conversation-target"))
+
+    def test_forward_shortcuts_remap_disable_and_text_input_isolation(self):
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("f"), check("dialog", None),
+                       key("ctrl+a"), key("BackSpace"), check("total",120), key("Escape"),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(645,156), check("settings_tab", "Shortcuts"),
+                       {"type":"hover","x":1110,"y":690}, {"type":"scroll","amount":30}, wait(100),
+                       click(905,780), key("F4"), check("shortcuts.Forward", "F4"),
+                       click(1070,780), key("alt+f"), check("shortcut_secondary.Forward", "Alt+F"), check("preferences_saved",True),
+                       key("ctrl+1"), check("tab", "Mail"), key("ctrl+k"), check("focused_input","search"),
+                       key("F4"), key("alt+f"), check("dialog",None), check("query", "f"),
+                       key("ctrl+a"), key("BackSpace"),
+                       check("query",""), check("selected","A little more room to think"), key("Escape"), wait(80),
+                       key("F4"), check("dialog","Compose"),
+                       key("Escape"), check("dialog",None), key("alt+f"), check("dialog","Compose"),
+                       key("Escape"), check("dialog",None), check("notice", "Draft saved.", "contains"),
+                       click(1400,895), check("notice",None), key("ctrl+comma"), check("tab","Preferences"),
+                       click(645,156), check("settings_tab","Shortcuts"), {"type":"hover","x":1110,"y":690},
+                       {"type":"scroll","amount":30}, wait(100), click(988,780), check("shortcuts.Forward",""),
+                       click(1157,780), check("shortcut_secondary.Forward",""), check("preferences_saved",True),
+                       key("ctrl+1"), check("tab","Mail"), key("F4"), key("alt+f"), key("f"), check("dialog",None),
+                       check("draft_count",2))
+
     def test_find_formatted_message_navigation_and_keyboard_isolation(self):
         self.mcp.call("desktop.start", html_mail=True)
         self.mcp.batch(click(400,558), check("selected", "Long formatted letter"), check("html_ready", True),
@@ -118,15 +187,15 @@ class NativeFlows(unittest.TestCase):
     def test_find_remap_secondary_binding_disable_and_mouse_close(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(645,156), check("settings_tab", "Shortcuts"),
                        {"type":"hover","x":1200,"y":700}, {"type":"scroll","amount":30}, wait(150), shot("find-shortcut-settings"),
-                       click(905,780), key("F3"), check("shortcuts.Find", "F3"), check("preferences_saved", True),
-                       click(1070,780), key("ctrl+f"), check("shortcut_secondary.Find", "Mod+F"), check("preferences_saved", True),
+                       click(905,720), key("F3"), check("shortcuts.Find", "F3"), check("preferences_saved", True),
+                       click(1070,720), key("ctrl+f"), check("shortcut_secondary.Find", "Mod+F"), check("preferences_saved", True),
                        key("ctrl+1"), check("tab", "Mail"), key("F3"), check("find_open", True), check("focused_input", "find-message"),
                        type_text("conversation"), check("find_query", "conversation"), check("find_pending", False),
                        shot("find-remapped-open"), click(1388,158), check("find_open", False),
                        key("ctrl+f"), check("find_open", True), key("Escape"), check("find_open", False),
                        key("ctrl+comma"), check("tab", "Preferences"),
                        {"type":"hover","x":1200,"y":700}, {"type":"scroll","amount":30}, wait(100),
-                       click(988,780), check("shortcuts.Find", ""), click(1157,780), check("shortcut_secondary.Find", ""),
+                       click(988,720), check("shortcuts.Find", ""), click(1157,720), check("shortcut_secondary.Find", ""),
                        check("preferences_saved", True), key("ctrl+1"), check("tab", "Mail"),
                        key("F3"), wait(80), check("find_open", False), key("ctrl+f"), wait(80), check("find_open", False))
 
@@ -657,7 +726,7 @@ class NativeFlows(unittest.TestCase):
                        key("Escape"), key("ctrl+comma"), check("tab","Preferences"), wait(80),
                        click(645,156), check("settings_tab","Shortcuts"),
                        {"type":"hover","x":1200,"y":700},{"type":"scroll","amount":30},wait(150),
-                       click(920,660),key("alt+d"),check("shortcuts.Delete","Alt+D"),check("preferences_saved",True),
+                       click(920,600),key("alt+d"),check("shortcuts.Delete","Alt+D"),check("preferences_saved",True),
                        key("ctrl+1"),check("tab","Mail"),wait(80),
                        click(415,154),type_text("invoice"),check("total",1),key("alt+d"),
                        key("ctrl+a"),key("BackSpace"),check("total",120),check("action_toast",None),
@@ -675,12 +744,12 @@ class NativeFlows(unittest.TestCase):
                        click(85, 115), check("folder", "INBOX"), check("total", 121),
                        key("ctrl+comma"), check("tab", "Preferences"), click(645, 156), check("settings_tab", "Shortcuts"),
                        {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(150), shot("sidebar-inbox-key-settings"),
-                       click(988, 720), check("shortcuts.Inbox", ""), check("shortcuts.Delete", "Mod+D"), check("preferences_saved", True),
+                       click(988, 660), check("shortcuts.Inbox", ""), check("shortcuts.Delete", "Mod+D"), check("preferences_saved", True),
                        key("ctrl+1"), check("tab", "Mail"), click(100, 537), check("folder", "Projects"),
                        key("i"), wait(80), check("folder", "Projects"),
                        key("ctrl+comma"), check("tab", "Preferences"),
                        {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(120),
-                       click(920, 720), key("alt+i"), check("shortcuts.Inbox", "Alt+I"), check("preferences_saved", True),
+                       click(920, 660), key("alt+i"), check("shortcuts.Inbox", "Alt+I"), check("preferences_saved", True),
                        key("ctrl+1"), check("tab", "Mail"), click(100, 537), check("folder", "Projects"), key("alt+i"), check("folder", "INBOX"))
 
     def test_secondary_shortcut_remap_conflict_and_disable(self):
@@ -812,7 +881,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_reply_all_mouse_and_remappable_shortcut(self):
         self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prototype"),
-                       check("total", 1), key("Escape"), wait(80), click(766, 830), check("dialog", "Compose"),
+                       check("total", 1), key("Escape"), check("html_ready", True), wait(100), click(766, 784), check("dialog", "Compose"),
                        check("fields.to", "Daniel Park <team@example.com>, colleague@example.com"),
                        check("fields.cc", "copy@example.com"), check("fields.bcc", ""),
                        check("draft_in_reply_to", "<prototype@example.com>"), shot("reply-all-mouse"),
