@@ -45,9 +45,9 @@ impl CommandSender {
         command: Command,
     ) -> Result<(), Box<mpsc::error::TrySendError<Command>>> {
         let channel = match &command {
-            Command::Query(_, _, true) | Command::Detail(_, true) => &self.prefetch,
-            Command::Query(..) | Command::Detail(..) => &self.reads,
-            Command::SavePreferences(_)
+            Command::Query(_, _, true) | Command::Detail { prefetch: true, .. } => &self.prefetch,
+            Command::Query(..) | Command::Detail { .. } => &self.reads,
+            Command::SavePreferences(..)
             | Command::SaveDraft(_)
             | Command::AutoSaveDraft(_)
             | Command::SaveBeforeClose(_) => &self.persistence,
@@ -205,18 +205,30 @@ mod tests {
         sender
             .try_send(Command::Query(42, MailQuery::default(), false))
             .unwrap();
-        sender.try_send(Command::Detail(id, false)).unwrap();
         sender
-            .try_send(Command::SavePreferences(Preferences {
-                reader_font_size: 12,
-                ..Default::default()
-            }))
+            .try_send(Command::Detail {
+                revision: 0,
+                id,
+                prefetch: false,
+            })
             .unwrap();
         sender
-            .try_send(Command::SavePreferences(Preferences {
-                reader_font_size: 18,
-                ..Default::default()
-            }))
+            .try_send(Command::SavePreferences(
+                1,
+                Preferences {
+                    reader_font_size: 12,
+                    ..Default::default()
+                },
+            ))
+            .unwrap();
+        sender
+            .try_send(Command::SavePreferences(
+                2,
+                Preferences {
+                    reader_font_size: 18,
+                    ..Default::default()
+                },
+            ))
             .unwrap();
         let draft = Draft {
             id: "saved-draft".into(),
@@ -242,7 +254,12 @@ mod tests {
                         assert_eq!(result.total, 1);
                         page = true;
                     }
-                    Event::Detail(result, false) => {
+                    Event::Detail {
+                        revision: 0,
+                        result: Ok(result),
+                        prefetch: false,
+                        ..
+                    } => {
                         assert_eq!(result.summary.subject, "Still readable");
                         detail = true;
                     }

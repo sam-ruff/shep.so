@@ -8,7 +8,7 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 | --- | --- | --- |
 | Native mouse-friendly UI, remappable shortcuts | iced mail/calendar/preferences, native MCP keyboard/mouse flows, saved remapping | Broader accessibility and large-font layout review |
 | Multiple saved IMAP/POP3 accounts, SMTP wizard | SQLite settings, OS secrets, local IMAP transcript tests; authorized Fastmail authentication and Inbox download | POP3/SMTP wire contracts beyond fixtures; account lifecycle |
-| Responsive inbox, preloading, resize, filters, fuzzy move | Independent bounded foreground/prefetch/persistence/provider workers, background store, caches, virtual inbox, native functional flows; saturated-provider correctness test | Review stale preferences during rapid changes; final performance rerun |
+| Responsive inbox, preloading, resize, filters, fuzzy move | Independent bounded workers, background store, caches, virtual inbox; saturated-provider test; versioned preferences and message-detail results; native combined resize/settings flow | Pending save/shutdown and overload recovery review; final performance rerun |
 | Compact inbox header | Single row for title/count/sync; native layout gallery at 1440×920 and 900×640 | Installed/running windows need to use the latest build |
 | Optional Google login and Drive backups | Browser OAuth/PKCE, app-data scope, encrypted rolling backups; local retention/encryption tests | HTTP contracts for OAuth refresh/Drive and genuine Google authorization |
 | Google Calendar and CalDAV | Background sync/create/edit/delete, conditional writes, native all-day editor | CalDAV discovery, Google read-only calendars, connection lifecycle; live server evidence |
@@ -20,10 +20,10 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 ## Remaining implementation audit
 
-1. Cached queries, body loads and ordered saves now have independent workers, verified with all provider slots and their queue occupied. Startup also defers the Google keychain check until the cached workspace is ready. Next review stale preference snapshots during rapid UI changes and long-running backups; a late workspace update must not undo newer local settings. Check stale detail/prefetch results across flag and move mutations as well.
+1. Cached queries, body loads and ordered saves have independent workers, verified with provider slots/queue occupied. Startup defers the Google keychain check. Preferences now use versioned acknowledgements; backup completion changes only metadata. Detail revisions reject stale bodies/errors after flag/move changes. Still review closing during a debounced/pending preference save and retrying a full persistence queue.
 2. Complete account/calendar lifecycle and make connection errors recoverable without leaving stale sources or credentials. Respect Google calendar access roles and add CalDAV discovery/connection testing.
 3. Complete common sending/reading workflows: outgoing attachments, CC/BCC, reply-all, server Sent handling, and grouping separate messages into conversations. Preserve drafts across failures.
-4. Exercise Google OAuth refresh, Drive upload/list/restore/retention, POP3 and SMTP through deterministic protocol contracts. Handle pagination loops, partial failures and ambiguous writes explicitly.
+4. Exercise Google OAuth refresh, Drive upload/list/restore/retention, POP3 and SMTP through deterministic protocol contracts. Handle pagination loops, partial failures and ambiguous writes explicitly. Backup setup currently remembers its passphrase only if automatic backup was already enabled during the successful manual copy; enabling it afterward can leave scheduling without a credential. Fix that setup flow and distinguish a committed copy from retention/keychain/list failures. Bind backup completion timestamps and list results to the destination used for that operation, including when preferences change while uploading.
 5. Review the current 25 MiB message and 256 MiB snapshot ceilings against real mailbox sizes. Large-mail/backup paths must remain bounded in memory while avoiding silent omissions.
 6. Review scaled fonts, compact windows, empty/error states and keyboard/mouse parity. Finish with the full functional suite, final performance gates, release/install checks, and a push to `sam-ruff/shep.so`.
 

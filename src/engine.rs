@@ -21,10 +21,14 @@ use tokio::sync::mpsc;
 pub enum Command {
     Query(u64, MailQuery, bool),
     LoadImages(Vec<String>),
-    Detail(String, bool),
+    Detail {
+        revision: u64,
+        id: String,
+        prefetch: bool,
+    },
     SaveAccount(Account, SecretString, SecretString),
     TestConnection(Account, SecretString, SecretString, ConnectionTarget),
-    SavePreferences(Preferences),
+    SavePreferences(u64, Preferences),
     Sync,
     Move(Mail, String),
     Transfer(Mail, String, String),
@@ -72,8 +76,14 @@ pub enum Event {
     Ready(CommandSender, Arc<Workspace>, bool),
     RemoteImage(String, Result<Vec<u8>, String>),
     Workspace(Arc<Workspace>),
+    PreferencesSaved(u64, Arc<crate::store::PreferenceSnapshot>),
     Page(u64, Arc<MailPage>, bool),
-    Detail(Arc<MailDetail>, bool),
+    Detail {
+        revision: u64,
+        id: String,
+        result: Result<Arc<MailDetail>, String>,
+        prefetch: bool,
+    },
     Changed,
     Calendar(Arc<Vec<CalendarEvent>>),
     Backups(Arc<Vec<BackupCopy>>),
@@ -326,12 +336,24 @@ impl Engine {
                     ))
                     .await?;
             }
-            Command::Detail(id, prefetch) => {
+            Command::Detail {
+                revision,
+                id,
+                prefetch,
+            } => {
+                let result = self
+                    .store
+                    .detail(id.clone())
+                    .await
+                    .map(Arc::new)
+                    .map_err(|e| format!("{e:#}"));
                 output
-                    .send(Event::Detail(
-                        Arc::new(self.store.detail(id).await?),
+                    .send(Event::Detail {
+                        revision,
+                        id,
+                        result,
                         prefetch,
-                    ))
+                    })
                     .await?;
             }
             Command::TestConnection(account, password, smtp_password, target) => {
@@ -387,10 +409,11 @@ impl Engine {
                     ))
                     .await?;
             }
-            Command::SavePreferences(prefs) => {
-                prefs.validate()?;
-                self.store.put("preferences", prefs).await?;
-                self.workspace(&mut output).await?;
+            Command::SavePreferences(request, prefs) => {
+                let snapshot = self.store.save_preferences(prefs).await?;
+                output
+                    .send(Event::PreferencesSaved(request, Arc::new(snapshot)))
+                    .await?;
             }
             Command::Sync => {
                 if self.demo {
@@ -607,7 +630,8 @@ impl Engine {
             Command::GoogleLogin(prefs) => {
                 anyhow::ensure!(!self.demo, "Google sign-in is disabled in preview.");
                 prefs.validate()?;
-                self.store.put("preferences", prefs.clone()).await?;
+                // The UI starts OAuth only after the corresponding preferences save
+                // is acknowledged. A delayed provider job must not overwrite settings.
                 self.google.login(&prefs).await?;
                 for source in self.google.calendars(&prefs).await? {
                     self.store.save_source(source).await?;
@@ -703,7 +727,7 @@ impl Engine {
             }
             Command::Backup(passphrase) => {
                 anyhow::ensure!(!self.demo, "Backup is disabled in preview.");
-                let mut prefs: Preferences = self.store.get("preferences").await?;
+                let prefs: Preferences = self.store.get("preferences").await?;
                 prefs.validate()?;
                 let provider = self.backup_provider(&prefs).await?;
                 let accounts: Vec<Account> = self.store.get("accounts").await?;
@@ -755,11 +779,14 @@ impl Engine {
                 provider.upload(&name, bytes).await?;
                 // Only prune after the new encrypted copy was successfully committed.
                 backup::retain(provider.as_ref(), prefs.backup_copies).await?;
-                prefs.last_backup = Some(chrono::Utc::now().timestamp());
                 if prefs.auto_backup {
                     providers::write_secret("backup-passphrase", passphrase).await?;
                 }
-                self.store.put("preferences", prefs).await?;
+                self.store
+                    .update_preferences(|current| {
+                        current.last_backup = Some(chrono::Utc::now().timestamp());
+                    })
+                    .await?;
                 self.workspace(&mut output).await?;
                 output
                     .send(Event::Backups(Arc::new(provider.list().await?)))

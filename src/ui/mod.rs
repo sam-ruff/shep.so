@@ -1,6 +1,9 @@
 mod account;
 mod components;
+mod preference_sync;
 mod reading;
+#[cfg(test)]
+mod reading_tests;
 mod sidebar;
 mod views;
 
@@ -9,7 +12,7 @@ use crate::{
     engine::{self, Command, Event},
     model::*,
     shortcuts::Action,
-    store::Workspace,
+    store::{PreferenceSnapshot, Workspace},
 };
 use chrono::{Datelike, NaiveDate, TimeZone};
 use components::*;
@@ -176,6 +179,8 @@ pub struct App {
     tx: Option<engine::CommandSender>,
     workspace: Arc<Workspace>,
     preferences: Preferences,
+    preference_sync: preference_sync::PreferenceSync,
+    pending_google_login: Option<(u64, Preferences)>,
     tab: Tab,
     settings_tab: SettingsTab,
     dialog: Option<Dialog>,
@@ -187,6 +192,7 @@ pub struct App {
     selected: Option<String>,
     detail: Option<Arc<MailDetail>>,
     detail_cache: VecDeque<Arc<MailDetail>>,
+    detail_revision: u64,
     prefetch_page: Option<(MailQuery, Arc<MailPage>)>,
     prefetch_query: Option<MailQuery>,
     pending_details: HashSet<String>,
@@ -280,6 +286,8 @@ impl App {
                 tx: None,
                 workspace: Arc::new(Workspace::default()),
                 preferences: Preferences::default(),
+                preference_sync: Default::default(),
+                pending_google_login: None,
                 tab: Tab::Mail,
                 settings_tab: SettingsTab::General,
                 dialog: None,
@@ -294,6 +302,7 @@ impl App {
                 selected: None,
                 detail: None,
                 detail_cache: VecDeque::new(),
+                detail_revision: 0,
                 prefetch_page: None,
                 prefetch_query: None,
                 pending_details: HashSet::new(),
@@ -372,11 +381,24 @@ impl App {
             }),
         ])
     }
+    fn save_preferences(&mut self) {
+        let request = self.preference_sync.changed();
+        self.send(Command::SavePreferences(request, self.preferences.clone()));
+    }
+
+    fn update_saved_preferences(&mut self) {
+        let workspace = Arc::make_mut(&mut self.workspace);
+        workspace.preferences = self.preference_sync.saved.value.clone();
+        workspace.preferences_revision = self.preference_sync.saved.revision;
+    }
+
     fn send(&mut self, command: Command) {
         if let Some(tx) = &self.tx {
             if let Err(error) = tx.try_send(command) {
                 match (*error).into_inner() {
-                    Command::Detail(id, true) => {
+                    Command::Detail {
+                        id, prefetch: true, ..
+                    } => {
                         self.pending_details.remove(&id);
                     }
                     Command::Query(_, _, true) => self.prefetch_query = None,
@@ -437,7 +459,11 @@ impl App {
             return;
         }
         self.pending_details.insert(id.clone());
-        self.send(Command::Detail(id, true));
+        self.send(Command::Detail {
+            revision: self.detail_revision,
+            id,
+            prefetch: true,
+        });
     }
     fn select(&mut self, id: String) {
         if self.selected.as_deref() != Some(&id) {
@@ -450,7 +476,11 @@ impl App {
             .find(|d| d.summary.id == id)
             .cloned();
         if self.detail.is_none() {
-            self.send(Command::Detail(id.clone(), false));
+            self.send(Command::Detail {
+                revision: self.detail_revision,
+                id: id.clone(),
+                prefetch: false,
+            });
         }
         if let Some(i) = self.page.rows.iter().position(|m| m.id == id) {
             if let Some(next) = self.page.rows.get(i + 1) {
@@ -536,6 +566,11 @@ impl App {
                 Event::Ready(tx, workspace, google) => {
                     self.tx = Some(tx);
                     self.preferences = workspace.preferences.clone();
+                    self.preference_sync =
+                        preference_sync::PreferenceSync::new(PreferenceSnapshot {
+                            revision: workspace.preferences_revision,
+                            value: workspace.preferences.clone(),
+                        });
                     self.panes
                         .resize(self.reader_split, self.preferences.reader_split);
                     self.query.sort = self.preferences.mail_sort;
@@ -547,8 +582,37 @@ impl App {
                     self.request_page();
                 }
                 Event::Workspace(workspace) => {
-                    self.preferences = workspace.preferences.clone();
+                    self.preference_sync.observe(
+                        PreferenceSnapshot {
+                            revision: workspace.preferences_revision,
+                            value: workspace.preferences.clone(),
+                        },
+                        &mut self.preferences,
+                    );
                     self.workspace = workspace;
+                    self.update_saved_preferences();
+                }
+                Event::PreferencesSaved(request, snapshot) => {
+                    self.preference_sync.acknowledge(
+                        request,
+                        (*snapshot).clone(),
+                        &mut self.preferences,
+                    );
+                    self.update_saved_preferences();
+                    if self
+                        .pending_google_login
+                        .as_ref()
+                        .is_some_and(|(id, _)| *id == request)
+                        && let Some((_, prefs)) = self.pending_google_login.take()
+                    {
+                        if prefs.google_client_id == self.preferences.google_client_id
+                            && prefs.google_client_secret == self.preferences.google_client_secret
+                        {
+                            self.send(Command::GoogleLogin(prefs));
+                        } else {
+                            self.notice("Google client details changed. Connect Google again with the updated details.", true);
+                        }
+                    }
                 }
                 Event::Page(g, page, prefetch) if g == self.generation => {
                     if prefetch {
@@ -589,22 +653,41 @@ impl App {
                         }
                     }
                 }
-                Event::Detail(detail, prefetch) => {
-                    self.pending_details.remove(&detail.summary.id);
-                    if self.selected.as_deref() == Some(&detail.summary.id) {
-                        self.detail = Some(detail.clone());
+                Event::Detail {
+                    revision,
+                    id,
+                    result,
+                    prefetch,
+                } if revision == self.detail_revision => {
+                    self.pending_details.remove(&id);
+                    match result {
+                        Ok(detail) => {
+                            if self.selected.as_deref() == Some(&id) {
+                                self.detail = Some(detail.clone());
+                            }
+                            if !prefetch || self.detail_cache.len() < 8 {
+                                self.cache_detail(detail);
+                            }
+                            self.load_remote_images();
+                        }
+                        Err(error) if !prefetch && self.selected.as_deref() == Some(&id) => {
+                            self.notice(format!("Could not load this message: {error}"), true)
+                        }
+                        Err(_) => {}
                     }
-                    if !prefetch || self.detail_cache.len() < 8 {
-                        self.cache_detail(detail);
-                    }
-                    self.load_remote_images();
                 }
                 Event::Changed => {
+                    self.detail_revision += 1;
                     self.prefetch_page = None;
                     self.detail_cache.clear();
+                    self.pending_details.clear();
                     self.request_page();
                     if let Some(id) = self.selected.clone() {
-                        self.send(Command::Detail(id, false));
+                        self.send(Command::Detail {
+                            revision: self.detail_revision,
+                            id,
+                            prefetch: false,
+                        });
                     }
                 }
                 Event::Calendar(events) => self.events = events,
@@ -799,7 +882,7 @@ impl App {
                 self.selected = None;
                 self.detail = None;
                 self.request_page();
-                self.send(Command::SavePreferences(self.preferences.clone()));
+                self.save_preferences();
             }
             Message::Filter(filter) => {
                 self.query.unread_only = filter == MailFilter::Unread;
@@ -1174,23 +1257,32 @@ impl App {
                 ));
             }
             Message::SavePreferences => match self.read_preferences() {
-                Ok(()) => self.send(Command::SavePreferences(self.preferences.clone())),
+                Ok(()) => self.save_preferences(),
                 Err(e) => self.notice(e.to_string(), true),
             },
             Message::Appearance(appearance) => {
                 self.preferences.appearance = appearance;
-                self.send(Command::SavePreferences(self.preferences.clone()));
+                self.save_preferences();
             }
             Message::BackupDestination(destination) => {
-                self.preferences.backup_destination = destination
+                self.preferences.backup_destination = destination;
+                self.preference_sync.changed();
             }
-            Message::BackupAccounts(enabled) => self.preferences.backup_accounts = enabled,
-            Message::AutoBackup(enabled) => self.preferences.auto_backup = enabled,
+            Message::BackupAccounts(enabled) => {
+                self.preferences.backup_accounts = enabled;
+                self.preference_sync.changed();
+            }
+            Message::AutoBackup(enabled) => {
+                self.preferences.auto_backup = enabled;
+                self.preference_sync.changed();
+            }
             Message::GoogleLogin => {
                 if let Err(e) = self.read_preferences() {
                     self.notice(e.to_string(), true);
                 } else {
-                    self.send(Command::GoogleLogin(self.preferences.clone()));
+                    let request = self.preference_sync.changed();
+                    self.pending_google_login = Some((request, self.preferences.clone()));
+                    self.send(Command::SavePreferences(request, self.preferences.clone()));
                 }
             }
             Message::Backup => self.send(Command::Backup(secrecy::SecretString::from(
@@ -1214,7 +1306,7 @@ impl App {
             }
             Message::ResetShortcuts => {
                 self.preferences.shortcuts = Default::default();
-                self.send(Command::SavePreferences(self.preferences.clone()));
+                self.save_preferences();
             }
             Message::Editor(action) => {
                 if action.is_edit() {
@@ -1401,19 +1493,19 @@ impl App {
                     self.workspace.accounts.first().map(|a| a.id.clone())
                 };
                 self.request_page();
-                self.send(Command::SavePreferences(self.preferences.clone()));
+                self.save_preferences();
             }
             Message::PrefCrossAccount(value) => {
                 self.preferences.cross_account_moves = value;
-                self.send(Command::SavePreferences(self.preferences.clone()));
+                self.save_preferences();
             }
             Message::PrefReaderSize(value) => {
                 self.preferences.reader_font_size = value;
-                self.send(Command::SavePreferences(self.preferences.clone()));
+                self.save_preferences();
             }
             Message::PrefScale(value) => {
                 self.preferences.interface_scale = value;
-                self.send(Command::SavePreferences(self.preferences.clone()));
+                self.save_preferences();
             }
             Message::OpenMessage(id) => {
                 self.select(id);
@@ -1430,18 +1522,18 @@ impl App {
             Message::PrefReplies(mode) => {
                 self.preferences.reply_display = mode;
                 self.expanded_replies.clear();
-                self.send(Command::SavePreferences(self.preferences.clone()));
+                self.save_preferences();
             }
             Message::PrefImages(policy) => {
                 self.preferences.image_policy = policy;
-                self.send(Command::SavePreferences(self.preferences.clone()));
+                self.save_preferences();
                 self.load_remote_images();
             }
             Message::ClearImageTrust => {
                 self.preferences.image_messages.clear();
                 self.preferences.image_senders.clear();
                 self.preferences.image_domains.clear();
-                self.send(Command::SavePreferences(self.preferences.clone()));
+                self.save_preferences();
             }
             Message::AllowImages(scope) => {
                 if let Some(detail) = &self.detail {
@@ -1465,7 +1557,7 @@ impl App {
                             }
                         }
                     }
-                    self.send(Command::SavePreferences(self.preferences.clone()));
+                    self.save_preferences();
                     self.load_remote_images();
                 }
             }
@@ -1497,6 +1589,7 @@ impl App {
                 let ratio = event.ratio.clamp(0.2, 0.7);
                 self.panes.resize(event.split, ratio);
                 self.preferences.reader_split = ratio;
+                self.preference_sync.changed();
                 self.layout_generation += 1;
                 let generation = self.layout_generation;
                 return Task::perform(
@@ -1509,7 +1602,7 @@ impl App {
             }
             Message::SaveLayout(generation) => {
                 if generation == self.layout_generation {
-                    self.send(Command::SavePreferences(self.preferences.clone()));
+                    self.save_preferences();
                 }
             }
         }
@@ -1776,7 +1869,7 @@ impl App {
                 match self.preferences.shortcuts.remap(action, chord) {
                     Ok(()) => {
                         self.remapping = None;
-                        self.send(Command::SavePreferences(self.preferences.clone()));
+                        self.save_preferences();
                     }
                     Err(e) => self.notice(e.to_string(), true),
                 }
@@ -1877,6 +1970,10 @@ impl App {
         samples.sort_by(f64::total_cmp);
         let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|d.summary.starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
         data["focused_input"] = serde_json::json!(self.focused_input);
+        data["preferences_saved"] = serde_json::json!(!self.preference_sync.dirty());
+        data["saved_preferences_revision"] = serde_json::json!(self.workspace.preferences_revision);
+        data["saved_appearance"] =
+            serde_json::json!(format!("{:?}", self.workspace.preferences.appearance));
         data["attachment_count"] =
             serde_json::json!(self.detail.as_ref().map(|d| d.attachments.len()));
         data["account"] = serde_json::json!(self.query.account);

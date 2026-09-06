@@ -15,9 +15,16 @@ pub struct Workspace {
     pub accounts: Vec<Account>,
     pub calendars: Vec<CalendarSource>,
     pub preferences: Preferences,
+    pub preferences_revision: u64,
     pub folders: Vec<String>,
     pub account_folders: std::collections::HashMap<String, Vec<String>>,
     pub drafts: Vec<Draft>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PreferenceSnapshot {
+    pub revision: u64,
+    pub value: Preferences,
 }
 
 impl Store {
@@ -108,7 +115,41 @@ impl Store {
         value: T,
     ) -> anyhow::Result<()> {
         let key = key.to_string();
-        self.run(move |c| put(c, &key, &value)).await
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            put(&tx, &key, &value)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+    pub async fn save_preferences(
+        &self,
+        requested: Preferences,
+    ) -> anyhow::Result<PreferenceSnapshot> {
+        self.update_preferences(move |current| {
+            let last_backup = current.last_backup;
+            *current = requested;
+            // Backup history is backend-owned metadata, not a user preference.
+            current.last_backup = last_backup;
+        })
+        .await
+    }
+    pub async fn update_preferences<F>(&self, update: F) -> anyhow::Result<PreferenceSnapshot>
+    where
+        F: FnOnce(&mut Preferences) + Send + 'static,
+    {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            let mut value: Preferences = get(&tx, "preferences")?;
+            update(&mut value);
+            value.validate()?;
+            put(&tx, "preferences", &value)?;
+            let revision = get(&tx, "preferences_revision")?;
+            tx.commit()?;
+            Ok(PreferenceSnapshot { revision, value })
+        })
+        .await
     }
     pub async fn workspace(&self) -> anyhow::Result<Workspace> {
         self.run(|c| {
@@ -147,6 +188,7 @@ impl Store {
                 accounts: get(c, "accounts")?,
                 calendars: get(c, "calendars")?,
                 preferences: get(c, "preferences")?,
+                preferences_revision: get(c, "preferences_revision")?,
                 account_folders,
                 folders,
                 drafts: get(c, "drafts")?,
@@ -449,6 +491,16 @@ fn put<T: Serialize>(c: &Connection, key: &str, value: &T) -> anyhow::Result<()>
         "INSERT INTO kv VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         params![key, serde_json::to_string(value)?],
     )?;
+    if key == "preferences" {
+        let revision: u64 = get(c, "preferences_revision")?;
+        put(
+            c,
+            "preferences_revision",
+            &revision
+                .checked_add(1)
+                .context("Preferences revision overflow")?,
+        )?;
+    }
     Ok(())
 }
 pub fn fts_query(input: &str) -> String {
