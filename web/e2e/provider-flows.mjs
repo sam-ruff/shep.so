@@ -421,18 +421,168 @@ export async function providerFlows(page, context, origin, output, session) {
     "Sent upload is not confirmed",
   );
   await context.unroute(`${origin}/api/mail/sent/*/copy`, loseCopyResponse);
-  await page.reload();
-  await page.getByRole("button", { name: "Outbox", exact: true }).click();
-  await deliveredCopy()
+  // Sync the acknowledged-on-server copy before repairing the lost receipt.
+  // The duplicate stays separate until proof is durable in the browser journal.
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "Sent", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Mail refreshed");
+  const sentRows = page
+    .locator(".mail-row")
+    .filter({ hasText: "Lost response fixture" });
+  await expect(sentRows).toHaveCount(2);
+  const localKey = await page
+    .locator('.mail-row[data-id*="local-sent-"]')
+    .getAttribute("data-id");
+  assert.ok(localKey);
+  const providerRow = page.locator('.mail-row[data-id$=":Sent Mail:91.4"]');
+  const providerKey = await providerRow.getAttribute("data-id");
+  await providerRow
+    .getByRole("button", { name: "Lost response fixture", exact: true })
+    .click();
+  await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().endsWith("/api/mail/flags") && r.status() === 200,
+    ),
+    providerRow
+      .getByRole("button", { name: "Flag Lost response fixture", exact: true })
+      .click(),
+  ]);
+  await expect(
+    providerRow.getByRole("button", {
+      name: "Unflag Lost response fixture",
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  // A freshly opened tab has no passwords. Repair through its real controls;
+  // the first tab retains its reader and a provider-ID Undo closure.
+  const reopened = await context.newPage();
+  await reopened.goto(`${origin}/app/`);
+  await reopened.reload();
+  await reopened.getByRole("button", { name: "Outbox", exact: true }).click();
+  const reopenedDialog = reopened.getByRole("dialog");
+  const recovered = reopenedDialog
+    .locator(".settings-card")
+    .filter({
+      has: reopened.getByRole("heading", {
+        name: "Lost response fixture",
+        exact: true,
+      }),
+    });
+  await recovered
     .getByRole("button", { name: "Check server Sent", exact: true })
     .click();
-  await expect(deliveredCopy()).toContainText(
-    "Provider Sent copy acknowledged",
-  );
-  await page.screenshot({
+  await expect(recovered).toContainText("Provider Sent copy acknowledged");
+  await reopened.screenshot({
     path: path.join(output, "provider-sent-recovered-after-reload.png"),
   });
-  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await reopened.close();
+
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Mail refreshed");
+  await expect(sentRows).toHaveCount(1);
+  await expect(sentRows).toHaveAttribute("data-id", localKey);
+  await expect(sentRows).toHaveClass(/selected/);
+  const reader = page.getByRole("region", { name: "Message reader" });
+  await expect(
+    reader.getByText("Saved before SMTP begins.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    reader.getByRole("button", { name: "Unflag", exact: true }),
+  ).toBeEnabled();
+  const handover = await page.evaluate(
+    async ({ user, localKey, providerKey }) => {
+      const db = await new Promise((resolve, reject) => {
+        const r = indexedDB.open(`shep.mail.v1.${user}`);
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = reject;
+      });
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(["mail", "mailAliases", "raw", "outgoing"]);
+        const mail = tx.objectStore("mail").get(localKey),
+          alias = tx.objectStore("mailAliases").get(providerKey),
+          raw = tx.objectStore("raw").get(localKey),
+          out = tx.objectStore("outgoing").getAll();
+        tx.oncomplete = () => {
+          db.close();
+          resolve({
+            mail: mail.result,
+            alias: alias.result,
+            raw: raw.result,
+            out: out.result.find((r) => r.mail?.core.id === localKey),
+          });
+        };
+        tx.onabort = reject;
+      });
+    },
+    { user: session.user_id, localKey, providerKey },
+  );
+  assert.deepEqual(handover.alias, { alias: providerKey, target: localKey });
+  assert.equal(handover.mail.core.remote_id, "91.4");
+  assert.equal(handover.mail.core.folder, "Sent Mail");
+  assert.equal(handover.mail.local, undefined);
+  assert.equal(
+    handover.raw,
+    handover.out.wire.raw,
+    "Original submitted MIME remains exact",
+  );
+  // Undo was created for the provider ID before the other tab adopted it.
+  await Promise.all([
+    page.waitForResponse(
+      (r) =>
+        r.url().endsWith("/api/mail/flags") &&
+        r.request().postDataJSON().starred === false &&
+        r.request().postDataJSON().mail.remote_id === "91.4" &&
+        r.status() === 200,
+    ),
+    page.getByRole("button", { name: "Undo", exact: true }).click(),
+  ]);
+  await expect(
+    reader.getByRole("button", { name: "Flag", exact: true }),
+  ).toBeEnabled();
+  await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().endsWith("/api/mail/move") && r.status() === 200,
+    ),
+    reader.getByRole("button", { name: "Archive", exact: true }).click(),
+  ]);
+  await expect(sentRows).toHaveCount(0);
+  await expect(
+    reader.getByText("Saved before SMTP begins.", { exact: true }),
+  ).toBeVisible();
+  await Promise.all([
+    page.waitForResponse(
+      (r) =>
+        r.url().endsWith("/api/mail/move") &&
+        r.request().postDataJSON().folder === "Sent Mail" &&
+        r.status() === 200,
+    ),
+    page.getByRole("button", { name: "Undo", exact: true }).click(),
+  ]);
+  await expect(sentRows).toHaveCount(1);
+  await expect(sentRows).toHaveAttribute("data-id", localKey);
+  for (const [theme, width, height] of [
+    ["light", 1440, 920],
+    ["dark", 900, 640],
+  ]) {
+    await page
+      .getByRole("button", { name: "Preferences", exact: true })
+      .click();
+    await page.getByLabel("Theme", { exact: true }).selectOption(theme);
+    await page.getByRole("button", { name: "Mail", exact: true }).click();
+    await page.setViewportSize({ width, height });
+    await expect(
+      reader.getByText("Saved before SMTP begins.", { exact: true }),
+    ).toBeVisible();
+    const axe = await new AxeBuilder({ page })
+      .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+      .analyze();
+    assert.deepEqual(axe.violations, []);
+    await page.screenshot({
+      path: path.join(output, `sent-handover-${theme}-${width}.png`),
+    });
+  }
   await page.getByRole("button", { name: "Preferences", exact: true }).click();
   await page
     .getByRole("button", {
@@ -790,6 +940,10 @@ export async function providerFlows(page, context, origin, output, session) {
     "Sent-lost-response-reopen-without-credentials",
     "Sent-reviewed-uncertain-copy-no-repeat",
     "Sent-light-dark-compact-axe",
+    "Sent-provider-row-before-ack-repair",
+    "Sent-cross-tab-alias-reader-and-Undo",
+    "Sent-logical-folder-physical-move-Undo",
+    "Sent-handover-light-dark-compact-axe",
     "browser-only-storage-no-secrets",
   ];
 }

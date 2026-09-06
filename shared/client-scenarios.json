@@ -78,7 +78,7 @@
       "id": "smtp-ambiguous-recovery",
       "contract": "commit exact prepared MIME/envelope and outgoing ID before SMTP; lost/restarted/uncertain delivery never starts a fresh automatic send; terminal acknowledgments remain authoritative after server receipt expiry",
       "mobile": "Rust outgoing_tests.rs + sent_tests.rs / outbox_test.dart / outbox_android_test.dart; shared handles/process locks, SMTP and Sent-ack storage failures, separate reviewed retries; full platform/live verification OPEN",
-      "browser": "provider.test.ts / provider-flows.mjs / backend prepare/digest/cancel/disconnect tests; Sent reservations/repair now covered; provider identity handover/grouping OPEN"
+      "browser": "provider.test.ts / provider-flows.mjs / backend prepare/digest/cancel/disconnect tests; Sent reservations/repair now covered; provider identity handover/grouping now covered; bounded history and full parity OPEN"
     },
     {
       "id": "reply-envelope",
@@ -108,7 +108,7 @@
       "id": "provider-sent-copy",
       "contract": "discover the configured/special-use Sent folder; verify complete tagged lookup success and exact Message-ID; journal destination before APPEND; never repeat an uncertain copy automatically; preserve acknowledgments, local edits and policy changes; adopt a cached provider identity atomically, retain old IDs for queued actions/replies, keep logical Sent membership and physical Undo destinations, and preserve an open reader/late body through handover",
       "mobile": "shared sent/gateway TLS tests / native sent_tests.rs (rollback, migration, queued action, occupied capacity) / native_repository_test.dart / sent_handover_scenario.dart shared by ui_test.dart and native_mail_test.dart / actual bridge repair in outbox_android_test.dart; no live IMAP claim",
-      "browser": "backend mail/sent_tests.rs + sent.test.ts + real Rust HTTPS provider-flows.mjs: authenticated reservations, exact MIME before APPEND, lost response/reopen, retained acknowledgment, explicit uncertain retry, lookup-only resolution and account preferences; synced identity handover/grouping/history OPEN"
+      "browser": "backend mail/sent_tests.rs + sent.test.ts + handover.test.ts + storage.spec.ts + real Rust HTTPS provider-flows.mjs: reservations, exact MIME, lost response/reopen, explicit review, policy, atomic adoption/migration/rollback, aliases/replies/queued actions, cross-tab reader/Undo and physical Sent destinations; labels/history/bounded reads OPEN"
     }
   ]
 }

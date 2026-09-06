@@ -1,3 +1,14 @@
+import {
+  resolveMail,
+  localId,
+  insertSentCandidate,
+  aliasChanges,
+  removeMailChanges,
+  roleFolders,
+  acknowledgeRole,
+  type MailAlias,
+  type MailRoles,
+} from "./sent_cache";
 import { recoverSent, type SentWork } from "./sent";
 import { envelope, replyDraft, type ReplyEnvelope } from "./reply";
 import type { Session } from "./auth";
@@ -82,7 +93,9 @@ async function base64(blob: Blob) {
     binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
   return btoa(binary);
 }
-interface RecordMail {
+export interface RecordMail {
+  sentMessageId?: string | null;
+  localEdited?: boolean;
   local?: boolean;
   reply?: ReplyEnvelope;
   core: CoreMail;
@@ -120,9 +133,6 @@ async function browserLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
       "This browser cannot coordinate mail safely between tabs. Use a current browser.",
     );
   return await navigator.locks.request(name, fn);
-}
-function localId(mail: RecordMail) {
-  return mail.localId ?? mail.core.id;
 }
 function serverId(mail: CoreMail) {
   return `${mail.account_id}:${mail.folder}:${mail.remote_id}`;
@@ -209,6 +219,8 @@ export class GatewayRepository implements Repository {
   drafts: Draft[] = [];
   accounts: Account[] = [];
   folders = new Map<string, string[]>();
+  aliases = new Map<string, string>();
+  folderRoles = new Map<string, Set<string>>();
   warning: string | null = null;
   private secrets = new Map<string, { incoming: string; smtp: string }>();
   private records = new Map<string, RecordMail>();
@@ -232,8 +244,25 @@ export class GatewayRepository implements Repository {
     await this.reloadMail();
   }
   private async reloadMail() {
+    const snapshot = await this.store.snapshot([
+      "mail",
+      "mailRoles",
+      "mailAliases",
+    ]);
+    const roles = snapshot.mailRoles as MailRoles[],
+      aliases = snapshot.mailAliases as MailAlias[];
+    this.aliases = new Map(aliases.map((a) => [a.alias, a.target]));
+    this.folderRoles = new Map(
+      this.accounts.map((a) => [
+        a.id,
+        roleFolders(
+          a,
+          roles.find((r) => r.account === a.id),
+        ),
+      ]),
+    );
     this.records = new Map(
-      (await this.store.all<RecordMail>("mail")).map((m) => [localId(m), m]),
+      (snapshot.mail as RecordMail[]).map((m) => [localId(m), m]),
     );
     this.cached = [...this.records.values()]
       .filter((m) => !m.moved)
@@ -368,9 +397,20 @@ export class GatewayRepository implements Repository {
       throw new Error("Add a mail account in Preferences to refresh.");
     for (const account of accounts) {
       try {
-        await this.exclusive(`account.${account.id}`, () =>
-          this.sync(account, folder),
-        );
+        await this.exclusive(`account.${account.id}`, async () => {
+          const roles = await this.store.get<MailRoles>(
+            "mailRoles",
+            account.id,
+          );
+          const destinations =
+            folder === "Sent" && account.protocol === "Imap"
+              ? [...roleFolders(account, roles)]
+              : [folder];
+          if (!destinations.length && account.protocol === "Imap")
+            destinations.push("Sent");
+          for (const destination of destinations)
+            await this.sync(account, destination);
+        });
       } catch (error) {
         failures.push(
           error instanceof Error
@@ -396,7 +436,10 @@ export class GatewayRepository implements Repository {
       connection,
       folder: folder === "Inbox" ? "INBOX" : folder,
       known: before
-        .filter((m) => !m.moved && !m.local && m.reply)
+        .filter(
+          (m) =>
+            !m.moved && !m.local && m.reply && m.sentMessageId !== undefined,
+        )
         .map((m) => m.core.id),
     });
     if (!response.ok) {
@@ -408,145 +451,173 @@ export class GatewayRepository implements Repository {
     for await (const value of lines(response)) {
       check(value);
       if (complete) throw new Error("Unexpected data after sync completion.");
-      switch (value.kind) {
-        case "message": {
-          check(value.mail);
-          const core = coreMail(value.mail.summary, account.id);
-          if (
-            displayFolder(core.folder) !== displayFolder(folder) ||
-            typeof value.mail.text !== "string" ||
-            typeof value.mail.raw !== "string"
-          )
-            throw new Error("Invalid sync message.");
-          const matching = before.find(
-            (m) => !m.moved && m.core.id === core.id,
-          );
-          const key = matching ? localId(matching) : core.id;
-          const current = await this.store.get<RecordMail>("mail", key);
-          // POP3's server has no folders or flags; preserve this device's edits.
-          if (account.protocol === "Pop3" && current)
-            Object.assign(core, {
-              folder: current.core.folder,
-              unread: current.core.unread,
-              starred: current.core.starred,
-            });
-          await this.store.commit([
-            {
-              store: "mail",
-              key,
-              value: {
-                core,
-                text: value.mail.text,
-                localId: key,
-                receipt: current?.receipt,
-                pendingMove: current?.pendingMove,
-                reply: value.reply ? envelope(value.reply) : undefined,
-              },
-            },
-            { store: "raw", key, value: value.mail.raw },
-          ]);
-          break;
-        }
-        case "flags": {
-          if (!Array.isArray(value.flags))
-            throw new Error("Invalid sync flags.");
-          const changes: Change[] = [];
-          for (const entry of value.flags) {
+      await this.exclusive(`cache.${account.id}`, async () => {
+        switch (value.kind) {
+          case "message": {
+            check(value.mail);
+            const core = coreMail(value.mail.summary, account.id);
             if (
-              !Array.isArray(entry) ||
-              typeof entry[0] !== "string" ||
-              typeof entry[1] !== "boolean" ||
-              typeof entry[2] !== "boolean"
+              displayFolder(core.folder) !== displayFolder(folder) ||
+              typeof value.mail.text !== "string" ||
+              typeof value.mail.raw !== "string"
             )
-              throw new Error("Invalid sync flags.");
-            const known = before.find(
-              (m) => m.core.id === entry[0] && !m.moved,
+              throw new Error("Invalid sync message.");
+            const matching = (await this.store.all<RecordMail>("mail")).find(
+              (m) =>
+                !m.moved &&
+                m.core.id === core.id &&
+                m.core.account_id === account.id,
             );
-            const m = await this.store.get<RecordMail>(
-              "mail",
-              known ? localId(known) : entry[0],
+            const key = matching ? localId(matching) : core.id;
+            const current = await this.store.get<RecordMail>("mail", key);
+            // POP3's server has no folders or flags; preserve this device's edits.
+            if (account.protocol === "Pop3" && current)
+              Object.assign(core, {
+                folder: current.core.folder,
+                unread: current.core.unread,
+                starred: current.core.starred,
+              });
+            const incoming: RecordMail = {
+              core,
+              text: value.mail.text,
+              localId: key,
+              receipt: current?.receipt,
+              pendingMove: current?.pendingMove,
+              localEdited: current?.localEdited,
+              reply: value.reply ? envelope(value.reply) : undefined,
+              sentMessageId:
+                typeof value.sent_message_id === "string"
+                  ? value.sent_message_id
+                  : null,
+            };
+            await this.store.commit(
+              await insertSentCandidate(this.store, incoming, value.mail.raw),
             );
-            if (
-              m &&
-              m.core.account_id === account.id &&
-              !m.moved &&
-              account.protocol === "Imap"
-            ) {
-              Object.assign(m.core, { unread: entry[1], starred: entry[2] });
-              changes.push({ store: "mail", key: localId(m), value: m });
-            }
+            break;
           }
-          await this.store.commit(changes);
-          break;
+          case "flags": {
+            if (!Array.isArray(value.flags))
+              throw new Error("Invalid sync flags.");
+            const changes: Change[] = [];
+            for (const entry of value.flags) {
+              if (
+                !Array.isArray(entry) ||
+                typeof entry[0] !== "string" ||
+                typeof entry[1] !== "boolean" ||
+                typeof entry[2] !== "boolean"
+              )
+                throw new Error("Invalid sync flags.");
+              const known = before.find(
+                (m) => m.core.id === entry[0] && !m.moved,
+              );
+              const m = await resolveMail(
+                this.store,
+                known ? localId(known) : entry[0],
+              );
+              if (
+                m &&
+                m.core.account_id === account.id &&
+                !m.moved &&
+                account.protocol === "Imap"
+              ) {
+                Object.assign(m.core, { unread: entry[1], starred: entry[2] });
+                changes.push({ store: "mail", key: localId(m), value: m });
+              }
+            }
+            await this.store.commit(changes);
+            break;
+          }
+          case "reconcile": {
+            if (
+              value.account !== account.id ||
+              typeof value.folder !== "string" ||
+              displayFolder(value.folder) !== displayFolder(folder) ||
+              !Array.isArray(value.live_ids) ||
+              value.live_ids.some((id) => typeof id !== "string")
+            )
+              throw new Error("Invalid sync reconciliation.");
+            reconcile = {
+              folder: value.folder,
+              ids: new Set(value.live_ids as string[]),
+            };
+            break;
+          }
+          case "folders": {
+            if (
+              value.account !== account.id ||
+              !Array.isArray(value.folders) ||
+              value.folders.some((f) => typeof f !== "string")
+            )
+              throw new Error("Invalid mail folders.");
+            this.folders.set(account.id, value.folders.map(displayFolder));
+            break;
+          }
+          case "sent_folder": {
+            if (
+              value.account !== account.id ||
+              (value.folder !== null && typeof value.folder !== "string")
+            )
+              throw new Error("Invalid Sent folder role.");
+            const roles = (await this.store.get<MailRoles>(
+              "mailRoles",
+              account.id,
+            )) ?? { account: account.id, acknowledged: [] };
+            roles.discovered = value.folder as string | null;
+            await this.store.commit([
+              { store: "mailRoles", key: account.id, value: roles },
+            ]);
+            break;
+          }
+          case "skipped_large":
+            this.warning =
+              "Some messages exceed the current 25 MiB limit and were not downloaded.";
+            break;
+          case "error":
+            throw new Error(
+              typeof value.error === "string"
+                ? value.error
+                : "Mail sync failed. Retry Refresh.",
+            );
+          case "done":
+            complete = true;
+            break;
+          default:
+            throw new Error("Unknown sync event. Update Shep before retrying.");
         }
-        case "reconcile": {
-          if (
-            value.account !== account.id ||
-            typeof value.folder !== "string" ||
-            displayFolder(value.folder) !== displayFolder(folder) ||
-            !Array.isArray(value.live_ids) ||
-            value.live_ids.some((id) => typeof id !== "string")
-          )
-            throw new Error("Invalid sync reconciliation.");
-          reconcile = {
-            folder: value.folder,
-            ids: new Set(value.live_ids as string[]),
-          };
-          break;
-        }
-        case "folders": {
-          if (
-            value.account !== account.id ||
-            !Array.isArray(value.folders) ||
-            value.folders.some((f) => typeof f !== "string")
-          )
-            throw new Error("Invalid mail folders.");
-          this.folders.set(account.id, value.folders.map(displayFolder));
-          break;
-        }
-        case "sent_folder":
-          break;
-        case "skipped_large":
-          this.warning =
-            "Some messages exceed the current 25 MiB limit and were not downloaded.";
-          break;
-        case "error":
-          throw new Error(
-            typeof value.error === "string"
-              ? value.error
-              : "Mail sync failed. Retry Refresh.",
-          );
-        case "done":
-          complete = true;
-          break;
-        default:
-          throw new Error("Unknown sync event. Update Shep before retrying.");
-      }
+      });
     }
     if (!complete)
       throw new Error(
         "Mail sync was interrupted. Cached mail was kept; retry Refresh.",
       );
-    if (reconcile && account.protocol === "Imap") {
-      const changes: Change[] = [];
-      for (const m of before) {
-        if (m.moved || m.local || m.core.folder !== reconcile.folder) continue;
-        if (!reconcile.ids.has(m.core.id)) {
-          changes.push(
-            { store: "mail", key: localId(m) },
-            { store: "raw", key: localId(m) },
-          );
-        } else if (m.pendingMove) {
-          const current = await this.store.get<RecordMail>("mail", localId(m));
-          if (current) {
+    if (reconcile && account.protocol === "Imap")
+      await this.exclusive(`cache.${account.id}`, async () => {
+        const changes: Change[] = [];
+        const removed = new Set<string>();
+        for (const current of await this.store.all<RecordMail>("mail")) {
+          if (
+            current.core.account_id !== account.id ||
+            current.moved ||
+            current.local ||
+            current.core.folder !== reconcile!.folder
+          )
+            continue;
+          if (!reconcile!.ids.has(current.core.id))
+            removed.add(localId(current));
+          else if (current.pendingMove) {
             delete current.pendingMove;
-            changes.push({ store: "mail", key: localId(m), value: current });
+            changes.push({
+              store: "mail",
+              key: localId(current),
+              value: current,
+            });
           }
         }
-      }
-      await this.store.commit(changes);
-    }
+        changes.push(...(await removeMailChanges(this.store, removed)));
+        await this.store.commit(changes);
+      });
   }
+
   private async saveMoved(id: string, latest: RecordMail) {
     const changes: Change[] = [];
     for (const other of await this.store.all<RecordMail>("mail")) {
@@ -566,6 +637,7 @@ export class GatewayRepository implements Repository {
           "The destination cache contains conflicting content. Refresh before another action.",
         );
       changes.push(
+        ...(await aliasChanges(this.store, localId(other), id)),
         { store: "mail", key: localId(other) },
         { store: "raw", key: localId(other) },
       );
@@ -597,18 +669,42 @@ export class GatewayRepository implements Repository {
     await this.saveMoved(id, latest);
   }
   async mutate(id: string, fields: Fields) {
-    const m = await this.store.get<RecordMail>("mail", id);
+    const m = await resolveMail(this.store, id);
     if (!m)
       throw new Error("This message is no longer cached. Refresh its folder.");
     const account = this.accounts.find((a) => a.id === m.core.account_id);
     if (!account)
       throw new Error("This account was removed. Reopen Preferences.");
-    await this.exclusive(`account.${account.id}`, async () => {
-      const latest = await this.store.get<RecordMail>("mail", id);
+    const local = await this.exclusive(`cache.${account.id}`, async () => {
+      const latest = await resolveMail(this.store, id);
       if (!latest)
         throw new Error(
           "This message is no longer cached. Refresh its folder.",
         );
+      if (!latest.local && account.protocol !== "Pop3") return false;
+      if (latest.pendingMove || latest.receipt || latest.moved)
+        throw new Error(
+          "This message needs move recovery before another action.",
+        );
+      const folder = fields.folder === "Inbox" ? "INBOX" : fields.folder;
+      Object.assign(latest.core, fields, folder ? { folder } : {});
+      latest.localEdited = true;
+      await this.store.commit([
+        { store: "mail", key: localId(latest), value: latest },
+      ]);
+      return true;
+    });
+    if (local) {
+      await this.reloadMail();
+      return;
+    }
+    await this.exclusive(`account.${account.id}`, async () => {
+      const latest = await resolveMail(this.store, id);
+      if (!latest)
+        throw new Error(
+          "This message is no longer cached. Refresh its folder.",
+        );
+      id = localId(latest);
       if (latest.pendingMove)
         throw new Error(
           "A previous move has no saved acknowledgment. Refresh both folders and choose the current message; it was not moved again.",
@@ -781,7 +877,7 @@ export class GatewayRepository implements Repository {
     });
   }
   async reply(id: string, all: boolean): Promise<Draft> {
-    const record = await this.store.get<RecordMail>("mail", id);
+    const record = await resolveMail(this.store, id);
     if (!record)
       throw new Error(
         "The original message is no longer cached. Refresh before replying.",
@@ -970,26 +1066,18 @@ export class GatewayRepository implements Repository {
       await this.store.commit([
         { store: "outgoing", key: draft.id, value: record },
         ...(record.state === "delivered"
-          ? [
-              { store: "drafts" as const, key: draft.id },
-              ...(record.mail && record.wire
-                ? [
-                    {
-                      store: "mail" as const,
-                      key: record.mail.core.id,
-                      value: record.mail,
-                    },
-                    {
-                      store: "raw" as const,
-                      key: record.mail.core.id,
-                      value: record.wire.raw,
-                    },
-                  ]
-                : []),
-            ]
+          ? [{ store: "drafts" as const, key: draft.id }]
           : []),
       ]);
-      if (record.state === "delivered") await this.reloadMail();
+      if (record.state === "delivered" && record.mail && record.wire) {
+        try {
+          await this.finishSentLocal(record);
+        } catch {
+          throw new Error(
+            "Delivery is confirmed, but the local Sent cache needs repair. Open Outbox to finish; do not send again.",
+          );
+        }
+      }
       if (record.state !== "delivered")
         throw new Error(
           record.state === "rejected"
@@ -1041,23 +1129,55 @@ export class GatewayRepository implements Repository {
       await this.store.commit([{ store: "accounts", key: id, value }]);
       this.accounts = this.accounts.map((a) => (a.id === id ? value : a));
     });
+    await this.reloadMail();
   }
   private async finishSentLocal(record: Outgoing) {
     if (!record.mail || !record.wire)
       throw new Error(
         "The original Sent message is unavailable. Keep this delivery record.",
       );
-    const id = record.mail.core.id;
-    const existing = await this.store.get<RecordMail>("mail", id);
-    await this.store.commit([
-      { store: "drafts", key: record.draft.id },
-      ...(!existing
-        ? [
-            { store: "mail" as const, key: id, value: record.mail },
-            { store: "raw" as const, key: id, value: record.wire.raw },
-          ]
-        : []),
-    ]);
+    const original = record.mail,
+      wire = record.wire;
+    await this.exclusive(`cache.${original.core.account_id}`, async () => {
+      const id = original.core.id;
+      const existing = await this.store.get<RecordMail>("mail", id);
+      const changes: Change[] = [{ store: "drafts", key: record.draft.id }];
+      if (!existing)
+        changes.push(
+          { store: "mail", key: id, value: original },
+          { store: "raw", key: id, value: wire.raw },
+        );
+      if (record.sent?.state === "saved" && record.sent.receipt) {
+        changes.push(
+          await acknowledgeRole(
+            this.store,
+            original.core.account_id,
+            record.sent.receipt.folder,
+          ),
+        );
+        const candidates = (await this.store.all<RecordMail>("mail")).filter(
+          (m) =>
+            !m.local &&
+            m.core.account_id === original.core.account_id &&
+            m.core.folder === record.sent!.receipt!.folder &&
+            m.sentMessageId === `<${record.id}@shep.so>`,
+        );
+        if (candidates.length === 1) {
+          const incoming = candidates[0];
+          const raw = await this.store.get<string>("raw", localId(incoming));
+          if (raw)
+            changes.push(
+              ...(await insertSentCandidate(
+                this.store,
+                incoming,
+                raw,
+                existing ?? original,
+              )),
+            );
+        }
+      }
+      await this.store.commit(changes);
+    });
     await this.reloadMail();
   }
   async recoverSent(
@@ -1254,26 +1374,12 @@ export class GatewayRepository implements Repository {
         throw new Error(
           "This older submission has no exact saved MIME. Its original draft is retained for review.",
         );
-      const sent = record.mail;
-      // Preserve an existing local copy's newer flags or folder choices.
-      const existing = await this.store.get<RecordMail>("mail", sent.core.id);
       if (action !== "check")
         record.recovery = { action: action === "mark" ? "marked" : "local" };
       await this.store.commit([
         { store: "outgoing", key: record.draft.id, value: record },
-        { store: "drafts", key: record.draft.id },
-        ...(!existing
-          ? [
-              { store: "mail" as const, key: sent.core.id, value: sent },
-              {
-                store: "raw" as const,
-                key: sent.core.id,
-                value: record.wire.raw,
-              },
-            ]
-          : []),
       ]);
-      await this.reloadMail();
+      await this.finishSentLocal(record);
     });
   }
   async delivery(draft: Draft) {

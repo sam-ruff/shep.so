@@ -787,3 +787,22 @@ async fn preparation_failure_or_lost_response_does_not_authorize_a_fresh_or_chan
     );
     assert_eq!(fake.sends.load(Ordering::SeqCst), 0);
 }
+
+#[test]
+fn sent_handover_identity_requires_one_complete_header_within_the_bound() {
+    assert_eq!(
+        unique_sent_identity(b"Message-ID: <one@shep.so>\r\nSubject: fixture\r\n\r\nbody"),
+        Some("<one@shep.so>".into())
+    );
+    for raw in [
+        b"Message-ID: <one@shep.so>\r\nMessage-ID: <one@shep.so>\r\n\r\n".as_slice(),
+        b"Message-ID: <one@shep.so> <two@shep.so>\n\n",
+        b"Message-ID: <one@shep.so>\r\n",
+    ] {
+        assert!(unique_sent_identity(raw).is_none());
+    }
+    let mut long = b"Message-ID: <one@shep.so>\r\nX-Padding: ".to_vec();
+    long.extend(vec![b'a'; 64 * 1024]);
+    long.extend_from_slice(b"\r\nMessage-ID: <two@shep.so>\r\n\r\n");
+    assert!(unique_sent_identity(&long).is_none());
+}

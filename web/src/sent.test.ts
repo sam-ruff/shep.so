@@ -15,6 +15,18 @@ class Memory implements LocalStore {
   async get<T>(store: StoreName, key: string) {
     return structuredClone(this.data.get(`${store}:${key}`)) as T | undefined;
   }
+  async snapshot(names: readonly StoreName[]) {
+    return Object.fromEntries(
+      await Promise.all(
+        names.map(async (name) => [name, await this.all(name)]),
+      ),
+    );
+  }
+  async submissions<T>(id: string) {
+    return (await this.all<{ id: string }>("outgoing")).filter(
+      (r) => r.id === id,
+    ) as T[];
+  }
   async commit(changes: Change[]) {
     if (this.fail?.(changes)) {
       this.fail = undefined;
