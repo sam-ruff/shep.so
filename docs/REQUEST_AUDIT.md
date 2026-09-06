@@ -21,7 +21,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R15 | Remove useless local-device/privacy slogans, keeping useful explanations | Navigation copy cleaned; final copy review remains open |
 | R16 | Inbox Up/Down; Tab between list/sidebar; sender address/copy dialog; wrapping attachments in reply bar; bigger initial/avatar icons; configurable font size; fix preview spacing and vertically misaligned buttons | Delivered baseline and native tests; continued compact/large-font review in TODO |
 | R17 | Unified Inbox preference; optional cross-account moves; unified Inbox collapses with account children; custom folders at bottom; remove backup promo and duplicate syncing badges; clean list preview spacing | Delivered baseline; no claim that every visual issue is finished |
-| R18 | Better fuzzy mail and Move search; Enter moves to the top choice | Initial implementation delivered; library/relevance improvement R44 and highlighted target R46 are open/in progress |
+| R18 | Better fuzzy mail and Move search; Enter moves to the top choice | Delivered d3a530a: RapidFuzz, Best match ordering, exact-body regression, Unicode and fast Enter-to-move tests |
 | R19 | Double-click mail opens full-window reader; Esc/close button with remapping | Delivered |
 | R20 | Configurable collapsed replies/history instead of one continuous body; configurable separate-message conversation cards | Delivered and tested |
 | R21 | Compact inbox header rather than an excessively thick top bar | Delivered; refresh-icon replacement is R53 |
@@ -47,7 +47,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R41 | Add Forward and Print controls in preview | Open |
 | R42 | Ctrl+A list selection, Ctrl-click, Shift-click, checkbox Select mode beside search, bulk toolbar/keybind actions and Y/N/Enter/Esc confirmations | Open |
 | R43 | Inbox (unread count) in sidebar | Delivered in 590ab10; cache counts ignore query/filter scope, with storage/native tests |
-| R44 | Ctrl+F within email; fast search; fuzzy matching library and exact body “test” ranked first | Open; regression and library implementation still required |
+| R44 | Ctrl+F within email; fast search; fuzzy matching library and exact body “test” ranked first | Library/relevance search delivered d3a530a; Ctrl+F within a message remains open |
 | R45 | Drag messages/selection from list into sidebar folders | Open |
 | R46 | Highlight Move target used by Enter | Delivered in 590ab10; highlighted Inbox/Enter target and native visual evidence |
 | R47 | Cannot move out of A. Keep into Inbox; display Inbox rather than INBOX | In progress; local metadata confirms folders exist, native return-move and wire/logout tests exist; actual reported personal-account cause not confirmed |
