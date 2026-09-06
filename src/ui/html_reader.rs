@@ -1,5 +1,6 @@
 //! Small UI-side state only. DOM, fonts, image decoding and rasterization belong
 //! to the renderer worker. Geometry/hover requests coalesce under backpressure.
+mod anchor;
 mod cache;
 mod canvas;
 mod pan;
@@ -10,12 +11,14 @@ use crate::html_render::{self, Input, Viewport};
 #[derive(Debug, Clone)]
 pub enum Message {
     Backend(html_render::Event),
-    Geometry(u64, [f32; 4], Option<[f32; 4]>),
+    Geometry(u64, [f32; 4], Option<[f32; 4]>, f32),
+    ReflowApplied(u64, u64, Option<f32>),
     Prepared(html_render::preparation::Event),
     Input(Input),
     Pump,
     Plain(bool),
     Quotes,
+    Retry,
     Scroll(u64, f32),
     ScrollEnd(u64, bool),
     LinkResult(Result<(), String>),
@@ -33,6 +36,10 @@ pub(super) struct State {
     pumping: bool,
     pending: bool,
     current: Option<Arc<std::sync::atomic::AtomicU64>>,
+    view_version: Arc<std::sync::atomic::AtomicU64>,
+    anchor_pending: Option<u64>,
+    anchor_seen: u64,
+    parent_width: f32,
     pub cache: cache::Cache,
     pub generation: u64,
     key: Option<(String, [u8; 32], u16, bool, bool, u16)>,
@@ -55,12 +62,29 @@ pub(super) struct State {
     pub system_scale: f32,
 }
 impl State {
+    pub(super) fn can_retry(&self) -> bool {
+        self.error.is_some() && self.tx.as_ref().is_some_and(|tx| !tx.is_closed())
+    }
+    pub(super) fn anchoring(&self) -> bool {
+        self.anchor_pending.is_some()
+    }
+    fn anchor_shift(&self, body_y: f32, viewport_y: f32) -> f32 {
+        if self.anchor_pending.is_some() {
+            self.frame
+                .as_ref()
+                .and_then(|f| f.reflow)
+                .map_or(0., |r| (viewport_y - body_y).max(0.).floor() - r.to)
+        } else {
+            0.
+        }
+    }
     pub fn view_current(&self) -> bool {
-        self.frame.as_ref().is_some_and(|frame| {
-            self.viewport
-                .is_some_and(|(size, top)| frame.matches_view(size, top))
-                && (frame.pan - self.pan).abs() < 1.
-        })
+        !self.anchoring()
+            && self.frame.as_ref().is_some_and(|frame| {
+                self.viewport
+                    .is_some_and(|(size, top)| frame.matches_view(size, top))
+                    && (frame.pan - self.pan).abs() < 1.
+            })
     }
 
     fn enqueue(&mut self, command: Input) {
@@ -149,6 +173,11 @@ impl App {
         let reset_horizontal = self.html_reader.key != key;
         if reset_horizontal {
             let state = &mut self.html_reader;
+            state
+                .view_version
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            state.anchor_pending = None;
+            state.anchor_seen = 0;
             state.generation += 1;
             if let Some(current) = &state.current {
                 current.store(state.generation, std::sync::atomic::Ordering::Relaxed);
@@ -185,11 +214,21 @@ impl App {
     }
     pub(super) fn handle_html(&mut self, message: Message) -> Task<super::Message> {
         use html_render::Event;
+        let mut adjustment = Task::none();
         match message {
-            Message::Geometry(generation, bounds, visible) => {
+            Message::Geometry(generation, bounds, visible, parent_width) => {
                 if generation == self.html_reader.generation {
                     self.html_reader.body_bounds = Some(bounds);
                     self.html_reader.body_visible = visible;
+                    self.html_reader.parent_width = parent_width;
+                }
+            }
+            Message::ReflowApplied(id, layout, top) => {
+                let state = &mut self.html_reader;
+                if id == state.generation && state.anchor_pending == Some(layout) {
+                    state.anchor_pending = None;
+                    let top = top.unwrap_or_else(|| state.viewport.map_or(0., |(_, top)| top));
+                    state.enqueue(Input::ReflowApplied(id, layout, top));
                 }
             }
             Message::Prepared(html_render::preparation::Event::Ready(tx)) => {
@@ -243,17 +282,28 @@ impl App {
                 self.html_reader
                     .resources
                     .extend(frame.images.iter().filter(|u| remote_url(u)).cloned());
-                if self
-                    .html_reader
-                    .viewport
-                    .is_none_or(|(viewport, top)| !frame.matches_view(viewport, top))
-                    || (frame.pan
-                        - self
-                            .html_reader
-                            .pan
-                            .min((frame.content_width - frame.viewport.width as f32).max(0.)))
-                    .abs()
-                        >= 1.
+                if self.html_reader.viewport.is_none_or(|(viewport, top)| {
+                    !(frame.matches_view(viewport, top)
+                        || (frame.viewport == viewport
+                            && frame.reflow.is_some_and(|r| (r.from - top).abs() < 1.)))
+                }) {
+                    if frame.reflow.is_some() {
+                        let top = self.html_reader.viewport.map_or(0., |(_, top)| top);
+                        self.html_reader.enqueue(Input::ReflowApplied(
+                            frame.generation,
+                            frame.layout_revision,
+                            top,
+                        ));
+                    }
+                    return Task::none();
+                }
+                if (frame.pan
+                    - self
+                        .html_reader
+                        .pan
+                        .min((frame.content_width - frame.viewport.width as f32).max(0.)))
+                .abs()
+                    >= 1.
                 {
                     return Task::none();
                 }
@@ -271,6 +321,19 @@ impl App {
                 }
                 self.html_reader.handle = Some(cache::handle(&frame));
                 self.html_reader.pan = frame.pan;
+                if frame.reflow.is_some() && frame.layout_revision > self.html_reader.anchor_seen {
+                    self.html_reader.anchor_seen = frame.layout_revision;
+                    self.html_reader.anchor_pending = Some(frame.layout_revision);
+                    adjustment = anchor::apply(
+                        &self.html_reader,
+                        if self.conversation_visible() {
+                            "conversation-reader"
+                        } else {
+                            "message-reader"
+                        },
+                        &frame,
+                    );
+                }
                 if let Some(found) = self.html_reader.pending_find.take() {
                     if found.layout == frame.layout_revision {
                         self.find_message.accept(found.revision, found.result);
@@ -339,6 +402,11 @@ impl App {
                         Some((detail.summary.id.clone(), !self.html_quotes_hidden(detail)));
                 }
             }
+            Message::Retry => {
+                if self.html_reader.can_retry() {
+                    self.html_reader.key = None;
+                }
+            }
             Message::Input(Input::Pan(id, pan)) => {
                 if id == self.html_reader.generation && pan.is_finite() {
                     self.html_reader.pan =
@@ -360,6 +428,9 @@ impl App {
                     if id == self.html_reader.generation
                         && self.html_reader.viewport != Some((size, top))
                     {
+                        self.html_reader
+                            .view_version
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         self.html_reader.viewport = Some((size, top));
                         if self.html_reader.pending
                             && let Some(request) = self
@@ -397,6 +468,9 @@ impl App {
                 }
             }
             Message::Scroll(id, amount) if id == self.html_reader.generation => {
+                self.html_reader
+                    .view_version
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let target = if self.conversation_visible() {
                     "conversation-reader"
                 } else {
@@ -408,6 +482,9 @@ impl App {
                 );
             }
             Message::ScrollEnd(id, end) if id == self.html_reader.generation => {
+                self.html_reader
+                    .view_version
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let target = if self.conversation_visible() {
                     "conversation-reader"
                 } else {
@@ -428,7 +505,7 @@ impl App {
             }
             Message::LinkResult(Ok(())) => {}
         }
-        Task::none()
+        adjustment
     }
     fn load_html_images(&mut self) {
         if self.html_reader.key.as_ref().is_none_or(|key| !key.4) {
@@ -507,6 +584,7 @@ mod tests {
             scroll,
             pan: 0.,
             images: vec!["https://example.test/image.webp".into()],
+            reflow: None,
         })
     }
     #[tokio::test]
@@ -732,6 +810,51 @@ mod tests {
             "Old queries/documents cannot be retained"
         );
         assert_eq!(app.find_message.results.as_ref().unwrap().matches.len(), 1);
+    }
+    #[tokio::test]
+    async fn native_anchor_ack_cannot_replace_newer_observed_scroll_or_document() {
+        let mut app = app().await;
+        let _ = app.prepare_html();
+        let id = app.html_reader.generation;
+        let viewport = Viewport {
+            width: 400,
+            height: 200,
+            scale: 1.,
+        };
+        app.html_reader.viewport = Some((viewport, 900.));
+        app.html_reader.anchor_pending = Some(2);
+        let _ = app.handle_html(Message::ReflowApplied(id - 1, 2, Some(500.)));
+        assert_eq!(app.html_reader.anchor_pending, Some(2));
+        let _ = app.handle_html(Message::ReflowApplied(id, 2, Some(500.)));
+        assert_eq!(app.html_reader.viewport, Some((viewport, 900.)));
+        assert!(app.html_reader.anchor_pending.is_none());
+    }
+    #[tokio::test]
+    async fn renderer_retry_keeps_the_message_and_ignores_an_old_error() {
+        let mut app = app().await;
+        let _ = app.prepare_html();
+        let id = app.html_reader.generation;
+        let selected = app.selected.clone();
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        app.html_reader.tx = Some(tx);
+        app.html_reader.error = Some("Failed preview".into());
+        assert!(app.html_reader.can_retry());
+        let _ = app.handle_html(Message::Retry);
+        let _ = app.prepare_html();
+        assert!(app.html_reader.generation > id);
+        assert_eq!(app.selected, selected);
+        assert!(app.html_reader.error.is_none());
+        let _ = app.handle_html(Message::Backend(html_render::Event::Error(
+            id,
+            "Old failure".into(),
+        )));
+        assert!(app.html_reader.error.is_none());
+        drop(rx);
+        app.html_reader.error = Some("Renderer closed".into());
+        assert!(
+            !app.html_reader.can_retry(),
+            "A stopped worker needs the existing reopen instruction"
+        );
     }
     #[tokio::test]
     async fn metadata_refresh_preserves_html_but_policy_revocation_and_plain_mode_clear_it() {

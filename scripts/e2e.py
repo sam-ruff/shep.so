@@ -99,6 +99,22 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("Left"), key("Right"), wait(80), check("html_pan",pan), shot("html-css-find"),
                        key("Escape"), check("find_open",False))
 
+    def test_html_image_arrival_keeps_the_reading_position(self):
+        result = self.mcp.call("desktop.start", html_mail=True, image_delay_ms=2000)
+        print(f"Image reflow evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(85,440), check("selected","Delayed illustrated report"),
+                       check("html_view_current",True), click(1115,376), check("images_allowed",True),
+                       check("html_view_current",True), check("html_loaded_images",0),
+                       click(850,450), key("Next"), key("Next"), check("html_scroll",500,"gte"),
+                       check("html_view_current",True), shot("html-before-image-arrival"))
+        before = self.mcp.call("desktop.state")
+        self.mcp.batch(check("html_loaded_images",2), check("html_height",before["html_height"]+400,"gte"),
+                       check("html_view_current",True), wait(120), shot("html-after-image-arrival"))
+        after = self.mcp.call("desktop.state")
+        self.assertAlmostEqual(after["html_scroll"]-before["html_scroll"],
+                               after["html_height"]-before["html_height"], delta=2.,
+                               msg="Images above the viewport must not displace the paragraph being read")
+
     def test_html_compact_preview_preserves_readable_body_and_all_attachment_controls(self):
         result = self.mcp.call("desktop.start", width=900, height=640)
         print(f"Compact HTML evidence: {result['artifacts']}", flush=True)
@@ -110,6 +126,43 @@ class NativeFlows(unittest.TestCase):
         self.assertGreaterEqual(state["html_body_visible"][3], min(120.,state["html_body_bounds"][3]))
         self.mcp.batch(key("f"), check("dialog","Compose"), check("draft_attachments.3.name",None,"ne"),
                        key("Escape"), check("dialog",None))
+
+    def test_html_image_arrival_keeps_compact_dark_find_and_reading_position(self):
+        result = self.mcp.call("desktop.start", width=900, height=640, html_mail=True, image_delay_ms=3000)
+        print(f"Compact image reflow evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab","Preferences"), wait(100), click(563,366), check("dark",True),
+                       key("ctrl+1"), check("tab","Mail"), click(85,440), check("selected","Delayed illustrated report"),
+                       check("html_view_current",True), click(807,296), wait(80), click(800,328), check("images_allowed",True),
+                       check("html_view_current",True), key("ctrl+f"), check("focused_input","find-message"),
+                       type_text("Reading paragraph 30"), check("find_count",1), check("html_scroll",500,"gte"),
+                       check("html_view_current",True), check("html_loaded_images",0), shot("html-dark-before-image-arrival"))
+        before = self.mcp.call("desktop.state")
+        self.mcp.batch(check("html_loaded_images",2), check("html_height",before["html_height"]+400,"gte"),
+                       check("html_view_current",True), check("find_count",1), wait(120), shot("html-dark-after-image-arrival"))
+        after = self.mcp.call("desktop.state")
+        self.assertAlmostEqual(after["html_scroll"]-before["html_scroll"],400.,delta=2.)
+        self.mcp.batch(key("Escape"), check("find_open",False), click(700,450), key("Home"),
+                       check("html_scroll",0), check("html_view_current",True), shot("html-images-at-start"))
+
+    def test_html_late_images_do_not_scroll_a_different_message(self):
+        result = self.mcp.call("desktop.start", html_mail=True, image_delay_ms=2000)
+        print(f"Late image navigation evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(85,440), check("selected","Delayed illustrated report"), check("html_view_current",True),
+                       click(1115,376), check("images_allowed",True), check("remote_image_pending",2),
+                       click(850,450), key("Next"), check("html_scroll",100,"gte"),
+                       click(85,278), check("selected","Styled sign-in sample"), check("html_view_current",True),
+                       check("remote_image_pending",0), check("remote_image_cached",2,"gte"),
+                       check("html_scroll",0), check("images_allowed",False), check("html_view_current",True),
+                       wait(120), shot("html-navigation-after-late-images"))
+
+    def test_html_render_failure_has_a_working_native_retry(self):
+        result = self.mcp.call("desktop.start", html_mail=True, html_failure_once=True)
+        print(f"HTML recovery evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("html_error",None,"ne"), wait(100), shot("html-render-failure"),
+                       click(733,468), check("html_error",None), check("html_view_current",True),
+                       check("selected","Styled sign-in sample"), wait(100), shot("html-render-retried"),
+                       click(772,320), check("html_formatted",False), check("reader_text_ready",True),
+                       click(685,320), check("html_view_current",True), check("html_error",None))
 
     def test_refresh_icons_in_mail_calendar_and_compact_dark(self):
         self.mcp.batch(check("reader_text_ready", True), wait(150), shot("refresh-mail-light"),
@@ -491,6 +544,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_read_unread_and_flags_show_immediately_during_slow_save(self):
         self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch(check("unread",None,"ne"), check("starred",None,"ne"))
         state = self.mcp.call("desktop.state")
         initial, starred = state["unread"], state["starred"]
         self.mcp.batch(click(740, 100), check("unread", not initial), check("mail_pending", 1),
@@ -504,6 +558,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_failed_read_and_flag_restore_state_without_blocking_navigation(self):
         self.mcp.call("desktop.start", mail_actions="fail")
+        self.mcp.batch(check("unread",None,"ne"), check("starred",None,"ne"))
         state = self.mcp.call("desktop.state")
         initial, starred = state["unread"], state["starred"]
         self.mcp.batch(click(740, 100), check("unread", not initial), check("mail_pending", 1),

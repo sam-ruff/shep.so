@@ -3135,6 +3135,8 @@ impl App {
         );
         data["html_resources"] = serde_json::json!(self.html_reader.resources.len());
         data["html_error"] = serde_json::json!(self.html_reader.error);
+        data["remote_image_pending"] = serde_json::json!(self.requested_images.len());
+        data["remote_image_cached"] = serde_json::json!(self.remote_bytes.len());
         data["html_body_bounds"] = serde_json::json!(self.html_reader.body_bounds);
         data["html_body_visible"] = serde_json::json!(self.html_reader.body_visible);
         data["html_pan_target"] = serde_json::json!(self.html_reader.pan);

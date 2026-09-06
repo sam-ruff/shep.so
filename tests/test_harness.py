@@ -14,6 +14,22 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_html_failure_fixture_rejects_non_boolean_values(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (0, 1, "1", None):
+                with self.assertRaisesRegex(ValueError, "HTML failure fixture"):
+                    desktop.start(html_failure_once=value)
+            launch.assert_not_called()
+
+    def test_image_delay_is_bounded_and_invalid_values_never_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for delay in (-1, 5001, True, "500", 1.5):
+                with self.assertRaisesRegex(ValueError, "Image fixture delay"):
+                    desktop.start(image_delay_ms=delay)
+            launch.assert_not_called()
+
     def test_html_delay_is_bounded_and_invalid_values_never_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

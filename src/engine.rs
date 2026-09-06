@@ -453,6 +453,8 @@ impl Engine {
                 let results = futures::stream::iter(urls.into_iter().take(8))
                     .map(|url| async move {
                         let result = if self.demo {
+                            #[cfg(feature = "test-support")]
+                            crate::test_support::image_delay().await;
                             Ok(include_bytes!("../assets/logo-light.webp").to_vec())
                         } else {
                             crate::remote_images::fetch(&url)

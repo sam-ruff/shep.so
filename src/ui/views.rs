@@ -753,7 +753,14 @@ impl App {
         }
         if formatted {
             if let Some(error) = &self.html_reader.error {
-                reading = reading.push(muted(error));
+                let mut recovery = column![muted(error)].spacing(10);
+                if self.html_reader.can_retry() {
+                    recovery = recovery.push(action(
+                        "Retry formatted message",
+                        Message::Html(super::html_reader::Message::Retry),
+                    ));
+                }
+                reading = reading.push(recovery);
             } else {
                 reading = reading.push(self.find_highlights(detail, 0, self.html_canvas()));
             }

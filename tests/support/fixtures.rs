@@ -573,3 +573,13 @@ pub async fn print_delay(store: &Store) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// Controlled image delivery in isolated demo workspaces only.
+pub async fn image_delay() {
+    let delay = std::env::var("SHEP_TEST_IMAGE_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0)
+        .min(5000);
+    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+}

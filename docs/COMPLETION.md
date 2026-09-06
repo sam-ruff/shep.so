@@ -450,3 +450,49 @@ and the full-product goal remains active. R69 stays in TODO for the explicit
 remaining image-arrival and readiness work.
 
 [Documentation run 34061562636](https://github.com/sam-ruff/shep.so/actions/runs/34061562636) builds and deploys the shipped code successfully.
+
+
+## Reading position during image arrival and renderer recovery — R69
+
+A saved native fixture reproduced a 400-pixel displacement when two images
+without a fixed height arrived above the visible paragraph. The renderer now
+retains a visible text-node anchor across image layout, prepares the corrected
+viewport pixels, and coordinates the native scroll adjustment. Subsequent image
+layouts coalesce until acknowledgement; input and replacement documents continue
+through the existing channel. Images below the viewport do not move its content.
+The native operation checks document/view version, scroll position and geometry,
+so an old result cannot overwrite newer navigation. Acknowledgements never replace
+newer viewport observations. Find and selection use the corrected layout.
+
+The renderer regression compares the before/after pixel buffers exactly, exercises
+multiple arrivals and Copy while the scroller acknowledgement is pending, and
+checks images below the viewport and old document acknowledgements. Native tests
+cover the same two-image arrival in light mode and a compact dark reader with an
+active Find match, plus navigation to another message before images arrive. The
+reviewed captures keep paragraph 24 and the paragraph-30 Find match at the same
+screen position. Evidence includes `artifacts/e2e/d0907ab46ccf/`,
+`artifacts/e2e/4e0da012e9be/` and `artifacts/e2e/355ea02c14b9/`.
+
+Recoverable renderer errors now offer Retry formatted message. Retry preserves
+the selected mail, creates a new render generation, waits for its real viewport
+and rejects old errors. Plain text stays available. An unavailable worker keeps
+its explicit reopen instruction. The isolated failure/native Retry capture is
+`artifacts/e2e/68eb7d07359e/html-render-failure.webp`.
+
+The first full run also exposed two older tests that could capture nullable
+read/flag values before the initial detail arrived. Those tests now await known
+initial metadata before taking their snapshots. Immediate-feedback and rollback
+assertions are unchanged, and the failing scenario passes after that correction.
+
+Formatting, Clippy with warnings denied, 305 Rust tests (two opt-in live diagnostics
+ignored), and 27 Python tests pass. All 104 native functional scenarios pass in
+one full run. Final reviewed captures include `artifacts/e2e/c5f648fefa94/`,
+`artifacts/e2e/1e0e97d0a409/` and `artifacts/e2e/d4b91c137b88/`.
+Release checksum, extraction
+and the bundled installer pass. Performance measurements remain deferred to the
+final idle-host gates; no latency claim follows from these controlled delays.
+
+The installed Linux release matches `target/release/shep` at SHA-256
+`a7803f07d0a3b6b3baed85c98a73ca5834b31db61bd97c635b0ac892c05f2273`.
+Personal windows remain untouched; reopening starts the new binary. Logs are
+under `artifacts/logs/html-anchor-*`. Strict documentation validation passes.

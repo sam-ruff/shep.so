@@ -1,13 +1,25 @@
 //! Owned visible text geometry. No DOM pointers outlive a layout, and hidden
 //! quotations/preheaders cannot leak into a selection or clipboard operation.
 use litehtml::{Document, FontHandle, Position};
+use std::hash::{Hash, Hasher};
 type Measure<'a> = dyn Fn(&str, FontHandle) -> f32 + 'a;
 struct Run {
+    identity: usize,
     text: String,
     boundaries: Vec<usize>,
     font: FontHandle,
     bounds: Position,
     offset: std::ops::Range<usize>,
+}
+pub(super) struct Anchor {
+    identity: usize,
+    fingerprint: u64,
+    y: f32,
+}
+fn fingerprint(text: &str) -> u64 {
+    let mut hash = std::hash::DefaultHasher::new();
+    text.hash(&mut hash);
+    hash.finish()
 }
 #[derive(Default)]
 pub(super) struct Selection {
@@ -19,11 +31,46 @@ pub(super) struct Selection {
     index: crate::message_find::TextIndex,
 }
 impl Selection {
+    pub fn anchor(&self, top: f32, left: f32, width: f32, height: f32) -> Option<Anchor> {
+        if top <= 0. {
+            return None;
+        }
+        let begin = self
+            .spatial
+            .partition_point(|&i| self.runs[i].bounds.y + self.max_height <= top);
+        self.spatial[begin..]
+            .iter()
+            .copied()
+            .take_while(|&i| self.runs[i].bounds.y < top + height)
+            .find(|&i| {
+                let run = &self.runs[i];
+                run.bounds.y + run.bounds.height > top
+                    && run.bounds.x + run.bounds.width > left
+                    && run.bounds.x < left + width
+                    && !run.text.trim().is_empty()
+            })
+            .map(|run| Anchor {
+                identity: self.runs[run].identity,
+                fingerprint: fingerprint(&self.runs[run].text),
+                y: self.runs[run].bounds.y,
+            })
+    }
+    pub fn displacement(&self, anchor: Anchor) -> Option<f32> {
+        self.runs
+            .binary_search_by_key(&anchor.identity, |run| run.identity)
+            .ok()
+            .and_then(|index| self.runs.get(index))
+            .filter(|run| fingerprint(&run.text) == anchor.fingerprint)
+            .map(|run| run.bounds.y - anchor.y)
+    }
     pub fn layout(&mut self, document: &Document<'_>) {
         *self = Self::default();
         let mut elements: Vec<_> = document.root().into_iter().collect();
+        let mut identity = 0;
         while let Some(element) = elements.pop() {
             if element.is_text() {
+                let node = identity;
+                identity += 1;
                 let bounds = element.placement();
                 if bounds.width > 0. && bounds.height > 0. {
                     let text = element.get_text();
@@ -34,6 +81,7 @@ impl Selection {
                         .collect();
                     self.max_height = self.max_height.max(bounds.height);
                     self.runs.push(Run {
+                        identity: node,
                         text,
                         boundaries,
                         bounds,

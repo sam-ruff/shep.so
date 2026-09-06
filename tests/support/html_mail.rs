@@ -100,5 +100,23 @@ Content-Transfer-Encoding: base64
             false,
         )?])
         .await?;
+    let illustrated = format!(
+        "From: Reports <reports@example.test>\r\nTo: alex@studio.example\r\nSubject: Delayed illustrated report\r\nContent-Type: text/html\r\n\r\n<html><body><img src=\"https://images.example.test/first.webp\" style=\"display:block;width:200px;height:auto\"><img src=\"https://images.example.test/second.webp\" style=\"display:block;width:200px;height:auto\">{}</body></html>",
+        (0..80)
+            .map(|i| format!(
+                "<p>Reading paragraph {i:02}: keep this text steady when illustrations arrive.</p>"
+            ))
+            .collect::<String>()
+    );
+    store
+        .upsert(vec![parse_mail(
+            "preview-work",
+            "html-illustrated",
+            "Trash",
+            illustrated.into_bytes(),
+            false,
+            false,
+        )?])
+        .await?;
     Ok(())
 }
