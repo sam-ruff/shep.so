@@ -1121,12 +1121,12 @@ impl App {
                     row![
                         column![
                             text("Check for new mail").size(13),
-                            muted("Minutes between background checks").size(11)
+                            muted("Seconds between background checks").size(11)
                         ]
                         .spacing(5),
                         space().width(Length::Fill),
-                        input("5", self.field("sync_minutes"), |v| Message::Field(
-                            "sync_minutes",
+                        input("15", self.field("mail_check_seconds"), |v| Message::Field(
+                            "mail_check_seconds",
                             v
                         ))
                         .width(90)

@@ -2,6 +2,23 @@ use super::*;
 
 const NETWORK_CONCURRENCY: usize = 8;
 
+#[derive(Clone)]
+pub(super) struct Slots(Arc<tokio::sync::Semaphore>);
+impl Default for Slots {
+    fn default() -> Self {
+        Self(Arc::new(tokio::sync::Semaphore::new(NETWORK_CONCURRENCY)))
+    }
+}
+impl Slots {
+    pub(super) async fn acquire(&self) -> tokio::sync::OwnedSemaphorePermit {
+        self.0
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("Provider slots stay open")
+    }
+}
+
 /// Independent bounded queues keep local interaction independent of slow providers.
 #[derive(Clone, Debug)]
 pub struct CommandSender {
@@ -9,6 +26,7 @@ pub struct CommandSender {
     prefetch: mpsc::Sender<Command>,
     persistence: mpsc::Sender<Command>,
     network: mpsc::Sender<Command>,
+    sync: mpsc::Sender<Command>,
 }
 
 pub(super) struct Inputs {
@@ -16,6 +34,7 @@ pub(super) struct Inputs {
     prefetch: mpsc::Receiver<Command>,
     persistence: mpsc::Receiver<Command>,
     network: mpsc::Receiver<Command>,
+    sync: mpsc::Receiver<Command>,
 }
 
 impl CommandSender {
@@ -36,18 +55,21 @@ impl CommandSender {
         let (prefetch, prefetch_input) = mpsc::channel(8);
         let (persistence, persistence_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (network, network_input) = mpsc::channel(CHANNEL_CAPACITY);
+        let (sync, sync_input) = mpsc::channel(1);
         (
             Self {
                 reads,
                 prefetch,
                 persistence,
                 network,
+                sync,
             },
             Inputs {
                 reads: read_input,
                 prefetch: prefetch_input,
                 persistence: persistence_input,
                 network: network_input,
+                sync: sync_input,
             },
         )
     }
@@ -56,6 +78,15 @@ impl CommandSender {
         &self,
         command: Command,
     ) -> Result<(), Box<mpsc::error::TrySendError<Command>>> {
+        if matches!(command, Command::Sync) {
+            return match self.sync.try_send(command) {
+                // A pending full refresh already covers another click. Retain
+                // one follow-up request while a cycle is active, never drop it
+                // because the unrelated provider queue is occupied.
+                Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => Ok(()),
+                Err(error) => Err(Box::new(error)),
+            };
+        }
         let channel = match &command {
             Command::Query(_, _, true) | Command::Detail { prefetch: true, .. } => &self.prefetch,
             Command::Query(..)
@@ -75,7 +106,19 @@ impl CommandSender {
 
 impl Engine {
     pub(super) async fn run(self, input: Inputs, output: Output) {
+        let background = !self.demo || {
+            #[cfg(feature = "test-support")]
+            {
+                std::env::args().any(|arg| arg == "--background-sync")
+            }
+            #[cfg(not(feature = "test-support"))]
+            {
+                false
+            }
+        };
         tokio::join!(
+            self.clone()
+                .run_mail_sync(input.sync, output.clone(), background),
             self.clone().run_reads(input.reads, output.clone(), 2),
             self.clone().run_reads(input.prefetch, output.clone(), 1),
             self.clone()
@@ -128,7 +171,7 @@ impl Engine {
         let mut busy = HashSet::new();
         let mut timer = tokio::time::interval(Duration::from_secs(60));
         timer.tick().await;
-        let mut last_sync = Instant::now();
+        let mut last_calendar_sync = Instant::now();
         let mut last_backup_attempt: Option<(BackupTarget, Instant)> = None;
         loop {
             tokio::select! {
@@ -146,6 +189,7 @@ impl Engine {
                     if let Some(key)=&key{busy.insert(key.clone());let _=output.send(Event::Busy(key.clone(),true)).await;}
                     let engine=engine.clone();let output=output.clone();
                     jobs.spawn(async move {
+                        let _slot = engine.provider_slots.acquire().await;
                         // Uploads have bounded HTTP requests and progress checks,
                         // plus a durable journal. Do not cancel a healthy transfer
                         // merely because the whole archive takes over ten minutes.
@@ -162,13 +206,14 @@ impl Engine {
                 }
                 _=timer.tick(),if !demo=>{
                     if let Ok(prefs)=engine.store.get::<Preferences>("preferences").await{
-                        if last_sync.elapsed()>=Duration::from_secs(prefs.sync_minutes*60)&&!busy.contains("sync")&&jobs.len()<NETWORK_CONCURRENCY{
-                            last_sync=Instant::now();busy.insert("sync".into());let _=output.send(Event::Busy("sync".into(),true)).await;
-                            let worker=engine.clone();let events=output.clone();jobs.spawn(async move{(Some("sync".into()),worker.execute(Command::Sync,events).await)});
-                            if !busy.contains("calendar") && jobs.len()<NETWORK_CONCURRENCY {
-                                busy.insert("calendar".into());
-                                let worker=engine.clone();let events=output.clone();jobs.spawn(async move{(Some("calendar".into()),worker.execute(Command::SyncCalendar,events).await)});
-                            }
+                        if last_calendar_sync.elapsed() >= Duration::from_secs(prefs.sync_minutes * 60) && !busy.contains("calendar") && jobs.len() < NETWORK_CONCURRENCY {
+                            last_calendar_sync = Instant::now();
+                            busy.insert("calendar".into());
+                            let worker = engine.clone(); let events = output.clone();
+                            jobs.spawn(async move {
+                                let _slot = worker.provider_slots.acquire().await;
+                                (Some("calendar".into()), worker.execute(Command::SyncCalendar, events).await)
+                            });
                         }
                         let target = BackupTarget::from_preferences(&prefs);
                         let interval = Duration::from_secs(prefs.backup_hours * 3600);
@@ -176,7 +221,7 @@ impl Engine {
                         if prefs.auto_backup && prefs.backup_ready && retry_due && chrono::Utc::now().timestamp()-prefs.last_backup.unwrap_or(0)>=interval.as_secs()as i64&&!busy.contains("backup")&&jobs.len()<NETWORK_CONCURRENCY {
                                 last_backup_attempt = Some((target.clone(), Instant::now()));
                                 busy.insert("backup".into());let _=output.send(Event::Busy("backup".into(),true)).await;
-                                let engine=engine.clone();let output=output.clone();jobs.spawn(async move{(Some("backup".into()),engine.execute(Command::AutomaticBackup(target),output).await)});
+                                let engine=engine.clone();let output=output.clone();jobs.spawn(async move{let _slot = engine.provider_slots.acquire().await; (Some("backup".into()),engine.execute(Command::AutomaticBackup(target),output).await)});
                             }
                     }
                 }
@@ -188,6 +233,25 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn manual_refresh_has_a_coalescing_queue_independent_of_provider_backpressure() {
+        let (sender, mut inputs) = CommandSender::channel();
+        for _ in 0..CHANNEL_CAPACITY {
+            sender.try_send(Command::LoadImages(vec![])).unwrap();
+        }
+        assert!(sender.try_send(Command::LoadImages(vec![])).is_err());
+        for _ in 0..100 {
+            sender.try_send(Command::Sync).unwrap();
+        }
+        assert_eq!(inputs.sync.len(), 1);
+        assert!(matches!(inputs.sync.recv().await, Some(Command::Sync)));
+        assert!(inputs.sync.try_recv().is_err());
+        sender.try_send(Command::Sync).unwrap();
+        assert!(matches!(inputs.sync.recv().await, Some(Command::Sync)));
+        drop(inputs);
+        assert!(sender.try_send(Command::Sync).is_err());
+    }
 
     struct Running(tokio::task::JoinHandle<()>);
     impl Drop for Running {
@@ -217,6 +281,8 @@ mod tests {
             passphrases: Arc::new(backup::OsPassphraseStore),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
             backup_uploads: Default::default(),
+            mail_sync_settings: Default::default(),
+            provider_slots: Default::default(),
         };
         let (sender, input) = CommandSender::channel();
         let (output, mut events) = futures::channel::mpsc::channel(32);
@@ -237,10 +303,10 @@ mod tests {
             .await
             .unwrap();
         for _ in 0..CHANNEL_CAPACITY {
-            sender.try_send(Command::Sync).unwrap();
+            sender.try_send(Command::LoadImages(vec![])).unwrap();
         }
         assert!(matches!(
-            sender.try_send(Command::Sync),
+            sender.try_send(Command::LoadImages(vec![])),
             Err(error) if matches!(*error, mpsc::error::TrySendError::Full(_))
         ));
         sender

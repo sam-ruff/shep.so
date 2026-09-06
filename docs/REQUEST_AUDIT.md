@@ -68,7 +68,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R62 | Fix nonworking read/unread and add integration coverage for basic mail behavior | Delivered 742b21e; IMAP NO detection, selective flags, dispatcher/cache/reopen/native coverage |
 | R64 | Transparent GNOME desktop icon matching system theme | Recorded, open |
 | R63 | Fix shortcut × and extend native E2E coverage across functionality paths | Clear controls delivered 742b21e with per-slot persistence and native tests; final functionality coverage audit remains open |
-| R65 | More frequent/reliable background sync independent of manual Refresh | Recorded, open |
+| R65 | Frequent background sync (user prioritizes rapid arrival), immediate startup check and independent manual Refresh | Recorded, open |
 | R66 | Record Dungeonwalk vectoriser/remove.bg credential discovery in AGENTS.md | Delivered 742b21e; discovery pointer only, no keys copied |
 | R59 | Investigate and fix the newly failed CI build | Delivered eea1dfb; strict local build and GitHub run 34026001754 passed |
 

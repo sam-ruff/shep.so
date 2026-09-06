@@ -4,7 +4,7 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Current UI and interaction work
 
-- [ ] **R65 — Background mail freshness:** investigate infrequent background syncing, use responsive background scheduling and independent manual refresh behavior. Clicking Refresh during background sync must register/queue a refresh, not silently drop it; preserve navigation and optimistic actions. Cover timer, overlap, errors and recovery with integration/native tests.
+- [ ] **R65 — Background mail freshness:** the user explicitly wants frequent background checks because sync is cheap, so new mail should appear as quickly as possible. Start after the cache opens and default to 15-second background checks, with no overlaps and independent manual refresh behavior. Clicking Refresh during background sync must register/queue a refresh, not silently drop it; preserve navigation and optimistic actions. Cover timer, overlap, errors and recovery with integration/native tests.
 
 - [ ] **R63 — E2E coverage audit:** primary/secondary clear controls, remapping, capture cancellation and persistence are shipped in 742b21e. Continue mapping every remaining visible feature to realistic native happy/error/recovery scenarios as the TODO features land; complete a final functionality-path coverage audit.
 

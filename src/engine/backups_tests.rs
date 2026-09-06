@@ -47,6 +47,8 @@ fn engine(secrets: Arc<Secrets>) -> Engine {
         passphrases: secrets,
         restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
         backup_uploads: Default::default(),
+        mail_sync_settings: Default::default(),
+        provider_slots: Default::default(),
     }
 }
 fn passphrase() -> SecretString {

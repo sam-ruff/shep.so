@@ -70,6 +70,41 @@ class NativeFlows(unittest.TestCase):
         self.artifacts = Path(result["artifacts"])
         print(f"\nEvidence: {result['artifacts']}", flush=True)
 
+    def test_background_mail_arrives_without_refresh_and_manual_clicks_queue(self):
+        self.mcp.call("desktop.start", background_sync=True)
+        self.mcp.batch(check("background_sync", True), check("refreshing", False),
+                       check("mail_check_seconds", 15), shot("background-sync-refresh-idle"),
+                       click(1400, 36), click(1400, 36), key("ctrl+r"),
+                       check("refreshing", True), check("background_sync", True),
+                       check("sync_round", 1), check("total", 121),
+                       check("background_sync", False), check("refreshing", True),
+                       shot("manual-refresh-queued-after-background"),
+                       {**check("sync_round", 2), "timeout_ms": 5000}, check("refreshing", False),
+                       check("total", 121), click(420, 247),
+                       check("selected", "New mail from the background"), shot("background-arrival-readable"))
+
+    def test_background_sync_failure_allows_manual_retry(self):
+        self.mcp.call("desktop.start", background_sync=True, sync_failure_once=True)
+        self.mcp.batch(check("background_sync", True), check("refreshing", False),
+                       check("notice", "temporarily unavailable", "contains"),
+                       check("background_sync", False), check("total", 120), shot("background-sync-error"),
+                       click(1400, 36), check("refreshing", True),
+                       check("sync_round", 2), check("total", 121), check("refreshing", False),
+                       check("notice", None),
+                       click(420, 247), check("selected", "New mail from the background"),
+                       shot("background-sync-retry-arrival"))
+
+    def test_mail_check_interval_uses_seconds_and_validates_before_saving(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(1150, 88), type_text("background"), check("settings_matches", ["Mail & performance"]),
+                       click(500, 289), check("settings_group", "Mail & performance"), shot("mail-check-seconds-setting"),
+                       click(1110, 364), key("ctrl+a"), type_text("0"), click(1350, 88),
+                       check("notice", "5–3600 seconds", "contains"), check("mail_check_seconds", 15),
+                       click(1110, 364), key("ctrl+a"), type_text("5"), click(1350, 88),
+                       check("mail_check_seconds", 5), check("preferences_saved", True), check("notice", None),
+                       shot("mail-check-seconds-saved"), key("ctrl+1"), key("ctrl+comma"),
+                       check("fields.mail_check_seconds", "5"))
+
     def test_read_unread_and_flags_show_immediately_during_slow_save(self):
         self.mcp.call("desktop.start", mail_actions="slow")
         state = self.mcp.call("desktop.state")

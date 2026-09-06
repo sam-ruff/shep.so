@@ -237,6 +237,8 @@ pub struct App {
     focused_input: Option<&'static str>,
     #[cfg(feature = "test-support")]
     test_keys: VecDeque<String>,
+    #[cfg(feature = "test-support")]
+    test_sync_round: u64,
     list_revision: u64,
     last_list_query: MailQuery,
     draft_dirty: Option<Instant>,
@@ -289,6 +291,8 @@ pub struct App {
     remapping: Option<(Action, Slot)>,
     busy: HashSet<String>,
     notice: Option<(String, bool, Instant)>,
+    sync_notice: Option<Instant>,
+    preference_notice: Option<Instant>,
     google_connected: bool,
     google_disconnect_pending: Option<u64>,
     system_dark: bool,
@@ -368,6 +372,8 @@ impl App {
                 focused_input: None,
                 #[cfg(feature = "test-support")]
                 test_keys: VecDeque::new(),
+                #[cfg(feature = "test-support")]
+                test_sync_round: 0,
                 list_revision: 0,
                 last_list_query: MailQuery::default(),
                 draft_dirty: None,
@@ -423,6 +429,8 @@ impl App {
                 remapping: None,
                 busy: HashSet::new(),
                 notice: None,
+                sync_notice: None,
+                preference_notice: None,
                 google_connected: false,
                 google_disconnect_pending: None,
                 system_dark: false,
@@ -854,6 +862,7 @@ impl App {
                         format!("Changes could not be saved: {error}. Try Save changes again."),
                         true,
                     );
+                    self.preference_notice = self.notice.as_ref().map(|notice| notice.2);
                 }
                 Event::PreferencesSaved(request, snapshot) => {
                     self.preference_sync.acknowledge(
@@ -866,6 +875,11 @@ impl App {
                         if self.confirm_save.is_some_and(|id| request >= id) {
                             self.confirm_save = None;
                             self.saved_toast = Some(Instant::now());
+                            if self.preference_notice.take().is_some_and(|at| {
+                                self.notice.as_ref().is_some_and(|notice| notice.2 == at)
+                            }) {
+                                self.notice = None;
+                            }
                         }
                         if let Some(window) = self.pending_close.take() {
                             return self.handle(Message::WindowClose(window));
@@ -959,12 +973,28 @@ impl App {
                         Err(_) => {}
                     }
                 }
+                Event::MailSyncFinished(result) => match result {
+                    Ok(()) => {
+                        if self.sync_notice.is_some_and(|at| {
+                            self.notice.as_ref().is_some_and(|notice| notice.2 == at)
+                        }) {
+                            self.notice = None;
+                        }
+                        self.sync_notice = None;
+                    }
+                    Err(error) => {
+                        self.notice(error, true);
+                        self.sync_notice = self.notice.as_ref().map(|notice| notice.2);
+                    }
+                },
                 Event::MoveFinished(request, mail, folder, result) => {
                     return self.move_finished(request, mail, folder, result);
                 }
                 Event::FlagsFinished(request, mail, result) => {
                     return self.flags_finished(request, mail, result);
                 }
+                #[cfg(feature = "test-support")]
+                Event::PreviewSync(round) => self.test_sync_round = round,
                 Event::Changed => {
                     self.detail_revision += 1;
                     self.prefetch_page = None;
@@ -1482,7 +1512,11 @@ impl App {
                     self.pending_focus = None;
                 }
             }
-            Message::Sync => self.send(Command::Sync),
+            Message::Sync => {
+                if self.try_command(Command::Sync) {
+                    self.busy.insert("sync".into());
+                }
+            }
             Message::SyncCalendar => self.send(Command::SyncCalendar),
             Message::MoveFirst => {
                 if self.dialog == Some(Dialog::Move)
@@ -1759,7 +1793,11 @@ impl App {
                     self.confirm_save = Some(self.preference_sync.generation());
                     self.saved_toast = None;
                 }
-                Err(e) => self.notice(e.to_string(), true),
+                Err(e) => {
+                    self.confirm_save = None;
+                    self.notice(e.to_string(), true);
+                    self.preference_notice = self.notice.as_ref().map(|notice| notice.2);
+                }
             },
             Message::Appearance(appearance) => {
                 self.preferences.appearance = appearance;
@@ -2358,7 +2396,10 @@ impl App {
             ("backup_folder", self.preferences.backup_folder.clone()),
             ("copies", self.preferences.backup_copies.to_string()),
             ("hours", self.preferences.backup_hours.to_string()),
-            ("sync_minutes", self.preferences.sync_minutes.to_string()),
+            (
+                "mail_check_seconds",
+                self.preferences.mail_check_seconds.to_string(),
+            ),
             ("contacts", self.preferences.contacts.join(", ")),
             ("google_id", self.preferences.google_client_id.clone()),
             (
@@ -2375,7 +2416,7 @@ impl App {
             next.backup_folder = self.field("backup_folder").into();
             next.backup_copies = self.field("copies").parse()?;
             next.backup_hours = self.field("hours").parse()?;
-            next.sync_minutes = self.field("sync_minutes").parse()?;
+            next.mail_check_seconds = self.field("mail_check_seconds").parse()?;
             next.google_client_id = self.field("google_id").trim().into();
             next.google_client_secret = self.field("google_secret").trim().into();
         }
@@ -2679,6 +2720,13 @@ impl App {
         data["inbox_unread"] = serde_json::json!(self.page.inbox_unread);
         data["shortcut_secondary"] = serde_json::json!(self.preferences.shortcuts.1);
         data["conversation_total"] = serde_json::json!(self.conversation.page.total);
+        #[cfg(feature = "test-support")]
+        {
+            data["sync_round"] = serde_json::json!(self.test_sync_round);
+        }
+        data["refreshing"] = serde_json::json!(self.busy.contains("sync"));
+        data["background_sync"] = serde_json::json!(self.busy.contains("background-sync"));
+        data["mail_check_seconds"] = serde_json::json!(self.preferences.mail_check_seconds);
         data["mail_pending"] = serde_json::json!(self.mail_actions.pending());
         data["unread"] = serde_json::json!(
             self.detail

@@ -481,3 +481,26 @@ pub async fn mail_action_delay() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// A new arrival proves that an automatic cycle reaches the ordinary cache/UI.
+pub async fn sync_mail(store: &Store) -> anyhow::Result<u64> {
+    let background = std::env::args().any(|arg| arg == "--background-sync");
+    let fail_once = std::env::args().any(|arg| arg == "--sync-failure-once");
+    let round = store.get::<u64>("preview-sync-round").await? + 1;
+    store.put("preview-sync-round", round).await?;
+    tokio::time::sleep(std::time::Duration::from_millis(if background {
+        2500
+    } else {
+        1500
+    }))
+    .await;
+    anyhow::ensure!(
+        !fail_once || round != 1,
+        "Fixture mail server is temporarily unavailable. Try Refresh again."
+    );
+    if background {
+        store.upsert(vec![parse_mail("preview-work", "1.9000", "INBOX",
+            b"From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: New mail from the background\r\n\r\nThis fictional message arrived through the automatic refresh.".to_vec(), true, false)?]).await?;
+    }
+    Ok(round)
+}

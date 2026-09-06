@@ -2,6 +2,29 @@
 //! separately by the native MCP suite; these tests control result arrival order.
 use super::*;
 
+#[test]
+fn recovered_mail_sync_clears_its_error_but_preserves_other_action_errors() {
+    let (mut app, _) = App::new();
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(Err(
+        "Mail server unavailable. Try Refresh again.".into(),
+    ))));
+    assert!(app.notice.as_ref().unwrap().1);
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(Ok(()))));
+    assert!(app.notice.is_none());
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(Err(
+        "Mail server unavailable.".into(),
+    ))));
+    // Give the unrelated notice a distinct, deterministic identity.
+    app.sync_notice = Some(Instant::now() - std::time::Duration::from_secs(1));
+    app.notice("Archive failed. The message was restored.", true);
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(Ok(()))));
+    assert_eq!(
+        app.notice.as_ref().unwrap().0,
+        "Archive failed. The message was restored."
+    );
+    assert!(app.sync_notice.is_none());
+}
+
 #[tokio::test]
 async fn stale_prefetch_cannot_restore_flags_or_errors_after_a_mail_change() {
     let store = crate::store::Store::memory().unwrap();
