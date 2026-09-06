@@ -784,3 +784,91 @@ async fn cached_reply_all_uses_reply_to_and_excludes_every_configured_sender() {
         "<original@example.test>"
     );
 }
+
+#[tokio::test]
+async fn cached_attachment_bytes_reopen_alias_and_stale_identity_without_provider_capacity() {
+    let (dir, p) = profile().await;
+    seed(&p, 0).await;
+    let fixtures: Value =
+        serde_json::from_str(include_str!("../../../shared/attachment-fixtures.json")).unwrap();
+    let raw = fixtures[0]["raw"].as_str().unwrap().as_bytes().to_vec();
+    p.database.write(move|db| {
+        operations::insert_mail(db,parse_mail("fixture","files","INBOX",raw,false,false)?,false)?;
+        db.execute("INSERT INTO mail_aliases(alias,id) VALUES('previous-file-id','fixture:INBOX:files')",[])?;
+        Ok(())
+    }).await.unwrap();
+    let _occupied = p.operations.hold_network_capacity().await;
+    let detail = request(&p, json!({"op":"detail","id":"previous-file-id"})).await;
+    for file in fixtures[0]["files"].as_array().unwrap() {
+        let bytes = request(
+            &p,
+            json!({"op":"attachment","id":"previous-file-id","file":file["id"]}),
+        )
+        .await;
+        assert_eq!(bytes["bytes"], file["bytes"]);
+        assert_eq!(bytes["info"]["name"], file["name"]);
+    }
+    assert_eq!(detail["files"].as_array().unwrap().len(), 3);
+    let reopened = MobileProfile::open(dir.path().join("mail.sqlite3").to_str().unwrap().into())
+        .await
+        .unwrap();
+    let first = &fixtures[0]["files"][0];
+    assert_eq!(
+        request(
+            &reopened,
+            json!({"op":"attachment","id":"previous-file-id","file":first["id"]})
+        )
+        .await["bytes"],
+        first["bytes"]
+    );
+    p.database.write(|db|{db.execute("UPDATE mail SET raw=CAST(replace(CAST(raw AS TEXT),'AP8BDQo=','AAECAwQ=') AS BLOB) WHERE remote_id='files'",[])?;Ok(())}).await.unwrap();
+    let failed: Value = serde_json::from_str(
+        &p.request(
+            json!({"op":"attachment","id":"previous-file-id","file":first["id"]}).to_string(),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(failed["error"].as_str().unwrap().contains("changed"));
+}
+
+#[tokio::test]
+async fn corrupt_attachment_does_not_hide_cached_body_or_allow_an_empty_save() {
+    let (_dir, p) = profile().await;
+    seed(&p, 0).await;
+    let fixtures: Value =
+        serde_json::from_str(include_str!("../../../shared/attachment-fixtures.json")).unwrap();
+    let raw = fixtures[0]["raw"]
+        .as_str()
+        .unwrap()
+        .replace("AP8BDQo=", "%%%invalid%%%")
+        .into_bytes();
+    p.database
+        .write(move |db| {
+            operations::insert_mail(
+                db,
+                parse_mail("fixture", "corrupt", "INBOX", raw, false, false)?,
+                false,
+            )
+        })
+        .await
+        .unwrap();
+    let detail = request(&p, json!({"op":"detail","id":"fixture:INBOX:corrupt"})).await;
+    assert!(
+        detail["body"]
+            .as_str()
+            .unwrap()
+            .contains("Cached incoming files.")
+    );
+    assert!(
+        detail["file_error"]
+            .as_str()
+            .unwrap()
+            .contains("cached message body")
+    );
+    assert!(detail["files"].as_array().unwrap().is_empty());
+    let saved:Value=serde_json::from_str(&p.request(json!({"op":"attachment","id":"fixture:INBOX:corrupt","file":fixtures[0]["files"][0]["id"]}).to_string()).await.unwrap()).unwrap();
+    assert!(saved["error"].is_string());
+    assert!(saved.get("data").is_none());
+}

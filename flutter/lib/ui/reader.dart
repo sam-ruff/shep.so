@@ -1,10 +1,11 @@
 import 'mail_error.dart';
+import '../data/attachments.dart';
 import 'package:flutter/material.dart';
 import '../model/mail.dart';
 import '../model/workspace.dart';
 import 'composer.dart';
 
-class Reader extends StatelessWidget {
+class Reader extends StatefulWidget {
   const Reader({
     super.key,
     required this.workspace,
@@ -14,6 +15,71 @@ class Reader extends StatelessWidget {
   final Workspace workspace;
   final String id;
   final void Function(String, MailAction) act;
+  @override
+  State<Reader> createState() => _ReaderState();
+}
+
+class _ReaderState extends State<Reader> {
+  Workspace get workspace => widget.workspace;
+  String get id => widget.id;
+  void Function(String, MailAction) get act => widget.act;
+  String? saving, fileStatus;
+  bool fileError = false;
+  @override
+  void initState() {
+    super.initState();
+    workspace.retainReader(id);
+  }
+
+  @override
+  void didUpdateWidget(Reader old) {
+    super.didUpdateWidget(old);
+    if (old.id != id || old.workspace != workspace) {
+      old.workspace.releaseReader(old.id);
+      workspace.retainReader(id);
+    }
+  }
+
+  @override
+  void dispose() {
+    workspace.releaseReader(id);
+    super.dispose();
+  }
+
+  Future<void> save(ReceivedAttachment file) async {
+    if (saving != null) return;
+    setState(() {
+      saving = file.id;
+      fileStatus = null;
+      fileError = false;
+    });
+    try {
+      final repository = workspace.repository;
+      if (repository is! AttachmentRepository) throw StateError('Unavailable');
+      final bytes = await (repository as AttachmentRepository).attachment(
+        id,
+        file,
+      );
+      if (!mounted) return;
+      final saved = await const AttachmentSaver().save(file, bytes);
+      if (mounted) {
+        setState(
+          () => fileStatus = saved ? '${file.name} saved.' : 'Save cancelled.',
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          fileError = true;
+          fileStatus =
+              'Could not save ${file.name}. Retry Save, or reopen this message if its contents changed.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => saving = null);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: workspace,
@@ -44,6 +110,11 @@ class Reader extends StatelessWidget {
         appBar: AppBar(
           title: const Text('Message'),
           actions: [
+            IconButton(
+              tooltip: 'Refresh mail',
+              onPressed: () => workspace.refresh(),
+              icon: const Icon(Icons.refresh),
+            ),
             IconButton(
               tooltip: 'Archive',
               onPressed: () {
@@ -160,21 +231,75 @@ class Reader extends StatelessWidget {
                         ),
                       ],
                     ),
+                  if (mail.fileError case final String error) ...[
+                    const SizedBox(height: 16),
+                    Semantics(
+                      liveRegion: true,
+                      child: Text(error, style: TextStyle(color: scheme.error)),
+                    ),
+                    TextButton.icon(
+                      onPressed: workspace.loadingBody(id)
+                          ? null
+                          : () => workspace.loadBody(id, force: true),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Reload attachments'),
+                    ),
+                  ],
                   if (mail.attachments.isNotEmpty) ...[
                     const SizedBox(height: 24),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
-                      children: mail.attachments
-                          .map(
-                            (a) => Chip(
-                              avatar: const Icon(Icons.attach_file, size: 16),
-                              label: Text(a),
-                            ),
-                          )
-                          .toList(),
+                      children: mail.files.isNotEmpty
+                          ? mail.files
+                                .map(
+                                  (file) => OutlinedButton.icon(
+                                    onPressed: saving == null
+                                        ? () => save(file)
+                                        : null,
+                                    icon: saving == file.id
+                                        ? const SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : const Icon(Icons.save_alt, size: 18),
+                                    label: Text(
+                                      'Save ${file.name} (${file.size} bytes)',
+                                    ),
+                                  ),
+                                )
+                                .toList()
+                          : mail.attachments
+                                .map(
+                                  (a) => Chip(
+                                    avatar: const Icon(
+                                      Icons.attach_file,
+                                      size: 16,
+                                    ),
+                                    label: Text(a),
+                                  ),
+                                )
+                                .toList(),
                     ),
                   ],
+                  if (fileStatus != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          fileStatus!,
+                          style: TextStyle(
+                            color: fileError
+                                ? scheme.error
+                                : scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ),
                   const SizedBox(height: 28),
                   Wrap(
                     spacing: 12,

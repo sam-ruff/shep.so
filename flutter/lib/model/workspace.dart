@@ -110,14 +110,30 @@ class Workspace extends ChangeNotifier {
   Map<String, Set<String>> _pageFolders = {};
   final Map<String, String> _aliases = {};
   String _canonical(String id) => _aliases[id] ?? id;
+  Mail? _reader;
+  void retainReader(String id) {
+    _reader = mail(id);
+    if (_reader case final Mail current) {
+      _confirmed.putIfAbsent(current.id, () => current);
+    }
+  }
+
+  void releaseReader(String id) {
+    if (_reader?.id == _canonical(id)) _reader = null;
+  }
+
   Mail? mail(String id) =>
-      _mail.where((m) => m.id == _canonical(id)).firstOrNull;
+      _mail.where((m) => m.id == _canonical(id)).firstOrNull ??
+      (_reader?.id == _canonical(id) ? _reader : null);
   bool loadingBody(String id) =>
       loadingBodies.contains(id) || loadingBodies.contains(_canonical(id));
   String? bodyError(String id) => bodyErrors[id] ?? bodyErrors[_canonical(id)];
 
   void _acceptAliases(Map<String, String> aliases) {
     _aliases.addAll(aliases);
+    if (_reader case final Mail current) {
+      _reader = current.patch({'id': _canonical(current.id)});
+    }
     for (final entry in aliases.entries) {
       final previous = _bodies.remove(entry.key);
       if (previous != null) _bodies.putIfAbsent(entry.value, () => previous);
@@ -215,9 +231,13 @@ class Workspace extends ChangeNotifier {
           )
           .toList();
       _mail = append ? [..._mail, ...rows] : rows;
+      if (_reader case final Mail current) {
+        _reader = _mail.where((m) => m.id == current.id).firstOrNull ?? current;
+      }
       _confirmed.removeWhere(
         (id, _) =>
             id != _undoId &&
+            id != _reader?.id &&
             !_mail.any((m) => m.id == id) &&
             !_queues.containsKey(id),
       );
@@ -225,7 +245,8 @@ class Workspace extends ChangeNotifier {
         (_, target) =>
             !_mail.any((m) => m.id == target) &&
             !_bodies.containsKey(target) &&
-            target != _undoId,
+            target != _undoId &&
+            target != _reader?.id,
       );
       total = page.total;
       _unread = page.unread;
@@ -242,12 +263,12 @@ class Workspace extends ChangeNotifier {
     }
   }
 
-  Future<void> loadBody(String id) async {
+  Future<void> loadBody(String id, {bool force = false}) async {
     id = _canonical(id);
     final requestedId = id;
     final native = accountRepository;
     if (native == null ||
-        mail(id)?.bodyLoaded != false ||
+        (!force && mail(id)?.bodyLoaded != false) ||
         !loadingBodies.add(id)) {
       return;
     }
@@ -261,6 +282,7 @@ class Workspace extends ChangeNotifier {
       if (mail(id) != null) {
         _bodies.remove(id);
         _bodies[id] = detail;
+        if (_reader?.id == id) _reader = _reader!.withDetail(detail);
         while (_bodies.length > 8 ||
             _bodies.values.fold<int>(0, (sum, m) => sum + m.body.length * 2) >
                 32 * 1024 * 1024) {
@@ -287,6 +309,7 @@ class Workspace extends ChangeNotifier {
   }
 
   void _patchMail(String id, Map<String, Object> fields) {
+    if (_reader?.id == id) _reader = _reader!.patch(fields);
     _mail = _mail.map((m) {
       if (m.id != id) return m;
       final changed = m.patch(fields);

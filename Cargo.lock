@@ -4377,6 +4377,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "shep-mail-content"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "mailparse",
+ "serde",
+ "serde_json",
+ "sha2",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "shep-mail-core"
 version = "0.1.0"
 dependencies = [
@@ -4394,6 +4407,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shep-mail-content",
  "tokio",
  "tokio-native-tls",
  "tracing",

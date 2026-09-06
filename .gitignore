@@ -23,3 +23,5 @@ __pycache__/
 /backend/target/
 /backend/.env*
 /backend/deploy/beta.env
+
+/web/src/wasm/

@@ -65,6 +65,8 @@ jobs:
       - name: Browser, website and parity checks
         run: |
           python3 scripts/clients/check_parity.py
+          rustup target add wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.128 --locked --root artifacts/wasm-tools
           npm --prefix web ci
           npm --prefix web run build
           npm --prefix web test

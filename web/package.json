@@ -8,11 +8,16 @@
     "build": "tsc --noEmit && vite build",
     "build:preview": "tsc --noEmit && vite build --mode preview",
     "test": "vitest run",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "prebuild": "node ../scripts/clients/build_mail_content.mjs",
+    "pretest": "node ../scripts/clients/build_mail_content.mjs",
+    "predev": "node ../scripts/clients/build_mail_content.mjs",
+    "prebuild:preview": "node ../scripts/clients/build_mail_content.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.63.0",
+    "@types/node": "24.13.3",
     "prettier": "3.8.2",
     "typescript": "5.9.3",
     "vite": "7.3.6",

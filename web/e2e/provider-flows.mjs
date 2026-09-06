@@ -3,6 +3,7 @@ import { expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import assert from "node:assert/strict";
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 export async function providerFlows(page, context, origin, output, session) {
   await page.getByRole("button", { name: "Preferences", exact: true }).click();
   await page
@@ -47,6 +48,82 @@ export async function providerFlows(page, context, origin, output, session) {
   await expect(page.getByText("Connected in this tab")).toBeVisible();
   await page.getByRole("button", { name: "Mail", exact: true }).click();
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  // A failed worker module request is visible and retryable. Mail bytes stay
+  // in IndexedDB; cached attachment downloads then work with networking disabled.
+  const wasmRoute = /\/assets\/shep_mail_content_bg[^/]*\.wasm$/;
+  const failWasm = (route) => route.abort("failed");
+  await context.route(wasmRoute, failWasm);
+  await page
+    .locator(".mail-row")
+    .getByRole("button", { name: "Incoming files fixture", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Could not read this cached attachment",
+  );
+  await context.unroute(wasmRoute, failWasm);
+  await page
+    .getByRole("button", { name: "Reload attachments", exact: true })
+    .click();
+  const fileReader = page.getByRole("region", { name: "Message reader" });
+  await expect(
+    fileReader.getByRole("button", { name: "Save résumé.txt" }),
+  ).toBeVisible();
+  await context.setOffline(true);
+  try {
+    for (const [index, bytes] of [
+      [0, [0, 255, 1, 13, 10]],
+      [1, [0, 1, 2]],
+    ]) {
+      const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        fileReader
+          .getByRole("button", { name: "Save binary.bin" })
+          .nth(index)
+          .click(),
+      ]);
+      assert.equal(download.suggestedFilename(), "binary.bin");
+      assert.deepEqual([...(await readFile(await download.path()))], bytes);
+    }
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      fileReader.getByRole("button", { name: "Save résumé.txt" }).click(),
+    ]);
+    assert.equal(download.suggestedFilename(), "résumé.txt");
+    assert.equal(
+      (await readFile(await download.path())).toString("utf8"),
+      "Café",
+    );
+    await page.screenshot({
+      path: path.join(output, "incoming-attachments-offline.png"),
+    });
+  } finally {
+    await context.setOffline(false);
+  }
+  for (const [theme, width, height] of [
+    ["light", 1440, 920],
+    ["dark", 900, 640],
+  ]) {
+    await page
+      .getByRole("button", { name: "Preferences", exact: true })
+      .click();
+    await page.getByLabel("Theme", { exact: true }).selectOption(theme);
+    await page.getByRole("button", { name: "Mail", exact: true }).click();
+    await page.setViewportSize({ width, height });
+    await expect(
+      fileReader.getByRole("button", { name: "Save résumé.txt" }),
+    ).toBeVisible();
+    const axe = await new AxeBuilder({ page })
+      .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+      .analyze();
+    assert.deepEqual(axe.violations, []);
+    await page.screenshot({
+      path: path.join(output, `incoming-attachments-${theme}-${width}.png`),
+    });
+  }
+  await page.getByRole("button", { name: "Preferences", exact: true }).click();
+  await page.getByLabel("Theme", { exact: true }).selectOption("light");
+  await page.getByRole("button", { name: "Mail", exact: true }).click();
+  await page.setViewportSize({ width: 1440, height: 920 });
   const row = page
     .locator(".mail-row")
     .filter({ hasText: "The beta transport fixture" });
@@ -245,7 +322,7 @@ export async function providerFlows(page, context, origin, output, session) {
   await dialog.getByRole("button", { name: "Save draft", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await page.reload();
-  await expect(page.locator(".mail-row")).toHaveCount(1);
+  await expect(page.locator(".mail-row")).toHaveCount(2);
   await expect(
     page.locator(".mail-row").getByRole("button", {
       name: "Unflag The beta transport fixture",
@@ -462,14 +539,12 @@ export async function providerFlows(page, context, origin, output, session) {
   await reopened.reload();
   await reopened.getByRole("button", { name: "Outbox", exact: true }).click();
   const reopenedDialog = reopened.getByRole("dialog");
-  const recovered = reopenedDialog
-    .locator(".settings-card")
-    .filter({
-      has: reopened.getByRole("heading", {
-        name: "Lost response fixture",
-        exact: true,
-      }),
-    });
+  const recovered = reopenedDialog.locator(".settings-card").filter({
+    has: reopened.getByRole("heading", {
+      name: "Lost response fixture",
+      exact: true,
+    }),
+  });
   await recovered
     .getByRole("button", { name: "Check server Sent", exact: true })
     .click();
@@ -916,6 +991,9 @@ export async function providerFlows(page, context, origin, output, session) {
     "account-probe-failure-retry",
     "account-layout-axe-two-sizes",
     "streamed-mail-cache",
+    "cached-attachment-worker-failure-retry",
+    "offline-exact-binary-duplicate-and-encoded-attachments",
+    "incoming-files-light-dark-compact-axe",
     "flag-ack-reload",
     "imap-queued-undo",
     "imap-undo-after-refresh",

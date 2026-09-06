@@ -46,6 +46,47 @@ void main() {
     );
   });
   test(
+    'incoming attachment metadata and bytes need no credential access',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'shep-incoming-host-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final path = '${directory.path}/mail.sqlite';
+      final seeded = await Process.run('python3', [
+        '../scripts/clients/android_incoming_fixture.py',
+        '--prepare',
+        path,
+      ]);
+      expect(seeded.exitCode, 0, reason: '${seeded.stderr}');
+      final credentials = FixtureCredentials()..unavailable = true;
+      final repository = await NativeRepository.open(
+        path,
+        credentials: credentials,
+      );
+      await repository.initialize();
+      final detail = await repository.detail('fixture:INBOX:files');
+      expect(detail.files.map((f) => f.name), [
+        'binary.bin',
+        'résumé.txt',
+        'binary.bin',
+      ]);
+      expect(await repository.attachment(detail.id, detail.files[0]), [
+        0,
+        255,
+        1,
+        13,
+        10,
+      ]);
+      expect(await repository.attachment(detail.id, detail.files[2]), [
+        0,
+        1,
+        2,
+      ]);
+      expect(credentials.reads, 0);
+    },
+  );
+  test(
     'IMAP local Sent actions never request credentials and persist',
     () async {
       final directory = await Directory.systemTemp.createTemp(
