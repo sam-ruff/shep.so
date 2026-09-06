@@ -193,6 +193,47 @@ class NativeFlows(unittest.TestCase):
                        click(450, 355), type_text("Compact composer"), click(450, 400), type_text("Room to write."),
                        shot("compose-compact-recipients"), click(720, 548), check("dialog", None), check("draft_count", 1))
 
+    def test_conversation_reader_keeps_messages_separate(self):
+        self.mcp.call("desktop.start", conversation_mail=True)
+        self.mcp.batch(check("selected", "Re: Launch schedule"), check("conversation_total", 3),
+                       check("loaded_message_id", "preview-work:INBOX:launch-2"), wait(150), shot("conversation-overview"),
+                       click(800, 344), check("loaded_message_id", "preview-work:Sent:launch-1"),
+                       check("selected_id", "preview-work:INBOX:launch-2"), check("attachment_count", 1), shot("conversation-sent-message"),
+                       key("r"), check("dialog", "Compose"), check("fields.to", "maya@example.com"),
+                       check("draft_in_reply_to", "<launch-1@example.com>"), shot("conversation-reply-target"),
+                       key("Escape"), check("dialog", None), click(1366, 343),
+                       check("conversation_rows.1.starred", True), check("starred", True),
+                       check("loaded_message_id", "preview-work:Sent:launch-1"), shot("conversation-flagged-message"),
+                       key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
+                       type_text("Projects"), key("Return"), check("dialog", None),
+                       check("conversation_rows.1.folder", "Projects"), check("loaded_message_id", "preview-work:INBOX:launch-2"),
+                       click(1322, 429), check("conversation_collapsed", True), shot("conversation-collapsed"),
+                       click(800, 430), check("conversation_collapsed", False),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(286, 809), check("group_conversations", False),
+                       key("ctrl+1"), check("tab", "Mail"), check("loaded_message_id", "preview-work:INBOX:launch-2"), shot("individual-message-reading"),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(286, 809), check("group_conversations", True),
+                       click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
+                       check("conversation_total", 3), shot("conversation-dark"),
+                       double_click(400, 244), check("full_reader", True), shot("conversation-full-reader"),
+                       key("Escape"), check("full_reader", False))
+
+    def test_conversation_paging(self):
+        self.mcp.call("desktop.start", conversation_mail=True)
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("Long project review"),
+                       check("total", 1), key("Escape"), check("conversation_total", 25),
+                       check("conversation_offset", 20), wait(150), shot("conversation-latest-page"),
+                       click(1288, 194), check("conversation_offset", 0), check("loaded_message_id", "preview-work:Projects:long-0"),
+                       check("conversation_rows.19.remote_id", "long-19"), shot("conversation-first-page"),
+                       click(1377, 194), check("conversation_offset", 20), check("loaded_message_id", "preview-work:Projects:long-20"),
+                       check("conversation_rows.4.remote_id", "long-24"), shot("conversation-later-page"),
+                       click(1378, 34), check("busy", "sync", "contains"),
+                       check("loaded_message_id", "preview-work:Projects:long-20"), shot("conversation-during-sync"))
+
+    def test_conversation_compact_layout(self):
+        self.mcp.call("desktop.start", width=900, height=640, conversation_mail=True)
+        self.mcp.batch(check("conversation_total", 3), check("loaded_message_id", "preview-work:INBOX:launch-2"),
+                       wait(150), shot("conversation-compact"))
+
     def test_calendar_event_creation(self):
         self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80), double_click(700, 474),
                        check("dialog", "Event"), check("fields.all_day", "true"), shot("new-calendar-event"),

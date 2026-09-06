@@ -46,7 +46,7 @@ impl CommandSender {
     ) -> Result<(), Box<mpsc::error::TrySendError<Command>>> {
         let channel = match &command {
             Command::Query(_, _, true) | Command::Detail { prefetch: true, .. } => &self.prefetch,
-            Command::Query(..) | Command::Detail { .. } => &self.reads,
+            Command::Query(..) | Command::Detail { .. } | Command::Conversation(..) => &self.reads,
             Command::SavePreferences(..)
             | Command::SaveDraft(_)
             | Command::AutoSaveDraft(_)
@@ -135,7 +135,7 @@ impl Engine {
                         // merely because the whole archive takes over ten minutes.
                         // Restore also must observe its blocking SQLite commit;
                         // dropping its future cannot cancel that transaction.
-                        let result = if matches!(&command, Command::Backup(..) | Command::AutomaticBackup(_) | Command::Restore(..) | Command::Send(_)) {
+                        let result = if matches!(&command, Command::Backup(..) | Command::AutomaticBackup(_) | Command::Restore(..) | Command::Send(_) | Command::IndexConversations) {
                             engine.execute(command, output).await
                         } else {
                             tokio::time::timeout(Duration::from_secs(600), engine.execute(command, output)).await
@@ -227,6 +227,9 @@ mod tests {
             .try_send(Command::Query(42, MailQuery::default(), false))
             .unwrap();
         sender
+            .try_send(Command::Conversation(43, id.clone(), None, None))
+            .unwrap();
+        sender
             .try_send(Command::Detail {
                 revision: 0,
                 id,
@@ -270,12 +273,16 @@ mod tests {
             }))
             .unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
-            let (mut page, mut detail, mut saved) = (false, false, false);
-            while !(page && detail && saved) {
+            let (mut page, mut detail, mut saved, mut conversation) = (false, false, false, false);
+            while !(page && detail && saved && conversation) {
                 match events.next().await.expect("Dispatcher stopped") {
                     Event::Page(42, result, false) => {
                         assert_eq!(result.total, 1);
                         page = true;
+                    }
+                    Event::Conversation(43, _, result) => {
+                        assert_eq!(result.unwrap().total, 1);
+                        conversation = true;
                     }
                     Event::Detail {
                         revision: 0,

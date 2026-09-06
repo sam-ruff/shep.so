@@ -26,6 +26,8 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone)]
 pub enum Command {
     Query(u64, MailQuery, bool),
+    Conversation(u64, String, Option<String>, Option<usize>),
+    IndexConversations,
     LoadImages(Vec<String>),
     Detail {
         revision: u64,
@@ -88,6 +90,12 @@ pub enum Event {
     Workspace(Arc<Workspace>),
     PreferencesSaved(u64, Arc<crate::store::PreferenceSnapshot>),
     Page(u64, Arc<MailPage>, bool),
+    Conversation(
+        u64,
+        String,
+        Result<Arc<crate::store::ConversationPage>, String>,
+    ),
+    ConversationsIndexed(Result<(), String>),
     Detail {
         revision: u64,
         id: String,
@@ -193,6 +201,7 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             // workspace immediately and check Google from the provider worker.
             let _ = tx.try_send(Command::CheckGoogleConnection);
         }
+        let _ = tx.try_send(Command::IndexConversations);
         let _ = output
             .send(Event::Ready(tx, Arc::new(workspace), false))
             .await;
@@ -359,6 +368,28 @@ impl Engine {
                         prefetch,
                     ))
                     .await?;
+            }
+            Command::Conversation(generation, anchor, focus, offset) => {
+                let result = self
+                    .store
+                    .conversation_around(anchor.clone(), focus, offset)
+                    .await
+                    .map(Arc::new)
+                    .map_err(|error| format!("{error:#}"));
+                output
+                    .send(Event::Conversation(generation, anchor, result))
+                    .await?;
+            }
+            Command::IndexConversations => {
+                let result = async {
+                    while self.store.index_conversation_batch().await? {
+                        tokio::task::yield_now().await;
+                    }
+                    Ok::<_, anyhow::Error>(())
+                }
+                .await
+                .map_err(|error| format!("{error:#}"));
+                output.send(Event::ConversationsIndexed(result)).await?;
             }
             Command::Detail {
                 revision,
