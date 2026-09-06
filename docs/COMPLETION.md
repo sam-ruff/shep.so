@@ -8,7 +8,7 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 | --- | --- | --- |
 | Native mouse-friendly UI, remappable shortcuts | iced mail/calendar/preferences, native MCP keyboard/mouse flows, saved remapping | Broader accessibility and large-font layout review |
 | Multiple saved IMAP/POP3 accounts, SMTP wizard | SQLite settings, OS secrets, local IMAP transcript tests; authorized Fastmail authentication and Inbox download | POP3/SMTP wire contracts beyond fixtures; account lifecycle |
-| Responsive inbox, preloading, resize, filters, fuzzy move | Bounded channels, background store, body/page caches, virtual inbox, native functional flows | Reserve cached reads against saturation by network jobs; final performance rerun |
+| Responsive inbox, preloading, resize, filters, fuzzy move | Independent bounded foreground/prefetch/persistence/provider workers, background store, caches, virtual inbox, native functional flows; saturated-provider correctness test | Review stale preferences during rapid changes; final performance rerun |
 | Compact inbox header | Single row for title/count/sync; native layout gallery at 1440×920 and 900×640 | Installed/running windows need to use the latest build |
 | Optional Google login and Drive backups | Browser OAuth/PKCE, app-data scope, encrypted rolling backups; local retention/encryption tests | HTTP contracts for OAuth refresh/Drive and genuine Google authorization |
 | Google Calendar and CalDAV | Background sync/create/edit/delete, conditional writes, native all-day editor | CalDAV discovery, Google read-only calendars, connection lifecycle; live server evidence |
@@ -20,7 +20,7 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 ## Remaining implementation audit
 
-1. Protect cached queries and body loads from being queued behind the network-job concurrency limit. Test navigation with all provider slots occupied.
+1. Cached queries, body loads and ordered saves now have independent workers, verified with all provider slots and their queue occupied. Startup also defers the Google keychain check until the cached workspace is ready. Next review stale preference snapshots during rapid UI changes and long-running backups; a late workspace update must not undo newer local settings. Check stale detail/prefetch results across flag and move mutations as well.
 2. Complete account/calendar lifecycle and make connection errors recoverable without leaving stale sources or credentials. Respect Google calendar access roles and add CalDAV discovery/connection testing.
 3. Complete common sending/reading workflows: outgoing attachments, CC/BCC, reply-all, server Sent handling, and grouping separate messages into conversations. Preserve drafts across failures.
 4. Exercise Google OAuth refresh, Drive upload/list/restore/retention, POP3 and SMTP through deterministic protocol contracts. Handle pagination loops, partial failures and ambiguous writes explicitly.

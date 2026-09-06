@@ -1,3 +1,6 @@
+mod dispatch;
+pub use dispatch::CommandSender;
+
 use crate::{
     backup::{self, BackupCopy, BackupProvider, Snapshot},
     model::*,
@@ -31,6 +34,7 @@ pub enum Command {
     SaveBeforeClose(Draft),
     Send(Draft),
     GoogleLogin(Preferences),
+    CheckGoogleConnection,
     SaveCalendar(CalendarSource, SecretString),
     SyncCalendar,
     SaveEvent(CalendarEvent),
@@ -40,6 +44,11 @@ pub enum Command {
     Restore(String, SecretString),
     ExportAttachment(String, usize, String),
     ExportMessage(String, String),
+    #[cfg(test)]
+    HoldBackend {
+        started: Arc<tokio::sync::Barrier>,
+        release: Arc<tokio::sync::Notify>,
+    },
 }
 impl Command {
     fn key(&self) -> Option<String> {
@@ -60,7 +69,7 @@ impl Command {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
-    Ready(mpsc::Sender<Command>, Arc<Workspace>, bool),
+    Ready(CommandSender, Arc<Workspace>, bool),
     RemoteImage(String, Result<Vec<u8>, String>),
     Workspace(Arc<Workspace>),
     Page(u64, Arc<MailPage>, bool),
@@ -94,7 +103,7 @@ type Output = futures::channel::mpsc::Sender<Event>;
 pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
     let demo = *demo;
     iced::stream::channel(CHANNEL_CAPACITY, move |mut output: Output| async move {
-        let (tx, mut input) = mpsc::channel(CHANNEL_CAPACITY);
+        let (tx, input) = CommandSender::channel();
         let store = tokio::task::spawn_blocking(move || {
             if demo {
                 Store::memory()
@@ -148,62 +157,18 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
                 return;
             }
         };
-        let connected = !demo
-            && !workspace.preferences.google_client_id.is_empty()
-            && engine.google.connected().await;
+        if !demo && !workspace.preferences.google_client_id.is_empty() {
+            // Credential stores may wait for an unlock dialog. Show the cached
+            // workspace immediately and check Google from the provider worker.
+            let _ = tx.try_send(Command::CheckGoogleConnection);
+        }
         let _ = output
-            .send(Event::Ready(tx, Arc::new(workspace), connected))
+            .send(Event::Ready(tx, Arc::new(workspace), false))
             .await;
         if let Ok(events) = engine.store.events().await {
             let _ = output.send(Event::Calendar(Arc::new(events))).await;
         }
-        let mut jobs = tokio::task::JoinSet::new();
-        let mut busy = HashSet::new();
-        let mut timer = tokio::time::interval(Duration::from_secs(60));
-        timer.tick().await;
-        let mut last_sync = Instant::now();
-        loop {
-            tokio::select! {
-                biased;
-                result=jobs.join_next(),if !jobs.is_empty()=>{
-                    if let Some(Ok((key,result)))=result{
-                        if let Some(key)=key{busy.remove(&key);let _=output.send(Event::Busy(key,false)).await;}
-                        if let Err(e)=result{let _=output.send(Event::Error(format!("{e:#}"))).await;}
-                    }
-                }
-                command=input.recv(),if jobs.len()<8=>{
-                    let Some(command)=command else{break;};
-                    if matches!(command, Command::SavePreferences(_) | Command::SaveDraft(_) | Command::AutoSaveDraft(_) | Command::SaveBeforeClose(_)) {
-                        if let Err(error)=engine.execute(command, output.clone()).await {
-                            let _=output.send(Event::Error(format!("{error:#}"))).await;
-                        }
-                        continue;
-                    }
-                    let key=command.key();
-                    if key.as_ref().is_some_and(|k|busy.contains(k)){continue;}
-                    if let Some(key)=&key{busy.insert(key.clone());let _=output.send(Event::Busy(key.clone(),true)).await;}
-                    let engine=engine.clone();let output=output.clone();
-                    jobs.spawn(async move {let result=tokio::time::timeout(Duration::from_secs(600),engine.execute(command,output)).await.context("The operation timed out. Try again.").and_then(|r|r);(key,result)});
-                }
-                _=timer.tick(),if !demo=>{
-                    if let Ok(prefs)=engine.store.get::<Preferences>("preferences").await{
-                        if last_sync.elapsed()>=Duration::from_secs(prefs.sync_minutes*60)&&!busy.contains("sync"){
-                            last_sync=Instant::now();busy.insert("sync".into());let _=output.send(Event::Busy("sync".into(),true)).await;
-                            let worker=engine.clone();let events=output.clone();jobs.spawn(async move{(Some("sync".into()),worker.execute(Command::Sync,events).await)});
-                            if !busy.contains("calendar") && jobs.len()<7 {
-                                busy.insert("calendar".into());
-                                let worker=engine.clone();let events=output.clone();jobs.spawn(async move{(Some("calendar".into()),worker.execute(Command::SyncCalendar,events).await)});
-                            }
-                        }
-                        if prefs.auto_backup&&chrono::Utc::now().timestamp()-prefs.last_backup.unwrap_or(0)>=(prefs.backup_hours*3600)as i64&&!busy.contains("backup")
-                            && let Ok(secret)=providers::read_secret("backup-passphrase").await{
-                                busy.insert("backup".into());let _=output.send(Event::Busy("backup".into(),true)).await;
-                                let engine=engine.clone();let output=output.clone();jobs.spawn(async move{(Some("backup".into()),engine.execute(Command::Backup(secret),output).await)});
-                            }
-                    }
-                }
-            }
-        }
+        engine.run(input, output).await;
     })
 }
 
@@ -324,6 +289,16 @@ impl Engine {
         let closing = matches!(&command, Command::SaveBeforeClose(_));
         let deleting_event = matches!(&command, Command::DeleteEvent(_));
         match command {
+            Command::CheckGoogleConnection => {
+                if !self.demo && self.google.connected().await {
+                    output.send(Event::GoogleConnected).await?;
+                }
+            }
+            #[cfg(test)]
+            Command::HoldBackend { started, release } => {
+                started.wait().await;
+                release.notified().await;
+            }
             Command::LoadImages(urls) => {
                 let results = futures::stream::iter(urls.into_iter().take(8))
                     .map(|url| async move {
@@ -594,9 +569,7 @@ impl Engine {
                 self.store.save_draft(draft).await?;
                 self.workspace(&mut output).await?;
                 if explicit_draft {
-                    output
-                        .send(Event::Notice("Draft saved on this device.".into()))
-                        .await?;
+                    output.send(Event::Notice("Draft saved.".into())).await?;
                 }
                 if closing {
                     output.send(Event::ReadyToClose).await?;

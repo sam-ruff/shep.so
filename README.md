@@ -111,6 +111,8 @@ Conventional Commits drive semantic-release on `main`. Pre-commit runs fmt, Clip
 
 `src/ui/` contains iced presentation and bounded prefetch caches. `engine.rs` dispatches bounded channels to background jobs; `store.rs` keeps SQLite work off the UI thread. Mail sync, flags and moves serialize per account to avoid racing stale server snapshots.
 
+Cached search and message loads have reserved workers independent of provider operations. Speculative prefetch has its own smaller queue, and settings/drafts save in order on a separate worker. The dispatcher is tested with every provider worker blocked and its command queue full while local reads and saves continue.
+
 Implement `providers::MailProvider`, `providers::CalendarProvider` or `backup::BackupProvider` for a new provider, register its factory/configuration, and add deterministic contract tests. Wire-protocol code belongs in the provider; the UI only sends commands and handles events. Keep channel capacity, concurrency limits, cancellation, TLS verification and retention invariants intact.
 
 The approved White Swiss Shepherd logo and dark variant are in `assets/`; [assets/README.md](assets/README.md) records image-generation prompts and derivations. Font licensing is included alongside the embedded fonts. MIT license.
