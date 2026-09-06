@@ -147,6 +147,9 @@ impl App {
             body = body.push(
                 muted("Server messages, server calendars and saved backups are kept.").size(12),
             );
+            if preview.outgoing > 0 {
+                body=body.push(text(format!("{} outgoing recovery records will also be removed. Review Outbox first if delivery is uncertain.",preview.outgoing)).size(12));
+            }
             if preview.transfers > 0 {
                 body = body.push(container(column![
                     text(format!("{} unfinished {} this account. Copies may already exist at the destination.",preview.transfers, if preview.transfers == 1 { "move involves" } else { "moves involve" })).size(12),
@@ -226,6 +229,7 @@ mod tests {
             drafts: 0,
             events: 1,
             transfers: 0,
+            outgoing: 0,
             fingerprint: "fixture".into(),
         }
     }

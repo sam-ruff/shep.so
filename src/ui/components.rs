@@ -375,6 +375,7 @@ fn icon_color<'a>(name: &str, size: f32, bright: bool) -> Element<'a, Message> {
         ("plus",r#"<path d="M12 5v14M5 12h14"/>"#),
         ("search",r#"<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>"#),
         ("down",r#"<path d="m6 9 6 6 6-6"/>"#),
+        ("chevron-down",r#"<path d="m5 9 7 7 7-7"/>"#),
         ("chevron",r#"<path d="m9 5 7 7-7 7"/>"#),
         ("left",r#"<path d="m15 5-7 7 7 7"/>"#),
         ("down",r#"<path d="m6 9 6 6 6-6"/>"#),

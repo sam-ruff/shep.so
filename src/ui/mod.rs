@@ -4,6 +4,7 @@ mod calendar_setup;
 mod components;
 mod composing;
 mod conversations;
+mod outgoing;
 mod preference_sync;
 mod reading;
 #[cfg(test)]
@@ -50,6 +51,7 @@ pub enum SettingsTab {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
     Removal,
+    Outbox,
     Account,
     Calendar,
     Move,
@@ -78,6 +80,7 @@ pub enum Message {
     Query(String),
     SearchReady(u64),
     Folder(String),
+    SentFolder,
     Account(Option<String>),
     Filter(MailFilter),
     Sort(MailSort),
@@ -112,6 +115,11 @@ pub enum Message {
     SaveCalendar,
     ReviewRemoval(crate::store::ConnectionRef),
     ConfirmRemoval,
+    OpenOutbox,
+    OutboxPage(usize),
+    SelectOutgoing(String),
+    ConfirmOutgoing(bool),
+    ResolveOutgoing(crate::outgoing::RecoveryAction),
     CancelPendingTransfers(bool),
     CleanupCredentials,
     RestoreGoogleCalendars,
@@ -230,6 +238,7 @@ pub struct App {
     editing_event: Option<CalendarEvent>,
     calendar_setup: calendar_setup::CalendarSetup,
     removal: removals::Removal,
+    outbox: outgoing::Outbox,
     editor: text_editor::Content,
     draft_id: String,
     remapping: Option<Action>,
@@ -348,6 +357,7 @@ impl App {
                 editing_event: None,
                 calendar_setup: Default::default(),
                 removal: Default::default(),
+                outbox: Default::default(),
                 editor: text_editor::Content::new(),
                 draft_id: String::new(),
                 remapping: None,
@@ -642,6 +652,11 @@ impl App {
                             self.workspace.removed_google_calendars;
                     }
 
+                    if workspace.outgoing_revision < self.workspace.outgoing_revision {
+                        workspace.outgoing_revision = self.workspace.outgoing_revision;
+                        workspace.outgoing_pending = self.workspace.outgoing_pending;
+                        workspace.outgoing_drafts = self.workspace.outgoing_drafts.clone();
+                    }
                     if workspace.drafts_revision < self.workspace.drafts_revision {
                         workspace.drafts = self.workspace.drafts.clone();
                         workspace.drafts_revision = self.workspace.drafts_revision;
@@ -829,7 +844,23 @@ impl App {
                         Err(error) => self.notice(error, true),
                     }
                 }
-                Event::Sent(id, revision) => {
+                Event::OutgoingPage(request, result) => self.outgoing_page(request, result),
+                Event::OutgoingChanged => {
+                    if self.dialog == Some(Dialog::Outbox) {
+                        self.load_outbox(self.outbox.page.offset);
+                    }
+                }
+                Event::ReviewOutgoing(id, revision) => {
+                    if self.dialog == Some(Dialog::Compose)
+                        && self.draft_id == id
+                        && self.composer.draft.revision == revision
+                    {
+                        self.open_outbox();
+                    } else {
+                        self.notice("An outgoing message needs review in Outbox.", true);
+                    }
+                }
+                Event::SubmissionQueued(id, revision) | Event::Sent(id, revision) => {
                     if self.draft_id == id
                         && self.composer.draft.revision == revision
                         && self.dialog == Some(Dialog::Compose)
@@ -930,6 +961,11 @@ impl App {
                         "Wait for credential cleanup to finish before closing.",
                         true,
                     );
+                } else if self.busy.iter().any(|key| key.starts_with("outgoing:")) {
+                    self.notice(
+                        "Wait for Sent-copy recovery to finish before closing.",
+                        true,
+                    );
                 } else if self.calendar_setup.saving.is_some() {
                     self.notice(
                         "Wait for the calendar connection to finish saving before closing.",
@@ -1026,15 +1062,8 @@ impl App {
             }
             Message::SearchReady(g) if g == self.generation => self.request_page(),
             Message::SearchReady(_) => {}
-            Message::Folder(folder) => {
-                self.tab = Tab::Mail;
-                self.query.folder = folder;
-                self.query.starred_only = false;
-                self.query.offset = 0;
-                self.selected = None;
-                self.detail = None;
-                self.request_page();
-            }
+            Message::Folder(folder) => self.open_mail_folder(folder, false),
+            Message::SentFolder => self.open_mail_folder("Sent".into(), true),
             Message::Account(account) => {
                 self.query.account = account.or_else(|| {
                     if self.preferences.unified_inbox {
@@ -1074,6 +1103,7 @@ impl App {
                 self.query.read_only = false;
                 self.query.attachments_only = false;
                 self.query.folder.clear();
+                self.query.sent_only = false;
                 self.query.offset = 0;
                 self.selected = None;
                 self.detail = None;
@@ -1259,6 +1289,10 @@ impl App {
                 }
             }
             Message::Draft(id) => {
+                if self.workspace.outgoing_drafts.contains(&id) {
+                    self.open_outbox();
+                    return Task::none();
+                }
                 if let Some(draft) = self.workspace.drafts.iter().find(|d| d.id == id).cloned() {
                     self.load_draft(draft);
                 }
@@ -1273,7 +1307,9 @@ impl App {
                 if self.compose_locked() {
                     return Task::none();
                 }
-                if self.dialog == Some(Dialog::Account) && key != "setup_step" {
+                if self.dialog == Some(Dialog::Account)
+                    && !matches!(key, "setup_step" | "sent_copy" | "sent_folder")
+                {
                     self.fields.remove("test_incoming");
                     self.fields.remove("test_smtp");
                     if key == "incoming_security" {
@@ -1403,11 +1439,22 @@ impl App {
                         ("smtp_port", a.smtp_port.to_string()),
                         ("smtp_username", a.smtp_username),
                         ("smtp_separate", a.smtp_separate_password.to_string()),
+                        ("sent_copy", format!("{:?}", a.sent_copy)),
+                        ("sent_folder", a.sent_folder),
                     ] {
                         self.fields.insert(k, v);
                     }
                 }
             }
+            Message::OpenOutbox => self.open_outbox(),
+            Message::OutboxPage(offset) => self.load_outbox(offset),
+            Message::SelectOutgoing(attempt) => {
+                self.outbox.selected =
+                    (self.outbox.selected.as_ref() != Some(&attempt)).then_some(attempt);
+                self.outbox.confirmed = false;
+            }
+            Message::ConfirmOutgoing(value) => self.outbox.confirmed = value,
+            Message::ResolveOutgoing(action) => self.resolve_outbox(action),
             Message::ReviewRemoval(target) => self.review_removal(target),
             Message::ConfirmRemoval => self.confirm_removal(),
             Message::CancelPendingTransfers(value) => self.removal.cancel_transfers = value,
@@ -1916,6 +1963,16 @@ impl App {
             IncomingAuth::Password
         }
     }
+    fn open_mail_folder(&mut self, folder: String, sent_only: bool) {
+        self.tab = Tab::Mail;
+        self.query.folder = folder;
+        self.query.sent_only = sent_only;
+        self.query.starred_only = false;
+        self.query.offset = 0;
+        self.selected = None;
+        self.detail = None;
+        self.request_page();
+    }
     fn smtp_auth(&self) -> SmtpAuth {
         match self.field("smtp_auth") {
             "Plain" => SmtpAuth::Plain,
@@ -1953,6 +2010,12 @@ impl App {
             smtp_auth: self.smtp_auth(),
             smtp_username: self.field("smtp_username").trim().into(),
             smtp_separate_password: self.field("smtp_separate") == "true",
+            sent_copy: match self.field("sent_copy") {
+                "LocalOnly" => SentCopyPolicy::LocalOnly,
+                "ServerManaged" => SentCopyPolicy::ServerManaged,
+                _ => SentCopyPolicy::Automatic,
+            },
+            sent_folder: self.field("sent_folder").trim().into(),
             smtp_port: self
                 .field("smtp_port")
                 .parse()
@@ -2210,6 +2273,11 @@ impl App {
         data["loaded_message_id"] =
             serde_json::json!(self.detail.as_ref().map(|detail| &detail.summary.id));
         data["reader_message_id"] = serde_json::json!(self.reader_id());
+        data["outgoing_pending"] = serde_json::json!(self.workspace.outgoing_pending);
+        data["outgoing_rows"] = serde_json::json!(self.outbox.page.rows);
+        data["outgoing_confirmed"] = serde_json::json!(self.outbox.confirmed);
+        data["outgoing_error"] = serde_json::json!(self.outbox.error);
+        data["outgoing_selected"] = serde_json::json!(self.outbox.selected);
         data["removal"] = serde_json::json!(self.removal.preview);
         data["removal_error"] = serde_json::json!(self.removal.error);
         data["removing"] = serde_json::json!(self.removal.removing.is_some());

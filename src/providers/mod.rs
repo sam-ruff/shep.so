@@ -1,6 +1,7 @@
 pub mod calendar;
 pub mod google;
 pub mod mail;
+pub mod outgoing;
 #[cfg(test)]
 pub(crate) mod test_http;
 

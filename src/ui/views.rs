@@ -1354,6 +1354,7 @@ impl App {
     fn dialog_view(&self, dialog: Dialog) -> Element<'_, Message> {
         let (title, subtitle) = match dialog {
             Dialog::Removal => ("Remove connection?", ""),
+            Dialog::Outbox => ("Outbox", ""),
             Dialog::Account => ("Mail account", ""),
             Dialog::Sender => ("Sender details", ""),
             Dialog::Calendar => (
@@ -1389,6 +1390,7 @@ impl App {
         let mut body = column![header, line()].spacing(20);
         match dialog {
             Dialog::Removal => body = body.push(self.removal_form()),
+            Dialog::Outbox => body = body.push(self.outbox_view()),
             Dialog::Sender => body = body.push(self.sender_dialog()),
             Dialog::Account => body = body.push(self.account_wizard()),
             Dialog::Calendar => body = body.push(self.calendar_connection_form()),

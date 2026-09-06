@@ -42,6 +42,7 @@ fn engine(secrets: Arc<Secrets>) -> Engine {
         calendar_setup_lock: Default::default(),
         connection_lifecycle_lock: Default::default(),
         secret_remover: Arc::new(removals::OsSecretRemover),
+        outbound: Arc::new(providers::outgoing::Servers),
         google_connection_lock: Default::default(),
         passphrases: secrets,
         restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
