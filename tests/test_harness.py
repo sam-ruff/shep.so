@@ -48,14 +48,15 @@ class HarnessTests(unittest.TestCase):
             fixture.write_text("Fixture")
             windows = iter(["123", "", "123", ""])
             desktop.window = "main"
-            clipboard_reads = iter(["previous path", str(fixture)])
+            clipboard_reads = iter(["previous path", str(fixture), str(fixture)])
             desktop.command = Mock(side_effect=lambda *args: next(windows) if args[1] == "search" else next(clipboard_reads) if args[0] == "xclip" else "")
             with patch.object(harness.time, "sleep"), patch.object(harness.subprocess, "Popen") as clipboard:
+                clipboard.return_value.poll.return_value = 0
                 self.assertEqual(desktop.choose_file(str(fixture)), {"selected": str(fixture)})
                 commands = [call.args for call in desktop.command.call_args_list]
                 self.assertIn(("xdotool", "windowfocus", "--sync", "123"), commands)
-                self.assertEqual(commands.count(("xclip", "-selection", "clipboard", "-out")), 2)
-                self.assertLess(max(i for i, command in enumerate(commands) if command[0] == "xclip"), commands.index(("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v")))
+                self.assertEqual(commands.count(("xclip", "-selection", "clipboard", "-out")), 3)
+                self.assertLess(next(i for i, command in enumerate(commands) if command[0] == "xclip"), commands.index(("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v")))
                 self.assertIn(("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v"), commands)
                 clipboard.return_value.stdin.write.assert_called_once_with(str(fixture).encode())
                 desktop.choose_file()
@@ -65,6 +66,64 @@ class HarnessTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 desktop.choose_file(str(ROOT / "Cargo.toml"))
             desktop.command.assert_not_called()
+
+    def test_picker_retries_ignored_input_and_requires_gtk_clipboard_ownership(self):
+        desktop = harness.Desktop()
+        fixture = Path("/isolated/fixture.txt")
+        desktop.command = Mock(return_value=str(fixture))
+        pending, copied = Mock(), Mock()
+        pending.poll.return_value = None
+        copied.poll.return_value = 0
+        tick = [0.0]
+        def advance(seconds):
+            tick[0] += seconds
+        with patch.object(harness.time, "monotonic", side_effect=lambda: tick[0]), \
+             patch.object(harness.time, "sleep", side_effect=advance), \
+             patch.object(harness.subprocess, "Popen", side_effect=[pending, copied]):
+            desktop.enter_picker_path("picker", fixture)
+        pending.terminate.assert_called_once()
+        commands = [call.args for call in desktop.command.call_args_list]
+        self.assertEqual(commands.count(("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+l")), 2)
+        self.assertNotIn(("xdotool", "key", "--clearmodifiers", "--delay", "1", "Return"), commands)
+        desktop.clipboard = None
+
+    def test_picker_never_submits_a_path_that_gtk_did_not_accept(self):
+        desktop = harness.Desktop()
+        fixture = Path("/isolated/fixture.txt")
+        desktop.command = Mock(return_value=str(fixture))
+        owner = Mock()
+        owner.poll.return_value = None
+        tick = [0.0]
+        def advance(seconds):
+            tick[0] += seconds
+        with patch.object(harness.time, "monotonic", side_effect=lambda: tick[0]), \
+             patch.object(harness.time, "sleep", side_effect=advance), \
+             patch.object(harness.subprocess, "Popen", return_value=owner):
+            with self.assertRaisesRegex(RuntimeError, "location field"):
+                desktop.enter_picker_path("picker", fixture)
+        self.assertGreaterEqual(tick[0], 3)
+        desktop.clipboard = None
+
+    def test_picker_confirmation_retries_only_its_window_after_filename_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            desktop = harness.Desktop()
+            desktop.directory = Path(directory)
+            fixture = desktop.directory / "fixture.txt"
+            fixture.write_text("Fixture")
+            desktop.enter_picker_path = Mock()
+            desktop.window = "main"
+            windows = iter(["123"] * 9 + [""])
+            desktop.command = Mock(side_effect=lambda *args: next(windows) if args[1] == "search" else "")
+            tick = [0.0]
+            def advance(seconds):
+                tick[0] += seconds
+            with patch.object(harness.time, "monotonic", side_effect=lambda: tick[0]), \
+                 patch.object(harness.time, "sleep", side_effect=advance):
+                desktop.choose_file(fixture)
+            desktop.enter_picker_path.assert_called_once_with("123", fixture)
+            confirms = [call.args for call in desktop.command.call_args_list if call.args[-1] == "Return"]
+            self.assertEqual(confirms, [("xdotool", "key", "--window", "123", "--clearmodifiers", "--delay", "1", "Return")] * 2)
+            self.assertEqual(desktop.command.call_args.args, ("xdotool", "windowfocus", "--sync", "main"))
 
     def test_mcp_initialize_discovery_and_unknown_tool(self):
         messages = [

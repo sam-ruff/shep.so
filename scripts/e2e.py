@@ -125,6 +125,16 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+a"), check("html_selected_text", "Right report column", "contains"),
                        shot("html-wide-table-selection"))
 
+    def test_html_keyboard_scroll_is_scoped_to_the_focused_reader(self):
+        self.mcp.call("desktop.start", html_mail=True)
+        self.mcp.batch(click(400,558), check("selected", "Long formatted letter"), check("html_ready", True),
+                       wait(100), click(850,440), key("Next"), check("html_scroll", 1, "gte"),
+                       key("Down"), check("selected", "Long formatted letter"), key("End"),
+                       check("html_scroll", 5000, "gte"), wait(100), shot("html-keyboard-bottom"),
+                       key("Home"), check("html_scroll", 0), check("selected", "Long formatted letter"),
+                       click(400,555), key("Up"), check("selected", "Escaped HTML request"),
+                       check("html_ready", True), wait(100), shot("html-inbox-arrows-after-reader-focus"))
+
     def test_search_best_match_beats_newer_mail_and_sort_can_be_overridden(self):
         self.mcp.call("desktop.start", search_mail=True)
         self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("test"),
@@ -244,12 +254,12 @@ class NativeFlows(unittest.TestCase):
                        key("Delete"), check("total",118), check("mail_pending",2),
                        check("action_toast.label","Archived 2 messages"), shot("counted-archive-pending"),
                        click(1390,874), check("action_toast",None),
-                       {**check("mail_pending",0),"timeout_ms":6000}, check("action_toast",None),
+                       {**check("mail_pending",0),"timeout_ms":5000}, check("action_toast",None),
                        key("ctrl+d"), check("total",117), check("mail_pending",1),
                        check("action_toast.label","Deleted 1 message"),
                        key("ctrl+d"), check("total",116), check("mail_pending",2),
                        check("action_toast.label","Deleted 2 messages"), shot("counted-delete-pending"),
-                       {**check("mail_pending",0),"timeout_ms":6000}, check("total",116))
+                       {**check("mail_pending",0),"timeout_ms":5000}, check("total",116))
 
     def test_move_toast_counts_and_failing_actions_remove_their_feedback(self):
         self.mcp.call("desktop.start", mail_actions="slow")
@@ -259,12 +269,12 @@ class NativeFlows(unittest.TestCase):
                            check("action_toast.label",f"Moved {count} message{'s' if count>1 else ''} to Projects"),
                            check("total",120-count))
         self.mcp.batch(check("mail_pending",2), shot("counted-move-pending"),
-                       {**check("mail_pending",0),"timeout_ms":6000})
+                       {**check("mail_pending",0),"timeout_ms":5000})
         self.mcp.call("desktop.start",mail_actions="fail")
         self.mcp.batch(key("BackSpace"), check("action_toast.label","Archived 1 message"),
                        key("ctrl+d"), check("action_toast.label","Deleted 1 message"),
                        check("total",118), check("mail_pending",2), shot("latest-action-before-failure"),
-                       {**check("mail_pending",0),"timeout_ms":6000}, check("total",120),
+                       {**check("mail_pending",0),"timeout_ms":5000}, check("total",120),
                        check("action_toast",None), check("notice","restored","contains"), shot("action-toast-failure"))
 
     def test_compact_dark_action_toast_and_cross_account_slow_failure(self):
@@ -278,13 +288,13 @@ class NativeFlows(unittest.TestCase):
                        click(670,385),type_text("Archive"),key("Return"),check("dialog",None),
                        check("total",119),check("mail_pending",1),check("action_toast.label","Archived 1 message"),
                        shot("cross-account-toast-pending"),
-                       {**check("mail_pending",0),"timeout_ms":6000},check("total",120),check("action_toast",None),
+                       {**check("mail_pending",0),"timeout_ms":5000},check("total",120),check("action_toast",None),
                        check("notice","Fixture server rejected","contains"),
                        click(1390,900),
                        {"type":"resize","width":900,"height":640},wait(150),
                        key("ctrl+d"),check("total",119),check("action_toast.label","Deleted 1 message"),
                        shot("dark-compact-toast"),
-                       {**check("mail_pending",0),"timeout_ms":6000},check("action_toast",None))
+                       {**check("mail_pending",0),"timeout_ms":5000},check("action_toast",None))
 
     def test_grouped_archive_undo_is_immediate_while_both_moves_are_pending(self):
         self.mcp.call("desktop.start", mail_actions="slow")
