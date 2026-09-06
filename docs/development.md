@@ -21,7 +21,7 @@ python -m pip install -r requirements-docs.txt
 zensical serve
 ```
 
-Open the local URL printed by Zensical. Run `zensical build --clean` to check the production build.
+Open the local URL printed by Zensical. Run `zensical build --clean --strict` to check the production build.
 
 Keep user pages short and task focused. Put protocol details, invariants and test evidence in [agent docs](agents/index.md). The README is a brief introduction, not the manual.
 

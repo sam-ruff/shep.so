@@ -1,6 +1,6 @@
 # Conversation request audit
 
-Audited against the user messages, source, AGENTS.md and completion evidence on 2026-09-06. “Delivered” refers to existing committed behavior, not completion of the entire product. “In progress” includes uncommitted code and does not imply shipping or a full passing test suite. Open items are maintained in [TODO.md](../TODO.md); completed evidence stays in [COMPLETION.md](COMPLETION.md).
+Audited against the user messages, source, AGENTS.md and completion evidence on 2026-09-06. “Delivered” refers to existing committed behavior, not completion of the entire product. “In progress” includes uncommitted code and does not imply shipping or a full passing test suite. Open items are maintained in [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md); completed evidence stays in [COMPLETION.md](COMPLETION.md).
 
 | ID | Request and subsequent corrections | Status / evidence |
 | --- | --- | --- |
@@ -62,5 +62,10 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R56 | No root log files; delete accidental ones | Ongoing requirement; all current agent logs use ignored artifacts/logs |
 | R57 | Preload messages, adjacent emails and next pages; WebP for image loading | Delivered baseline; maintain while large-mail/HTML work proceeds |
 | R58 | Additional useful features required | Existing sender actions, outgoing recovery, conversations, connection removal and calendar discovery delivered; Forward/Print/selection/settings sync remain explicit open requests |
+
+| R60 | Immediate optimistic archive/move and app-wide reversible-action feedback; persist principle in AGENTS.md | Principle recorded; implementation open under R50/R60 |
+| R61 | Raw GitHub installers for Linux/macOS/Windows, user-local default, optional system install and app menus; first install commands in README/docs | Recorded, open |
+| R62 | Fix nonworking read/unread and add integration coverage for basic mail behavior | Recorded, open |
+| R59 | Investigate and fix the newly failed CI build | Newly recorded, open |
 
 The main omissions were already present in the completion log but were not an adequate live checklist: faithful HTML, local encryption/large-mail streaming, folder trees/mutations, inline multiple drafts/discard, palette editing, multiple backup targets and continuous settings/account sync. The newer bulk-selection, drag/drop, find, optimistic feedback, tooltip/settings-search and context-menu requests are now explicit TODO entries. Passing the existing suite does not close them.

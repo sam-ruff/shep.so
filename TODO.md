@@ -4,7 +4,11 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Current UI and interaction work
 
-- [ ] **R50 — Immediate feedback:** flags and read/unread state update before network/SQLite completion. Coalesce rapid edits, reject stale acknowledgments, roll back failed changes and show an error. Audit other reversible controls for the same delay.
+- [ ] **R62 — Read/unread regression:** diagnose and fix the reported nonworking read/unread action. Add integration tests for basic mail actions through production UI/cache/provider paths, including delayed success, failure rollback and stale refreshes.
+
+- [ ] **R59 — CI failure:** inspect the newly failed GitHub run, fix its cause, and verify the corrected workflow without enabling dormant quality/release CI.
+
+- [ ] **R50/R60 — Immediate feedback:** archive/move, flags, read/unread and other reversible actions show their expected result immediately, before network/SQLite completion. Archiving removes the mail from the current list immediately; restore it with an actionable error on failure. This is the app-wide optimistic interaction principle, recorded in AGENTS.md. Coalesce rapid edits, reject stale acknowledgments, roll back failed changes and show an error. Audit other reversible controls for the same delay.
 - [ ] **R47 — A. Keep → Inbox:** investigate the reported failed move, verify the actual provider path and destination refresh. Commit 590ab10 ships Inbox labeling, send-queue feedback and a spaced-folder protocol test preserving acknowledgment after logout failure; the personal-account root cause is not yet confirmed.
 
 ## Mail reading, search and bulk actions
@@ -33,6 +37,8 @@ Active requests from this chat. Add new requests here immediately, including cor
 - [ ] **R32 — Backup options:** compression and chosen passcode encryption at setup, password prompt on restore, multiple destinations enabled together, independent upload results and configurable per-destination rolling copies (e.g. ten unreadable encrypted archives).
 
 ## Storage, appearance and final quality
+
+- [ ] **R61 — Download-and-install scripts:** provide directly runnable GitHub raw installer scripts for Linux, macOS and Windows. Default to the user home/equivalent, optionally prompt for all-user/system installation with appropriate elevation, and integrate with GNOME/KDE applications, macOS Applications and Windows Start menu. Put the commands near the top of README as the first install option and in the install docs; test download/extraction/install/update and cancellation using isolated fixtures.
 
 - [ ] **R22 — Encrypted local cache:** encrypt SQLite/mail/attachment data at rest and safely migrate existing personal data; keychain credentials and encrypted backups alone do not fulfill this request.
 - [ ] **R23 — Large mail:** remove the incoming 25 MiB, snapshot 256 MiB and preview 32,000-character ceilings using bounded streaming/paging and background large downloads. Large mail must not hold up smaller messages. Avoid replacement arbitrary caps/unbounded RAM allocations.
