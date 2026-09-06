@@ -313,18 +313,37 @@ impl Store {
             if query.attachments_only { filters.push("json_extract(data,'$.attachment_count')>0".into()); }
             if query.starred_only { filters.push("starred=1".into()); }
             let search = crate::fuzzy::mail_query(c, &query.search)?;
-            if !search.is_empty() { filters.push("rowid IN (SELECT rowid FROM mail_search WHERE mail_search MATCH ?)".into()); values.push(search.into()); }
+            if search.is_empty() && !query.search.trim().is_empty() { filters.push("0=1".into()); }
+            let from = if search.is_empty() { "messages" } else {
+                filters.push("mail_search.mail_search MATCH ?".into());
+                values.push(search.clone().into());
+                "messages JOIN mail_search ON mail_search.rowid=messages.rowid"
+            };
             let condition = filters.join(" AND ");
-            let total: i64 = c.query_row(&format!("{prefix}SELECT COUNT(*) FROM messages WHERE {condition}"), rusqlite::params_from_iter(&values), |r| r.get(0))?;
-            let unread: i64 = c.query_row(&format!("{prefix}SELECT COUNT(*) FROM messages WHERE {condition} AND unread=1"), rusqlite::params_from_iter(&values), |r| r.get(0))?;
-            values.push((PAGE_SIZE as i64).into()); values.push((query.offset as i64).into());
+            let total: i64 = c.query_row(&format!("{prefix}SELECT COUNT(*) FROM {from} WHERE {condition}"), rusqlite::params_from_iter(&values), |r| r.get(0))?;
+            let unread: i64 = c.query_row(&format!("{prefix}SELECT COUNT(*) FROM {from} WHERE {condition} AND unread=1"), rusqlite::params_from_iter(&values), |r| r.get(0))?;
+            let mut row_from = from.to_owned();
             let order = match query.sort {
+                MailSort::Relevance if !search.is_empty() => {
+                    // The exact query owns a separate BM25 score: rare typo
+                    // alternatives must not inflate otherwise weak exact hits.
+                    row_from.push_str(" LEFT JOIN mail_search(?, 'bm25(0.3, 2.0, 1.0)') AS exact_matches ON exact_matches.rowid=messages.rowid");
+                    values.insert(usize::from(!prefix.is_empty()), crate::fuzzy::literal_query(&query.search).into());
+                    // Short whole-body equality wins over keyword repetition.
+                    // octet_length reads stored size, so the CASE does not load
+                    // long bodies merely to rank a short search query.
+                    values.push((query.search.trim().len().saturating_add(8) as i64).into());
+                    values.push(query.search.trim().to_owned().into());
+                    "CASE WHEN octet_length(messages.body)<=? THEN CASE WHEN trim(messages.body,char(9)||char(10)||char(13)||' ')=? COLLATE NOCASE THEN 0 ELSE 1 END ELSE 1 END,exact_matches.rowid IS NULL,COALESCE(exact_matches.rank,bm25(mail_search.mail_search,0.3,2.0,1.0)),timestamp DESC,id"
+                }
+                MailSort::Relevance => "timestamp DESC,id",
                 MailSort::Newest => "timestamp DESC,id",
                 MailSort::Oldest => "timestamp ASC,id",
-                MailSort::Sender => "sender COLLATE NOCASE,timestamp DESC,id",
-                MailSort::Subject => "subject COLLATE NOCASE,timestamp DESC,id",
+                MailSort::Sender => "messages.sender COLLATE NOCASE,timestamp DESC,id",
+                MailSort::Subject => "messages.subject COLLATE NOCASE,timestamp DESC,id",
             };
-            let mut stmt = c.prepare(&format!("{prefix}SELECT data,unread,starred,folder FROM messages WHERE {condition} ORDER BY {order} LIMIT ? OFFSET ?"))?;
+            values.push((PAGE_SIZE as i64).into()); values.push((query.offset as i64).into());
+            let mut stmt = c.prepare(&format!("{prefix}SELECT data,unread,starred,folder FROM {row_from} WHERE {condition} ORDER BY {order} LIMIT ? OFFSET ?"))?;
             let rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?)))?
                 .map(|r| { let (data,unread,starred,folder)=r?; let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
             let inbox_unread = c.prepare("SELECT account,COUNT(*) FROM messages WHERE folder='INBOX' AND unread=1 GROUP BY account")?

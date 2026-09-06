@@ -70,6 +70,35 @@ class NativeFlows(unittest.TestCase):
         self.artifacts = Path(result["artifacts"])
         print(f"\nEvidence: {result['artifacts']}", flush=True)
 
+    def test_search_best_match_beats_newer_mail_and_sort_can_be_overridden(self):
+        self.mcp.call("desktop.start", search_mail=True)
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("test"),
+                       check("sort", "Relevance"), check("selected", "Quick note"),
+                       check("mail_rows.0.subject", "Quick note"), shot("search-exact-body-first"),
+                       click(531, 100), wait(100), shot("search-sort-menu"), click(531, 155),
+                       check("sort", "Newest"), check("selected", "Testing checklist"),
+                       key("ctrl+k"), check("focused_input", "search"), wait(80), key("ctrl+a"), type_text("testing"), check("query", "testing"), check("sort", "Newest"),
+                       key("ctrl+a"), key("BackSpace"), check("query", ""), check("sort", "Newest"),
+                       type_text("test"), check("sort", "Relevance"), check("selected", "Quick note"),
+                       key("Escape"), key("ctrl+r"), check("refreshing", True),
+                       check("refreshing", False), check("selected", "Quick note"), shot("search-relevance-after-sync"))
+
+    def test_move_library_matches_accents_and_fast_typo_enter(self):
+        self.mcp.call("desktop.start", search_mail=True)
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("test"),
+                       check("selected", "Quick note"), key("Escape"), key("m"),
+                       check("focused_input", "folder-search"), type_text("cafe"),
+                       check("move_enter_destination", "Café"), shot("move-accent-match-highlight"),
+                       key("Return"), check("dialog", None), check("mail_pending", 0),
+                       click(100, 617), check("folder", "Café"), check("total", 1), check("selected", "Quick note"),
+                       click(85, 115), check("folder", "INBOX"), check("query", ""),
+                       check("total", 123), check("selected", None, "ne"))
+        subject = self.mcp.call("desktop.state")["selected"]
+        self.mcp.batch(key("m"), check("dialog", "Move"), check("focused_input", "folder-search"), type_text("archvie"), key("Return"),
+                       check("dialog", None), check("mail_pending", 0),
+                       click(85, 398), check("folder", "Archive"), check("total", 1),
+                       check("selected", subject), shot("move-transposition-enter-result"))
+
     def test_background_mail_arrives_without_refresh_and_manual_clicks_queue(self):
         self.mcp.call("desktop.start", background_sync=True)
         self.mcp.batch(check("background_sync", True), check("refreshing", False),

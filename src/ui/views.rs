@@ -277,12 +277,20 @@ impl App {
                 .menu_style(select_menu)
                 .padding([9, 8])
                 .width(Length::Fill),
-            pick_list(MailSort::ALL, Some(self.query.sort), Message::Sort)
-                .text_size(11)
-                .style(select_input)
-                .menu_style(select_menu)
-                .padding([9, 8])
-                .width(Length::Fill),
+            pick_list(
+                if self.query.search.trim().is_empty() {
+                    &MailSort::BROWSE[..]
+                } else {
+                    &MailSort::SEARCH[..]
+                },
+                Some(self.query.sort),
+                Message::Sort
+            )
+            .text_size(11)
+            .style(select_input)
+            .menu_style(select_menu)
+            .padding([9, 8])
+            .width(Length::Fill),
         ]
         .spacing(6)
         .align_y(Alignment::Center);
@@ -1609,10 +1617,7 @@ impl App {
                 "Connect a calendar",
                 "Bring your home server calendar into Shep with CalDAV.",
             ),
-            Dialog::Move => (
-                "Move message",
-                "Choose a destination folder. POP3 folders are local to this device.",
-            ),
+            Dialog::Move => ("Move message", "Choose a destination folder."),
             Dialog::Compose => ("New message", ""),
             Dialog::Event => ("Calendar event", "Times use this device's timezone."),
             Dialog::Export => (
@@ -1655,7 +1660,7 @@ impl App {
             Dialog::Move=>{
                 if self.preferences.cross_account_moves {
                     let choices: Vec<_> = self.workspace.accounts.iter().filter(|a| a.protocol == Protocol::Imap).map(|a| Choice(a.id.clone(), a.name.clone())).collect();
-                    let source = self.detail.as_ref().map(|d| d.summary.account_id.as_str()).unwrap_or("");
+                    let source = self.action_mail().map(|mail| mail.account_id.as_str()).unwrap_or("");
                     let id = if self.field("move_account").is_empty() { source } else { self.field("move_account") };
                     let chosen = choices.iter().find(|c| c.0 == id).cloned();
                     body = body.push(column![text("Destination account").size(12), pick_list(choices, chosen, |c:Choice| Message::Field("move_account", c.0)).text_size(12).padding(11).style(select_input).menu_style(select_menu).width(Length::Fill)].spacing(8));
