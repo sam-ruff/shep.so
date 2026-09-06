@@ -68,7 +68,9 @@ impl CredentialStore for OsCredentialStore {
 
 #[derive(Default)]
 pub(super) struct State {
-    pub active: Option<Cached>,
+    pub grants: Vec<Cached>,
+    pub loaded: bool,
+    pub candidate_id: Option<String>,
     pub pending_login: Option<Tokens>,
     pub disconnected: bool,
 }
@@ -81,12 +83,16 @@ pub(super) struct Cached {
 #[derive(Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub(super) struct Tokens {
     #[serde(default)]
+    pub grant_id: String,
+    #[serde(default)]
     pub client_id: String,
+    #[serde(default)]
+    pub client_secret: String,
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_at: i64,
     #[serde(default)]
-    scope: Option<String>,
+    pub scope: Option<String>,
 }
 
 #[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
@@ -140,14 +146,24 @@ impl Tokens {
             "Google did not grant offline access. Reconnect Google and approve access so Shep can stay connected."
         );
         Ok(Self {
-            client_id: prefs.google_client_id.clone(),
+            grant_id: previous
+                .map(|old| old.grant_id.clone())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            client_id: previous
+                .map(|t| t.client_id.clone())
+                .unwrap_or_else(|| prefs.google_client_id.clone()),
+            client_secret: previous
+                .filter(|t| t.client_id != prefs.google_client_id)
+                .map(|t| t.client_secret.clone())
+                .unwrap_or_else(|| prefs.google_client_secret.clone()),
             access_token: access,
             refresh_token: refresh,
             expires_at: chrono::Utc::now().timestamp() + lifetime as i64,
             scope: reply
                 .scope
                 .take()
-                .or_else(|| previous.and_then(|old| old.scope.clone())),
+                .or_else(|| previous.and_then(|old| old.scope.clone()))
+                .or_else(|| previous.is_none().then(|| SCOPES.to_string())),
         })
     }
     fn validate_saved(&self) -> anyhow::Result<()> {
@@ -180,34 +196,86 @@ impl std::error::Error for ExchangeError {}
 
 impl Google {
     pub(super) async fn load_tokens(&self, state: &mut State) -> anyhow::Result<()> {
-        if state.disconnected {
+        if state.disconnected || state.loaded {
             return Ok(());
         }
-        if state.active.is_none() {
-            let Some(secret) = self.credentials.read().await.map_err(|_| anyhow::anyhow!(
+        let Some(secret) = self.credentials.read().await.map_err(|_| {
+            anyhow::anyhow!(
                 "Could not read the saved Google connection. Unlock the OS keychain and try again."
-            ))?
-            else {
-                return Ok(());
-            };
-            anyhow::ensure!(
-                secret.expose_secret().len() <= RESPONSE_LIMIT,
-                "The saved Google connection is too large. Reconnect Google in Preferences."
-            );
-            // Deserializer errors can quote input strings, including credentials.
-            let value: Tokens = serde_json::from_str(secret.expose_secret()).map_err(|_| {
-                anyhow::anyhow!(
-                    "The saved Google connection is damaged. Reconnect Google in Preferences."
-                )
-            })?;
+            )
+        })?
+        else {
+            return Ok(());
+        };
+        anyhow::ensure!(
+            secret.expose_secret().len() <= 256 * 1024,
+            "The saved Google connection is too large. Reconnect Google in Preferences."
+        );
+        // Accept the original single-grant keychain entry without rewriting it.
+        // Deserializer diagnostics must never quote credential contents.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Saved {
+            Vault {
+                grants: Vec<Tokens>,
+                #[serde(default)]
+                candidate_id: Option<String>,
+            },
+            Legacy(Tokens),
+        }
+        let saved: Saved = serde_json::from_str(secret.expose_secret()).map_err(|_| {
+            anyhow::anyhow!(
+                "The saved Google connection is damaged. Reconnect Google in Preferences."
+            )
+        })?;
+        let (values, candidate_id) = match saved {
+            Saved::Vault {
+                grants,
+                candidate_id,
+            } => (grants, candidate_id),
+            Saved::Legacy(value) => (vec![value], None),
+        };
+        anyhow::ensure!(
+            values.len() <= 2,
+            "The saved Google connection contains too many grants."
+        );
+        let mut ids = std::collections::HashSet::new();
+        for value in &values {
             value.validate_saved()?;
-            state.active = Some(Cached {
+            anyhow::ensure!(
+                ids.insert(&value.grant_id),
+                "The saved Google connection has duplicate grants."
+            );
+        }
+        state.candidate_id = candidate_id;
+        state.grants = values
+            .into_iter()
+            .map(|value| Cached {
                 value,
                 pending_save: false,
                 invalidated: false,
-            });
-        }
+            })
+            .collect();
+        state.loaded = true;
         Ok(())
+    }
+
+    async fn write_grants(
+        &self,
+        values: &[&Tokens],
+        candidate_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        #[derive(Serialize)]
+        struct Vault<'a> {
+            grants: &'a [&'a Tokens],
+            candidate_id: Option<&'a str>,
+        }
+        self.credentials
+            .write(SecretString::from(serde_json::to_string(&Vault {
+                grants: values,
+                candidate_id,
+            })?))
+            .await
     }
 
     pub(super) async fn exchange(&self, form: &[(&str, &str)]) -> anyhow::Result<Reply> {
@@ -259,10 +327,14 @@ impl Google {
         Ok(reply)
     }
 
-    pub(super) async fn persist_refresh(&self, cached: &mut Cached) -> anyhow::Result<()> {
-        self.credentials.write(SecretString::from(serde_json::to_string(&cached.value)?)).await
+    pub(super) async fn persist_refresh(
+        &self,
+        state: &mut State,
+        index: usize,
+    ) -> anyhow::Result<()> {
+        self.write_grants(&state.grants.iter().map(|c| &c.value).collect::<Vec<_>>(), state.candidate_id.as_deref()).await
             .map_err(|_| anyhow::anyhow!("Google access was renewed, but its credentials could not be saved to the OS keychain. Keep Shep open, unlock the keychain and try Sync again."))?;
-        cached.pending_save = false;
+        state.grants[index].pending_save = false;
         Ok(())
     }
 
@@ -272,9 +344,9 @@ impl Google {
         code: &str,
         redirect: &str,
         verifier: &str,
-    ) -> anyhow::Result<()> {
-        // Refresh and sign-in must use one lock through exchange and persistence.
+    ) -> anyhow::Result<crate::model::GoogleGrant> {
         let mut state = self.state.lock().await;
+        self.load_tokens(&mut state).await?;
         let mut form = vec![
             ("client_id", prefs.google_client_id.as_str()),
             ("code", code),
@@ -286,35 +358,100 @@ impl Google {
             form.push(("client_secret", prefs.google_client_secret.as_str()));
         }
         let reply = self.exchange(&form).await?;
-        state.pending_login = Some(Tokens::from_reply(prefs, reply, None)?);
-        self.commit_login(&mut state).await
+        let candidate = Tokens::from_reply(prefs, reply, None)?;
+        let access = scopes::access(candidate.scope.as_deref());
+        anyhow::ensure!(
+            access.drive || access.calendar_read,
+            "Google did not grant usable Calendar or Drive access. Connect again and approve Calendar (including its list) or Drive backup."
+        );
+        state.pending_login = Some(candidate);
+        self.stage_login(&mut state, prefs).await
     }
 
-    pub(super) async fn finish_pending_login(&self, prefs: &Preferences) -> anyhow::Result<bool> {
+    pub(super) async fn finish_pending_login(
+        &self,
+        prefs: &Preferences,
+    ) -> anyhow::Result<Option<crate::model::GoogleGrant>> {
         let mut state = self.state.lock().await;
+        self.load_tokens(&mut state).await?;
         if state
             .pending_login
             .as_ref()
-            .is_some_and(|tokens| tokens.client_id == prefs.google_client_id)
+            .is_some_and(|t| t.client_id == prefs.google_client_id)
         {
-            self.commit_login(&mut state).await?;
-            return Ok(true);
+            return self.stage_login(&mut state, prefs).await.map(Some);
         }
-        Ok(false)
+        // A crash before the SQLite activation leaves the candidate available for
+        // retry. The current preference pointer still selects the working grant.
+        Ok(state
+            .grants
+            .iter()
+            .find(|c| {
+                state.candidate_id.as_deref() == Some(c.value.grant_id.as_str())
+                    && c.value.grant_id != prefs.google_grant.id
+                    && c.value.client_id == prefs.google_client_id
+                    && !c.invalidated
+            })
+            .map(|c| crate::model::GoogleGrant {
+                id: c.value.grant_id.clone(),
+                client_id: c.value.client_id.clone(),
+                access: scopes::access(c.value.scope.as_deref()),
+            }))
     }
-    async fn commit_login(&self, state: &mut State) -> anyhow::Result<()> {
+
+    async fn stage_login(
+        &self,
+        state: &mut State,
+        prefs: &Preferences,
+    ) -> anyhow::Result<crate::model::GoogleGrant> {
         let candidate = state
             .pending_login
             .as_ref()
             .context("No pending Google sign-in")?;
-        self.credentials.write(SecretString::from(serde_json::to_string(candidate)?)).await
-            .map_err(|_| anyhow::anyhow!("Google authorization was received, but it could not be saved to the OS keychain. Keep Shep open, unlock the keychain and choose Reconnect Google to finish."))?;
-        state.active = state.pending_login.take().map(|value| Cached {
-            value,
+        let mut values: Vec<&Tokens> = state
+            .grants
+            .iter()
+            .filter(|c| c.value.grant_id == prefs.google_grant.id)
+            .map(|c| &c.value)
+            .collect();
+        values.push(candidate);
+        self.write_grants(&values, Some(&candidate.grant_id)).await.map_err(|_| anyhow::anyhow!(
+            "Google authorization was received, but it could not be saved to the OS keychain. Keep Shep open, unlock the keychain and choose Reconnect Google to finish."))?;
+        let grant = crate::model::GoogleGrant {
+            id: candidate.grant_id.clone(),
+            client_id: candidate.client_id.clone(),
+            access: scopes::access(candidate.scope.as_deref()),
+        };
+        state.candidate_id = Some(grant.id.clone());
+        state
+            .grants
+            .retain(|c| c.value.grant_id == prefs.google_grant.id);
+        state.grants.push(Cached {
+            value: state.pending_login.take().unwrap(),
             pending_save: false,
             invalidated: false,
         });
         state.disconnected = false;
+        state.loaded = true;
+        Ok(grant)
+    }
+
+    /// Only after the SQLite pointer commits may the previous credential be pruned.
+    /// Failure is harmless to activation; the bounded vault still selects by ID.
+    pub(crate) async fn finish_activation(&self, prefs: &Preferences) -> anyhow::Result<()> {
+        let mut state = self.state.lock().await;
+        self.load_tokens(&mut state).await?;
+        let selected = state
+            .grants
+            .iter()
+            .find(|c| c.value.grant_id == prefs.google_grant.id)
+            .context("The selected Google grant is missing. Reconnect Google.")?;
+        self.write_grants(&[&selected.value], None).await?;
+        state
+            .grants
+            .retain(|c| c.value.grant_id == prefs.google_grant.id);
+        state.candidate_id = None;
+        state.pending_login = None;
         Ok(())
     }
 }

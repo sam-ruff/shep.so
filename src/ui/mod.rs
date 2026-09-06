@@ -134,7 +134,7 @@ pub enum Message {
     BackupDestination(BackupDestination),
     BackupAccounts(bool),
     AutoBackup(bool),
-    GoogleLogin,
+    GoogleLogin(bool),
     ReviewGoogleDisconnect,
     ConfirmGoogleDisconnect,
     CleanupGoogle,
@@ -220,7 +220,7 @@ pub struct App {
     workspace: Arc<Workspace>,
     preferences: Preferences,
     preference_sync: preference_sync::PreferenceSync,
-    pending_google_login: Option<(u64, Preferences)>,
+    pending_google_login: Option<(u64, Preferences, bool)>,
     pending_backup: Option<backups::PendingBackup>,
     tab: Tab,
     settings_tab: SettingsTab,
@@ -717,13 +717,13 @@ impl App {
                     if self
                         .pending_google_login
                         .as_ref()
-                        .is_some_and(|(id, _)| *id == request)
-                        && let Some((_, prefs)) = self.pending_google_login.take()
+                        .is_some_and(|(id, _, _)| *id == request)
+                        && let Some((_, prefs, retry)) = self.pending_google_login.take()
                     {
                         if prefs.google_client_id == self.preferences.google_client_id
                             && prefs.google_client_secret == self.preferences.google_client_secret
                         {
-                            self.send(Command::GoogleLogin(prefs));
+                            self.send(Command::GoogleLogin(prefs, retry));
                         } else {
                             self.notice("Google client details changed. Connect Google again with the updated details.", true);
                         }
@@ -1540,12 +1540,12 @@ impl App {
                 self.preferences.auto_backup = enabled;
                 self.preference_sync.changed();
             }
-            Message::GoogleLogin => {
+            Message::GoogleLogin(retry) => {
                 if let Err(e) = self.read_preferences() {
                     self.notice(e.to_string(), true);
                 } else {
                     let request = self.preference_sync.changed();
-                    self.pending_google_login = Some((request, self.preferences.clone()));
+                    self.pending_google_login = Some((request, self.preferences.clone(), retry));
                     self.send(Command::SavePreferences(request, self.preferences.clone()));
                 }
             }
@@ -2343,6 +2343,7 @@ impl App {
         data["calendar_selected"] = serde_json::json!(self.calendar_setup.selected.len());
         data["calendar_error"] = serde_json::json!(self.calendar_setup.error);
         data["calendar_sources"] = serde_json::json!(self.workspace.calendars);
+        data["google_grant"] = serde_json::json!(self.preferences.google_grant);
         data["google_lifecycle"] = serde_json::json!(self.preferences.google_lifecycle);
         data["google_archived"] = serde_json::json!(self.workspace.google_archived);
         data["google_connected"] = serde_json::json!(self.google_connected);

@@ -125,8 +125,7 @@ async fn reconnecting_the_same_drive_account_preserves_history_but_other_account
         })
         .await
         .unwrap();
-    let connected = store
-        .record_google_connection("client".into(), "drive:first".into())
+    let connected = connect_google(&store, "client", "drive:first")
         .await
         .unwrap();
     let target = BackupTarget::from_preferences(&connected.value);
@@ -134,23 +133,20 @@ async fn reconnecting_the_same_drive_account_preserves_history_but_other_account
         .record_backup(target.clone(), 123, true)
         .await
         .unwrap();
-    let reconnected = store
-        .record_google_connection("client".into(), "drive:first".into())
+    let reconnected = connect_google(&store, "client", "drive:first")
         .await
         .unwrap();
     assert_eq!(reconnected.value.last_backup, Some(123));
     assert!(reconnected.value.backup_ready);
     assert_eq!(BackupTarget::from_preferences(&reconnected.value), target);
-    let other = store
-        .record_google_connection("client".into(), "drive:other".into())
+    let other = connect_google(&store, "client", "drive:other")
         .await
         .unwrap();
     assert_eq!(other.value.last_backup, None);
     assert!(!other.value.backup_ready);
     let revision = other.revision;
     assert!(
-        store
-            .record_google_connection("stale-client".into(), "drive:first".into())
+        connect_google(&store, "stale-client", "drive:first")
             .await
             .is_err()
     );
@@ -193,4 +189,38 @@ async fn preferences_revision_survives_reopen_and_failed_validation_is_atomic() 
         .await
         .unwrap();
     assert_eq!(next.revision, saved.revision + 1);
+}
+
+async fn connect_google(
+    store: &Store,
+    client: &str,
+    identity: &str,
+) -> anyhow::Result<shep::store::PreferenceSnapshot> {
+    use shep::model::{CalendarKind, GoogleAccess, GoogleGrant};
+    let mut prefs: Preferences = store.get("preferences").await?;
+    prefs.google_client_id = client.into();
+    let sources = store
+        .workspace()
+        .await?
+        .calendars
+        .into_iter()
+        .filter(|s| s.kind == CalendarKind::Google)
+        .collect();
+    store
+        .activate_google(
+            prefs,
+            GoogleGrant {
+                id: uuid::Uuid::new_v4().to_string(),
+                client_id: client.into(),
+                access: GoogleAccess {
+                    known: true,
+                    drive: true,
+                    calendar_read: true,
+                    calendar_write: true,
+                },
+            },
+            Some(identity.into()),
+            sources,
+        )
+        .await
 }

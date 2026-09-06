@@ -243,6 +243,34 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
     events.retain(|e| e.source_id == source.id);
     store.replace_events(source.id, events).await?;
     store.replace_events(home.id, home_events).await?;
+    let mode =
+        std::env::args().find_map(|a| a.strip_prefix("--google-permissions=").map(str::to_owned));
+    if let Some(mode) = mode {
+        let prefs: Preferences = store.get("preferences").await?;
+        let access = GoogleAccess {
+            known: true,
+            drive: mode == "drive",
+            calendar_read: mode != "drive",
+            calendar_write: mode == "calendar",
+        };
+        let sources = if access.calendar_read {
+            store.get("calendars").await?
+        } else {
+            vec![]
+        };
+        store
+            .activate_google(
+                prefs.clone(),
+                GoogleGrant {
+                    id: "fixture-grant".into(),
+                    client_id: prefs.google_client_id.clone(),
+                    access,
+                },
+                access.drive.then(|| "drive:fixture".into()),
+                sources,
+            )
+            .await?;
+    }
     Ok(())
 }
 

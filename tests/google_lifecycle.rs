@@ -100,14 +100,12 @@ async fn google_disconnect_keeps_cache_and_backup_identity_and_survives_reopen()
             .is_err()
     );
     assert!(
-        store
-            .record_google_connection("fixture-client".into(), "drive:replacement".into())
+        connect_google(&store, "fixture-client", "drive:replacement")
             .await
             .is_err()
     );
     store.finish_google_cleanup(1).await.unwrap();
-    let saved = store
-        .record_google_connection("fixture-client".into(), "drive:original".into())
+    let saved = connect_google(&store, "fixture-client", "drive:original")
         .await
         .unwrap();
     assert!(!saved.value.google_lifecycle.disconnected);
@@ -162,8 +160,7 @@ async fn reconnect_only_reactivates_calendars_in_the_new_complete_list() {
             .contains("google:restored")
     );
     store.finish_google_cleanup(1).await.unwrap();
-    store
-        .record_google_connection("fixture-client".into(), "drive:other".into())
+    connect_google(&store, "fixture-client", "drive:other")
         .await
         .unwrap();
     store
@@ -175,4 +172,186 @@ async fn reconnect_only_reactivates_calendars_in_the_new_complete_list() {
     assert!(!workspace.google_archived.contains("google:new"));
     assert!(workspace.preferences.last_backup.is_none());
     assert_eq!(store.calendar_snapshot().await.unwrap().1.len(), 1);
+}
+
+async fn connect_google(
+    store: &Store,
+    client: &str,
+    identity: &str,
+) -> anyhow::Result<shep::store::PreferenceSnapshot> {
+    use shep::model::{CalendarKind, GoogleAccess, GoogleGrant};
+    let mut prefs: Preferences = store.get("preferences").await?;
+    prefs.google_client_id = client.into();
+    let sources = store
+        .workspace()
+        .await?
+        .calendars
+        .into_iter()
+        .filter(|s| s.kind == CalendarKind::Google)
+        .collect();
+    store
+        .activate_google(
+            prefs,
+            GoogleGrant {
+                id: uuid::Uuid::new_v4().to_string(),
+                client_id: client.into(),
+                access: GoogleAccess {
+                    known: true,
+                    drive: true,
+                    calendar_read: true,
+                    calendar_write: true,
+                },
+            },
+            Some(identity.into()),
+            sources,
+        )
+        .await
+}
+
+#[tokio::test]
+async fn partial_grants_preserve_cached_data_and_late_preferences_cannot_restore_old_access() {
+    let store = Store::memory().unwrap();
+    let original = seed(&store).await;
+    let calendar_grant = GoogleGrant {
+        id: "calendar-grant".into(),
+        client_id: "fixture-client".into(),
+        access: GoogleAccess {
+            known: true,
+            calendar_read: true,
+            ..Default::default()
+        },
+    };
+    let saved = store
+        .activate_google(
+            original.clone(),
+            calendar_grant.clone(),
+            None,
+            vec![source("google:work", CalendarKind::Google)],
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved.value.google_connection_id, "drive:original");
+    assert_eq!(saved.value.last_backup, Some(42));
+    assert!(!saved.value.auto_backup && !saved.value.backup_ready);
+    let late = store.save_preferences(original.clone()).await.unwrap();
+    assert_eq!(late.value.google_grant, calendar_grant);
+    assert!(!late.value.auto_backup && !late.value.backup_ready);
+    assert!(store.workspace().await.unwrap().google_archived.is_empty());
+    assert!(
+        store
+            .workspace()
+            .await
+            .unwrap()
+            .calendars
+            .iter()
+            .find(|s| s.id == "google:work")
+            .unwrap()
+            .access
+            .read_only()
+    );
+    // Source setup and subsequent full role refresh cannot bypass the OAuth scope.
+    store
+        .save_source(source("google:work", CalendarKind::Google))
+        .await
+        .unwrap();
+    store
+        .refresh_google_sources(vec![source("google:work", CalendarKind::Google)])
+        .await
+        .unwrap();
+    assert!(
+        store
+            .workspace()
+            .await
+            .unwrap()
+            .calendars
+            .iter()
+            .find(|s| s.id == "google:work")
+            .unwrap()
+            .access
+            .read_only()
+    );
+    let drive_grant = GoogleGrant {
+        id: "drive-grant".into(),
+        client_id: "fixture-client".into(),
+        access: GoogleAccess {
+            known: true,
+            drive: true,
+            ..Default::default()
+        },
+    };
+    let committed = store
+        .activate_google(
+            late.value,
+            drive_grant.clone(),
+            Some("drive:original".into()),
+            vec![],
+        )
+        .await
+        .unwrap();
+    let workspace = store.workspace().await.unwrap();
+    assert_eq!(workspace.preferences.google_grant, drive_grant);
+    assert_eq!(workspace.preferences.last_backup, Some(42));
+    assert!(workspace.google_archived.contains("google:work"));
+    assert!(
+        workspace
+            .calendars
+            .iter()
+            .find(|s| s.id == "home")
+            .unwrap()
+            .access
+            .create
+    );
+    assert_eq!(store.calendar_snapshot().await.unwrap().1.len(), 1);
+    assert!(
+        store
+            .refresh_google_sources(vec![source("google:work", CalendarKind::Google)])
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .activate_google(original, calendar_grant, None, vec![])
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store.get::<Preferences>("preferences").await.unwrap(),
+        committed.value
+    );
+}
+
+#[tokio::test]
+async fn changed_oauth_settings_reject_staged_activation_without_changing_working_credentials() {
+    let store = Store::memory().unwrap();
+    let original = seed(&store).await;
+    let old = connect_google(&store, "fixture-client", "drive:original")
+        .await
+        .unwrap()
+        .value;
+    let target = shep::backup::BackupTarget::from_preferences(&old);
+    let mut edited = old.clone();
+    edited.google_client_id = "next-client".into();
+    edited.google_client_secret = "next-secret".into();
+    let edited = store.save_preferences(edited).await.unwrap().value;
+    assert_eq!(edited.google_grant, old.google_grant);
+    assert_eq!(
+        shep::backup::BackupTarget::from_preferences(&edited),
+        target
+    );
+    assert_eq!(edited.last_backup, original.last_backup);
+    let grant = GoogleGrant {
+        id: "staged".into(),
+        client_id: "fixture-client".into(),
+        access: old.google_grant.access,
+    };
+    assert!(
+        store
+            .activate_google(old, grant, Some("drive:other".into()), vec![])
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store.get::<Preferences>("preferences").await.unwrap(),
+        edited
+    );
 }

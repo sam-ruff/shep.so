@@ -68,7 +68,7 @@ impl Store {
             }
             put(&tx, "accounts", &accounts)?;
             let prefs: Preferences = get(&tx, "preferences")?;
-            if prefs.google_lifecycle.disconnected {
+            if prefs.google_lifecycle.disconnected || !prefs.google_grant.access.calendar_allowed() {
                 let mut archived: HashSet<String> = get(&tx, "google_archived")?;
                 for source in &mut calendars {
                     if source.kind == CalendarKind::Google {
@@ -77,6 +77,9 @@ impl Store {
                     }
                 }
                 put(&tx, "google_archived", &archived)?;
+            }
+            if !prefs.google_grant.access.calendar_write_allowed() {
+                for source in &mut calendars { if source.kind == CalendarKind::Google { source.access = CalendarAccess::READ_ONLY; } }
             }
             put(&tx, "calendars", &calendars)?;
             connections::changed(&tx)?;

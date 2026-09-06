@@ -468,16 +468,22 @@ impl DriveBackup {
     fn api<'a>(&'a self, token: &'a SecretString) -> Api<'a> {
         Api {
             http: &self.google.http,
-            base: url::Url::parse("https://www.googleapis.com/").expect("official Drive URL"),
+            base: self.google.api_base.clone(),
             token: token.expose_secret(),
         }
     }
     pub(crate) async fn account_identity(&self) -> anyhow::Result<String> {
-        let token = self.google.token(&self.preferences).await?;
+        let token = self
+            .google
+            .token_for(&self.preferences, crate::providers::google::Service::Drive)
+            .await?;
         self.api(&token).identity().await
     }
     async fn verified_token(&self) -> anyhow::Result<SecretString> {
-        let token = self.google.token(&self.preferences).await?;
+        let token = self
+            .google
+            .token_for(&self.preferences, crate::providers::google::Service::Drive)
+            .await?;
         self.verified
             .get_or_try_init(|| async {
                 anyhow::ensure!(

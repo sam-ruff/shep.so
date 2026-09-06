@@ -52,7 +52,7 @@ impl BackupTarget {
         match prefs.backup_destination {
             BackupDestination::Local => Self::Local(prefs.backup_folder.clone()),
             BackupDestination::GoogleDrive => Self::GoogleDrive {
-                client_id: prefs.google_client_id.clone(),
+                client_id: prefs.active_google_client().to_string(),
                 connection_id: prefs.google_connection_id.clone(),
             },
         }

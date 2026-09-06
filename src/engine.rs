@@ -53,7 +53,7 @@ pub enum Command {
     OutgoingPage(u64, usize),
     ResolveOutgoing(String, crate::outgoing::RecoveryAction, bool),
     RepairOutgoing,
-    GoogleLogin(Preferences),
+    GoogleLogin(Preferences, bool),
     DisconnectGoogle(u64),
     CleanupGoogle,
     CheckGoogleConnection,
@@ -88,7 +88,7 @@ impl Command {
             Self::SyncCalendar => Some("calendar".into()),
             Self::CleanupCredentials => Some("credential-cleanup".into()),
             Self::RestoreGoogleCalendars => Some("restore-calendars".into()),
-            Self::GoogleLogin(_) => Some("google".into()),
+            Self::GoogleLogin(..) => Some("google".into()),
             Self::DisconnectGoogle(_) | Self::CleanupGoogle => Some("google-disconnect".into()),
             Self::Backup(..) | Self::AutomaticBackup(_) | Self::Restore(..) => {
                 Some("backup".into())
@@ -236,7 +236,7 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
         };
         if !demo && workspace.preferences.google_lifecycle.cleanup_pending {
             let _ = tx.try_send(Command::CleanupGoogle);
-        } else if !demo && !workspace.preferences.google_client_id.is_empty() {
+        } else if !demo && !workspace.preferences.active_google_client().is_empty() {
             // Credential stores may wait for an unlock dialog. Show the cached
             // workspace immediately and check Google from the provider worker.
             let _ = tx.try_send(Command::CheckGoogleConnection);
@@ -244,8 +244,9 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
         let _ = tx.try_send(Command::IndexConversations);
         let _ = tx.try_send(Command::CleanupCredentials);
         let _ = tx.try_send(Command::RepairOutgoing);
+        let preview_google = demo && workspace.preferences.google_grant.access.known;
         let _ = output
-            .send(Event::Ready(tx, Arc::new(workspace), false))
+            .send(Event::Ready(tx, Arc::new(workspace), preview_google))
             .await;
         if let Ok((revision, events)) = engine.store.calendar_snapshot().await {
             let _ = output
@@ -775,7 +776,7 @@ impl Engine {
                 result?;
             }
             Command::RepairOutgoing => self.repair_outgoing(&mut output).await?,
-            Command::GoogleLogin(prefs) => {
+            Command::GoogleLogin(prefs, retry) => {
                 anyhow::ensure!(!self.demo, "Google sign-in is disabled in preview.");
                 prefs.validate()?;
                 // The UI starts OAuth only after the corresponding preferences save
@@ -787,19 +788,16 @@ impl Engine {
                     "Google changed before sign-in started. Choose Connect Google again."
                 );
                 self.cleanup_google_locked().await?;
-                self.google.login(&prefs).await?;
-                let mut authorized = prefs.clone();
-                authorized.google_lifecycle.disconnected = false;
-                let identity = backup::DriveBackup::new(self.google.clone(), authorized.clone())
-                    .account_identity()
-                    .await?;
+                let grant = self.google.login_with_retry(&prefs, retry).await?;
+                let (grant, identity, sources) = self.google.prepare_grant(&prefs, grant).await?;
+                let _lifecycle = self.connection_lifecycle_lock.lock().await;
                 let saved = self
                     .store
-                    .record_google_connection(prefs.google_client_id.clone(), identity)
+                    .activate_google(prefs, grant, identity, sources)
                     .await?;
-                self.store
-                    .refresh_google_sources(self.google.calendars(&authorized).await?)
-                    .await?;
+                // Activation is committed even if redundant old-secret cleanup fails.
+                // The keychain vault is bounded and every lookup follows the DB ID.
+                let cleanup_ok = self.google.finish_activation(&saved.value).await.is_ok();
                 self.workspace(&mut output).await?;
                 output
                     .send(Event::GoogleStatus(
@@ -808,10 +806,8 @@ impl Engine {
                     ))
                     .await?;
                 output
-                    .send(Event::Notice(
-                        "Google connected. Drive backup is optional; calendars are ready to sync."
-                            .into(),
-                    ))
+                    .send(if cleanup_ok { Event::Notice("Google connected. Granted permissions are shown in Preferences.".into()) }
+                    else { Event::Error("Google connected, but its previous saved grant could not be removed. Unlock the keychain and reconnect to retry cleanup.".into()) })
                     .await?;
             }
             Command::DiscoverCalendars(request, url, username, password) => {
@@ -881,6 +877,7 @@ impl Engine {
                     let sources: Vec<CalendarSource> = self.store.get("calendars").await?;
                     let prefs: Preferences = self.store.get("preferences").await?;
                     if !prefs.google_lifecycle.disconnected
+                        && prefs.google_grant.access.calendar_allowed()
                         && sources.iter().any(|s| s.kind == CalendarKind::Google)
                     {
                         match self.google.calendars(&prefs).await {
@@ -903,7 +900,8 @@ impl Engine {
                     for source in sources {
                         if archived.contains(&source.id)
                             || (source.kind == CalendarKind::Google
-                                && prefs.google_lifecycle.disconnected)
+                                && (prefs.google_lifecycle.disconnected
+                                    || !prefs.google_grant.access.calendar_allowed()))
                         {
                             continue;
                         }
