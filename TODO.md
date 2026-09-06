@@ -4,6 +4,13 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Current UI and interaction work
 
+- [ ] **R71 — Broken refresh icon:** investigate the malformed refresh icon in the latest screenshot; confirm whether it is the native mail/calendar refresh or browser preview, then correct SVG geometry, sizing/clipping and theme/scaling behavior. Add native/visual regression evidence for the affected control. A clarification is pending because the supplied crop includes browser chrome.
+
+- [ ] **R70 — Dock/taskbar new-mail badges:** show an unread Inbox count on the Shep launcher/dock/taskbar, including the GNOME-style badge in the user's screenshot where the desktop supports it. Reconcile new arrivals, read/unread, optimistic moves/deletes/Undo, account scope and restart without stale counts; allow disabling badges in Preferences. Use native platform integration with isolated automated tests and document actual desktop/platform support.
+
+- [ ] **R69 — HTML rendering stability and readiness:** the reader moves as HTML renders, shows visual artifacts, and feels slow. Reproduce with realistic native fixtures; stabilize layout and frame replacement, investigate adjacent-message HTML pre-rendering/pre-caching on bounded background workers, and keep stale renders from flashing into the selected message. Cover rapid navigation, resize/scroll, images loading, light/dark and compact layouts with automated equivalents and reviewed WebP evidence. Defer performance measurements until the final idle-host work; do not infer speed from a loaded-host run.
+  Initial code review: HTML starts at a provisional 600×600 viewport before receiving real geometry; loading text and image/horizontal-scroll controls can change the layout between frames. Investigate these transitions alongside frame caching. The compact Prototype fixture also leaves very little body space above its wrapped attachments; retain usable reading space while preserving the controls.
+
 - [ ] **R63 — E2E coverage audit:** primary/secondary clear controls, remapping, capture cancellation and persistence are shipped in 742b21e. Continue mapping every remaining visible feature to realistic native happy/error/recovery scenarios as the TODO features land; complete a final functionality-path coverage audit.
 
 - [ ] **R50/R60 — Immediate feedback:** archive/move, flags, read/unread and other reversible actions show their expected result immediately, before network/SQLite completion. Archiving removes the mail from the current list immediately; restore it with an actionable error on failure. This is the app-wide optimistic interaction principle, recorded in AGENTS.md. Commit 742b21e ships immediate flags/read and same-account moves, coalescing, stale results and rollback with unit/protocol/native verification. Commit d3a530a additionally keeps metadata actions available while bodies load and rejects stale-body targets. Commit 9c907d2 adds immediate cross-account source feedback, typed completion/rollback and ordering behind source read/flag changes. Remaining: reconcile optimistic membership/counts when switching filtered folders, ambiguous cross-account outcomes, other reversible controls, and durable restart recovery for pending actions.
@@ -11,7 +18,7 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Mail reading, search and bulk actions
 
-- [ ] **R41 — Print:** add a print control and a usable cross-platform print flow, with isolated automated equivalents.
+- [ ] **R41 — Print:** in progress: preview print control/remappable shortcut, background preparation from complete MIME, and default-browser printer/PDF selection. Serve a temporary in-memory document with inert email content and no external requests; cover formatted/plain/long output, images, errors/cancellation, actual PDF results and continued native navigation before shipping.
 - [ ] **R42 — Multi-selection:** Ctrl+A for all emails in the focused list, Ctrl-click toggles, Shift-click ranges, and a Select button beside conversation search for checkbox selection. Preserve scope across pages and distinguish list focus from text selection.
 - [ ] **R42 — Bulk actions:** preview toolbar and keybinds act on selected messages. Review multi-message actions with Y/N/Enter/Escape support, accurate scope/count and clear partial-failure handling.
 - [ ] **R45 — Drag mail to folders:** drag one mail or a selected group onto sidebar folders; highlight valid destinations, respect cross-account preference/provider support, and use the bulk-move confirmation.
@@ -31,7 +38,7 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Storage, appearance and final quality
 
-- [ ] **R64 — GNOME launcher icon:** install the approved dog mark with a transparent background, matching the system theme; verify desktop/dash integration and theme changes without replacing the approved design.
+- [ ] **R64 — GNOME launcher icon:** install the approved dog mark with a transparent background, matching the system theme; verify desktop/dash integration and theme changes without replacing the approved design. There are copies of the transparent icon in the shep.website folder one level up from the root
 
 - [ ] **R61 — Download-and-install scripts:** provide directly runnable GitHub raw installer scripts for Linux, macOS and Windows. Default to the user home/equivalent, optionally prompt for all-user/system installation with appropriate elevation, and integrate with GNOME/KDE applications, macOS Applications and Windows Start menu. Put the commands near the top of README as the first install option and in the install docs; test download/extraction/install/update and cancellation using isolated fixtures.
 
@@ -41,4 +48,4 @@ Active requests from this chat. Add new requests here immediately, including cor
 - [ ] **R15/R17/R21 — Final usability review:** finish remaining redundant-copy, spacing, icon sizing, alignment and compact/large-font checks, Singular message-count labels are corrected in the HTML-reader work; finish the remaining visual review. Preserve the approved dog logo, WebP assets, mouse usability, draggable panes and clean shadcn-style controls.
 - [ ] **R01/R06 — Provider/platform completeness:** close remaining POP3 protocol/lifecycle gaps, Google/CalDAV/SMTP integration evidence, independent-process coordination and Windows/macOS execution/distribution checks. Do not present fixture evidence as live-provider verification.
 - [ ] **R03/R09 — Final performance gates:** keep measurements deferred while the host is busy; run backend/native gates at the end on an idle host. Do not weaken budgets. Keep quality/release CI disabled until requested; documentation publishing has a separately recorded exception in AGENTS.md.
-- [ ] **R08/R10 — Ship verified work:** fmt, Clippy, Rust/Python and relevant native tests; optimized release/installer verification; install for the Linux user and push main at sam-ruff/shep.so. Keep logs/artifacts out of the root and preserve personal data.
+- [ ] **R08/R10 — Ship verified work:** push at the next opportunity with a working build, as requested; do not wait for the full product backlog to be finished. Run fmt, Clippy, Rust/Python and relevant native tests; optimized release/installer verification; install for the Linux user and push main at sam-ruff/shep.so. Keep logs/artifacts out of the root and preserve personal data.

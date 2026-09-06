@@ -559,3 +559,17 @@ pub async fn sync_mail(store: &Store) -> anyhow::Result<u64> {
     }
     Ok(round)
 }
+
+/// Controlled print delay/retry uses only isolated fixture storage.
+pub async fn print_delay(store: &Store) -> anyhow::Result<()> {
+    let mode =
+        std::env::args().find_map(|arg| arg.strip_prefix("--mail-actions=").map(str::to_owned));
+    if let Some(mode) = mode {
+        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+        if mode == "fail" && !store.get::<bool>("preview-print-failed").await? {
+            store.put("preview-print-failed", true).await?;
+            anyhow::bail!("Fixture storage failure. Try Print again.");
+        }
+    }
+    Ok(())
+}

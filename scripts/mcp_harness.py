@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -30,9 +31,23 @@ class Desktop:
         self.directory = None
         self.log = None
         self.xvfb_log = None
+        self.browser = None
+        self.browser_log = None
         atexit.register(self.stop)
 
     def stop(self):
+        if self.browser and self.browser.poll() is None:
+            os.killpg(self.browser.pid, signal.SIGTERM)
+            try:
+                self.browser.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                os.killpg(self.browser.pid, signal.SIGKILL)
+                self.browser.wait(timeout=3)
+        self.browser = None
+        if self.browser_log:
+            self.browser_log.close()
+            self.browser_log = None
+        self.env.pop("SHEP_TEST_PRINT_BROWSER", None)
         for process in (self.clipboard, self.app, self.xvfb):
             if process and process.poll() is None:
                 process.terminate()
@@ -55,8 +70,10 @@ class Desktop:
         return subprocess.run(args, env=self.env, capture_output=True, text=True,
                               check=True, timeout=10).stdout.strip()
 
-    def start(self, width=1440, height=920, empty_calendars=False, conversation_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False):
+    def start(self, width=1440, height=920, empty_calendars=False, conversation_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None):
         self.stop()
+        if print_browser not in (None, "pdf", "dialog", "fail"):
+            raise ValueError("Unknown print browser fixture.")
         if mail_actions not in (None, "slow", "fail"):
             raise ValueError("Unknown mail actions fixture.")
         if google_permissions not in (None, "drive", "calendar", "read-only"):
@@ -91,6 +108,8 @@ class Desktop:
                         XDG_CONFIG_HOME=str(self.directory / "config"),
                         XDG_CACHE_HOME=str(self.directory / "cache"))
         self.env.pop("WAYLAND_DISPLAY", None)
+        if print_browser:
+            self.start_print_browser(print_browser)
         self.log = (self.directory / "app.log").open("w")
         self.app = subprocess.Popen(
             [str(binary), "--demo", "--test-state", str(self.directory / "state.json"), *(["--empty-calendars"] if empty_calendars else []), *(["--conversation-mail"] if conversation_mail else []), *(["--readonly-calendars"] if readonly_calendars else []), *(["--pending-transfer"] if pending_transfer else []), *(["--outgoing-mail"] if outgoing_mail else []), *(["--long-folders"] if long_folders else []), *(["--discard-failure-once"] if discard_failure_once else []), *(["--undo-failure-once"] if undo_failure_once else []), *(["--search-mail"] if search_mail else []), *(["--html-mail"] if html_mail else []), *(["--background-sync"] if background_sync else []), *(["--sync-failure-once"] if sync_failure_once else []), *(["--mail-actions=" + mail_actions] if mail_actions in ("slow", "fail") else []), *(["--google-permissions=" + google_permissions] if google_permissions else [])],
@@ -114,6 +133,70 @@ class Desktop:
                 pass
             time.sleep(0.05)
         raise RuntimeError("Shep was not ready within 20 seconds; check the app log and test-support feature.")
+
+    def start_print_browser(self, mode):
+        """A fresh browser profile on the owned display; never the personal browser."""
+        launcher = self.directory / "print-browser.py"
+        if mode == "fail":
+            launcher.write_text(f"#!{sys.executable}\nraise SystemExit(1)\n")
+        else:
+            chrome = next((path for path in (shutil.which("google-chrome"), shutil.which("chromium"), "/opt/google/chrome/chrome") if path and Path(path).is_file()), None)
+            if not chrome or not all(shutil.which(tool) for tool in ("pdftotext", "pdfinfo", "pdftoppm", "convert")):
+                raise RuntimeError("Print E2E needs Chrome/Chromium, Poppler tools and ImageMagick.")
+            profile = self.directory / "print-profile"
+            (profile / "Default").mkdir(parents=True)
+            output = self.directory / "printed"
+            output.mkdir()
+            settings = {"version": 2, "recentDestinations": [{"id": "Save as PDF", "origin": "local", "account": ""}],
+                        "selectedDestinationId": "Save as PDF", "isHeaderFooterEnabled": False, "isCssBackgroundEnabled": True}
+            (profile / "Default" / "Preferences").write_text(json.dumps({
+                "printing": {"print_preview_sticky_settings": {"appState": json.dumps(settings)}},
+                "savefile": {"default_directory": str(output)}, "download": {"default_directory": str(output)}}))
+            common = [chrome, f"--user-data-dir={profile}", "--ozone-platform=x11", "--no-first-run", "--no-default-browser-check", "--disable-background-networking", "--disable-component-update", "--disable-sync"]
+            flags = ["--kiosk-printing"] if mode == "pdf" else []
+            self.browser_log = (self.directory / "browser.log").open("w")
+            self.browser = subprocess.Popen([*common, *flags, "about:blank"], env=self.env, stdout=self.browser_log, stderr=self.browser_log, start_new_session=True)
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    self.command("xdotool", "search", "--onlyvisible", "--pid", str(self.browser.pid))
+                    break
+                except subprocess.SubprocessError:
+                    if self.browser.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError(f"The isolated X11 print browser did not open. See {self.directory / 'browser.log'}")
+                    time.sleep(.05)
+            launcher.write_text(f"#!{sys.executable}\nimport subprocess, sys\nwith open({str(self.directory / 'browser.log')!r}, 'a') as log:\n    result = subprocess.run({common!r} + ['--new-window', sys.argv[1]], stdout=log, stderr=log, timeout=10)\nraise SystemExit(result.returncode)\n")
+        launcher.chmod(0o700)
+        self.env["SHEP_TEST_PRINT_BROWSER"] = str(launcher)
+
+    def print_output(self, count=1, text="", pages=1, name="printed-message"):
+        """Read actual browser-produced PDF output and capture its first page."""
+        if not 1 <= int(count) <= 20 or not 1 <= int(pages) <= 1000 or not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name):
+            raise ValueError("Invalid print output assertion.")
+        deadline = time.monotonic() + 5
+        while True:
+            files = sorted((self.directory / "printed").glob("*.pdf"), key=lambda p: p.stat().st_mtime_ns)
+            try:
+                if len(files) < count:
+                    raise AssertionError(f"Expected {count} PDF(s), found {len(files)}")
+                path = files[count - 1]
+                info = self.command("pdfinfo", str(path))
+                actual_pages = int(re.search(r"^Pages:\s+(\d+)", info, re.M)[1])
+                content = self.command("pdftotext", "-layout", str(path), "-")
+                if actual_pages < pages or text not in content:
+                    raise AssertionError(f"PDF must contain {text!r} and at least {pages} pages; got {actual_pages} pages")
+                break
+            except (AssertionError, subprocess.SubprocessError):
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(.05)
+        raster = self.directory / name
+        self.command("pdftoppm", "-f", "1", "-singlefile", "-scale-to", "1200", "-png", str(path), str(raster))
+        self.command("convert", str(raster.with_suffix(".png")), "-quality", "90", str(raster.with_suffix(".webp")))
+        raster.with_suffix(".png").unlink()
+        self.command("xdotool", "windowraise", self.window)
+        self.command("xdotool", "windowfocus", self.window)
+        return {"pdf": str(path), "pages": actual_pages, "text": content, "screenshot": str(raster.with_suffix(".webp"))}
 
     def wait_display(self):
         deadline = time.monotonic() + 5
@@ -312,6 +395,29 @@ class Desktop:
                     self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "--", action["key"])
                 elif kind == "choose_file":
                     result = self.choose_file(action.get("path"))
+                elif kind == "print_output":
+                    result = self.print_output(action.get("count", 1), action.get("text", ""), action.get("pages", 1), action.get("name", "printed-message"))
+                elif kind == "focus_app":
+                    self.command("xdotool", "windowraise", self.window)
+                    self.command("xdotool", "windowfocus", self.window)
+                elif kind == "cancel_print":
+                    if not self.browser or self.browser.poll() is not None:
+                        raise RuntimeError("No owned print browser is running.")
+                    # Native Escape cancels the browser dialog; no app state is injected.
+                    windows = self.command("xdotool", "search", "--onlyvisible", "--class", "[Cc]hrom")
+                    self.command("xdotool", "windowfocus", windows.splitlines()[-1])
+                    self.command("xdotool", "key", "--clearmodifiers", "Escape")
+                    self.command("xdotool", "windowraise", self.window)
+                    self.command("xdotool", "windowfocus", self.window)
+                elif kind == "browser_screenshot":
+                    if not self.browser or self.browser.poll() is not None:
+                        raise RuntimeError("No owned print browser is running.")
+                    name = action.get("name", "browser")
+                    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name):
+                        raise ValueError("Invalid browser screenshot name.")
+                    path = self.directory / f"{name}.webp"
+                    self.command("import", "-window", "root", "-quality", "90", str(path))
+                    result = str(path)
                 elif kind == "scroll":
                     amount = int(action.get("amount", 3))
                     if not 1 <= abs(amount) <= 30:
@@ -352,9 +458,9 @@ class Desktop:
 
 TOOLS = [
     {"name": "desktop.start", "description": "Launch an isolated Shep fixture workspace on Xvfb. Requires cargo build --profile test-ui --features test-support. No real credentials or network writes.",
-     "inputSchema": {"type": "object", "properties": {"empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail"]}, "search_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
+     "inputSchema": {"type": "object", "properties": {"print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail"]}, "search_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
     {"name": "desktop.batch", "description": "Run 1–100 real mouse/keyboard actions in order, including short waits, state assertions and WebP screenshots. Stops at first failure and captures evidence. Prefer batches to one call per action.",
-     "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"type": {"enum": ["click", "double_click", "hover", "resize", "drag", "type", "key", "choose_file", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "button": {"type": "integer", "enum": [1, 2, 3]}, "modifiers": {"type": "array", "items": {"type": "string", "enum": ["ctrl", "shift", "alt", "super"]}}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
+     "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"type": {"enum": ["click", "double_click", "hover", "resize", "drag", "type", "key", "choose_file", "print_output", "cancel_print", "focus_app", "browser_screenshot", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "count": {"type": "integer"}, "pages": {"type": "integer"}, "x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "button": {"type": "integer", "enum": [1, 2, 3]}, "modifiers": {"type": "array", "items": {"type": "string", "enum": ["ctrl", "shift", "alt", "super"]}}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
     {"name": "desktop.state", "description": "Read observed UI state, cache counts, shortcuts and handler timings; does not change app state.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "desktop.screenshot", "description": "Capture the actual iced window as WebP. Returns image and artifact path.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}}},
     {"name": "desktop.stop", "description": "Stop only the isolated app and Xvfb processes created by this harness.", "inputSchema": {"type": "object", "properties": {}}},

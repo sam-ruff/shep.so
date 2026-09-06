@@ -15,6 +15,7 @@ mod layout;
 mod mail_actions;
 mod outgoing;
 mod preference_sync;
+mod printing;
 mod read_tracking;
 mod reading;
 #[cfg(test)]
@@ -125,6 +126,7 @@ pub enum Message {
     Reply,
     ReplyAll,
     Forward,
+    Print(printing::Message),
     ChooseAttachments,
     ChosenAttachments(Draft, Vec<std::path::PathBuf>),
     RemoveDraftAttachment(String),
@@ -244,6 +246,7 @@ pub struct App {
     confirm_save: Option<u64>,
     saved_toast: Option<Instant>,
     action_toasts: action_toasts::ActionToasts,
+    printing: printing::State,
     context_menu: Option<context_menu::Menu>,
     pending_mail_action: Option<(String, context_menu::MailAction)>,
     mail_actions: mail_actions::Actions,
@@ -383,6 +386,7 @@ impl App {
                 confirm_save: None,
                 saved_toast: None,
                 action_toasts: Default::default(),
+                printing: Default::default(),
                 context_menu: None,
                 pending_mail_action: None,
                 mail_actions: Default::default(),
@@ -1170,6 +1174,7 @@ impl App {
                 }
                 Event::DraftDeleted(id, result) => self.draft_deleted(id, result),
                 Event::ForwardDraft(id, result) => return self.forward_ready(id, result),
+                Event::Print(revision, result) => return self.print_ready(revision, result),
                 Event::DraftFiles(id, result) => {
                     if self.composer.io.as_deref() == Some(&id) {
                         self.composer.io = None;
@@ -1718,6 +1723,7 @@ impl App {
                     self.begin_forward(mail.id);
                 }
             }
+            Message::Print(message) => return self.handle_print(message),
             Message::ChooseAttachments => return self.choose_attachments(),
             Message::ChosenAttachments(draft, paths) => self.attach_chosen(draft, paths),
             Message::RemoveDraftAttachment(id) => self.remove_draft_attachment(id),
@@ -2939,6 +2945,7 @@ impl App {
                 Action::Reply => self.handle(Message::Reply),
                 Action::ReplyAll => self.handle(Message::ReplyAll),
                 Action::Forward => self.handle(Message::Forward),
+                Action::Print => self.handle_print(printing::Message::Open),
                 Action::Archive => self.handle(Message::Move("Archive".into())),
                 Action::Delete => self.handle(Message::Move("Trash".into())),
                 Action::Star => self.handle(Message::ToggleStar),
@@ -3138,6 +3145,9 @@ impl App {
             serde_json::json!(self.context_menu.as_ref().map(|m| &m.mail.subject));
         #[cfg(feature = "test-support")]
         {
+            data["print_pending"] = serde_json::json!(self.printing.pending);
+            data["print_source"] = serde_json::json!(self.printing.source);
+            data["print_revision"] = serde_json::json!(self.printing.revision);
             data["action_toast"] = serde_json::json!(
                 self.action_toasts
                     .current

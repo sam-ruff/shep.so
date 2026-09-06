@@ -14,6 +14,59 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_print_fixture_is_explicit_and_schema_matches_batch_actions(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            with self.assertRaisesRegex(ValueError, "Unknown print browser"):
+                desktop.start(print_browser="personal")
+            launch.assert_not_called()
+        start = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        self.assertEqual(start["inputSchema"]["properties"]["print_browser"]["enum"], ["pdf", "dialog", "fail"])
+        batch = next(t for t in harness.TOOLS if t["name"] == "desktop.batch")
+        actions = batch["inputSchema"]["properties"]["actions"]["items"]["properties"]["type"]["enum"]
+        for action in ("print_output", "cancel_print", "focus_app"):
+            self.assertIn(action, actions)
+
+    def test_print_failure_launcher_cannot_fall_back_to_a_personal_browser(self):
+        with tempfile.TemporaryDirectory() as directory:
+            desktop = harness.Desktop()
+            desktop.directory = Path(directory)
+            with patch.object(harness.subprocess, "Popen") as launch:
+                desktop.start_print_browser("fail")
+                launch.assert_not_called()
+            launcher = desktop.env["SHEP_TEST_PRINT_BROWSER"]
+            self.assertEqual(Path(launcher).parent, desktop.directory)
+            self.assertEqual(subprocess.run([launcher, "http://127.0.0.1:1/fixture"]).returncode, 1)
+            desktop.stop()
+            self.assertNotIn("SHEP_TEST_PRINT_BROWSER", desktop.env)
+
+    def test_print_output_rejects_paths_and_invalid_counts(self):
+        desktop = harness.Desktop()
+        for arguments in ({"count":0}, {"pages":0}, {"name":"../private"}):
+            with self.assertRaisesRegex(ValueError, "Invalid print output"):
+                desktop.print_output(**arguments)
+
+    def test_print_browser_uses_owned_x11_profile_and_waits_before_app_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            desktop = harness.Desktop()
+            desktop.directory = Path(directory)
+            desktop.env["DISPLAY"] = ":321"
+            browser = Mock(pid=12345)
+            browser.poll.return_value = 0  # Cleanup must never signal a real PID, even if this test fails.
+            desktop.command = Mock(return_value="456")
+            with patch.object(harness.shutil, "which", return_value="/bin/true"), patch.object(harness.subprocess, "Popen", return_value=browser) as launch:
+                desktop.start_print_browser("pdf")
+                args = launch.call_args.args[0]
+                self.assertIn("--ozone-platform=x11", args)
+                self.assertIn(f"--user-data-dir={desktop.directory / 'print-profile'}", args)
+                self.assertIn("--kiosk-printing", args)
+                self.assertEqual(launch.call_args.kwargs["env"]["DISPLAY"], ":321")
+                self.assertTrue(launch.call_args.kwargs["start_new_session"])
+                desktop.command.assert_called_with("xdotool", "search", "--onlyvisible", "--pid", "12345")
+            # The process is a mock; cleanup must never signal a real PID.
+            desktop.browser = None
+            desktop.stop()
+
     def test_invalid_mail_action_fault_mode_is_rejected_before_launch(self):
         desktop = harness.Desktop()
         with self.assertRaisesRegex(ValueError, "Unknown mail actions"):

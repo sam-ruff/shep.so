@@ -14,6 +14,8 @@ HTML mail retains its layout, fonts, tables and inline images. Use **Plain text*
 
 Drag the pane edges to give your inbox or reader more room.
 
+Use the printer icon beside Forward, or `Ctrl+P`, to open your default browser’s print dialog. Choose a printer or save as PDF. Printing uses the complete cached message in the current Formatted/Plain text mode, including quoted history and attachment names. Only inline images and external images already loaded under your image preferences are included. Close the browser tab when finished. Remap or disable Print in Shortcuts; the macOS default is Command+P.
+
 ## Reply and organize
 
 Use the visible message controls or right-click a message to reply, flag, move, archive, send to Trash or export it. Use `M` to move, `Ctrl+D` to send to Trash, and `Backspace` or `Delete` to archive. With the sidebar focused, `I` returns to Inbox. Change either shortcut slot, or disable the sidebar key, in **Preferences → Shortcuts**. On macOS, Command replaces Ctrl for the defaults.
