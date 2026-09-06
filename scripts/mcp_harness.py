@@ -51,7 +51,7 @@ class Desktop:
         return subprocess.run(args, env=self.env, capture_output=True, text=True,
                               check=True, timeout=10).stdout.strip()
 
-    def start(self, width=1440, height=920, empty_calendars=False, conversation_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None):
+    def start(self, width=1440, height=920, empty_calendars=False, conversation_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False):
         self.stop()
         if google_permissions not in (None, "drive", "calendar", "read-only"):
             raise ValueError("Unknown Google permissions fixture.")
@@ -85,7 +85,7 @@ class Desktop:
         self.env.pop("WAYLAND_DISPLAY", None)
         self.log = (self.directory / "app.log").open("w")
         self.app = subprocess.Popen(
-            [str(binary), "--demo", "--test-state", str(self.directory / "state.json"), *(["--empty-calendars"] if empty_calendars else []), *(["--conversation-mail"] if conversation_mail else []), *(["--readonly-calendars"] if readonly_calendars else []), *(["--pending-transfer"] if pending_transfer else []), *(["--outgoing-mail"] if outgoing_mail else []), *(["--google-permissions=" + google_permissions] if google_permissions else [])],
+            [str(binary), "--demo", "--test-state", str(self.directory / "state.json"), *(["--empty-calendars"] if empty_calendars else []), *(["--conversation-mail"] if conversation_mail else []), *(["--readonly-calendars"] if readonly_calendars else []), *(["--pending-transfer"] if pending_transfer else []), *(["--outgoing-mail"] if outgoing_mail else []), *(["--long-folders"] if long_folders else []), *(["--google-permissions=" + google_permissions] if google_permissions else [])],
             cwd=ROOT, env=self.env, stdout=self.log, stderr=self.log)
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
@@ -209,9 +209,29 @@ class Desktop:
             try:
                 result = None
                 if kind in ("click", "double_click"):
+                    modifiers = action.get("modifiers", [])
+                    if not isinstance(modifiers, list) or any(m not in ("ctrl", "shift", "alt", "super") for m in modifiers):
+                        raise ValueError("Click modifiers must be ctrl, shift, alt or super.")
                     self.command("xdotool", "mousemove", "--window", self.window,
                                  str(int(action["x"])), str(int(action["y"])))
-                    self.command("xdotool", "click", "--repeat", "2" if kind == "double_click" else "1", "--delay", "90", str(action.get("button", 1)))
+                    try:
+                        for modifier in modifiers:
+                            self.command("xdotool", "keydown", modifier)
+                        if modifiers:
+                            time.sleep(.04)
+                        self.command("xdotool", "click", "--repeat", "2" if kind == "double_click" else "1", "--delay", "90", str(action.get("button", 1)))
+                        if modifiers:
+                            time.sleep(.04)
+                    finally:
+                        for modifier in reversed(modifiers):
+                            self.command("xdotool", "keyup", modifier)
+                elif kind == "resize":
+                    width, height = int(action["width"]), int(action["height"])
+                    if not 900 <= width <= 2560 or not 640 <= height <= 1600:
+                        raise ValueError("Test window must be 900–2560 × 640–1600.")
+                    self.command("xdotool", "windowsize", self.window, str(width), str(height))
+                elif kind == "hover":
+                    self.command("xdotool", "mousemove", "--window", self.window, str(int(action["x"])), str(int(action["y"])))
                 elif kind == "drag":
                     duration = int(action.get("duration_ms", 200))
                     if not 0 <= duration <= 2000:
@@ -277,9 +297,9 @@ class Desktop:
 
 TOOLS = [
     {"name": "desktop.start", "description": "Launch an isolated Shep fixture workspace on Xvfb. Requires cargo build --profile test-ui --features test-support. No real credentials or network writes.",
-     "inputSchema": {"type": "object", "properties": {"empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
+     "inputSchema": {"type": "object", "properties": {"empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
     {"name": "desktop.batch", "description": "Run 1–100 real mouse/keyboard actions in order, including short waits, state assertions and WebP screenshots. Stops at first failure and captures evidence. Prefer batches to one call per action.",
-     "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"type": {"enum": ["click", "double_click", "drag", "type", "key", "choose_file", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "x": {"type": "integer"}, "y": {"type": "integer"}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
+     "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"type": {"enum": ["click", "double_click", "hover", "resize", "drag", "type", "key", "choose_file", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "button": {"type": "integer", "enum": [1, 2, 3]}, "modifiers": {"type": "array", "items": {"type": "string", "enum": ["ctrl", "shift", "alt", "super"]}}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
     {"name": "desktop.state", "description": "Read observed UI state, cache counts, shortcuts and handler timings; does not change app state.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "desktop.screenshot", "description": "Capture the actual iced window as WebP. Returns image and artifact path.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}}},
     {"name": "desktop.stop", "description": "Stop only the isolated app and Xvfb processes created by this harness.", "inputSchema": {"type": "object", "properties": {}}},

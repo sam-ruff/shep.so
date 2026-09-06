@@ -19,6 +19,25 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 | Testing, release, installer | Repo MCP skill, deterministic native scenarios, Rust/Python tests, hooks, semantic-release files, Linux installer | Final artifact/build verification after remaining changes; non-Linux execution/distribution |
 | CI and performance gates | Dormant workflow definitions, strict backend/native budgets, Actions disabled by user request | Keep disabled until Sam asks; run measurements only at the end on an idle host |
 
+## New explicit requests (active)
+
+- Encrypt the local mail cache at rest, with safe migration of existing personal data; OS credential storage and encrypted backups alone do not satisfy this.
+- Remove the 25 MiB incoming-message, 256 MiB snapshot and 32,000-character preview ceilings. Use bounded streaming/background processing for large mail and backups; large downloads must not hold up smaller messages. Do not replace these with higher arbitrary caps or claim unlimited RAM/storage.
+- Fix sidebar horizontal overflow at compact/scaled widths. Ctrl+click toggles folders into a combined mail view; ordinary click selects one. Account headings expand/collapse their folders with a chevron. Remove Add account from the main sidebar; keep it in Preferences.
+- Replace Sync calendar with a refresh icon, remove the Workspace / Calendar breadcrumb and calendar footer caption and use the freed space for the grid/agenda.
+- Make the sidebar draggable for width, and persist window sizes across sessions, including closing promptly after resize.
+- Inbox context menus must expose common message actions, with mouse and keyboard parity.
+- Draft navigation must be a collapsible group and support right-click deletion. Action tooltips must show current remapped shortcuts.
+- Email body text must support native mouse selection and copying in preview and full-window reading, including formatted HTML content.
+- Render HTML email with its layout, typography, tables, spacing, backgrounds, links and inline image placement preserved; current plain-text conversion plus appended images is insufficient (user supplied comparison). Keep selectable text, a plain-text option, existing remote-image policy and per-message/sender/domain exceptions; no active email scripts or uncontrolled resource requests. Use synthetic equivalents in tests, never commit personal verification-mail contents/screenshots.
+- Compose new messages and replies inside the preview pane. Autosave while typing and support switching between multiple open drafts and reading other mail without losing content, attachments or recipient context.
+- Contacts need a separate Preferences section. Confirm explicit saves with an acknowledgment-based toast and give buttons a visible pressed state.
+- Backups must support multiple independently configured destinations (local disk, Google Drive, S3, FTP/FTPS and SFTP), configurable compression and passphrase encryption at setup, parallel destination outcomes and per-destination rolling retention. Restore must prompt for the passphrase. Design destination setup and management as a clear, polished list/wizard.
+- Folder context menus must support delete and moving folders inside other folders. Render folder hierarchies as collapsible groups, defaulting nested groups to collapsed; preserve provider-specific hierarchy delimiters and account scope.
+- Make flagged states visibly outlined in red. Provide a UI panel for configurable primary/secondary/background/surface/text/accent and related scheme colors, with persistence and usable light/dark behavior.
+
+These requests extend the active full-product goal. The sidebar/flag/color changes are the next visible priority, followed by cache encryption and bounded large-mail/backup support. No performance measurements until the end on an idle host.
+
 ## Remaining implementation audit
 
 1. Cached queries, body loads and ordered saves have independent workers, verified with provider slots/queue occupied. Startup defers the Google keychain check. Preferences now use versioned acknowledgements; backup completion changes only metadata. Detail revisions reject stale bodies/errors after flag/move changes. Still review closing during a debounced/pending preference save and retrying a full persistence queue.
@@ -111,3 +130,12 @@ Provider tests exercise real local HTTP requests with fake credentials for parti
 Independent-process coordination, live authorization, non-Linux execution and the other completion-audit items remain open. Performance measurements are still deferred until the end on an idle host.
 
 This increment passes formatting, Clippy with warnings denied, 178 Rust tests (two opt-in live tests ignored), 13 Python tests and all 40 native functional scenarios. Linux release packaging and installation are checked separately; live Google and non-Linux execution remain unverified.
+
+
+## Sidebar, contacts and inbox context evidence
+
+The sidebar now measures/truncates long labels without horizontal overflow, reserves scrollbar space, persists collapsed account headings and supports Ctrl+click folder unions without duplicates or a misleading all-mail result for an empty selection. Account setup remains in Preferences. A native draggable edge saves sidebar width; window dimensions restore after cached startup. A narrower window clamps the visible sidebar without discarding the saved wider choice. Close flushes pending drag state and waits for the latest preferences acknowledgment. A coalesced retry handles a full persistence queue; a failed save keeps the window and unsaved edits open.
+
+Inbox context actions retain the right-clicked identity, support mouse plus Shift+F10/arrow/Enter/Escape, and wait for the correct body before reply/move/export. Navigation cancels delayed actions. Flags use a red outline; supported button tooltips show remapped keys. Contacts has a dedicated Preferences tab. Explicit saves show a dismissible acknowledgment-based toast. Calendar uses a refresh icon and frees header/footer space for its grid.
+
+Validation: formatting, Clippy with warnings denied, 184 Rust tests (two opt-in live diagnostics ignored), 15 Python tests and all 45 native functional flows pass. SQLite reopen verifies layout persistence; UI unit tests cover close during debounce, failed saves, full-queue coalescing, stale acknowledgments and late context-body results. Native light/dark/900×640 evidence was visually reviewed. No performance measurements were run. This completes the listed increment only; folder trees/mutations, inline multi-draft composition, palette editing, encrypted large-mail streaming and multiple backup destinations remain active requirements above.

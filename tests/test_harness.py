@@ -124,6 +124,35 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(responses[0]["error"]["code"], -32600)
         self.assertEqual(responses[1]["error"]["code"], -32601)
 
+    def test_modified_click_releases_keys_after_failed_native_input(self):
+        desktop = harness.Desktop()
+        desktop.app = Mock()
+        desktop.app.poll.return_value = None
+        desktop.window = "fixture-window"
+        desktop.screenshot = Mock(return_value={})
+        def command(*args):
+            if args[1] == "click":
+                raise RuntimeError("fixture click failure")
+            return ""
+        desktop.command = Mock(side_effect=command)
+        with patch.object(harness.time, "sleep"):
+            with self.assertRaisesRegex(Exception, "fixture click failure"):
+                desktop.batch([{"type": "click", "x": 20, "y": 30, "modifiers": ["ctrl", "shift"]}])
+        calls = [call.args for call in desktop.command.call_args_list]
+        self.assertEqual(calls[-2:], [("xdotool", "keyup", "shift"), ("xdotool", "keyup", "ctrl")])
+
+    def test_resize_rejects_invalid_dimensions_before_native_input(self):
+        desktop = harness.Desktop()
+        desktop.app = Mock()
+        desktop.app.poll.return_value = None
+        desktop.screenshot = Mock()
+        desktop.command = Mock()
+        for size in [(899, 640), (900, 639), (2561, 800)]:
+            with self.assertRaises(RuntimeError):
+                desktop.batch([{"type": "resize", "width": size[0], "height": size[1]}])
+        desktop.command.assert_not_called()
+        desktop.app = None
+
 
 if __name__ == "__main__":
     unittest.main()

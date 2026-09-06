@@ -72,13 +72,19 @@ impl App {
             text("Remote images").size(17).font(BOLD),
             pick_list([ImagePolicy::BlockAll, ImagePolicy::Contacts, ImagePolicy::AllowAll], Some(self.preferences.image_policy), Message::PrefImages).style(select_input).menu_style(select_menu).text_size(12).padding(11).width(Length::Fill),
             muted("Loading an external image lets its server see the request. Sender identity in email is not verified by Shep.").size(12),
-            text("Contacts").size(14).font(BOLD),
-            muted("Email addresses allowed by the Contacts policy, separated by commas.").size(12),
-            input("alex@example.com, maya@example.com", self.field("contacts"), |v|Message::Field("contacts", v)),
-            action("Save contacts", Message::SavePreferences),
+            action("Manage contacts", Message::SettingsTab(SettingsTab::Contacts)),
             line(),
             text(format!("Image exceptions: {} messages, {} senders, {} domains", self.preferences.image_messages.len(), self.preferences.image_senders.len(), self.preferences.image_domains.len())).size(12),
             action("Clear image exceptions", Message::ClearImageTrust),
+        ].spacing(16)).padding(23).style(card).into()
+    }
+    pub(super) fn contacts_settings(&self) -> Element<'_, Message> {
+        container(column![
+            text("Contacts").size(17).font(BOLD),
+            muted("Add email addresses, separated by commas. These addresses are used by the Contacts image policy."),
+            input("alex@example.com, maya@example.com", self.field("contacts"), |value| Message::Field("contacts", value)).id("contacts"),
+            row![action("Save contacts", Message::SavePreferences), action("Image preferences", Message::SettingsTab(SettingsTab::Privacy))].spacing(10).wrap(),
+            text(format!("{} saved contacts", self.preferences.contacts.len())).size(12),
         ].spacing(16)).padding(23).style(card).into()
     }
     pub(super) fn image_bar(&self) -> Element<'_, Message> {

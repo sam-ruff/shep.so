@@ -70,12 +70,55 @@ class NativeFlows(unittest.TestCase):
         self.artifacts = Path(result["artifacts"])
         print(f"\nEvidence: {result['artifacts']}", flush=True)
 
+    def test_sidebar_resize_window_size_and_contacts_toast(self):
+        self.mcp.batch(drag(222, 500, 310, 500), check("sidebar_width", 305, "gte"),
+                       check("preferences_saved", True), check("saved_sidebar_width", 305, "gte"),
+                       shot("resized-sidebar-light"),
+                       {"type": "resize", "width": 1200, "height": 800}, check("window_size", [1200.0, 800.0]),
+                       check("preferences_saved", True), check("saved_window_size.width", 1200.0),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(906, 156), check("settings_tab", "Contacts"), shot("contacts-section"),
+                       click(590, 323), type_text("friend@example.com, alex@example.com"),
+                       click(430, 380), check("contacts", ["friend@example.com", "alex@example.com"]),
+                       check("saved_toast", True), check("preferences_saved", True), shot("contacts-saved-toast"),
+                       click(1162, 756), check("saved_toast", False),
+                       click(400, 156), check("settings_tab", "General"), click(693, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"), shot("resized-sidebar-dark"))
+
+    def test_inbox_context_menu_targets_clicked_message(self):
+        self.mcp.batch({"type": "click", "x": 403, "y": 450, "button": 3},
+                       check("context_subject", "Coffee next Thursday?"), shot("inbox-context-light"),
+                       click(485, 624), check("context_menu", None),
+                       click(403, 450), check("selected", "Coffee next Thursday?"), check("starred", True),
+                       {"type": "click", "x": 403, "y": 450, "button": 3}, check("context_subject", "Coffee next Thursday?"),
+                       key("Escape"), check("context_menu", None),
+                       key("shift+F10"), check("context_subject", "Coffee next Thursday?"),
+                       key("Return"), check("full_reader", True), key("Escape"), check("full_reader", False),
+                       {"type": "click", "x": 403, "y": 450, "button": 3}, check("context_subject", "Coffee next Thursday?"),
+                       click(486, 664), check("dialog", "Move"), check("focused_input", "folder-search"),
+                       type_text("Archive"), key("Return"), check("dialog", None), check("total", 119),
+                       click(85, 398), check("folder", "Archive"), check("selected", "Coffee next Thursday?"),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(690, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"), key("shift+F10"),
+                       check("context_subject", "Coffee next Thursday?"), shot("inbox-context-dark"),
+                       click(1400, 700), check("context_menu", None))
+
+    def test_inbox_context_compact_and_reply_target(self):
+        self.mcp.call("desktop.stop")
+        self.mcp.call("desktop.start", width=900, height=640)
+        self.mcp.batch({"type": "click", "x": 357, "y": 450, "button": 3},
+                       check("context_subject", "Coffee next Thursday?"), shot("inbox-context-compact"),
+                       click(442, 275), check("dialog", "Compose"), check("fields.to", "Sophie Williams <hello2@example.com>"),
+                       check("fields.subject", "Re: Coffee next Thursday?"), shot("context-reply-target"),
+                       key("Escape"), check("dialog", None),
+                       key("ctrl+comma"), check("tab", "Preferences"), shot("contacts-tabs-compact"))
+
     def test_layout_gallery(self):
         self.mcp.batch(shot("compact-mail-header"), key("ctrl+comma"), check("tab", "Preferences"), shot("preferences-general"),
                        click(645, 156), check("settings_tab", "Shortcuts"), shot("shortcuts-layout"),
                        key("ctrl+1"), check("tab", "Mail"), key("c"), check("dialog", "Compose"), shot("compose-layout"), key("Escape"), check("dialog", None),
                        key("m"), check("dialog", "Move"), shot("move-layout"), key("Escape"), check("dialog", None),
-                       key("ctrl+2"), check("tab", "Calendar"), click(1340, 84), check("dialog", "Event"), shot("event-layout"), key("Escape"), check("dialog", None),
+                       key("ctrl+2"), check("tab", "Calendar"), click(1340, 45), check("dialog", "Event"), shot("event-layout"), key("Escape"), check("dialog", None),
                        key("ctrl+1"), check("tab", "Mail"), wait(80), key("ctrl+k"), check("focused_input", "search"), type_text("prototype"), check("total", 1), key("Escape"), check("dialog", None),
                        check("reply_count", 1), check("attachment_count", 4), shot("reply-layout"))
 
@@ -281,7 +324,7 @@ class NativeFlows(unittest.TestCase):
                            key("ctrl+comma"), check("tab", "Preferences"),
                            click(470, 156), check("settings_tab", "Calendars"),
                            click(1240, 820), {"type": "scroll", "amount": 8}, wait(150), shot("google-permissions-" + mode),
-                           key("ctrl+2"), check("tab", "Calendar"), click(1260, 395), check("dialog", "Event"),
+                           key("ctrl+2"), check("tab", "Calendar"), click(1260, 348), check("dialog", "Event"),
                            check("event_access.update", mode == "calendar"), shot("google-event-" + mode),
                            key("Escape"), check("dialog", None), key("ctrl+comma"),
                            click(559, 156), check("settings_tab", "Backups"), shot("google-backup-" + mode),
@@ -310,7 +353,7 @@ class NativeFlows(unittest.TestCase):
                        check("google_archived", "preview-calendar", "contains"), check("calendar_count", 2),
                        check("account_count", 2), check("events", 5), shot("google-disconnected-light"),
                        key("ctrl+2"), check("tab", "Calendar"), shot("google-calendar-offline"),
-                       click(1260, 395), check("dialog", "Event"), check("event_access.update", False),
+                       click(1260, 348), check("dialog", "Event"), check("event_access.update", False),
                        check("event_access.delete", False), shot("google-offline-event-read-only"),
                        key("Escape"), check("dialog", None), key("ctrl+1"), check("tab", "Mail"),
                        check("total", 120), key("Down"), check("selected", "Your weekly workspace digest"))
@@ -413,7 +456,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_calendar_read_only_event(self):
         self.mcp.call("desktop.start", readonly_calendars=True)
-        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80), click(1260, 395),
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80), click(1260, 348),
                        check("dialog", "Event"), check("fields.source", "preview-home-calendar"),
                        check("event_access.update", False), check("event_access.delete", False), shot("calendar-read-only-event"),
                        key("Escape"), check("dialog", None), double_click(700, 474), check("dialog", "Event"),
@@ -427,13 +470,13 @@ class NativeFlows(unittest.TestCase):
 
     def test_calendar_same_uid_in_different_calendars_edits_and_deletes_correct_event(self):
         self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80),
-                       click(1260, 395), check("dialog", "Event"),
+                       click(1260, 348), check("dialog", "Event"),
                        check("fields.title", "A little time outside"), check("fields.source", "preview-home-calendar"),
                        shot("calendar-duplicate-id-edit"), click(650, 313), key("ctrl+a"), type_text("More time outside"),
                        click(510, 708), check("dialog", None), check("events", 5),
-                       click(1260, 395), check("dialog", "Event"), check("fields.title", "More time outside"),
+                       click(1260, 348), check("dialog", "Event"), check("fields.title", "More time outside"),
                        check("fields.source", "preview-home-calendar"), click(925, 708), check("dialog", None), check("events", 4),
-                       shot("calendar-scoped-deletion"), click(1260, 282), check("dialog", "Event"),
+                       shot("calendar-scoped-deletion"), click(1260, 234), check("dialog", "Event"),
                        check("fields.title", "A quiet start"), check("fields.source", "preview-calendar"),
                        key("Escape"), check("dialog", None))
 
@@ -448,8 +491,31 @@ class NativeFlows(unittest.TestCase):
         for _ in range(12): self.mcp.batch(key("Down"), wait(25))
         self.mcp.batch(check("inbox_scroll", 200, "gte"), shot("keyboard-scrolled-inbox"))
 
+    def test_sidebar_combined_folders_and_account_collapse(self):
+        self.mcp.call("desktop.start", long_folders=True)
+        long_folder = "Mailspring/Snoozed/Worldwide correspondence and scheduled delivery"
+        self.mcp.batch(shot("sidebar-long-labels-light"), click(100, 537), check("folder", "Projects"), check("total", 1),
+                       {"type": "click", "x": 100, "y": 576, "modifiers": ["ctrl"]}, check("total", 2),
+                       check("selected_folders.1.folder", long_folder), shot("sidebar-combined-folders"),
+                       {"type": "click", "x": 100, "y": 537, "modifiers": ["ctrl"]}, check("total", 1),
+                       check("selected_folders.0.folder", long_folder),
+                       click(100, 615), check("folder", "WWW MMM WWW MMM WWW MMM WWW MMM"), check("selected_folders", None),
+                       {"type": "click", "x": 100, "y": 615, "modifiers": ["ctrl"]}, check("selected_folders", []), check("total", 0),
+                       click(100, 498), check("collapsed_accounts", ["preview-work"]), check("preferences_saved", True), shot("sidebar-account-collapsed"),
+                       click(100, 498), check("collapsed_accounts", []), check("preferences_saved", True),
+                       {"type": "hover", "x": 125, "y": 576}, wait(600), shot("sidebar-long-name-tooltip"),
+                       click(78, 278), check("folder", "INBOX"), check("selected_folders", None), check("total", 120))
+
+    def test_sidebar_long_labels_compact_dark(self):
+        self.mcp.call("desktop.start", width=900, height=640, long_folders=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"), shot("sidebar-compact-dark"),
+                       {"type": "hover", "x": 110, "y": 520}, {"type": "scroll", "amount": 4}, wait(120),
+                       shot("sidebar-compact-dark-folders"), {"type": "scroll", "amount": -20}, wait(100),
+                       click(155, 278), check("inbox_expanded", True), shot("sidebar-compact-expanded"))
+
     def test_mouse_flagging_and_unified_expansion(self):
-        self.mcp.batch(click(570, 215), check("starred", False), click(570, 215), check("starred", True),
+        self.mcp.batch(click(570, 215), check("starred", False), click(570, 215), check("starred", True), shot("flagged-message-red-outline"),
                        click(186, 278), check("inbox_expanded", True), shot("expanded-unified-inbox"),
                        click(104, 357), check("account", "preview-personal"), check("total", 2),
                        click(186, 278), check("inbox_expanded", False), shot("account-inbox"))
@@ -478,11 +544,11 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+1"), check("tab", "Mail"), wait(80), key("m"), check("dialog", "Move"), shot("cross-account-destination"),
                        click(710, 327), wait(80), click(710, 403), check("fields.move_account", "preview-personal"),
                        click(670, 385), type_text("archvie"), key("Return"), check("dialog", None), check("total", 119),
-                       click(104, 596), check("account", "preview-personal"), click(85, 399), check("folder", "Archive"),
+                       click(183, 278), check("inbox_expanded", True), click(104, 357), check("account", "preview-personal"), click(183, 278), check("inbox_expanded", False), click(85, 399), check("folder", "Archive"),
                        check("total", 1), check("selected", "A little more room to think"), shot("transferred-message"))
 
     def test_account_wizard_security_and_connection_testing(self):
-        self.mcp.batch(click(78, 689), check("dialog", "Account"), shot("account-identity"),
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(383, 156), check("settings_tab", "Accounts"), shot("account-settings-before-add"), click(354, 474), check("dialog", "Account"), shot("account-identity"),
                        click(674, 444), type_text("Fastmail"), check("fields.name", "Fastmail"), click(664, 524), type_text("test@example.com"), check("fields.email", "test@example.com"),
                        click(572, 580), check("fields.host", "imap.fastmail.com"), click(936, 635), check("fields.setup_step", "1"), shot("account-incoming"),
                        click(690, 408), wait(80), click(690, 482), check("fields.incoming_security", "StartTls"), check("fields.port", "143"),

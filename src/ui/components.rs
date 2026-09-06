@@ -20,6 +20,7 @@ pub struct Colors {
     pub border: Color,
     pub accent: Color,
     pub tint: Color,
+    pub flag: Color,
 }
 pub fn colors(theme: &Theme) -> Colors {
     let dark = theme.palette().background.r < 0.3;
@@ -33,6 +34,7 @@ pub fn colors(theme: &Theme) -> Colors {
             border: hex(0x323239),
             accent: hex(0xb5a0ff),
             tint: hex(0x30283f),
+            flag: hex(0xf87171),
         }
     } else {
         Colors {
@@ -44,6 +46,7 @@ pub fn colors(theme: &Theme) -> Colors {
             border: hex(0xe8e7ed),
             accent: hex(0x7356bd),
             tint: hex(0xf0eafa),
+            flag: hex(0xc62828),
         }
     }
 }
@@ -88,16 +91,6 @@ pub fn line<'a>() -> Element<'a, Message> {
     container(widget::space())
         .height(1)
         .width(Length::Fill)
-        .style(|t| container::Style {
-            background: Some(colors(t).border.into()),
-            ..Default::default()
-        })
-        .into()
-}
-pub fn divider<'a>() -> Element<'a, Message> {
-    container(widget::space())
-        .width(1)
-        .height(Length::Fill)
         .style(|t| container::Style {
             background: Some(colors(t).border.into()),
             ..Default::default()
@@ -158,17 +151,22 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
             ..Default::default()
         };
     }
-    let bg = if matches!(status, button::Status::Hovered) {
-        hex(0x8060cc)
-    } else {
-        hex(0x7356bd)
+    let bg = match status {
+        button::Status::Hovered => hex(0x8060cc),
+        button::Status::Pressed => hex(0x60459f),
+        _ => hex(0x7356bd),
     };
     button::Style {
         background: Some(bg.into()),
         text_color: Color::WHITE,
         border: Border {
             radius: 8.into(),
-            ..Default::default()
+            width: if status == button::Status::Pressed {
+                1.
+            } else {
+                0.
+            },
+            color: hex(0x4e3787),
         },
         ..if matches!(status, button::Status::Disabled) {
             button::Style {
@@ -184,7 +182,9 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
 pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
     let p = colors(theme);
     button::Style {
-        background: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+        background: if status == button::Status::Pressed {
+            Some(p.tint.into())
+        } else if status == button::Status::Hovered {
             Some(p.subtle.into())
         } else {
             None
@@ -260,21 +260,37 @@ pub fn action<'a>(label: &'a str, message: Message) -> widget::Button<'a, Messag
         .style(outline)
         .on_press(message)
 }
-pub fn icon_action<'a>(name: &str, label: &'a str, message: Message) -> Element<'a, Message> {
+pub fn icon_action<'a>(
+    name: &str,
+    label: impl Into<std::borrow::Cow<'a, str>>,
+    message: Message,
+) -> Element<'a, Message> {
     toggle_icon_action(name, label, false, message)
 }
 pub fn toggle_icon_action<'a>(
     name: &str,
-    label: &'a str,
+    label: impl Into<std::borrow::Cow<'a, str>>,
     active: bool,
     message: Message,
 ) -> Element<'a, Message> {
     tooltip(
-        button(icon(name, 20.))
-            .padding(10)
-            .style(if active { selected } else { ghost })
-            .on_press(message),
-        container(text(label).size(12)).padding(8).style(card),
+        button(if name == "flag" {
+            flag_icon(active, 20.)
+        } else {
+            icon(name, 20.)
+        })
+        .padding(10)
+        .style(if active && name == "flag" {
+            flagged
+        } else if active {
+            selected
+        } else {
+            ghost
+        })
+        .on_press(message),
+        container(text(label.into()).size(12))
+            .padding(8)
+            .style(card),
         tooltip::Position::Bottom,
     )
     .gap(5)
@@ -350,13 +366,26 @@ pub fn avatar<'a>(name: &str, index: usize, size: f32) -> Element<'a, Message> {
         })
         .into()
 }
+pub fn flagged(theme: &Theme, status: button::Status) -> button::Style {
+    let mut style = ghost(theme, status);
+    style.border = Border {
+        color: colors(theme).flag,
+        width: 1.5,
+        radius: 7.into(),
+    };
+    style.text_color = colors(theme).flag;
+    style
+}
+pub fn flag_icon<'a>(active: bool, size: f32) -> Element<'a, Message> {
+    icon_color("flag", size, false, active)
+}
 pub fn icon<'a>(name: &str, size: f32) -> Element<'a, Message> {
-    icon_color(name, size, false)
+    icon_color(name, size, false, false)
 }
 pub fn icon_bright<'a>(name: &str, size: f32) -> Element<'a, Message> {
-    icon_color(name, size, true)
+    icon_color(name, size, true, false)
 }
-fn icon_color<'a>(name: &str, size: f32, bright: bool) -> Element<'a, Message> {
+fn icon_color<'a>(name: &str, size: f32, bright: bool, is_flagged: bool) -> Element<'a, Message> {
     static ICONS: OnceLock<HashMap<&'static str, svg::Handle>> = OnceLock::new();
     let icons=ICONS.get_or_init(||[
         ("image",r#"<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="2"/><path d="m21 15-5-5L5 21"/>"#),
@@ -390,6 +419,7 @@ fn icon_color<'a>(name: &str, size: f32, bright: bool) -> Element<'a, Message> {
         ("sun",r#"<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1 1M18 18l1 1M5 19l1-1M18 6l1-1"/>"#),
         ("moon",r#"<path d="M21 13A9 9 0 0 1 11 3 9 9 0 1 0 21 13Z"/>"#),
         ("keyboard",r#"<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h1m3 0h1m3 0h1m3 0h1M6 12h1m3 0h1m3 0h1m3 0h1M7 16h10"/>"#),
+        ("copy",r#"<rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3"/>"#),
         ("download",r#"<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>"#),
         ("clock",r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>"#),
     ].into_iter().map(|(name,path)|(name,svg::Handle::from_memory(format!(r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#777580" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{path}</svg>"##).into_bytes()))).collect());
@@ -397,7 +427,9 @@ fn icon_color<'a>(name: &str, size: f32, bright: bool) -> Element<'a, Message> {
         .width(size)
         .height(size)
         .style(move |t, _| svg::Style {
-            color: Some(if bright {
+            color: Some(if is_flagged {
+                colors(t).flag
+            } else if bright {
                 Color::WHITE
             } else {
                 colors(t).muted

@@ -108,6 +108,7 @@ pub enum Event {
     RemoteImage(String, Result<Vec<u8>, String>),
     Workspace(Arc<Workspace>),
     PreferencesSaved(u64, Arc<crate::store::PreferenceSnapshot>),
+    PreferencesSaveFailed(u64, String),
     Page(u64, Arc<MailPage>, bool),
     Conversation(
         u64,
@@ -541,10 +542,11 @@ impl Engine {
                     .await?;
             }
             Command::SavePreferences(request, prefs) => {
-                let snapshot = self.store.save_preferences(prefs).await?;
-                output
-                    .send(Event::PreferencesSaved(request, Arc::new(snapshot)))
-                    .await?;
+                let event = match self.store.save_preferences(prefs).await {
+                    Ok(snapshot) => Event::PreferencesSaved(request, Arc::new(snapshot)),
+                    Err(error) => Event::PreferencesSaveFailed(request, error.to_string()),
+                };
+                output.send(event).await?;
             }
             Command::Sync => {
                 if self.demo {

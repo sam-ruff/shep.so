@@ -60,3 +60,54 @@ fn a_failed_background_prefetch_clears_its_marker_without_an_unrelated_error() {
     assert!(app.pending_details.is_empty());
     assert!(app.notice.is_none());
 }
+
+#[tokio::test]
+async fn context_reply_waits_for_clicked_body_and_navigation_cancels_it() {
+    use super::context_menu::MailAction;
+    let store = crate::store::Store::memory().unwrap();
+    let mut messages = vec![];
+    for (id, sender) in [("1", "first@example.com"), ("2", "second@example.com")] {
+        messages.push(parse_mail("test", id, "INBOX", format!("From: {sender}\r\nTo: reader@example.com\r\nSubject: Message {id}\r\n\r\nBody {id}").into_bytes(), false, false).unwrap());
+    }
+    store.upsert(messages.clone()).await.unwrap();
+    let first = Arc::new(store.detail(messages[0].summary.id.clone()).await.unwrap());
+    let second = Arc::new(store.detail(messages[1].summary.id.clone()).await.unwrap());
+    let (mut app, _) = App::new();
+    app.page = Arc::new(MailPage {
+        rows: messages.iter().map(|m| m.summary.clone()).collect(),
+        ..Default::default()
+    });
+    app.selected = Some(first.summary.id.clone());
+    app.detail = Some(first.clone());
+    let _ = app.handle(Message::MailContext(
+        second.summary.id.clone(),
+        iced::Point::ORIGIN,
+    ));
+    let _ = app.handle(Message::MailContextAction(MailAction::Reply));
+    assert!(app.dialog.is_none());
+    let _ = app.handle(Message::Backend(Event::Detail {
+        revision: app.detail_revision,
+        id: first.summary.id.clone(),
+        result: Ok(first.clone()),
+        prefetch: true,
+    }));
+    assert!(app.dialog.is_none());
+    assert!(app.pending_mail_action.is_some());
+    app.select(first.summary.id.clone());
+    let _ = app.handle(Message::Backend(Event::Detail {
+        revision: app.detail_revision,
+        id: second.summary.id.clone(),
+        result: Ok(second.clone()),
+        prefetch: false,
+    }));
+    assert!(app.dialog.is_none());
+    assert!(app.pending_mail_action.is_none());
+    let _ = app.handle(Message::MailContext(
+        second.summary.id.clone(),
+        iced::Point::ORIGIN,
+    ));
+    let _ = app.handle(Message::MailContextAction(MailAction::Reply));
+    assert_eq!(app.dialog, Some(Dialog::Compose));
+    assert_eq!(app.field("to"), "second@example.com");
+    assert_eq!(app.field("subject"), "Re: Message 2");
+}

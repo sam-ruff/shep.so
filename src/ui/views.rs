@@ -73,7 +73,12 @@ impl App {
             Element::from(main.width(Length::Fill))
         } else {
             Element::from(
-                row![self.sidebar(), divider(), main.width(Length::Fill)].height(Length::Fill),
+                row![
+                    self.sidebar(),
+                    super::layout::SidebarDivider(self.sidebar_width()),
+                    main.width(Length::Fill)
+                ]
+                .height(Length::Fill),
             )
         })
         .style(|t| container::Style {
@@ -105,7 +110,36 @@ impl App {
         } else {
             // Keep the base widget tree alive as dialogs open and close. Replacing the
             // root Stack with a Container drops native input focus and shaped text.
-            stack![base].into()
+            let mut layers = stack![base];
+            if self.context_menu.is_some() {
+                layers = layers.push(opaque(
+                    mouse_area(container(space()).width(Length::Fill).height(Length::Fill))
+                        .on_press(Message::DismissContext)
+                        .on_right_press(Message::DismissContext),
+                ));
+                layers = layers.push(self.mail_context_view());
+            }
+            if self.saved_toast.is_some() {
+                layers = layers.push(
+                    container(opaque(
+                        container(
+                            row![
+                                icon("check", 18.),
+                                text("Changes saved").size(13),
+                                icon_action("close", "Dismiss", Message::DismissToast)
+                            ]
+                            .spacing(10)
+                            .align_y(Alignment::Center),
+                        )
+                        .padding([8, 14])
+                        .style(card),
+                    ))
+                    .align_right(Length::Fill)
+                    .align_bottom(Length::Fill)
+                    .padding(20),
+                );
+            }
+            layers.into()
         }
     }
     fn page_header<'a>(
@@ -114,22 +148,35 @@ impl App {
         subtitle: impl Into<std::borrow::Cow<'a, str>>,
         right: Element<'a, Message>,
     ) -> Element<'a, Message> {
-        row![
-            column![heading(title), muted(subtitle)].spacing(7),
-            space().width(Length::Fill),
-            right
-        ]
-        .align_y(Alignment::Center)
-        .spacing(20)
-        .into()
+        let subtitle = subtitle.into();
+        let mut title = column![heading(title)].spacing(7);
+        if !subtitle.is_empty() {
+            title = title.push(muted(subtitle));
+        }
+        row![title, space().width(Length::Fill), right]
+            .align_y(Alignment::Center)
+            .spacing(20)
+            .into()
     }
     fn mail_view(&self) -> Element<'_, Message> {
-        let title = if self.query.starred_only {
-            "Flagged"
+        let title = if let Some(folders) = &self.query.folders {
+            match folders.as_slice() {
+                [] => "No folders selected".to_string(),
+                [folder] => {
+                    if folder.folder == "INBOX" {
+                        "Inbox".into()
+                    } else {
+                        folder.folder.clone()
+                    }
+                }
+                folders => format!("{} folders", folders.len()),
+            }
+        } else if self.query.starred_only {
+            "Flagged".into()
         } else if self.query.folder == "INBOX" {
-            "Inbox"
+            "Inbox".into()
         } else {
-            &self.query.folder
+            self.query.folder.clone()
         };
         let header = row![
             heading(title),
@@ -144,13 +191,17 @@ impl App {
             } else {
                 space().into()
             },
-            action(
-                if self.busy.contains("sync") {
-                    "Syncing…"
-                } else {
-                    "Sync mail"
-                },
-                Message::Sync
+            self.with_shortcut(
+                action(
+                    if self.busy.contains("sync") {
+                        "Syncing…"
+                    } else {
+                        "Sync mail"
+                    },
+                    Message::Sync
+                ),
+                "Sync mail",
+                Action::Sync
             )
         ]
         .spacing(14)
@@ -269,9 +320,9 @@ impl App {
                 }),
                 space().width(Length::Fill),
                 muted(date).size(10),
-                button(icon("flag", 18.))
+                button(flag_icon(mail.starred, 18.))
                     .padding(6)
-                    .style(if mail.starred { selected } else { ghost })
+                    .style(if mail.starred { flagged } else { ghost })
                     .on_press(Message::FlagRow(mail.id.clone()))
             ]
             .spacing(9)
@@ -338,11 +389,12 @@ impl App {
             })
             .on_press(Message::Select(mail.id.clone()));
             messages = messages
-                .push(
+                .push(super::context_menu::ContextArea::new(
                     mouse_area(entry)
                         .on_enter(Message::Hover(mail.id.clone()))
                         .on_double_click(Message::OpenMessage(mail.id.clone())),
-                )
+                    mail.id.clone(),
+                ))
                 .push(line());
         }
         messages = messages.push(space().height((self.page.rows.len() - end) as f32 * row_height));
@@ -455,7 +507,11 @@ impl App {
     }
     pub(super) fn reader_toolbar<'a>(&'a self, detail: &'a MailDetail) -> Element<'a, Message> {
         let toolbar = row![
-            icon_action("archive", "Archive", Message::Move("Archive".into())),
+            icon_action(
+                "archive",
+                self.shortcut_hint("Archive", Action::Archive),
+                Message::Move("Archive".into())
+            ),
             icon_action("trash", "Move to Trash", Message::Move("Trash".into())),
             icon_action(
                 "mail",
@@ -468,20 +524,29 @@ impl App {
             ),
             toggle_icon_action(
                 "flag",
-                if detail.summary.starred {
-                    "Remove flag"
-                } else {
-                    "Flag message"
-                },
+                self.shortcut_hint(
+                    if detail.summary.starred {
+                        "Remove flag"
+                    } else {
+                        "Flag message"
+                    },
+                    Action::Star
+                ),
                 detail.summary.starred,
                 Message::ToggleStar
             ),
             space().width(Length::Fill),
-            if (self.size.width - if self.size.width < 1100. { 257. } else { 279. })
+            if (self.size.width / (self.preferences.interface_scale as f32 / 100.)
+                - self.sidebar_width()
+                - 57.)
                 * (1. - self.preferences.reader_split)
                 < 440.
             {
-                icon_action("move", "Move to folder", Message::Open(Dialog::Move))
+                icon_action(
+                    "move",
+                    self.shortcut_hint("Move to folder", Action::Move),
+                    Message::Open(Dialog::Move),
+                )
             } else {
                 button(
                     row![
@@ -623,18 +688,26 @@ impl App {
     }
     pub(super) fn reader_actions<'a>(&'a self, detail: &'a MailDetail) -> Element<'a, Message> {
         let mut footer = row![
-            button(
-                row![
-                    icon_bright("reply", 20.),
-                    text("Reply").size(12).line_height(1.)
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center)
+            self.with_shortcut(
+                button(
+                    row![
+                        icon_bright("reply", 20.),
+                        text("Reply").size(12).line_height(1.)
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                )
+                .padding([10, 14])
+                .style(primary)
+                .on_press(Message::Reply),
+                "Reply",
+                Action::Reply
+            ),
+            self.with_shortcut(
+                action("Reply all", Message::ReplyAll),
+                "Reply all",
+                Action::ReplyAll
             )
-            .padding([10, 14])
-            .style(primary)
-            .on_press(Message::Reply),
-            action("Reply all", Message::ReplyAll)
         ]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -662,12 +735,12 @@ impl App {
             space().width(Length::Fill),
             icon_action(
                 "left",
-                "Previous inbox message",
+                self.shortcut_hint("Previous inbox message", Action::Previous),
                 Message::PreviousMessage(true)
             ),
             icon_action(
                 "chevron",
-                "Next inbox message",
+                self.shortcut_hint("Next inbox message", Action::Next),
                 Message::PreviousMessage(false)
             )
         ]
@@ -679,7 +752,7 @@ impl App {
             "Calendar",
             "",
             row![
-                action("Sync calendar", Message::SyncCalendar),
+                icon_action("sync", "Refresh calendar", Message::SyncCalendar),
                 button(text("New event").size(13))
                     .padding([10, 16])
                     .style(primary)
@@ -864,7 +937,10 @@ impl App {
                 .style(card)
         ]
         .spacing(18);
-        container(column![muted("WORKSPACE  /  CALENDAR").size(10).font(BOLD),header,body.height(Length::Fill),muted("Google Calendar & CalDAV · local times · sync window: 90 days back, 1 year ahead").size(10)].spacing(23)).padding([27,28]).height(Length::Fill).into()
+        container(column![header, body.height(Length::Fill)].spacing(23))
+            .padding([27, 28])
+            .height(Length::Fill)
+            .into()
     }
     fn preferences_view(&self) -> Element<'_, Message> {
         let header = self.page_header(
@@ -880,6 +956,7 @@ impl App {
             (SettingsTab::Backups, "Backups"),
             (SettingsTab::Shortcuts, "Shortcuts"),
             (SettingsTab::Privacy, "Privacy"),
+            (SettingsTab::Contacts, "Contacts"),
         ] {
             tabs = tabs.push(
                 button(text(label).size(12))
@@ -899,12 +976,13 @@ impl App {
             SettingsTab::Backups => self.backup_settings(),
             SettingsTab::Shortcuts => self.shortcut_settings(),
             SettingsTab::Privacy => self.privacy_settings(),
+            SettingsTab::Contacts => self.contacts_settings(),
         };
         container(
             column![
                 muted("WORKSPACE  /  PREFERENCES").size(10).font(BOLD),
                 header,
-                tabs,
+                tabs.wrap(),
                 line(),
                 scrollable(container(content).max_width(940).width(Length::Fill))
                     .height(Length::Fill)
