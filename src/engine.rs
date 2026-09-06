@@ -45,7 +45,7 @@ pub enum Command {
     SavePreferences(u64, Preferences),
     Sync,
     Move(u64, Mail, String),
-    Transfer(Mail, String, String),
+    Transfer(u64, Mail, String, String),
     Flags(u64, Mail, crate::mail_actions::Flags),
     SaveDraft(Draft),
     AutoSaveDraft(Draft),
@@ -100,7 +100,7 @@ impl Command {
             Self::SaveEvent(e) | Self::DeleteEvent(e) => Some(format!("event:{}", e.key())),
             Self::Flags(request, m, _) => Some(format!("flags:{}:{request}", m.id)),
             Self::Move(request, m, _) => Some(format!("move:{}:{request}", m.id)),
-            Self::Transfer(m, _, _) => Some(format!("message:{}", m.id)),
+            Self::Transfer(request, m, _, _) => Some(format!("transfer:{}:{request}", m.id)),
             _ => None,
         }
     }
@@ -128,6 +128,7 @@ pub enum Event {
     MailSyncFinished(Result<(), String>),
     FlagsFinished(u64, Mail, Result<(), String>),
     MoveFinished(u64, Mail, String, Result<(), String>),
+    TransferFinished(u64, Mail, Result<(), String>),
     #[cfg(feature = "test-support")]
     PreviewSync(u64),
     Changed,
@@ -608,103 +609,23 @@ impl Engine {
                 output.send(Event::Changed).await?;
                 anyhow::ensure!(failures.is_empty(), "{}", failures.join("\n"));
             }
-            Command::Transfer(mail, destination, folder) => {
-                let preferences: Preferences = self.store.get("preferences").await?;
-                anyhow::ensure!(
-                    preferences.cross_account_moves,
-                    "Enable moving between accounts in Preferences first."
-                );
-                anyhow::ensure!(
-                    mail.account_id != destination,
-                    "Choose a different destination account."
-                );
-                anyhow::ensure!(
-                    !mail.remote_id.starts_with("local-sent-"),
-                    "This copy is stored locally. Save and sync its server Sent copy before moving it to another account."
-                );
-                // Always lock in the same order to prevent opposing transfers deadlocking.
-                let mut ids = [mail.account_id.clone(), destination.clone()];
-                ids.sort();
-                let first = self.account_lock(&ids[0]).await;
-                let second = self.account_lock(&ids[1]).await;
-                let source = self.account(&mail.account_id).await?;
-                let destination = self.account(&destination).await?;
-                anyhow::ensure!(
-                    source.protocol == Protocol::Imap && destination.protocol == Protocol::Imap,
-                    "Moving between accounts requires two IMAP accounts. POP3 keeps server originals."
-                );
-                let raw = self.store.raw_message(mail.id.clone()).await?;
-                if self.demo {
-                    let moved = parse_mail(
-                        &destination.id,
-                        &format!("local-sent-transfer-{}", uuid::Uuid::new_v4()),
-                        &folder,
-                        raw,
-                        mail.unread,
-                        mail.starred,
-                    )?;
-                    self.store.upsert(vec![moved]).await?;
-                } else {
-                    let source_secret = providers::read_secret(&source.id).await?;
-                    let destination_secret = providers::read_secret(&destination.id).await?;
-                    let journal_key = format!("transfer:{}", mail.id);
-                    let journal: Option<(String, String, String)> =
-                        self.store.get(&journal_key).await?;
-                    if let Some((account, target, stage)) = &journal {
-                        anyhow::ensure!(
-                            account == &destination.id && target == &folder,
-                            "A transfer is already pending for this message. Resume with the same destination."
-                        );
-                        anyhow::ensure!(
-                            stage == "copied",
-                            "The previous upload was interrupted. The original is safe. Check the destination in webmail before moving it there manually; Shep will not upload a possible duplicate."
-                        );
-                    }
-                    tokio::time::timeout(
-                        Duration::from_secs(35),
-                        providers::mail::prepare_transfer(&source, &source_secret, &mail),
-                    )
-                    .await??;
-                    if journal.is_none() {
-                        self.store
-                            .put(
-                                &journal_key,
-                                Some((
-                                    destination.id.clone(),
-                                    folder.clone(),
-                                    "uploading".to_owned(),
-                                )),
-                            )
-                            .await?;
-                        tokio::time::timeout(Duration::from_secs(60), providers::mail::append_transfer(&destination, &destination_secret, &mail, &folder, raw)).await
-                            .context("Upload timed out; the source is retained. Check the destination before retrying.")??;
-                        self.store
-                            .put(
-                                &journal_key,
-                                Some((destination.id.clone(), folder.clone(), "copied".to_owned())),
-                            )
-                            .await?;
-                    }
-                    tokio::time::timeout(Duration::from_secs(35), providers::mail::finish_transfer(&source, &source_secret, &mail)).await
-                        .context("The destination has a copy; source removal timed out. Retry the same destination to finish without uploading again.")?
-                        .context("The destination has a copy; source removal could not be confirmed. Retry the same destination to finish.")?;
-                }
-                let journal_key = format!("transfer:{}", mail.id);
-                self.store.remove(mail.id).await?;
-                self.store
-                    .put(&journal_key, Option::<(String, String, String)>::None)
-                    .await?;
-                drop(second);
-                drop(first);
-                output.send(Event::Changed).await?;
+            Command::Transfer(request, mail, destination, folder) => {
+                let result = self
+                    .transfer_message(&mail, destination, folder, output.clone())
+                    .await;
+                let refresh = result.as_ref().ok().cloned();
                 output
-                    .send(Event::Notice(format!(
-                        "Moved to {} / {folder}.",
-                        destination.name
-                    )))
+                    .send(Event::TransferFinished(
+                        request,
+                        mail,
+                        result.map(|_| ()).map_err(|e| format!("{e:#}")),
+                    ))
                     .await?;
-                if !self.demo {
-                    self.sync_account(destination, output.clone()).await?;
+                if !self.demo
+                    && let Some(account) = refresh
+                    && let Err(error) = self.sync_account(account, output.clone()).await
+                {
+                    output.send(Event::Error(format!("The message was moved, but refreshing folders failed. Try Refresh. {error:#}"))).await?;
                 }
             }
             Command::Move(request, mail, folder) => {

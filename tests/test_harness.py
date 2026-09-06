@@ -126,6 +126,10 @@ class HarnessTests(unittest.TestCase):
             with patch.object(harness.time, "sleep"):
                 result = desktop.batch([{"type": "wait_for", "path": "rows.0.folder", "value": "Projects"}])
             self.assertEqual(result["actions"][0]["result"], "Projects")
+            desktop.state = Mock(side_effect=[{"removal": None}, {"removal": {"transfers": 1}}, {}])
+            with patch.object(harness.time, "sleep"):
+                result = desktop.batch([{"type": "wait_for", "path": "removal.transfers", "value": 1}])
+            self.assertEqual(result["actions"][0]["result"], 1)
             desktop.state = Mock(return_value={"rows": []})
             with self.assertRaises(AssertionError):
                 desktop.assertion({"path": "rows.0.folder", "value": "Projects"})

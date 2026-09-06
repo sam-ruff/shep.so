@@ -8,7 +8,7 @@ Go to **Preferences → Accounts**. Add an IMAP or POP3 account, then enter its 
 
 The unified inbox brings your accounts together. Choose a folder in the sidebar, search by sender or message text, or filter for unread, flagged or attachment-bearing mail.
 
-Click a message to read it. Double-click for a full-window reader. Related messages appear as collapsible cards; disable grouping in **Preferences → General** if you prefer individual messages.
+Click a message to read it. Moving on to another message, folder or tab marks it read. An explicit **Mark as unread** remains unread until you choose to read it again. Double-click for a full-window reader. Related messages appear as collapsible cards; disable grouping in **Preferences → General** if you prefer individual messages.
 
 Drag the pane edges to give your inbox or reader more room.
 
@@ -25,3 +25,5 @@ Choose appearance, text size and quoted-history display in **Preferences → Gen
 See [current limits](limits.md) for provider restrictions and size limits.
 
 Select email text with the mouse and copy it normally. Search Preferences to jump to a settings section. Icon tooltips can show the primary shortcut; both tooltips and their key hints can be turned off.
+
+Archive, delete and move show a toast immediately while saving continues. Repeating an action increases the count and restarts its six-second display time; archive/delete counts continue across accounts in a unified inbox. A failed action restores the message and removes its count, with the error remaining visible. Undo is still being implemented.

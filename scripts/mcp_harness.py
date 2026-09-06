@@ -212,7 +212,7 @@ class Desktop:
         for key in action["path"].split("."):
             try:
                 value = value[key] if isinstance(value, dict) else value[int(key)]
-            except (KeyError, IndexError, TypeError) as error:
+            except (KeyError, IndexError, TypeError, ValueError) as error:
                 raise AssertionError(f"{action['path']}: not present in the current state") from error
         expected = action.get("value")
         op = action.get("op", "eq")
