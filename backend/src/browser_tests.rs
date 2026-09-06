@@ -86,6 +86,20 @@ impl HostedMail for BrowserMail {
                 output.send(MailSyncItem::Message(mail)).await?;
             }
         }
+        if folder == "INBOX" {
+            let fixture: serde_json::Value =
+                serde_json::from_str(include_str!("../../shared/attachment-fixtures.json"))?;
+            let mail = parse_mail(
+                &c.account.id,
+                "42.99",
+                folder,
+                fixture[0]["raw"].as_str().unwrap().as_bytes().to_vec(),
+                false,
+                false,
+            )?;
+            live_ids.insert(mail.summary.id.clone());
+            output.send(MailSyncItem::Message(mail)).await?;
+        }
         output
             .send(MailSyncItem::Reconcile {
                 account: c.account.id.clone(),

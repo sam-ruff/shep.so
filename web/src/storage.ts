@@ -82,6 +82,9 @@ export class BrowserStore implements LocalStore {
       };
     });
   }
+  close() {
+    this.db.close();
+  }
   private read<T>(store: StoreName, key?: string): Promise<T> {
     return new Promise((resolve, reject) => {
       const tx = this.db.transaction(store, "readonly");

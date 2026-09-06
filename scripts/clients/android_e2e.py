@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import signal
 import subprocess
 import sys
 import time
@@ -46,7 +47,33 @@ def outbox(device, flutter, env):
                 try: fixture.wait(timeout=5)
                 except subprocess.TimeoutExpired: fixture.kill();fixture.wait()
 
-def main(device, flutter='flutter', compose_only=False, outbox_only=False):
+def incoming(device, flutter, env):
+    with (LOGS/'android-incoming-fixture.log').open('w') as log:
+        fixture=subprocess.Popen([sys.executable,str(ROOT/'scripts/clients/android_incoming_fixture.py'),'--device',device],stdout=log,stderr=subprocess.STDOUT)
+        try:
+            test_env=env.copy();test_env['SHEP_NATIVE_REPORT']='integration-incoming-result'
+            with (LOGS/'android-incoming-integration.log').open('w') as driver_log:
+                driver=subprocess.Popen([flutter,'drive','--driver','test_driver/native_driver.dart','--target','integration_test/incoming_android_test.dart','-d',device,'--flavor','preview'],cwd=ROOT/'flutter',env=test_env,stdout=driver_log,stderr=subprocess.STDOUT,start_new_session=True)
+                try:
+                    deadline=time.monotonic()+600
+                    while driver.poll() is None:
+                        if fixture.poll() not in (None,0):raise RuntimeError('Incoming picker stopped before the UI test finished')
+                        if time.monotonic()>deadline:raise TimeoutError('Incoming UI test did not finish')
+                        time.sleep(.2)
+                    if driver.returncode!=0:raise RuntimeError('Incoming UI test failed; see android-incoming-integration.log')
+                finally:
+                    if driver.poll() is None:
+                        os.killpg(driver.pid,signal.SIGTERM)
+                        try:driver.wait(timeout=5)
+                        except subprocess.TimeoutExpired:os.killpg(driver.pid,signal.SIGKILL);driver.wait()
+            if fixture.wait(timeout=15)!=0:raise RuntimeError('Incoming file picker failed; see its log')
+        finally:
+            if fixture.poll() is None:
+                fixture.terminate()
+                try:fixture.wait(timeout=5)
+                except subprocess.TimeoutExpired:fixture.kill();fixture.wait()
+
+def main(device, flutter='flutter', compose_only=False, outbox_only=False, incoming_only=False):
     if not device.startswith('emulator-') or not device.removeprefix('emulator-').isdigit():
         raise ValueError('Only an explicit Android emulator is allowed; personal devices are refused')
     avd = subprocess.check_output(['adb', '-s', device, 'emu', 'avd', 'name'], text=True).splitlines()[0]
@@ -55,6 +82,10 @@ def main(device, flutter='flutter', compose_only=False, outbox_only=False):
     env = os.environ.copy()
     env['ANDROID_SERIAL'] = device
     env['APPIUM_HOME'] = str(ROOT / 'artifacts/appium')
+    if incoming_only:
+        incoming(device,flutter,env)
+        print('Android incoming-attachment scenario passed; other scenarios were not rerun.')
+        return
     if outbox_only:
         outbox(device,flutter,env)
         print('Android Outbox scenario passed; other scenarios were not rerun.')
@@ -66,9 +97,10 @@ def main(device, flutter='flutter', compose_only=False, outbox_only=False):
     run('android-integration', [flutter,'test','integration_test/mail_test.dart','-d',device,'--flavor','preview'], ROOT/'flutter')
     run('android-native-integration', [flutter,'drive','--driver','test_driver/native_driver.dart','--target','integration_test/native_mail_test.dart','-d',device,'--flavor','preview'], ROOT/'flutter')
     compose(device,flutter,env)
+    incoming(device,flutter,env)
     outbox(device,flutter,env)
     captures=ROOT/'artifacts/flutter/native';captures.mkdir(parents=True,exist_ok=True)
-    for name in ['native-sent-handover','sent-handover-reader','sent-handover-undo','native-draft-reopened','native-account-retry','native-production-startup','paged-swipe-undo','native-reply-attachments','native-outbox-review-light','native-outbox-review-dark','native-outbox-recovered-draft','native-outbox-empty','native-outbox-local-sent', 'native-sent-copy-review', 'native-sent-preferences', 'native-imap-local-sent-offline', 'native-imap-local-sent-reopened', 'native-imap-credential-recovery']:
+    for name in ['native-incoming-saved','native-sent-handover','sent-handover-reader','sent-handover-undo','native-draft-reopened','native-account-retry','native-production-startup','paged-swipe-undo','native-reply-attachments','native-outbox-review-light','native-outbox-review-dark','native-outbox-recovered-draft','native-outbox-empty','native-outbox-local-sent', 'native-sent-copy-review', 'native-sent-preferences', 'native-imap-local-sent-offline', 'native-imap-local-sent-reopened', 'native-imap-credential-recovery']:
         png=captures/f'{name}.png'
         subprocess.run(['convert',str(png),str(png.with_suffix('.webp'))],check=True)
         png.unlink()
@@ -104,6 +136,7 @@ if __name__=='__main__':
     parser.add_argument('--flutter',default='flutter',help='Flutter executable (use an unpacked SDK when Snap bundles incompatible build tools)')
     parser.add_argument('--compose-only',action='store_true',help='Run only the saved native reply/attachment scenario during development')
     parser.add_argument('--outbox-only',action='store_true',help='Run only the saved native Outbox recovery scenario')
+    parser.add_argument('--incoming-only',action='store_true',help='Run only the real incoming attachment save/cancel scenario')
     args=parser.parse_args()
-    if args.compose_only and args.outbox_only: parser.error('Choose only one targeted scenario')
-    main(args.device,args.flutter,args.compose_only,args.outbox_only)
+    if sum([args.compose_only,args.outbox_only,args.incoming_only])>1: parser.error('Choose only one targeted scenario')
+    main(args.device,args.flutter,args.compose_only,args.outbox_only,args.incoming_only)

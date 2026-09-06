@@ -115,6 +115,10 @@ pub enum Request {
     Detail {
         id: String,
     },
+    Attachment {
+        id: String,
+        file: String,
+    },
     Sync {
         account: String,
         password: SecretString,
@@ -409,13 +413,31 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             if folder=="Sent" { for message in &mail {folder_membership.entry(message.account_id.clone()).or_default().insert(message.folder.clone());} }
             Ok(json!({"mail":mail,"total":total,"unread":unread,"aliases":aliases,"folder_membership":folder_membership}))
         }).await,
-        Request::Detail{id} => db.read(move |db| {
-            let summary=stored_mail(db,&id)?;
-            let (text,raw):(String,Vec<u8>)=db.query_row("SELECT body,raw FROM mail WHERE id=?1",[&summary.id],|r|Ok((r.get(0)?,r.get(1)?)))?;
-            let parsed=mailparse::parse_mail(&raw)?;
-            let (_,files)=content(&parsed);
-            Ok(json!({"summary":summary,"body":text,"attachments":files.iter().map(|f|f.name.clone()).collect::<Vec<_>>()}))
-        }).await,
+        Request::Detail{id} => {
+            let (summary,text,raw)=db.read(move |db| {
+                let summary=stored_mail(db,&id)?;
+                let (text,raw):(String,Vec<u8>)=db.query_row("SELECT body,raw FROM mail WHERE id=?1",[&summary.id],|r|Ok((r.get(0)?,r.get(1)?)))?;
+                Ok((summary,text,raw))
+            }).await?;
+            tokio::task::spawn_blocking(move || {
+                let (files,file_error)=match shep_mail_core::attachments::catalog(&raw) {
+                    Ok(files)=>(files,None),
+                    Err(_)=>(Vec::new(),Some("Could not read attachments. The cached message body is still available. Refresh the message or retry loading its attachments.")),
+                };
+                Ok(json!({"summary":summary,"body":text,"attachments":files.iter().map(|f|f.name.clone()).collect::<Vec<_>>(),"files":files,"file_error":file_error}))
+            }).await?
+        }
+        Request::Attachment{id,file} => {
+            let raw:Vec<u8>=db.read(move |db| {
+                let summary=stored_mail(db,&id)?;
+                Ok(db.query_row("SELECT raw FROM mail WHERE id=?1",[&summary.id],|r|r.get(0))?)
+            }).await?;
+            tokio::task::spawn_blocking(move || {
+                use base64::Engine;
+                let (info,bytes)=shep_mail_core::attachments::read(&raw,&file)?;
+                Ok(json!({"info":info,"bytes":base64::engine::general_purpose::STANDARD.encode(bytes)}))
+            }).await?
+        }
         Request::Drafts => db.read(crate::drafts::list).await,
         Request::DraftFiles{id} => db.read(move|db|crate::drafts::snapshot(db,&id)).await,
         Request::AddDraftFiles{id,paths} => {

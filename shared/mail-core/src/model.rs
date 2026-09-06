@@ -2,7 +2,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-pub const MAX_MESSAGE_BYTES: usize = 25 * 1024 * 1024;
+pub use shep_mail_content::MAX_MESSAGE_BYTES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Protocol {
@@ -356,11 +356,13 @@ pub fn content(parsed: &mailparse::ParsedMail<'_>) -> (String, Vec<Attachment>) 
         let disp = p.get_content_disposition();
         if disp.disposition == mailparse::DispositionType::Attachment
             || disp.params.contains_key("filename")
+            || p.ctype.params.contains_key("name")
         {
             attachments.push(Attachment {
                 name: disp
                     .params
                     .get("filename")
+                    .or_else(|| p.ctype.params.get("name"))
                     .cloned()
                     .unwrap_or_else(|| "attachment.bin".into()),
                 bytes: p.get_body_raw().unwrap_or_default(),

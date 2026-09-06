@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'attachments.dart';
 import 'package:flutter/foundation.dart';
 import '../src/rust/api.dart';
 import '../src/rust/frb_generated.dart';
@@ -18,7 +19,8 @@ class NativeRepository
         AccountRepository,
         DraftRepository,
         OutgoingRepository,
-        SentPreferencesRepository {
+        SentPreferencesRepository,
+        AttachmentRepository {
   NativeRepository(this.profile, this.credentials);
   final MobileProfile profile;
   final CredentialStore credentials;
@@ -126,6 +128,9 @@ class NativeRepository
     Map<String, dynamic> m, {
     String body = '',
     List<String>? attachments,
+    List<ReceivedAttachment> files = const [],
+    bool? loaded,
+    String? fileError,
   }) {
     final sender = (m['sender'] as String).trim().isEmpty
         ? 'Unknown sender'
@@ -158,7 +163,9 @@ class NativeRepository
             m['attachment_count'] as int,
             (i) => 'Attachment ${i + 1}',
           ),
-      bodyLoaded: body.isNotEmpty,
+      files: files,
+      fileError: fileError,
+      bodyLoaded: loaded ?? body.isNotEmpty,
     );
   }
 
@@ -214,7 +221,28 @@ class NativeRepository
       data['summary'],
       body: data['body'],
       attachments: (data['attachments'] as List).cast<String>(),
+      files: (data['files'] as List? ?? [])
+          .map((f) => ReceivedAttachment.fromJson(f))
+          .toList(),
+      loaded: true,
+      fileError: data['file_error'],
     );
+  }
+
+  @override
+  Future<Uint8List> attachment(String message, ReceivedAttachment file) async {
+    final result = await call({
+      'op': 'attachment',
+      'id': message,
+      'file': file.id,
+    });
+    final info = ReceivedAttachment.fromJson(result['info']);
+    if (info.id != file.id || info.size != file.size) {
+      throw const MailOperationFailure(
+        'This attachment changed. Reopen the message and retry.',
+      );
+    }
+    return compute(base64Decode, result['bytes'] as String);
   }
 
   @override

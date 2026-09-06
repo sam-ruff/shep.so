@@ -101,14 +101,20 @@
     {
       "id": "outbox-review",
       "contract": "active SMTP cannot be released; cancel an unused reservation atomically; reviewed return clones draft/file ownership, prevents stale resurrection, and needs a separate Send; manual mark preserves acknowledgement uncertainty; local Sent keeps exact bytes and newer local edits; local IMAP Sent actions do not access credentials, while server actions require credentials for the current stored identity",
-      "mobile": "outgoing_tests.rs / sent_tests.rs / outbox_test.dart / outbox_android_test.dart + android_outbox_fixture.py; paged review, separate APPEND decisions, known-ack repair, settings and local Sent/reopen; Sent-folder grouping/history cleanup OPEN; offline local flag/read/move + locked/missing-credential refusal and visible reader recovery in native_repository_test.dart, ui_test.dart and outbox_android_test.dart",
-      "browser": "provider.test.ts / model.test.ts / real Rust HTTPS provider-flows.mjs; light/dark compact controls and axe; provider Sent lookup/reservations/review/repair in sent.test.ts and provider-flows.mjs; identity handover/grouping and bounded paging OPEN"
+      "mobile": "outgoing_tests.rs / sent_tests.rs / outbox_test.dart / outbox_android_test.dart + android_outbox_fixture.py; paged review, separate APPEND decisions, known-ack repair, settings and local Sent/reopen; Sent-folder grouping covered; copy labels/history cleanup OPEN; offline local flag/read/move + locked/missing-credential refusal and visible reader recovery in native_repository_test.dart, ui_test.dart and outbox_android_test.dart",
+      "browser": "provider.test.ts / model.test.ts / real Rust HTTPS provider-flows.mjs; light/dark compact controls and axe; provider Sent lookup/reservations/review/repair in sent.test.ts and provider-flows.mjs; identity handover/grouping covered; labels/history/bounded paging OPEN"
     },
     {
       "id": "provider-sent-copy",
       "contract": "discover the configured/special-use Sent folder; verify complete tagged lookup success and exact Message-ID; journal destination before APPEND; never repeat an uncertain copy automatically; preserve acknowledgments, local edits and policy changes; adopt a cached provider identity atomically, retain old IDs for queued actions/replies, keep logical Sent membership and physical Undo destinations, and preserve an open reader/late body through handover",
       "mobile": "shared sent/gateway TLS tests / native sent_tests.rs (rollback, migration, queued action, occupied capacity) / native_repository_test.dart / sent_handover_scenario.dart shared by ui_test.dart and native_mail_test.dart / actual bridge repair in outbox_android_test.dart; no live IMAP claim",
       "browser": "backend mail/sent_tests.rs + sent.test.ts + handover.test.ts + storage.spec.ts + real Rust HTTPS provider-flows.mjs: reservations, exact MIME, lost response/reopen, explicit review, policy, atomic adoption/migration/rollback, aliases/replies/queued actions, cross-tab reader/Undo and physical Sent destinations; labels/history/bounded reads OPEN"
+    },
+    {
+      "id": "cached-incoming-attachments",
+      "contract": "cached MIME yields identical safe filenames, stable per-part content identities and exact decoded bytes across native Rust and browser WASM; save/cancel/error remains visible, stale files cannot save under old IDs, and an open reader survives exclusion from its refreshed list",
+      "mobile": "shared/attachment-fixtures.json + mail-content/mail-core tests / native Rust alias/reopen/occupied-capacity/corrupt-file tests / native_repository_test.dart / incoming_test.dart / incoming_android_test.dart + android_incoming_fixture.py real DocumentsUI cancel and exact-byte save; Apple export execution OPEN",
+      "browser": "attachment_content.test.ts shared WASM byte goldens / real Rust HTTPS provider-flows.mjs: blocked WASM retry, offline binary/Unicode/duplicate downloads, light/dark compact axe and screenshots; full lifecycle/large MIME OPEN"
     }
   ]
 }

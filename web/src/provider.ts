@@ -1,3 +1,4 @@
+import { AttachmentReader } from "./attachments";
 import {
   resolveMail,
   localId,
@@ -218,6 +219,12 @@ export class GatewayRepository implements Repository {
   events: CalendarEntry[] = [];
   drafts: Draft[] = [];
   accounts: Account[] = [];
+  private attachmentReader?: AttachmentReader;
+  get incomingAttachments() {
+    return (this.attachmentReader ??= new AttachmentReader(
+      this.session.user_id,
+    ));
+  }
   folders = new Map<string, string[]>();
   aliases = new Map<string, string>();
   folderRoles = new Map<string, Set<string>>();

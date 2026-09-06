@@ -1,3 +1,21 @@
+class ReceivedAttachment {
+  const ReceivedAttachment({
+    required this.id,
+    required this.name,
+    required this.mediaType,
+    required this.size,
+  });
+  final String id, name, mediaType;
+  final int size;
+  factory ReceivedAttachment.fromJson(Map<String, dynamic> value) =>
+      ReceivedAttachment(
+        id: value['id'],
+        name: value['name'],
+        mediaType: value['media_type'],
+        size: value['size'],
+      );
+}
+
 enum MailAction {
   none('None'),
   archive('Archive'),
@@ -26,6 +44,8 @@ class Mail {
     this.unread = true,
     this.starred = false,
     this.attachments = const [],
+    this.files = const [],
+    this.fileError,
     this.accountId = '',
     this.bodyLoaded = true,
   });
@@ -33,11 +53,13 @@ class Mail {
   final DateTime date;
   final bool unread, starred;
   final List<String> attachments;
+  final List<ReceivedAttachment> files;
+  final String? fileError;
   final String accountId;
   final bool bodyLoaded;
 
   Mail patch(Map<String, Object> fields) => Mail(
-    id: id,
+    id: fields['id'] as String? ?? id,
     sender: sender,
     address: address,
     subject: subject,
@@ -49,6 +71,8 @@ class Mail {
     unread: fields['unread'] as bool? ?? unread,
     starred: fields['starred'] as bool? ?? starred,
     attachments: attachments,
+    files: files,
+    fileError: fileError,
     accountId: accountId,
     bodyLoaded: bodyLoaded,
   );
@@ -67,6 +91,8 @@ class Mail {
     unread: unread,
     starred: starred,
     attachments: attachments,
+    files: files,
+    fileError: fileError,
     bodyLoaded: false,
   );
 
@@ -84,6 +110,8 @@ class Mail {
     unread: unread,
     starred: starred,
     attachments: detail.attachments,
+    files: detail.files,
+    fileError: detail.fileError,
     bodyLoaded: true,
   );
 

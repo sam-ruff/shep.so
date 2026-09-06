@@ -1,3 +1,4 @@
+import type { ReceivedAttachment } from "./attachments";
 import {
   type Action,
   type Mail,
@@ -917,6 +918,7 @@ export function mount(
     return s;
   }
   function open(m: Mail) {
+    attachmentState = undefined;
     w.selected = m.id;
     if (m.unread) void w.change(m.id, { unread: false }, false);
     else w.changed();
@@ -1105,6 +1107,99 @@ export function mount(
     );
     return box;
   }
+  let attachmentState:
+    | {
+        id: string;
+        files?: ReceivedAttachment[];
+        loading: boolean;
+        busy?: string;
+        error?: string;
+        notice?: string;
+      }
+    | undefined;
+  function incomingFiles(m: Mail) {
+    const panel = el("div", "attachments");
+    if (!gateway) {
+      for (const name of m.attachments)
+        panel.append(el("span", "attachment", name));
+      return panel;
+    }
+    if (attachmentState?.id !== m.id) {
+      const state = (attachmentState = {
+        id: m.id,
+        loading: true,
+      } as NonNullable<typeof attachmentState>);
+      void gateway.incomingAttachments
+        .files(m.id)
+        .then((files) => (state.files = files))
+        .catch((error) => (state.error = error.message))
+        .finally(() => {
+          state.loading = false;
+          if (attachmentState === state) w.changed();
+        });
+    }
+    const state = attachmentState;
+    if (state.loading) panel.append(el("span", "", "Loading attachments…"));
+    for (const file of state.files ?? []) {
+      const save = button(
+        `Save ${file.name}`,
+        async () => {
+          if (state.busy) return;
+          state.busy = file.id;
+          state.error = undefined;
+          state.notice = undefined;
+          w.changed();
+          try {
+            const bytes = await gateway.incomingAttachments.read(m.id, file);
+            const url = URL.createObjectURL(
+              new Blob([bytes], { type: "application/octet-stream" }),
+            );
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = file.name;
+            document.body.append(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 30000);
+            state.notice = `Download started for ${file.name}.`;
+          } catch (error) {
+            state.error =
+              error instanceof Error
+                ? error.message
+                : "Could not save this attachment. Retry Save.";
+          } finally {
+            state.busy = undefined;
+            if (attachmentState === state) w.changed();
+          }
+        },
+        "file",
+      );
+      save.disabled = !!state.busy;
+      save.append(el("span", "attachment-size", `${file.size} bytes`));
+      panel.append(save);
+    }
+    if (state.error) {
+      const status = el("p", "error", state.error);
+      status.setAttribute("role", "alert");
+      panel.append(status);
+      panel.append(
+        button(
+          "Reload attachments",
+          () => {
+            attachmentState = undefined;
+            w.changed();
+          },
+          "refresh",
+        ),
+      );
+    }
+    if (state.notice) {
+      const status = el("p", "", state.notice);
+      status.setAttribute("role", "status");
+      panel.append(status);
+    }
+    return panel;
+  }
   function reader() {
     const panel = el("section", "reader");
     panel.setAttribute("aria-label", "Message reader");
@@ -1186,12 +1281,9 @@ export function mount(
       );
       content.append(quotes);
     }
-    const files = el("div", "attachments");
-    for (const a of m.attachments) {
-      const file = el("span", "attachment");
-      file.append(icon("file"), el("span", "", a));
-      files.append(file);
-    }
+    // Older caches can lack counts for Content-Type name parameters. Inspect
+    // cached MIME when opening a message so those files are still available.
+    const files = incomingFiles(m);
     content.append(files);
     const actions = el("div", "reader-actions");
     const reply = button("Reply", () => composer(m), "reply");
