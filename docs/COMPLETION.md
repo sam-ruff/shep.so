@@ -443,3 +443,10 @@ deferred; controlled fixture delays are correctness evidence only.
 The user installation matches the tested optimized binary at SHA-256
 `8de511f5d3f57cf511b8219fc10e5db1a01ea035cd537f54c3aaa7b4d7257483`.
 Personal windows were left running. Strict documentation validation passes.
+
+Shipped to main as `6d83b728a0b8fbec239a42a454b179026629d7ba`. The Linux
+installation is verified, all 100 native functional scenarios pass in one run,
+and the full-product goal remains active. R69 stays in TODO for the explicit
+remaining image-arrival and readiness work.
+
+[Documentation run 34061562636](https://github.com/sam-ruff/shep.so/actions/runs/34061562636) builds and deploys the shipped code successfully.
