@@ -334,6 +334,7 @@ impl fmt::Display for ReplyDisplay {
 
 #[derive(Debug, Clone)]
 pub struct MailDetail {
+    pub html: Option<std::sync::Arc<crate::email_content::HtmlBody>>,
     pub summary: Mail,
     pub body: String,
     pub body_truncated: bool,
@@ -718,52 +719,11 @@ pub fn parse_mail(
 }
 
 pub fn content(parsed: &mailparse::ParsedMail<'_>) -> (String, Vec<Attachment>) {
-    let mut plain = Vec::new();
-    let mut html = Vec::new();
-    let mut attachments = Vec::new();
-    fn walk(
-        p: &mailparse::ParsedMail<'_>,
-        plain: &mut Vec<String>,
-        html: &mut Vec<String>,
-        attachments: &mut Vec<Attachment>,
-    ) {
-        let disp = p.get_content_disposition();
-        if disp.disposition == mailparse::DispositionType::Attachment
-            || disp.params.contains_key("filename")
-        {
-            attachments.push(Attachment {
-                name: disp
-                    .params
-                    .get("filename")
-                    .cloned()
-                    .unwrap_or_else(|| "attachment.bin".into()),
-                bytes: p.get_body_raw().unwrap_or_default(),
-            });
-        } else if p.subparts.is_empty() {
-            if p.ctype.mimetype == "text/plain" {
-                plain.push(p.get_body().unwrap_or_default());
-            } else if p.ctype.mimetype == "text/html" {
-                html.push(p.get_body().unwrap_or_default());
-            }
-        } else {
-            for part in &p.subparts {
-                walk(part, plain, html, attachments);
-            }
-        }
-    }
-    walk(parsed, &mut plain, &mut html, &mut attachments);
-    let text = if plain.is_empty() {
-        html.into_iter()
-            .map(|h| html_to_text(&h))
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        plain.join("\n")
-    };
-    (text, attachments)
+    let content = crate::email_content::extract(parsed);
+    (content.text, content.attachments)
 }
 
-fn html_to_text(html: &str) -> String {
+pub(crate) fn html_to_text(html: &str) -> String {
     fn walk(element: scraper::ElementRef<'_>, output: &mut String, quoted: bool) {
         let name = element.value().name();
         if matches!(name, "style" | "script" | "head" | "title" | "noscript") {

@@ -366,17 +366,24 @@ impl Store {
             summary.starred = starred;
             summary.folder = folder;
             let parsed = mailparse::parse_mail(&raw)?;
-            let (body, attachments) = crate::model::content(&parsed);
+            let content = crate::email_content::extract(&parsed);
+            let (body, attachments) = (content.text, content.attachments);
             let body_truncated = body.chars().count() > 32000;
             let body: String = body.chars().take(32000).collect();
             let (latest_body, replies) = crate::replies::split(&body);
+            let remote_images = content
+                .html
+                .as_ref()
+                .map(|h| crate::remote_images::extract_html(&h.source))
+                .unwrap_or_default();
             Ok(MailDetail {
+                html: content.html.map(Arc::new),
                 latest_body,
                 replies,
                 summary,
                 body,
                 body_truncated,
-                remote_images: crate::remote_images::extract(&parsed),
+                remote_images,
                 attachments: Arc::new(attachments),
                 reply: crate::compose::ReplyHeaders::parse(&parsed),
             })

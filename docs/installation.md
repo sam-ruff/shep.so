@@ -7,7 +7,7 @@ Linux is the currently verified platform. Windows and macOS still need testing.
 Install stable Rust (1.88 or newer) and Python 3. On Debian or Ubuntu, add these build dependencies:
 
 ```sh
-sudo apt install build-essential pkg-config libssl-dev libdbus-1-dev \
+sudo apt install build-essential cmake pkg-config libssl-dev libdbus-1-dev \
   libx11-dev libxkbcommon-dev libwayland-dev
 ```
 

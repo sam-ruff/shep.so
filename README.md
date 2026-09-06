@@ -36,7 +36,7 @@ Add accounts and calendars in **Preferences**.
 
 Fastmail login and Inbox sync have been verified. Live Google, other providers and Windows/macOS still need verification.
 
-- Mail uses text rendering; external images load only when your privacy settings allow them.
+- Mail supports static HTML layout and selectable text, with a plain-text option. External images load only when your privacy settings allow them.
 - Downloads: **25 MiB per message**. Backups: **256 MiB of original mail**.
 - Gmail needs an app password; Google sign-in does not provide Gmail OAuth.
 - Calendar sync: **90 days back, 365 days ahead**. Edit recurring CalDAV series in your server's calendar UI.

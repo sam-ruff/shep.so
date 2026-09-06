@@ -15,6 +15,8 @@ iced = { version = "0.14", default-features = false, features = ["tiny-skia", "t
 image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 rfd = "0.17"
 scraper = "0.27"
+litehtml = "=0.2.6"
+shep-html-pixbuf = { path = "vendor/shep-html-pixbuf" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs"] }
 futures = "0.3"
 async-trait = "0.1"
@@ -40,6 +42,8 @@ argon2 = "0.5"
 rand = "0.8"
 sha2 = "0.10"
 base64 = "0.22"
+bytes = "1"
+percent-encoding = "2"
 zeroize = { version = "1", features = ["derive"] }
 zstd = "0.13"
 url = "2"

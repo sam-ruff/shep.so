@@ -1,4 +1,6 @@
 use crate::{model::*, store::Store};
+#[path = "html_mail.rs"]
+mod html_mail;
 
 pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
     store
@@ -158,6 +160,9 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
             .await?;
     }
     store.upsert(mails).await?;
+    if std::env::args().any(|arg| arg == "--html-mail") {
+        html_mail::seed(store).await?;
+    }
     if std::env::args().any(|arg| arg == "--search-mail") {
         let mut messages = Vec::new();
         for (index, subject, body) in [

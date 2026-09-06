@@ -70,6 +70,61 @@ class NativeFlows(unittest.TestCase):
         self.artifacts = Path(result["artifacts"])
         print(f"\nEvidence: {result['artifacts']}", flush=True)
 
+    def test_html_styled_message_plain_alternative_and_raw_xhtml(self):
+        self.mcp.call("desktop.start", html_mail=True)
+        self.mcp.batch(check("selected", "Styled sign-in sample"), check("html_ready", True),
+                       check("html_error", None), check("html_formatted", True),
+                       check("images_allowed", False), wait(200), shot("html-styled-blocked"),
+                       click(772, 320), check("html_formatted", False), check("reader_text_ready", True),
+                       shot("html-plain-alternative"), click(685, 320), check("html_ready", True),
+                       click(400, 351), check("selected", "Mislabeled XHTML request"), check("html_ready", True),
+                       wait(100), shot("html-mislabeled-xhtml"), click(800, 402), key("ctrl+a"),
+                       check("html_selected_text", "SAMPLE-ONLY", "contains"), key("ctrl+c"),
+                       key("ctrl+k"), check("focused_input", "search"), key("ctrl+v"),
+                       check("query", "SAMPLE-ONLY", "contains"), key("ctrl+a"), key("BackSpace"),
+                       check("total", 124), key("Escape"), click(400, 452),
+                       check("selected", "Escaped HTML request"), check("html_ready", True), wait(100),
+                       shot("html-escaped-tags"))
+
+    def test_html_selection_scrolling_and_pending_mail_actions(self):
+        self.mcp.call("desktop.start", html_mail=True, mail_actions="slow")
+        self.mcp.batch(check("html_ready", True), click(400, 558), check("selected", "Long formatted letter"),
+                       check("html_ready", True), check("html_height", 6000, "gte"),
+                       wait(100), {"type": "hover", "x": 1100, "y": 600}, {"type": "scroll", "amount": 12},
+                       check("html_scroll", 1, "gte"), wait(100), shot("html-long-scrolled"),
+                       click(850, 480), key("ctrl+a"), check("html_selected_text", "Last visible paragraph.", "contains"),
+                       shot("html-long-selected"), click(784, 100), check("starred", True),
+                       check("mail_pending", 1, "gte"), check("html_ready", True),
+                       click(652, 100), check("action_toast.label", "Archived 1 message"), check("mail_pending", 1, "gte"),
+                       shot("html-archive-immediate-toast"))
+
+    def test_html_dark_full_reader_and_compact_layout(self):
+        self.mcp.call("desktop.start", html_mail=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
+                       check("html_ready", True), wait(120), shot("html-dark-preview"),
+                       double_click(400, 245), check("full_reader", True), check("html_ready", True),
+                       wait(150), shot("html-dark-full-reader"),
+                       {"type": "hover", "x": 1100, "y": 600}, {"type": "scroll", "amount": 12}, wait(100),
+                       shot("html-dark-full-bottom"), click(150, 614), check("html_link", "https://example.test/help"),
+                       {"type": "resize", "width": 900, "height": 640}, check("window_size", [900,640]),
+                       check("html_error", None), wait(150), shot("html-dark-compact-full"),
+                       key("Escape"), check("full_reader", False), wait(150), shot("html-dark-compact-preview"),
+                       click(787,349), wait(100), shot("html-compact-image-menu"),
+                       click(783,266), check("images_allowed", True), check("html_loaded_images", 1),
+                       wait(100), shot("html-compact-images-allowed"),
+                       {"type": "hover", "x": 750, "y": 460}, {"type": "scroll", "amount": 8},
+                       check("html_scroll", 1, "gte"), wait(100), shot("html-dark-compact-body"))
+
+    def test_html_wide_table_can_scroll_horizontally_and_select_its_right_column(self):
+        self.mcp.call("desktop.start", html_mail=True)
+        self.mcp.batch(click(100, 536), check("folder", "Projects"), check("selected", "Wide HTML report"),
+                       check("html_ready", True), check("html_width", 1000, "gte"), wait(100), shot("html-wide-table"),
+                       drag(800, 357, 1372, 357), check("html_pan", 100, "gte"), wait(100), shot("html-wide-table-right"),
+                       drag(904,415,1061,415), check("html_selected_text", "Right report column"),
+                       key("ctrl+a"), check("html_selected_text", "Right report column", "contains"),
+                       shot("html-wide-table-selection"))
+
     def test_search_best_match_beats_newer_mail_and_sort_can_be_overridden(self):
         self.mcp.call("desktop.start", search_mail=True)
         self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("test"),
@@ -984,10 +1039,14 @@ class NativeFlows(unittest.TestCase):
             if index: self.mcp.call("desktop.start")
             self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prottoype"), check("total", 1), key("Escape"),
                            check("reply_count", 1), check("attachment_count", 4), check("images_allowed", False),
-                           click(740, 475), check("expanded_replies", 0, "contains"), shot("expanded-reply"),
-                           click(740, 475), check("expanded_replies", []),
-                           click(740, 223), check("dialog", "Sender"), shot("sender-details"), key("Escape"), check("dialog", None),
-                           click(x, 360), check("images_allowed", True), shot(f"image-exception-{index}"))
+                           check("html_ready", True), wait(100), shot("prototype-html-layout"),
+                           click(713, 574), check("html_quotes_hidden", False), wait(100), shot("expanded-html-reply"),
+                           click(712, 623), check("html_quotes_hidden", True),
+                           click(740, 243), check("dialog", "Sender"), shot("sender-details"), key("Escape"), check("dialog", None),
+                           click(x, 408), check("images_allowed", True), wait(100), shot(f"image-exception-{index}"))
+        self.mcp.batch(click(770,320), check("html_formatted", False), check("reader_text_ready", True),
+                       wait(100), shot("plain-quoted-history"), click(740,419), check("expanded_replies", 0, "contains"),
+                       wait(100), shot("plain-quoted-history-expanded"))
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(730, 156), check("settings_tab", "Privacy"), shot("privacy-preferences"))
 
     def test_reading_preferences_and_cross_account_move(self):
