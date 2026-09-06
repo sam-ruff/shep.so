@@ -128,3 +128,8 @@ text belongs to the final message. Preserve image-policy, quote and Find flows.
 The refresh-icon scenario captures Mail and Calendar in light/dark and compact
 layouts, including a pending mail refresh. Inspect the icon geometry in the
 actual WebP captures, rather than relying on state assertions alone.
+
+The 120% scaling scenario uses Preferences → General → Interface size. At the
+standard fixture size, open near x=1145,y=623; its menu opens upward and 120 is
+near x=1140,y=509. Wait for interface_scale == 120 and html_view_current after
+returning to Mail. Review both the scaled HTML and Mail/Calendar refresh icons.
