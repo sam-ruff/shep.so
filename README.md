@@ -53,6 +53,8 @@ The Calendar tab combines a month grid with an agenda. Connect Google Calendar o
 
 Sync covers the previous 90 days and next 365 days. Double-click a day to add an all-day event. Create, edit and delete timed, multiday and all-day events. The last date in the all-day editor is inclusive. Existing remote events use ETags to detect conflicting writes. Expanded CalDAV recurring occurrences can be viewed; edit their series using the server's calendar interface. Calendar creation and edits are synchronized through the background engine. See Google's [calendar concepts](https://developers.google.com/workspace/calendar/api/concepts/events-calendars) for calendar and recurrence terminology.
 
+CalDAV edits preserve existing alarms, attendees, timezones and extension fields. Successful writes update the local calendar without depending on another full sync. Interrupted creates keep the same identity when retried; conflicting edits ask you to sync. A server that omits its updated ETag can still save an event, but you must sync before editing it again.
+
 ## Optional Google login and backups
 
 Google is optional. Without it, mail and CalDAV work with local settings and you can back up to a local folder.
@@ -99,7 +101,7 @@ Linux native E2E additionally needs `xvfb`, `xdotool`, and ImageMagick with WebP
 
 The native MCP server is configured in `.mcp.json`. Read [the repository E2E skill](.agents/skills/shep-e2e/SKILL.md). Its batch tool performs real clicks, double-clicks, drags, typing and shortcuts, plus bounded waits, observed-state assertions and WebP screenshots. Every AI-driven scenario must have an equivalent automated test. Fixture mail exists only behind the nondefault `test-support` feature. The production application does not launch fixture workspaces.
 
-All generated logs and evidence belong under ignored `artifacts/`; never leave logs in the repository root. Performance budgets, methodology and the validated Linux baseline are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). The final checks passed 22 Rust tests, 10 Python tests and 19 native MCP scenarios, plus the explicitly authorized Fastmail diagnostics.
+All generated logs and evidence belong under ignored `artifacts/`; never leave logs in the repository root. Performance budgets, methodology and the validated Linux baseline are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). The [completion audit](docs/COMPLETION.md) distinguishes implemented behavior, remaining work and verification that still needs live services/platforms.
 
 **All GitHub Actions are deliberately disabled.** Workflow files use `.yml.disabled` and repository Actions are disabled. [AGENTS.md](AGENTS.md) records the reminder and exact steps for re-enabling on the intended self-hosted Linux, Windows and macOS runners. Do not enable automatically.
 

@@ -42,7 +42,7 @@ pub trait CalendarProvider: Send + Sync {
         &self,
         source: &CalendarSource,
         event: &CalendarEvent,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<CalendarEvent>;
     async fn delete_event(
         &self,
         source: &CalendarSource,

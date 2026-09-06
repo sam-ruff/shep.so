@@ -33,7 +33,9 @@ impl App {
             }
         };
         let mut main = column![content].height(Length::Fill);
-        if let Some((message, error, _)) = &self.notice {
+        if self.dialog.is_none()
+            && let Some((message, error, _)) = &self.notice
+        {
             let error = *error;
             main = main.push(
                 container(
@@ -801,7 +803,7 @@ impl App {
                     .padding(15)
                     .width(Length::Fill)
                     .style(outline)
-                    .on_press(Message::EditEvent(event.id.clone())),
+                    .on_press(Message::EditEvent(event.key())),
                 )
                 .push(space().height(6));
         }
@@ -1269,12 +1271,8 @@ impl App {
             Dialog::Export=>body=body.push(form_field("Full destination path","/home/you/Downloads/message.eml",self.field("path"),"path",false)).push(action("Browse…",Message::BrowseExport)).push(button(text("Save file").size(12)).padding([12,18]).style(primary).on_press(Message::SaveExport)),
             Dialog::Restore=>body=body.push(form_field("Backup passphrase","Enter the original passphrase",self.field("passphrase"),"passphrase",true)).push(muted("Account passwords are restored only if they were included in the encrypted copy. Google sign-in and this device's backup preferences are kept separate.").size(11)).push(row![action("Cancel",Message::Close),button(text("Restore & merge").size(12)).padding([12,18]).style(primary).on_press(Message::ConfirmRestore)].spacing(10)),
         }
-        if let Some((notice, error, _)) = &self.notice {
-            body = body.push(
-                container(text(notice).size(11))
-                    .padding(12)
-                    .style(if *error { subtle } else { card }),
-            );
+        if let Some((notice, true, _)) = &self.notice {
+            body = body.push(container(text(notice).size(11)).padding(12).style(subtle));
         }
         container(scrollable(container(body).padding(27)).height(Length::Shrink))
             .max_height((self.size.height - 65.).max(400.))

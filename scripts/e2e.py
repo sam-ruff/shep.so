@@ -132,6 +132,18 @@ class NativeFlows(unittest.TestCase):
                        wait(80), type_text("A real calendar flow"), check("fields.title", "A real calendar flow"),
                        click(510, 677), check("dialog", None), check("events", 6), shot("saved-calendar-event"))
 
+    def test_calendar_same_uid_in_different_calendars_edits_and_deletes_correct_event(self):
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80),
+                       click(1260, 395), check("dialog", "Event"),
+                       check("fields.title", "A little time outside"), check("fields.source", "preview-home-calendar"),
+                       shot("calendar-duplicate-id-edit"), click(650, 313), key("ctrl+a"), type_text("More time outside"),
+                       click(510, 708), check("dialog", None), check("events", 5),
+                       click(1260, 395), check("dialog", "Event"), check("fields.title", "More time outside"),
+                       check("fields.source", "preview-home-calendar"), click(925, 708), check("dialog", None), check("events", 4),
+                       shot("calendar-scoped-deletion"), click(1260, 282), check("dialog", "Event"),
+                       check("fields.title", "A quiet start"), check("fields.source", "preview-calendar"),
+                       key("Escape"), check("dialog", None))
+
     def test_keyboard_pane_navigation_and_full_reader(self):
         self.mcp.batch(key("Down"), check("selected", "Your weekly workspace digest"),
                        key("Up"), check("selected", "A little more room to think"),

@@ -668,9 +668,18 @@ impl App {
                         result.unwrap_or_else(|e| e),
                     );
                 }
-                Event::CalendarEventSaved => {
-                    self.dialog = None;
-                    self.editing_event = None;
+                Event::CalendarEventSaved(key) => {
+                    let current = self
+                        .editing_event
+                        .as_ref()
+                        .map(CalendarEvent::key)
+                        .unwrap_or_else(|| {
+                            CalendarEvent::scoped_key(self.field("source"), self.field("event_id"))
+                        });
+                    if self.dialog == Some(Dialog::Event) && current == key {
+                        self.dialog = None;
+                        self.editing_event = None;
+                    }
                 }
                 Event::ReadyToClose => {
                     if let Some(window) = self.closing_window.take() {
@@ -1241,8 +1250,8 @@ impl App {
                 self.open(Dialog::Event);
                 return focus_after_layout("event-title");
             }
-            Message::EditEvent(id) => {
-                if let Some(event) = self.events.iter().find(|e| e.id == id).cloned() {
+            Message::EditEvent(key) => {
+                if let Some(event) = self.events.iter().find(|e| e.key() == key).cloned() {
                     self.open(Dialog::Event);
                     self.fields.insert("title", event.title.clone());
                     self.fields.insert("location", event.location.clone());

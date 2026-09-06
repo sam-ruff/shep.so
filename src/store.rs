@@ -27,7 +27,7 @@ impl Store {
     pub fn memory() -> anyhow::Result<Self> {
         Self::from_connection(Connection::open_in_memory()?)
     }
-    fn from_connection(conn: Connection) -> anyhow::Result<Self> {
+    fn from_connection(mut conn: Connection) -> anyhow::Result<Self> {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
             CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -54,8 +54,30 @@ impl Store {
                 INSERT INTO mail_search(mail_search,rowid,sender,subject,body) VALUES('delete',old.rowid,old.sender,old.subject,old.body);
                 INSERT INTO mail_search(rowid,sender,subject,body) VALUES(new.rowid,new.sender,new.subject,new.body); END;
             CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, source TEXT NOT NULL, start INTEGER NOT NULL, data TEXT NOT NULL);
-            CREATE INDEX IF NOT EXISTS event_start ON events(start);
-            PRAGMA user_version=1;")?;
+            CREATE INDEX IF NOT EXISTS event_start ON events(start);")?;
+        let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version < 2 {
+            let tx = conn.transaction()?;
+            let events = tx
+                .prepare("SELECT data FROM events")?
+                .query_map([], |r| r.get::<_, String>(0))?
+                .map(|row| Ok(serde_json::from_str::<CalendarEvent>(&row?)?))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            tx.execute("DELETE FROM events", [])?;
+            for event in events {
+                tx.execute(
+                    "INSERT INTO events VALUES(?,?,?,?)",
+                    params![
+                        event.key(),
+                        event.source_id,
+                        event.start.timestamp(),
+                        serde_json::to_string(&event)?
+                    ],
+                )?;
+            }
+            tx.pragma_update(None, "user_version", 2)?;
+            tx.commit()?;
+        }
         Ok(Self(Arc::new(Mutex::new(conn))))
     }
     pub async fn run<T, F>(&self, f: F) -> anyhow::Result<T>
@@ -340,13 +362,17 @@ impl Store {
         events: Vec<CalendarEvent>,
     ) -> anyhow::Result<()> {
         self.run(move |c| {
+            anyhow::ensure!(
+                events.iter().all(|e| e.source_id == source),
+                "Calendar sync returned events from a different calendar."
+            );
             let tx = c.transaction()?;
             tx.execute("DELETE FROM events WHERE source=?", [source])?;
             for e in events {
                 tx.execute(
                     "INSERT OR REPLACE INTO events VALUES(?,?,?,?)",
                     params![
-                        format!("{}:{}", e.source_id, e.id),
+                        e.key(),
                         e.source_id,
                         e.start.timestamp(),
                         serde_json::to_string(&e)?
@@ -354,6 +380,38 @@ impl Store {
                 )?;
             }
             tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+    pub async fn save_event(&self, event: CalendarEvent) -> anyhow::Result<()> {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            // Also remove the legacy key on the first edit of an existing cache.
+            tx.execute(
+                "DELETE FROM events WHERE source=? AND json_extract(data, '$.id')=?",
+                params![event.source_id, event.id],
+            )?;
+            tx.execute(
+                "INSERT INTO events VALUES(?,?,?,?)",
+                params![
+                    event.key(),
+                    event.source_id,
+                    event.start.timestamp(),
+                    serde_json::to_string(&event)?
+                ],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+    pub async fn delete_event(&self, source: String, id: String) -> anyhow::Result<()> {
+        self.run(move |c| {
+            c.execute(
+                "DELETE FROM events WHERE source=? AND json_extract(data, '$.id')=?",
+                params![source, id],
+            )?;
             Ok(())
         })
         .await
