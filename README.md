@@ -72,6 +72,8 @@ CalDAV edits preserve existing alarms, attendees, timezones and extension fields
 
 Google is optional. Without it, mail and CalDAV work with local settings and you can back up to a local folder.
 
+Disconnect Google from Preferences → Accounts or Calendars. This stops Google Calendar and Drive work on this device and removes its saved Google login; cached events remain readable as offline archives. Mail accounts, local backups and existing Drive copies are retained. If the credential store is locked, use **Retry Google cleanup** after unlocking it. Reconnecting requires a fresh sign-in, and automatic Drive backups stay off until enabled again. This device action does not revoke Google access for other installations.
+
 1. Create a Google Cloud project and enable **Drive API** and **Google Calendar API**.
 2. Configure its OAuth consent screen; add your Google address as a test user if the app is in testing.
 3. Create an OAuth client of type **Desktop app**. Enter its client ID and desktop client secret in Preferences → General, or set `SHEP_GOOGLE_CLIENT_ID` and `SHEP_GOOGLE_CLIENT_SECRET` before the first launch.
@@ -101,7 +103,7 @@ Drive reserves each file ID before transferring a copy and uploads in 1 MiB resu
 - The reader renders plain text with a basic HTML-to-text fallback. Remote images load only after the privacy policy allows them, with bounded downloads, address validation and WebP conversion. Scripts never execute. Related messages are linked by Message-ID, References and In-Reply-To within each account; matching subjects alone do not form a conversation. Only downloaded mail can appear. Full HTML layout, invitations and general offline mutation queues are not implemented yet.
 - Gmail mail access currently needs an app password and compatible account settings; Google login connects Drive/Calendar, not Gmail OAuth. OAuth-only IMAP servers are not supported yet.
 - Same-account IMAP moves require MOVE; cross-account moves require two IMAP accounts and source UIDPLUS. An upload interrupted before its acknowledgement is retained for manual destination inspection, while a confirmed copy can resume source removal without uploading again. POP3 requires UIDL and never deletes server originals. Periodic background sync is configurable from 1–60 minutes; IMAP IDLE is not implemented yet.
-- A server Sent lookup uses the exact Message-ID. An absent copy cannot prove that delivery failed, and copying mail after an unacknowledged upload can create duplicates. Outbox requires an explicit review for those cases. Editing recurring CalDAV series is not implemented. Global Google sign-out and a disconnect option that retains an offline archive remain in development.
+- A server Sent lookup uses the exact Message-ID. An absent copy cannot prove that delivery failed, and copying mail after an unacknowledged upload can create duplicates. Outbox requires an explicit review for those cases. Editing recurring CalDAV series is not implemented. Google grant switching, partial permission handling and coordination between independent app processes still need further work.
 - Automated UI testing currently runs on Linux/X11. Windows/macOS builds are in the dormant CI matrix but have not been executed here. Signed/notarized installers are not included.
 
 ## Development, tests and releases

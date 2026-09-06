@@ -43,6 +43,14 @@ impl tokens::CredentialStore for Credentials {
         *self.saved.lock().unwrap() = Some(value);
         Ok(())
     }
+    async fn delete(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.locked.load(Ordering::SeqCst),
+            "Fixture keychain locked"
+        );
+        *self.saved.lock().unwrap() = None;
+        Ok(())
+    }
 }
 impl Credentials {
     fn seed(&self, value: Value) {
@@ -533,4 +541,64 @@ async fn google_callback_denial_with_matching_state_acknowledges_the_browser() {
             .to_string()
             .contains("cancelled or denied")
     );
+}
+
+#[tokio::test]
+async fn disconnect_clears_cached_and_saved_grants_and_fresh_signin_can_reconnect() {
+    let server = Server::start(vec![response("new-account", Some("new-refresh"))]).await;
+    let credentials = Arc::new(Credentials::default());
+    credentials.seed(saved(chrono::Utc::now().timestamp() + 3600));
+    let google = google(&server, credentials.clone());
+    assert!(google.connected(&prefs()).await.unwrap());
+    google.clear_credentials().await.unwrap();
+    assert!(!google.connected(&prefs()).await.unwrap());
+    assert!(google.token(&prefs()).await.is_err());
+    assert!(credentials.saved.lock().unwrap().is_none());
+    google.clear_credentials().await.unwrap();
+    google
+        .exchange_code(
+            &prefs(),
+            "new-code",
+            "http://127.0.0.1:7/callback",
+            "verifier",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        google.token(&prefs()).await.unwrap().expose_secret(),
+        "new-account"
+    );
+    assert_eq!(credentials.value()["refresh_token"], "new-refresh");
+}
+
+#[tokio::test]
+async fn failed_credential_deletion_blocks_cached_grants_and_is_retryable() {
+    let server = Server::start(vec![]).await;
+    let credentials = Arc::new(Credentials::default());
+    credentials.seed(saved(chrono::Utc::now().timestamp() + 3600));
+    let google = google(&server, credentials.clone());
+    assert!(google.token(&prefs()).await.is_ok());
+    credentials.locked.store(true, Ordering::SeqCst);
+    assert!(
+        google
+            .clear_credentials()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("Retry Google cleanup")
+    );
+    assert!(google.token(&prefs()).await.is_err());
+    assert!(!google.connected(&prefs()).await.unwrap());
+    let mut disconnected = prefs();
+    disconnected.google_lifecycle.disconnected = true;
+    let reopened = super::Google {
+        credentials: credentials.clone(),
+        ..Default::default()
+    };
+    assert!(!reopened.connected(&disconnected).await.unwrap());
+    assert!(reopened.token(&disconnected).await.is_err());
+    credentials.locked.store(false, Ordering::SeqCst);
+    google.clear_credentials().await.unwrap();
+    assert!(credentials.saved.lock().unwrap().is_none());
+    assert!(server.requests().is_empty());
 }

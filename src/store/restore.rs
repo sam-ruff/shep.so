@@ -67,6 +67,17 @@ impl Store {
                 }
             }
             put(&tx, "accounts", &accounts)?;
+            let prefs: Preferences = get(&tx, "preferences")?;
+            if prefs.google_lifecycle.disconnected {
+                let mut archived: HashSet<String> = get(&tx, "google_archived")?;
+                for source in &mut calendars {
+                    if source.kind == CalendarKind::Google {
+                        source.access = CalendarAccess::READ_ONLY;
+                        archived.insert(source.id.clone());
+                    }
+                }
+                put(&tx, "google_archived", &archived)?;
+            }
             put(&tx, "calendars", &calendars)?;
             connections::changed(&tx)?;
             let mut messages = 0;

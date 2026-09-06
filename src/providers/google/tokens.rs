@@ -9,6 +9,7 @@ const RESPONSE_LIMIT: usize = 64 * 1024;
 pub(super) trait CredentialStore: Send + Sync {
     async fn read(&self) -> anyhow::Result<Option<SecretString>>;
     async fn write(&self, secret: SecretString) -> anyhow::Result<()>;
+    async fn delete(&self) -> anyhow::Result<()>;
 }
 #[derive(Default)]
 pub(super) struct OsCredentialStore {
@@ -53,12 +54,23 @@ impl CredentialStore for OsCredentialStore {
             })
             .await
     }
+    async fn delete(&self) -> anyhow::Result<()> {
+        self.writes
+            .run(|| {
+                match keyring::Entry::new("so.shep.desktop", "google-oauth")?.delete_credential() {
+                    Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                    Err(error) => Err(error.into()),
+                }
+            })
+            .await
+    }
 }
 
 #[derive(Default)]
 pub(super) struct State {
     pub active: Option<Cached>,
     pub pending_login: Option<Tokens>,
+    pub disconnected: bool,
 }
 pub(super) struct Cached {
     pub value: Tokens,
@@ -168,6 +180,9 @@ impl std::error::Error for ExchangeError {}
 
 impl Google {
     pub(super) async fn load_tokens(&self, state: &mut State) -> anyhow::Result<()> {
+        if state.disconnected {
+            return Ok(());
+        }
         if state.active.is_none() {
             let Some(secret) = self.credentials.read().await.map_err(|_| anyhow::anyhow!(
                 "Could not read the saved Google connection. Unlock the OS keychain and try again."
@@ -299,6 +314,7 @@ impl Google {
             pending_save: false,
             invalidated: false,
         });
+        state.disconnected = false;
         Ok(())
     }
 }

@@ -4,6 +4,8 @@ mod calendar_setup;
 mod components;
 mod composing;
 mod conversations;
+#[cfg(test)]
+mod google_lifecycle_tests;
 mod outgoing;
 mod preference_sync;
 mod reading;
@@ -51,6 +53,7 @@ pub enum SettingsTab {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
     Removal,
+    GoogleDisconnect,
     Outbox,
     Account,
     Calendar,
@@ -132,6 +135,9 @@ pub enum Message {
     BackupAccounts(bool),
     AutoBackup(bool),
     GoogleLogin,
+    ReviewGoogleDisconnect,
+    ConfirmGoogleDisconnect,
+    CleanupGoogle,
     Backup,
     ListBackups,
     Restore(String),
@@ -245,6 +251,7 @@ pub struct App {
     busy: HashSet<String>,
     notice: Option<(String, bool, Instant)>,
     google_connected: bool,
+    google_disconnect_pending: Option<u64>,
     system_dark: bool,
     size: Size,
     light_logo: widget::image::Handle,
@@ -364,6 +371,7 @@ impl App {
                 busy: HashSet::new(),
                 notice: None,
                 google_connected: false,
+                google_disconnect_pending: None,
                 system_dark: false,
                 size: Size::new(1440., 920.),
                 light_logo: widget::image::Handle::from_bytes(
@@ -640,6 +648,10 @@ impl App {
                         },
                         &mut self.preferences,
                     );
+                    if self.preferences.google_lifecycle.disconnected {
+                        self.google_connected = false;
+                        self.pending_google_login = None;
+                    }
                     let mut workspace = (*workspace).clone();
                     if workspace.connections_revision < self.workspace.connections_revision {
                         workspace.accounts = self.workspace.accounts.clone();
@@ -648,6 +660,7 @@ impl App {
                         workspace.folders = self.workspace.folders.clone();
                         workspace.connections_revision = self.workspace.connections_revision;
                         workspace.credential_cleanup = self.workspace.credential_cleanup;
+                        workspace.google_archived = self.workspace.google_archived.clone();
                         workspace.removed_google_calendars =
                             self.workspace.removed_google_calendars;
                     }
@@ -811,7 +824,25 @@ impl App {
                     self.notice(text, true);
                     self.pending_details.clear();
                 }
-                Event::GoogleConnected => self.google_connected = true,
+                Event::GoogleStatus(revision, connected) => {
+                    if revision == self.preferences.google_lifecycle.revision {
+                        self.google_connected =
+                            connected && !self.preferences.google_lifecycle.disconnected;
+                    }
+                }
+                Event::GoogleDisconnected(revision, result) => {
+                    if self.google_disconnect_pending == Some(revision) {
+                        self.google_disconnect_pending = None;
+                        match result {
+                            Ok(()) if self.dialog == Some(Dialog::GoogleDisconnect) => {
+                                self.dialog = None;
+                                self.settings_fields();
+                            }
+                            Ok(()) => {}
+                            Err(error) => self.notice(error, true),
+                        }
+                    }
+                }
                 Event::AccountSaved(id) => {
                     if self.dialog == Some(Dialog::Account) && self.field("id") == id {
                         self.dialog = None;
@@ -961,6 +992,11 @@ impl App {
                         "Wait for credential cleanup to finish before closing.",
                         true,
                     );
+                } else if self.busy.contains("google-disconnect") || self.busy.contains("google") {
+                    self.notice(
+                        "Wait for the Google connection change to finish before closing.",
+                        true,
+                    );
                 } else if self.busy.iter().any(|key| key.starts_with("outgoing:")) {
                     self.notice(
                         "Wait for Sent-copy recovery to finish before closing.",
@@ -1028,7 +1064,10 @@ impl App {
                 }
             }
             Message::Close => {
-                if matches!(self.dialog, Some(Dialog::Calendar | Dialog::Removal)) {
+                if matches!(
+                    self.dialog,
+                    Some(Dialog::Calendar | Dialog::Removal | Dialog::GoogleDisconnect)
+                ) {
                     self.calendar_setup.invalidate();
                     self.fields.clear();
                     if self.tab == Tab::Preferences {
@@ -1510,6 +1549,17 @@ impl App {
                     self.send(Command::SavePreferences(request, self.preferences.clone()));
                 }
             }
+            Message::ReviewGoogleDisconnect => self.open(Dialog::GoogleDisconnect),
+            Message::ConfirmGoogleDisconnect => {
+                if self.google_disconnect_pending.is_none() {
+                    let revision = self.preferences.google_lifecycle.revision;
+                    if self.try_command(Command::DisconnectGoogle(revision)) {
+                        self.google_disconnect_pending = Some(revision);
+                        self.busy.insert("google-disconnect".into());
+                    }
+                }
+            }
+            Message::CleanupGoogle => self.send(Command::CleanupGoogle),
             Message::Backup => self.begin_backup_request(backups::BackupAction::Save(
                 secrecy::SecretString::from(self.field("passphrase").to_string()),
             )),
@@ -2293,6 +2343,9 @@ impl App {
         data["calendar_selected"] = serde_json::json!(self.calendar_setup.selected.len());
         data["calendar_error"] = serde_json::json!(self.calendar_setup.error);
         data["calendar_sources"] = serde_json::json!(self.workspace.calendars);
+        data["google_lifecycle"] = serde_json::json!(self.preferences.google_lifecycle);
+        data["google_archived"] = serde_json::json!(self.workspace.google_archived);
+        data["google_connected"] = serde_json::json!(self.google_connected);
         data["event_access"] = serde_json::json!(self.event_access());
         data["group_conversations"] = serde_json::json!(self.preferences.group_conversations);
         data["draft_attachments"] = serde_json::json!(self.composer.draft.attachments);

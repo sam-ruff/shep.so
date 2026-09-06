@@ -480,6 +480,7 @@ pub struct Preferences {
     pub last_backup: Option<i64>,
     pub backup_ready: bool,
     pub google_connection_id: String,
+    pub google_lifecycle: GoogleLifecycle,
     pub sync_minutes: u64,
     pub google_client_id: String,
     pub google_client_secret: String,
@@ -511,12 +512,21 @@ impl Default for Preferences {
             last_backup: None,
             backup_ready: false,
             google_connection_id: String::new(),
+            google_lifecycle: Default::default(),
             sync_minutes: 5,
             google_client_id: std::env::var("SHEP_GOOGLE_CLIENT_ID").unwrap_or_default(),
             google_client_secret: std::env::var("SHEP_GOOGLE_CLIENT_SECRET").unwrap_or_default(),
             shortcuts: Default::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GoogleLifecycle {
+    pub revision: u64,
+    pub disconnected: bool,
+    pub cleanup_pending: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

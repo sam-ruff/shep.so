@@ -11,7 +11,7 @@ impl Engine {
         anyhow::ensure!(!self.demo, "Restore is disabled in preview.");
         // Local archives may also contain Google sources. Serialize against
         // login/calendar discovery while preserving this device's Google token.
-        let _google = self.google_connection_lock.lock().await;
+        let _google = self.google_connection_lock.read().await;
         let prefs = self.store.get("preferences").await?;
         Self::check_backup_target(&target, &prefs)?;
         let bytes = self.backup_provider(&prefs).await?.download(&id).await?;

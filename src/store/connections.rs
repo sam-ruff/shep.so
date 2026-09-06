@@ -240,6 +240,9 @@ impl Store {
                         else { google_data = Some(serde_json::to_string(source)?); }
                     }
                     sources.retain(|s| s.id != target.id); put(&tx, "calendars", &sources)?;
+                    let mut archived: std::collections::HashSet<String> = get(&tx, "google_archived")?;
+                    archived.remove(&target.id);
+                    put(&tx, "google_archived", &archived)?;
                     tx.execute("DELETE FROM events WHERE source=?", [&target.id])?;
                     calendar_changed(&tx)?;
                 }
