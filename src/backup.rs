@@ -32,6 +32,53 @@ pub struct BackupCopy {
     pub created_at: String,
 }
 
+/// A configured destination, independent of settings such as theme or retention.
+/// A new Google authorization has its own identity even when the client ID stays
+/// the same, because the user may have selected a different Google account.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BackupTarget {
+    Local(String),
+    GoogleDrive {
+        client_id: String,
+        connection_id: String,
+    },
+}
+impl BackupTarget {
+    pub fn from_preferences(prefs: &Preferences) -> Self {
+        match prefs.backup_destination {
+            BackupDestination::Local => Self::Local(prefs.backup_folder.clone()),
+            BackupDestination::GoogleDrive => Self::GoogleDrive {
+                client_id: prefs.google_client_id.clone(),
+                connection_id: prefs.google_connection_id.clone(),
+            },
+        }
+    }
+    fn secret_id(&self) -> String {
+        use sha2::{Digest, Sha256};
+        // The hash avoids putting a folder path or Google identity in key names.
+        format!(
+            "backup-passphrase:{:x}",
+            Sha256::digest(serde_json::to_vec(self).expect("backup target serializes"))
+        )
+    }
+}
+
+#[async_trait]
+pub(crate) trait PassphraseStore: Send + Sync {
+    async fn read(&self, target: &BackupTarget) -> anyhow::Result<SecretString>;
+    async fn write(&self, target: &BackupTarget, secret: SecretString) -> anyhow::Result<()>;
+}
+pub(crate) struct OsPassphraseStore;
+#[async_trait]
+impl PassphraseStore for OsPassphraseStore {
+    async fn read(&self, target: &BackupTarget) -> anyhow::Result<SecretString> {
+        crate::providers::read_secret(&target.secret_id()).await
+    }
+    async fn write(&self, target: &BackupTarget, secret: SecretString) -> anyhow::Result<()> {
+        crate::providers::write_secret(&target.secret_id(), secret).await
+    }
+}
+
 #[async_trait]
 pub trait BackupProvider: Send + Sync {
     async fn list(&self) -> anyhow::Result<Vec<BackupCopy>>;
@@ -126,10 +173,29 @@ pub fn decrypt(bytes: &[u8], passphrase: &SecretString) -> anyhow::Result<Snapsh
     Ok(snapshot)
 }
 
-pub async fn retain(provider: &dyn BackupProvider, keep: usize) -> anyhow::Result<usize> {
+pub async fn retain(
+    provider: &dyn BackupProvider,
+    keep: usize,
+    committed: &str,
+) -> anyhow::Result<usize> {
     anyhow::ensure!((1..=100).contains(&keep), "Keep between 1 and 100 copies.");
     let mut copies = provider.list().await?;
-    copies.sort_by(|a, b| b.name.cmp(&a.name));
+    anyhow::ensure!(
+        copies.iter().any(|copy| copy.id == committed),
+        "The new copy is not yet visible in the backup list. Older copies were kept."
+    );
+    let mut ids = std::collections::HashSet::new();
+    anyhow::ensure!(
+        copies.iter().all(|copy| ids.insert(&copy.id)),
+        "The backup list contains duplicate file IDs. Older copies were kept."
+    );
+    // Protect the acknowledged copy even after a clock correction or when two
+    // copies share a timestamp. Listing failure must never trigger deletion.
+    copies.sort_by(|a, b| {
+        (b.id == committed)
+            .cmp(&(a.id == committed))
+            .then_with(|| b.name.cmp(&a.name))
+    });
     let mut deleted = 0;
     for copy in copies.into_iter().skip(keep) {
         provider.delete(&copy.id).await?;
@@ -138,7 +204,16 @@ pub async fn retain(provider: &dyn BackupProvider, keep: usize) -> anyhow::Resul
     Ok(deleted)
 }
 fn valid_name(name: &str) -> bool {
-    name.starts_with("shep-") && name.ends_with(".shepbackup") && !name.contains(['/', '\\'])
+    let Some((stamp, identity)) = name
+        .strip_prefix("shep-")
+        .and_then(|name| name.strip_suffix(".shepbackup"))
+        .and_then(|name| name.split_once('-'))
+    else {
+        return false;
+    };
+    stamp.len() == 16
+        && chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%dT%H%M%SZ").is_ok()
+        && uuid::Uuid::parse_str(identity).is_ok_and(|id| id.to_string() == identity)
 }
 
 #[async_trait]
@@ -164,33 +239,63 @@ impl BackupProvider for LocalBackup {
         Ok(copies)
     }
     async fn upload(&self, name: &str, data: Vec<u8>) -> anyhow::Result<String> {
-        use tokio::io::AsyncWriteExt;
         anyhow::ensure!(valid_name(name), "Invalid backup filename.");
-        tokio::fs::create_dir_all(&self.directory).await?;
-        let temporary = self.directory.join(format!(".{name}.tmp"));
-        let mut file = tokio::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)
-            .await?;
-        file.write_all(&data).await?;
-        file.sync_all().await?;
-        drop(file);
-        tokio::fs::rename(temporary, self.directory.join(name)).await?;
+        let directory = self.directory.clone();
+        let filename = name.to_owned();
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            use std::io::Write;
+            std::fs::create_dir_all(&directory)?;
+            let mut temporary = tempfile::Builder::new()
+                .prefix(".shep-")
+                .suffix(".tmp")
+                .tempfile_in(&directory)?;
+            temporary.write_all(&data)?;
+            temporary.as_file().sync_all()?;
+            // No overwrite, and RAII removes partial temporary files on errors.
+            temporary
+                .persist_noclobber(directory.join(filename))
+                .map_err(|error| {
+                    anyhow::anyhow!(
+                        "Could not commit the backup without replacing an existing file: {}",
+                        error.error
+                    )
+                })?;
+            Ok(())
+        })
+        .await??;
         Ok(name.into())
     }
     async fn download(&self, id: &str) -> anyhow::Result<Vec<u8>> {
+        use tokio::io::AsyncReadExt;
         anyhow::ensure!(valid_name(id), "Invalid backup filename.");
         let path = self.directory.join(id);
         anyhow::ensure!(
-            tokio::fs::metadata(&path).await?.len() <= MAX_DECODED,
+            tokio::fs::symlink_metadata(&path)
+                .await?
+                .file_type()
+                .is_file(),
+            "Choose a regular backup file."
+        );
+        let file = tokio::fs::File::open(path).await?;
+        anyhow::ensure!(
+            file.metadata().await?.len() <= MAX_DECODED,
             "The backup exceeds the restore size limit."
         );
-        Ok(tokio::fs::read(path).await?)
+        let mut bytes = Vec::new();
+        file.take(MAX_DECODED + 1).read_to_end(&mut bytes).await?;
+        anyhow::ensure!(
+            bytes.len() as u64 <= MAX_DECODED,
+            "The backup exceeds the restore size limit."
+        );
+        Ok(bytes)
     }
     async fn delete(&self, id: &str) -> anyhow::Result<()> {
         anyhow::ensure!(valid_name(id), "Invalid backup filename.");
-        tokio::fs::remove_file(self.directory.join(id)).await?;
+        if let Err(error) = tokio::fs::remove_file(self.directory.join(id)).await
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(error.into());
+        }
         Ok(())
     }
 }

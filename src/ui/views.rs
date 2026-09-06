@@ -1117,6 +1117,92 @@ impl App {
         .into()
     }
     fn backup_settings(&self) -> Element<'_, Message> {
+        let target = self.configured_backup_target();
+        let matches_saved = target == BackupTarget::from_preferences(&self.workspace.preferences);
+        let ready = matches_saved && self.workspace.preferences.backup_ready;
+        let last_backup = if matches_saved {
+            self.workspace.preferences.last_backup
+        } else {
+            None
+        };
+        let mut form = column![
+            row![
+                text("Save to").size(13),
+                space().width(Length::Fill),
+                pick_list(
+                    [BackupDestination::Local, BackupDestination::GoogleDrive],
+                    Some(self.preferences.backup_destination),
+                    Message::BackupDestination
+                )
+                .text_size(12)
+                .padding(11)
+                .style(select_input)
+                .menu_style(select_menu)
+            ]
+            .align_y(Alignment::Center)
+        ]
+        .spacing(18);
+        if self.preferences.backup_destination == BackupDestination::Local {
+            form = form.push(
+                row![
+                    form_field(
+                        "Local backup folder",
+                        "/path/to/backups",
+                        self.field("backup_folder"),
+                        "backup_folder",
+                        false
+                    ),
+                    action("Browse…", Message::BrowseBackup)
+                ]
+                .spacing(12)
+                .align_y(Alignment::End),
+            );
+        } else if !self.google_connected {
+            form = form.push(action(
+                "Connect Google",
+                Message::SettingsTab(SettingsTab::Calendars),
+            ));
+        }
+        form = form
+            .push(
+                row![
+                    form_field(
+                        "Copies to keep (1–100)",
+                        "7",
+                        self.field("copies"),
+                        "copies",
+                        false
+                    ),
+                    form_field(
+                        "Backup interval (hours)",
+                        "24",
+                        self.field("hours"),
+                        "hours",
+                        false
+                    )
+                ]
+                .spacing(18),
+            )
+            .push(
+                checkbox(self.preferences.auto_backup)
+                    .label("Back up automatically while Shep is running")
+                    .on_toggle(Message::AutoBackup)
+                    .text_size(12),
+            );
+        if self.preferences.auto_backup && !ready {
+            form = form.push(container(muted("Finish setup: enter a passphrase and choose Back up now. Automatic backups start after that copy is saved and the passphrase is stored in your OS keychain.").size(12)).padding(12).style(subtle));
+        }
+        form = form.push(checkbox(self.preferences.backup_accounts).label("Include account passwords in the encrypted backup").on_toggle(Message::BackupAccounts).text_size(12))
+        .push(form_field("Backup passphrase", "At least 12 characters", self.field("passphrase"), "passphrase", true))
+        .push(muted("Keep the passphrase somewhere safe for restoring. A successful copy also stores it in your OS keychain for this destination. Google tokens are never included. Current snapshot limit: 256 MiB of mail.").size(11))
+        .push(row![action("Save backup preferences", Message::SavePreferences),
+            button(text(if self.busy.contains("backup") { "Backing up…" } else { "Back up now" }).size(12)).padding([11,17]).style(primary)
+                .on_press_maybe((!self.busy.contains("backup") && self.pending_backup.is_none()).then_some(Message::Backup))
+        ].spacing(12))
+        .push(if let Some(time) = last_backup {
+            muted(format!("Last backup: {}", chrono::DateTime::from_timestamp(time,0).unwrap_or_default().with_timezone(&chrono::Local).format("%d %b %Y at %H:%M")))
+        } else { muted("No successful backup at this destination yet.") });
+        let visible = self.visible_backups();
         let mut copies = column![
             row![
                 text("Saved copies").font(BOLD).size(14),
@@ -1126,12 +1212,14 @@ impl App {
             .align_y(Alignment::Center)
         ]
         .spacing(15);
-        if self.backups.is_empty() {
-            copies = copies.push(muted(
-                "Save your preferences, then refresh to see available copies.",
-            ));
+        if visible.is_empty() {
+            copies = copies.push(muted(if self.backups_target.as_ref() == Some(&target) {
+                "No saved copies found at this destination."
+            } else {
+                "Refresh to see copies at this destination."
+            }));
         }
-        for copy in self.backups.iter().take(100) {
+        for copy in visible.iter().take(100) {
             copies = copies.push(
                 row![
                     column![
@@ -1146,17 +1234,20 @@ impl App {
                 .align_y(Alignment::Center),
             );
         }
-        column![settings_card("Backups","Choose a destination, schedule and number of copies to keep.",column![
-            row![text("Save to").size(13),space().width(Length::Fill),pick_list([BackupDestination::Local,BackupDestination::GoogleDrive],Some(self.preferences.backup_destination),Message::BackupDestination).text_size(12).padding(11)].align_y(Alignment::Center),
-            row![form_field("Local backup folder","/path/to/backups",self.field("backup_folder"),"backup_folder",false),action("Browse…",Message::BrowseBackup)].spacing(12).align_y(Alignment::End),
-            row![form_field("Copies to keep (1–100)","7",self.field("copies"),"copies",false),form_field("Backup interval (hours)","24",self.field("hours"),"hours",false)].spacing(18),
-            checkbox(self.preferences.auto_backup).label("Back up automatically while Shep is running").on_toggle(Message::AutoBackup).text_size(12),
-            checkbox(self.preferences.backup_accounts).label("Include account passwords in the encrypted backup").on_toggle(Message::BackupAccounts).text_size(12),
-            form_field("Backup passphrase","At least 12 characters",self.field("passphrase"),"passphrase",true),
-            muted("Keep this passphrase somewhere safe. For automatic backups it is stored in your OS keychain after the first successful backup. Google tokens are never included. Current snapshot limit: 256 MiB of mail.").size(11),
-            row![action("Save backup preferences",Message::SavePreferences),button(text(if self.busy.contains("backup"){"Backing up…"}else{"Back up now"}).size(12)).padding([11,17]).style(primary).on_press_maybe((!self.busy.contains("backup")).then_some(Message::Backup))].spacing(12),
-            if let Some(time)=self.preferences.last_backup{muted(format!("Last backup: {}",chrono::DateTime::from_timestamp(time,0).unwrap_or_default().with_timezone(&chrono::Local).format("%d %b %Y at %H:%M")))}else{muted("No successful backup yet.")}
-        ].spacing(18).into()),settings_card("Restore a copy","Restoring merges messages and accounts into this device. Existing mail is kept.",copies.into())].spacing(22).into()
+        column![
+            settings_card(
+                "Backups",
+                "Choose a destination, schedule and number of copies to keep.",
+                form.into()
+            ),
+            settings_card(
+                "Restore a copy",
+                "Restoring merges messages and accounts into this device. Existing mail is kept.",
+                copies.into()
+            )
+        ]
+        .spacing(22)
+        .into()
     }
     fn shortcut_settings(&self) -> Element<'_, Message> {
         let mut actions = column![].spacing(3);

@@ -69,6 +69,8 @@ Google refresh tokens and saved account passwords are kept in the OS keychain. D
 
 Backups contain downloaded original email, account configuration, calendar-source settings and preferences. Enable **Include account passwords** to carry those passwords inside the encrypted snapshot. Google tokens are never included. Snapshots use compression, Argon2id and AES-256-GCM with fresh salts/nonces. The passphrase is saved in the OS keychain after a successful backup for scheduled use. Keep a separate copy of it for restore.
 
+“Back up now” saves the displayed backup settings before starting. Make one manual copy at each destination to prepare its automatic schedule; this also works when you enable automatic backups afterward. Changing destinations or reconnecting Google requires a new first copy. Existing installations need one new manual copy to establish the destination-specific keychain entry. Missing keychain access pauses automatic backups and the Backups page explains how to resume. A cleanup or keychain failure after upload reports that the copy was saved and identifies the remaining step.
+
 Drive copies live in its private application data area, accessed only with `drive.appdata`; they do not appear as ordinary files in My Drive. This follows the [Drive app-data model](https://developers.google.com/workspace/drive/api/guides/appdata). Use the same OAuth application when restoring on another machine. Retention deletes only Shep copies after a successful new upload. Restore decrypts and validates first, then merges mail/accounts; it keeps this device's Google login and backup preferences. Calendar events sync from their calendar providers again.
 
 ## Current limits
@@ -113,7 +115,7 @@ Conventional Commits drive semantic-release on `main`. Pre-commit runs fmt, Clip
 
 Cached search and message loads have reserved workers independent of provider operations. Speculative prefetch has its own smaller queue, and settings/drafts save in order on a separate worker. The dispatcher is tested with every provider worker blocked and its command queue full while local reads and saves continue.
 
-Preferences use versioned acknowledgements so an older background update cannot undo newer choices or pane resizing. Message-detail results are invalidated after mail changes, including late prefetch errors and old flag states. Backup completion updates its timestamp without overwriting settings changed during the upload.
+Preferences use versioned acknowledgements so an older background update cannot undo newer choices or pane resizing. Message-detail results are invalidated after mail changes, including late prefetch errors and old flag states. Backup completion updates only its destination's timestamp and schedule readiness without overwriting settings changed during the upload. Copy lists and restore actions are bound to the selected destination. Retention protects the acknowledged copy even after a clock correction; local uploads never overwrite an existing file.
 
 Implement `providers::MailProvider`, `providers::CalendarProvider` or `backup::BackupProvider` for a new provider, register its factory/configuration, and add deterministic contract tests. Wire-protocol code belongs in the provider; the UI only sends commands and handles events. Keep channel capacity, concurrency limits, cancellation, TLS verification and retention invariants intact.
 

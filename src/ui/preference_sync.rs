@@ -30,7 +30,15 @@ impl PreferenceSync {
             self.saved = snapshot;
         }
         if self.dirty() {
-            live.last_backup = self.saved.value.last_backup;
+            live.google_connection_id = self.saved.value.google_connection_id.clone();
+            let same_target = crate::backup::BackupTarget::from_preferences(live)
+                == crate::backup::BackupTarget::from_preferences(&self.saved.value);
+            live.last_backup = if same_target {
+                self.saved.value.last_backup
+            } else {
+                None
+            };
+            live.backup_ready = same_target && self.saved.value.backup_ready;
         } else {
             *live = self.saved.value.clone();
         }
@@ -120,5 +128,22 @@ mod tests {
         assert!(!sync.dirty());
         assert_eq!(live.last_backup, Some(42));
         assert_eq!(live.reader_font_size, 20);
+    }
+
+    #[test]
+    fn backup_metadata_from_the_saved_destination_does_not_appear_on_an_unsaved_one() {
+        let original = Preferences {
+            backup_folder: "/first".into(),
+            last_backup: Some(42),
+            backup_ready: true,
+            ..Default::default()
+        };
+        let mut live = original.clone();
+        let mut sync = PreferenceSync::new(snapshot(1, &original));
+        live.backup_folder = "/second".into();
+        sync.changed();
+        sync.observe(snapshot(2, &original), &mut live);
+        assert_eq!(live.backup_folder, "/second");
+        assert!(live.last_backup.is_none() && !live.backup_ready);
     }
 }

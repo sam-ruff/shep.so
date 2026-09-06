@@ -1,4 +1,5 @@
 use shep::{
+    backup::BackupTarget,
     model::{Appearance, Preferences},
     store::Store,
 };
@@ -36,7 +37,11 @@ async fn backup_completion_preserves_settings_changed_while_uploading() {
     let changed = store.save_preferences(changed).await.unwrap();
     // The upload finishes later. Only its timestamp belongs to that operation.
     let completed = store
-        .update_preferences(|p| p.last_backup = Some(2345))
+        .record_backup(
+            BackupTarget::from_preferences(&backup_started_with.value),
+            2345,
+            true,
+        )
         .await
         .unwrap();
     assert!(completed.revision > changed.revision);
@@ -44,6 +49,68 @@ async fn backup_completion_preserves_settings_changed_while_uploading() {
     assert_eq!(completed.value.reader_font_size, 24);
     assert_eq!(completed.value.backup_copies, 15);
     assert_eq!(completed.value.last_backup, Some(2345));
+    assert!(completed.value.backup_ready);
+}
+
+#[tokio::test]
+async fn a_new_backup_destination_never_inherits_history_or_readiness() {
+    let store = Store::memory().unwrap();
+    let old = store
+        .save_preferences(Preferences {
+            backup_folder: "/first".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let old_target = BackupTarget::from_preferences(&old.value);
+    let completed = store
+        .record_backup(old_target.clone(), 123, true)
+        .await
+        .unwrap();
+    let mut changed = completed.value;
+    changed.backup_folder = "/second".into();
+    let saved = store.save_preferences(changed).await.unwrap();
+    assert_eq!(saved.value.last_backup, None);
+    assert!(!saved.value.backup_ready);
+    let late = store.record_backup(old_target, 456, true).await.unwrap();
+    assert_eq!(late.value.backup_folder, "/second");
+    assert_eq!(late.value.last_backup, None);
+    assert!(!late.value.backup_ready);
+}
+
+#[tokio::test]
+async fn old_ui_cannot_restore_a_previous_google_connection_or_backup_metadata() {
+    use shep::model::BackupDestination;
+    let store = Store::memory().unwrap();
+    let initial = store
+        .save_preferences(Preferences {
+            backup_destination: BackupDestination::GoogleDrive,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let previous = BackupTarget::from_preferences(&initial.value);
+    let mut old_ui = store
+        .record_backup(previous.clone(), 12, true)
+        .await
+        .unwrap()
+        .value;
+    store
+        .update_preferences(|p| {
+            p.google_connection_id = "new-authorization".into();
+            p.last_backup = None;
+            p.backup_ready = false;
+        })
+        .await
+        .unwrap();
+    old_ui.appearance = Appearance::Dark;
+    let saved = store.save_preferences(old_ui).await.unwrap();
+    assert_eq!(saved.value.google_connection_id, "new-authorization");
+    assert_eq!(saved.value.last_backup, None);
+    assert!(!saved.value.backup_ready);
+    assert_eq!(saved.value.appearance, Appearance::Dark);
+    let late = store.record_backup(previous, 24, true).await.unwrap();
+    assert_eq!(late.value.last_backup, None);
 }
 
 #[tokio::test]

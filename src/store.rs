@@ -129,9 +129,30 @@ impl Store {
     ) -> anyhow::Result<PreferenceSnapshot> {
         self.update_preferences(move |current| {
             let last_backup = current.last_backup;
+            let backup_ready = current.backup_ready;
+            let previous_target = crate::backup::BackupTarget::from_preferences(current);
+            let connection = current.google_connection_id.clone();
             *current = requested;
-            // Backup history is backend-owned metadata, not a user preference.
-            current.last_backup = last_backup;
+            // These are backend-owned metadata, not user preferences.
+            current.google_connection_id = connection;
+            let same_target =
+                previous_target == crate::backup::BackupTarget::from_preferences(current);
+            current.last_backup = if same_target { last_backup } else { None };
+            current.backup_ready = same_target && backup_ready;
+        })
+        .await
+    }
+    pub async fn record_backup(
+        &self,
+        target: crate::backup::BackupTarget,
+        time: i64,
+        ready: bool,
+    ) -> anyhow::Result<PreferenceSnapshot> {
+        self.update_preferences(move |current| {
+            if crate::backup::BackupTarget::from_preferences(current) == target {
+                current.last_backup = Some(time);
+                current.backup_ready = ready;
+            }
         })
         .await
     }
