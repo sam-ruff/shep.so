@@ -20,7 +20,8 @@ class NativeRepository
         DraftRepository,
         OutgoingRepository,
         SentPreferencesRepository,
-        AttachmentRepository {
+        AttachmentRepository,
+        AccountRemovalRepository {
   NativeRepository(this.profile, this.credentials);
   final MobileProfile profile;
   final CredentialStore credentials;
@@ -66,17 +67,79 @@ class NativeRepository
     folderNames = (state['folders'] as Map<String, dynamic>).map(
       (k, v) => MapEntry(k, (v as List).cast<String>()),
     );
+    pendingCredentialCleanup =
+        (await call({'op': 'credential_cleanup'}) as List).length;
     savedDrafts = (await call({'op': 'drafts'}) as List)
         .map((d) => Draft.fromJson(d))
         .toList();
   }
 
+  // Account/credential lifecycle operations share one FIFO across bridge
+  // handles. The native profile lock excludes independent app processes.
+  static Future<void> _accountWrites = Future.value();
+  Future<T> _accountWrite<T>(Future<T> Function() operation) {
+    final result = _accountWrites.then((_) => operation());
+    _accountWrites = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return result;
+  }
+
   @override
-  Future<void> connect(
+  int pendingCredentialCleanup = 0;
+  @override
+  Future<AccountRemoval> removalPreview(String id) async => AccountRemoval(
+    Map<String, dynamic>.from(
+      await call({'op': 'account_removal_preview', 'id': id}),
+    ),
+  );
+  Future<void> _cleanupCredentials() async {
+    final ids = (await call({'op': 'credential_cleanup'}) as List)
+        .cast<String>();
+    pendingCredentialCleanup = ids.length;
+    for (final id in ids) {
+      try {
+        await credentials.remove(id);
+        await call({'op': 'credential_cleanup_done', 'id': id});
+        pendingCredentialCleanup--;
+      } catch (_) {
+        // Removal is already committed. Retain the durable cleanup job.
+      }
+    }
+  }
+
+  @override
+  Future<void> cleanupCredentials() => _accountWrite(_cleanupCredentials);
+  @override
+  Future<void> removeAccount(AccountRemoval review, bool discardUnresolved) =>
+      _accountWrite(() async {
+        await call({
+          'op': 'remove_account',
+          'review': review.data,
+          'discard_unresolved': discardUnresolved,
+        });
+        mailAccounts.removeWhere((a) => a.id == review.id);
+        folderNames.remove(review.id);
+        savedDrafts.removeWhere((d) => d.accountId == review.id);
+        cached.removeWhere((m) => m.accountId == review.id);
+        pendingCredentialCleanup++;
+        try {
+          await _cleanupCredentials();
+        } catch (_) {
+          /* durable job retries in Preferences */
+        }
+      });
+  @override
+  Future<void> connect(MailAccount account, String incoming, String smtp) =>
+      _accountWrite(() => _connect(account, incoming, smtp));
+
+  Future<void> _connect(
     MailAccount account,
     String incoming,
     String smtp,
   ) async {
+    await call({'op': 'check_account', 'id': account.id});
     await call({
       'op': 'probe',
       'account': account.toJson(),

@@ -1,3 +1,8 @@
+import {
+  removalPreview,
+  reviewStores,
+  type RemovalReview,
+} from "./account_removal";
 import { AttachmentReader } from "./attachments";
 import {
   resolveMail,
@@ -127,13 +132,31 @@ export interface Outgoing {
   state: string;
 }
 type Fetcher = typeof fetch;
-type Lock = <T>(name: string, fn: () => Promise<T>) => Promise<T>;
-async function browserLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
+type Lock = <T>(
+  name: string,
+  fn: () => Promise<T>,
+  wait?: boolean,
+) => Promise<T>;
+async function browserLock<T>(
+  name: string,
+  fn: () => Promise<T>,
+  wait = true,
+): Promise<T> {
   if (!navigator.locks)
     throw new Error(
       "This browser cannot coordinate mail safely between tabs. Use a current browser.",
     );
-  return await navigator.locks.request(name, fn);
+  return await navigator.locks.request(
+    name,
+    { ifAvailable: !wait },
+    async (lock) => {
+      if (!lock)
+        throw new Error(
+          "This account has an operation in progress. Wait for it to finish, then check Outbox before removing it.",
+        );
+      return fn();
+    },
+  );
 }
 function serverId(mail: CoreMail) {
   return `${mail.account_id}:${mail.folder}:${mail.remote_id}`;
@@ -219,6 +242,7 @@ export class GatewayRepository implements Repository {
   events: CalendarEntry[] = [];
   drafts: Draft[] = [];
   accounts: Account[] = [];
+  removedAccounts = new Set<string>();
   private attachmentReader?: AttachmentReader;
   get incomingAttachments() {
     return (this.attachmentReader ??= new AttachmentReader(
@@ -238,8 +262,8 @@ export class GatewayRepository implements Repository {
     private request: Fetcher = (input, init) => fetch(input, init),
     private lock: Lock = browserLock,
   ) {}
-  private exclusive<T>(scope: string, fn: () => Promise<T>) {
-    return this.lock(`shep.${this.session.user_id}.${scope}`, fn);
+  private exclusive<T>(scope: string, fn: () => Promise<T>, wait = true) {
+    return this.lock(`shep.${this.session.user_id}.${scope}`, fn, wait);
   }
   async load() {
     [this.accounts, this.drafts] = await Promise.all([
@@ -294,13 +318,22 @@ export class GatewayRepository implements Repository {
           starred: m.starred,
           attachments: Array.from(
             { length: Math.min(m.attachment_count, 100) },
-            (_, i) => `Attachment ${i + 1} (download support pending)`,
+            (_, i) => `Attachment ${i + 1}`,
           ),
           accountId: m.account_id,
         };
       });
   }
   private async response(path: string, body?: unknown) {
+    const connected = (
+      body as { connection?: { account?: Account } } | undefined
+    )?.connection?.account;
+    if (connected && (await this.store.get("removedAccounts", connected.id))) {
+      this.secrets.delete(connected.id);
+      throw new Error(
+        "This account was removed in another tab. Reopen Preferences.",
+      );
+    }
     const response = await this.request(path, {
       method: body === undefined ? "GET" : "POST",
       credentials: "same-origin",
@@ -349,6 +382,10 @@ export class GatewayRepository implements Repository {
   }
   async connect(account: Account, password: string, smtpPassword: string) {
     await this.exclusive(`account.${account.id}`, async () => {
+      if (await this.store.get("removedAccounts", account.id))
+        throw new Error(
+          "This account was removed. Add it again as a new account in Preferences.",
+        );
       // A connection edit cannot silently reassign cached remote identities.
       const existing = await this.store.get<Account>("accounts", account.id);
       if (
@@ -386,6 +423,48 @@ export class GatewayRepository implements Repository {
       ];
     });
   }
+  async removalPreview(id: string) {
+    return removalPreview(await this.store.snapshot(reviewStores), id);
+  }
+  async removeAccount(review: RemovalReview, discard: boolean) {
+    if (!this.store.removeAccount)
+      throw new Error(
+        "Account removal is unavailable in this storage adapter.",
+      );
+    // Same draft -> account -> cache order as SMTP/Sent; a held operation
+    // produces immediate feedback instead of trapping the user in this dialog.
+    const lockDrafts = (index: number): Promise<void> =>
+      index < review.draftIds.length
+        ? this.exclusive(
+            `draft.${review.draftIds[index]}`,
+            () => lockDrafts(index + 1),
+            false,
+          )
+        : this.exclusive(
+            `account.${review.id}`,
+            () =>
+              this.exclusive(
+                `cache.${review.id}`,
+                () => this.store.removeAccount!(review, discard),
+                false,
+              ),
+            false,
+          );
+    await lockDrafts(0);
+    this.secrets.delete(review.id);
+    this.accounts = this.accounts.filter((a) => a.id !== review.id);
+    this.cached = this.cached.filter((m) => m.accountId !== review.id);
+    this.drafts = this.drafts.filter((d) => d.accountId !== review.id);
+    this.folders.delete(review.id);
+    this.folderRoles.delete(review.id);
+    this.records = new Map(
+      [...this.records].filter(([, m]) => m.core.account_id !== review.id),
+    );
+    this.removedAccounts.add(review.id);
+    for (const [key, work] of this.sentAcknowledgments)
+      if (work.copyAccount?.id === review.id)
+        this.sentAcknowledgments.delete(key);
+  }
   private connection(account: Account, smtp = false) {
     const password = this.secrets.get(account.id)?.[smtp ? "smtp" : "incoming"];
     if (!password)
@@ -396,6 +475,15 @@ export class GatewayRepository implements Repository {
   }
   async refresh(folder = "Inbox", selected?: string | null): Promise<Mail[]> {
     this.warning = null;
+    const removed = await this.store.all<{ id: string }>("removedAccounts");
+    this.removedAccounts = new Set(removed.map((r) => r.id));
+    if (this.accounts.some((a) => this.removedAccounts.has(a.id))) {
+      for (const id of this.removedAccounts) this.secrets.delete(id);
+      await this.load();
+      this.warning =
+        "An account was removed in another tab. Its local mail and drafts were removed.";
+      return this.cached;
+    }
     const failures: string[] = [];
     const accounts = this.accounts.filter(
       (a) => !selected || selected === a.id || selected === a.email,

@@ -59,6 +59,7 @@ export interface Repository {
   warning?: string | null;
   aliases?: Map<string, string>;
   folderRoles?: Map<string, Set<string>>;
+  removedAccounts?: Set<string>;
   refresh(folder?: string, account?: string | null): Promise<Mail[]>;
   mutate(id: string, fields: Fields): Promise<void>;
   saveDraft(draft: Draft): Promise<void>;
@@ -186,6 +187,7 @@ export class Workspace extends EventTarget {
   }
   selection = new Set<string>();
   drafts = new Map<string, Draft>();
+  private removedAccountIds = new Set<string>();
   error: string | null = null;
   notice: string | null = null;
   undo: (() => void) | null = null;
@@ -371,13 +373,39 @@ export class Workspace extends EventTarget {
     // disappear behind a refresh started before the submission completed.
     const known = new Set(this.mail.map((m) => m.id));
     for (const message of messages)
-      if (!known.has(message.id)) {
+      if (
+        !known.has(message.id) &&
+        !this.removedAccountIds.has(message.accountId ?? "")
+      ) {
         const saved = structuredClone(message);
         this.mail.push(saved);
         this.confirmed.set(saved.id, structuredClone(saved));
         known.add(saved.id);
         this.revision++;
       }
+  }
+  rememberDraft(draft: Draft) {
+    if (draft.accountId && this.removedAccountIds.has(draft.accountId))
+      throw new Error(
+        "This account was removed. Copy this text into a new draft with a connected account.",
+      );
+    this.drafts.set(draft.id, structuredClone(draft));
+  }
+  accountRemoved(id: string) {
+    if (this.removedAccountIds.has(id)) return;
+    this.removedAccountIds.add(id);
+    for (const [key, draft] of this.drafts)
+      if (draft.accountId === id) this.drafts.delete(key);
+    if (this.readerMessage?.accountId === id) this.selected = null;
+    this.mail = this.mail.filter((m) => m.accountId !== id);
+    for (const [key, m] of this.confirmed)
+      if (m.accountId === id) this.confirmed.delete(key);
+    this.account = null;
+    this.folder = "Inbox";
+    this.page = 0;
+    this.undo = null;
+    this.revision++;
+    this.changed();
   }
   async refresh() {
     if (this.syncing) {
@@ -390,9 +418,14 @@ export class Workspace extends EventTarget {
     this.changed();
     do {
       this.refreshAgain = false;
-      const rev = this.revision;
+      let rev = this.revision;
       try {
         const result = await this.repository.refresh(this.folder, this.account);
+        for (const id of this.repository.removedAccounts ?? []) {
+          const unchanged = rev === this.revision;
+          this.accountRemoved(id);
+          if (unchanged) rev = this.revision;
+        }
         this.acceptAliases(result, rev);
         if (rev === this.revision && !this.pending) {
           if (this.readerMessage)
@@ -462,12 +495,15 @@ export class Workspace extends EventTarget {
       .filter(([key]) => this.canonical(key) === id)
       .map(([, job]) => job);
     const job = Promise.all(previousJobs).then(async () => {
+      if (!this.confirmed.has(this.canonical(id))) return;
       try {
         await this.repository.mutate(this.canonical(id), fields);
+        if (!this.confirmed.has(this.canonical(id))) return;
         this.acceptAliases(this.repository.cached, revision);
         const key = this.canonical(id);
         this.confirmed.set(key, { ...this.confirmed.get(key)!, ...fields });
       } catch (error) {
+        if (!this.confirmed.has(this.canonical(id))) return;
         if (error instanceof MutationFailure && error.committed) {
           const key = this.canonical(id);
           this.confirmed.set(key, { ...this.confirmed.get(key)!, ...fields });

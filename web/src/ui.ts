@@ -472,7 +472,7 @@ export function mount(
         writes = writes.then(async () => {
           try {
             await w.repository.saveDraft(snapshot);
-            w.drafts.set(snapshot.id, snapshot);
+            w.rememberDraft(snapshot);
           } catch (error) {
             if (d.isConnected)
               status.textContent =
@@ -568,7 +568,7 @@ export function mount(
         draft.attachments = remove
           ? await gateway.removeFile(draft.id, remove)
           : await gateway.addFiles(draft.id, files);
-        w.drafts.set(draft.id, structuredClone(draft));
+        w.rememberDraft(draft);
         status.textContent = "";
       } catch (error) {
         draft.attachments = previous;
@@ -625,7 +625,7 @@ export function mount(
         if (send) await w.repository.send(draft);
         else await w.repository.saveDraft(draft);
         if (send) w.drafts.delete(draft.id);
-        else w.drafts.set(draft.id, { ...draft });
+        else w.rememberDraft(draft);
         if (send) {
           if (gateway) w.addCachedMail(gateway.cached);
           w.notice = "Message accepted by SMTP";
@@ -1405,8 +1405,14 @@ export function mount(
     );
     if (gateway)
       panel.append(
-        accountPanel(gateway, () => {
-          w.notice = "Account verified and saved";
+        accountPanel(gateway, (removed) => {
+          if (removed) {
+            w.accountRemoved(removed);
+            attachmentState = undefined;
+          }
+          w.notice = removed
+            ? "Account removed from this browser"
+            : "Account preferences saved";
           w.error = null;
           w.changed();
         }),

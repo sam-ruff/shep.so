@@ -102,7 +102,7 @@ test("IndexedDB upgrade preserves mail and seeds Sent roles; failed writes roll 
       version,
     };
   });
-  expect(evidence.version).toBe(3);
+  expect(evidence.version).toBe(4);
   expect(evidence.migrated.mail).toEqual([
     { id: "original", subject: "Storage fixture" },
   ]);
@@ -126,4 +126,142 @@ test("IndexedDB upgrade preserves mail and seeds Sent roles; failed writes roll 
   expect(evidence.pair.mail.some((m: { id: string }) => m.id === "valid")).toBe(
     true,
   );
+});
+
+test("account removal rechecks its transaction and refuses late tab writes without retaining deleted content", async ({
+  page,
+}) => {
+  await page.goto("/preview.html");
+  const result = await page.evaluate(async () => {
+    const storeModule = "/src/storage.ts",
+      removalModule = "/src/account_removal.ts",
+      providerModule = "/src/provider.ts";
+    const { BrowserStore } = await import(storeModule);
+    const { removalPreview, reviewStores } = await import(removalModule);
+    const { GatewayRepository } = await import(providerModule);
+    const store = await BrowserStore.open("R".repeat(43));
+    const account = { id: "fixture", email: "owner@example.test" };
+    const draft = {
+      id: "draft",
+      accountId: account.id,
+      body: "PRIVATE REMOVED TEXT",
+      revision: 1,
+    };
+    const mail = {
+      core: { id: "mail", account_id: account.id },
+      text: "PRIVATE REMOVED TEXT",
+    };
+    await store.commit([
+      { store: "accounts", key: account.id, value: account },
+      { store: "accounts", key: "other", value: { id: "other" } },
+      { store: "mail", key: "mail", value: mail },
+      { store: "raw", key: "mail", value: "PRIVATE RAW" },
+      { store: "drafts", key: "draft", value: draft },
+      {
+        store: "draftFiles",
+        key: "file",
+        value: {
+          draftId: "draft",
+          info: { id: "file", name: "private.bin" },
+          blob: new Blob(["PRIVATE BYTES"]),
+        },
+      },
+      {
+        store: "mailAliases",
+        key: "old",
+        value: { alias: "old", target: "mail" },
+      },
+    ]);
+    const old = removalPreview(await store.snapshot(reviewStores), account.id);
+    await store.commit([
+      { store: "drafts", key: "draft", value: { ...draft, revision: 2 } },
+    ]);
+    let stale = false;
+    try {
+      await store.removeAccount(old, false);
+    } catch (e) {
+      stale = String(e).includes("Local data changed");
+    }
+    const retained = !!(await store.get("accounts", account.id));
+    const current = removalPreview(
+      await store.snapshot(reviewStores),
+      account.id,
+    );
+    let release!: () => void, entered!: () => void;
+    const acquired = new Promise<void>((r) => (entered = r)),
+      gate = new Promise<void>((r) => (release = r));
+    const held = navigator.locks.request(
+      `shep.${"R".repeat(43)}.account.fixture`,
+      async () => {
+        entered();
+        await gate;
+      },
+    );
+    await acquired;
+    const guarded = new GatewayRepository(
+      { user_id: "R".repeat(43), csrf: "C".repeat(43) },
+      store,
+    );
+    let occupied = false;
+    try {
+      await guarded.removeAccount(current, false);
+    } catch (e) {
+      occupied = String(e).includes("operation in progress");
+    }
+    release();
+    await held;
+    if (!occupied) throw Error("Removal did not refuse an occupied account");
+    await store.removeAccount(current, false);
+    await store.removeAccount(current, false);
+    let late = false;
+    try {
+      await store.commit([
+        {
+          store: "accounts",
+          key: "other",
+          value: { id: "other", name: "must roll back" },
+        },
+        { store: "drafts", key: "draft", value: { ...draft, revision: 999 } },
+      ]);
+    } catch (e) {
+      late = String(e).includes("removed");
+    }
+    const other = await store.get("accounts", "other");
+    const data = await store.snapshot(reviewStores);
+    let requests = 0;
+    const repo = new GatewayRepository(
+      { user_id: "R".repeat(43), csrf: "C".repeat(43) },
+      store,
+      async () => {
+        requests++;
+        throw Error("Must not request");
+      },
+      async (_name: any, fn: any) => fn(),
+    );
+    let reconnect = false;
+    try {
+      await repo.connect(account, "new", "new");
+    } catch (e) {
+      reconnect = String(e).includes("removed");
+    }
+    const raw = await store.get("raw", "mail");
+    store.close();
+    return { stale, retained, late, other, data, raw, reconnect, requests };
+  });
+  expect(result.stale).toBe(true);
+  expect(result.retained).toBe(true);
+  expect(result.late).toBe(true);
+  expect(result.other).toEqual({ id: "other" });
+  expect(result.requests).toBe(0);
+  expect(result.reconnect).toBe(true);
+  expect(result.raw).toBeUndefined();
+  for (const name of [
+    "mail",
+    "drafts",
+    "draftFiles",
+    "outgoing",
+    "mailAliases",
+  ])
+    expect(result.data[name]).toEqual([]);
+  expect(JSON.stringify(result.data)).not.toContain("PRIVATE");
 });

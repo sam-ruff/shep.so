@@ -20,6 +20,7 @@ class Workspace extends ChangeNotifier {
   final Map<String, int> _versions = {};
   final Map<String, Future<void>> _queues = {};
   final Map<String, Draft> drafts = {};
+  final Set<String> _removedAccounts = {};
   List<CalendarEntry> events;
   Preferences preferences = const Preferences();
   String folder = 'Inbox', query = '', filter = 'All';
@@ -322,6 +323,26 @@ class Workspace extends ChangeNotifier {
     }).toList();
   }
 
+  Future<void> accountRemoved(String id) async {
+    _removedAccounts.add(id);
+    drafts.removeWhere((_, draft) => draft.accountId == id);
+    if (_confirmed[_undoId]?.accountId == id) {
+      undo = null;
+      _undoId = null;
+    }
+    _mail.removeWhere((m) => m.accountId == id);
+    _bodies.removeWhere((_, m) => m.accountId == id);
+    _confirmed.removeWhere((_, m) => m.accountId == id);
+    if (_reader?.accountId == id) _reader = null;
+    account = null;
+    folder = 'Inbox';
+    selected.clear();
+    notice = 'Account removed from this device.';
+    error = null;
+    _changed();
+    await loadPage();
+  }
+
   Future<void> savePreferences(Preferences value) async {
     preferences = value;
     final revision = ++_settingsRevision;
@@ -508,10 +529,13 @@ class Workspace extends ChangeNotifier {
     retry = null;
     final before = _queues[id] ?? Future.value();
     final job = before.then((_) async {
+      if (!_confirmed.containsKey(id)) return;
       try {
         await repository.mutate(id, fields);
+        if (!_confirmed.containsKey(_canonical(id))) return;
         _confirmed[id] = _confirmed[id]!.patch(fields);
       } catch (e) {
+        if (!_confirmed.containsKey(id)) return;
         if (e is MailOperationFailure && e.committed) {
           _confirmed[id] = _confirmed[id]!.patch(fields);
           error = e.message;
@@ -579,6 +603,12 @@ class Workspace extends ChangeNotifier {
   Future<bool> saveDraft(Draft draft) async {
     try {
       await repository.saveDraft(draft);
+      if (_removedAccounts.contains(draft.accountId)) {
+        error =
+            'This account was removed. Copy this text into a new draft with a connected account.';
+        _changed();
+        return false;
+      }
       drafts[draft.id] = draft;
       notice = 'Draft saved';
       _changed();

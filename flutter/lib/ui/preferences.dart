@@ -1,3 +1,4 @@
+import 'account_removal.dart';
 import 'package:flutter/material.dart';
 import '../model/mail.dart';
 import '../model/workspace.dart';
@@ -157,7 +158,8 @@ class PreferencesView extends StatelessWidget {
         ]),
         section('Connections', [
           if (workspace.accountRepository != null) ...[
-            for (final account in workspace.accountRepository!.mailAccounts)
+            for (final account
+                in workspace.accountRepository!.mailAccounts) ...[
               ListTile(
                 leading: const Icon(Icons.mail_outline),
                 title: Text(account.name),
@@ -184,6 +186,40 @@ class PreferencesView extends StatelessWidget {
                   ),
                 ),
               ),
+              if (workspace.repository is AccountRemovalRepository)
+                ListTile(
+                  leading: const Icon(Icons.remove_circle_outline),
+                  title: Text('Remove ${account.email}'),
+                  onTap: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => AccountRemovalScreen(
+                          workspace: workspace,
+                          account: account,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+            ],
+            if (workspace.repository
+                case final AccountRemovalRepository removal)
+              if (removal.pendingCredentialCleanup > 0)
+                ListTile(
+                  leading: const Icon(Icons.key_off_outlined),
+                  title: const Text('Removed account passwords need cleanup'),
+                  subtitle: const Text(
+                    'Local account data is removed. Unlock device credential storage, then retry cleanup.',
+                  ),
+                  trailing: TextButton(
+                    onPressed: () async {
+                      await removal.cleanupCredentials();
+                      await workspace.loadPage();
+                    },
+                    child: const Text('Retry cleanup'),
+                  ),
+                ),
             ListTile(
               leading: const Icon(Icons.add),
               title: const Text('Add mail account'),

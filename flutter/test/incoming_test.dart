@@ -14,6 +14,7 @@ class IncomingRepository extends PagedRepository
     implements AttachmentRepository {
   final value = Mail(
     id: 'incoming',
+    accountId: 'fixture',
     sender: 'Files',
     address: 'files@example.test',
     subject: 'Incoming fixture',
@@ -53,6 +54,32 @@ class IncomingRepository extends PagedRepository
 }
 
 void main() {
+  test(
+    'removed account reader cannot be restored by a late mutation failure',
+    () async {
+      final repo = IncomingRepository();
+      final w = Workspace(repo, MemorySettings());
+      addTearDown(w.dispose);
+      await w.initialize();
+      w.setForeground(false);
+      w.retainReader('incoming');
+      final action = w.action('incoming', MailAction.star);
+      await Future<void>.delayed(Duration.zero);
+      repo.omitted = true;
+      w.drafts['deleted-draft'] = Draft(
+        id: 'deleted-draft',
+        accountId: 'fixture',
+      );
+      await w.accountRemoved('fixture');
+      expect(w.drafts, isEmpty);
+      expect(w.mail('incoming'), isNull);
+      repo.jobs.single.completeError(StateError('Late provider failure'));
+      await action;
+      expect(w.mail('incoming'), isNull);
+      expect(w.pending, 0);
+      expect(w.visible, isEmpty);
+    },
+  );
   test(
     'reader keeps loaded detail and metadata after page exclusion, then releases it',
     () async {

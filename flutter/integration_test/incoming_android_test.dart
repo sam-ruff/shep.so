@@ -86,6 +86,59 @@ void main() {
       await binding.convertFlutterSurfaceToImage();
       await tester.pumpAndSettle();
       await binding.takeScreenshot('native-incoming-saved');
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Preferences').last);
+      await tester.pumpAndSettle();
+      Future<void> show(Finder target, {double delta = -400}) async {
+        for (var i = 0; i < 20 && target.evaluate().isEmpty; i++) {
+          await tester.drag(find.byType(ListView).last, Offset(0, delta));
+          await tester.pumpAndSettle();
+        }
+        await tester.ensureVisible(target);
+        await tester.pumpAndSettle();
+      }
+
+      final removeAccount = find.text('Remove owner@example.test');
+      await show(removeAccount);
+      await tester.tap(removeAccount);
+      await tester.pumpAndSettle();
+      await wait(
+        () => find.textContaining('1 cached messages').evaluate().isNotEmpty,
+      );
+      await binding.takeScreenshot('native-account-removal-light');
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(repository.mailAccounts, hasLength(1));
+      final appearance = find.byType(DropdownButton<ThemeMode>);
+      await show(appearance, delta: 400);
+      await tester.tap(appearance);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Dark').last);
+      await tester.pumpAndSettle();
+      await show(removeAccount);
+      await tester.tap(removeAccount);
+      await tester.pumpAndSettle();
+      await wait(
+        () => find.textContaining('1 cached messages').evaluate().isNotEmpty,
+      );
+      await binding.takeScreenshot('native-account-removal-dark');
+      expect(workspace.drafts.values.single.subject, 'Account removal draft');
+      credentials.removeUnavailable = true;
+      await tester.tap(find.text('Remove from device'));
+      await tester.pumpAndSettle();
+      await wait(() => repository.mailAccounts.isEmpty);
+      final retryCleanup = find.text('Retry cleanup');
+      await show(retryCleanup);
+      await binding.takeScreenshot('native-account-removal-cleanup');
+      expect(repository.pendingCredentialCleanup, 1);
+      credentials.removeUnavailable = false;
+      await tester.tap(retryCleanup);
+      await tester.pumpAndSettle();
+      await wait(() => repository.pendingCredentialCleanup == 0);
+      expect(find.text('Removed account passwords need cleanup'), findsNothing);
+      expect(workspace.visible, isEmpty);
+      expect(workspace.drafts, isEmpty);
       await tester.pumpWidget(const SizedBox());
       workspace.dispose();
     },
