@@ -113,6 +113,14 @@ class NativeFlows(unittest.TestCase):
                        key("Escape"), check("dialog", None),
                        key("ctrl+comma"), check("tab", "Preferences"), shot("contacts-tabs-compact"))
 
+    def test_documentation_screenshots(self):
+        self.mcp.batch(check("selected", "A little more room to think"),
+                       {"type": "hover", "x": 1430, "y": 910}, wait(400), shot("docs-mail-light"),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       click(690, 366), check("dark", True),
+                       key("ctrl+2"), check("tab", "Calendar"),
+                       {"type": "hover", "x": 1430, "y": 910}, wait(400), shot("docs-calendar-dark"))
+
     def test_layout_gallery(self):
         self.mcp.batch(shot("compact-mail-header"), key("ctrl+comma"), check("tab", "Preferences"), shot("preferences-general"),
                        click(645, 156), check("settings_tab", "Shortcuts"), shot("shortcuts-layout"),

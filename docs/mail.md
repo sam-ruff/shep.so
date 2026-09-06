@@ -1,0 +1,25 @@
+# Mail
+
+## Connect your accounts
+
+Go to **Preferences → Accounts**. Add an IMAP or POP3 account, then enter its outgoing SMTP settings. You can test each connection during setup. Fastmail has a preset; use your full email address and an app password.
+
+## Find and read messages
+
+The unified inbox brings your accounts together. Choose a folder in the sidebar, search by sender or message text, or filter for unread, flagged or attachment-bearing mail.
+
+Click a message to read it. Double-click for a full-window reader. Related messages appear as collapsible cards; disable grouping in **Preferences → General** if you prefer individual messages.
+
+Drag the pane edges to give your inbox or reader more room.
+
+## Reply and organize
+
+Use the visible message controls or right-click a message to reply, flag, move, archive, send to Trash or export it. The default Move shortcut is `M`. Change shortcuts in **Preferences → Shortcuts**.
+
+Drafts save automatically. Attached files are copied into the draft, so moving the originals will not break it. Interrupted sends appear in **Outbox** for review; they are not retried automatically.
+
+## Adjust your reading preferences
+
+Choose appearance, text size and quoted-history display in **Preferences → General**. External images are blocked by default; manage exceptions in **Privacy** and trusted addresses in **Contacts**.
+
+See [current limits](limits.md) for provider restrictions and size limits.

@@ -8,3 +8,6 @@
 /dist/
 __pycache__/
 *.pyc
+/site/
+/.cache/
+/.venv-docs/

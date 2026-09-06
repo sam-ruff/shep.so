@@ -2,15 +2,17 @@
 
 ## Product direction
 
+Keep README and human documentation short, concise and easy to read. The Zensical home page links to a separate `docs/agents/` section for detailed behavior and implementation reference. Keep operational agent instructions in this file, and link to it from the agent docs rather than maintaining a second copy.
+
 Shep is a native Rust + iced email and calendar client. Mouse usability and keyboard usability are equally important. Do not describe it as keyboard-first. Keep common actions visible and clickable; shortcuts are optional, native, remappable accelerators. The default move shortcut is `M`. Never run letter shortcuts while a text field or editor consumes the keystroke.
 
 Keep the restrained shadcn-inspired design: clear hierarchy, comfortable spacing, rounded controls, subtle borders, quiet violet accents, useful empty/error states. Appearance has Light / Dark / System choices in Preferences. The user approved the flat Swiss Shepherd profile in `assets/swiss-shepherd.png`; preserve the design. App raster assets use WebP. Small logo variants are loaded once, not read from disk on every frame. Vector UI icons remain SVG.
 
-## GitHub Actions are DISABLED — reminder to re-enable
+## Documentation CI is enabled; quality and release are DISABLED
 
-**The user explicitly requested that all GitHub CI remain disabled for now.** Repository: `sam-ruff/shep.so`, private, default branch `main`. Direct pushes to `main` are currently authorized.
+**The user authorized automatic Zensical documentation publishing to GitHub Pages.** Repository: `sam-ruff/shep.so`, private, default branch `main`. Direct pushes to `main` are currently authorized. `.github/workflows/docs.yml` builds documentation on GitHub-hosted Linux runners and deploys changes from `main`; pull requests only build. Repository Actions must be enabled for this workflow.
 
-Workflow definitions are deliberately named `.github/workflows/ci.yml.disabled` and `release.yml.disabled`, and repository Actions permissions are set to `enabled: false`. Do not enable them as a side effect of ordinary development. Remind Sam to re-enable them when the self-hosted runners are ready.
+Quality and release workflow definitions remain deliberately named `.github/workflows/ci.yml.disabled` and `release.yml.disabled`. Do not enable them as a side effect of ordinary development or docs publishing. Remind Sam to re-enable them when the self-hosted runners are ready.
 
 To enable when Sam asks:
 
@@ -88,7 +90,7 @@ Current practical limits and unsupported behavior must remain explicit in README
 
 Use Conventional Commits: `fix:`/`perf:` patch, `feat:` minor, `!` or `BREAKING CHANGE:` major. `main` is the only release branch. Node is development/release tooling only; the application remains Rust.
 
-`npm ci` installs the locked release tooling. `.releaserc.json` runs commit analysis, notes/changelog, `scripts/release.py` (updates Cargo version and lockfile and creates a native archive/checksums), commits the version files, then publishes a GitHub tag/release. Release definitions are dormant while Actions are disabled. `npm run release:dry` inspects the intended release with authenticated GitHub access but does not publish.
+`npm ci` installs the locked release tooling. `.releaserc.json` runs commit analysis, notes/changelog, `scripts/release.py` (updates Cargo version and lockfile and creates a native archive/checksums), commits the version files, then publishes a GitHub tag/release. Release definitions remain dormant while the release workflow is disabled. `npm run release:dry` inspects the intended release with authenticated GitHub access but does not publish.
 
 The release workflow waits for a successful full quality workflow and checks that `main` still equals the tested SHA before publishing. Current automated release packaging produces a Linux archive on the Linux runner; Windows/macOS compilation is covered by the CI matrix, but signed installers and distribution builds for those platforms need additional packaging jobs. Do not call unsigned development binaries signed/notarized.
 

@@ -1,150 +1,45 @@
 # Shep
 
-A native Rust + iced email and calendar client, with a quiet interface, light/dark themes, and equally useful mouse controls and remappable keyboard shortcuts.
+A calm, native email and calendar app built with Rust and iced. Comfortable with a mouse, with remappable shortcuts when you want them.
 
-This is an initial working implementation. Fastmail IMAP/SMTP authentication and Inbox sync have been verified with the saved account. Google authorization, other live providers, and Windows/macOS execution still need verification with real accounts and platform runners. Automated tests use isolated fixture mail and local protocol streams.
+[Documentation](https://sam-ruff.github.io/shep.so/) · [Install](docs/installation.md) · [Agent docs](docs/agents/index.md)
 
-## Run and install
+![Shep in light mode, with a unified inbox and an open email](docs/images/mail-light.webp)
 
-Use current stable Rust with `rustfmt` and `clippy`, and Python 3 for development scripts. On Debian/Ubuntu, build dependencies include:
+- **Mail in one place.** Multiple accounts, a unified inbox, search and conversation reading.
+- **Everyday essentials.** Replies, attachments, autosaved drafts and recovery for interrupted sends.
+- **Calendars alongside.** Google Calendar and CalDAV, with a month view and agenda.
+- **Make it yours.** Light, Dark or System appearance, resizable panes and configurable shortcuts.
+- **Encrypted backups.** Save locally or to Google Drive. Google is optional.
+
+![Shep's calendar in dark mode, showing the month and upcoming events](docs/images/calendar-dark.webp)
+
+*Native Linux screenshots with fictional demo mail and events.*
+
+## Get started
+
+With stable Rust and the [Linux dependencies](docs/installation.md) installed, run from the checkout:
 
 ```sh
-sudo apt install build-essential pkg-config libssl-dev libdbus-1-dev \
-  libx11-dev libxkbcommon-dev libwayland-dev
 cargo run --release
 ```
 
-Linux credentials require a working Secret Service, such as GNOME Keyring or KeePassXC with Secret Service enabled. Windows uses Credential Manager; macOS uses Keychain. Linux file dialogs use the desktop portal, so install your desktop's `xdg-desktop-portal` implementation.
-
-Install the optimized production build for your Linux user:
+Or install for your Linux user:
 
 ```sh
 bash scripts/install-linux.sh
-# Optionally pin it to the GNOME dash as well:
-bash scripts/install-linux.sh --pin
 ```
 
-The installer builds with `--release --locked --no-default-features`, installs `~/.local/bin/shep`, and registers **Shep** in the applications menu. Right-click it and choose **Add to Favorites** or your panel's pin action. `--pin` supports GNOME and preserves existing favorites. KDE and other panels can pin the launcher through their normal menus. The desktop entry and window use `so.shep.Shep`, following the [freedesktop launcher specification](https://specifications.freedesktop.org/desktop-entry/latest-single/) and [iced's application ID guidance](https://docs.rs/iced/0.14.0/iced/window/settings/struct.PlatformSpecific.html).
+Add accounts and calendars in **Preferences**.
 
-An extracted release archive includes the installer and can be installed without Rust. You can also supply an existing binary:
+## Still in development
 
-```sh
-bash scripts/install-linux.sh --binary /path/to/shep
-bash scripts/install-linux.sh --uninstall    # keeps accounts, mail, drafts and backups
-```
+Fastmail login and Inbox sync have been verified. Live Google, other providers and Windows/macOS still need verification.
 
-`--prefix` changes the binary prefix; `--data-dir` changes launcher/icon placement. Launcher files otherwise follow `XDG_DATA_HOME`. Do not run the user installer with sudo. App images are cached WebP; the desktop launcher has a small PNG compatibility icon for Linux icon themes.
+- Mail uses text rendering; external images load only when your privacy settings allow them.
+- Downloads: **25 MiB per message**. Backups: **256 MiB of original mail**.
+- Gmail needs an app password; Google sign-in does not provide Gmail OAuth.
+- Calendar sync: **90 days back, 365 days ahead**. Edit recurring CalDAV series in your server's calendar UI.
+- The local mail cache is not encrypted at rest.
 
-## Mail and layout
-
-- Add and edit multiple IMAP or POP3 accounts in Preferences → Accounts. The setup wizard separates identity, incoming IMAP/POP3 and outgoing SMTP settings, with SSL/TLS or STARTTLS, authentication choices, and independent connection tests. Fastmail has a preset; use its app password and full login address. Certificate verification is always enabled.
-- Enable the unified inbox in General preferences, expand it to choose an account, or disable it for account-specific navigation. Custom folders appear under collapsible account headings. Ctrl+click folders to combine them in one view; an ordinary click selects just one. Fuzzy search covers indexed sender, subject and body text. Filter All, Unread, Read, Flagged or Attachments; sort newest/oldest, sender or subject. Sorting is saved.
-- Right-click an inbox message for open, reply, read/unread, flag, move, archive, Trash, sender copy and export actions. Shift+F10 opens the same menu, with arrows/Enter and Escape. Button tooltips show current remapped shortcuts.
-- Flag/unflag directly in an inbox row or the reader toolbar, with a red outline for flagged messages; mark read/unread in the toolbar. IMAP flags synchronize with the server; POP3 flags and folders are local. The Flagged sidebar view searches across folders.
-- Drag the sidebar edge or the divider between inbox and reader to resize them. The layout and window dimensions persist across sessions; closing waits for pending layout saves. Pages contain 50 messages; visible rows and a small margin are rendered. Adjacent bodies and the next page preload in the background.
-- Move with the visible button or `M`, fuzzy-search a folder, then press Enter to use the top match. Opt-in moves between IMAP accounts preserve the source until the destination confirms receipt; interrupted transfers are recorded to prevent blind duplicate uploads. Reply or Reply all, compose with To/Cc/Bcc, save drafts, archive, move to Trash, export original `.eml` files and save attachments through native file dialogs.
-- Attach files through the native picker; attachment chips wrap and can be removed with the mouse. Files are copied into the draft cache so moving or deleting the original does not break a saved draft. Up to 32 files / 18 MiB of attachments fit within the 25 MiB encoded-message limit.
-- Drafts autosave after editing pauses. Closing waits for a successful save, and failures keep the composer open. Older saves cannot overwrite newer edits or restore a sent draft. Send saves a durable delivery record before contacting SMTP, then releases the composer while delivery runs in the background. Interrupted sends appear in **Outbox** and are never retried automatically. Review delivery there before returning an uncertain message to drafts or recording it as sent.
-- Sent messages keep a local copy. IMAP accounts can also save to the server's Sent folder, rely on a server that saves its own copies, or keep copies locally; choose this in the SMTP setup step. Automatic discovery uses the server's Sent designation, with an optional explicit folder override. The sidebar's Sent view combines each account's actual Sent folder and local copies. POP3 keeps Sent copies locally.
-- Outbox separates delivery from Sent-copy recovery. Check for an existing copy, save a missing server copy, or keep it locally without another SMTP send. A lost copy acknowledgment requires a review before another upload. Locally stored Sent copies have local flags/folders; moving them to another account requires first saving and syncing a server copy.
-- Reply uses Reply-To when provided. Reply all excludes your configured addresses, deduplicates recipients and preserves message references. Its default shortcut is `Shift+R`, remappable in Preferences.
-- Up/Down selects messages, Tab switches between inbox and sidebar navigation, and double-click opens a full-window reader. Close it with the button or remappable Escape shortcut.
-- Related messages appear as separate, collapsible cards in the reader, including cached replies in other folders of the same account. One message opens at a time; reply, move and toolbar actions apply to that message. Long conversations page through 20 messages at a time and preload neighboring bodies. Disable **Group related messages in the reader** in General preferences to read individual messages. The inbox still lists individual emails.
-- Quoted reply history within each message can be collapsed, expanded or hidden. Attachments wrap alongside Reply. Click the sender for copyable addresses. Remote images default to blocked, with message/sender/domain exceptions and Block all / Contacts / Allow all policies in Privacy preferences. Contacts are currently a manually maintained list.
-- Preferences → General includes message font size and interface scaling, alongside Light, Dark and System appearance. Preferences → Shortcuts remaps every listed action and rejects duplicate bindings. Letter shortcuts do not activate inside text fields. `Mod` is Command on macOS and Control elsewhere.
-
-Contacts has a separate Preferences tab. Image policy and per-message/sender/domain exceptions remain under Privacy. Explicit Save buttons show a dismissible **Changes saved** toast after persistence succeeds.
-
-## Calendar
-
-The Calendar tab combines a month grid with an agenda. Connect Google Calendar or choose **Add CalDAV calendar** under Preferences → Calendars. Enter your server URL, username and app password, then choose **Find calendars**. Shep tests authentication, discovers calendar homes and lists event calendars for you to select. Direct collection URLs also work. Reconnecting the same URL and username updates the existing connection without duplicating it.
-
-CalDAV discovery follows same-server redirects, `/.well-known/caldav`, the current user's principal and calendar-home properties. It verifies HTTPS certificates and stops before forwarding credentials to another server; enter that server's address explicitly when needed. Plain HTTP remains limited to localhost. Servers that advertise only task collections do not appear as event calendars.
-
-Calendar permissions distinguish creating, editing and deleting events. Read-only calendars remain available to view, and new events default to a writable calendar. Google permissions refresh during calendar sync; calendars exposing only free/busy information are not imported as event calendars. If a previously connected Google calendar disappears from a complete list, its cached events remain available and editing is disabled. CalDAV permissions come from discovery when the server reports them; otherwise the server enforces access on each request.
-
-Remove a mail account or calendar from **Preferences → Accounts / Calendars** using its trash button. The confirmation shows exactly how many downloaded messages, drafts or cached events will be removed locally. Server originals and existing backups are kept. Unfinished cross-account moves need a separate confirmation; destination copies may already exist. If local data changes during review, review it again before confirming.
-
-Removing a Google calendar hides that calendar from subsequent syncs without signing out of Google. **Restore removed Google calendars** reconnects accessible calendars; use Sync calendar to download their events again. Re-add CalDAV calendars through discovery. Failed OS credential deletion appears in Preferences with **Retry credential cleanup**, and retries after reopening. Restoring a backup explicitly reconnects the accounts/calendars included in it.
-
-Sync covers the previous 90 days and next 365 days. Double-click a day to add an all-day event. Create, edit and delete timed, multiday and all-day events. The last date in the all-day editor is inclusive. Existing remote events use ETags to detect conflicting writes. Expanded CalDAV recurring occurrences can be viewed; edit their series using the server's calendar interface. Calendar creation and edits are synchronized through the background engine. See Google's [calendar concepts](https://developers.google.com/workspace/calendar/api/concepts/events-calendars) for calendar and recurrence terminology.
-
-CalDAV edits preserve existing alarms, attendees, timezones and extension fields. Successful writes update the local calendar without depending on another full sync. Interrupted creates keep the same identity when retried; conflicting edits ask you to sync. A server that omits its updated ETag can still save an event, but you must sync before editing it again.
-
-## Optional Google login and backups
-
-Google is optional. Without it, mail and CalDAV work with local settings and you can back up to a local folder.
-
-Disconnect Google from Preferences → Accounts or Calendars. This stops Google Calendar and Drive work on this device and removes its saved Google login; cached events remain readable as offline archives. Mail accounts, local backups and existing Drive copies are retained. If the credential store is locked, use **Retry Google cleanup** after unlocking it. Reconnecting requires a fresh sign-in, and automatic Drive backups stay off until enabled again. This device action does not revoke Google access for other installations.
-
-1. Create a Google Cloud project and enable **Drive API** and **Google Calendar API**.
-2. Configure its OAuth consent screen; add your Google address as a test user if the app is in testing.
-3. Create an OAuth client of type **Desktop app**. Enter its client ID and desktop client secret in Preferences → Accounts or Calendars, or set `SHEP_GOOGLE_CLIENT_ID` and `SHEP_GOOGLE_CLIENT_SECRET` before the first launch.
-4. Save preferences, then choose **Connect Google**. Authorization opens the system browser, using PKCE, state validation and a temporary loopback callback, following Google's [desktop OAuth flow](https://developers.google.com/identity/protocols/oauth2/native-app).
-5. In Preferences → Backups, choose Local folder or Google Drive, set retention (1–100 copies) and interval (1–8760 hours), enter a passphrase of at least 12 characters, and make the first backup. Enable automatic backups if wanted.
-
-Google refresh tokens and saved account passwords are kept in the OS keychain. Desktop OAuth client configuration is stored with local preferences; it is not a confidential server credential. Sign-in requests Drive app-data and Calendar permissions together. You can grant either service independently. Preferences shows which permissions were granted; Calendar also supports read-only access. Drive backups require Drive permission, and missing Calendar permission leaves cached calendars readable as offline archives.
-
-Connecting another Google account keeps the current login until the new grant is saved and validated. Calendar access and the selected credential then commit together. If validation fails, **Reconnect Google** retries the staged connection, including after a restart. **Start a new sign-in** opens Google's account chooser for a different attempt. Changed OAuth setup fields do not replace an already committed client until sign-in succeeds.
-
-Google access refreshes in the background and saves any replacement refresh token. If saving fails, keep Shep open, unlock the keychain and retry Sync; the received credentials remain pending until saved. If this happens during sign-in, choose **Reconnect Google** after unlocking to finish the received authorization without another browser prompt. Revoked Google access requires reconnecting. A fresh sign-in must include offline access; it never reuses another account's refresh token.
-
-Backups contain downloaded original email, account configuration, calendar-source settings and preferences. Enable **Include account passwords** to carry those passwords inside the encrypted snapshot. Google tokens are never included. Snapshots use compression, Argon2id and AES-256-GCM with fresh salts/nonces. The passphrase is saved in the OS keychain after a successful backup for scheduled use. Keep a separate copy of it for restore.
-
-“Back up now” saves the displayed backup settings before starting. Make one manual copy at each destination to prepare its automatic schedule; this also works when you enable automatic backups afterward. Changing destination, Google account or OAuth application requires a new first copy. Reconnecting the same verified Google account preserves its pending uploads and history. Existing installations need to reconnect Google once to verify the account/application binding, and make a new manual copy to establish the destination-specific keychain entry. Missing keychain access pauses automatic backups and the Backups page explains how to resume. A cleanup or keychain failure after upload reports that the copy was saved and identifies the remaining step.
-
-Drive copies live in its private application data area, accessed only with `drive.appdata`; they do not appear as ordinary files in My Drive. This follows the [Drive app-data model](https://developers.google.com/workspace/drive/api/guides/appdata). Use the same OAuth application when restoring on another machine. Retention deletes only Shep copies after a successful new upload. Restore decrypts and validates first, then merges mail/accounts; it keeps this device's Google login and backup preferences. Calendar events sync from their calendar providers again.
-
-Restore imports new mail and account/calendar settings in one local transaction. Existing messages, flags, folder moves, connection settings, preferences and unsent drafts are retained. Included passwords fill only missing OS-keychain entries for matching connections; restoring an older copy never replaces a current password. If the keychain is locked, the mail import is still complete: unlock it and restore the same copy again to finish the missing passwords without duplicating mail. Credentials for connections whose settings have changed are skipped. Invalid credential owners, duplicate IDs, conflicting cached identities or unreadable originals stop the import before any local changes.
-
-Recovered emails remain cached even if the server has already deleted them. They follow server deletions again only after a complete sync confirms the same remote identity. Restore does not upload mail back to the server.
-
-Drive reserves each file ID before transferring a copy and uploads in 1 MiB resumable chunks, following the [Drive upload protocol](https://developers.google.com/workspace/drive/api/guides/manage-uploads). Shep saves the encrypted archive, reserved ID and session in `backup-uploads.sqlite` beside the mail cache, using a separate database connection. After interruption or an app restart, choose **Back up now** with the original passphrase to resume that exact copy. A missing final response is resolved by checking the reserved file's identity, size and ciphertext checksum. A confirmed copy with unfinished cleanup is retried without another upload. Healthy uploads are not stopped by an overall ten-minute deadline; individual HTTP requests and lack of progress remain bounded.
-
-## Current limits
-
-- The local SQLite mail cache is not encrypted at rest; encrypted backups and OS-keychain credentials have separate protection. Use device disk encryption when needed.
-- Incoming messages over 25 MiB are skipped with a notice. A snapshot supports up to 256 MiB of original mail in this version. Email text previews are capped at 32,000 characters; export preserves the original message and attachments.
-- The reader renders plain text with a basic HTML-to-text fallback. Remote images load only after the privacy policy allows them, with bounded downloads, address validation and WebP conversion. Scripts never execute. Related messages are linked by Message-ID, References and In-Reply-To within each account; matching subjects alone do not form a conversation. Only downloaded mail can appear. Full HTML layout, invitations and general offline mutation queues are not implemented yet.
-- Gmail mail access currently needs an app password and compatible account settings; Google login connects Drive/Calendar, not Gmail OAuth. OAuth-only IMAP servers are not supported yet.
-- Same-account IMAP moves require MOVE; cross-account moves require two IMAP accounts and source UIDPLUS. An upload interrupted before its acknowledgement is retained for manual destination inspection, while a confirmed copy can resume source removal without uploading again. POP3 requires UIDL and never deletes server originals. Periodic background sync is configurable from 1–60 minutes; IMAP IDLE is not implemented yet.
-- A server Sent lookup uses the exact Message-ID. An absent copy cannot prove that delivery failed, and copying mail after an unacknowledged upload can create duplicates. Outbox requires an explicit review for those cases. Editing recurring CalDAV series is not implemented. Google grant switching, partial permission handling and coordination between independent app processes still need further work.
-- Automated UI testing currently runs on Linux/X11. Windows/macOS builds are in the dormant CI matrix but have not been executed here. Signed/notarized installers are not included.
-
-## Development, tests and releases
-
-```sh
-bash scripts/install-hooks.sh
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
-python3 -m unittest discover -s tests -p 'test_*.py'
-cargo build --profile test-ui --features test-support
-python3 scripts/e2e.py --functional-only     # use while the machine is busy
-# On an otherwise idle machine, at the end:
-cargo bench --bench responsiveness
-python3 scripts/e2e.py
-python3 scripts/performance_gate.py
-```
-
-Linux native E2E additionally needs `xvfb`, `xdotool`, `zenity`, `xclip`, and ImageMagick with WebP support. The optimized `test-ui` profile avoids measuring debug rendering. `scripts/check.sh` runs the full suite; `SHEP_SKIP_E2E=1` explicitly omits GUI tests when X11 is unavailable.
-
-The native MCP server is configured in `.mcp.json`. Read [the repository E2E skill](.agents/skills/shep-e2e/SKILL.md). Its batch tool performs real clicks, double-clicks, drags, typing and shortcuts, plus bounded waits, observed-state assertions and WebP screenshots. Every AI-driven scenario must have an equivalent automated test. Fixture mail exists only behind the nondefault `test-support` feature. The production application does not launch fixture workspaces.
-
-All generated logs and evidence belong under ignored `artifacts/`; never leave logs in the repository root. Performance budgets, methodology and the validated Linux baseline are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). The [completion audit](docs/COMPLETION.md) distinguishes implemented behavior, remaining work and verification that still needs live services/platforms.
-
-**All GitHub Actions are deliberately disabled.** Workflow files use `.yml.disabled` and repository Actions are disabled. [AGENTS.md](AGENTS.md) records the reminder and exact steps for re-enabling on the intended self-hosted Linux, Windows and macOS runners. Do not enable automatically.
-
-Conventional Commits drive semantic-release on `main`. Pre-commit runs fmt, Clippy and Rust tests; commit-msg validates the commit format. Release tooling uses Node 24 and `npm ci`. `npm run release:dry` checks the proposed release without publishing. The dormant release workflow runs only after a successful quality build, verifies the tested commit, prepares the Cargo version/archive/checksums, and publishes the GitHub release. Current release packaging produces Linux archives.
-
-## Extending Shep
-
-`src/ui/` contains iced presentation and bounded prefetch caches. `engine.rs` dispatches bounded channels to background jobs; `store.rs` keeps SQLite work off the UI thread. Mail sync, flags and moves serialize per account to avoid racing stale server snapshots.
-
-Cached search and message loads have reserved workers independent of provider operations. Speculative prefetch has its own smaller queue, and settings/drafts save in order on a separate worker. The dispatcher is tested with every provider worker blocked and its command queue full while local reads and saves continue.
-
-Preferences use versioned acknowledgements so an older background update cannot undo newer choices or pane resizing. Message-detail results are invalidated after mail changes, including late prefetch errors and old flag states. Backup completion updates only its destination's timestamp and schedule readiness without overwriting settings changed during the upload. Copy lists and restore actions are bound to the selected destination. Retention protects the acknowledged copy even after a clock correction; local uploads never overwrite an existing file.
-
-Implement `providers::MailProvider`, `providers::CalendarProvider` or `backup::BackupProvider` for a new provider, register its factory/configuration, and add deterministic contract tests. Wire-protocol code belongs in the provider; the UI only sends commands and handles events. Keep channel capacity, concurrency limits, cancellation, TLS verification and retention invariants intact.
-
-The approved White Swiss Shepherd logo and dark variant are in `assets/`; [assets/README.md](assets/README.md) records image-generation prompts and derivations. Font licensing is included alongside the embedded fonts. MIT license.
+[Full limits](docs/limits.md) · [Contributing](docs/development.md) · MIT licensed.
