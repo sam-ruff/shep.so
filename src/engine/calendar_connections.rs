@@ -34,6 +34,7 @@ impl Engine {
         &self,
         mut sources: Vec<CalendarSource>,
         password: SecretString,
+        observed_revision: u64,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             !sources.is_empty() && sources.len() <= 256,
@@ -55,6 +56,7 @@ impl Engine {
         }
         // A separate lock namespace avoids conflicts with externally supplied
         // legacy source identifiers. Network discovery happens before this lock.
+        let _lifecycle = self.connection_lifecycle_lock.lock().await;
         let _setup = self.calendar_setup_lock.lock().await;
         let mut guards = Vec::new();
         let existing: Vec<CalendarSource> = self.store.get("calendars").await?;
@@ -84,6 +86,9 @@ impl Engine {
         );
         for id in ids {
             guards.push(self.calendar_lock(&id).await);
+            self.store
+                .check_calendar_reconnect(id, observed_revision)
+                .await?;
         }
         if !self.demo {
             anyhow::ensure!(
@@ -116,13 +121,13 @@ mod tests {
             access: CalendarAccess::READ_ONLY,
         };
         engine
-            .connect_calendars(vec![source.clone()], "fixture".into())
+            .connect_calendars(vec![source.clone()], "fixture".into(), 0)
             .await
             .unwrap();
         let mut reconnected = source;
         reconnected.url = "https://CALENDAR.example.test/home/".into();
         engine
-            .connect_calendars(vec![reconnected], "fixture".into())
+            .connect_calendars(vec![reconnected], "fixture".into(), 0)
             .await
             .unwrap();
         let sources: Vec<CalendarSource> = engine.store.get("calendars").await.unwrap();
@@ -133,7 +138,7 @@ mod tests {
         invalid.url = "http://external.example".into();
         assert!(
             engine
-                .connect_calendars(vec![sources[0].clone(), invalid], "fixture".into())
+                .connect_calendars(vec![sources[0].clone(), invalid], "fixture".into(), 0)
                 .await
                 .is_err()
         );

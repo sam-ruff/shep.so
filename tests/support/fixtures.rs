@@ -143,6 +143,18 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
         false,
         true,
     )?;
+    if std::env::args().any(|a| a == "--pending-transfer") {
+        store
+            .put(
+                &format!("transfer:{}", mails[0].summary.id),
+                Some((
+                    "preview-personal".to_owned(),
+                    "INBOX".to_owned(),
+                    "uploaded".to_owned(),
+                )),
+            )
+            .await?;
+    }
     store.upsert(mails).await?;
     if std::env::args().any(|arg| arg == "--conversation-mail") {
         seed_conversations(store).await?;

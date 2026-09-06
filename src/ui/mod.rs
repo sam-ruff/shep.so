@@ -8,6 +8,7 @@ mod preference_sync;
 mod reading;
 #[cfg(test)]
 mod reading_tests;
+mod removals;
 mod sidebar;
 mod views;
 
@@ -48,6 +49,7 @@ pub enum SettingsTab {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
+    Removal,
     Account,
     Calendar,
     Move,
@@ -108,6 +110,11 @@ pub enum Message {
     ConnectCalendarFromEvent,
     EditAccount(String),
     SaveCalendar,
+    ReviewRemoval(crate::store::ConnectionRef),
+    ConfirmRemoval,
+    CancelPendingTransfers(bool),
+    CleanupCredentials,
+    RestoreGoogleCalendars,
     DiscoverCalendars,
     ChooseCalendar(String),
     CalendarBack,
@@ -217,10 +224,12 @@ pub struct App {
     prefetch_query: Option<MailQuery>,
     pending_details: HashSet<String>,
     events: Arc<Vec<CalendarEvent>>,
+    events_revision: u64,
     month: NaiveDate,
     day: NaiveDate,
     editing_event: Option<CalendarEvent>,
     calendar_setup: calendar_setup::CalendarSetup,
+    removal: removals::Removal,
     editor: text_editor::Content,
     draft_id: String,
     remapping: Option<Action>,
@@ -333,10 +342,12 @@ impl App {
                 prefetch_query: None,
                 pending_details: HashSet::new(),
                 events: Arc::new(Vec::new()),
+                events_revision: 0,
                 month: today.with_day(1).unwrap(),
                 day: today,
                 editing_event: None,
                 calendar_setup: Default::default(),
+                removal: Default::default(),
                 editor: text_editor::Content::new(),
                 draft_id: String::new(),
                 remapping: None,
@@ -620,11 +631,38 @@ impl App {
                         &mut self.preferences,
                     );
                     let mut workspace = (*workspace).clone();
+                    if workspace.connections_revision < self.workspace.connections_revision {
+                        workspace.accounts = self.workspace.accounts.clone();
+                        workspace.calendars = self.workspace.calendars.clone();
+                        workspace.account_folders = self.workspace.account_folders.clone();
+                        workspace.folders = self.workspace.folders.clone();
+                        workspace.connections_revision = self.workspace.connections_revision;
+                        workspace.credential_cleanup = self.workspace.credential_cleanup;
+                        workspace.removed_google_calendars =
+                            self.workspace.removed_google_calendars;
+                    }
+
                     if workspace.drafts_revision < self.workspace.drafts_revision {
                         workspace.drafts = self.workspace.drafts.clone();
                         workspace.drafts_revision = self.workspace.drafts_revision;
                     }
                     self.workspace = Arc::new(workspace);
+                    if self
+                        .query
+                        .account
+                        .as_ref()
+                        .is_some_and(|id| !self.workspace.accounts.iter().any(|a| &a.id == id))
+                    {
+                        self.query.account = None;
+                        self.selected = None;
+                        self.detail = None;
+                        self.query.offset = 0;
+                        self.request_page();
+                    }
+                    if !self.preferences.unified_inbox && self.query.account.is_none() {
+                        self.query.account = self.workspace.accounts.first().map(|a| a.id.clone());
+                        self.request_page();
+                    }
                     self.observe_draft_files();
                     self.update_saved_preferences();
                 }
@@ -740,7 +778,12 @@ impl App {
                         });
                     }
                 }
-                Event::Calendar(events) => self.events = events,
+                Event::Calendar(revision, events) => {
+                    if revision >= self.events_revision {
+                        self.events_revision = revision;
+                        self.events = events;
+                    }
+                }
                 Event::Busy(key, busy) => {
                     if busy {
                         self.busy.insert(key);
@@ -754,10 +797,19 @@ impl App {
                     self.pending_details.clear();
                 }
                 Event::GoogleConnected => self.google_connected = true,
-                Event::AccountSaved => {
-                    self.dialog = None;
-                    self.fields.clear();
+                Event::AccountSaved(id) => {
+                    if self.dialog == Some(Dialog::Account) && self.field("id") == id {
+                        self.dialog = None;
+                        self.fields.clear();
+                        if self.tab == Tab::Preferences {
+                            self.settings_fields();
+                        }
+                    }
                     self.send(Command::Sync);
+                }
+                Event::RemovalPreview(request, result) => self.removal_preview(request, result),
+                Event::ConnectionRemoved(request, result) => {
+                    self.connection_removed(request, result)
                 }
                 Event::CalendarsDiscovered(request, result) => {
                     self.calendars_discovered(request, result)
@@ -873,7 +925,12 @@ impl App {
                 _ => {}
             },
             Message::WindowClose(window) => {
-                if self.calendar_setup.saving.is_some() {
+                if self.removal.removing.is_some() || self.busy.contains("credential-cleanup") {
+                    self.notice(
+                        "Wait for credential cleanup to finish before closing.",
+                        true,
+                    );
+                } else if self.calendar_setup.saving.is_some() {
                     self.notice(
                         "Wait for the calendar connection to finish saving before closing.",
                         true,
@@ -935,7 +992,7 @@ impl App {
                 }
             }
             Message::Close => {
-                if self.dialog == Some(Dialog::Calendar) {
+                if matches!(self.dialog, Some(Dialog::Calendar | Dialog::Removal)) {
                     self.calendar_setup.invalidate();
                     self.fields.clear();
                     if self.tab == Tab::Preferences {
@@ -1313,6 +1370,7 @@ impl App {
             },
             Message::SaveAccount => match self.account_form() {
                 Ok(account) => {
+                    self.fields.insert("id", account.id.clone());
                     let password = self.field("password").to_string();
                     self.send(Command::SaveAccount(
                         account,
@@ -1350,6 +1408,17 @@ impl App {
                     }
                 }
             }
+            Message::ReviewRemoval(target) => self.review_removal(target),
+            Message::ConfirmRemoval => self.confirm_removal(),
+            Message::CancelPendingTransfers(value) => self.removal.cancel_transfers = value,
+            Message::CleanupCredentials => {
+                if !self.busy.contains("credential-cleanup")
+                    && self.try_command(Command::CleanupCredentials)
+                {
+                    self.busy.insert("credential-cleanup".into());
+                }
+            }
+            Message::RestoreGoogleCalendars => self.send(Command::RestoreGoogleCalendars),
             Message::DiscoverCalendars => self.discover_calendars(),
             Message::SaveCalendar => self.connect_calendars(),
             Message::CalendarBack => {
@@ -2141,6 +2210,15 @@ impl App {
         data["loaded_message_id"] =
             serde_json::json!(self.detail.as_ref().map(|detail| &detail.summary.id));
         data["reader_message_id"] = serde_json::json!(self.reader_id());
+        data["removal"] = serde_json::json!(self.removal.preview);
+        data["removal_error"] = serde_json::json!(self.removal.error);
+        data["removing"] = serde_json::json!(self.removal.removing.is_some());
+        data["removal_cancel_transfers"] = serde_json::json!(self.removal.cancel_transfers);
+        data["account_count"] = serde_json::json!(self.workspace.accounts.len());
+        data["calendar_count"] = serde_json::json!(self.workspace.calendars.len());
+        data["removed_google_calendars"] =
+            serde_json::json!(self.workspace.removed_google_calendars);
+        data["credential_cleanup"] = serde_json::json!(self.workspace.credential_cleanup);
         data["calendar_discovering"] = serde_json::json!(self.calendar_setup.discovering);
         data["calendar_saving"] = serde_json::json!(self.calendar_setup.saving.is_some());
         data["calendar_choices"] = serde_json::json!(self.calendar_setup.choices);

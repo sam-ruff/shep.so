@@ -3,6 +3,7 @@ mod backups;
 mod backups_tests;
 mod calendar_connections;
 mod dispatch;
+mod removals;
 mod restore;
 #[cfg(test)]
 mod restore_tests;
@@ -50,7 +51,11 @@ pub enum Command {
     GoogleLogin(Preferences),
     CheckGoogleConnection,
     DiscoverCalendars(u64, String, String, SecretString),
-    ConnectCalendars(u64, Vec<CalendarSource>, SecretString),
+    ConnectCalendars(u64, u64, Vec<CalendarSource>, SecretString),
+    RemovalPreview(u64, crate::store::ConnectionRef),
+    RemoveConnection(u64, crate::store::RemovalPreview, bool),
+    CleanupCredentials,
+    RestoreGoogleCalendars,
     SyncCalendar,
     SaveEvent(CalendarEvent),
     DeleteEvent(CalendarEvent),
@@ -72,6 +77,8 @@ impl Command {
             Self::TestConnection(_, _, _, target) => Some(format!("test:{target:?}")),
             Self::Sync => Some("sync".into()),
             Self::SyncCalendar => Some("calendar".into()),
+            Self::CleanupCredentials => Some("credential-cleanup".into()),
+            Self::RestoreGoogleCalendars => Some("restore-calendars".into()),
             Self::GoogleLogin(_) => Some("google".into()),
             Self::Backup(..) | Self::AutomaticBackup(_) | Self::Restore(..) => {
                 Some("backup".into())
@@ -105,7 +112,7 @@ pub enum Event {
         prefetch: bool,
     },
     Changed,
-    Calendar(Arc<Vec<CalendarEvent>>),
+    Calendar(u64, Arc<Vec<CalendarEvent>>),
     Backups(u64, BackupTarget, Result<Arc<Vec<BackupCopy>>, String>),
     BackupSaved(BackupTarget, BackupCopy),
     BackupFinished(BackupTarget),
@@ -113,7 +120,9 @@ pub enum Event {
     Notice(String),
     Error(String),
     GoogleConnected,
-    AccountSaved,
+    AccountSaved(String),
+    RemovalPreview(u64, Result<crate::store::RemovalPreview, String>),
+    ConnectionRemoved(u64, Result<usize, String>),
     CalendarsDiscovered(
         u64,
         Result<Vec<providers::calendar::discovery::DiscoveredCalendar>, String>,
@@ -135,6 +144,8 @@ struct Engine {
     account_locks: AccountLocks,
     calendar_locks: AccountLocks,
     calendar_setup_lock: Arc<tokio::sync::Mutex<()>>,
+    connection_lifecycle_lock: Arc<tokio::sync::Mutex<()>>,
+    secret_remover: Arc<dyn removals::SecretRemover>,
     google_connection_lock: Arc<tokio::sync::Mutex<()>>,
     passphrases: Arc<dyn backup::PassphraseStore>,
     restore_credentials: Arc<dyn backup::restore::CredentialRestorer>,
@@ -192,6 +203,8 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             account_locks: Default::default(),
             calendar_locks: Default::default(),
             calendar_setup_lock: Default::default(),
+            connection_lifecycle_lock: Default::default(),
+            secret_remover: Arc::new(removals::OsSecretRemover),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
@@ -210,17 +223,28 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             let _ = tx.try_send(Command::CheckGoogleConnection);
         }
         let _ = tx.try_send(Command::IndexConversations);
+        let _ = tx.try_send(Command::CleanupCredentials);
         let _ = output
             .send(Event::Ready(tx, Arc::new(workspace), false))
             .await;
-        if let Ok(events) = engine.store.events().await {
-            let _ = output.send(Event::Calendar(Arc::new(events))).await;
+        if let Ok((revision, events)) = engine.store.calendar_snapshot().await {
+            let _ = output
+                .send(Event::Calendar(revision, Arc::new(events)))
+                .await;
         }
         engine.run(input, output).await;
     })
 }
 
 impl Engine {
+    async fn send_calendar(&self, output: &mut Output) -> anyhow::Result<()> {
+        let (revision, events) = self.store.calendar_snapshot().await?;
+        output
+            .send(Event::Calendar(revision, Arc::new(events)))
+            .await?;
+        Ok(())
+    }
+
     async fn calendar_lock(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
         let lock = self
             .calendar_locks
@@ -294,9 +318,7 @@ impl Engine {
         cache_result.context(if committed {
             "The calendar change was saved, but the local cache could not be updated. Sync calendar to reload it."
         } else { "Could not save the calendar change locally." })?;
-        output
-            .send(Event::Calendar(Arc::new(self.store.events().await?)))
-            .await?;
+        self.send_calendar(output).await?;
         output
             .send(Event::Notice(
                 if deleting {
@@ -442,7 +464,15 @@ impl Engine {
                     "Account changes are disabled in preview. Relaunch without --demo to add an account."
                 );
                 account.validate()?;
+                let _lifecycle = self.connection_lifecycle_lock.lock().await;
                 let _guard = self.account_lock(&account.id).await;
+                self.store
+                    .check_connection(crate::store::ConnectionRef {
+                        kind: crate::store::ConnectionKind::Account,
+                        id: account.id.clone(),
+                    })
+                    .await?;
+                let saved_id = account.id.clone();
                 let password = if password.expose_secret().is_empty() {
                     providers::read_secret(&account.id)
                         .await
@@ -466,7 +496,7 @@ impl Engine {
                     .context("Could not save the account credential")?;
                 self.store.save_account(account).await?;
                 self.workspace(&mut output).await?;
-                output.send(Event::AccountSaved).await?;
+                output.send(Event::AccountSaved(saved_id)).await?;
                 output
                     .send(Event::Notice(
                         "Account saved. Use Sync to receive your mail.".into(),
@@ -780,9 +810,9 @@ impl Engine {
                     .send(Event::CalendarsDiscovered(request, result))
                     .await?;
             }
-            Command::ConnectCalendars(request, sources, password) => {
+            Command::ConnectCalendars(request, revision, sources, password) => {
                 let result = self
-                    .connect_calendars(sources, password)
+                    .connect_calendars(sources, password, revision)
                     .await
                     .map_err(|e| format!("{e:#}"));
                 let saved = result.is_ok();
@@ -792,6 +822,45 @@ impl Engine {
                 if saved {
                     self.workspace(&mut output).await?;
                 }
+            }
+            Command::RemovalPreview(request, target) => {
+                let result = self
+                    .store
+                    .removal_preview(target)
+                    .await
+                    .map_err(|e| format!("{e:#}"));
+                output.send(Event::RemovalPreview(request, result)).await?;
+            }
+            Command::RemoveConnection(request, preview, cancel) => {
+                let result = self
+                    .remove_connection(preview, cancel)
+                    .await
+                    .map_err(|e| format!("{e:#}"));
+                let removed = result.is_ok();
+                output
+                    .send(Event::ConnectionRemoved(request, result))
+                    .await?;
+                if removed {
+                    self.workspace(&mut output).await?;
+                    output.send(Event::Changed).await?;
+                    self.send_calendar(&mut output).await?;
+                }
+            }
+            Command::CleanupCredentials => {
+                let failed = self.cleanup_credentials().await?;
+                if failed > 0 {
+                    output.send(Event::Error("A removed connection still has saved credentials. Unlock your credential store and choose Retry credential cleanup in Preferences.".into())).await?;
+                }
+                self.workspace(&mut output).await?;
+            }
+            Command::RestoreGoogleCalendars => {
+                let count = self.restore_google_calendars().await?;
+                self.workspace(&mut output).await?;
+                output
+                    .send(Event::Notice(format!(
+                        "{count} Google calendars restored. Use Sync calendar to load their events."
+                    )))
+                    .await?;
             }
             Command::SyncCalendar => {
                 if !self.demo {
@@ -816,6 +885,15 @@ impl Engine {
                     let now = chrono::Utc::now();
                     for source in sources {
                         let _guard = self.calendar_lock(&source.id).await;
+                        let Some(source) = self
+                            .store
+                            .get::<Vec<CalendarSource>>("calendars")
+                            .await?
+                            .into_iter()
+                            .find(|s| s.id == source.id)
+                        else {
+                            continue;
+                        };
                         let result = async {
                             let events = self
                                 .calendar_provider(&source)
@@ -836,9 +914,7 @@ impl Engine {
                         }
                     }
                 }
-                output
-                    .send(Event::Calendar(Arc::new(self.store.events().await?)))
-                    .await?;
+                self.send_calendar(&mut output).await?;
             }
             Command::SaveEvent(event) | Command::DeleteEvent(event) => {
                 anyhow::ensure!(
@@ -934,6 +1010,7 @@ impl Engine {
     }
     async fn sync_account(&self, account: Account, mut output: Output) -> anyhow::Result<()> {
         let _guard = self.account_lock(&account.id).await;
+        let account = self.account(&account.id).await?;
         let password = providers::read_secret(&account.id).await?;
         let known = self.store.known(account.id.clone()).await?;
         let (tx, mut rx) = mpsc::channel(8);
@@ -1025,6 +1102,8 @@ mod calendar_tests {
             account_locks: Default::default(),
             calendar_locks: Default::default(),
             calendar_setup_lock: Default::default(),
+            connection_lifecycle_lock: Default::default(),
+            secret_remover: Arc::new(removals::OsSecretRemover),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),

@@ -130,6 +130,21 @@ pub fn select_input(theme: &Theme, status: widget::pick_list::Status) -> widget:
         },
     }
 }
+pub fn destructive(theme: &Theme, status: button::Status) -> button::Style {
+    let mut style = primary(theme, status);
+    if status != button::Status::Disabled {
+        style.background = Some(
+            match status {
+                button::Status::Hovered | button::Status::Pressed => hex(0x991b1b),
+                _ => hex(0xb91c1c),
+            }
+            .into(),
+        );
+        style.text_color = Color::WHITE;
+    }
+    style
+}
+
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     let p = colors(theme);
     if matches!(status, button::Status::Disabled) {

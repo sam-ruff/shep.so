@@ -58,6 +58,8 @@ fn engine(credentials: Arc<Credentials>) -> Engine {
         account_locks: Default::default(),
         calendar_locks: Default::default(),
         calendar_setup_lock: Default::default(),
+        connection_lifecycle_lock: Default::default(),
+        secret_remover: Arc::new(removals::OsSecretRemover),
         google_connection_lock: Default::default(),
         passphrases: Arc::new(backup::OsPassphraseStore),
         restore_credentials: credentials,
@@ -450,4 +452,42 @@ async fn encrypted_local_restore_retries_missing_passwords_without_replacing_cur
             .iter()
             .any(|id| id == "google-oauth")
     );
+}
+
+#[tokio::test]
+async fn explicit_backup_restore_reconnects_removed_owners_and_cancels_old_cleanup() {
+    use crate::store::{ConnectionKind, ConnectionRef};
+    let store = Store::memory().unwrap();
+    store.restore_snapshot(fixture()).await.unwrap();
+    for (kind, id) in [
+        (ConnectionKind::Account, "work"),
+        (ConnectionKind::Calendar, "home"),
+        (ConnectionKind::Calendar, "google:work@example.com"),
+    ] {
+        let preview = store
+            .removal_preview(ConnectionRef {
+                kind,
+                id: id.into(),
+            })
+            .await
+            .unwrap();
+        store.remove_connection(preview, false).await.unwrap();
+    }
+    assert_eq!(store.cleanup_jobs().await.unwrap().len(), 3);
+    assert!(store.workspace().await.unwrap().accounts.is_empty());
+    let restored = store.restore_snapshot(fixture()).await.unwrap();
+    assert_eq!(restored.messages, 2);
+    assert_eq!(restored.credentials.len(), 3);
+    assert!(store.cleanup_jobs().await.unwrap().is_empty());
+    assert!(store.removed_google_calendars().await.unwrap().is_empty());
+    assert_eq!(store.workspace().await.unwrap().accounts.len(), 1);
+    assert_eq!(store.workspace().await.unwrap().calendars.len(), 2);
+    assert_eq!(store.export().await.unwrap().len(), 2);
+    store
+        .check_connection(ConnectionRef {
+            kind: ConnectionKind::Account,
+            id: "work".into(),
+        })
+        .await
+        .unwrap();
 }
