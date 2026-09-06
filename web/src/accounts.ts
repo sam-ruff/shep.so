@@ -1,3 +1,4 @@
+import type { RemovalReview } from "./account_removal";
 import { GatewayRepository, type Account, type Endpoint } from "./provider";
 function node<K extends keyof HTMLElementTagNameMap>(tag: K, text = "") {
   const n = document.createElement(tag);
@@ -300,7 +301,116 @@ function sentPreferences(
   document.body.append(dialog);
   dialog.showModal();
 }
-export function accountPanel(repo: GatewayRepository, changed: () => void) {
+function removeAccount(
+  repo: GatewayRepository,
+  account: Account,
+  changed: (id: string) => void,
+) {
+  const dialog = node("dialog");
+  dialog.className = "account-dialog account-removal";
+  dialog.setAttribute("aria-label", `Remove ${account.email}`);
+  const title = node("h2", "Remove account");
+  const body = node("div");
+  body.className = "account-body";
+  body.append(
+    node("p", account.email),
+    node(
+      "p",
+      "Remove this account and its cached mail, drafts, attached files and delivery records from this browser. Mail on the server is unchanged. Local-only mail and unsent drafts cannot be recovered here after removal.",
+    ),
+  );
+  const counts = node("p");
+  const label = node("label");
+  label.className = "checkbox-field";
+  const check = node("input");
+  check.type = "checkbox";
+  check.setAttribute(
+    "aria-label",
+    "Discard unfinished delivery and move records",
+  );
+  label.append(
+    check,
+    node(
+      "span",
+      "Discard unfinished delivery and move records. Removal cannot cancel or undo an operation that reached the server. Check Sent and the source/destination folders first.",
+    ),
+  );
+  const status = node("p");
+  status.role = "status";
+  const reload = button("Reload removal counts", () => void load());
+  const cancel = button("Cancel", () => dialog.close());
+  const remove = button("Remove from browser", () => void submit());
+  remove.classList.add("danger");
+  const actions = node("div");
+  actions.className = "dialog-actions";
+  actions.append(cancel, remove);
+  body.append(counts, label, reload, status);
+  dialog.append(title, body, actions);
+  let review: RemovalReview | undefined,
+    busy = false;
+  function state() {
+    remove.disabled =
+      busy ||
+      !review ||
+      (!!(review.unresolved || review.moves) && !check.checked);
+    reload.disabled = busy;
+    cancel.disabled = busy;
+    check.disabled = busy;
+  }
+  check.onchange = state;
+  async function load() {
+    busy = true;
+    review = undefined;
+    check.checked = false;
+    label.hidden = true;
+    status.textContent = "Loading removal counts…";
+    state();
+    try {
+      review = await repo.removalPreview(account.id);
+      counts.textContent = `${review.messages} cached messages · ${review.drafts} drafts · ${review.files} draft files · ${review.outgoing} delivery records`;
+      label.hidden = !(review.unresolved || review.moves);
+      status.textContent = label.hidden
+        ? ""
+        : `${review.unresolved} unfinished deliveries · ${review.moves} unfinished moves`;
+    } catch (e) {
+      status.textContent =
+        e instanceof Error ? e.message : "Could not load the review. Retry.";
+    } finally {
+      busy = false;
+      state();
+    }
+  }
+  async function submit() {
+    if (!review || busy) return;
+    busy = true;
+    status.textContent = "Removing local account data…";
+    state();
+    try {
+      await repo.removeAccount(review, check.checked);
+      dialog.close();
+      changed(account.id);
+    } catch (e) {
+      status.textContent =
+        e instanceof Error
+          ? e.message
+          : "Could not remove this account. Retry.";
+    } finally {
+      busy = false;
+      state();
+    }
+  }
+  dialog.addEventListener("cancel", (e) => {
+    if (busy) e.preventDefault();
+  });
+  dialog.addEventListener("close", () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+  void load();
+}
+export function accountPanel(
+  repo: GatewayRepository,
+  changed: (removed?: string) => void,
+) {
   const panel = node("section");
   panel.className = "settings-card";
   panel.append(node("h2", "Mail accounts"));
@@ -330,6 +440,11 @@ export function accountPanel(repo: GatewayRepository, changed: () => void) {
             repo.accounts.find((a) => a.id === account.id) ?? account,
             changed,
           ),
+        ),
+      );
+      row.append(
+        button(`Remove ${account.email}`, () =>
+          removeAccount(repo, account, changed),
         ),
       );
       panel.append(row);

@@ -115,6 +115,12 @@
       "contract": "cached MIME yields identical safe filenames, stable per-part content identities and exact decoded bytes across native Rust and browser WASM; save/cancel/error remains visible, stale files cannot save under old IDs, and an open reader survives exclusion from its refreshed list",
       "mobile": "shared/attachment-fixtures.json + mail-content/mail-core tests / native Rust alias/reopen/occupied-capacity/corrupt-file tests / native_repository_test.dart / incoming_test.dart / incoming_android_test.dart + android_incoming_fixture.py real DocumentsUI cancel and exact-byte save; Apple export execution OPEN",
       "browser": "attachment_content.test.ts shared WASM byte goldens / real Rust HTTPS provider-flows.mjs: blocked WASM retry, offline binary/Unicode/duplicate downloads, light/dark compact axe and screenshots; full lifecycle/large MIME OPEN"
+    },
+    {
+      "id": "reviewed-account-removal",
+      "contract": "review current local message/draft/file/delivery counts before local account removal; stale reviews abort atomically, occupied provider work remains protected, unfinished recovery requires explicit acknowledgement, server mail is untouched, and late saves cannot resurrect the removed identity; retain only tombstones and retryable native credential cleanup jobs",
+      "mobile": "accounts_tests.rs transaction/FTS rollback, stale draft/file review, occupied capacity, restart/tombstones; native_repository_test.dart locked cleanup/reconnect; incoming_android_test.dart real Preferences cancel/light/dark/remove/cleanup-retry; incoming_test.dart late mutation; Apple execution OPEN",
+      "browser": "account_removal.test.ts review/ownership/tombstone contracts; real IndexedDB storage.spec.ts atomic stale review, rollback, held Web Lock and late writes; model.test.ts late mutation; Rust HTTPS provider-flows.mjs cancellation, stale review/reload, compact light/dark axe, stale-tab reconnect/refresh and reopen; wider lifecycle/large-cache performance OPEN"
     }
   ]
 }

@@ -129,3 +129,19 @@ abstract interface class SentPreferencesRepository {
     String folder,
   );
 }
+
+class AccountRemoval {
+  const AccountRemoval(this.data);
+  final Map<String, dynamic> data;
+  String get id => data['id'];
+  String get email => data['email'];
+  int count(String key) => data[key] as int;
+  bool get unfinished => count('unresolved') > 0 || count('moves') > 0;
+}
+
+abstract interface class AccountRemovalRepository {
+  int get pendingCredentialCleanup;
+  Future<AccountRemoval> removalPreview(String id);
+  Future<void> removeAccount(AccountRemoval review, bool discardUnresolved);
+  Future<void> cleanupCredentials();
+}

@@ -1042,3 +1042,8 @@ dialog > .field,
   overflow-wrap: anywhere;
 }
 .attachment-size { font-size: 12px; opacity: .8; }
+
+.account-removal .account-body { display: flex; flex-direction: column; gap: 14px; margin: 16px 0 20px; }
+.account-removal .account-body > p { margin: 0; line-height: 1.55; }
+.account-removal .account-body > button { align-self: flex-start; }
+.account-removal .dialog-actions .danger { border-color: var(--destructive, #dc2626); }

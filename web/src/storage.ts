@@ -1,3 +1,9 @@
+import {
+  checkRemovedWrites,
+  removalChanges,
+  reviewStores,
+  type RemovalReview,
+} from "./account_removal";
 // Mail and drafts stay on this browser. Passwords and OAuth grants never enter
 // this database. A committed transaction is required before any SMTP request.
 export const stores = [
@@ -9,6 +15,7 @@ export const stores = [
   "draftFiles",
   "mailAliases",
   "mailRoles",
+  "removedAccounts",
 ] as const;
 export type StoreName = (typeof stores)[number];
 export interface Change {
@@ -17,6 +24,7 @@ export interface Change {
   value?: unknown;
 }
 export interface LocalStore {
+  removeAccount?(review: RemovalReview, discard: boolean): Promise<void>;
   all<T>(store: StoreName): Promise<T[]>;
   get<T>(store: StoreName, key: string): Promise<T | undefined>;
   commit(changes: Change[]): Promise<void>;
@@ -31,7 +39,7 @@ export class BrowserStore implements LocalStore {
     if (!/^[A-Za-z0-9_-]{43}$/.test(user))
       throw new Error("Invalid browser profile identity.");
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open(`shep.mail.v1.${user}`, 3);
+      const request = indexedDB.open(`shep.mail.v1.${user}`, 4);
       request.onupgradeneeded = () => {
         for (const store of stores)
           if (!request.result.objectStoreNames.contains(store))
@@ -136,11 +144,50 @@ export class BrowserStore implements LocalStore {
         );
     });
   }
+  removeAccount(review: RemovalReview, discard: boolean): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction([...stores], "readwrite", {
+        durability: "strict",
+      });
+      let error: unknown;
+      tx.oncomplete = () => resolve();
+      tx.onabort = () =>
+        reject(
+          error ??
+            new Error(
+              "Could not remove this account from browser storage. Local data is unchanged; retry.",
+            ),
+        );
+      const snapshot: Partial<Record<StoreName, any[]>> = {};
+      let remaining = reviewStores.length;
+      for (const name of reviewStores) {
+        const request = tx.objectStore(name).getAll();
+        request.onsuccess = () => {
+          snapshot[name] = request.result;
+          if (--remaining) return;
+          try {
+            for (const c of removalChanges(snapshot, review, discard)) {
+              if (c.value === undefined) tx.objectStore(c.store).delete(c.key);
+              else tx.objectStore(c.store).put(c.value, c.key);
+            }
+          } catch (e) {
+            error = e;
+            tx.abort();
+          }
+        };
+      }
+    });
+  }
   commit(changes: Change[]): Promise<void> {
     if (!changes.length) return Promise.resolve();
     return new Promise((resolve, reject) => {
       const tx = this.db.transaction(
-        [...new Set(changes.map((c) => c.store))],
+        [
+          ...new Set([
+            ...changes.map((c) => c.store),
+            "removedAccounts" as const,
+          ]),
+        ],
         "readwrite",
         { durability: "strict" },
       );
@@ -151,16 +198,29 @@ export class BrowserStore implements LocalStore {
             "Could not save on this browser. Free storage space and retry; keep the draft open.",
           ),
         );
-      try {
-        for (const c of changes) {
-          if (c.value === undefined) tx.objectStore(c.store).delete(c.key);
-          else tx.objectStore(c.store).put(c.value, c.key);
+      const removed = tx.objectStore("removedAccounts").getAll();
+      let cause: unknown;
+      const originalAbort = tx.onabort;
+      tx.onabort = (event) =>
+        cause ? reject(cause) : originalAbort?.call(tx, event);
+      removed.onsuccess = () => {
+        try {
+          checkRemovedWrites(changes, removed.result);
+          for (const c of changes) {
+            if (c.value === undefined) tx.objectStore(c.store).delete(c.key);
+            else tx.objectStore(c.store).put(c.value, c.key);
+          }
+        } catch (error) {
+          cause =
+            error instanceof Error &&
+            error.message.startsWith("This account was removed")
+              ? error
+              : undefined;
+          // DataCloneError and invalid keys can throw synchronously after earlier
+          // requests were queued. Abort them before rejecting the whole operation.
+          tx.abort();
         }
-      } catch {
-        // DataCloneError and invalid keys can throw synchronously after earlier
-        // requests were queued. Abort them before rejecting the whole operation.
-        tx.abort();
-      }
+      };
     });
   }
 }

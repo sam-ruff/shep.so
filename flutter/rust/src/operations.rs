@@ -84,6 +84,21 @@ impl Operations {
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
     Accounts,
+    CheckAccount {
+        id: String,
+    },
+    AccountRemovalPreview {
+        id: String,
+    },
+    RemoveAccount {
+        review: crate::accounts::Removal,
+        #[serde(default)]
+        discard_unresolved: bool,
+    },
+    CredentialCleanup,
+    CredentialCleanupDone {
+        id: String,
+    },
     SaveSentPreferences {
         id: String,
         policy: SentCopyPolicy,
@@ -360,6 +375,22 @@ async fn value<T: serde::Serialize>(result: Result<T>) -> Result<Value> {
 pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
     let db = &profile.database;
     match request {
+        Request::CheckAccount{id} => {db.read(move|db|crate::accounts::available(db,&id)).await?;Ok(json!({"available":true}))}
+        Request::AccountRemovalPreview{id} => db.read(move|db|Ok(serde_json::to_value(crate::accounts::preview(db,&id)?)?)).await,
+        Request::RemoveAccount{review,discard_unresolved} => {
+            let _guard=profile.operations.try_account(&review.id).await?;
+            db.write(move|db|crate::accounts::remove(db,review,discard_unresolved)).await?;
+            Ok(json!({"removed":true}))
+        }
+        Request::CredentialCleanup => db.read(|db|{
+            let mut q=db.prepare("SELECT id FROM removed_accounts WHERE cleanup=1 ORDER BY id")?;
+            let ids=q.query_map([],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(json!(ids))
+        }).await,
+        Request::CredentialCleanupDone{id} => db.write(move|db|{
+            let allowed:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM removed_accounts WHERE id=?1) AND NOT EXISTS(SELECT 1 FROM accounts WHERE id=?1)",[&id],|r|r.get(0))?; anyhow::ensure!(allowed,"This account is still connected; its credential cleanup was refused.");
+            db.execute("UPDATE removed_accounts SET cleanup=0 WHERE id=?1",[id])?;Ok(json!({"cleaned":true}))
+        }).await,
         Request::Accounts => value(db.read(|db| {
             let mut statement=db.prepare("SELECT settings FROM accounts ORDER BY id")?;
             let accounts=statement.query_map([], |r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
@@ -383,6 +414,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             anyhow::ensure!(!account.id.is_empty() && account.id.len()<=128,"Give the account a valid identity.");
             let _guard=profile.operations.account(&account.id).await;
             db.write(move |db| {
+                crate::accounts::available(db,&account.id)?;
                 if let Ok(old)=stored_account(db,&account.id) {
                     if preserve_sent {account.sent_copy=old.sent_copy;account.sent_folder=old.sent_folder.clone();}
                     anyhow::ensure!(old.host==account.host && old.port==account.port && old.username==account.username && old.protocol==account.protocol,"Add changed incoming server settings as a new account to preserve cached identities.");

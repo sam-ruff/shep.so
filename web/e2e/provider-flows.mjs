@@ -987,6 +987,123 @@ export async function providerFlows(page, context, origin, output, session) {
   assert.ok(persisted.includes("Uncertain delivery fixture"));
   assert.ok(!persisted.includes("synthetic-password"));
   assert.ok(!persisted.includes(session.csrf));
+  const stale = await context.newPage();
+  await stale.goto(origin + "/app/");
+  await page.getByRole("button", { name: "Preferences", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Remove mailbox@example.test", exact: true })
+    .click();
+  await expect(dialog.getByText(/cached messages/)).toBeVisible();
+  await stale.getByRole("button", { name: "Drafts", exact: true }).click();
+  await stale
+    .getByRole("button", { name: "Rejected delivery fixture", exact: true })
+    .click();
+  await stale
+    .getByRole("dialog")
+    .getByLabel("Message", { exact: true })
+    .fill("Draft changed while account removal was open.");
+  await stale
+    .getByRole("dialog")
+    .getByRole("button", { name: "Save draft", exact: true })
+    .click();
+  const discard = dialog.getByLabel(
+    "Discard unfinished delivery and move records",
+  );
+  if (await discard.isVisible()) await discard.check();
+  await dialog
+    .getByRole("button", { name: "Remove from browser", exact: true })
+    .click();
+  await expect(dialog.getByRole("status")).toContainText("Local data changed");
+  await dialog
+    .getByRole("button", { name: "Reload removal counts", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("button", { name: "Reload removal counts" }),
+  ).toBeEnabled();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(
+    page.getByRole("button", {
+      name: "Reconnect mailbox@example.test",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await stale.getByRole("button", { name: "Preferences", exact: true }).click();
+  await stale
+    .getByRole("button", {
+      name: "Reconnect mailbox@example.test",
+      exact: true,
+    })
+    .click();
+  await stale
+    .getByRole("dialog")
+    .getByLabel("Incoming password", { exact: true })
+    .fill("synthetic-password");
+  for (const [mode, width, height] of [
+    ["dark", 900, 640],
+    ["light", 1440, 920],
+  ]) {
+    await page.getByLabel("Theme", { exact: true }).selectOption(mode);
+    await page.setViewportSize({ width, height });
+    await page
+      .getByRole("button", { name: "Remove mailbox@example.test", exact: true })
+      .click();
+    await expect(dialog.getByText(/cached messages/)).toBeVisible();
+    assert.deepEqual(
+      (
+        await new AxeBuilder({ page })
+          .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+          .analyze()
+      ).violations,
+      [],
+    );
+    await page.screenshot({
+      path: path.join(output, `account-removal-${mode}-${width}.png`),
+    });
+    if (mode === "dark")
+      await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  }
+  if (await discard.isVisible()) await discard.check();
+  await dialog
+    .getByRole("button", { name: "Remove from browser", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page.getByRole("button", {
+      name: "Reconnect mailbox@example.test",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await stale
+    .getByRole("dialog")
+    .getByRole("button", { name: "Verify and save account", exact: true })
+    .click();
+  await expect(stale.getByRole("dialog").getByRole("status")).toContainText(
+    "account was removed",
+  );
+  await stale
+    .getByRole("dialog")
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await stale.getByRole("button", { name: "Mail", exact: true }).click();
+  await stale.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(stale.locator(".mail-row")).toHaveCount(0);
+  await stale.close();
+  await page.getByRole("button", { name: "Drafts", exact: true }).click();
+  await expect(
+    page.getByRole("button", {
+      name: "Rejected delivery fixture",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator(".mail-row")).toHaveCount(0);
+  await page.getByRole("button", { name: "Drafts", exact: true }).click();
+  await expect(
+    page.getByRole("button", {
+      name: "Rejected delivery fixture",
+      exact: true,
+    }),
+  ).toHaveCount(0);
   return [
     "account-probe-failure-retry",
     "account-layout-axe-two-sizes",
@@ -1023,5 +1140,9 @@ export async function providerFlows(page, context, origin, output, session) {
     "Sent-logical-folder-physical-move-Undo",
     "Sent-handover-light-dark-compact-axe",
     "browser-only-storage-no-secrets",
+    "account-removal-stale-review-reload-cancel",
+    "account-removal-light-dark-compact-axe",
+    "account-removal-atomic-local-cleanup-reopen",
+    "account-removal-stale-tab-reconnect-and-refresh",
   ];
 }

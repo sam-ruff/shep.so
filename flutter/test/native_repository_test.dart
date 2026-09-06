@@ -10,7 +10,7 @@ import 'package:shep_mobile/model/mail.dart';
 class FixtureCredentials implements CredentialStore {
   final values = <String, List<String>>{};
   int reads = 0;
-  bool unavailable = false;
+  bool unavailable = false, removeUnavailable = false;
   @override
   Future<String?> read(String account, bool smtp) async {
     reads++;
@@ -25,6 +25,7 @@ class FixtureCredentials implements CredentialStore {
 
   @override
   Future<void> remove(String account) async {
+    if (removeUnavailable) throw StateError('Synthetic locked cleanup');
     values.remove(account);
   }
 }
@@ -45,6 +46,54 @@ void main() {
       ),
     );
   });
+  test(
+    'reviewed account removal survives locked cleanup and stale reconnect',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'shep-removal-host-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final path = '${directory.path}/mail.sqlite';
+      final seeded = await Process.run('python3', [
+        '../scripts/clients/android_incoming_fixture.py',
+        '--prepare',
+        path,
+      ]);
+      expect(seeded.exitCode, 0, reason: '${seeded.stderr}');
+      final credentials = FixtureCredentials()..removeUnavailable = true;
+      final repository = await NativeRepository.open(
+        path,
+        credentials: credentials,
+      );
+      await repository.initialize();
+      final original = repository.mailAccounts.single;
+      credentials.values[original.id] = ['fixture-secret', 'fixture-secret'];
+      final review = await repository.removalPreview(original.id);
+      expect(review.count('messages'), 1);
+      await repository.removeAccount(review, false);
+      expect(repository.mailAccounts, isEmpty);
+      expect(repository.pendingCredentialCleanup, 1);
+      expect(credentials.values, contains(original.id));
+      await expectLater(
+        repository.connect(original, 'new', 'new'),
+        throwsA(predicate((e) => '$e'.contains('removed'))),
+      );
+      expect(credentials.values[original.id], [
+        'fixture-secret',
+        'fixture-secret',
+      ]);
+      final reopened = await NativeRepository.open(
+        path,
+        credentials: credentials,
+      );
+      await reopened.initialize();
+      expect(reopened.pendingCredentialCleanup, 1);
+      credentials.removeUnavailable = false;
+      await reopened.cleanupCredentials();
+      expect(credentials.values, isEmpty);
+      expect(reopened.pendingCredentialCleanup, 0);
+    },
+  );
   test(
     'incoming attachment metadata and bytes need no credential access',
     () async {

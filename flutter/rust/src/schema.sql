@@ -40,5 +40,9 @@ CREATE VIEW IF NOT EXISTS sent_folder_names AS
  UNION SELECT account_id,folder FROM discovered_sent WHERE folder IS NOT NULL
  UNION SELECT account_id,folder FROM known_sent_folders;
 INSERT OR IGNORE INTO known_sent_folders(account_id,folder) SELECT o.account_id,s.folder FROM outgoing o JOIN outgoing_sent s ON s.id=o.id JOIN accounts a ON a.id=o.account_id WHERE (SELECT user_version FROM pragma_user_version)<6 AND s.state='saved' AND s.folder IS NOT NULL;
-PRAGMA user_version=6;
+CREATE TABLE IF NOT EXISTS removed_accounts(id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, cleanup INTEGER NOT NULL DEFAULT 1);
+CREATE TRIGGER IF NOT EXISTS refuse_removed_account BEFORE INSERT ON accounts WHEN EXISTS(SELECT 1 FROM removed_accounts WHERE id=new.id) BEGIN SELECT RAISE(ABORT,'This account was removed. Add a new account.'); END;
+CREATE TRIGGER IF NOT EXISTS refuse_removed_draft BEFORE INSERT ON drafts WHEN EXISTS(SELECT 1 FROM removed_accounts WHERE id=json_extract(new.content,'$.account_id')) BEGIN SELECT RAISE(ABORT,'This account was removed. Choose a connected account.'); END;
+CREATE TRIGGER IF NOT EXISTS refuse_removed_draft_edit BEFORE UPDATE ON drafts WHEN EXISTS(SELECT 1 FROM removed_accounts WHERE id=json_extract(new.content,'$.account_id')) BEGIN SELECT RAISE(ABORT,'This account was removed. Choose a connected account.'); END;
+PRAGMA user_version=7;
 COMMIT;

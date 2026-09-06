@@ -880,7 +880,7 @@ async fn version_five_sent_folder_migration_is_atomic_and_preserves_original_mai
         .read(|db| {
             assert_eq!(
                 db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-                6
+                7
             );
             assert_eq!(
                 db.query_row(

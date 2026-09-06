@@ -8,7 +8,7 @@ Every desktop feature/default/provider change must update this matrix and the co
 
 | Behavior | Rust desktop reference | Flutter mobile | Separate browser |
 | --- | --- | --- | --- |
-| Multiple accounts, unified/account folders | Implemented | Native account setup/reconnect, device credentials and cached unified/account folders; edit/remove lifecycle open | Account setup/reconnect, cached folders and unified view; full account lifecycle open |
+| Multiple accounts, unified/account folders | Implemented | Native setup/reconnect, device credentials and cached folders; reviewed atomic removal with durable credential cleanup and stale-write protection tested; connection editing and Apple lifecycle open | Setup/reconnect, cached folders and unified view; reviewed atomic removal, stale-tab protection and cancellation tested; connection editing and wider lifecycle audit open |
 | IMAP/POP3, TLS/STARTTLS, SMTP | Implemented, remaining live/protocol audit | Shared Rust provider adapter and native bridge implemented; complete device/protocol and live verification open | Shared Rust transport, authenticated VPS endpoints and browser adapter implemented; live verification open |
 | Sender/subject/snippet, unread/flag/attachment indicators | Implemented | Implemented in preview; 0–4 snippet lines, avatars | Implemented in preview; 0–4 snippet lines, avatars |
 | Configurable left/right swipes and icons | Touch adaptation | Archive, Trash, read/unread, flag, selection, move, spam, disabled; menu equivalents | Desktop controls; browser behavior follows iced |

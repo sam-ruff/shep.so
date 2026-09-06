@@ -214,3 +214,32 @@ describe("local Sent insertion", () => {
     expect(w.mail.filter((m) => m.id === sent.id)).toHaveLength(1);
   });
 });
+
+it("account removal clears a retained reader and a late failure cannot restore its message", async () => {
+  const repo = new Controlled();
+  repo.cached = repo.cached.map((m) => ({ ...m, accountId: "removed" }));
+  const w = new Workspace(repo, new Settings());
+  w.selected = "1";
+  const pending = w.action("1", "star");
+  await tick();
+  const draft = {
+    id: "deleted-draft",
+    accountId: "removed",
+    to: "to@example.test",
+    cc: "",
+    bcc: "",
+    subject: "Private draft",
+    body: "Keep until removal",
+  };
+  w.rememberDraft(draft);
+  w.accountRemoved("removed");
+  expect(w.drafts.size).toBe(0);
+  expect(() => w.rememberDraft(draft)).toThrow("account was removed");
+  expect(w.readerMessage).toBeNull();
+  expect(w.mail).toEqual([]);
+  repo.jobs[0].reject();
+  await pending;
+  expect(w.mail).toEqual([]);
+  expect(w.readerMessage).toBeNull();
+  expect(w.pending).toBe(0);
+});

@@ -268,7 +268,10 @@ async fn independent_cached_reads_continue_while_writer_is_held_and_cancellation
     let (_dir, p) = profile().await;
     let db = p.database.clone();
     db.write(|db| {
-        db.execute("INSERT INTO drafts VALUES('ordered',0,'initial')", [])?;
+        db.execute(
+            "INSERT INTO drafts VALUES('ordered',0,json_object('body','initial'))",
+            [],
+        )?;
         Ok(())
     })
     .await
@@ -280,7 +283,10 @@ async fn independent_cached_reads_continue_while_writer_is_held_and_cancellation
         held.write(move |db| {
             let _ = started_tx.send(());
             release_rx.recv().unwrap();
-            db.execute("UPDATE drafts SET content='first' WHERE id='ordered'", [])?;
+            db.execute(
+                "UPDATE drafts SET content=json_object('body','first') WHERE id='ordered'",
+                [],
+            )?;
             Ok(())
         })
         .await
@@ -291,7 +297,10 @@ async fn independent_cached_reads_continue_while_writer_is_held_and_cancellation
     let second = tokio::spawn(async move {
         second_db
             .write(|db| {
-                db.execute("UPDATE drafts SET content='last' WHERE id='ordered'", [])?;
+                db.execute(
+                    "UPDATE drafts SET content=json_object('body','last') WHERE id='ordered'",
+                    [],
+                )?;
                 Ok(())
             })
             .await
@@ -299,7 +308,7 @@ async fn independent_cached_reads_continue_while_writer_is_held_and_cancellation
     // This is a correctness barrier, not a latency measurement or a sleep.
     assert_eq!(
         db.read(|db| Ok(db.query_row(
-            "SELECT content FROM drafts WHERE id='ordered'",
+            "SELECT json_extract(content,'$.body') FROM drafts WHERE id='ordered'",
             [],
             |r| r.get::<_, String>(0)
         )?))
@@ -312,7 +321,7 @@ async fn independent_cached_reads_continue_while_writer_is_held_and_cancellation
     second.await.unwrap().unwrap();
     assert_eq!(
         db.read(|db| Ok(db.query_row(
-            "SELECT content FROM drafts WHERE id='ordered'",
+            "SELECT json_extract(content,'$.body') FROM drafts WHERE id='ordered'",
             [],
             |r| r.get::<_, String>(0)
         )?))

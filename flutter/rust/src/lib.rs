@@ -15,3 +15,7 @@ mod outgoing_tests;
 mod sent;
 #[cfg(test)]
 mod sent_tests;
+
+mod accounts;
+#[cfg(test)]
+mod accounts_tests;
