@@ -567,3 +567,44 @@ full product goal remain active for their explicitly recorded remaining work.
 Shipped to main as `90776fad7d344eeada6ba910e0aad4277170b157`. The Linux
 installation and all 108 native functional scenarios are verified. R70 remains
 open for its platform/rendering/recovery follow-ups; the full goal is active.
+
+## 2026-09-07 — Preferences clipping and refresh verification
+
+Compact Preferences could draw part of the Interface size dropdown below its
+scroll viewport. Searching for a setting left those pixels behind until a full
+repaint. The saved native regression reproduces that behavior before the fix
+(`artifacts/e2e/685033e171ef/`) and checks the empty margin after filtering and
+after resizing by one pixel and back.
+
+The released iced 0.14 software renderer treated a cached text viewport as if it
+were the glyph bounds, sometimes omitting its clip entirely. Shep now patches
+that renderer to intersect the local viewport and damaged layer for cached text.
+Raw text also resets its shared mask so a preceding label cannot clip it. Normal
+partial redraws remain enabled. Only `engine.rs` differs from the upstream src/
+copy; the release archive includes its MIT license and patch provenance.
+
+Three direct renderer tests cover partially/fully scrolled text, damage-region
+intersection and clip-mask ordering, using the bundled Noto Sans font. All 316
+Rust tests pass (two opt-in live diagnostics ignored), along with Clippy with
+warnings denied and 29 Python tests. The saved native clipping test passes and
+its corrected captures are in `artifacts/e2e/b5e139f565dd/`.
+
+The existing Mail/Calendar refresh scenarios pass again, including 120% interface
+size and compact dark mode. The native icons were visually reviewed in
+`artifacts/e2e/1741714f5abe/` and `artifacts/e2e/7480b4601efe/`; their geometry is
+correct. This verifies the native icon already shipped for R71, not the browser
+chrome in the original crop. The full native run, release installation and push
+are being completed for this checkpoint; no performance timings were measured.
+
+The first full run completed 109 scenarios with two failures: the Google
+permissions flow clicked Backups before the returned Preferences layout was
+ready, and rapid HTML navigation queued subsequent clicks without observing each
+intermediate selection. Both saved flows now observe native UI state before the
+next click. They pass individually; HTML navigation still does not wait for
+intermediate body rendering. A final complete functional rerun is in progress.
+
+Built-in imagegen was used for transparent logo extraction. Light and dark
+candidates and prompt provenance are saved under ignored
+`artifacts/imagegen/launcher-alpha/`. The dark extractions have visible edge
+defects and were rejected. Approved production assets remain unchanged; R64 is
+open for a clean cutout and desktop theme integration.

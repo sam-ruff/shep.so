@@ -197,7 +197,10 @@ class NativeFlows(unittest.TestCase):
                        click(400,351), check("selected","Mislabeled XHTML request"),
                        check("html_cache_hits",state["html_cache_hits"] + 1,"gte"),
                        check("html_view_current",True), wait(120), shot("html-prepared-neighbor"),
-                       click(400,452), click(400,558), click(400,245), click(400,558),
+                       click(400,452), check("selected","Escaped HTML request"),
+                       click(400,558), check("selected","Long formatted letter"),
+                       click(400,245), check("selected","Styled sign-in sample"),
+                       click(400,558),
                        check("selected","Long formatted letter"), check("html_view_current",True),
                        check("html_height",6000,"gte"), wait(100),
                        click(850,440), key("ctrl+a"), check("html_selected_text","Last visible paragraph.","contains"),
@@ -555,6 +558,26 @@ class NativeFlows(unittest.TestCase):
                        click(450,289),check("settings_group","Mail & performance"),
                        shot("badge-preference-compact-dark"),click(310,431),
                        check("desktop_badge.visible",False),check("saved_unread_badge",False))
+
+    def test_filtered_preferences_do_not_leave_pixels_outside_scroll_view(self):
+        result = self.mcp.call("desktop.start", width=900, height=640)
+        directory = Path(result["artifacts"])
+        print(f"Preferences clipping evidence: {directory}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(563,366), check("dark", True), shot("preferences-before-filter"),
+                       click(650,88), type_text("badge"), check("settings_search", "badge"),
+                       check("settings_matches", ["Mail & performance"]), wait(80),
+                       click(450,289), check("settings_group", "Mail & performance"),
+                       shot("preferences-filtered"),
+                       {"type":"resize", "width":901, "height":640}, check("window_size", [901,640]),
+                       {"type":"resize", "width":900, "height":640}, check("window_size", [900,640]),
+                       shot("preferences-filtered-repainted"))
+        for name in ("preferences-filtered", "preferences-filtered-repainted"):
+            # This is the empty bottom margin, below the scroll viewport. The old
+            # scale picker's cached text escaped its clip and survived filtering.
+            pixels = subprocess.check_output(["convert", str(directory / f"{name}.webp"),
+                                              "-crop", "80x17+780+614", "-depth", "8", "rgb:-"])
+            self.assertLessEqual(max(pixels)-min(pixels), 16, f"Stray control pixels in {name}")
 
     def test_desktop_badge_archive_delete_move_and_undo(self):
         for action in ("archive", "delete", "move"):
@@ -1261,6 +1284,7 @@ class NativeFlows(unittest.TestCase):
                            key("ctrl+2"), check("tab", "Calendar"), click(1260, 348), check("dialog", "Event"),
                            check("event_access.update", mode == "calendar"), shot("google-event-" + mode),
                            key("Escape"), check("dialog", None), key("ctrl+comma"),
+                           check("tab", "Preferences"), wait(80),
                            click(559, 156), check("settings_tab", "Backups"), shot("google-backup-" + mode),
                            key("ctrl+1"), check("tab", "Mail"), key("Down"),
                            check("selected", "Your weekly workspace digest"))
