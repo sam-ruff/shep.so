@@ -23,6 +23,6 @@ The Playwright flows use real browser controls, as in Walkie Textie's browser au
 
 Distribution cards deliberately show unpublished Google Play/App Store and undeployed private-beta status. The beta is not open for login yet. Replace those labels with verified release/store destinations when available. The Linux guide currently installs from source. Keep availability and product limits aligned with the root README and completion audit.
 
-The browser's earlier static-only plan is superseded: `backend/` implements the Google access gate; SMTP/IMAP/POP3 transport on the email VPS is still being ported, without persisting mail or passwords there. The VPS SSH target and exact allowlisted Google identity are pending; this promotional site does not implement or verify authentication.
+`backend/` implements the Google access gate and SMTP/IMAP/POP3 transport without persistent server mail or password storage. Full client/provider parity remains in TODO.md. The VPS SSH target and exact allowlisted Google identity are pending; this promotional site does not implement or verify authentication.
 
-This work remains uncommitted in its worktree. Deployment, DNS, store publication and release activation are deferred. Serve this output at `/` and integrate the independently built gated beta at `/beta` when verified. Keep documentation publishing at its existing destination and quality/release workflows disabled.
+The site is committed on the combined `feat/mobile-web-clients` review branch. Deployment, DNS, store publication and release activation remain pending. Serve this output at `/` and integrate the independently built gated beta at `/beta` when verified. Keep documentation publishing at its existing destination and quality/release workflows disabled.
