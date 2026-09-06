@@ -22,3 +22,5 @@ Shep is still in development. Check the [current limits](limits.md) before relyi
 ## Working on Shep?
 
 [Contributing](development.md) covers local development. The separate [agent documentation](agents/index.md) contains detailed behavior, architecture, testing contracts and implementation status.
+
+Mobile and browser development is tracked in [client parity](CLIENT_PARITY.md), with [separate client testing](CLIENT_TESTING.md).

@@ -12,6 +12,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   native:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       fail-fast: false
       matrix:
@@ -51,3 +52,94 @@ jobs:
           path: |
             artifacts/e2e/
             artifacts/performance/
+
+  browser-and-beta:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Browser, website and parity checks
+        run: |
+          python3 scripts/clients/check_parity.py
+          npm --prefix web ci
+          npm --prefix web run build
+          npm --prefix web test
+          npm --prefix web exec -- playwright install chromium
+          npm --prefix web run e2e
+          npm --prefix website ci
+          npm --prefix website exec -- playwright install chromium firefox webkit
+          npm --prefix website run test:all-browsers
+      - name: Rust beta gateway
+        run: |
+          cargo fmt --manifest-path backend/Cargo.toml -- --check
+          cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path backend/Cargo.toml
+          cargo test --manifest-path backend/Cargo.toml real_browser_beta_gate -- --ignored
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: browser-and-beta-evidence
+          path: |
+            artifacts/web/
+            artifacts/beta-browser/
+            artifacts/website/
+            artifacts/logs/
+
+  flutter-android:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      # Provision Flutter 3.44.2, Android SDK 37 / NDK 28.2, Rust 1.96.0,
+      # Perl, make, a C compiler, Node 24 and Appium 3.5.2,
+      # and a running dedicated shep-e2e AVD on this trusted runner first.
+      - name: Flutter quality and Android native flows
+        run: |
+          cargo fmt --manifest-path flutter/rust/Cargo.toml -- --check
+          cargo clippy --manifest-path flutter/rust/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path flutter/rust/Cargo.toml
+          cd flutter
+          flutter pub get
+          dart format --output=none --set-exit-if-changed lib test integration_test test_driver hook
+          flutter analyze
+          flutter test
+          cd ..
+          npm --prefix flutter/e2e ci
+          npm --prefix flutter/e2e exec -- playwright install chromium
+          python3 scripts/clients/android_e2e.py --device emulator-5554
+          python3 scripts/clients/flutter_web_e2e.py
+          cd flutter
+          flutter build apk --debug --flavor production
+          cd ..
+          python3 scripts/clients/verify_android.py flutter/build/app/outputs/flutter-apk/app-production-debug.apk --report artifacts/android-native-production-isolation.json
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: flutter-android-evidence
+          path: |
+            artifacts/flutter/
+            artifacts/logs/
+
+  flutter-apple:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      # Provision Flutter 3.44.2, Xcode and an iOS Simulator runtime first.
+      - name: Apple simulator integration
+        run: |
+          cd flutter
+          flutter pub get
+          cd ..
+          python3 scripts/clients/apple_simulator.py
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: flutter-apple-evidence
+          path: artifacts/logs/apple-integration.log

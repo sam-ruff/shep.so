@@ -1,3 +1,9 @@
+[workspace]
+resolver = "3"
+members = ["shared/mail-core"]
+default-members = [".", "shared/mail-core"]
+exclude = ["backend", "flutter/rust"]
+
 [package]
 name = "shep"
 version = "0.1.0"
@@ -8,9 +14,10 @@ license = "MIT"
 
 [features]
 default = []
-test-support = []
+test-support = ["shep-mail-core/test-support"]
 
 [dependencies]
+shep-mail-core = { path = "shared/mail-core" }
 iced = { version = "0.14", default-features = false, features = ["tiny-skia", "tokio", "svg", "image-without-codecs", "advanced", "x11", "wayland", "linux-theme-detection"] }
 image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 rfd = "0.17"

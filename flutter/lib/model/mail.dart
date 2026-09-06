@@ -1,0 +1,188 @@
+enum MailAction {
+  none('None'),
+  archive('Archive'),
+  trash('Trash'),
+  read('Read / unread'),
+  star('Flag / unflag'),
+  select('Select'),
+  move('Move'),
+  spam('Spam');
+
+  const MailAction(this.label);
+  final String label;
+}
+
+class Mail {
+  const Mail({
+    required this.id,
+    required this.sender,
+    required this.address,
+    required this.subject,
+    required this.preview,
+    required this.body,
+    required this.date,
+    this.account = 'Personal',
+    this.folder = 'Inbox',
+    this.unread = true,
+    this.starred = false,
+    this.attachments = const [],
+    this.accountId = '',
+    this.bodyLoaded = true,
+  });
+  final String id, sender, address, subject, preview, body, account, folder;
+  final DateTime date;
+  final bool unread, starred;
+  final List<String> attachments;
+  final String accountId;
+  final bool bodyLoaded;
+
+  Mail patch(Map<String, Object> fields) => Mail(
+    id: id,
+    sender: sender,
+    address: address,
+    subject: subject,
+    preview: preview,
+    body: body,
+    date: date,
+    account: account,
+    folder: fields['folder'] as String? ?? folder,
+    unread: fields['unread'] as bool? ?? unread,
+    starred: fields['starred'] as bool? ?? starred,
+    attachments: attachments,
+    accountId: accountId,
+    bodyLoaded: bodyLoaded,
+  );
+
+  Mail withoutBody() => Mail(
+    id: id,
+    sender: sender,
+    address: address,
+    subject: subject,
+    preview: preview,
+    body: '',
+    date: date,
+    account: account,
+    accountId: accountId,
+    folder: folder,
+    unread: unread,
+    starred: starred,
+    attachments: attachments,
+    bodyLoaded: false,
+  );
+
+  Mail withDetail(Mail detail) => Mail(
+    id: id,
+    sender: sender,
+    address: address,
+    subject: subject,
+    preview: preview,
+    body: detail.body,
+    date: date,
+    account: account,
+    accountId: accountId,
+    folder: folder,
+    unread: unread,
+    starred: starred,
+    attachments: detail.attachments,
+    bodyLoaded: true,
+  );
+
+  Object field(String name) => switch (name) {
+    'folder' => folder,
+    'unread' => unread,
+    'starred' => starred,
+    _ => throw ArgumentError.value(name),
+  };
+}
+
+class CalendarEntry {
+  const CalendarEntry(
+    this.id,
+    this.title,
+    this.start,
+    this.end, {
+    this.calendar = 'Personal',
+    this.location = '',
+    this.readOnly = false,
+  });
+  final String id, title, calendar, location;
+  final DateTime start, end;
+  final bool readOnly;
+}
+
+class DraftAttachment {
+  const DraftAttachment({
+    required this.id,
+    required this.name,
+    required this.mediaType,
+    required this.size,
+  });
+  final String id, name, mediaType;
+  final int size;
+  Map<String, Object> toJson() => {
+    'id': id,
+    'name': name,
+    'media_type': mediaType,
+    'size': size,
+  };
+  factory DraftAttachment.fromJson(Map<String, dynamic> value) =>
+      DraftAttachment(
+        id: value['id'],
+        name: value['name'],
+        mediaType: value['media_type'],
+        size: value['size'],
+      );
+}
+
+class Draft {
+  const Draft({
+    required this.id,
+    this.to = '',
+    this.cc = '',
+    this.bcc = '',
+    this.subject = '',
+    this.body = '',
+    this.accountId = '',
+    this.revision = 0,
+    this.fileRevision = 0,
+    this.inReplyTo,
+    this.references = const [],
+    this.attachments = const [],
+  });
+  final String id, to, cc, bcc, subject, body;
+  final String accountId;
+  final int revision, fileRevision;
+  final String? inReplyTo;
+  final List<String> references;
+  final List<DraftAttachment> attachments;
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'account_id': accountId,
+    'to': to,
+    'cc': cc,
+    'bcc': bcc,
+    'subject': subject,
+    'body': body,
+    'revision': revision,
+    'in_reply_to': inReplyTo,
+    'references': references,
+    'file_revision': fileRevision,
+    'attachments': attachments.map((a) => a.toJson()).toList(),
+  };
+  factory Draft.fromJson(Map<String, dynamic> json) => Draft(
+    id: json['id'],
+    accountId: json['account_id'],
+    to: json['to'],
+    cc: json['cc'],
+    bcc: json['bcc'],
+    subject: json['subject'],
+    body: json['body'],
+    revision: json['revision'],
+    fileRevision: json['file_revision'] ?? 0,
+    inReplyTo: json['in_reply_to'],
+    references: (json['references'] as List? ?? []).cast<String>(),
+    attachments: (json['attachments'] as List? ?? [])
+        .map((a) => DraftAttachment.fromJson(a))
+        .toList(),
+  );
+}

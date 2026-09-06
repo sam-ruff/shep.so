@@ -1,0 +1,33 @@
+name: shep_mobile
+description: Shep email and calendar for Android and iOS.
+publish_to: none
+version: 0.1.0+1
+environment:
+  sdk: ^3.12.2
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_rust_bridge: 2.13.0
+  flutter_rust_bridge_hooks: 2.13.0
+  code_assets: 1.2.1
+  flutter_secure_storage: 11.0.0
+  file_selector: 1.1.0
+  path_provider: 2.1.5
+  shared_preferences: 2.5.5
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  integration_test:
+    sdk: flutter
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo-light.webp
+    - assets/logo-dark.webp
+  fonts:
+    - family: NotoSans
+      fonts:
+        - asset: assets/NotoSans-Regular.ttf
+        - asset: assets/NotoSans-SemiBold.ttf
+          weight: 600

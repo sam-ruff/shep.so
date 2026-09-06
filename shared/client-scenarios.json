@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "reference": "Rust iced desktop; docs/CLIENT_PARITY.md records gaps",
+  "scenarios": [
+    {
+      "id": "mail-list",
+      "contract": "sender, subject, preview, account, unread and attachment indicators",
+      "mobile": "preview inbox",
+      "browser": "workspace.spec.ts"
+    },
+    {
+      "id": "optimistic-archive",
+      "contract": "remove immediately; navigation remains possible; rollback restores failed change",
+      "mobile": "workspace_test.dart / ui_test.dart / mail_test.dart / native.mjs",
+      "browser": "model.test.ts / workspace.spec.ts"
+    },
+    {
+      "id": "rapid-intent",
+      "contract": "older failure cannot overwrite newer flags/read or undo",
+      "mobile": "workspace_test.dart",
+      "browser": "model.test.ts"
+    },
+    {
+      "id": "swipes",
+      "contract": "left/right configurable; disabled is inert; icons match action; visible menu equivalent",
+      "mobile": "ui_test.dart / web.mjs / native.mjs",
+      "browser": "desktop controls; touch adaptation not required"
+    },
+    {
+      "id": "preferences",
+      "contract": "theme, preview and actions persist; failures preserve local edits",
+      "mobile": "workspace_test.dart / ui_test.dart / web.mjs / native.mjs",
+      "browser": "model.test.ts / workspace.spec.ts"
+    },
+    {
+      "id": "compose-failure",
+      "contract": "send refusal retains editor and text",
+      "mobile": "workspace_test.dart / ui_test.dart",
+      "browser": "workspace.spec.ts"
+    },
+    {
+      "id": "calendar-identity",
+      "contract": "edit selected calendar event; preserve source/end; read-only cannot save",
+      "mobile": "ui_test.dart",
+      "browser": "workspace.spec.ts"
+    },
+    {
+      "id": "production-isolation",
+      "contract": "no sample messages, credentials or mock success in production",
+      "mobile": "native_mail_test.dart production entry / verify_android.py APK fixture exclusion; preview remains separate",
+      "browser": "workspace.spec.ts; production build audit"
+    },
+    {
+      "id": "live-providers",
+      "contract": "same protocol/failure/recovery behavior as root Rust",
+      "mobile": "OPEN",
+      "browser": "OPEN"
+    },
+    {
+      "id": "apple-simulator",
+      "contract": "execute mobile scenarios on iOS Simulator",
+      "mobile": "mail_test.dart; NOT RUN on Linux",
+      "browser": "not an iOS native claim"
+    },
+    {
+      "id": "private-beta-gate",
+      "contract": "server gates app assets/API; verified exact allowlist, one-time callback, expiry, CSRF and logout",
+      "mobile": "not the mobile sign-in provider; OPEN mobile Google lifecycle",
+      "browser": "backend/src/tests.rs + real_browser_beta_gate / beta-gateway.mjs; live Google/VPS OPEN"
+    },
+    {
+      "id": "browser-provider-cache",
+      "contract": "verified account, scoped local cache/drafts, streamed sync failures, local POP3 flags, no password persistence",
+      "mobile": "NativeRepository / Rust SQLite tests / native_mail_test.dart; live verification OPEN",
+      "browser": "provider.test.ts / provider-flows.mjs / backend mail tests / shared-core TLS tests; live verification OPEN"
+    },
+    {
+      "id": "smtp-ambiguous-recovery",
+      "contract": "commit exact prepared MIME/envelope and outgoing ID before SMTP; lost/restarted/uncertain delivery never starts a fresh automatic send; terminal acknowledgments remain authoritative after server receipt expiry",
+      "mobile": "Rust outgoing_tests.rs + sent_tests.rs / outbox_test.dart / outbox_android_test.dart; shared handles/process locks, SMTP and Sent-ack storage failures, separate reviewed retries; full platform/live verification OPEN",
+      "browser": "provider.test.ts / provider-flows.mjs / backend prepare/digest/cancel/disconnect tests; provider Sent-copy recovery OPEN"
+    },
+    {
+      "id": "reply-envelope",
+      "contract": "Reply-To, own-address exclusion, To/Cc deduplication, references and quoted text agree across clients; cached replies need no server connection",
+      "mobile": "shared/compose-fixtures.json + shared Rust reply contract / Rust native reply test / attachments_android_test.dart",
+      "browser": "reply.test.ts / provider.test.ts / provider-flows.mjs"
+    },
+    {
+      "id": "draft-attachments",
+      "contract": "real file picker, multi-file import/cancel, durable binary blobs independent of text saves, removal/reopen and immutable submitted MIME",
+      "mobile": "Rust draft-file tests / attachments_android_test.dart + android_compose_fixture.py; Apple picker OPEN",
+      "browser": "provider.test.ts / real IndexedDB and picker provider-flows.mjs / cfg(test) Rust MIME assertions"
+    },
+    {
+      "id": "move-identity-undo",
+      "contract": "acknowledged receipts preserve stable client identity across sync/restart; queued Undo uses the acknowledged destination; unresolved sends cannot repeat automatically",
+      "mobile": "shared mail-core receipt/recovery tests / native Rust cache tests / native_mail_test.dart",
+      "browser": "provider.test.ts / provider-flows.mjs / authenticated gateway tests; complete ambiguous-move review OPEN"
+    },
+    {
+      "id": "outbox-review",
+      "contract": "active SMTP cannot be released; cancel an unused reservation atomically; reviewed return clones draft/file ownership, prevents stale resurrection, and needs a separate Send; manual mark preserves acknowledgement uncertainty; local Sent keeps exact bytes and newer local edits; local IMAP Sent actions do not access credentials, while server actions require credentials for the current stored identity",
+      "mobile": "outgoing_tests.rs / sent_tests.rs / outbox_test.dart / outbox_android_test.dart + android_outbox_fixture.py; paged review, separate APPEND decisions, known-ack repair, settings and local Sent/reopen; Sent-folder grouping/history cleanup OPEN; offline local flag/read/move + locked/missing-credential refusal and visible reader recovery in native_repository_test.dart, ui_test.dart and outbox_android_test.dart",
+      "browser": "provider.test.ts / model.test.ts / real Rust HTTPS provider-flows.mjs; light/dark compact controls and axe; provider Sent lookup/append and bounded paging OPEN"
+    },
+    {
+      "id": "provider-sent-copy",
+      "contract": "discover the configured/special-use Sent folder; verify complete tagged lookup success and exact Message-ID; journal destination before APPEND; never repeat an uncertain copy automatically; preserve acknowledgments, local edits and policy changes; adopt a cached provider identity atomically, retain old IDs for queued actions/replies, keep logical Sent membership and physical Undo destinations, and preserve an open reader/late body through handover",
+      "mobile": "shared sent/gateway TLS tests / native sent_tests.rs (rollback, migration, queued action, occupied capacity) / native_repository_test.dart / sent_handover_scenario.dart shared by ui_test.dart and native_mail_test.dart / actual bridge repair in outbox_android_test.dart; no live IMAP claim",
+      "browser": "PinnedMail shared transport available; authenticated gateway endpoints, client journal and controls OPEN"
+    }
+  ]
+}

@@ -4363,6 +4363,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shep-mail-core",
  "tempfile",
  "tokio",
  "tokio-native-tls",
@@ -4373,6 +4374,30 @@ dependencies = [
  "webbrowser",
  "zeroize",
  "zstd",
+]
+
+[[package]]
+name = "shep-mail-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-imap",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "futures",
+ "lettre",
+ "mailparse",
+ "native-tls",
+ "scraper",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-native-tls",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

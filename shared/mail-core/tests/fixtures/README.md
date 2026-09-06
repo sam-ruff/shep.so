@@ -1,0 +1,1 @@
+These certificate/key files are public synthetic loopback test material. They identify only `localhost`, are never used by production, and must never be deployed. The test-only CA is scoped to the fixture connection. Production gateway routes continue to require normal hostname and certificate verification.
