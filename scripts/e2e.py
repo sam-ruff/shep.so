@@ -520,6 +520,73 @@ class NativeFlows(unittest.TestCase):
                        check("total", 121), click(420, 247),
                        check("selected", "New mail from the background"), shot("background-arrival-readable"))
 
+    def test_desktop_badge_tracks_read_changes_after_switching_folders(self):
+        self.mcp.call("desktop.start", desktop_badges=True, mail_actions="slow")
+        self.mcp.batch(check("unread", True), check("desktop_badge.visible", True))
+        initial = self.mcp.call("desktop.state")
+        count = initial["desktop_badge"]["count"]
+        self.mcp.batch(click(740,100), check("mail_pending",1), check("desktop_badge.count",count-1),
+                       click(85,398), check("folder","Archive"),
+                       check("count_observed_ids",initial["selected_id"],"contains"),check("mail_pending",1),
+                       check("desktop_badge.count",count-1),
+                       {**check("mail_pending",0), "timeout_ms":5000}, check("desktop_badge.count",count-1),
+                       shot("badge-read-after-folder-navigation"))
+        history = self.mcp.call("desktop.state")["desktop_badge"]["history"]
+        self.assertTrue(all(n == count-1 for n in history[history.index(count-1):]), history)
+
+    def test_desktop_badge_preference_clears_and_restores_the_native_count(self):
+        self.mcp.call("desktop.start", desktop_badges=True)
+        self.mcp.batch(check("desktop_badge.visible",True))
+        count = self.mcp.call("desktop.state")["desktop_badge"]["count"]
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),click(1150,88),type_text("badge"),
+                       check("settings_matches",["Mail & performance"]),click(500,289),
+                       check("settings_group","Mail & performance"), shot("badge-preference"),
+                       click(340,431),check("desktop_badge.count",0),check("desktop_badge.visible",False),
+                       check("preferences_saved",True),key("ctrl+1"),key("ctrl+comma"),
+                       click(1150,88),type_text("badge"),click(500,289),wait(),click(340,431),
+                       check("desktop_badge.count",count),check("desktop_badge.visible",True),
+                       click(300,239),check("settings_group",None),click(286,737),check("unified",False),
+                       key("ctrl+1"),check("account","preview-work"),check("desktop_badge.count",count),
+                       shot("badge-count-spans-account-inboxes"))
+        self.mcp.call("desktop.start",desktop_badges=True,width=900,height=640)
+        self.mcp.batch(check("desktop_badge.visible",True),key("ctrl+comma"),check("tab","Preferences"),
+                       click(563,366),check("dark",True),click(650,88),type_text("badge"),
+                       check("settings_search","badge"),check("settings_matches",["Mail & performance"]),wait(80),
+                       click(450,289),check("settings_group","Mail & performance"),
+                       shot("badge-preference-compact-dark"),click(310,431),
+                       check("desktop_badge.visible",False),check("saved_unread_badge",False))
+
+    def test_desktop_badge_archive_delete_move_and_undo(self):
+        for action in ("archive", "delete", "move"):
+            with self.subTest(action=action):
+                self.mcp.call("desktop.start", desktop_badges=True, mail_actions="slow")
+                self.mcp.batch(check("unread",True),check("desktop_badge.visible",True))
+                count = self.mcp.call("desktop.state")["desktop_badge"]["count"]
+                if action == "archive":
+                    self.mcp.batch(click(652,100))
+                elif action == "delete":
+                    self.mcp.batch(key("ctrl+d"))
+                else:
+                    self.mcp.batch(key("m"),check("focused_input","folder-search"),type_text("Projects"),key("Return"),check("dialog",None))
+                self.mcp.batch(check("mail_pending",1),check("desktop_badge.count",count-1),
+                               click(85,398),check("folder","Archive"),
+                               {**check("mail_pending",0),"timeout_ms":5000},check("desktop_badge.count",count-1),
+                               click(1340,874),check("mail_pending",1),check("desktop_badge.count",count),
+                               {**check("mail_pending",0),"timeout_ms":5000},check("desktop_badge.count",count),
+                               shot("badge-"+action+"-undo"))
+
+    def test_desktop_badge_background_arrival_and_failed_action(self):
+        self.mcp.call("desktop.start",desktop_badges=True,background_sync=True)
+        self.mcp.batch(check("desktop_badge.visible",True),check("background_sync",True))
+        count = self.mcp.call("desktop.state")["desktop_badge"]["count"]
+        self.mcp.batch(check("total",121),check("desktop_badge.count",count+1),shot("badge-new-arrival"))
+        self.mcp.call("desktop.start",desktop_badges=True,mail_actions="fail")
+        self.mcp.batch(check("desktop_badge.visible",True),check("unread",True))
+        count = self.mcp.call("desktop.state")["desktop_badge"]["count"]
+        self.mcp.batch(click(652,100),check("mail_pending",1),check("desktop_badge.count",count-1),
+                       {**check("mail_pending",0),"timeout_ms":5000},check("notice","restored","contains"),
+                       check("desktop_badge.count",count),shot("badge-failed-archive"))
+
     def test_background_sync_failure_allows_manual_retry(self):
         self.mcp.call("desktop.start", background_sync=True, sync_failure_once=True)
         self.mcp.batch(check("background_sync", True), check("refreshing", False),

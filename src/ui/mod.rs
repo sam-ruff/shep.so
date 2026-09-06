@@ -212,6 +212,8 @@ pub enum Message {
     AccountFolderUnified,
     PrefUnified(bool),
     PrefTooltips(bool),
+    PrefUnreadBadge(bool),
+    DesktopBadge(crate::desktop_badge::Event),
     PrefShortcutTooltips(bool),
     SettingsSearch(String),
     FindSetting(SettingsTab, &'static str),
@@ -247,6 +249,7 @@ pub struct App {
     saved_toast: Option<Instant>,
     action_toasts: action_toasts::ActionToasts,
     printing: printing::State,
+    desktop_badge: Option<tokio::sync::watch::Sender<u64>>,
     context_menu: Option<context_menu::Menu>,
     pending_mail_action: Option<(String, context_menu::MailAction)>,
     mail_actions: mail_actions::Actions,
@@ -387,6 +390,7 @@ impl App {
                 saved_toast: None,
                 action_toasts: Default::default(),
                 printing: Default::default(),
+                desktop_badge: None,
                 context_menu: None,
                 pending_mail_action: None,
                 mail_actions: Default::default(),
@@ -516,6 +520,7 @@ impl App {
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
             Subscription::run_with(self.demo, engine::subscription).map(Message::Backend),
+            Subscription::run(crate::desktop_badge::subscription).map(Message::DesktopBadge),
             Subscription::run(crate::html_render::subscription)
                 .map(|e| Message::Html(html_reader::Message::Backend(e))),
             Subscription::run(crate::html_render::preparation::subscription)
@@ -609,7 +614,9 @@ impl App {
         self.generation += 1;
         self.prefetch_page = None;
         self.prefetch_query = None;
-        self.send(Command::Query(self.generation, self.query.clone(), false));
+        let mut query = self.query.clone();
+        query.observe = self.mail_actions.observed_ids();
+        self.send(Command::Query(self.generation, query, false));
     }
     fn cache_detail(&mut self, detail: Arc<MailDetail>) {
         self.mail_actions.observe_detail(&detail.summary);
@@ -736,6 +743,7 @@ impl App {
         }
         let start = Instant::now();
         let task = self.handle(message);
+        self.update_desktop_badge();
         let task = Task::batch([
             task,
             self.prepare_reader_selection(),
@@ -753,11 +761,45 @@ impl App {
             task
         }
     }
+    fn unread_badge_count(&self) -> u64 {
+        if !self.preferences.unread_badge {
+            return 0;
+        }
+        self.workspace.accounts.iter().fold(0u64, |count, account| {
+            count.saturating_add(
+                self.page
+                    .inbox_unread
+                    .get(&account.id)
+                    .copied()
+                    .unwrap_or(0) as u64,
+            )
+        })
+    }
+    fn update_desktop_badge(&self) {
+        if let Some(sender) = &self.desktop_badge {
+            let count = self.unread_badge_count();
+            sender.send_if_modified(|current| {
+                if *current == count {
+                    false
+                } else {
+                    *current = count;
+                    true
+                }
+            });
+        }
+    }
     fn handle(&mut self, message: Message) -> Task<Message> {
         if !self.read_navigation(&message) {
             return Task::none();
         }
         match message {
+            Message::DesktopBadge(crate::desktop_badge::Event::Ready(sender)) => {
+                self.desktop_badge = Some(sender);
+            }
+            Message::PrefUnreadBadge(value) => {
+                self.preferences.unread_badge = value;
+                self.save_preferences();
+            }
             Message::HtmlScaleRequest(id) => {
                 return iced::window::scale_factor(id)
                     .map(|s| Message::Html(html_reader::Message::Scale(s)));
@@ -1026,6 +1068,7 @@ impl App {
                             let mut query = self.query.clone();
                             query.offset += PAGE_SIZE;
                             self.prefetch_query = Some(query.clone());
+                            query.observe = self.mail_actions.observed_ids();
                             self.send(Command::Query(g, query, true));
                         }
                         let ids: Vec<_> = self
@@ -3003,6 +3046,15 @@ impl App {
                 .collect::<Vec<_>>()
         );
         data["inbox_unread"] = serde_json::json!(self.page.inbox_unread);
+        data["unread_badge"] = serde_json::json!(self.preferences.unread_badge);
+        data["saved_unread_badge"] = serde_json::json!(self.workspace.preferences.unread_badge);
+        data["count_observed_ids"] = serde_json::json!(
+            self.mail_actions
+                .base_page
+                .observed
+                .keys()
+                .collect::<Vec<_>>()
+        );
         data["shortcut_secondary"] = serde_json::json!(self.preferences.shortcuts.1);
         data["conversation_total"] = serde_json::json!(self.conversation.page.total);
         #[cfg(feature = "test-support")]

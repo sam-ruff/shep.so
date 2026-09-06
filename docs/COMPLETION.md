@@ -501,3 +501,65 @@ Shipped to main as `cc38af9d04eca6284214a030d5015262d19effed`. R69 is
 closed after the full native run, reviewed captures, installer verification and
 push. Final idle-host performance gates remain R03/R09; the full product goal
 remains active.
+
+## Linux unread launcher integration — R70, with R50/R60 count reconciliation
+
+The Linux adapter publishes the native Unity LauncherEntry protocol for Shep's
+installed desktop ID. A dedicated async worker receives only the newest unread
+count through a watch channel, retains its session-bus connection, republishes
+on dock-owner changes and reconnects after bus loss. Zero hides the badge.
+Preferences has a searchable, saved toggle. Counts include all connected mail
+accounts, independently of the currently selected folder or unified-inbox choice.
+
+The existing optimistic count adjustment depended on visible page rows. Pending
+read/move/Undo identities are now observed in the same database snapshot as global
+counts. The UI projects their intended membership separately from page contents,
+rejects snapshots requested before a new intent, and avoids applying changes twice
+when SQLite has committed before iced receives an acknowledgement. This includes
+Inbox destinations and known cross-account destination identities. Remaining
+ambiguous provider outcomes and durable recovery stay in R50/R60.
+
+Rust tests exercise actual private-bus Update/Query messages, hiding at zero,
+dock-owner replacement, rapid count replacement and lost-bus recovery. Other tests
+cover empty filtered pages, read failure, Inbox moves, rekeyed cross-account Undo,
+SQLite membership snapshots and preference persistence after reopening. All 313
+Rust tests pass (two opt-in live diagnostics ignored), alongside formatting,
+Clippy with warnings denied and 29 Python tests.
+
+Four saved native badge scenarios pass through the MCP harness, which starts an
+owned private bus and observes actual protocol messages. They exercise background
+arrival, read changes across folder navigation, archive/delete/move with Undo,
+failed archive rollback and the preference. Recent count history catches transient
+regressions. Final full-suite, compact visual and shipping evidence follow below.
+No personal desktop bus, mail account or process was used by these tests.
+
+This increment implements Linux publication. Actual dock rendering review,
+Windows/macOS adapters and execution remain open under R70; unsupported platforms
+do not show an ineffective preference. Protocol observations alone are not a
+GNOME screenshot. Performance measurements remain deferred to R03/R09.
+
+The first full native run completed 108 scenarios with one failure in the new
+compact preference test: it clicked before the complete search query/result had
+settled. Waiting for that exact native query/result fixes the scenario; all four
+badge scenarios then pass again with service activation disabled on the private
+bus. A fixture-bus unit test also verifies that no portal/keyring service is
+activatable. No processes with a stopped fixture's badge-bus address remain.
+The final full rerun uses that corrected harness and scenario.
+
+Reviewed preference evidence includes `artifacts/e2e/702328ea573b/` and
+`artifacts/e2e/8c4fb25cf9f1/badge-preference-compact-dark.webp`. The compact capture
+also exposes an existing clipped tab/scale-fragment rendering issue, retained
+explicitly in R15/R17/R21. Badge controls are visible and operable; this is not a
+claim that the remaining preferences polish is complete. The optimized release
+passes checksum, extraction and bundled-installer checks.
+
+The final full native rerun passes all 108 functional scenarios. Its badge
+preference evidence includes `artifacts/e2e/b6b3d7b40d33/`; the private-bus log
+confirms no service activation. Formatting, Clippy, 313 Rust tests (two ignored
+live diagnostics), 29 Python tests and strict documentation validation pass.
+Logs remain under `artifacts/logs/badge-*`; quality/release CI stays disabled.
+
+The installed Linux binary matches the verified optimized release at SHA-256
+`745bae0c21cf1c908c4b5f17185242f7e25aeffaf12495f22e974c6b17b5b738`.
+Personal windows were left running; reopening uses the new binary. R70 and the
+full product goal remain active for their explicitly recorded remaining work.
