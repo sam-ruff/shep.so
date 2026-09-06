@@ -367,7 +367,8 @@ async fn sync(
                             if !emit(&bytes, move || match event {
                                 MailSyncItem::Message(mail)=>{
                                     let reply=mailparse::parse_mail(&mail.raw).ok().map(|p|shep_mail_core::compose::ReplyHeaders::parse(&p).envelope());
-                                    serde_json::json!({"kind":"message","mail":mail,"reply":reply})
+                                    let sent_message_id = unique_sent_identity(&mail.raw);
+                                    serde_json::json!({"kind":"message","mail":mail,"reply":reply,"sent_message_id":sent_message_id})
                                 },
                                 MailSyncItem::Flags(flags)=>serde_json::json!({"kind":"flags","flags":flags}),
                                 MailSyncItem::Reconcile{account,folder,live_ids}=>serde_json::json!({"kind":"reconcile","account":account,"folder":folder,"live_ids":live_ids}),
@@ -550,4 +551,22 @@ async fn resolve_move(
             "Could not identify one unchanged copy in the destination. Refresh the folder and choose the message to move back.",
         ),
     }
+}
+
+// Handover needs exactly one complete identity, unlike reply hints which may
+// recover a usable reference from a malformed message. Runs in the emit worker.
+fn unique_sent_identity(raw: &[u8]) -> Option<String> {
+    use mailparse::MailHeaderMap;
+    let prefix = raw.get(..raw.len().min(64 * 1024))?;
+    let end = prefix
+        .windows(4)
+        .position(|s| s == b"\r\n\r\n")
+        .map(|i| i + 4)
+        .or_else(|| prefix.windows(2).position(|s| s == b"\n\n").map(|i| i + 2))?;
+    let (headers, _) = mailparse::parse_headers(&prefix[..end]).ok()?;
+    let ids = headers.get_all_values("Message-ID");
+    (ids.len() == 1
+        && ids[0].len() <= 1024
+        && shep_mail_core::compose::message_ids(&ids[0]) == [ids[0].clone()])
+    .then(|| ids[0].clone())
 }

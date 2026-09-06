@@ -23,6 +23,7 @@ if (
 const output = path.join(root, "../artifacts/beta-browser");
 await mkdir(output, { recursive: true });
 await rm(path.join(output, "result.json"), { force: true });
+const upstreamAgent = new http.Agent({ keepAlive: false });
 const proxy = https.createServer(
   {
     key: await readFile(
@@ -36,6 +37,7 @@ const proxy = https.createServer(
     const upstream = http.request(
       {
         host: "127.0.0.1",
+        agent: upstreamAgent,
         port: backendPort,
         path: request.url,
         method: request.method,
@@ -53,6 +55,13 @@ const proxy = https.createServer(
     request.pipe(upstream);
   },
 );
+// A browser can leave a speculative TLS connection without an HTTP request.
+// Track this fixture's raw sockets as well as Node's HTTP connections.
+const proxySockets = new Set();
+proxy.on("connection", (socket) => {
+  proxySockets.add(socket);
+  socket.once("close", () => proxySockets.delete(socket));
+});
 await new Promise((resolve, reject) => {
   proxy.once("error", reject);
   proxy.listen(proxyPort, "127.0.0.1", resolve);
@@ -99,6 +108,7 @@ const asset = (await readdir(path.join(root, "dist/assets"))).find((name) =>
   name.endsWith(".js"),
 );
 assert.ok(asset, "Production JavaScript build required");
+let result;
 try {
   assert.equal(
     (await context.request.get(`${origin}/api/session`)).status(),
@@ -196,35 +206,36 @@ try {
     303,
   );
   assert.deepEqual(errors, []);
-  await writeFile(
-    path.join(output, "result.json"),
-    JSON.stringify(
-      {
-        passed: true,
-        scenarios: [
-          ...providerScenarios,
-          "anonymous-api-and-assets",
-          "login-redirect",
-          "denied-user",
-          "allowed-owner",
-          "replay-rejection",
-          "secure-cookie-no-store",
-          "csrf-origin",
-          "ui-logout-revocation",
-        ],
-      },
-      null,
-      2,
-    ),
-  );
-  console.log(
-    "PASS: real Rust gateway and production browser, nineteen beta and mail scenarios",
-  );
+  result = {
+    passed: true,
+    scenarios: [
+      ...providerScenarios,
+      "anonymous-api-and-assets",
+      "login-redirect",
+      "denied-user",
+      "allowed-owner",
+      "replay-rejection",
+      "secure-cookie-no-store",
+      "csrf-origin",
+      "ui-logout-revocation",
+    ],
+  };
 } catch (error) {
   await page.screenshot({ path: path.join(output, "failure.png") });
   throw error;
 } finally {
   await browser.close();
+  const stopped = new Promise((resolve) => proxy.close(resolve));
   proxy.closeAllConnections();
-  await new Promise((resolve) => proxy.close(resolve));
+  for (const socket of proxySockets) socket.destroy();
+  upstreamAgent.destroy();
+  await stopped;
 }
+
+await writeFile(
+  path.join(output, "result.json"),
+  JSON.stringify(result, null, 2),
+);
+console.log(
+  `PASS: real Rust gateway and production browser, ${result.scenarios.length} beta and mail stages`,
+);

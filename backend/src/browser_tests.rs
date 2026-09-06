@@ -44,7 +44,7 @@ impl HostedMail for BrowserMail {
         output
             .send(MailSyncItem::Folders(
                 c.account.id.clone(),
-                vec!["INBOX".into(), "Archive".into()],
+                vec!["INBOX".into(), "Archive".into(), "Sent Mail".into()],
             ))
             .await?;
         let location = self
@@ -53,6 +53,13 @@ impl HostedMail for BrowserMail {
             .await
             .clone()
             .unwrap_or(("INBOX".into(), "42.7".into()));
+        output
+            .send(MailSyncItem::SentFolder(
+                c.account.id.clone(),
+                Some("Sent Mail".into()),
+            ))
+            .await?;
+        let mut live_ids = HashSet::new();
         if folder == location.0 {
             let mail = parse_mail(
                 &c.account.id,
@@ -62,28 +69,61 @@ impl HostedMail for BrowserMail {
                 self.unread.load(Ordering::SeqCst),
                 self.starred.load(Ordering::SeqCst),
             )?;
-            let id = mail.summary.id.clone();
+            live_ids.insert(mail.summary.id.clone());
             output.send(MailSyncItem::Message(mail)).await?;
-            output
-                .send(MailSyncItem::Reconcile {
-                    account: c.account.id.clone(),
-                    folder: folder.into(),
-                    live_ids: [id].into(),
-                })
-                .await?;
-        } else {
-            output
-                .send(MailSyncItem::Reconcile {
-                    account: c.account.id.clone(),
-                    folder: folder.into(),
-                    live_ids: HashSet::new(),
-                })
-                .await?;
         }
-        Ok(vec!["INBOX".into(), "Archive".into()])
+        for copy in self.sent.copies.lock().await.values() {
+            if copy.folder == folder {
+                let mail = parse_mail(
+                    &c.account.id,
+                    &copy.remote,
+                    folder,
+                    copy.raw.clone(),
+                    copy.unread,
+                    copy.starred,
+                )?;
+                live_ids.insert(mail.summary.id.clone());
+                output.send(MailSyncItem::Message(mail)).await?;
+            }
+        }
+        output
+            .send(MailSyncItem::Reconcile {
+                account: c.account.id.clone(),
+                folder: folder.into(),
+                live_ids,
+            })
+            .await?;
+        Ok(vec!["INBOX".into(), "Archive".into(), "Sent Mail".into()])
     }
-    async fn flags(&self, c: &Connection, _: &Mail, flags: Flags) -> anyhow::Result<()> {
+    async fn flags(&self, c: &Connection, mail: &Mail, flags: Flags) -> anyhow::Result<()> {
         self.probe(c, false).await?;
+        if let Some(copy) = self
+            .sent
+            .copies
+            .lock()
+            .await
+            .values_mut()
+            .find(|copy| copy.folder == mail.folder && copy.remote == mail.remote_id)
+        {
+            if let Some(value) = flags.unread {
+                copy.unread = value;
+            }
+            if let Some(value) = flags.starred {
+                copy.starred = value;
+            }
+            self.sent.flags.fetch_add(1, Ordering::SeqCst);
+            return Ok(());
+        }
+        let location = self
+            .location
+            .lock()
+            .await
+            .clone()
+            .unwrap_or(("INBOX".into(), "42.7".into()));
+        anyhow::ensure!(
+            location == (mail.folder.clone(), mail.remote_id.clone()),
+            "Stale flag UID"
+        );
         if let Some(value) = flags.unread {
             self.unread.store(value, Ordering::SeqCst);
         }
@@ -99,6 +139,19 @@ impl HostedMail for BrowserMail {
         folder: &str,
     ) -> anyhow::Result<Option<String>> {
         self.probe(c, false).await?;
+        if let Some(copy) = self
+            .sent
+            .copies
+            .lock()
+            .await
+            .values_mut()
+            .find(|copy| copy.folder == mail.folder && copy.remote == mail.remote_id)
+        {
+            let uid = self.sent.moves.fetch_add(1, Ordering::SeqCst) + 100;
+            copy.folder = folder.into();
+            copy.remote = format!("91.{uid}");
+            return Ok(Some(copy.remote.clone()));
+        }
         let mut location = self.location.lock().await;
         let current = location.clone().unwrap_or(("INBOX".into(), "42.7".into()));
         anyhow::ensure!(
@@ -117,6 +170,26 @@ impl HostedMail for BrowserMail {
         receipt: &shep_mail_core::mail_actions::MoveReceipt,
     ) -> anyhow::Result<Mail> {
         self.probe(c, false).await?;
+        if let Some(copy) = self.sent.copies.lock().await.values().find(|copy| {
+            copy.folder == receipt.folder
+                && receipt
+                    .fingerprint
+                    .as_ref()
+                    .is_some_and(|f| f.matches(&copy.raw))
+        }) {
+            if let Some(current) = &receipt.current {
+                anyhow::ensure!(current.remote_id == copy.remote, "Stale Sent recovery UID");
+            }
+            return Ok(parse_mail(
+                &c.account.id,
+                &copy.remote,
+                &copy.folder,
+                copy.raw.clone(),
+                copy.unread,
+                copy.starred,
+            )?
+            .summary);
+        }
         let location = self.location.lock().await.clone().unwrap();
         anyhow::ensure!(
             receipt.folder == location.0
@@ -213,8 +286,17 @@ impl HostedMail for BrowserMail {
 #[derive(Default)]
 struct BrowserSent {
     original: Mutex<HashMap<String, Vec<u8>>>,
-    copies: Mutex<HashMap<String, Vec<u8>>>,
+    copies: Mutex<HashMap<String, BrowserSentCopy>>,
     appends: AtomicUsize,
+    moves: AtomicUsize,
+    flags: AtomicUsize,
+}
+struct BrowserSentCopy {
+    raw: Vec<u8>,
+    folder: String,
+    remote: String,
+    unread: bool,
+    starred: bool,
 }
 struct BrowserSentMailbox {
     data: Arc<BrowserSent>,
@@ -229,12 +311,17 @@ impl shep_mail_core::providers::mail::sent::SentConnection for BrowserSentMailbo
         &mut self,
         id: &str,
     ) -> anyhow::Result<Option<shep_mail_core::providers::mail::sent::SentReceipt>> {
-        Ok(self.data.copies.lock().await.contains_key(id).then(|| {
-            shep_mail_core::providers::mail::sent::SentReceipt {
+        Ok(self
+            .data
+            .copies
+            .lock()
+            .await
+            .get(id)
+            .filter(|copy| copy.folder == self.folder)
+            .map(|copy| shep_mail_core::providers::mail::sent::SentReceipt {
                 folder: self.folder.clone(),
-                remote_id: Some("91.4".into()),
-            }
-        }))
+                remote_id: Some(copy.remote.clone()),
+            }))
     }
     async fn append(
         &mut self,
@@ -249,8 +336,17 @@ impl shep_mail_core::providers::mail::sent::SentConnection for BrowserSentMailbo
             raw,
             "APPEND uses the immutable bytes originally submitted to SMTP"
         );
-        self.data.appends.fetch_add(1, Ordering::SeqCst);
-        self.data.copies.lock().await.insert(id, raw.to_vec());
+        let index = self.data.appends.fetch_add(1, Ordering::SeqCst);
+        self.data.copies.lock().await.insert(
+            id,
+            BrowserSentCopy {
+                raw: raw.to_vec(),
+                folder: self.folder.clone(),
+                remote: format!("91.{}", index + 4),
+                unread: false,
+                starred: false,
+            },
+        );
         anyhow::ensure!(
             !String::from_utf8_lossy(raw).contains("Uncertain delivery fixture reviewed"),
             "Synthetic lost APPEND acknowledgment"
@@ -370,6 +466,16 @@ async fn real_browser_beta_gate() {
         transport.moves.load(Ordering::SeqCst),
         4,
         "Queued Undo and refresh Undo use the acknowledged destination identity"
+    );
+    assert_eq!(
+        transport.sent.moves.load(Ordering::SeqCst),
+        2,
+        "Sent Archive and Undo route current physical identities"
+    );
+    assert_eq!(
+        transport.sent.flags.load(Ordering::SeqCst),
+        2,
+        "Sent flag and pre-handover Undo reach the provider"
     );
     assert_eq!(
         transport.sent.appends.load(Ordering::SeqCst),

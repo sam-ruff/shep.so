@@ -1108,7 +1108,7 @@ export function mount(
   function reader() {
     const panel = el("section", "reader");
     panel.setAttribute("aria-label", "Message reader");
-    const m = w.mail.find((m) => m.id === w.selected);
+    const m = w.readerMessage;
     const toolbar = el("div", "reader-toolbar");
     if (fullReader)
       toolbar.append(
@@ -1530,7 +1530,7 @@ export function mount(
         .querySelector<HTMLInputElement>('[aria-label="Search conversations"]')
         ?.focus();
     else if (action === "reply") {
-      const m = w.mail.find((m) => m.id === w.selected);
+      const m = w.readerMessage;
       if (m) composer(m);
     } else if (action === "reader") {
       if (w.selected) {

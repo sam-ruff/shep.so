@@ -57,6 +57,8 @@ export interface Repository {
   events: CalendarEntry[];
   drafts?: Draft[];
   warning?: string | null;
+  aliases?: Map<string, string>;
+  folderRoles?: Map<string, Set<string>>;
   refresh(folder?: string, account?: string | null): Promise<Mail[]>;
   mutate(id: string, fields: Fields): Promise<void>;
   saveDraft(draft: Draft): Promise<void>;
@@ -161,7 +163,27 @@ export class Workspace extends EventTarget {
   query = "";
   newestFirst = true;
   page = 0;
-  selected: string | null = null;
+  private selectedId: string | null = null;
+  private retainedReader: Mail | null = null;
+  get selected() {
+    return this.selectedId;
+  }
+  set selected(id: string | null) {
+    this.selectedId = id === null ? null : this.canonical(id);
+    this.retainedReader =
+      id === null
+        ? null
+        : structuredClone(
+            this.mail.find((m) => m.id === this.selectedId) ??
+              this.retainedReader,
+          );
+  }
+  get readerMessage(): Mail | null {
+    return (
+      this.mail.find((m) => m.id === this.selectedId) ??
+      (this.retainedReader?.id === this.selectedId ? this.retainedReader : null)
+    );
+  }
   selection = new Set<string>();
   drafts = new Map<string, Draft>();
   error: string | null = null;
@@ -174,12 +196,101 @@ export class Workspace extends EventTarget {
   private confirmed = new Map<string, Mail>();
   private versions = new Map<string, number>();
   private queues = new Map<string, Promise<void>>();
+  private aliases = new Map<string, string>();
+  private canonical(id: string) {
+    return this.aliases.get(id) ?? id;
+  }
+  private isPending(id: string) {
+    return [...this.queues.keys()].some((key) => this.canonical(key) === id);
+  }
+  private message(id: string) {
+    return (
+      this.mail.find((m) => m.id === this.canonical(id)) ??
+      (this.readerMessage?.id === this.canonical(id)
+        ? this.readerMessage
+        : undefined)
+    );
+  }
+  private paint(id: string, fields: Fields) {
+    this.mail = this.mail.map((m) => (m.id === id ? { ...m, ...fields } : m));
+    if (this.retainedReader?.id === id)
+      this.retainedReader = { ...this.retainedReader, ...fields };
+  }
+  private acceptAliases(messages: Mail[], since: number) {
+    const incomingAliases =
+      this.repository.aliases ?? new Map<string, string>();
+    const targets = new Set(
+      [...incomingAliases]
+        .filter(([alias, target]) => this.aliases.get(alias) !== target)
+        .map(([, target]) => target),
+    );
+    if (!targets.size) return;
+    const old = this.mail;
+    for (const [alias, target] of incomingAliases) {
+      for (const [key, previous] of this.aliases)
+        if (previous === alias) this.aliases.set(key, target);
+      this.aliases.set(alias, target);
+    }
+    const fields = ["folder", "unread", "starred"] as const;
+    const versions = new Map<string, number>();
+    const overlays = new Map<string, { revision: number; value: unknown }>();
+    for (const [key, version] of this.versions) {
+      const colon = key.lastIndexOf(":");
+      const next = `${this.canonical(key.slice(0, colon))}${key.slice(colon)}`;
+      if ((versions.get(next) ?? -1) < version) versions.set(next, version);
+    }
+    for (const m of old)
+      for (const field of fields) {
+        const version = this.versions.get(`${m.id}:${field}`);
+        const id = this.canonical(m.id),
+          key = `${id}:${field}`;
+        if (
+          version !== undefined &&
+          (version > since || this.isPending(id)) &&
+          (overlays.get(key)?.revision ?? -1) < version
+        )
+          overlays.set(key, { revision: version, value: m[field] });
+      }
+    this.versions = versions;
+    const confirmed = new Map<string, Mail>();
+    for (const [id, m] of this.confirmed)
+      confirmed.set(this.canonical(id), { ...m, id: this.canonical(id) });
+    const incoming = new Map(messages.map((m) => [m.id, m]));
+    const merged = new Map<string, Mail>();
+    for (const oldMail of old) {
+      const id = this.canonical(oldMail.id);
+      const source = targets.has(id) ? (incoming.get(id) ?? oldMail) : oldMail;
+      const next = { ...source, id };
+      if (targets.has(id) && incoming.has(id))
+        confirmed.set(id, structuredClone(incoming.get(id)!));
+      for (const field of fields)
+        if (overlays.has(`${id}:${field}`))
+          Object.assign(next, {
+            [field]: overlays.get(`${id}:${field}`)!.value,
+          });
+      merged.set(id, next);
+    }
+    this.confirmed = confirmed;
+    this.mail = [...merged.values()];
+    if (this.selectedId) this.selectedId = this.canonical(this.selectedId);
+    if (this.retainedReader)
+      this.retainedReader = this.mail.find(
+        (m) => m.id === this.canonical(this.retainedReader!.id),
+      ) ?? {
+        ...this.retainedReader,
+        id: this.canonical(this.retainedReader.id),
+      };
+    this.selection = new Set(
+      [...this.selection].map((id) => this.canonical(id)),
+    );
+  }
   constructor(
     public repository: Repository,
     private settings: SettingsStore,
   ) {
     super();
     this.mail = structuredClone(repository.cached);
+    this.aliases = new Map(repository.aliases ?? []);
     this.events = structuredClone(repository.events);
     this.drafts = new Map(
       (repository.drafts ?? []).map((d) => [d.id, structuredClone(d)]),
@@ -203,7 +314,11 @@ export class Workspace extends EventTarget {
     return this.mail
       .filter(
         (m) =>
-          m.folder === this.folder &&
+          (m.folder === this.folder ||
+            (this.folder === "Sent" &&
+              this.repository.folderRoles
+                ?.get(m.accountId ?? m.account)
+                ?.has(m.folder))) &&
           (!this.account || m.account === this.account) &&
           (this.filter !== "Unread" || m.unread) &&
           (this.filter !== "Flagged" || m.starred) &&
@@ -251,6 +366,7 @@ export class Workspace extends EventTarget {
     this.changed();
   }
   addCachedMail(messages: Mail[]) {
+    this.acceptAliases(messages, this.revision);
     // A newly saved Sent copy must not overwrite other pending mail actions or
     // disappear behind a refresh started before the submission completed.
     const known = new Set(this.mail.map((m) => m.id));
@@ -277,7 +393,10 @@ export class Workspace extends EventTarget {
       const rev = this.revision;
       try {
         const result = await this.repository.refresh(this.folder, this.account);
+        this.acceptAliases(result, rev);
         if (rev === this.revision && !this.pending) {
+          if (this.readerMessage)
+            this.retainedReader = structuredClone(this.readerMessage);
           this.mail = result;
           result.forEach((m) => this.confirmed.set(m.id, structuredClone(m)));
         }
@@ -300,7 +419,8 @@ export class Workspace extends EventTarget {
     this.changed();
   }
   action(id: string, action: Action, destination?: string) {
-    const m = this.mail.find((m) => m.id === id);
+    id = this.canonical(id);
+    const m = this.message(id);
     if (!m) return Promise.resolve();
     const fields: Fields =
       action === "archive"
@@ -317,7 +437,8 @@ export class Workspace extends EventTarget {
     return this.change(id, fields);
   }
   async change(id: string, fields: Fields, offerUndo = true) {
-    const current = this.mail.find((m) => m.id === id);
+    id = this.canonical(id);
+    const current = this.message(id);
     if (!current || !Object.keys(fields).length) return;
     const previous = Object.fromEntries(
       Object.keys(fields).map((key) => [key, current[key as keyof Mail]]),
@@ -325,7 +446,7 @@ export class Workspace extends EventTarget {
     const revision = ++this.revision;
     for (const key of Object.keys(fields))
       this.versions.set(`${id}:${key}`, revision);
-    this.mail = this.mail.map((m) => (m.id === id ? { ...m, ...fields } : m));
+    this.paint(id, fields);
     this.selection.delete(id);
     if (offerUndo)
       this.undo = () => {
@@ -337,13 +458,19 @@ export class Workspace extends EventTarget {
       : "Message updated";
     this.error = null;
     this.retry = null;
-    const job = (this.queues.get(id) ?? Promise.resolve()).then(async () => {
+    const previousJobs = [...this.queues]
+      .filter(([key]) => this.canonical(key) === id)
+      .map(([, job]) => job);
+    const job = Promise.all(previousJobs).then(async () => {
       try {
-        await this.repository.mutate(id, fields);
-        this.confirmed.set(id, { ...this.confirmed.get(id)!, ...fields });
+        await this.repository.mutate(this.canonical(id), fields);
+        this.acceptAliases(this.repository.cached, revision);
+        const key = this.canonical(id);
+        this.confirmed.set(key, { ...this.confirmed.get(key)!, ...fields });
       } catch (error) {
         if (error instanceof MutationFailure && error.committed) {
-          this.confirmed.set(id, { ...this.confirmed.get(id)!, ...fields });
+          const key = this.canonical(id);
+          this.confirmed.set(key, { ...this.confirmed.get(key)!, ...fields });
           this.error = error.message;
           this.notice = null;
           this.undo = null;
@@ -352,12 +479,16 @@ export class Workspace extends EventTarget {
         }
         const rollback = Object.fromEntries(
           Object.keys(fields)
-            .filter((key) => this.versions.get(`${id}:${key}`) === revision)
-            .map((key) => [key, this.confirmed.get(id)![key as keyof Mail]]),
+            .filter(
+              (key) =>
+                this.versions.get(`${this.canonical(id)}:${key}`) === revision,
+            )
+            .map((key) => [
+              key,
+              this.confirmed.get(this.canonical(id))![key as keyof Mail],
+            ]),
         ) as Fields;
-        this.mail = this.mail.map((m) =>
-          m.id === id ? { ...m, ...rollback } : m,
-        );
+        this.paint(this.canonical(id), rollback);
         if (Object.keys(rollback).length) {
           this.error = `Could not confirm the update to ${current.subject}. The affected display was restored. ${error instanceof Error ? error.message : "The affected change was restored. Retry."}`;
           this.notice = null;
