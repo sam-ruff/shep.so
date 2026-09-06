@@ -575,6 +575,7 @@ impl App {
         column![
             container(self.reader_toolbar(detail)).padding([10, 18]),
             line(),
+            self.find_bar(),
             scrollable(
                 container(self.reader_body(detail, true)).padding(if self.size.width < 1200. {
                     22.
@@ -625,12 +626,17 @@ impl App {
                 summary.starred,
                 Message::ToggleStar
             ),
+            self.icon_action(
+                "search",
+                self.shortcut_hint("Find in message", Action::Find),
+                Message::Find(super::find_message::Message::Open)
+            ),
             space().width(Length::Fill),
             if (self.size.width / (self.preferences.interface_scale as f32 / 100.)
                 - self.sidebar_width()
                 - 57.)
                 * (1. - self.preferences.reader_split)
-                < 440.
+                < 500.
             {
                 self.icon_action(
                     "move",
@@ -757,7 +763,7 @@ impl App {
                 if self.html_reader.frame.is_none() {
                     reading = reading.push(muted("Opening formatted message…"));
                 }
-                reading = reading.push(self.html_canvas());
+                reading = reading.push(self.find_highlights(detail, 0, self.html_canvas()));
             }
             if detail.html.as_ref().is_some_and(|h| h.has_quotes)
                 && self.preferences.reply_display != ReplyDisplay::LatestOnly
@@ -785,7 +791,8 @@ impl App {
             }
             return reading;
         }
-        reading = reading.push(self.selectable_body(detail, 0, body));
+        reading =
+            reading.push(self.find_highlights(detail, 0, self.selectable_body(detail, 0, body)));
         if self.preferences.reply_display != ReplyDisplay::LatestOnly {
             for (index, reply) in detail.replies.iter().enumerate() {
                 let expanded = self.expanded_replies.contains(&index)
@@ -805,7 +812,11 @@ impl App {
                 ]
                 .spacing(8);
                 if expanded {
-                    section = section.push(self.selectable_body(detail, index + 1, &reply.body));
+                    section = section.push(self.find_highlights(
+                        detail,
+                        index + 1,
+                        self.selectable_body(detail, index + 1, &reply.body),
+                    ));
                 }
                 reading = reading.push(
                     container(section)

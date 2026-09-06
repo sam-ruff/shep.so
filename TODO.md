@@ -11,7 +11,7 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Mail reading, search and bulk actions
 
-- [ ] **R44 — Find in message:** Ctrl+F within the open email, fast background searching, visible matches and next/previous navigation.
+- [ ] **R44 — Find in message:** Ctrl+F within the open email, fast background searching, visible matches and next/previous navigation. In progress: literal Unicode matching, HTML/independent plain-text layout workers and native find controls are being integrated; regression/visual verification and shipping remain.
 - [ ] **R41 — Forward:** add a forward control to the preview actions; preserve message content/attachments and correct draft semantics.
 - [ ] **R41 — Print:** add a print control and a usable cross-platform print flow, with isolated automated equivalents.
 - [ ] **R42 — Multi-selection:** Ctrl+A for all emails in the focused list, Ctrl-click toggles, Shift-click ranges, and a Select button beside conversation search for checkbox selection. Preserve scope across pages and distinguish list focus from text selection.

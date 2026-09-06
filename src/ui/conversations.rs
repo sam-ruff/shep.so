@@ -337,6 +337,7 @@ impl App {
         column![
             container(toolbar).padding([10, 18]),
             line(),
+            self.find_bar(),
             container(heading).padding([14, 20]),
             scrollable(container(cards).padding([0, 20]))
                 .id("conversation-reader")

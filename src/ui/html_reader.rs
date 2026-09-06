@@ -41,6 +41,10 @@ impl State {
     fn enqueue(&mut self, command: Input) {
         // A new view supersedes unprocessed geometry; moves supersede adjacent
         // hover/drag positions, but never a Down/Up/Copy boundary.
+        if matches!(command, Input::Find(..) | Input::PlainFind(..)) {
+            self.queue
+                .retain(|c| !matches!(c, Input::Find(..) | Input::PlainFind(..)));
+        }
         if matches!(command, Input::Pan(..)) {
             self.queue.retain(|c| !matches!(c, Input::Pan(..)));
         }
@@ -161,6 +165,19 @@ impl App {
     pub(super) fn handle_html(&mut self, message: Message) -> Task<super::Message> {
         use html_render::Event;
         match message {
+            Message::Backend(Event::Found(generation, revision, layout, result))
+                if generation == self.html_reader.generation
+                    && self
+                        .html_reader
+                        .frame
+                        .as_ref()
+                        .is_some_and(|f| f.layout_revision == layout) =>
+            {
+                self.find_message.accept(revision, result);
+            }
+            Message::Backend(Event::PlainFound(revision, result)) => {
+                self.find_message.accept(revision, result)
+            }
             Message::Scale(scale) => self.html_reader.system_scale = scale,
             Message::Backend(Event::Ready(tx)) => self.html_reader.tx = Some(tx),
             Message::Backend(Event::Frame(frame))
@@ -172,6 +189,7 @@ impl App {
                     .as_ref()
                     .is_some_and(|previous| previous.layout_revision != frame.layout_revision)
                 {
+                    self.find_message.results = None;
                     self.html_reader.selection.clear();
                     self.html_reader.rectangles.clear();
                 }

@@ -7,6 +7,7 @@ mod composing;
 mod context_menu;
 mod conversations;
 mod ellipsis;
+mod find_message;
 #[cfg(test)]
 mod google_lifecycle_tests;
 mod html_reader;
@@ -86,6 +87,7 @@ enum MailPane {
 pub enum Message {
     WindowUnfocused,
     Html(html_reader::Message),
+    Find(find_message::Message),
     HtmlScaleRequest(iced::window::Id),
     Backend(Event),
     Tick,
@@ -246,6 +248,7 @@ pub struct App {
     mail_actions: mail_actions::Actions,
     reader_selection: Option<Box<selectable::Content>>,
     html_reader: html_reader::State,
+    find_message: find_message::State,
     remote_bytes: VecDeque<(String, Arc<[u8]>)>,
     pending_reader_selection: Option<Arc<MailDetail>>,
     reader_selection_generation: u64,
@@ -384,6 +387,7 @@ impl App {
                 mail_actions: Default::default(),
                 reader_selection: None,
                 html_reader: Default::default(),
+                find_message: Default::default(),
                 remote_bytes: VecDeque::new(),
                 pending_reader_selection: None,
                 reader_selection_generation: 0,
@@ -725,7 +729,12 @@ impl App {
         }
         let start = Instant::now();
         let task = self.handle(message);
-        let task = Task::batch([task, self.prepare_reader_selection(), self.prepare_html()]);
+        let task = Task::batch([
+            task,
+            self.prepare_reader_selection(),
+            self.prepare_html(),
+            self.prepare_find(),
+        ]);
         self.update_samples
             .push_back(start.elapsed().as_secs_f64() * 1000.);
         if self.update_samples.len() > 1000 {
@@ -747,6 +756,7 @@ impl App {
                     .map(|s| Message::Html(html_reader::Message::Scale(s)));
             }
             Message::Html(message) => return self.handle_html(message),
+            Message::Find(message) => return self.handle_find(message),
             Message::WindowUnfocused => self.modifiers = keyboard::Modifiers::default(),
             Message::Noop => return Task::none(),
             Message::DismissContext => {
@@ -1525,6 +1535,8 @@ impl App {
                 self.request_page();
             }
             Message::Select(id) => {
+                self.focused_input = None;
+                self.pending_focus = None;
                 let double = self
                     .last_click
                     .as_ref()
@@ -1602,6 +1614,9 @@ impl App {
             }
             Message::Focus(id, attempt) => {
                 let visible = match id {
+                    "find-message" => {
+                        self.find_message.open && self.tab == Tab::Mail && self.dialog.is_none()
+                    }
                     "folder-search" => self.dialog == Some(Dialog::Move),
                     "event-title" => self.dialog == Some(Dialog::Event),
                     "search" => self.tab == Tab::Mail && self.dialog.is_none() && !self.full_reader,
@@ -1980,6 +1995,25 @@ impl App {
                 }
             }
             Message::Key(key, modifiers, captured) => {
+                if self.find_message.open
+                    && self.tab == Tab::Mail
+                    && self.dialog.is_none()
+                    && self.remapping.is_none()
+                    && self.context_menu.is_none()
+                    && self.composer.context.is_none()
+                    && key == Key::Named(keyboard::key::Named::Enter)
+                {
+                    let revision = self.find_message.revision;
+                    return widget::operation::is_focused("find-message").map(move |focused| {
+                        Message::Find(find_message::Message::Enter(
+                            revision,
+                            key.clone(),
+                            modifiers,
+                            captured,
+                            focused,
+                        ))
+                    });
+                }
                 let input_guard = !captured
                     && self.dialog.is_none()
                     && self.remapping.is_none()
@@ -1992,6 +2026,7 @@ impl App {
                             !matches!(
                                 action,
                                 Action::Search
+                                    | Action::Find
                                     | Action::Mail
                                     | Action::Calendar
                                     | Action::Settings
@@ -2002,6 +2037,15 @@ impl App {
                 if input_guard {
                     if self.tab != Tab::Mail {
                         return Task::none();
+                    }
+                    if self.full_reader && self.find_message.open {
+                        return widget::operation::is_focused("find-message").map(move |focused| {
+                            Message::Find(find_message::Message::GuardedKey(
+                                key.clone(),
+                                modifiers,
+                                focused,
+                            ))
+                        });
                     }
                     if self.full_reader {
                         // The full-window reader has no search widget. A focus
@@ -2024,6 +2068,15 @@ impl App {
                     && self.context_menu.is_none()
                     && self.composer.context.is_none()
                 {
+                    if !focused && self.find_message.open {
+                        return widget::operation::is_focused("find-message").map(move |focused| {
+                            Message::Find(find_message::Message::GuardedKey(
+                                key.clone(),
+                                modifiers,
+                                focused,
+                            ))
+                        });
+                    }
                     return self.key(key, modifiers, focused);
                 }
             }
@@ -2322,6 +2375,8 @@ impl App {
                 self.save_preferences();
             }
             Message::ConversationMessage(id) => {
+                self.focused_input = None;
+                self.pending_focus = None;
                 if self.conversation.page.rows.iter().any(|mail| mail.id == id) {
                     if self.reader_id() == Some(&id) {
                         self.conversation.collapsed = !self.conversation.collapsed;
@@ -2774,6 +2829,9 @@ impl App {
         }
 
         if key == Key::Named(keyboard::key::Named::Escape) && modifiers.is_empty() {
+            if self.dialog.is_none() && self.find_message.open {
+                return self.handle_find(find_message::Message::Close);
+            }
             if self.dialog.is_none() && self.full_reader {
                 if self.preferences.shortcuts.resolve("Escape") == Some(Action::ClosePreview) {
                     return self.handle(Message::ClosePreview);
@@ -2799,7 +2857,13 @@ impl App {
                     chord
                         .as_deref()
                         .and_then(|k| self.preferences.shortcuts.resolve(k)),
-                    Some(Action::Search | Action::Mail | Action::Calendar | Action::Settings)
+                    Some(
+                        Action::Search
+                            | Action::Find
+                            | Action::Mail
+                            | Action::Calendar
+                            | Action::Settings
+                    )
                 ))
         {
             return Task::none();
@@ -2844,6 +2908,7 @@ impl App {
             .and_then(|k| self.preferences.shortcuts.resolve(k))
         {
             return match action {
+                Action::Find => self.handle_find(find_message::Message::Open),
                 Action::Search => {
                     self.focused_input = None;
                     self.tab = Tab::Mail;
@@ -3007,6 +3072,18 @@ impl App {
                 .as_ref()
                 .is_some_and(|d| self.html_quotes_hidden(d))
         );
+        data["find_open"] = serde_json::json!(self.find_message.open);
+        data["find_query"] = serde_json::json!(self.find_message.query);
+        data["find_match_case"] = serde_json::json!(self.find_message.match_case);
+        data["find_pending"] = serde_json::json!(self.find_message.pending);
+        data["find_active"] = serde_json::json!(self.find_message.active);
+        data["find_count"] = serde_json::json!(
+            self.find_message
+                .results
+                .as_ref()
+                .map_or(0, |r| r.matches.len())
+        );
+        data["find_error"] = serde_json::json!(self.find_message.error);
         data["html_ready"] = serde_json::json!(self.html_reader.frame.is_some());
         data["html_formatted"] =
             serde_json::json!(self.detail.as_ref().is_some_and(|d| self.formatted(d)));

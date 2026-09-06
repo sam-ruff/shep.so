@@ -49,6 +49,8 @@ pub enum Input {
     Pointer(u64, Pointer, f32, f32),
     Copy(u64),
     Image(u64, String, Arc<[u8]>),
+    Find(u64, u64, String, bool),
+    PlainFind(crate::message_find::plain::Request),
     Clear,
 }
 #[derive(Debug, Clone, Copy)]
@@ -80,6 +82,13 @@ pub enum Event {
     Copy(u64, String),
     Link(u64, String),
     Error(u64, String),
+    Found(
+        u64,
+        u64,
+        u64,
+        Result<Arc<crate::message_find::Results>, String>,
+    ),
+    PlainFound(u64, Result<Arc<crate::message_find::Results>, String>),
 }
 pub fn subscription() -> impl futures::Stream<Item = Event> {
     iced::stream::channel(4, |mut output: mpsc::Sender<Event>| async move {
@@ -95,10 +104,22 @@ fn emit(output: &mut mpsc::Sender<Event>, event: Event) -> bool {
 }
 fn worker(mut input: commands::Receiver<Input>, mut output: mpsc::Sender<Event>) {
     let mut next = None;
+    let mut plain_fonts = None;
     loop {
         let Some(command) = next.take().or_else(|| input.blocking_recv()) else {
             return;
         };
+        if let Input::PlainFind(request) = command {
+            if request.current.load(std::sync::atomic::Ordering::Relaxed) != request.revision {
+                continue;
+            }
+            let fonts = plain_fonts.get_or_insert_with(crate::message_find::plain::fonts);
+            let result = crate::message_find::plain::find(fonts, &request).map(Arc::new);
+            if !emit(&mut output, Event::PlainFound(request.revision, result)) {
+                return;
+            }
+            continue;
+        }
         let Input::Load {
             generation,
             body,
@@ -175,6 +196,8 @@ fn document(
     let mut repaint = true;
     let mut buffered = None;
     let mut layout_revision = 1;
+    let mut find: Option<(u64, String, bool)> = None;
+    let mut find_pending = false;
     loop {
         if repaint {
             let pixels = {
@@ -230,17 +253,32 @@ fn document(
             }
             repaint = false;
         }
+        if find_pending {
+            if let Some((revision, query, match_case)) = &find {
+                let result = selection
+                    .find(query, *match_case, &measure)
+                    .map(Arc::new)
+                    .map_err(|error| error.to_string());
+                if !emit(
+                    output,
+                    Event::Found(generation, *revision, layout_revision, result),
+                ) {
+                    return Ok(None);
+                }
+            }
+            find_pending = false;
+        }
         let Some(mut command) = buffered.take().or_else(|| input.blocking_recv()) else {
             return Ok(None);
         };
         while matches!(
             command,
-            Input::View(..) | Input::Pointer(_, Pointer::Move, ..)
+            Input::View(..) | Input::Find(..) | Input::Pointer(_, Pointer::Move, ..)
         ) {
             let Ok(next) = input.try_recv() else {
                 break;
             };
-            let compatible = matches!((&command, &next), (Input::View(a, ..), Input::View(b, ..)) | (Input::Pointer(a, Pointer::Move, ..), Input::Pointer(b, Pointer::Move, ..)) if a == b);
+            let compatible = matches!((&command, &next), (Input::View(a, ..), Input::View(b, ..)) | (Input::Find(a, ..), Input::Find(b, ..)) | (Input::Pointer(a, Pointer::Move, ..), Input::Pointer(b, Pointer::Move, ..)) if a == b);
             if compatible {
                 command = next;
             } else {
@@ -249,7 +287,11 @@ fn document(
             }
         }
         match command {
-            Input::Load { .. } | Input::Clear => return Ok(Some(command)),
+            Input::Find(id, revision, query, match_case) if id == generation => {
+                find = Some((revision, query, match_case));
+                find_pending = true;
+            }
+            Input::Load { .. } | Input::PlainFind(..) | Input::Clear => return Ok(Some(command)),
             Input::View(id, size, top) if id == generation && top.is_finite() => {
                 let size = size.validate()?;
                 if size != viewport {
@@ -264,6 +306,7 @@ fn document(
                     let _ = document.render(viewport.width as f32);
                     selection.layout(&document);
                     layout_revision += 1;
+                    find_pending = true;
                 }
                 pan = pan.min((document.width() - viewport.width as f32).max(0.));
                 scroll = top.clamp(0., (document.height() - viewport.height as f32).max(0.));
@@ -281,6 +324,7 @@ fn document(
                 let _ = document.render(viewport.width as f32);
                 selection.layout(&document);
                 layout_revision += 1;
+                find_pending = true;
                 pan = pan.min((document.width() - viewport.width as f32).max(0.));
                 scroll = scroll.min((document.height() - viewport.height as f32).max(0.));
                 repaint = true;
@@ -355,6 +399,7 @@ fn document(
                     let _ = document.render(viewport.width as f32);
                     selection.layout(&document);
                     layout_revision += 1;
+                    find_pending = true;
                     repaint = true;
                 }
             }
