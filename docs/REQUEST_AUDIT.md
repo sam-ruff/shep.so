@@ -14,7 +14,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R08 | Create GitHub repo under corrected owner sam-ruff, direct main pushes authorized; push completed code | Repo/main pushes delivered; ongoing shipping obligation |
 | R09 | Semantic release CI, unit/E2E/MCP tests, fmt/Clippy pre-commit and CI, batchable MCP with short waits, repo test skill, all AI scenarios automated, document testing/releases in AGENTS, disable GitHub CI but retain files | Delivered baseline; quality/release remain dormant. A separate concurrent documentation task recorded authorization for docs CI/Pages in AGENTS; no quality/release enablement is authorized here |
 | R10 | Linux release installer and desktop/dash launcher | Delivered and release/installer tested; install each verified update |
-| R11 | Flagging, filtering and sorting | Delivered; optimistic flag/read UI requested later remains open (R50) |
+| R11 | Flagging, filtering and sorting | Delivered, including optimistic flag/read in 742b21e; remaining app-wide interaction work is tracked under R50 |
 | R12 | Load app as user with Fastmail and debug sync; independent IMAP/POP3 and SMTP wizards with SSL/TLS, authentication and connection tests; supplied Fastmail settings | Delivered baseline; authorized read-only Fastmail diagnosis found FETCH syntax issue. New A. Keep move report in R47 |
 | R13 | Block remote images by default; Block all / Contacts / Allow all; allow this email/sender/domain bar when blocked | Delivered with preferences, security and native tests |
 | R14 | Explain/fix empty calendar dropdown; better event editor; double-click calendar to add an all-day event; use vertical space well | Delivered with no-calendar connection state, all-day/range editor and native tests |
@@ -53,7 +53,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R47 | Cannot move out of A. Keep into Inbox; display Inbox rather than INBOX | In progress; local metadata confirms folders exist, native return-move and wire/logout tests exist; actual reported personal-account cause not confirmed |
 | R48 | I goes to Inbox only with sidebar focus; remappable and disableable | Delivered in 590ab10, including sidebar/list focus and native disable/remap tests |
 | R49 | Drive appDataFolder continuously syncs accounts and as many settings as possible; first-time offer/toggle; existing cloud setup automatically loads on another PC | Open; credential-protection preference question pending |
-| R50 | Flagging immediately reflects UI intent before database/network save; apply same treatment elsewhere appropriate | Open; must handle rapid edits, failures and stale acknowledgments |
+| R50 | Flagging immediately reflects UI intent before database/network save; apply same treatment elsewhere appropriate | Flags/read/same-account moves delivered 742b21e; cross-account source feedback and typed results delivered 9c907d2; filtered destination projection, other controls and durable recovery remain open |
 | R51 | Remove newly added tooltips from text-labeled controls; tooltips only on icons | Delivered in 590ab10, labeled controls unwrapped and native visual checks |
 | R52 | Tooltip shows primary shortcut only; disable all tooltips or keyboard hints independently; searchable Preferences | Delivered in 590ab10; both tooltip toggles, primary-only hints, settings index/direct section navigation and native light/dark/compact tests |
 | R53 | Sync mail becomes refresh icon at top right | Delivered in 590ab10; mouse sync/busy/navigation native tests |
@@ -62,16 +62,15 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R56 | No root log files; delete accidental ones | Ongoing requirement; all current agent logs use ignored artifacts/logs |
 | R57 | Preload messages, adjacent emails and next pages; WebP for image loading | Delivered baseline; maintain while large-mail/HTML work proceeds |
 | R58 | Additional useful features required | Existing sender actions, outgoing recovery, conversations, connection removal and calendar discovery delivered; Forward/Print/selection/settings sync remain explicit open requests |
-
-| R60 | Immediate optimistic archive/move and app-wide reversible-action feedback; persist principle in AGENTS.md | Principle recorded; implementation open under R50/R60 |
+| R60 | Immediate optimistic archive/move and app-wide reversible-action feedback; persist principle in AGENTS.md | Principle recorded; immediate flags/read/moves delivered in 742b21e and 9c907d2, with remaining reconciliation/recovery under R50/R60 |
 | R61 | Raw GitHub installers for Linux/macOS/Windows, user-local default, optional system install and app menus; first install commands in README/docs | Recorded, open |
 | R62 | Fix nonworking read/unread and add integration coverage for basic mail behavior | Delivered 742b21e; IMAP NO detection, selective flags, dispatcher/cache/reopen/native coverage |
 | R64 | Transparent GNOME desktop icon matching system theme | Recorded, open |
-| R63 | Fix shortcut × and extend native E2E coverage across functionality paths | Clear controls delivered 742b21e with per-slot persistence and native tests; final functionality coverage audit remains open |
+| R63 | Fix shortcut × and extend native E2E coverage across functionality paths | Clear controls delivered 742b21e; native search-focus isolation for default/remapped mail actions and wrong-row clear regression delivered 9c907d2; final functionality coverage audit remains open |
 | R65 | Frequent background sync (user prioritizes rapid arrival), immediate startup check and independent manual Refresh | Delivered d4ecb21; 15-second default, saved seconds interval, independent coalescing refresh, virtual-time and native arrival/retry tests |
 | R66 | Record Dungeonwalk vectoriser/remove.bg credential discovery in AGENTS.md | Delivered 742b21e; discovery pointer only, no keys copied |
-| R67 | Select an inbox message, then click away to count it as read | Open; tracked in TODO with optimistic save and explicit-unread protection |
-| R68 | Refreshing counted toast with Undo for archive, delete and move | Open; immediate feedback, repeated-action counts and failure reconciliation in TODO |
+| R67 | Select an inbox message, then click away to count it as read | Delivered 9c907d2: deliberate selection, immediate read-on-leave, explicit-unread protection, rollback and native navigation tests |
+| R68 | Refreshing counted toast with Undo for archive, delete and move | Immediate counted feedback, refreshed lifetime, dismissal and failure reconciliation delivered 9c907d2; Undo remains open |
 | R59 | Investigate and fix the newly failed CI build | Delivered eea1dfb; strict local build and GitHub run 34026001754 passed |
 
 The main omissions were already present in the completion log but were not an adequate live checklist: faithful HTML, local encryption/large-mail streaming, folder trees/mutations, inline multiple drafts/discard, palette editing, multiple backup targets and continuous settings/account sync. The newer bulk-selection, drag/drop, find, optimistic feedback, tooltip/settings-search and context-menu requests are now explicit TODO entries. Passing the existing suite does not close them.
