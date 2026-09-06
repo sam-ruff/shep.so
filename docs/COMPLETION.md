@@ -299,3 +299,6 @@ Reviewed evidence includes the four wrapped files and reopened composer at `arti
 
 
 The optimized production package passes checksum, extraction and bundled-installer verification. The Linux user installation matches the release binary at SHA-256 `a270f17cc51c2bb15cd5051389b7c5aca0c8e93df967f1507b588d5a7db10128`. Personal windows remain running and need reopening for this build. Publication is recorded below after pushing; the full-product goal remains active.
+
+
+Shipped as `9062dcf656ec22df438c4eabbcdebfa376be7739` on main. R41 Forward is complete and removed from TODO. R41 Print and all other remaining requests stay open; the full-product goal remains active. Quality/release workflows remain disabled as requested, and performance measurements remain deferred.
