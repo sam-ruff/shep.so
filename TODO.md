@@ -30,7 +30,6 @@ Active requests from this chat. Add new requests here immediately, including cor
 - [ ] **R30 — Folder trees:** nested folders form collapsible groups, collapsed by default, honoring each IMAP hierarchy delimiter and nonselectable parents.
 - [ ] **R30 — Folder context menus:** delete folders and move them inside another folder; review destructive scope, keep account/server/cache state consistent, and test failure/retry behavior.
 - [ ] **R35 — Inline composer:** new messages/replies open in the preview pane; autosave while typing and support switching among multiple drafts and received mail without losing content, recipients or attachments.
-- [ ] **R36 — Draft navigation:** a collapsible Drafts group, right-click deletion, and a discard bin in the draft editor. The discard confirmation button must be red (latest screenshot correction). Delete cached attachments and prevent delayed autosaves from resurrecting discarded drafts.
 
 ## Account/settings sync and backups
 

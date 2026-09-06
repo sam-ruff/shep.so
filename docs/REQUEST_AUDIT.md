@@ -39,7 +39,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R33 | Separate Contacts Preferences section | Delivered |
 | R34 | Save-success toast and slightly depressed button state | Delivered, with acknowledgment-based toast and failure preservation |
 | R35 | Compose in preview pane, autosave while typing, read other mail and work on several replies/drafts | Autosave delivered; inline/multiple-draft UX open |
-| R36 | Collapsible Drafts group, right-click delete, discard bin in draft editor; red discard confirmation button | Open; must prevent stale saves from restoring deleted drafts |
+| R36 | Collapsible Drafts group, right-click delete, discard bin in draft editor; red discard confirmation button | Delivered 5aab267; collapsed preference, context/bin review, red confirmation, retirement/rollback/outgoing tests and native flows |
 | R37 | Shortcut hints for buttons | Superseded by R51/R52: icon-only tooltip, primary key only and toggles |
 | R38 | Render HTML like supplied examples, including the later raw-XHTML tags; preserve layout/images and selectable text | Native plain/quoted text selection delivered in 590ab10; faithful HTML remains open |
 | R39 | Delete shortcut and optional second binding; final defaults Ctrl+D → Trash, Backspace + Delete → Archive; all remappable | Delivered in 590ab10: versioned slots/migration, conflict and native tests; older Delete-to-Trash default superseded |
