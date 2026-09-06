@@ -117,3 +117,14 @@ The prototype fixture's Forward arrow is near x=835,y=784 after its four attachm
 
 
 Print flows use `desktop.start(print_browser="pdf" | "dialog" | "fail")`, with Chrome/Chromium and Poppler installed. The harness owns a fresh profile, explicitly uses X11, and never opens the personal browser. Drive the actual footer icon or Mod+P. `print_output` checks an actual browser-created PDF using count/text/minimum pages and saves a first-page WebP; `browser_screenshot` captures the isolated display, `cancel_print` presses native Escape, and `focus_app` restores native Shep input. Observe `print_pending`, `print_revision` and `print_source` only. Test full formatted/plain/long output, source identity while navigating, retry, shortcut isolation and compact dark attachment wrapping. Review subject/sender headers and CID images in the PDF, plus the real printer dialog before cancellation. The current shortcut rows at the bottom are Print y=780, Forward y=720, Find y=660, Inbox y=600, Delete y=540, without a bottom notice. Keep the saved native equivalents and do not interpret launch completion as a printing receipt.
+
+
+For HTML frame preparation, use html_mail=true and wait for html_view_current,
+which confirms the displayed frame matches the current native viewport/scroll.
+The html_cache_ids, html_cache_hits and html_cache_bytes observations establish
+bounded neighbor preparation without timing claims. Save rapid navigation,
+End/Home, pane drag and compact resize as automated equivalents; verify selected
+text belongs to the final message. Preserve image-policy, quote and Find flows.
+The refresh-icon scenario captures Mail and Calendar in light/dark and compact
+layouts, including a pending mail refresh. Inspect the icon geometry in the
+actual WebP captures, rather than relying on state assertions alone.

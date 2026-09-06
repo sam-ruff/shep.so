@@ -760,9 +760,6 @@ impl App {
             if let Some(error) = &self.html_reader.error {
                 reading = reading.push(muted(error));
             } else {
-                if self.html_reader.frame.is_none() {
-                    reading = reading.push(muted("Opening formatted message…"));
-                }
                 reading = reading.push(self.find_highlights(detail, 0, self.html_canvas()));
             }
             if detail.html.as_ref().is_some_and(|h| h.has_quotes)

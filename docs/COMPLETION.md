@@ -323,3 +323,65 @@ The optimized user installation and release binary match SHA-256 `a8c928de57d867
 
 
 Shipped as `b120721e6c6c3314becf47605be19f8922225cc2` on main. R41 Print is complete and removed from TODO; its platform/browser execution limits remain explicit above and under R01/R06. The full-product goal remains active. The repository skill and AGENTS.md now describe the print harness, actual PDF evidence, X11/profile isolation and the updated shortcut positions.
+
+
+## 2026-09-06 — Refresh geometry and prepared HTML frames
+
+The shared Mail/Calendar refresh SVG now joins its circular strokes to both
+arrowheads. The previous path left disconnected segments. Saved native scenarios
+exercise refresh while navigating and capture light/dark, 900×640 and 120%
+interface scaling. Reviewed evidence is under `artifacts/e2e/4820b8a914ff/` and
+`artifacts/e2e/2b315964044a/`. The supplied browser crop's exact location remains
+unconfirmed; these checks establish the native controls specifically.
+
+HTML now waits for the actual canvas viewport before its first Load and keeps
+Find behind that Load. Loading stays inside the body allocation. Current-message
+frames for obsolete viewport/scroll geometry cannot replace the displayed frame;
+resource discovery survives rejection, and incompatible width/scale bitmaps
+are never stretched into a new layout. Each renderer reuses its own font system
+across documents, without locking iced's fonts. Same-size repaints clear/reuse
+the pixel allocation, and redundant unchanged viewport requests skip repainting.
+
+A separate background worker prepares the first viewport of up to two adjacent,
+already cached messages. Its replaceable mailbox drops obsolete queued work.
+The UI retains at most four prepared frames / 32 MiB, keyed by message/body,
+geometry, font, quotes, image permissions and cached-image revision. Preparation
+never fetches resources; permitted cached WebP bytes decode only if the document
+uses them. Document handles, glyphs and decoded resources remain isolated. The
+active renderer remains available independently and builds the selection/Find
+state after a prepared frame is shown.
+
+All 294 Rust tests pass (two opt-in live diagnostics ignored), along with all 24
+Python tests, formatting and all-target/all-feature Clippy with warnings denied.
+Five new Rust tests cover geometry/Find ordering, stale-frame isolation, image
+permission/source/layout cache keys, bounded LRU behavior and replaceable
+preparation with seeded images. Three saved native scenarios pass; the scaled
+scenario was corrected after visual inspection of the actual upward-opening
+preferences menu. The HTML flow verifies a cache hit before adjacent-message
+navigation, final-message text after rapid selection, End/Home, pane dragging
+and compact resize. Reviewed evidence is in `artifacts/e2e/5eba7ad959ed/`.
+
+The full native suite, optimized installation and publication are recorded below
+after completion. R69 remains open for late-discovered image/horizontal controls,
+compact reading space above wrapped attachments and remaining visual readiness
+work. R70 badges and the rest of the full product backlog remain open. No latency
+claim is inferred from these functional tests; performance measurements stay
+deferred and quality/release workflows stay disabled. Logs use
+`artifacts/logs/html-preparation-*`.
+
+
+The complete native run passes all 98 functional scenarios in one run, including
+existing HTML selection/Find/quotes/images, wrapped attachments, forwarding and
+actual browser printing, context menus, read/unread, immediate toasts and Undo.
+The log is `artifacts/logs/html-preparation-full-native.log`. Additional reviewed
+captures include `artifacts/e2e/7c888b317ab3/` (dark/compact HTML) and
+`artifacts/e2e/e5674c505059/html-wide-table-right.webp` (horizontal panning).
+No performance measurements were run.
+
+
+The optimized production package passes SHA-256, extraction and bundled-installer
+verification. The user installation matches `target/release/shep` at SHA-256
+`72db7cbaf528a24a2bcb9a2a628836f13b144279537271bc0a0e4fe7a3d20dbe`.
+Existing personal windows remain open and need reopening for the new build.
+Strict documentation validation passes. No root logs were created. Publication
+is recorded below after the authorized main push.

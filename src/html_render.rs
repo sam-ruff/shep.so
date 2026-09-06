@@ -1,12 +1,25 @@
 //! HTML layout and rasterization live on an owned worker thread. iced receives
 //! immutable viewport frames and small input results through bounded channels.
 mod container;
+pub mod preparation;
 mod selection;
 use crate::email_content::HtmlBody;
 use futures::{SinkExt, channel::mpsc};
 use litehtml::{Document, DrawContext, Position};
 use selection::Selection;
 use std::sync::Arc;
+type Fonts = shep_html_pixbuf::FontSystem;
+fn fonts() -> Fonts {
+    shep_html_pixbuf::new_font_system()
+}
+
+#[derive(Debug, Clone)]
+pub struct Source {
+    pub body: Arc<HtmlBody>,
+    pub font_size: u16,
+    pub hide_quotes: bool,
+    pub images: Vec<(String, Arc<[u8]>)>,
+}
 use tokio::sync::mpsc as commands;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -40,6 +53,7 @@ pub enum Input {
         viewport: Viewport,
         font_size: u16,
         hide_quotes: bool,
+        images: Vec<(String, Arc<[u8]>)>,
     },
     Resize(u64, Viewport),
     View(u64, Viewport, f32),
@@ -74,6 +88,14 @@ pub struct Frame {
     pub scroll: f32,
     pub images: Vec<String>,
 }
+impl Frame {
+    pub fn matches_view(&self, viewport: Viewport, top: f32) -> bool {
+        self.viewport == viewport
+            && (self.scroll - top.clamp(0., (self.content_height - viewport.height as f32).max(0.)))
+                .abs()
+                < 1.
+    }
+}
 #[derive(Debug, Clone)]
 pub enum Event {
     Ready(commands::Sender<Input>),
@@ -105,6 +127,7 @@ fn emit(output: &mut mpsc::Sender<Event>, event: Event) -> bool {
 fn worker(mut input: commands::Receiver<Input>, mut output: mpsc::Sender<Event>) {
     let mut next = None;
     let mut plain_fonts = None;
+    let mut html_fonts = None;
     loop {
         let Some(command) = next.take().or_else(|| input.blocking_recv()) else {
             return;
@@ -126,16 +149,21 @@ fn worker(mut input: commands::Receiver<Input>, mut output: mpsc::Sender<Event>)
             viewport,
             font_size,
             hide_quotes,
+            images,
         } = command
         else {
             continue;
         };
         match document(
             generation,
-            body,
+            Source {
+                body,
+                font_size,
+                hide_quotes,
+                images,
+            },
             viewport,
-            font_size,
-            hide_quotes,
+            html_fonts.get_or_insert_with(fonts).clone(),
             &mut input,
             &mut output,
         ) {
@@ -158,15 +186,20 @@ fn worker(mut input: commands::Receiver<Input>, mut output: mpsc::Sender<Event>)
 }
 fn document(
     generation: u64,
-    body: Arc<HtmlBody>,
+    source: Source,
     mut viewport: Viewport,
-    font_size: u16,
-    hide_quotes: bool,
+    fonts: Fonts,
     input: &mut commands::Receiver<Input>,
     output: &mut mpsc::Sender<Event>,
 ) -> anyhow::Result<Option<Input>> {
     viewport.validate()?;
-    let surface = container::Surface::new(viewport.width, viewport.height, viewport.scale);
+    let Source {
+        body,
+        font_size,
+        hide_quotes,
+        images,
+    } = source;
+    let surface = container::Surface::new(viewport.width, viewport.height, viewport.scale, fonts);
     let mut container = surface.clone();
     let font_size = font_size.clamp(11, 26);
     let source = format!(
@@ -183,6 +216,8 @@ fn document(
                 .load_image_data(&format!("cid:{cid}"), &webp);
         }
     }
+    // These are already validated, cached WebP bytes; never fetch resources here.
+    surface.seed_images(images);
     let measure = surface.0.borrow().text_measure_fn();
     let mut document = Document::from_html(&source, &mut container, None, quotes)
         .map_err(|_| anyhow::anyhow!("HTML parsing failed."))?;
@@ -229,6 +264,7 @@ fn document(
                 Arc::from(pixels)
             };
             let frame = {
+                let used_seeded_images = surface.used_seeded_images();
                 let mut surface = surface.0.borrow_mut();
                 Frame {
                     generation,
@@ -245,6 +281,7 @@ fn document(
                         .take_pending_images()
                         .into_iter()
                         .map(|(url, _)| url)
+                        .chain(used_seeded_images)
                         .collect(),
                 }
             };
@@ -294,6 +331,11 @@ fn document(
             Input::Load { .. } | Input::PlainFind(..) | Input::Clear => return Ok(Some(command)),
             Input::View(id, size, top) if id == generation && top.is_finite() => {
                 let size = size.validate()?;
+                if size == viewport
+                    && scroll == top.clamp(0., (document.height() - size.height as f32).max(0.))
+                {
+                    continue;
+                }
                 if size != viewport {
                     viewport = size;
                     surface.0.borrow_mut().resize_with_scale(

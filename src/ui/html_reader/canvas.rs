@@ -76,13 +76,13 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
         }
         let bounds = layout.bounds();
         let visible = bounds.intersection(viewport);
-        if let Some(clip) = visible {
+        {
             let size = Viewport {
                 width: bounds.width.ceil().max(1.) as u32,
                 height: viewport.height.ceil().max(1.) as u32,
                 scale: self.scale,
             };
-            let top = (clip.y - bounds.y).max(0.).floor();
+            let top = (viewport.y - bounds.y).max(0.).floor();
             if state.geometry != Some((size, top)) {
                 state.geometry = Some((size, top));
                 shell.publish(Message::Html(HtmlMessage::Input(Input::View(
@@ -185,7 +185,10 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
         let Some(clip) = bounds.intersection(viewport) else {
             return;
         };
-        if let (Some(frame), Some(handle)) = (&self.state.frame, &self.state.handle) {
+        if let (Some(frame), Some(handle)) = (&self.state.frame, &self.state.handle)
+            && frame.viewport.width == bounds.width.ceil().max(1.) as u32
+            && (frame.viewport.scale - self.scale).abs() < 0.001
+        {
             renderer.with_layer(clip, |renderer| {
                 renderer.draw_image(
                     image::Image::new(handle.clone()),
@@ -216,6 +219,31 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
                                 .scale_alpha(0.3),
                         );
                     }
+                }
+            });
+        } else {
+            // Loading occupies the body itself; it must not add/remove a row
+            // above the document when the first frame arrives.
+            renderer.with_layer(clip, |renderer| {
+                for (i, fraction) in [0.66, 0.9, 0.78].into_iter().enumerate() {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: bounds.x,
+                                y: bounds.y + 12. + i as f32 * 24.,
+                                width: bounds.width * fraction,
+                                height: 7.,
+                            },
+                            border: iced::Border {
+                                radius: 3.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                        super::super::components::colors(theme)
+                            .muted
+                            .scale_alpha(0.12),
+                    );
                 }
             });
         }

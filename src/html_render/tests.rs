@@ -12,7 +12,7 @@ async fn next(rx: &mut mpsc::Receiver<Event>) -> Event {
 #[tokio::test]
 async fn find_uses_visible_text_across_styles_and_rebuilds_after_wrapping() {
     let (tx, mut rx, thread) = start();
-    tx.send(Input::Load { generation: 90, body: body("<p>CAFÉ <b>project</b> plan and café project plan.</p><blockquote>Invisible project plan</blockquote><p style='display:none'>Hidden project plan</p><p>Literal [a.*] Σ σ ς</p>"), viewport: viewport(), font_size: 14, hide_quotes: true }).await.unwrap();
+    tx.send(Input::Load { generation: 90, body: body("<p>CAFÉ <b>project</b> plan and café project plan.</p><blockquote>Invisible project plan</blockquote><p style='display:none'>Hidden project plan</p><p>Literal [a.*] Σ σ ς</p>"), viewport: viewport(), font_size: 14, hide_quotes: true, images: Vec::new() }).await.unwrap();
     assert!(matches!(next(&mut rx).await, Event::Frame(_)));
     tx.send(Input::Find(90, 1, "café project plan".into(), false))
         .await
@@ -83,7 +83,7 @@ fn start() -> (
 #[tokio::test]
 async fn html_table_styles_render_and_long_documents_keep_viewport_sized_frames() {
     let (tx, mut rx, thread) = start();
-    tx.send(Input::Load { generation: 1, body: body("<html><body><table style=\"width:100%;border-collapse:collapse\"><tr><td style=\"background:#ff0000;height:70px;width:50%\">First cell</td><td style=\"background:#0000ff\">Second cell</td></tr></table><div style=\"height:20000px\">Long message</div><p>Last line</p></body></html>"), viewport: viewport(), font_size: 14, hide_quotes: false }).await.unwrap();
+    tx.send(Input::Load { generation: 1, body: body("<html><body><table style=\"width:100%;border-collapse:collapse\"><tr><td style=\"background:#ff0000;height:70px;width:50%\">First cell</td><td style=\"background:#0000ff\">Second cell</td></tr></table><div style=\"height:20000px\">Long message</div><p>Last line</p></body></html>"), viewport: viewport(), font_size: 14, hide_quotes: false, images: Vec::new() }).await.unwrap();
     let Event::Frame(first) = next(&mut rx).await else {
         panic!("Expected rendered frame");
     };
@@ -120,7 +120,7 @@ async fn html_table_styles_render_and_long_documents_keep_viewport_sized_frames(
 #[tokio::test]
 async fn resources_are_reported_without_fetching_and_rejected_documents_can_be_replaced() {
     let (tx, mut rx, thread) = start();
-    tx.send(Input::Load { generation: 7, body: body("<html><head><style>@import url('https://invalid.example/private.css');</style><script>fetch('https://invalid.example/secret')</script></head><body><img src=\"file:///etc/passwd\" width=20 height=20><img src=\"https://invalid.example/tracker.png\" width=20 height=20>Safe text</body></html>"), viewport: viewport(), font_size: 14, hide_quotes: false }).await.unwrap();
+    tx.send(Input::Load { generation: 7, body: body("<html><head><style>@import url('https://invalid.example/private.css');</style><script>fetch('https://invalid.example/secret')</script></head><body><img src=\"file:///etc/passwd\" width=20 height=20><img src=\"https://invalid.example/tracker.png\" width=20 height=20>Safe text</body></html>"), viewport: viewport(), font_size: 14, hide_quotes: false, images: Vec::new() }).await.unwrap();
     let Event::Frame(frame) = next(&mut rx).await else {
         panic!();
     };
@@ -142,6 +142,7 @@ async fn resources_are_reported_without_fetching_and_rejected_documents_can_be_r
         },
         font_size: 14,
         hide_quotes: false,
+        images: Vec::new(),
     })
     .await
     .unwrap();
@@ -152,6 +153,7 @@ async fn resources_are_reported_without_fetching_and_rejected_documents_can_be_r
         viewport: viewport(),
         font_size: 14,
         hide_quotes: false,
+        images: Vec::new(),
     })
     .await
     .unwrap();
@@ -171,6 +173,7 @@ async fn selection_copy_inline_images_quotes_and_links_share_the_actual_html_lay
         viewport: viewport(),
         font_size: 14,
         hide_quotes: true,
+        images: Vec::new(),
     })
     .await
     .unwrap();
@@ -222,6 +225,7 @@ async fn selection_copy_inline_images_quotes_and_links_share_the_actual_html_lay
         },
         font_size: 18,
         hide_quotes: false,
+        images: Vec::new(),
     })
     .await
     .unwrap();
@@ -275,6 +279,7 @@ async fn image_css_size_position_repeat_and_device_scale_are_applied_before_clip
             },
             font_size: 14,
             hide_quotes: false,
+            images: Vec::new(),
         })
         .await
         .unwrap();
@@ -308,7 +313,7 @@ async fn image_css_size_position_repeat_and_device_scale_are_applied_before_clip
 #[tokio::test]
 async fn fixed_width_tables_pan_without_allocating_full_document_rasters() {
     let (tx, mut rx, thread) = start();
-    tx.send(Input::Load {generation: 1, body: body("<table style=\"width:1000px;border-collapse:collapse\"><tr><td style=\"width:500px;height:60px;background:red\">Left column</td><td style=\"width:500px;background:blue\">Right column</td></tr></table>"), viewport: viewport(), font_size:14, hide_quotes:false}).await.unwrap();
+    tx.send(Input::Load {generation: 1, body: body("<table style=\"width:1000px;border-collapse:collapse\"><tr><td style=\"width:500px;height:60px;background:red\">Left column</td><td style=\"width:500px;background:blue\">Right column</td></tr></table>"), viewport: viewport(), font_size:14, hide_quotes:false, images: Vec::new()}).await.unwrap();
     let Event::Frame(first) = next(&mut rx).await else {
         panic!()
     };

@@ -29,6 +29,13 @@ struct FontData {
     metrics: FontMetrics,
 }
 
+/// Font discovery shared only by containers on one renderer thread.
+pub type FontSystem = Rc<RefCell<cosmic_text::FontSystem>>;
+
+pub fn new_font_system() -> FontSystem {
+    Rc::new(RefCell::new(cosmic_text::FontSystem::new()))
+}
+
 /// A pixel buffer rendering backend that implements [`DocumentContainer`].
 ///
 /// Uses `tiny-skia` for 2D drawing primitives and `cosmic-text` for text
@@ -73,13 +80,29 @@ impl PixbufContainer {
     /// (`width * scale_factor`, `height * scale_factor`), while the viewport
     /// stores the logical size. At scale 1.0 this behaves identically to `new()`.
     pub fn new_with_scale(width: u32, height: u32, scale_factor: f32) -> Self {
+        Self::with_font_system(
+            width,
+            height,
+            scale_factor,
+            Rc::new(RefCell::new(cosmic_text::FontSystem::new())),
+        )
+    }
+
+    /// Reuse font discovery on one renderer thread. Document font handles,
+    /// glyph bitmaps and resource maps remain local to this container.
+    pub fn with_font_system(
+        width: u32,
+        height: u32,
+        scale_factor: f32,
+        font_system: Rc<RefCell<cosmic_text::FontSystem>>,
+    ) -> Self {
         let phys_w = ((width as f32) * scale_factor).ceil() as u32;
         let phys_h = ((height as f32) * scale_factor).ceil() as u32;
         let pixmap =
             tiny_skia::Pixmap::new(phys_w.max(1), phys_h.max(1)).expect("failed to create pixmap");
         Self {
             pixmap,
-            font_system: Rc::new(RefCell::new(cosmic_text::FontSystem::new())),
+            font_system,
             swash_cache: RefCell::new(cosmic_text::SwashCache::new()),
             fonts: Rc::new(RefCell::new(HashMap::new())),
             next_font_id: 1,
@@ -216,8 +239,12 @@ impl PixbufContainer {
         self.scale_factor = scale_factor;
         let phys_w = ((width as f32) * scale_factor).ceil() as u32;
         let phys_h = ((height as f32) * scale_factor).ceil() as u32;
-        self.pixmap =
-            tiny_skia::Pixmap::new(phys_w.max(1), phys_h.max(1)).expect("failed to create pixmap");
+        if self.pixmap.width() == phys_w.max(1) && self.pixmap.height() == phys_h.max(1) {
+            self.pixmap.data_mut().fill(0);
+        } else {
+            self.pixmap = tiny_skia::Pixmap::new(phys_w.max(1), phys_h.max(1))
+                .expect("failed to create pixmap");
+        }
         self.viewport.width = width as f32;
         self.viewport.height = height as f32;
         self.cached_clip_mask = None;

@@ -372,3 +372,29 @@ The saved native Print flows start `desktop.start(print_browser="pdf" | "dialog"
 Adding Print moves bottom-scrolled shortcut rows: Print y=780, Forward y=720, Find y=660, Inbox y=600 and Delete y=540 at 1440×920 without a bottom notice. Verify the actual presentation before adjusting coordinate tests. Performance measurements remain deferred; controlled preparation delays are correctness checks.
 
 References: [Window.print](https://developer.mozilla.org/en-US/docs/Web/API/Window/print), [iframe sandbox](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe), [srcdoc isolation](https://developer.mozilla.org/en-US/docs/Web/API/HTMLIFrameElement/srcdoc).
+
+
+## HTML frame preparation and geometry
+
+The first HTML Load waits for the native canvas viewport, including when the body
+is below the visible portion of the reader. Keep Find and input behind that Load.
+Reject obsolete generation/viewport/scroll frames before presenting them, while
+retaining their current-document resource discovery. Draw old frames only at
+compatible width/scale; never stretch a bitmap from different geometry. Loading
+indicators belong inside the body allocation rather than a temporary extra row.
+
+The interactive HTML worker retains its own font discovery across documents;
+never share iced's font lock. A separate speculative worker has a replaceable
+mailbox of at most two neighboring cached messages. Its first-frame cache holds
+at most four frames / 32 MiB, keyed by body signature, message identity, geometry,
+font, quote policy, image permission and cached-image revision. It performs no
+network requests and cannot use the interactive renderer's capacity. Seed only
+permitted cached WebP bytes, decoded lazily when that document references them.
+Keep document font handles, glyphs and decoded resources isolated. Same-size
+repaints clear/reuse the viewport allocation.
+
+The saved native preparation flow checks cache use, rapid selection, End/Home,
+pane drag and compact resize through actual input; observe html_view_current,
+html_cache_ids, html_cache_hits and html_cache_bytes. These are correctness
+observations, not latency measurements. Preserve existing selection, Find,
+quote/image-policy and delayed-action scenarios and review their WebP captures.
