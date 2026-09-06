@@ -117,6 +117,7 @@ struct Engine {
     calendar_locks: AccountLocks,
     google_connection_lock: Arc<tokio::sync::Mutex<()>>,
     passphrases: Arc<dyn backup::PassphraseStore>,
+    backup_uploads: Arc<tokio::sync::OnceCell<backup::journal::Journal>>,
 }
 type Output = futures::channel::mpsc::Sender<Event>;
 
@@ -171,6 +172,7 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             calendar_locks: Default::default(),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore),
+            backup_uploads: Default::default(),
         };
         let workspace = match engine.store.workspace().await {
             Ok(w) => w,
@@ -300,10 +302,9 @@ impl Engine {
                     directory: prefs.backup_folder.clone().into(),
                 })
             }
-            BackupDestination::GoogleDrive => Box::new(backup::DriveBackup {
-                google: self.google.clone(),
-                preferences: prefs.clone(),
-            }),
+            BackupDestination::GoogleDrive => {
+                Box::new(backup::DriveBackup::new(self.google.clone(), prefs.clone()))
+            }
         })
     }
     async fn execute(&self, command: Command, mut output: Output) -> anyhow::Result<()> {
@@ -646,14 +647,11 @@ impl Engine {
                 // is acknowledged. A delayed provider job must not overwrite settings.
                 let _guard = self.google_connection_lock.lock().await;
                 self.google.login(&prefs).await?;
+                let identity = backup::DriveBackup::new(self.google.clone(), prefs.clone())
+                    .account_identity()
+                    .await?;
                 self.store
-                    .update_preferences(|current| {
-                        current.google_connection_id = uuid::Uuid::new_v4().to_string();
-                        if current.backup_destination == BackupDestination::GoogleDrive {
-                            current.last_backup = None;
-                            current.backup_ready = false;
-                        }
-                    })
+                    .record_google_connection(prefs.google_client_id.clone(), identity)
                     .await?;
                 for source in self.google.calendars(&prefs).await? {
                     self.store.save_source(source).await?;
@@ -920,6 +918,7 @@ mod calendar_tests {
             calendar_locks: Default::default(),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore),
+            backup_uploads: Default::default(),
         }
     }
     fn event(source: &str) -> CalendarEvent {

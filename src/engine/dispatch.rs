@@ -129,7 +129,18 @@ impl Engine {
                     if key.as_ref().is_some_and(|k|busy.contains(k)){continue;}
                     if let Some(key)=&key{busy.insert(key.clone());let _=output.send(Event::Busy(key.clone(),true)).await;}
                     let engine=engine.clone();let output=output.clone();
-                    jobs.spawn(async move {let result=tokio::time::timeout(Duration::from_secs(600),engine.execute(command,output)).await.context("The operation timed out. Try again.").and_then(|r|r);(key,result)});
+                    jobs.spawn(async move {
+                        // Uploads have bounded HTTP requests and progress checks,
+                        // plus a durable journal. Do not cancel a healthy transfer
+                        // merely because the whole archive takes over ten minutes.
+                        let result = if matches!(&command, Command::Backup(..) | Command::AutomaticBackup(_)) {
+                            engine.execute(command, output).await
+                        } else {
+                            tokio::time::timeout(Duration::from_secs(600), engine.execute(command, output)).await
+                                .context("The operation timed out. Try again.").and_then(|result| result)
+                        };
+                        (key, result)
+                    });
                 }
                 _=timer.tick(),if !demo=>{
                     if let Ok(prefs)=engine.store.get::<Preferences>("preferences").await{
@@ -182,6 +193,7 @@ mod tests {
             calendar_locks: Default::default(),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore),
+            backup_uploads: Default::default(),
         };
         let (sender, input) = CommandSender::channel();
         let (output, mut events) = futures::channel::mpsc::channel(32);

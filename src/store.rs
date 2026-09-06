@@ -160,10 +160,36 @@ impl Store {
     where
         F: FnOnce(&mut Preferences) + Send + 'static,
     {
+        self.update_preferences_checked(move |value| {
+            update(value);
+            Ok(())
+        })
+        .await
+    }
+    pub async fn record_google_connection(
+        &self,
+        client_id: String,
+        identity: String,
+    ) -> anyhow::Result<PreferenceSnapshot> {
+        self.update_preferences_checked(move |current| {
+            anyhow::ensure!(current.google_client_id == client_id, "Google client details changed during sign-in. Reconnect Google with the current settings.");
+            let changed = current.google_connection_id != identity;
+            current.google_connection_id = identity;
+            if changed && current.backup_destination == BackupDestination::GoogleDrive {
+                current.last_backup = None;
+                current.backup_ready = false;
+            }
+            Ok(())
+        }).await
+    }
+    async fn update_preferences_checked<F>(&self, update: F) -> anyhow::Result<PreferenceSnapshot>
+    where
+        F: FnOnce(&mut Preferences) -> anyhow::Result<()> + Send + 'static,
+    {
         self.run(move |c| {
             let tx = c.transaction()?;
             let mut value: Preferences = get(&tx, "preferences")?;
-            update(&mut value);
+            update(&mut value)?;
             value.validate()?;
             put(&tx, "preferences", &value)?;
             let revision = get(&tx, "preferences_revision")?;
