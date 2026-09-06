@@ -1,5 +1,6 @@
 use super::*;
-use crate::mail_actions::Flags;
+use crate::mail_actions::{Flags, MoveReceipt};
+mod undo;
 
 #[derive(Default)]
 pub(super) struct Actions {
@@ -9,6 +10,7 @@ pub(super) struct Actions {
     sequence: u64,
     moves: HashMap<String, PendingMove>,
     transfers: HashMap<String, PendingTransfer>,
+    undo: HashMap<u64, undo::Record>,
 }
 
 struct PendingTransfer {
@@ -43,6 +45,7 @@ impl Actions {
             .count()
             + self.moves.len()
             + self.transfers.len()
+            + self.undo.values().filter(|entry| entry.pending()).count()
     }
     pub fn effective<'a>(&'a self, mail: &'a Mail) -> &'a Mail {
         self.flags
@@ -74,6 +77,11 @@ impl App {
         if self.mail_actions.flags.is_empty()
             && self.mail_actions.moves.is_empty()
             && self.mail_actions.transfers.is_empty()
+            && !self
+                .mail_actions
+                .undo
+                .values()
+                .any(|entry| entry.restoring())
         {
             self.page = self.mail_actions.base_page.clone();
             return;
@@ -125,10 +133,14 @@ impl App {
             }
             keep
         });
+        self.project_undo(&mut page);
         self.page = Arc::new(page);
     }
 
     pub(super) fn toggle_mail_flag(&mut self, mail: Mail, unread: bool) {
+        if self.mail_actions.restoring(&mail.id) {
+            return;
+        }
         if unread
             && self
                 .mail_actions
@@ -188,7 +200,8 @@ impl App {
 
     pub(super) fn transfer_mail(&mut self, mail: Mail, account: String, folder: String) {
         let id = mail.id.clone();
-        if self.mail_actions.transfers.contains_key(&id)
+        if self.mail_actions.restoring(&id)
+            || self.mail_actions.transfers.contains_key(&id)
             || self.mail_actions.moves.contains_key(&id)
         {
             return;
@@ -203,6 +216,7 @@ impl App {
         }
         let mail = self.mail_actions.effective(&mail).clone();
         let toast = self.action_toasts.add(&account, &folder, Instant::now());
+        self.remember_move(toast, &mail);
         self.mail_actions.transfers.insert(
             id.clone(),
             PendingTransfer {
@@ -257,16 +271,17 @@ impl App {
         if !self.try_command(command) {
             if let Some(entry) = self.mail_actions.transfers.remove(id) {
                 self.action_toasts.failed(entry.toast);
+                self.mail_actions.undo.remove(&entry.toast);
             }
             self.pending_close = None;
         }
     }
 
-    pub(super) fn transfer_finished(
+    pub(super) fn transfer_receipt(
         &mut self,
         request: u64,
         mail: Mail,
-        result: Result<(), String>,
+        result: Result<Arc<MoveReceipt>, String>,
     ) -> Task<Message> {
         if self
             .mail_actions
@@ -287,11 +302,12 @@ impl App {
                 toast: entry.toast,
             },
         );
-        self.move_finished(request, mail, entry.folder, result)
+        self.move_receipt(request, mail, entry.folder, result)
     }
 
     pub(super) fn move_mail(&mut self, mail: Mail, destination: String) {
-        if mail.folder == destination
+        if self.mail_actions.restoring(&mail.id)
+            || mail.folder == destination
             || self.mail_actions.moves.contains_key(&mail.id)
             || self.mail_actions.transfers.contains_key(&mail.id)
         {
@@ -310,6 +326,7 @@ impl App {
         let toast = self
             .action_toasts
             .add(&mail.account_id, &destination, Instant::now());
+        self.remember_move(toast, &mail);
         self.mail_actions.moves.insert(
             id.clone(),
             PendingMove {
@@ -359,17 +376,18 @@ impl App {
         if !self.try_command(command) {
             if let Some(entry) = self.mail_actions.moves.remove(id) {
                 self.action_toasts.failed(entry.toast);
+                self.mail_actions.undo.remove(&entry.toast);
             }
             self.pending_close = None;
         }
     }
 
-    pub(super) fn move_finished(
+    pub(super) fn move_receipt(
         &mut self,
         request: u64,
         mail: Mail,
         _folder: String,
-        result: Result<(), String>,
+        result: Result<Arc<MoveReceipt>, String>,
     ) -> Task<Message> {
         if self
             .mail_actions
@@ -381,7 +399,11 @@ impl App {
         }
         let entry = self.mail_actions.moves.remove(&mail.id).unwrap();
         match result {
-            Ok(()) => {
+            Ok(receipt) => {
+                if let Some(record) = self.mail_actions.undo.get_mut(&entry.toast) {
+                    record.original = entry.mail.clone();
+                    record.receipt = Some(receipt);
+                }
                 let mut base = (*self.mail_actions.base_page).clone();
                 if let Some(index) = base.rows.iter().position(|m| m.id == mail.id) {
                     let removed = base.rows.remove(index);
@@ -397,7 +419,14 @@ impl App {
                 self.mail_actions.base_page = Arc::new(base);
             }
             Err(error) => {
-                self.action_toasts.failed(entry.toast);
+                let undo_requested = self
+                    .mail_actions
+                    .undo
+                    .remove(&entry.toast)
+                    .is_some_and(|r| r.restoring());
+                if !undo_requested {
+                    self.action_toasts.failed(entry.toast);
+                }
                 self.pending_close = None;
                 self.notice(
                     format!(
@@ -412,6 +441,7 @@ impl App {
                 );
             }
         }
+        self.dispatch_undos();
         self.project_mail_flags();
         let failure_notice = self.notice.clone().filter(|(_, error, _)| *error);
         let refresh = self.handle(Message::Backend(Event::Changed));
@@ -424,6 +454,34 @@ impl App {
             return Task::batch([refresh, self.handle(Message::WindowClose(window))]);
         }
         refresh
+    }
+
+    #[cfg(test)]
+    fn move_finished(
+        &mut self,
+        request: u64,
+        mail: Mail,
+        folder: String,
+        result: Result<(), String>,
+    ) -> Task<Message> {
+        let result = result.map(|()| Arc::new(MoveReceipt::local(&mail, &folder)));
+        self.move_receipt(request, mail, folder, result)
+    }
+    #[cfg(test)]
+    fn transfer_finished(
+        &mut self,
+        request: u64,
+        mail: Mail,
+        result: Result<(), String>,
+    ) -> Task<Message> {
+        let folder = self
+            .mail_actions
+            .transfers
+            .get(&mail.id)
+            .map(|e| e.folder.as_str())
+            .unwrap_or("Archive");
+        let result = result.map(|()| Arc::new(MoveReceipt::local(&mail, folder)));
+        self.transfer_receipt(request, mail, result)
     }
 
     pub(super) fn flags_finished(
@@ -450,6 +508,15 @@ impl App {
         newer.apply(&mut entry.desired);
         // Keep existing bodies in place. Only their small metadata is overlaid.
         let confirmed = entry.confirmed.clone();
+        for record in self
+            .mail_actions
+            .undo
+            .values_mut()
+            .filter(|r| r.original.id == sent.id)
+        {
+            record.original.unread = confirmed.unread;
+            record.original.starred = confirmed.starred;
+        }
         if let Some(moving) = self.mail_actions.moves.get_mut(&sent.id) {
             moving.mail.unread = confirmed.unread;
             moving.mail.starred = confirmed.starred;
@@ -562,7 +629,7 @@ mod tests {
         assert_eq!(mail.folder, "Archive");
     }
 
-    async fn fixture() -> (App, tokio::sync::mpsc::Receiver<Command>, Arc<MailDetail>) {
+    pub(super) async fn fixture() -> (App, tokio::sync::mpsc::Receiver<Command>, Arc<MailDetail>) {
         let store = crate::store::Store::memory().unwrap();
         let mail = parse_mail(
             "fixture",

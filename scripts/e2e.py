@@ -231,6 +231,78 @@ class NativeFlows(unittest.TestCase):
                        shot("dark-compact-toast"),
                        {**check("mail_pending",0),"timeout_ms":6000},check("action_toast",None))
 
+    def test_grouped_archive_undo_is_immediate_while_both_moves_are_pending(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        initial = self.mcp.call("desktop.state")["mail_rows"]
+        self.mcp.batch(click(652, 100), key("Delete"), check("total", 118),
+                       check("action_toast.label", "Archived 2 messages"), check("action_toast.undo", True),
+                       click(1340, 874), check("action_toast.label", "Restored 2 messages"),
+                       check("action_toast.undo", False), check("total", 120),
+                       check("mail_pending", 1, "gte"), shot("undo-group-before-provider-ack"),
+                       key("ctrl+2"), check("tab", "Calendar"),
+                       {**check("mail_pending", 1, "lte"), "timeout_ms": 5000},
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       key("ctrl+1"), check("tab", "Mail"), check("total", 120), wait(150),
+                       shot("undo-group-restored-inbox"))
+        restored = self.mcp.call("desktop.state")["mail_rows"]
+        self.assertEqual([m["subject"] for m in restored[:2]], [m["subject"] for m in initial[:2]])
+        self.mcp.batch(click(85, 398), check("folder", "Archive"), check("total", 0))
+
+    def test_delete_undo_failure_has_persistent_retry_and_restores_after_retry(self):
+        self.mcp.call("desktop.start", mail_actions="slow", undo_failure_once=True)
+        subject = self.mcp.call("desktop.state")["selected"]
+        self.mcp.batch(key("ctrl+d"), check("action_toast.label", "Deleted 1 message"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000}, check("total", 119),
+                       click(1340, 874), check("total", 120), check("action_toast.label", "Restored 1 message"),
+                       check("mail_pending", 1), shot("undo-delete-pending"),
+                       {**check("undo_failures", 1), "timeout_ms": 5000}, check("total", 119),
+                       check("mail_pending", 0), check("notice", "Fixture server rejected Undo", "contains"),
+                       shot("undo-failed-retry-control"), click(1308, 874),
+                       check("undo_failures", 0), check("total", 120), check("mail_pending", 1),
+                       {**check("mail_pending", 0), "timeout_ms": 5000}, check("total", 120),
+                       check("notice", None), shot("undo-delete-retried"))
+        self.assertIn(subject, [m["subject"] for m in self.mcp.call("desktop.state")["mail_rows"]])
+        self.mcp.batch(click(85, 438), check("folder", "Trash"), check("total", 0))
+
+    def test_move_undo_from_destination_and_compact_dark_feedback(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        subject = self.mcp.call("desktop.state")["selected"]
+        self.mcp.batch(key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
+                       type_text("Projects"), key("Return"), check("dialog", None),
+                       check("action_toast.label", "Moved 1 message to Projects"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       click(95, 537), check("folder", "Projects"), check("total", 1),
+                       click(1340, 874), check("total", 0), check("mail_pending", 1),
+                       check("action_toast.label", "Restored 1 message"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000}, check("total", 0), check("notice", None),
+                       click(85, 115), check("folder", "INBOX"), check("total", 120),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(690, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80),
+                       {"type": "resize", "width": 900, "height": 640}, wait(150),
+                       key("ctrl+d"), check("action_toast.label", "Deleted 1 message"),
+                       shot("undo-dark-compact-control"), click(800, 594),
+                       check("action_toast.label", "Restored 1 message"), check("total", 120),
+                       shot("undo-dark-compact-restoring"),
+                       {**check("mail_pending", 0), "timeout_ms": 7000}, check("total", 120))
+        self.assertIn(subject, [m["subject"] for m in self.mcp.call("desktop.state")["mail_rows"]])
+
+    def test_cross_account_undo_returns_to_original_account_while_settings_remain_usable(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(286, 773), check("cross_account_moves", True),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80),
+                       key("m"), check("dialog", "Move"), wait(80),
+                       click(710, 327), wait(80), click(710, 403), check("fields.move_account", "preview-personal"),
+                       click(670, 385), type_text("Archive"), key("Return"), check("dialog", None),
+                       check("total", 119), check("action_toast.label", "Archived 1 message"),
+                       click(1340, 874), check("total", 120), check("mail_pending", 1),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(286, 773), check("cross_account_moves", False),
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       key("ctrl+1"), check("tab", "Mail"), check("total", 120),
+                       check("mail_rows.0.account_id", "preview-work"), check("notice", None), shot("undo-cross-account-restored"),
+                       click(85, 398), check("folder", "Archive"), check("total", 0))
+
     def test_read_on_leave_updates_immediately_and_preserves_explicit_unread(self):
         self.mcp.call("desktop.start", mail_actions="slow")
         self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), key("ctrl+1"), check("tab", "Mail"), wait(80),

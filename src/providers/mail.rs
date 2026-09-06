@@ -1,3 +1,5 @@
+mod receipts;
+pub mod recovery;
 pub mod sent;
 use super::MailProvider;
 use crate::model::*;
@@ -334,7 +336,7 @@ impl MailProvider for Imap {
         password: &SecretString,
         mail: &Mail,
         folder: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<String>> {
         move_imap_session(imap(account, password).await?, mail, folder).await
     }
 
@@ -382,7 +384,7 @@ async fn move_imap_session<
     mut session: async_imap::Session<T>,
     mail: &Mail,
     folder: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<String>> {
     anyhow::ensure!(
         !folder.is_empty() && !folder.contains(['\r', '\n']),
         "Choose a valid folder."
@@ -393,11 +395,11 @@ async fn move_imap_session<
         session.capabilities().await?.has_str("MOVE"),
         "This IMAP server does not support safe MOVE. Move this message with your server's webmail."
     );
-    session.uid_mv(uid, folder).await?;
+    let receipt = receipts::move_message(&mut session, &uid, folder).await?;
     // The tagged MOVE acknowledgment commits the action. A dropped connection
     // during logout must not retain the old source or invite a duplicate retry.
     let _ = session.logout().await;
-    Ok(())
+    Ok(receipt)
 }
 
 fn validate_uid(mail: &Mail, validity: Option<u32>) -> anyhow::Result<String> {
@@ -520,8 +522,8 @@ impl MailProvider for Pop3 {
         _: &SecretString,
         _: &Mail,
         _: &str,
-    ) -> anyhow::Result<()> {
-        Ok(())
+    ) -> anyhow::Result<Option<String>> {
+        Ok(None)
     }
     async fn set_flags(
         &self,
@@ -694,30 +696,11 @@ pub async fn append_transfer(
     mail: &Mail,
     folder: &str,
     raw: Vec<u8>,
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        !folder.is_empty() && !folder.contains(['\r', '\n']),
-        "Choose a valid destination folder."
-    );
+) -> anyhow::Result<Option<String>> {
     let mut session = imap(account, secret).await?;
-    let mut flags = Vec::new();
-    if !mail.unread {
-        flags.push("\\Seen");
-    }
-    if mail.starred {
-        flags.push("\\Flagged");
-    }
-    let flags = format!("({})", flags.join(" "));
-    let date = chrono::DateTime::from_timestamp(mail.timestamp, 0)
-        .unwrap_or_default()
-        .format("\"%d-%b-%Y %H:%M:%S %z\"")
-        .to_string();
-    // APPEND's tagged OK is the commit point. A failed logout must not lose that acknowledgement.
-    session
-        .append(folder, Some(&flags), Some(&date), raw)
-        .await?;
+    let receipt = receipts::append_message(&mut session, mail, folder, &raw).await?;
     let _ = session.logout().await;
-    Ok(())
+    Ok(receipt)
 }
 pub async fn finish_transfer(
     account: &Account,

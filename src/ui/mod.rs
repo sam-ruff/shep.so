@@ -179,6 +179,8 @@ pub enum Message {
     SidebarResize(f32),
     DismissToast,
     DismissActionToast,
+    UndoActions(Vec<u64>),
+    DismissUndoErrors(Vec<u64>),
     MailContext(String, iced::Point),
     MailContextAction(context_menu::MailAction),
     DismissContext,
@@ -630,6 +632,15 @@ impl App {
             self.conversation.page = Default::default();
         }
         self.selected = Some(id.clone());
+        if self.mail_actions.restoring(&id) {
+            self.conversation = Default::default();
+            self.detail = self
+                .detail_cache
+                .iter()
+                .find(|d| d.summary.id == id)
+                .cloned();
+            return;
+        }
         self.focus_conversation_message(id.clone());
         self.request_conversation(None);
         if let Some(i) = self.page.rows.iter().position(|m| m.id == id) {
@@ -1035,11 +1046,14 @@ impl App {
                         self.sync_notice = self.notice.as_ref().map(|notice| notice.2);
                     }
                 },
+                Event::UndoFinished(request, mail, result) => {
+                    return self.undo_finished(request, mail, result);
+                }
                 Event::TransferFinished(request, mail, result) => {
-                    return self.transfer_finished(request, mail, result);
+                    return self.transfer_receipt(request, mail, result);
                 }
                 Event::MoveFinished(request, mail, folder, result) => {
-                    return self.move_finished(request, mail, folder, result);
+                    return self.move_receipt(request, mail, folder, result);
                 }
                 Event::FlagsFinished(request, mail, result) => {
                     return self.flags_finished(request, mail, result);
@@ -1053,7 +1067,11 @@ impl App {
                     self.pending_details.clear();
                     self.request_page();
                     self.request_conversation(None);
-                    if let Some(id) = self.reader_id().map(str::to_owned) {
+                    if let Some(id) = self
+                        .reader_id()
+                        .filter(|id| !self.mail_actions.restoring(id))
+                        .map(str::to_owned)
+                    {
                         self.send(Command::Detail {
                             revision: self.detail_revision,
                             id,
@@ -1298,6 +1316,8 @@ impl App {
             }
             Message::Tick => {
                 self.action_toasts.expire(Instant::now());
+                self.prune_undos();
+                self.dispatch_undos();
                 if let Some((request, prefs)) = self.pending_preference_save.take() {
                     self.persist_preferences(request, prefs);
                 }
@@ -2150,7 +2170,12 @@ impl App {
                 return self.debounce_layout();
             }
             Message::DismissToast => self.saved_toast = None,
-            Message::DismissActionToast => self.action_toasts.current = None,
+            Message::DismissActionToast => {
+                self.action_toasts.current = None;
+                self.prune_undos();
+            }
+            Message::UndoActions(tokens) => self.undo_actions(tokens),
+            Message::DismissUndoErrors(tokens) => self.dismiss_undo_errors(tokens),
             Message::Dismiss => self.notice = None,
             Message::BrowseBackup => {
                 return Task::perform(
@@ -2970,9 +2995,10 @@ impl App {
                 self.action_toasts
                     .current
                     .as_ref()
-                    .map(|t| serde_json::json!({"label": t.label(), "count": t.count()}))
+                    .map(|t| serde_json::json!({"label": t.label(), "count": t.count(), "undo": !t.undo_tokens().is_empty()}))
             );
         }
+        data["undo_failures"] = serde_json::json!(self.mail_actions.undo_failures().len());
         data["saved_toast"] = serde_json::json!(self.saved_toast.is_some());
         data["contacts"] = serde_json::json!(self.preferences.contacts);
         data["sidebar_labels"] = serde_json::json!(

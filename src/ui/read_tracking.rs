@@ -14,7 +14,7 @@ impl App {
             .is_none_or(|current| current.id != id)
         {
             self.finish_read();
-            if self.mail_actions.effective(&mail).unread {
+            if !self.mail_actions.restoring(&mail.id) && self.mail_actions.effective(&mail).unread {
                 self.mail_actions.read_candidate = Some(mail);
             }
         }

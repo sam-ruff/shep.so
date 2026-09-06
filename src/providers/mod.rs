@@ -24,7 +24,7 @@ pub trait MailProvider: Send + Sync {
         password: &SecretString,
         mail: &Mail,
         folder: &str,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<Option<String>>;
     async fn set_flags(
         &self,
         account: &Account,
