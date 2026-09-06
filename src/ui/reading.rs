@@ -88,6 +88,37 @@ impl App {
         ].spacing(16)).padding(23).style(card).into()
     }
     pub(super) fn image_bar(&self) -> Element<'_, Message> {
+        let width = self.size.width / (self.preferences.interface_scale as f32 / 100.);
+        let compact = if self.full_reader {
+            width < 650.
+        } else {
+            (width - self.sidebar_width() - 57.) * (1. - self.preferences.reader_split) < 480.
+        };
+        if compact {
+            return container(
+                row![
+                    icon("image", 16.),
+                    text("Images blocked").size(11),
+                    space().width(Length::Fill),
+                    pick_list(
+                        [ImageScope::Email, ImageScope::Sender, ImageScope::Domain],
+                        None::<ImageScope>,
+                        |scope| Message::AllowImages(scope as u8)
+                    )
+                    .placeholder("Show images")
+                    .style(select_input)
+                    .menu_style(select_menu)
+                    .text_size(11)
+                    .padding(7)
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .padding(8)
+            .width(Length::Fill)
+            .style(subtle)
+            .into();
+        }
         container(
             column![
                 row![
@@ -129,5 +160,21 @@ impl App {
         ]
         .spacing(12)
         .into()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageScope {
+    Email,
+    Sender,
+    Domain,
+}
+impl std::fmt::Display for ImageScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Email => "This email",
+            Self::Sender => "This sender",
+            Self::Domain => "This domain",
+        })
     }
 }

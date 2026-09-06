@@ -244,8 +244,14 @@ impl App {
         let header = row![
             heading(title),
             muted(format!(
-                "{} messages · {} unread",
-                self.page.total, self.page.unread
+                "{} {} · {} unread",
+                self.page.total,
+                if self.page.total == 1 {
+                    "message"
+                } else {
+                    "messages"
+                },
+                self.page.unread
             ))
             .size(12),
             space().width(Length::Fill),
@@ -576,6 +582,7 @@ impl App {
                     35.
                 })
             )
+            .id("message-reader")
             .height(Length::Fill),
             container(footer).padding([10, 20])
         ]
@@ -662,6 +669,11 @@ impl App {
         detail: &'a MailDetail,
         subject: bool,
     ) -> iced::widget::Column<'a, Message> {
+        let gap = if detail.html.is_some() && self.size.width < 1000. {
+            12
+        } else {
+            18
+        };
         let sender = sender_name(&detail.summary.sender);
         let date = chrono::DateTime::from_timestamp(detail.summary.timestamp, 0)
             .unwrap_or_default()
@@ -691,15 +703,87 @@ impl App {
                 .on_press(Message::Open(Dialog::Sender)),
             line()
         ]
-        .spacing(18);
+        .spacing(gap);
         if subject {
             reading =
-                column![text(&detail.summary.subject).size(25).font(BOLD), reading].spacing(18);
+                column![text(&detail.summary.subject).size(25).font(BOLD), reading].spacing(gap);
         }
-        if !detail.remote_images.is_empty()
+        let formatted = self.formatted(detail);
+        if detail.html.is_some() {
+            reading = reading.push(
+                row![
+                    button(text("Formatted").size(12))
+                        .padding([6, 10])
+                        .style(if formatted { primary } else { outline })
+                        .on_press(Message::Html(super::html_reader::Message::Plain(false))),
+                    button(text("Plain text").size(12))
+                        .padding([6, 10])
+                        .style(if formatted { outline } else { primary })
+                        .on_press(Message::Html(super::html_reader::Message::Plain(true)))
+                ]
+                .spacing(6),
+            );
+        }
+        if formatted
+            && (!detail.remote_images.is_empty() || !self.html_reader.resources.is_empty())
             && !crate::remote_images::allowed(&self.preferences, &detail.summary)
         {
             reading = reading.push(self.image_bar());
+        }
+        if formatted {
+            if let Some(frame) = &self.html_reader.frame
+                && frame.content_width > frame.viewport.width as f32 + 1.
+            {
+                let generation = self.html_reader.generation;
+                reading = reading.push(
+                    scrollable(space().width(frame.content_width).height(1))
+                        .horizontal()
+                        .id("html-horizontal")
+                        .width(Length::Fill)
+                        .height(12)
+                        .on_scroll(move |viewport| {
+                            Message::Html(super::html_reader::Message::Input(
+                                crate::html_render::Input::Pan(
+                                    generation,
+                                    viewport.absolute_offset().x,
+                                ),
+                            ))
+                        }),
+                );
+            }
+            if let Some(error) = &self.html_reader.error {
+                reading = reading.push(muted(error));
+            } else {
+                if self.html_reader.frame.is_none() {
+                    reading = reading.push(muted("Opening formatted message…"));
+                }
+                reading = reading.push(self.html_canvas());
+            }
+            if detail.html.as_ref().is_some_and(|h| h.has_quotes)
+                && self.preferences.reply_display != ReplyDisplay::LatestOnly
+            {
+                reading = reading.push(
+                    button(
+                        text(if self.html_quotes_hidden(detail) {
+                            "Show quoted text"
+                        } else {
+                            "Hide quoted text"
+                        })
+                        .size(12),
+                    )
+                    .padding([8, 12])
+                    .style(outline)
+                    .on_press(Message::Html(super::html_reader::Message::Quotes)),
+                );
+            }
+            if crate::remote_images::allowed(&self.preferences, &detail.summary) {
+                for url in &self.html_reader.resources {
+                    if let Some(error) = self.image_errors.get(url) {
+                        reading = reading.push(muted(error).size(11));
+                    }
+                }
+            }
+            return reading;
         }
         reading = reading.push(self.selectable_body(detail, 0, body));
         if self.preferences.reply_display != ReplyDisplay::LatestOnly {
@@ -731,7 +815,9 @@ impl App {
                 );
             }
         }
-        if crate::remote_images::allowed(&self.preferences, &detail.summary) {
+        if detail.html.is_none()
+            && crate::remote_images::allowed(&self.preferences, &detail.summary)
+        {
             for remote in &detail.remote_images {
                 if let Some((_, handle)) = self
                     .remote_handles

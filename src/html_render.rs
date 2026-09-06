@@ -1,0 +1,367 @@
+//! HTML layout and rasterization live on an owned worker thread. iced receives
+//! immutable viewport frames and small input results through bounded channels.
+mod container;
+mod selection;
+use crate::email_content::HtmlBody;
+use futures::{SinkExt, channel::mpsc};
+use litehtml::{Document, DrawContext, Position};
+use selection::Selection;
+use std::sync::Arc;
+use tokio::sync::mpsc as commands;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Viewport {
+    pub width: u32,
+    pub height: u32,
+    pub scale: f32,
+}
+impl Viewport {
+    fn validate(self) -> anyhow::Result<Self> {
+        // This limits the physical viewport allocation, never the document length.
+        anyhow::ensure!(
+            self.width > 0
+                && self.height > 0
+                && self.scale.is_finite()
+                && (0.5..=4.).contains(&self.scale),
+            "Invalid message viewport."
+        );
+        anyhow::ensure!(
+            (self.width as f64 * self.height as f64 * f64::from(self.scale).powi(2)) <= 16_777_216.,
+            "The message viewport is too large to render. Reduce window scaling."
+        );
+        Ok(self)
+    }
+}
+#[derive(Debug, Clone)]
+pub enum Input {
+    Load {
+        generation: u64,
+        body: Arc<HtmlBody>,
+        viewport: Viewport,
+        font_size: u16,
+        hide_quotes: bool,
+    },
+    Resize(u64, Viewport),
+    View(u64, Viewport, f32),
+    SelectAll(u64),
+    Scroll(u64, f32),
+    Pan(u64, f32),
+    Pointer(u64, Pointer, f32, f32),
+    Copy(u64),
+    Image(u64, String, Arc<[u8]>),
+    Clear,
+}
+#[derive(Debug, Clone, Copy)]
+pub enum Pointer {
+    Down,
+    Move,
+    Up,
+    Leave,
+}
+#[derive(Debug, Clone)]
+pub struct Frame {
+    pub generation: u64,
+    pub layout_revision: u64,
+    pub viewport: Viewport,
+    pub pixels: Arc<[u8]>,
+    pub width: u32,
+    pub height: u32,
+    pub content_height: f32,
+    pub content_width: f32,
+    pub pan: f32,
+    pub scroll: f32,
+    pub images: Vec<String>,
+}
+#[derive(Debug, Clone)]
+pub enum Event {
+    Ready(commands::Sender<Input>),
+    Frame(Arc<Frame>),
+    Selection(u64, String, Vec<[f32; 4]>, bool),
+    Copy(u64, String),
+    Link(u64, String),
+    Error(u64, String),
+}
+pub fn subscription() -> impl futures::Stream<Item = Event> {
+    iced::stream::channel(4, |mut output: mpsc::Sender<Event>| async move {
+        let (tx, rx) = commands::channel(16);
+        if output.send(Event::Ready(tx)).await.is_err() {
+            return;
+        }
+        let _ = tokio::task::spawn_blocking(move || worker(rx, output)).await;
+    })
+}
+fn emit(output: &mut mpsc::Sender<Event>, event: Event) -> bool {
+    futures::executor::block_on(output.send(event)).is_ok()
+}
+fn worker(mut input: commands::Receiver<Input>, mut output: mpsc::Sender<Event>) {
+    let mut next = None;
+    loop {
+        let Some(command) = next.take().or_else(|| input.blocking_recv()) else {
+            return;
+        };
+        let Input::Load {
+            generation,
+            body,
+            viewport,
+            font_size,
+            hide_quotes,
+        } = command
+        else {
+            continue;
+        };
+        match document(
+            generation,
+            body,
+            viewport,
+            font_size,
+            hide_quotes,
+            &mut input,
+            &mut output,
+        ) {
+            Ok(load) => next = load,
+            Err(error) => {
+                if !emit(
+                    &mut output,
+                    Event::Error(
+                        generation,
+                        format!(
+                            "The HTML message could not be displayed. Use Plain text or try reopening it. {error}"
+                        ),
+                    ),
+                ) {
+                    return;
+                }
+            }
+        }
+    }
+}
+fn document(
+    generation: u64,
+    body: Arc<HtmlBody>,
+    mut viewport: Viewport,
+    font_size: u16,
+    hide_quotes: bool,
+    input: &mut commands::Receiver<Input>,
+    output: &mut mpsc::Sender<Event>,
+) -> anyhow::Result<Option<Input>> {
+    viewport.validate()?;
+    let surface = container::Surface::new(viewport.width, viewport.height, viewport.scale);
+    let mut container = surface.clone();
+    let font_size = font_size.clamp(11, 26);
+    let source = format!(
+        "<style>body{{font-family:sans-serif;font-size:{font_size}px;line-height:1.5;color:#18181b;background:#fff;margin:0}}img{{max-width:100%}}</style>{}",
+        body.source.replace('\0', "\u{fffd}")
+    );
+    let quotes =
+        hide_quotes.then_some("blockquote,.gmail_quote,.yahoo_quoted{display:none!important}");
+    for (cid, bytes) in &body.inline {
+        if let Ok(webp) = crate::remote_images::convert_to_webp(bytes) {
+            surface
+                .0
+                .borrow_mut()
+                .load_image_data(&format!("cid:{cid}"), &webp);
+        }
+    }
+    let measure = surface.0.borrow().text_measure_fn();
+    let mut document = Document::from_html(&source, &mut container, None, quotes)
+        .map_err(|_| anyhow::anyhow!("HTML parsing failed."))?;
+    let _ = document.render(viewport.width as f32);
+    let mut selection = Selection::default();
+    selection.layout(&document);
+    let mut dragging = false;
+    let mut drag_origin = (0., 0.);
+    let mut scroll = 0.;
+    let mut pan = 0.;
+    let mut repaint = true;
+    let mut buffered = None;
+    let mut layout_revision = 1;
+    loop {
+        if repaint {
+            let pixels = {
+                surface.0.borrow_mut().resize_with_scale(
+                    viewport.width,
+                    viewport.height,
+                    viewport.scale,
+                );
+                document.draw(
+                    DrawContext::default(),
+                    -pan,
+                    -scroll,
+                    Some(Position {
+                        x: 0.,
+                        y: 0.,
+                        width: viewport.width as f32,
+                        height: viewport.height as f32,
+                    }),
+                );
+                let mut pixels = surface.0.borrow().pixels().to_vec();
+                // tiny-skia's buffer is premultiplied; iced images use straight RGBA.
+                for p in pixels.chunks_exact_mut(4) {
+                    if p[3] > 0 && p[3] < 255 {
+                        for i in 0..3 {
+                            p[i] = (u16::from(p[i]) * 255 / u16::from(p[3])).min(255) as u8;
+                        }
+                    }
+                }
+                Arc::from(pixels)
+            };
+            let frame = {
+                let mut surface = surface.0.borrow_mut();
+                Frame {
+                    generation,
+                    layout_revision,
+                    viewport,
+                    pixels,
+                    width: surface.width(),
+                    height: surface.height(),
+                    content_height: document.height(),
+                    content_width: document.width(),
+                    pan,
+                    scroll,
+                    images: surface
+                        .take_pending_images()
+                        .into_iter()
+                        .map(|(url, _)| url)
+                        .collect(),
+                }
+            };
+            if !emit(output, Event::Frame(Arc::new(frame))) {
+                return Ok(None);
+            }
+            repaint = false;
+        }
+        let Some(mut command) = buffered.take().or_else(|| input.blocking_recv()) else {
+            return Ok(None);
+        };
+        while matches!(
+            command,
+            Input::View(..) | Input::Pointer(_, Pointer::Move, ..)
+        ) {
+            let Ok(next) = input.try_recv() else {
+                break;
+            };
+            let compatible = matches!((&command, &next), (Input::View(a, ..), Input::View(b, ..)) | (Input::Pointer(a, Pointer::Move, ..), Input::Pointer(b, Pointer::Move, ..)) if a == b);
+            if compatible {
+                command = next;
+            } else {
+                buffered = Some(next);
+                break;
+            }
+        }
+        match command {
+            Input::Load { .. } | Input::Clear => return Ok(Some(command)),
+            Input::View(id, size, top) if id == generation && top.is_finite() => {
+                let size = size.validate()?;
+                if size != viewport {
+                    viewport = size;
+                    surface.0.borrow_mut().resize_with_scale(
+                        viewport.width,
+                        viewport.height,
+                        viewport.scale,
+                    );
+
+                    document.media_changed();
+                    let _ = document.render(viewport.width as f32);
+                    selection.layout(&document);
+                    layout_revision += 1;
+                }
+                pan = pan.min((document.width() - viewport.width as f32).max(0.));
+                scroll = top.clamp(0., (document.height() - viewport.height as f32).max(0.));
+                repaint = true;
+            }
+            Input::Resize(id, size) if id == generation => {
+                viewport = size.validate()?;
+                surface.0.borrow_mut().resize_with_scale(
+                    viewport.width,
+                    viewport.height,
+                    viewport.scale,
+                );
+
+                document.media_changed();
+                let _ = document.render(viewport.width as f32);
+                selection.layout(&document);
+                layout_revision += 1;
+                pan = pan.min((document.width() - viewport.width as f32).max(0.));
+                scroll = scroll.min((document.height() - viewport.height as f32).max(0.));
+                repaint = true;
+            }
+            Input::Pan(id, x) if id == generation && x.is_finite() => {
+                pan = x.clamp(0., (document.width() - viewport.width as f32).max(0.));
+                repaint = true;
+            }
+            Input::Scroll(id, delta) if id == generation && delta.is_finite() => {
+                scroll = delta.clamp(0., (document.height() - viewport.height as f32).max(0.));
+                repaint = true;
+            }
+            Input::Pointer(id, kind, x, y)
+                if id == generation && x.is_finite() && y.is_finite() =>
+            {
+                match kind {
+                    Pointer::Down => {
+                        dragging = true;
+                        drag_origin = (x, y);
+                        selection.start(&measure, x, y);
+                        document.on_lbutton_down(x, y, x - pan, y - scroll);
+                    }
+                    Pointer::Move => {
+                        document.on_mouse_over(x, y, x - pan, y - scroll);
+                        if dragging {
+                            selection.extend(&measure, x, y);
+                        }
+                    }
+                    Pointer::Up => {
+                        if dragging {
+                            selection.extend(&measure, x, y);
+                        }
+                        dragging = false;
+                        if (x - drag_origin.0).abs() + (y - drag_origin.1).abs() < 5. {
+                            document.on_lbutton_up(x, y, x - pan, y - scroll);
+                            if let Some(url) = surface.0.borrow_mut().take_anchor_click()
+                                && !emit(output, Event::Link(generation, url))
+                            {
+                                return Ok(None);
+                            }
+                        }
+                    }
+                    Pointer::Leave => {
+                        document.on_mouse_leave();
+                    }
+                }
+                let (text, rects) = selection.result(&measure);
+                let link = surface.0.borrow().cursor() == "pointer";
+                if !emit(output, Event::Selection(generation, text, rects, link)) {
+                    return Ok(None);
+                }
+            }
+            Input::SelectAll(id) if id == generation => {
+                selection.all();
+                let (text, rects) = selection.result(&measure);
+                if !emit(output, Event::Selection(generation, text, rects, false)) {
+                    return Ok(None);
+                }
+            }
+            Input::Copy(id) if id == generation => {
+                if !emit(
+                    output,
+                    Event::Copy(generation, selection.result(&measure).0),
+                ) {
+                    return Ok(None);
+                }
+            }
+            Input::Image(id, url, bytes) if id == generation => {
+                if let Ok(webp) = crate::remote_images::convert_to_webp(&bytes) {
+                    surface.0.borrow_mut().load_image_data(&url, &webp);
+
+                    let _ = document.render(viewport.width as f32);
+                    selection.layout(&document);
+                    layout_revision += 1;
+                    repaint = true;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

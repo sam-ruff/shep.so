@@ -10,6 +10,8 @@ The unified inbox brings your accounts together. Choose a folder in the sidebar,
 
 Click a message to read it. Moving on to another message, folder or tab marks it read. An explicit **Mark as unread** remains unread until you choose to read it again. Double-click for a full-window reader. Related messages appear as collapsible cards; disable grouping in **Preferences → General** if you prefer individual messages.
 
+HTML mail retains its layout, fonts, tables and inline images. Use **Plain text** for the text alternative. Select and copy text in either view; quoted text follows your reply-history preference.
+
 Drag the pane edges to give your inbox or reader more room.
 
 ## Reply and organize
@@ -26,4 +28,4 @@ See [current limits](limits.md) for provider restrictions and size limits.
 
 Select email text with the mouse and copy it normally. Search Preferences to jump to a settings section. Icon tooltips can show the primary shortcut; both tooltips and their key hints can be turned off.
 
-Archive, delete and move show a toast immediately while saving continues. Repeating an action increases the count and restarts its six-second display time; archive/delete counts continue across accounts in a unified inbox. A failed action restores the message and removes its count, with the error remaining visible. Undo is still being implemented.
+Archive, delete and move show a toast immediately while saving continues. Repeating an action increases the count and restarts its six-second display time; archive/delete counts continue across accounts in a unified inbox. A failed action restores the message and removes its count, with the error remaining visible. Use **Undo** on the toast to restore the messages, including while the original move is still pending. If reversal fails, the toast offers Retry Undo.

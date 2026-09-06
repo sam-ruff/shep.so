@@ -33,7 +33,7 @@ impl Content {
 
 impl App {
     pub(super) fn prepare_reader_selection(&mut self) -> Task<Message> {
-        let Some(source) = &self.detail else {
+        let Some(source) = self.detail.as_ref().filter(|d| !self.formatted(d)) else {
             self.reader_preparation = None;
             if self.pending_reader_selection.take().is_some() {
                 self.reader_selection_generation += 1;

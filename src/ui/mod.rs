@@ -9,6 +9,7 @@ mod conversations;
 mod ellipsis;
 #[cfg(test)]
 mod google_lifecycle_tests;
+mod html_reader;
 mod layout;
 mod mail_actions;
 mod outgoing;
@@ -84,6 +85,8 @@ enum MailPane {
 #[derive(Debug, Clone)]
 pub enum Message {
     WindowUnfocused,
+    Html(html_reader::Message),
+    HtmlScaleRequest(iced::window::Id),
     Backend(Event),
     Tick,
     Noop,
@@ -242,6 +245,8 @@ pub struct App {
     pending_mail_action: Option<(String, context_menu::MailAction)>,
     mail_actions: mail_actions::Actions,
     reader_selection: Option<Box<selectable::Content>>,
+    html_reader: html_reader::State,
+    remote_bytes: VecDeque<(String, Arc<[u8]>)>,
     pending_reader_selection: Option<Arc<MailDetail>>,
     reader_selection_generation: u64,
     reader_preparation: Option<iced::task::Handle>,
@@ -378,6 +383,8 @@ impl App {
                 pending_mail_action: None,
                 mail_actions: Default::default(),
                 reader_selection: None,
+                html_reader: Default::default(),
+                remote_bytes: VecDeque::new(),
                 pending_reader_selection: None,
                 reader_selection_generation: 0,
                 reader_preparation: None,
@@ -500,6 +507,8 @@ impl App {
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
             Subscription::run_with(self.demo, engine::subscription).map(Message::Backend),
+            Subscription::run(crate::html_render::subscription)
+                .map(|e| Message::Html(html_reader::Message::Backend(e))),
             iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick),
             iced::system::theme_changes().map(Message::SystemTheme),
             iced::event::listen_with(|e, status, id| match e {
@@ -515,6 +524,9 @@ impl App {
                 iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => Some(
                     Message::Key(key, modifiers, status == event::Status::Captured),
                 ),
+                iced::Event::Window(
+                    iced::window::Event::Opened { .. } | iced::window::Event::Moved(_),
+                ) => Some(Message::HtmlScaleRequest(id)),
                 iced::Event::Window(iced::window::Event::Resized(size)) => {
                     Some(Message::Resize(size))
                 }
@@ -599,6 +611,7 @@ impl App {
                 .iter()
                 .map(|d| {
                     d.body.len()
+                        + d.html.as_ref().map_or(0, |html| html.bytes)
                         + d.latest_body.len()
                         + d.replies
                             .iter()
@@ -712,7 +725,7 @@ impl App {
         }
         let start = Instant::now();
         let task = self.handle(message);
-        let task = Task::batch([task, self.prepare_reader_selection()]);
+        let task = Task::batch([task, self.prepare_reader_selection(), self.prepare_html()]);
         self.update_samples
             .push_back(start.elapsed().as_secs_f64() * 1000.);
         if self.update_samples.len() > 1000 {
@@ -729,6 +742,11 @@ impl App {
             return Task::none();
         }
         match message {
+            Message::HtmlScaleRequest(id) => {
+                return iced::window::scale_factor(id)
+                    .map(|s| Message::Html(html_reader::Message::Scale(s)));
+            }
+            Message::Html(message) => return self.handle_html(message),
             Message::WindowUnfocused => self.modifiers = keyboard::Modifiers::default(),
             Message::Noop => return Task::none(),
             Message::DismissContext => {
@@ -1180,6 +1198,12 @@ impl App {
                     self.requested_images.remove(&url);
                     match result {
                         Ok(bytes) => {
+                            self.remote_bytes.retain(|(u, _)| u != &url);
+                            self.remote_bytes
+                                .push_back((url.clone(), Arc::from(bytes.clone())));
+                            while self.remote_bytes.len() > 8 {
+                                self.remote_bytes.pop_front();
+                            }
                             self.remote_handles.retain(|(u, _)| u != &url);
                             self.remote_handles
                                 .push_back((url, widget::image::Handle::from_bytes(bytes)));
@@ -2407,6 +2431,9 @@ impl App {
         Task::none()
     }
     fn load_remote_images(&mut self) {
+        if self.detail.as_ref().is_some_and(|d| d.html.is_some()) {
+            return;
+        }
         if let Some(detail) = &self.detail
             && crate::remote_images::allowed(&self.preferences, &detail.summary)
         {
@@ -2975,6 +3002,25 @@ impl App {
         data["saved_sidebar_width"] = serde_json::json!(self.workspace.preferences.sidebar_width);
         data["window_size"] = serde_json::json!([self.size.width, self.size.height]);
         data["saved_window_size"] = serde_json::json!(self.workspace.preferences.window_size);
+        data["html_quotes_hidden"] = serde_json::json!(
+            self.detail
+                .as_ref()
+                .is_some_and(|d| self.html_quotes_hidden(d))
+        );
+        data["html_ready"] = serde_json::json!(self.html_reader.frame.is_some());
+        data["html_formatted"] =
+            serde_json::json!(self.detail.as_ref().is_some_and(|d| self.formatted(d)));
+        data["html_selected_text"] = serde_json::json!(self.html_reader.selection);
+        data["html_loaded_images"] = serde_json::json!(self.html_reader.supplied.len());
+        data["html_resources"] = serde_json::json!(self.html_reader.resources.len());
+        data["html_error"] = serde_json::json!(self.html_reader.error);
+        data["html_pan"] = serde_json::json!(self.html_reader.frame.as_ref().map(|f| f.pan));
+        data["html_width"] =
+            serde_json::json!(self.html_reader.frame.as_ref().map(|f| f.content_width));
+        data["html_scroll"] = serde_json::json!(self.html_reader.frame.as_ref().map(|f| f.scroll));
+        data["html_height"] =
+            serde_json::json!(self.html_reader.frame.as_ref().map(|f| f.content_height));
+        data["html_link"] = serde_json::json!(self.html_reader.last_link);
         data["reader_text_ready"] =
             serde_json::json!(self.reader_selection.as_ref().is_some_and(|c| {
                 self.detail

@@ -33,45 +33,35 @@ pub fn allowed(preferences: &Preferences, mail: &Mail) -> bool {
                 .any(|c| c.eq_ignore_ascii_case(&address)))
 }
 pub fn extract(parsed: &mailparse::ParsedMail<'_>) -> Vec<RemoteImage> {
-    fn walk(part: &mailparse::ParsedMail<'_>, images: &mut Vec<RemoteImage>) {
-        if images.len() >= 8 {
-            return;
-        }
-        if part.ctype.mimetype == "text/html"
-            && let Ok(body) = part.get_body()
+    crate::email_content::extract(parsed)
+        .html
+        .as_ref()
+        .map(|h| extract_html(&h.source))
+        .unwrap_or_default()
+}
+pub fn extract_html(source: &str) -> Vec<RemoteImage> {
+    let html = scraper::Html::parse_document(source);
+    let selector = scraper::Selector::parse("img[src]").expect("static selector");
+    let mut images = Vec::new();
+    for element in html.select(&selector) {
+        let value = element.value();
+        if let Ok(url) = url::Url::parse(value.attr("src").unwrap_or_default())
+            && matches!(url.scheme(), "https" | "http")
+            && url.username().is_empty()
+            && url.password().is_none()
+            && !images.iter().any(|i: &RemoteImage| i.url == url.as_str())
         {
-            let html = scraper::Html::parse_document(&body);
-            let selector = scraper::Selector::parse("img[src]").expect("static selector");
-            for element in html.select(&selector) {
-                if images.len() >= 8 {
-                    break;
-                }
-                let value = element.value();
-                let src = value.attr("src").unwrap_or_default();
-                if let Ok(url) = url::Url::parse(src)
-                    && matches!(url.scheme(), "https" | "http")
-                    && url.username().is_empty()
-                    && url.password().is_none()
-                    && !images.iter().any(|i| i.url == url.as_str())
-                {
-                    images.push(RemoteImage {
-                        url: url.to_string(),
-                        alt: value
-                            .attr("alt")
-                            .unwrap_or("Email image")
-                            .chars()
-                            .take(160)
-                            .collect(),
-                    });
-                }
-            }
-        }
-        for child in &part.subparts {
-            walk(child, images);
+            images.push(RemoteImage {
+                url: url.to_string(),
+                alt: value
+                    .attr("alt")
+                    .unwrap_or("Email image")
+                    .chars()
+                    .take(160)
+                    .collect(),
+            });
         }
     }
-    let mut images = Vec::new();
-    walk(parsed, &mut images);
     images
 }
 pub fn public_ip(ip: IpAddr) -> bool {
@@ -163,8 +153,26 @@ pub fn convert_to_webp(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
     limits.max_image_height = Some(2048);
     limits.max_alloc = Some(32 * 1024 * 1024);
     reader.limits(limits);
-    let decoded = reader.decode()?.thumbnail(1024, 1024);
+    let decoded = reader.decode()?;
+    let decoded = if decoded.width() > 1024 || decoded.height() > 1024 {
+        decoded.thumbnail(1024, 1024)
+    } else {
+        decoded
+    };
     let mut output = Cursor::new(Vec::new());
     decoded.write_to(&mut output, image::ImageFormat::WebP)?;
     Ok(output.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn webp_conversion_preserves_small_images_natural_size() {
+        let image = image::DynamicImage::new_rgba8(32, 16);
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        let converted = super::convert_to_webp(&bytes.into_inner()).unwrap();
+        let decoded = image::load_from_memory(&converted).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (32, 16));
+    }
 }
