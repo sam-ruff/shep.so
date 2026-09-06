@@ -129,6 +129,12 @@ The refresh-icon scenario captures Mail and Calendar in light/dark and compact
 layouts, including a pending mail refresh. Inspect the icon geometry in the
 actual WebP captures, rather than relying on state assertions alone.
 
+During rapid multi-row navigation, wait for each intended `selected` subject
+before the next click, without waiting for its HTML body. This verifies every
+native input was consumed and avoids interpreting queued clicks on an unchanged
+row as a double-click. When returning from a calendar dialog to Preferences,
+wait for that tab and its layout before clicking a settings category.
+
 Use `html_delay_ms` (integer 0–2000) with `html_mail=true` to inspect loading
 without blocking iced. The HTML fixture adds a CSS-background report in Archive.
 Save before/after captures and assert the body origin stays fixed. The horizontal
@@ -176,3 +182,12 @@ checkbox near x=340,y=431 in the standard fixture. Wait for the private-bus zero
 and hidden signal when disabling. The badge count always spans all mail accounts.
 Review the preference/mail WebP captures; the private-bus observer does not render
 a desktop dock, and its results must not be described as a GNOME visual test.
+
+Preserve `test_filtered_preferences_do_not_leave_pixels_outside_scroll_view`:
+open compact dark Preferences, search for badge, select Mail & performance, then
+resize by one pixel and back. Capture before filtering, after filtering and after
+the full repaint. Compare the empty bottom-margin pixels in the saved WebP
+captures to detect stale dropdown text; the state oracle cannot prove clipping.
+The pre-filter capture has a lossy-compression boundary next to visible content,
+so its exact clipping is covered by `tests/software_rendering.rs` and visual
+review. Do not substitute full-window redraws for fixing the renderer.
