@@ -1,0 +1,52 @@
+[project]
+site_name = "Shep"
+site_description = "A calm, native email and calendar app."
+site_url = "https://sam-ruff.github.io/shep.so/"
+repo_url = "https://github.com/sam-ruff/shep.so"
+repo_name = "sam-ruff/shep.so"
+edit_uri = "edit/main/docs/"
+copyright = "Shep · MIT licensed"
+nav = [
+  { "Home" = "index.md" },
+  { "Install" = "installation.md" },
+  { "User guide" = [
+    { "Mail" = "mail.md" },
+    { "Calendar" = "calendar.md" },
+    { "Backups and Google" = "backups.md" },
+    { "Current limits" = "limits.md" },
+  ] },
+  { "Contributing" = "development.md" },
+  { "For agents" = [
+    { "Start here" = "agents/index.md" },
+    { "Development and architecture" = "agents/development.md" },
+    { "Installation reference" = "agents/installation.md" },
+    { "Mail contracts" = "agents/mail.md" },
+    { "Calendar contracts" = "agents/calendar.md" },
+    { "Google and backup contracts" = "agents/backups.md" },
+    { "Detailed limits" = "agents/limits.md" },
+    { "Performance evidence" = "PERFORMANCE.md" },
+    { "Completion audit" = "COMPLETION.md" },
+  ] },
+]
+
+[project.theme]
+variant = "modern"
+logo = "images/logo.webp"
+favicon = "images/logo.webp"
+features = ["navigation.footer", "content.code.copy"]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "deep purple"
+accent = "deep purple"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "deep purple"
+accent = "deep purple"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
