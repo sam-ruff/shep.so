@@ -698,11 +698,21 @@ mod tests {
         let mut mail = engine.store.detail(info.local_id()).await.unwrap().summary;
         mail.starred = true;
         engine
-            .execute(Command::Flags(mail.clone()), output.clone())
+            .execute(
+                Command::Flags(
+                    1,
+                    mail.clone(),
+                    crate::mail_actions::Flags {
+                        starred: Some(true),
+                        unread: None,
+                    },
+                ),
+                output.clone(),
+            )
             .await
             .unwrap();
         engine
-            .execute(Command::Move(mail, "Archive".into()), output)
+            .execute(Command::Move(2, mail, "Archive".into()), output)
             .await
             .unwrap();
         let mail = engine.store.detail(info.local_id()).await.unwrap().summary;

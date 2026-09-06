@@ -343,24 +343,37 @@ impl MailProvider for Imap {
         account: &Account,
         password: &SecretString,
         mail: &Mail,
+        changes: crate::mail_actions::Flags,
     ) -> anyhow::Result<()> {
-        let mut session = imap(account, password).await?;
-        let mailbox = session.select(&mail.folder).await?;
-        let uid = validate_uid(mail, mailbox.uid_validity)?;
-        // Add/remove only the flags we own; preserve every other server flag.
-        for (flag, set) in [("\\Seen", !mail.unread), ("\\Flagged", mail.starred)] {
-            let _: Vec<_> = session
-                .uid_store(
-                    &uid,
-                    format!("{}FLAGS.SILENT ({flag})", if set { "+" } else { "-" }),
-                )
-                .await?
-                .try_collect()
+        flags_imap_session(imap(account, password).await?, mail, changes).await
+    }
+}
+
+async fn flags_imap_session<
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
+>(
+    mut session: async_imap::Session<T>,
+    mail: &Mail,
+    changes: crate::mail_actions::Flags,
+) -> anyhow::Result<()> {
+    let mailbox = session.select(&mail.folder).await?;
+    let uid = validate_uid(mail, mailbox.uid_validity)?;
+    for (flag, value) in [
+        ("\\Seen", changes.unread.map(|v| !v)),
+        ("\\Flagged", changes.starred),
+    ] {
+        if let Some(set) = value {
+            session
+                .run_command_and_check_ok(format!(
+                    "UID STORE {uid} {}FLAGS.SILENT ({flag})",
+                    if set { "+" } else { "-" }
+                ))
                 .await?;
         }
-        session.logout().await?;
-        Ok(())
     }
+    // Acknowledged STORE is committed even if the connection closes on logout.
+    let _ = session.logout().await;
+    Ok(())
 }
 
 async fn move_imap_session<
@@ -510,7 +523,13 @@ impl MailProvider for Pop3 {
     ) -> anyhow::Result<()> {
         Ok(())
     }
-    async fn set_flags(&self, _: &Account, _: &SecretString, _: &Mail) -> anyhow::Result<()> {
+    async fn set_flags(
+        &self,
+        _: &Account,
+        _: &SecretString,
+        _: &Mail,
+        _: crate::mail_actions::Flags,
+    ) -> anyhow::Result<()> {
         Ok(())
     }
 }
@@ -705,21 +724,25 @@ pub async fn finish_transfer(
     secret: &SecretString,
     mail: &Mail,
 ) -> anyhow::Result<()> {
-    let mut session = imap(account, secret).await?;
+    finish_transfer_session(imap(account, secret).await?, mail).await
+}
+
+async fn finish_transfer_session<
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
+>(
+    mut session: async_imap::Session<T>,
+    mail: &Mail,
+) -> anyhow::Result<()> {
     let uid = validate_uid(mail, session.select(&mail.folder).await?.uid_validity)?;
     anyhow::ensure!(
         session.capabilities().await?.has_str("UIDPLUS"),
         "Safe removal requires UIDPLUS."
     );
     session
-        .uid_store(&uid, "+FLAGS.SILENT (\\Deleted)")
-        .await?
-        .try_collect::<Vec<_>>()
+        .run_command_and_check_ok(format!("UID STORE {uid} +FLAGS.SILENT (\\Deleted)"))
         .await?;
     session
-        .uid_expunge(&uid)
-        .await?
-        .try_collect::<Vec<_>>()
+        .run_command_and_check_ok(format!("UID EXPUNGE {uid}"))
         .await?;
     let _ = session.logout().await;
     Ok(())
@@ -749,6 +772,192 @@ mod smtp_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn transfer_cleanup_requires_store_and_expunge_acknowledgments() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        for rejected in [None, Some("STORE"), Some("EXPUNGE")] {
+            let (client, server) = tokio::io::duplex(4096);
+            let server = tokio::spawn(async move {
+                let mut server = BufReader::new(server);
+                let mut mutations = Vec::new();
+                loop {
+                    let mut line = String::new();
+                    if server.read_line(&mut line).await.unwrap() == 0 {
+                        break;
+                    }
+                    let (tag, command) = line.trim_end().split_once(' ').unwrap();
+                    if command == "LOGOUT" {
+                        break;
+                    }
+                    let response = if command.starts_with("SELECT ") {
+                        "* 1 EXISTS\r\n* OK [UIDVALIDITY 42] valid\r\n"
+                    } else if command == "CAPABILITY" {
+                        "* CAPABILITY IMAP4rev1 UIDPLUS\r\n"
+                    } else {
+                        ""
+                    };
+                    let operation = if command == "UID STORE 7 +FLAGS.SILENT (\\Deleted)" {
+                        Some("STORE")
+                    } else if command == "UID EXPUNGE 7" {
+                        Some("EXPUNGE")
+                    } else {
+                        None
+                    };
+                    if let Some(operation) = operation {
+                        mutations.push(operation);
+                    }
+                    let failed = operation.is_some() && rejected == operation;
+                    let status = if failed {
+                        "NO not permitted"
+                    } else {
+                        "OK done"
+                    };
+                    server
+                        .get_mut()
+                        .write_all(format!("{response}{tag} {status}\r\n").as_bytes())
+                        .await
+                        .unwrap();
+                    if failed {
+                        break;
+                    }
+                }
+                assert_eq!(
+                    mutations,
+                    if rejected == Some("STORE") {
+                        vec!["STORE"]
+                    } else {
+                        vec!["STORE", "EXPUNGE"]
+                    }
+                );
+            });
+            let session = async_imap::Client::new(client)
+                .login("fixture", "secret")
+                .await
+                .unwrap();
+            let mail = parse_mail(
+                "fixture",
+                "42.7",
+                "INBOX",
+                b"From: fixture@example.test\r\nSubject: Transfer\r\n\r\nBody".to_vec(),
+                true,
+                false,
+            )
+            .unwrap();
+            assert_eq!(
+                finish_transfer_session(session, &mail.summary)
+                    .await
+                    .is_err(),
+                rejected.is_some()
+            );
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn imap_read_unread_and_flag_actions_emit_only_the_requested_store_and_honor_failure() {
+        use crate::mail_actions::Flags;
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        for (changes, expected, reject) in [
+            (
+                Flags {
+                    unread: Some(false),
+                    starred: None,
+                },
+                "UID STORE 7 +FLAGS.SILENT (\\Seen)",
+                false,
+            ),
+            (
+                Flags {
+                    unread: Some(true),
+                    starred: None,
+                },
+                "UID STORE 7 -FLAGS.SILENT (\\Seen)",
+                false,
+            ),
+            (
+                Flags {
+                    unread: None,
+                    starred: Some(true),
+                },
+                "UID STORE 7 +FLAGS.SILENT (\\Flagged)",
+                false,
+            ),
+            (
+                Flags {
+                    unread: None,
+                    starred: Some(false),
+                },
+                "UID STORE 7 -FLAGS.SILENT (\\Flagged)",
+                false,
+            ),
+            (
+                Flags {
+                    unread: Some(false),
+                    starred: None,
+                },
+                "UID STORE 7 +FLAGS.SILENT (\\Seen)",
+                true,
+            ),
+        ] {
+            let (client, server) = tokio::io::duplex(4096);
+            let server = tokio::spawn(async move {
+                let mut server = BufReader::new(server);
+                let mut stores = 0;
+                loop {
+                    let mut line = String::new();
+                    if server.read_line(&mut line).await.unwrap() == 0 {
+                        break;
+                    }
+                    let (tag, command) = line.trim_end().split_once(' ').unwrap();
+                    if command == "LOGOUT" {
+                        break;
+                    } // Ack remains valid on disconnect.
+                    let response = if command.starts_with("SELECT ") {
+                        "* 1 EXISTS\r\n* OK [UIDVALIDITY 42] valid\r\n"
+                    } else {
+                        ""
+                    };
+                    let status = if command.starts_with("UID STORE ") {
+                        stores += 1;
+                        assert_eq!(command, expected);
+                        if reject {
+                            "NO not permitted"
+                        } else {
+                            "OK stored"
+                        }
+                    } else {
+                        "OK completed"
+                    };
+                    server
+                        .get_mut()
+                        .write_all(format!("{response}{tag} {status}\r\n").as_bytes())
+                        .await
+                        .unwrap();
+                    if reject && stores == 1 {
+                        break;
+                    }
+                }
+                assert_eq!(stores, 1);
+            });
+            let session = async_imap::Client::new(client)
+                .login("fixture", "secret")
+                .await
+                .unwrap();
+            let mail = parse_mail(
+                "fixture",
+                "42.7",
+                "INBOX",
+                b"From: fixture@example.test\r\nSubject: Actions\r\n\r\nBody".to_vec(),
+                true,
+                false,
+            )
+            .unwrap();
+            let result = flags_imap_session(session, &mail.summary, changes).await;
+            assert_eq!(result.is_err(), reject);
+            server.await.unwrap();
+        }
+    }
 
     #[tokio::test]
     async fn move_from_spaced_folder_to_inbox_commits_before_logout_disconnect() {

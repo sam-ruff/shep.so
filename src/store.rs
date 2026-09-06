@@ -363,6 +363,18 @@ impl Store {
         })
         .await
     }
+    pub async fn patch_flags(
+        &self,
+        mail: Mail,
+        changes: crate::mail_actions::Flags,
+    ) -> anyhow::Result<()> {
+        self.run(move |c| {
+            let changed = c.execute("UPDATE messages SET unread=COALESCE(?, unread),starred=COALESCE(?, starred) WHERE id=? AND account=? AND folder=?",
+                params![changes.unread, changes.starred, mail.id, mail.account_id, mail.folder])?;
+            anyhow::ensure!(changed == 1, "This message moved or was removed. Refresh the folder and try again.");
+            Ok(())
+        }).await
+    }
     pub async fn flags(&self, mail: Mail) -> anyhow::Result<()> {
         self.run(move |c| {
             c.execute(
@@ -375,10 +387,14 @@ impl Store {
     }
     pub async fn move_local(&self, id: String, folder: String) -> anyhow::Result<()> {
         self.run(move |c| {
-            c.execute(
+            let changed = c.execute(
                 "UPDATE messages SET folder=? WHERE id=?",
                 params![folder, id],
             )?;
+            anyhow::ensure!(
+                changed == 1,
+                "This message was removed. Refresh the folder and try again."
+            );
             Ok(())
         })
         .await

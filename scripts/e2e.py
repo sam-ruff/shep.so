@@ -70,6 +70,79 @@ class NativeFlows(unittest.TestCase):
         self.artifacts = Path(result["artifacts"])
         print(f"\nEvidence: {result['artifacts']}", flush=True)
 
+    def test_read_unread_and_flags_show_immediately_during_slow_save(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        state = self.mcp.call("desktop.state")
+        initial, starred = state["unread"], state["starred"]
+        self.mcp.batch(click(740, 100), check("unread", not initial), check("mail_pending", 1),
+                       shot("read-change-pending"), click(784, 100), check("starred", not starred),
+                       click(740, 100), check("unread", initial), check("mail_pending", 1),
+                       key("ctrl+r"), check("busy", "sync", "contains"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000}, check("unread", initial), check("starred", not starred),
+                       shot("read-and-flag-committed"),
+                       click(740, 100), check("unread", not initial), {**check("mail_pending", 0), "timeout_ms": 5000},
+                       click(416, 349), click(416, 247), check("unread", not initial))
+
+    def test_failed_read_and_flag_restore_state_without_blocking_navigation(self):
+        self.mcp.call("desktop.start", mail_actions="fail")
+        state = self.mcp.call("desktop.state")
+        initial, starred = state["unread"], state["starred"]
+        self.mcp.batch(click(740, 100), check("unread", not initial), check("mail_pending", 1),
+                       {**check("mail_pending", 0), "timeout_ms": 5000}, check("unread", initial), check("notice", "restored", "contains"),
+                       shot("failed-read-restored"), click(784, 100), check("starred", not starred),
+                       click(420, 349), check("selected", "Your weekly workspace digest"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000}, click(420, 247), check("starred", starred),
+                       shot("failed-flag-restored"))
+
+    def test_archive_hides_immediately_and_commits_while_other_mail_is_readable(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch(click(652, 100), check("total", 119), check("mail_pending", 1),
+                       check("selected", "Your weekly workspace digest"), shot("archive-pending-next-mail"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       click(84, 398), check("folder", "Archive"), check("total", 1),
+                       check("selected", "A little more room to think"), shot("archive-committed"),
+                       key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
+                       type_text("inbox"), key("Return"), check("total", 0), check("mail_pending", 1),
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       click(84, 278), check("folder", "INBOX"), check("total", 120))
+
+    def test_failed_archive_restores_source_without_changing_navigation(self):
+        self.mcp.call("desktop.start", mail_actions="fail")
+        self.mcp.batch(key("BackSpace"), check("total", 119), check("mail_pending", 1),
+                       shot("archive-optimistic-before-failure"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000}, check("total", 120),
+                       check("notice", "restored to Inbox", "contains"), shot("archive-rollback"),
+                       click(420, 246), click(652, 100), check("total", 119),
+                       click(84, 398), check("folder", "Archive"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       check("folder", "Archive"), check("total", 0),
+                       click(84, 278), check("folder", "INBOX"), check("total", 120))
+
+    def test_context_read_and_inbox_flag_use_the_clicked_message_during_slow_save(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch({"type": "click", "x": 403, "y": 450, "button": 3},
+                       check("context_subject", "Coffee next Thursday?"),
+                       key("Down"), key("Down"), key("Down"), key("Return"),
+                       check("mail_rows.2.unread", False), check("mail_pending", 1),
+                       check("mail_rows.0.unread", True), shot("context-read-pending-correct-row"),
+                       click(568, 425), check("mail_rows.2.starred", True),
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       click(420, 450), check("selected", "Coffee next Thursday?"),
+                       check("unread", False), check("starred", True),
+                       shot("context-read-row-flag-committed"))
+
+    def test_shortcut_clear_primary_secondary_and_cancel_capture(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(645, 156),
+                       check("settings_tab", "Shortcuts"), shot("shortcut-clear-controls"),
+                       click(988, 350), check("shortcuts.Move", ""), check("preferences_saved", True),
+                       click(1070, 350), key("alt+m"), check("shortcut_secondary.Move", "Alt+M"),
+                       click(1157, 350), check("shortcut_secondary.Move", ""), check("preferences_saved", True),
+                       click(905, 350), click(988, 350), key("q"), check("shortcuts.Move", ""),
+                       key("ctrl+1"), check("tab", "Mail"), key("m"), wait(80), check("dialog", None),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(905, 350), key("m"),
+                       check("shortcuts.Move", "M"), check("preferences_saved", True),
+                       key("ctrl+1"), key("m"), check("dialog", "Move"), key("Escape"))
+
     def test_sidebar_resize_window_size_and_contacts_toast(self):
         self.mcp.batch(drag(222, 500, 310, 500), check("sidebar_width", 305, "gte"),
                        check("preferences_saved", True), check("saved_sidebar_width", 305, "gte"),
@@ -229,7 +302,7 @@ class NativeFlows(unittest.TestCase):
                        click(85, 115), check("folder", "INBOX"), check("total", 121),
                        key("ctrl+comma"), check("tab", "Preferences"), click(645, 156), check("settings_tab", "Shortcuts"),
                        {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(150), shot("sidebar-inbox-key-settings"),
-                       click(817, 738), check("shortcuts.Inbox", ""), check("preferences_saved", True),
+                       click(988, 738), check("shortcuts.Inbox", ""), check("preferences_saved", True),
                        key("ctrl+1"), check("tab", "Mail"), click(100, 537), check("folder", "Projects"),
                        key("i"), wait(80), check("folder", "Projects"),
                        key("ctrl+comma"), check("tab", "Preferences"),

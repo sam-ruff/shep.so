@@ -9,6 +9,7 @@ mod ellipsis;
 #[cfg(test)]
 mod google_lifecycle_tests;
 mod layout;
+mod mail_actions;
 mod outgoing;
 mod preference_sync;
 mod reading;
@@ -102,6 +103,7 @@ pub enum Message {
     Sync,
     SyncCalendar,
     Move(String),
+    MoveFirst,
     Focus(&'static str, u8),
     FocusChecked(&'static str, bool),
     ToggleStar,
@@ -224,6 +226,7 @@ pub struct App {
     saved_toast: Option<Instant>,
     context_menu: Option<context_menu::Menu>,
     pending_mail_action: Option<(String, context_menu::MailAction)>,
+    mail_actions: mail_actions::Actions,
     reader_selection: Option<Box<selectable::Content>>,
     pending_reader_selection: Option<Arc<MailDetail>>,
     reader_selection_generation: u64,
@@ -354,6 +357,7 @@ impl App {
                 saved_toast: None,
                 context_menu: None,
                 pending_mail_action: None,
+                mail_actions: Default::default(),
                 reader_selection: None,
                 pending_reader_selection: None,
                 reader_selection_generation: 0,
@@ -562,6 +566,7 @@ impl App {
         self.send(Command::Query(self.generation, self.query.clone(), false));
     }
     fn cache_detail(&mut self, detail: Arc<MailDetail>) {
+        self.mail_actions.observe_detail(&detail.summary);
         self.detail_cache
             .retain(|d| d.summary.id != detail.summary.id);
         self.detail_cache.push_front(detail);
@@ -888,7 +893,7 @@ impl App {
                             self.prefetch_page = Some((query, page));
                         }
                     } else {
-                        self.page = page;
+                        self.set_mail_page(page);
                         if let Some(menu) = &mut self.context_menu
                             && let Some(current) =
                                 self.page.rows.iter().find(|mail| mail.id == menu.mail.id)
@@ -953,6 +958,12 @@ impl App {
                         }
                         Err(_) => {}
                     }
+                }
+                Event::MoveFinished(request, mail, folder, result) => {
+                    return self.move_finished(request, mail, folder, result);
+                }
+                Event::FlagsFinished(request, mail, result) => {
+                    return self.flags_finished(request, mail, result);
                 }
                 Event::Changed => {
                     self.detail_revision += 1;
@@ -1150,7 +1161,12 @@ impl App {
                 _ => {}
             },
             Message::WindowClose(window) => {
-                if self.removal.removing.is_some() || self.busy.contains("credential-cleanup") {
+                if self.mail_actions.pending() > 0 {
+                    self.pending_close = Some(window);
+                    self.notice("Finishing your mail changes before closing…", false);
+                } else if self.removal.removing.is_some()
+                    || self.busy.contains("credential-cleanup")
+                {
                     self.notice(
                         "Wait for credential cleanup to finish before closing.",
                         true,
@@ -1387,7 +1403,7 @@ impl App {
                 if let Some((query, page)) = self.prefetch_page.take()
                     && query == self.query
                 {
-                    self.page = page;
+                    self.set_mail_page(page);
                     if let Some(first) = self.page.rows.first() {
                         self.select(first.id.clone());
                     }
@@ -1468,6 +1484,16 @@ impl App {
             }
             Message::Sync => self.send(Command::Sync),
             Message::SyncCalendar => self.send(Command::SyncCalendar),
+            Message::MoveFirst => {
+                if self.dialog == Some(Dialog::Move)
+                    && let Some(folder) =
+                        crate::fuzzy::ranked(self.field("folder_search"), self.move_folders())
+                            .into_iter()
+                            .next()
+                {
+                    return self.handle(Message::Move(folder));
+                }
+            }
             Message::Move(folder) => {
                 if let Some(d) = &self.detail {
                     let destination = self.field("move_account");
@@ -1488,7 +1514,8 @@ impl App {
                     let command = if transfer {
                         Command::Transfer(d.summary.clone(), destination.to_owned(), folder)
                     } else {
-                        Command::Move(d.summary.clone(), folder)
+                        self.move_mail(d.summary.clone(), folder);
+                        return Task::none();
                     };
                     if self.try_command(command) {
                         self.dialog = None;
@@ -1500,19 +1527,10 @@ impl App {
             }
             Message::ToggleStar | Message::ToggleRead => {
                 if let Some(detail) = &self.detail {
-                    if self
-                        .busy
-                        .contains(&format!("message:{}", detail.summary.id))
-                    {
-                        return Task::none();
-                    }
-                    let mut mail = detail.summary.clone();
-                    if matches!(message, Message::ToggleStar) {
-                        mail.starred = !mail.starred;
-                    } else {
-                        mail.unread = !mail.unread;
-                    }
-                    self.send(Command::Flags(mail));
+                    self.toggle_mail_flag(
+                        detail.summary.clone(),
+                        matches!(message, Message::ToggleRead),
+                    );
                 }
             }
             Message::Reply | Message::ReplyAll => {
@@ -1815,14 +1833,20 @@ impl App {
                 self.remapping = Some((action, slot));
             }
             Message::ClearShortcut(action, slot) => {
-                let _ = self
+                match self
                     .preferences
                     .shortcuts
-                    .remap_slot(action, slot, String::new());
-                self.remapping = None;
-                self.save_preferences();
+                    .remap_slot(action, slot, String::new())
+                {
+                    Ok(()) => {
+                        self.remapping = None;
+                        self.save_preferences();
+                    }
+                    Err(error) => self.notice(error.to_string(), true),
+                }
             }
             Message::ResetShortcuts => {
+                self.remapping = None;
                 self.preferences.shortcuts = Default::default();
                 self.save_preferences();
             }
@@ -2103,7 +2127,7 @@ impl App {
                 }
             }
             Message::ConversationFlag(id) => {
-                if let Some(mut mail) = self
+                if let Some(mail) = self
                     .conversation
                     .page
                     .rows
@@ -2111,8 +2135,7 @@ impl App {
                     .find(|mail| mail.id == id)
                     .cloned()
                 {
-                    mail.starred = !mail.starred;
-                    self.send(Command::Flags(mail));
+                    self.toggle_mail_flag(mail, false);
                 }
             }
             Message::ConversationPage(next) => {
@@ -2173,11 +2196,8 @@ impl App {
                 }
             }
             Message::FlagRow(id) => {
-                if let Some(mut mail) = self.page.rows.iter().find(|m| m.id == id).cloned()
-                    && !self.busy.contains(&format!("message:{id}"))
-                {
-                    mail.starred = !mail.starred;
-                    self.send(Command::Flags(mail));
+                if let Some(mail) = self.page.rows.iter().find(|m| m.id == id).cloned() {
+                    self.toggle_mail_flag(mail, false);
                 }
             }
             Message::InboxScroll(offset) => self.inbox_scroll = offset,
@@ -2638,7 +2658,7 @@ impl App {
         self.test_revision += 1;
         let mut samples: Vec<_> = self.update_samples.iter().copied().collect();
         samples.sort_by(f64::total_cmp);
-        let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|d.summary.starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts.0,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
+        let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|self.mail_actions.effective(&d.summary).starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts.0,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
         data["move_enter_destination"] = serde_json::json!(if self.dialog == Some(Dialog::Move) {
             crate::fuzzy::ranked(self.field("folder_search"), self.move_folders())
                 .first()
@@ -2659,6 +2679,13 @@ impl App {
         data["inbox_unread"] = serde_json::json!(self.page.inbox_unread);
         data["shortcut_secondary"] = serde_json::json!(self.preferences.shortcuts.1);
         data["conversation_total"] = serde_json::json!(self.conversation.page.total);
+        data["mail_pending"] = serde_json::json!(self.mail_actions.pending());
+        data["unread"] = serde_json::json!(
+            self.detail
+                .as_ref()
+                .map(|d| self.mail_actions.effective(&d.summary).unread)
+        );
+        data["mail_rows"] = serde_json::json!(self.page.rows);
         data["conversation_rows"] = serde_json::json!(self.conversation.page.rows);
         data["conversation_offset"] = serde_json::json!(self.conversation.page.offset);
         data["conversation_collapsed"] = serde_json::json!(self.conversation.collapsed);

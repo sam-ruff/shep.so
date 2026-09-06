@@ -4,6 +4,7 @@ mod backups_tests;
 mod calendar_connections;
 mod dispatch;
 mod google_lifecycle;
+mod mail_actions;
 mod outgoing;
 mod removals;
 mod restore;
@@ -42,9 +43,9 @@ pub enum Command {
     TestConnection(Account, SecretString, SecretString, ConnectionTarget),
     SavePreferences(u64, Preferences),
     Sync,
-    Move(Mail, String),
+    Move(u64, Mail, String),
     Transfer(Mail, String, String),
-    Flags(Mail),
+    Flags(u64, Mail, crate::mail_actions::Flags),
     SaveDraft(Draft),
     AutoSaveDraft(Draft),
     AddDraftFiles(Draft, Vec<std::path::PathBuf>),
@@ -95,9 +96,9 @@ impl Command {
             }
             Self::Send(d) => Some(format!("send:{}", d.id)),
             Self::SaveEvent(e) | Self::DeleteEvent(e) => Some(format!("event:{}", e.key())),
-            Self::Flags(m) | Self::Move(m, _) | Self::Transfer(m, _, _) => {
-                Some(format!("message:{}", m.id))
-            }
+            Self::Flags(request, m, _) => Some(format!("flags:{}:{request}", m.id)),
+            Self::Move(request, m, _) => Some(format!("move:{}:{request}", m.id)),
+            Self::Transfer(m, _, _) => Some(format!("message:{}", m.id)),
             _ => None,
         }
     }
@@ -122,6 +123,8 @@ pub enum Event {
         result: Result<Arc<MailDetail>, String>,
         prefetch: bool,
     },
+    FlagsFinished(u64, Mail, Result<(), String>),
+    MoveFinished(u64, Mail, String, Result<(), String>),
     Changed,
     Calendar(u64, Arc<Vec<CalendarEvent>>),
     Backups(u64, BackupTarget, Result<Arc<Vec<BackupCopy>>, String>),
@@ -678,56 +681,31 @@ impl Engine {
                     self.sync_account(destination, output.clone()).await?;
                 }
             }
-            Command::Move(mail, folder) => {
-                let guard = self.account_lock(&mail.account_id).await;
-                if !self.demo && !mail.remote_id.starts_with("local-sent-") {
-                    let account = self.account(&mail.account_id).await?;
-                    let password = providers::read_secret(&account.id).await?;
-                    tokio::time::timeout(
-                        Duration::from_secs(45),
-                        providers::mail::provider(account.protocol)
-                            .move_mail(&account, &password, &mail, &folder),
-                    )
-                    .await??;
-                    if account.protocol == Protocol::Imap {
-                        self.store.remove(mail.id).await?;
-                        output.send(Event::Changed).await?;
-                        drop(guard);
-                        self.sync_account(account, output.clone()).await?;
-                    } else {
-                        self.store.move_local(mail.id, folder.clone()).await?;
-                    }
-                } else {
-                    self.store.move_local(mail.id, folder.clone()).await?;
-                }
-                output.send(Event::Changed).await?;
+            Command::Move(request, mail, folder) => {
+                let result = self.change_folder(&mail, &folder, output.clone()).await;
+                let refresh = result.as_ref().ok().cloned().flatten();
                 output
-                    .send(Event::Notice(format!(
-                        "Moved to {}.",
-                        if folder.eq_ignore_ascii_case("INBOX") {
-                            "Inbox"
-                        } else {
-                            &folder
-                        }
-                    )))
+                    .send(Event::MoveFinished(
+                        request,
+                        mail,
+                        folder,
+                        result.map(|_| ()).map_err(|e| format!("{e:#}")),
+                    ))
                     .await?;
-            }
-            Command::Flags(mail) => {
-                let _guard = self.account_lock(&mail.account_id).await;
-                if !self.demo && !mail.remote_id.starts_with("local-sent-") {
-                    let account = self.account(&mail.account_id).await?;
-                    if account.protocol == Protocol::Imap {
-                        let password = providers::read_secret(&account.id).await?;
-                        tokio::time::timeout(
-                            Duration::from_secs(45),
-                            providers::mail::provider(account.protocol)
-                                .set_flags(&account, &password, &mail),
-                        )
-                        .await??;
-                    }
+                if let Some(account) = refresh
+                    && let Err(error) = self.sync_account(account, output.clone()).await
+                {
+                    output.send(Event::Error(format!("The message was moved, but refreshing folders failed. Try Refresh. {error:#}"))).await?;
                 }
-                self.store.flags(mail).await?;
-                output.send(Event::Changed).await?;
+            }
+            Command::Flags(request, mail, changes) => {
+                let result = self
+                    .change_flags(&mail, changes)
+                    .await
+                    .map_err(|e| format!("{e:#}"));
+                output
+                    .send(Event::FlagsFinished(request, mail, result))
+                    .await?;
             }
             Command::SaveDraft(draft) | Command::AutoSaveDraft(draft) => {
                 let id = draft.id.clone();

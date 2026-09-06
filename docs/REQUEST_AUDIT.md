@@ -65,7 +65,11 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 
 | R60 | Immediate optimistic archive/move and app-wide reversible-action feedback; persist principle in AGENTS.md | Principle recorded; implementation open under R50/R60 |
 | R61 | Raw GitHub installers for Linux/macOS/Windows, user-local default, optional system install and app menus; first install commands in README/docs | Recorded, open |
-| R62 | Fix nonworking read/unread and add integration coverage for basic mail behavior | Recorded, open |
-| R59 | Investigate and fix the newly failed CI build | Newly recorded, open |
+| R62 | Fix nonworking read/unread and add integration coverage for basic mail behavior | Implemented and tested; IMAP NO detection, selective flags, dispatcher/cache/reopen/native coverage; shipping pending |
+| R64 | Transparent GNOME desktop icon matching system theme | Recorded, open |
+| R63 | Fix shortcut × and extend native E2E coverage across functionality paths | Per-slot clearing and persistence tests plus expanded native scenarios pass; shipping pending |
+| R65 | More frequent/reliable background sync independent of manual Refresh | Recorded, open |
+| R66 | Record Dungeonwalk vectoriser/remove.bg credential discovery in AGENTS.md | Written; shipping pending |
+| R59 | Investigate and fix the newly failed CI build | Delivered eea1dfb; strict local build and GitHub run 34026001754 passed |
 
 The main omissions were already present in the completion log but were not an adequate live checklist: faithful HTML, local encryption/large-mail streaming, folder trees/mutations, inline multiple drafts/discard, palette editing, multiple backup targets and continuous settings/account sync. The newer bulk-selection, drag/drop, find, optimistic feedback, tooltip/settings-search and context-menu requests are now explicit TODO entries. Passing the existing suite does not close them.
