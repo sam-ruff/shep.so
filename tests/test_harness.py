@@ -14,6 +14,29 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_native_file_picker_uses_real_input_and_restricts_files_to_the_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            desktop = harness.Desktop()
+            desktop.directory = Path(directory)
+            fixture = desktop.directory / "a file.txt"
+            fixture.write_text("Fixture")
+            windows = iter(["123", "", "123", ""])
+            desktop.window = "main"
+            desktop.command = Mock(side_effect=lambda *args: next(windows) if args[1] == "search" else "")
+            with patch.object(harness.time, "sleep"), patch.object(harness.subprocess, "Popen") as clipboard:
+                self.assertEqual(desktop.choose_file(str(fixture)), {"selected": str(fixture)})
+                commands = [call.args for call in desktop.command.call_args_list]
+                self.assertIn(("xdotool", "windowfocus", "123"), commands)
+                self.assertIn(("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v"), commands)
+                clipboard.return_value.stdin.write.assert_called_once_with(str(fixture).encode())
+                desktop.choose_file()
+                self.assertIn(("xdotool", "key", "--clearmodifiers", "--delay", "1", "Escape"), [call.args for call in desktop.command.call_args_list])
+                self.assertEqual(desktop.command.call_args.args, ("xdotool", "windowfocus", "main"))
+            desktop.command.reset_mock()
+            with self.assertRaises(ValueError):
+                desktop.choose_file(str(ROOT / "Cargo.toml"))
+            desktop.command.assert_not_called()
+
     def test_mcp_initialize_discovery_and_unknown_tool(self):
         messages = [
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}},

@@ -297,6 +297,7 @@ pub struct MailDetail {
     pub latest_body: String,
     pub replies: Vec<crate::replies::ReplySection>,
     pub attachments: std::sync::Arc<Vec<Attachment>>,
+    pub reply: crate::compose::ReplyHeaders,
 }
 
 #[derive(Debug)]
@@ -312,13 +313,35 @@ pub enum MailSyncItem {
     Folders(String, Vec<String>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Draft {
     pub id: String,
     pub account_id: String,
     pub to: String,
     pub subject: String,
     pub body: String,
+    #[serde(default)]
+    pub cc: String,
+    #[serde(default)]
+    pub bcc: String,
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub in_reply_to: Option<String>,
+    #[serde(default)]
+    pub references: Vec<String>,
+    // File bytes and associations have separate storage; saving text cannot
+    // undo a file import/removal that finished while the user was typing.
+    #[serde(default, skip_serializing)]
+    pub attachments: Vec<DraftAttachment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DraftAttachment {
+    pub id: String,
+    pub name: String,
+    pub media_type: String,
+    pub size: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

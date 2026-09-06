@@ -1,4 +1,5 @@
 pub mod backup;
+pub mod compose;
 pub mod engine;
 pub mod fuzzy;
 pub mod model;

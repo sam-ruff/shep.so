@@ -120,7 +120,7 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
     // Exercise MIME attachments, quoted replies and blocked images through real reader controls.
     let old = &mails[4];
     let raw = format!(
-        "From: Daniel Park <hello4@example.com>\r\nTo: alex@studio.example\r\nSubject: Re: A few thoughts on the prototype\r\nDate: {}\r\nContent-Type: multipart/mixed; boundary=parts\r\n\r\n--parts\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>The prototype is ready. Please check the attached notes.</p><p>On Monday, Alex wrote:</p><blockquote><p>Can you send the updated prototype?</p></blockquote><img src=\"https://images.example.com/prototype.webp\" alt=\"Prototype sketch\">\r\n",
+        "From: Daniel Park <hello4@example.com>\r\nTo: alex@studio.example, colleague@example.com\r\nCc: copy@example.com\r\nReply-To: Daniel Park <team@example.com>\r\nMessage-ID: <prototype@example.com>\r\nReferences: <first@example.com>\r\nSubject: Re: A few thoughts on the prototype\r\nDate: {}\r\nContent-Type: multipart/mixed; boundary=parts\r\n\r\n--parts\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>The prototype is ready. Please check the attached notes.</p><p>On Monday, Alex wrote:</p><blockquote><p>Can you send the updated prototype?</p></blockquote><img src=\"https://images.example.com/prototype.webp\" alt=\"Prototype sketch\">\r\n",
         chrono::DateTime::from_timestamp(old.summary.timestamp, 0)
             .unwrap()
             .to_rfc2822()

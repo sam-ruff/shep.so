@@ -50,7 +50,7 @@ impl CommandSender {
             Command::SavePreferences(..)
             | Command::SaveDraft(_)
             | Command::AutoSaveDraft(_)
-            | Command::SaveBeforeClose(_) => &self.persistence,
+            | Command::RemoveDraftFile(..) => &self.persistence,
             _ => &self.network,
         };
         channel.try_send(command).map_err(Box::new)
@@ -135,7 +135,7 @@ impl Engine {
                         // merely because the whole archive takes over ten minutes.
                         // Restore also must observe its blocking SQLite commit;
                         // dropping its future cannot cancel that transaction.
-                        let result = if matches!(&command, Command::Backup(..) | Command::AutomaticBackup(_) | Command::Restore(..)) {
+                        let result = if matches!(&command, Command::Backup(..) | Command::AutomaticBackup(_) | Command::Restore(..) | Command::Send(_)) {
                             engine.execute(command, output).await
                         } else {
                             tokio::time::timeout(Duration::from_secs(600), engine.execute(command, output)).await
@@ -257,13 +257,15 @@ mod tests {
             to: "friend@example.com".into(),
             subject: "First draft".into(),
             body: "First text".into(),
+            ..Default::default()
         };
         sender
             .try_send(Command::AutoSaveDraft(draft.clone()))
             .unwrap();
         sender
-            .try_send(Command::SaveBeforeClose(Draft {
+            .try_send(Command::SaveDraft(Draft {
                 body: "Latest text".into(),
+                revision: 1,
                 ..draft
             }))
             .unwrap();
@@ -284,7 +286,10 @@ mod tests {
                         assert_eq!(result.summary.subject, "Still readable");
                         detail = true;
                     }
-                    Event::ReadyToClose => saved = true,
+                    Event::DraftSaved(_, 1, result) => {
+                        result.unwrap();
+                        saved = true;
+                    }
                     Event::Error(error) => panic!("Local operation failed: {error}"),
                     _ => {}
                 }

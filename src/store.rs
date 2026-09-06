@@ -1,6 +1,8 @@
 use crate::model::*;
+mod drafts;
 mod restore;
 use anyhow::Context;
+pub use drafts::DraftState;
 use rusqlite::{Connection, params};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
@@ -20,6 +22,7 @@ pub struct Workspace {
     pub folders: Vec<String>,
     pub account_folders: std::collections::HashMap<String, Vec<String>>,
     pub drafts: Vec<Draft>,
+    pub drafts_revision: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -63,6 +66,11 @@ impl Store {
                 INSERT INTO mail_search(rowid,sender,subject,body) VALUES(new.rowid,new.sender,new.subject,new.body); END;
             CREATE TABLE IF NOT EXISTS restored_messages (
                 id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE);
+            CREATE TABLE IF NOT EXISTS draft_attachments (
+                id TEXT PRIMARY KEY, draft TEXT NOT NULL, name TEXT NOT NULL,
+                media_type TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL);
+            CREATE INDEX IF NOT EXISTS draft_attachment_owner ON draft_attachments(draft);
+            CREATE TABLE IF NOT EXISTS draft_sent (id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, source TEXT NOT NULL, start INTEGER NOT NULL, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS event_start ON events(start);")?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -234,6 +242,7 @@ impl Store {
                     folders.push(folder);
                 }
             }
+            let drafts = drafts::snapshot(c)?;
             Ok(Workspace {
                 accounts: get(c, "accounts")?,
                 calendars: get(c, "calendars")?,
@@ -241,7 +250,8 @@ impl Store {
                 preferences_revision: get(c, "preferences_revision")?,
                 account_folders,
                 folders,
-                drafts: get(c, "drafts")?,
+                drafts: drafts.drafts,
+                drafts_revision: drafts.revision,
             })
         })
         .await
@@ -312,6 +322,7 @@ impl Store {
                 body_truncated,
                 remote_images: crate::remote_images::extract(&parsed),
                 attachments: Arc::new(attachments),
+                reply: crate::compose::ReplyHeaders::parse(&parsed),
             })
         })
         .await
@@ -439,18 +450,23 @@ impl Store {
     }
     pub async fn save_draft(&self, draft: Draft) -> anyhow::Result<()> {
         self.run(move |c| {
-            let mut drafts: Vec<Draft> = get(c, "drafts")?;
-            drafts.retain(|d| d.id != draft.id);
-            drafts.push(draft);
-            put(c, "drafts", &drafts)
+            let tx = c.transaction()?;
+            drafts::save(&tx, draft)?;
+            tx.commit()?;
+            Ok(())
         })
         .await
     }
     pub async fn delete_draft(&self, id: String) -> anyhow::Result<()> {
         self.run(move |c| {
-            let mut drafts: Vec<Draft> = get(c, "drafts")?;
+            let tx = c.transaction()?;
+            let mut drafts: Vec<Draft> = get(&tx, "drafts")?;
             drafts.retain(|d| d.id != id);
-            put(c, "drafts", &drafts)
+            put(&tx, "drafts", &drafts)?;
+            tx.execute("DELETE FROM draft_attachments WHERE draft=?", [id])?;
+            drafts::changed(&tx)?;
+            tx.commit()?;
+            Ok(())
         })
         .await
     }

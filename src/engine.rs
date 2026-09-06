@@ -41,7 +41,8 @@ pub enum Command {
     Flags(Mail),
     SaveDraft(Draft),
     AutoSaveDraft(Draft),
-    SaveBeforeClose(Draft),
+    AddDraftFiles(Draft, Vec<std::path::PathBuf>),
+    RemoveDraftFile(String, String),
     Send(Draft),
     GoogleLogin(Preferences),
     CheckGoogleConnection,
@@ -104,8 +105,9 @@ pub enum Event {
     GoogleConnected,
     AccountSaved,
     CalendarSaved,
-    Sent(String),
-    ReadyToClose,
+    DraftSaved(String, u64, Result<Arc<crate::store::DraftState>, String>),
+    DraftFiles(String, Result<Arc<crate::store::DraftState>, String>),
+    Sent(String, u64),
     CalendarEventSaved(String),
     ConnectionTest(ConnectionTarget, Result<String, String>),
 }
@@ -314,7 +316,6 @@ impl Engine {
     }
     async fn execute(&self, command: Command, mut output: Output) -> anyhow::Result<()> {
         let explicit_draft = matches!(&command, Command::SaveDraft(_));
-        let closing = matches!(&command, Command::SaveBeforeClose(_));
         let deleting_event = matches!(&command, Command::DeleteEvent(_));
         match command {
             Command::CheckGoogleConnection => {
@@ -610,44 +611,99 @@ impl Engine {
                 self.store.flags(mail).await?;
                 output.send(Event::Changed).await?;
             }
-            Command::SaveDraft(draft)
-            | Command::AutoSaveDraft(draft)
-            | Command::SaveBeforeClose(draft) => {
-                self.store.save_draft(draft).await?;
-                self.workspace(&mut output).await?;
-                if explicit_draft {
+            Command::SaveDraft(draft) | Command::AutoSaveDraft(draft) => {
+                let id = draft.id.clone();
+                let revision = draft.revision;
+                let result = async {
+                    self.store.save_draft(draft).await?;
+                    self.store.draft_state().await
+                }
+                .await
+                .map(Arc::new)
+                .map_err(|e| format!("Could not save the draft: {e:#}"));
+                let saved = result.is_ok();
+                output
+                    .send(Event::DraftSaved(id.clone(), revision, result))
+                    .await?;
+                if saved && explicit_draft {
                     output.send(Event::Notice("Draft saved.".into())).await?;
                 }
-                if closing {
-                    output.send(Event::ReadyToClose).await?;
-                }
+            }
+            Command::AddDraftFiles(draft, paths) => {
+                let id = draft.id.clone();
+                let result = self.store.add_draft_files(draft, paths).await;
+                output
+                    .send(Event::DraftFiles(
+                        id,
+                        result.map(Arc::new).map_err(|e| format!("{e:#}")),
+                    ))
+                    .await?;
+            }
+            Command::RemoveDraftFile(draft, file) => {
+                let result = self.store.remove_draft_file(draft.clone(), file).await;
+                output
+                    .send(Event::DraftFiles(
+                        draft,
+                        result.map(Arc::new).map_err(|e| format!("{e:#}")),
+                    ))
+                    .await?;
             }
             Command::Send(draft) => {
+                let _guard = self.account_lock(&draft.account_id).await;
+                self.store.ensure_draft_unsent(draft.clone()).await?;
                 self.store.save_draft(draft.clone()).await?;
+                let state = self.store.draft_state().await?;
+                output
+                    .send(Event::DraftSaved(
+                        draft.id.clone(),
+                        draft.revision,
+                        Ok(Arc::new(state)),
+                    ))
+                    .await?;
+                let account = self.account(&draft.account_id).await?;
+                let files = self.store.draft_files(draft.clone()).await?;
+                let (build_account, build_draft) = (account.clone(), draft.clone());
+                let message = tokio::task::spawn_blocking(move || {
+                    crate::compose::build(&build_account, &build_draft, files)
+                })
+                .await??;
                 anyhow::ensure!(
                     !self.demo,
                     "Sending is disabled in preview. Your draft is saved locally."
                 );
-                let account = self.account(&draft.account_id).await?;
                 let password = providers::read_secret(&account.id).await?;
                 let password = if account.smtp_separate_password {
                     providers::read_secret(&format!("{}:smtp", account.id)).await?
                 } else {
                     password
                 };
-                let raw = providers::mail::send(&account, &password, &draft).await?;
-                let mail = parse_mail(
-                    &account.id,
-                    &format!("local-sent-{}", draft.id),
-                    "Sent",
-                    raw,
-                    false,
-                    false,
-                )?;
-                self.store.upsert(vec![mail]).await?;
-                self.store.delete_draft(draft.id.clone()).await?;
-                self.workspace(&mut output).await?;
-                output.send(Event::Sent(draft.id)).await?;
+                let raw = providers::mail::send(&account, &password, message).await?;
+                // Delivery is acknowledged independently of local cleanup failures.
+                output
+                    .send(Event::Sent(draft.id.clone(), draft.revision))
+                    .await?;
+                let cleanup = async {
+                    let state = self.store.finish_draft_send(draft.clone()).await?;
+                    output
+                        .send(Event::DraftSaved(
+                            draft.id.clone(),
+                            draft.revision,
+                            Ok(Arc::new(state)),
+                        ))
+                        .await?;
+                    let remote = format!("local-sent-{}-{}", draft.id, draft.revision);
+                    let mail = tokio::task::spawn_blocking(move || {
+                        parse_mail(&account.id, &remote, "Sent", raw, false, false)
+                    })
+                    .await??;
+                    self.store.upsert(vec![mail]).await
+                }
+                .await;
+                if let Err(error) = cleanup {
+                    anyhow::bail!(
+                        "The message was sent, but its local Sent copy or draft cleanup failed: {error:#}. Do not resend this draft."
+                    );
+                }
                 output.send(Event::Changed).await?;
                 output.send(Event::Notice("Message sent.".into())).await?;
             }
