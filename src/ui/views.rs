@@ -1115,7 +1115,76 @@ impl App {
         .into()
     }
     fn google_settings(&self) -> Element<'_, Message> {
-        settings_card("Google connection","Connect Google Calendar and optionally save encrypted copies to Drive.",column![form_field("Desktop OAuth client ID","your-client-id.apps.googleusercontent.com",self.field("google_id"),"google_id",false),form_field("Desktop OAuth client secret","From your Google desktop application credentials",self.field("google_secret"),"google_secret",true),row![button(text(if self.google_connected{"Reconnect Google"}else{"Continue with Google"}).size(12)).padding([12,18]).style(outline).on_press(Message::GoogleLogin),if self.google_connected{badge("CONNECTED")}else{space().into()}].spacing(15).align_y(Alignment::Center),muted("Enable the Drive and Calendar APIs in your Google Cloud project. Sign-in opens your browser; backups stay off until you enable them.").size(11)].spacing(16).into())
+        let busy = self.busy.contains("google") || self.busy.contains("google-disconnect");
+        let lifecycle = self.preferences.google_lifecycle;
+        let mut controls = row![
+            button(
+                text(if self.google_connected {
+                    "Reconnect Google"
+                } else {
+                    "Continue with Google"
+                })
+                .size(12)
+            )
+            .padding([12, 18])
+            .style(outline)
+            .on_press_maybe((!busy && !lifecycle.cleanup_pending).then_some(Message::GoogleLogin))
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+        if self.google_connected {
+            controls = controls.push(badge("CONNECTED"));
+        }
+        if !lifecycle.disconnected
+            && (self.google_connected
+                || self
+                    .workspace
+                    .calendars
+                    .iter()
+                    .any(|s| s.kind == CalendarKind::Google)
+                || !self.preferences.google_connection_id.is_empty())
+        {
+            controls = controls.push(
+                button(text("Disconnect…").size(12))
+                    .padding([12, 18])
+                    .style(outline)
+                    .on_press_maybe(
+                        (!self.busy.contains("google-disconnect"))
+                            .then_some(Message::ReviewGoogleDisconnect),
+                    ),
+            );
+        }
+        let mut body = column![
+            form_field(
+                "Desktop OAuth client ID",
+                "your-client-id.apps.googleusercontent.com",
+                self.field("google_id"),
+                "google_id",
+                false
+            ),
+            form_field(
+                "Desktop OAuth client secret",
+                "From your Google desktop application credentials",
+                self.field("google_secret"),
+                "google_secret",
+                true
+            ),
+            controls.wrap(),
+        ]
+        .spacing(16);
+        if lifecycle.cleanup_pending {
+            body = body.push(text("Google is disconnected. Unlock your credential store to finish removing its saved login.").size(12))
+                .push(button(text("Retry Google cleanup").size(12)).padding(12).style(outline).on_press_maybe((!busy).then_some(Message::CleanupGoogle)));
+        } else if lifecycle.disconnected {
+            body = body
+                .push(muted("Disconnected · cached calendars remain available to read.").size(12));
+        }
+        body = body.push(muted("Enable the Drive and Calendar APIs in your Google Cloud project. Sign-in opens your browser; backups stay off until you enable them.").size(11));
+        settings_card(
+            "Google connection",
+            "Connect Google Calendar and optionally save encrypted copies to Drive.",
+            body.into(),
+        )
     }
     fn calendar_settings(&self) -> Element<'_, Message> {
         let mut sources = column![].spacing(17);
@@ -1128,7 +1197,9 @@ impl App {
                             text(&source.name).font(BOLD).size(13),
                             muted(match source.kind {
                                 CalendarKind::Google =>
-                                    if source.access.read_only() {
+                                    if self.workspace.google_archived.contains(&source.id) {
+                                        "Google Calendar · offline archive"
+                                    } else if source.access.read_only() {
                                         "Google Calendar · read only"
                                     } else {
                                         "Google Calendar"
@@ -1354,6 +1425,7 @@ impl App {
     fn dialog_view(&self, dialog: Dialog) -> Element<'_, Message> {
         let (title, subtitle) = match dialog {
             Dialog::Removal => ("Remove connection?", ""),
+            Dialog::GoogleDisconnect => ("Disconnect Google?", ""),
             Dialog::Outbox => ("Outbox", ""),
             Dialog::Account => ("Mail account", ""),
             Dialog::Sender => ("Sender details", ""),
@@ -1390,6 +1462,16 @@ impl App {
         let mut body = column![header, line()].spacing(20);
         match dialog {
             Dialog::Removal => body = body.push(self.removal_form()),
+            Dialog::GoogleDisconnect => {
+                let pending = self.google_disconnect_pending.is_some();
+                body = body.push(text("Calendar sync and Drive backups will stop on this device. Cached calendars remain readable, and your mail and existing backups are kept.").size(13))
+                    .push(muted("The saved Google login will be removed from this device. Access on other devices is managed separately in your Google Account.").size(12))
+                    .push(row![
+                        button(text(if pending { "Disconnecting…" } else { "Disconnect this device" }).size(12)).padding([12,16]).style(primary)
+                            .on_press_maybe((!pending).then_some(Message::ConfirmGoogleDisconnect)),
+                        action(if pending { "Close" } else { "Cancel" }, Message::Close)
+                    ].spacing(10).wrap());
+            },
             Dialog::Outbox => body = body.push(self.outbox_view()),
             Dialog::Sender => body = body.push(self.sender_dialog()),
             Dialog::Account => body = body.push(self.account_wizard()),

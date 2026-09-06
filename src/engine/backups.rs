@@ -26,10 +26,10 @@ impl Engine {
     pub(super) async fn backup_connection_guard(
         &self,
         target: &BackupTarget,
-    ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+    ) -> Option<tokio::sync::OwnedRwLockReadGuard<()>> {
         match target {
             BackupTarget::GoogleDrive { .. } => {
-                Some(self.google_connection_lock.clone().lock_owned().await)
+                Some(self.google_connection_lock.clone().read_owned().await)
             }
             BackupTarget::Local(_) => None,
         }
@@ -39,6 +39,11 @@ impl Engine {
         target: &BackupTarget,
         prefs: &Preferences,
     ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !matches!(target, BackupTarget::GoogleDrive { .. })
+                || !prefs.google_lifecycle.disconnected,
+            "Reconnect Google before accessing Drive backups."
+        );
         anyhow::ensure!(
             *target == BackupTarget::from_preferences(prefs),
             "The backup destination changed. Refresh copies or start the backup again with the current settings."

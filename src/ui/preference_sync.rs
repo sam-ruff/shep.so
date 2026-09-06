@@ -31,6 +31,12 @@ impl PreferenceSync {
         }
         if self.dirty() {
             live.google_connection_id = self.saved.value.google_connection_id.clone();
+            live.google_lifecycle = self.saved.value.google_lifecycle;
+            if live.google_lifecycle.disconnected
+                && live.backup_destination == crate::model::BackupDestination::GoogleDrive
+            {
+                live.auto_backup = false;
+            }
             let same_target = crate::backup::BackupTarget::from_preferences(live)
                 == crate::backup::BackupTarget::from_preferences(&self.saved.value);
             live.last_backup = if same_target {

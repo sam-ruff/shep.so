@@ -3,6 +3,7 @@ mod backups;
 mod backups_tests;
 mod calendar_connections;
 mod dispatch;
+mod google_lifecycle;
 mod outgoing;
 mod removals;
 mod restore;
@@ -53,6 +54,8 @@ pub enum Command {
     ResolveOutgoing(String, crate::outgoing::RecoveryAction, bool),
     RepairOutgoing,
     GoogleLogin(Preferences),
+    DisconnectGoogle(u64),
+    CleanupGoogle,
     CheckGoogleConnection,
     DiscoverCalendars(u64, String, String, SecretString),
     ConnectCalendars(u64, u64, Vec<CalendarSource>, SecretString),
@@ -86,6 +89,7 @@ impl Command {
             Self::CleanupCredentials => Some("credential-cleanup".into()),
             Self::RestoreGoogleCalendars => Some("restore-calendars".into()),
             Self::GoogleLogin(_) => Some("google".into()),
+            Self::DisconnectGoogle(_) | Self::CleanupGoogle => Some("google-disconnect".into()),
             Self::Backup(..) | Self::AutomaticBackup(_) | Self::Restore(..) => {
                 Some("backup".into())
             }
@@ -125,7 +129,8 @@ pub enum Event {
     Busy(String, bool),
     Notice(String),
     Error(String),
-    GoogleConnected,
+    GoogleStatus(u64, bool),
+    GoogleDisconnected(u64, Result<(), String>),
     AccountSaved(String),
     RemovalPreview(u64, Result<crate::store::RemovalPreview, String>),
     ConnectionRemoved(u64, Result<usize, String>),
@@ -157,7 +162,7 @@ struct Engine {
     connection_lifecycle_lock: Arc<tokio::sync::Mutex<()>>,
     secret_remover: Arc<dyn removals::SecretRemover>,
     outbound: Arc<dyn providers::outgoing::Outbound>,
-    google_connection_lock: Arc<tokio::sync::Mutex<()>>,
+    google_connection_lock: Arc<tokio::sync::RwLock<()>>,
     passphrases: Arc<dyn backup::PassphraseStore>,
     restore_credentials: Arc<dyn backup::restore::CredentialRestorer>,
     backup_uploads: Arc<tokio::sync::OnceCell<backup::journal::Journal>>,
@@ -229,7 +234,9 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
                 return;
             }
         };
-        if !demo && !workspace.preferences.google_client_id.is_empty() {
+        if !demo && workspace.preferences.google_lifecycle.cleanup_pending {
+            let _ = tx.try_send(Command::CleanupGoogle);
+        } else if !demo && !workspace.preferences.google_client_id.is_empty() {
             // Credential stores may wait for an unlock dialog. Show the cached
             // workspace immediately and check Google from the provider worker.
             let _ = tx.try_send(Command::CheckGoogleConnection);
@@ -371,14 +378,30 @@ impl Engine {
         let deleting_event = matches!(&command, Command::DeleteEvent(_));
         match command {
             Command::CheckGoogleConnection => {
-                if !self.demo
-                    && self
-                        .google
-                        .connected(&self.store.get("preferences").await?)
-                        .await?
-                {
-                    output.send(Event::GoogleConnected).await?;
-                }
+                let _guard = self.google_connection_lock.read().await;
+                let prefs: Preferences = self.store.get("preferences").await?;
+                let connected = !self.demo && self.google.connected(&prefs).await?;
+                output
+                    .send(Event::GoogleStatus(
+                        prefs.google_lifecycle.revision,
+                        connected,
+                    ))
+                    .await?;
+            }
+            Command::DisconnectGoogle(revision) => {
+                let result = self
+                    .disconnect_google(revision, &mut output)
+                    .await
+                    .map_err(|e| format!("{e:#}"));
+                output
+                    .send(Event::GoogleDisconnected(revision, result))
+                    .await?;
+            }
+            Command::CleanupGoogle => {
+                let _guard = self.google_connection_lock.write().await;
+                let result = self.cleanup_google_locked().await;
+                self.workspace(&mut output).await?;
+                result?;
             }
             #[cfg(test)]
             Command::HoldBackend { started, release } => {
@@ -757,19 +780,33 @@ impl Engine {
                 prefs.validate()?;
                 // The UI starts OAuth only after the corresponding preferences save
                 // is acknowledged. A delayed provider job must not overwrite settings.
-                let _guard = self.google_connection_lock.lock().await;
+                let _guard = self.google_connection_lock.write().await;
+                let current: Preferences = self.store.get("preferences").await?;
+                anyhow::ensure!(
+                    prefs.google_lifecycle.revision == current.google_lifecycle.revision,
+                    "Google changed before sign-in started. Choose Connect Google again."
+                );
+                self.cleanup_google_locked().await?;
                 self.google.login(&prefs).await?;
-                let identity = backup::DriveBackup::new(self.google.clone(), prefs.clone())
+                let mut authorized = prefs.clone();
+                authorized.google_lifecycle.disconnected = false;
+                let identity = backup::DriveBackup::new(self.google.clone(), authorized.clone())
                     .account_identity()
                     .await?;
-                self.store
+                let saved = self
+                    .store
                     .record_google_connection(prefs.google_client_id.clone(), identity)
                     .await?;
                 self.store
-                    .refresh_google_sources(self.google.calendars(&prefs).await?)
+                    .refresh_google_sources(self.google.calendars(&authorized).await?)
                     .await?;
                 self.workspace(&mut output).await?;
-                output.send(Event::GoogleConnected).await?;
+                output
+                    .send(Event::GoogleStatus(
+                        saved.value.google_lifecycle.revision,
+                        true,
+                    ))
+                    .await?;
                 output
                     .send(Event::Notice(
                         "Google connected. Drive backup is optional; calendars are ready to sync."
@@ -839,10 +876,13 @@ impl Engine {
                     .await?;
             }
             Command::SyncCalendar => {
+                let _google = self.google_connection_lock.read().await;
                 if !self.demo {
                     let sources: Vec<CalendarSource> = self.store.get("calendars").await?;
-                    if sources.iter().any(|s| s.kind == CalendarKind::Google) {
-                        let prefs: Preferences = self.store.get("preferences").await?;
+                    let prefs: Preferences = self.store.get("preferences").await?;
+                    if !prefs.google_lifecycle.disconnected
+                        && sources.iter().any(|s| s.kind == CalendarKind::Google)
+                    {
                         match self.google.calendars(&prefs).await {
                             Ok(updated) => {
                                 self.store.refresh_google_sources(updated).await?;
@@ -858,8 +898,15 @@ impl Engine {
                         }
                     }
                     let sources: Vec<CalendarSource> = self.store.get("calendars").await?;
+                    let archived: HashSet<String> = self.store.get("google_archived").await?;
                     let now = chrono::Utc::now();
                     for source in sources {
+                        if archived.contains(&source.id)
+                            || (source.kind == CalendarKind::Google
+                                && prefs.google_lifecycle.disconnected)
+                        {
+                            continue;
+                        }
                         let _guard = self.calendar_lock(&source.id).await;
                         let Some(source) = self
                             .store
@@ -893,6 +940,7 @@ impl Engine {
                 self.send_calendar(&mut output).await?;
             }
             Command::SaveEvent(event) | Command::DeleteEvent(event) => {
+                let _google = self.google_connection_lock.read().await;
                 anyhow::ensure!(
                     deleting_event || event.end > event.start,
                     "The event must end after it starts."

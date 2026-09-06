@@ -272,6 +272,35 @@ class NativeFlows(unittest.TestCase):
                        shot("outbox-empty-compact"), key("Escape"), check("dialog", None),
                        click(87, 359), check("folder", "Sent"), check("total", 2), shot("local-sent-copies-compact"))
 
+    def test_google_disconnect_preserves_cached_calendars(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(470, 156), check("settings_tab", "Calendars"),
+                       check("google_lifecycle.disconnected", False), check("events", 5), shot("google-connection-light"),
+                       click(502, 850), check("dialog", "GoogleDisconnect"), shot("google-disconnect-review-light"),
+                       click(664, 553), check("dialog", None), check("google_lifecycle.disconnected", False),
+                       click(502, 850), check("dialog", "GoogleDisconnect"), key("Escape"), check("dialog", None),
+                       click(502, 850), check("dialog", "GoogleDisconnect"), click(545, 553),
+                       check("dialog", None), check("google_lifecycle.disconnected", True),
+                       check("google_lifecycle.cleanup_pending", False), check("google_connected", False),
+                       check("google_archived", "preview-calendar", "contains"), check("calendar_count", 2),
+                       check("account_count", 2), check("events", 5), shot("google-disconnected-light"),
+                       key("ctrl+2"), check("tab", "Calendar"), shot("google-calendar-offline"),
+                       click(1260, 395), check("dialog", "Event"), check("event_access.update", False),
+                       check("event_access.delete", False), shot("google-offline-event-read-only"),
+                       key("Escape"), check("dialog", None), key("ctrl+1"), check("tab", "Mail"),
+                       check("total", 120), key("Down"), check("selected", "Your weekly workspace digest"))
+
+    def test_google_disconnect_compact_dark(self):
+        self.mcp.call("desktop.start", width=900, height=640)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       click(470, 156), check("settings_tab", "Calendars"), shot("google-connection-compact-dark"))
+        self.mcp.batch(click(764, 549), {"type": "scroll", "amount": 9}, wait(150), shot("google-connection-controls-compact"),
+                       click(480, 524), check("dialog", "GoogleDisconnect"), shot("google-disconnect-review-compact"),
+                       click(269, 412), check("dialog", None), check("google_lifecycle.disconnected", True),
+                       check("google_lifecycle.cleanup_pending", False), check("events", 5),
+                       shot("google-disconnected-compact"), key("ctrl+1"), check("tab", "Mail"),
+                       key("Down"), check("selected", "Your weekly workspace digest"), shot("mail-after-google-disconnect"))
+
     def test_connection_removal_review_and_cancel(self):
         self.mcp.batch(key("c"), check("dialog", "Compose"),
                        click(650, 362), type_text("A draft to review before removal"),

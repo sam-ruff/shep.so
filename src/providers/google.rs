@@ -41,7 +41,7 @@ impl Default for Google {
 }
 impl Google {
     pub async fn connected(&self, prefs: &Preferences) -> anyhow::Result<bool> {
-        if prefs.google_client_id.trim().is_empty() {
+        if prefs.google_client_id.trim().is_empty() || prefs.google_lifecycle.disconnected {
             return Ok(false);
         }
         let mut state = self.state.lock().await;
@@ -95,6 +95,10 @@ impl Google {
             .await
     }
     pub async fn token(&self, prefs: &Preferences) -> anyhow::Result<SecretString> {
+        anyhow::ensure!(
+            !prefs.google_lifecycle.disconnected,
+            "Google is disconnected on this device. Reconnect in Preferences."
+        );
         anyhow::ensure!(
             !prefs.google_client_id.trim().is_empty(),
             "Connect Google in Preferences before syncing or backing up to Drive."
@@ -152,6 +156,16 @@ impl Google {
             self.persist_refresh(cached).await?;
         }
         Ok(SecretString::from(cached.value.access_token.clone()))
+    }
+}
+
+impl Google {
+    pub async fn clear_credentials(&self) -> anyhow::Result<()> {
+        let mut state = self.state.lock().await;
+        state.active = None;
+        state.pending_login = None;
+        state.disconnected = true;
+        self.credentials.delete().await.map_err(|_| anyhow::anyhow!("Google is disconnected, but its saved credential could not be removed. Unlock the OS keychain and choose Retry Google cleanup in Preferences."))
     }
 }
 fn random() -> String {

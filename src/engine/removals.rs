@@ -86,6 +86,16 @@ impl Engine {
         Ok(failed)
     }
     pub(super) async fn restore_google_calendars(&self) -> anyhow::Result<usize> {
+        let _google = self.google_connection_lock.read().await;
+        anyhow::ensure!(
+            !self
+                .store
+                .get::<Preferences>("preferences")
+                .await?
+                .google_lifecycle
+                .disconnected,
+            "Reconnect Google before restoring calendars."
+        );
         let observed_revision = self.store.workspace().await?.connections_revision;
         let removed = self.store.removed_google_calendars().await?;
         let available = if self.demo {

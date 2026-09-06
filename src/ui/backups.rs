@@ -24,6 +24,11 @@ impl App {
     }
 
     pub(super) fn visible_backups(&self) -> &[BackupCopy] {
+        if self.preferences.backup_destination == BackupDestination::GoogleDrive
+            && self.preferences.google_lifecycle.disconnected
+        {
+            return &[];
+        }
         if self.backups_target.as_ref() == Some(&self.configured_backup_target()) {
             &self.backups
         } else {
@@ -43,6 +48,12 @@ impl App {
             return;
         }
         let target = self.configured_backup_target();
+        if matches!(target, BackupTarget::GoogleDrive { .. })
+            && self.preferences.google_lifecycle.disconnected
+        {
+            self.notice("Reconnect Google before accessing Drive backups.", true);
+            return;
+        }
         if let BackupTarget::Local(path) = &target
             && !std::path::Path::new(path).is_absolute()
         {
