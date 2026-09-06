@@ -1,3 +1,6 @@
+mod drive;
+pub(crate) mod journal;
+
 use crate::{model::*, providers::google::Google};
 use aes_gcm::{
     Aes256Gcm, KeyInit, Nonce,
@@ -33,8 +36,8 @@ pub struct BackupCopy {
 }
 
 /// A configured destination, independent of settings such as theme or retention.
-/// A new Google authorization has its own identity even when the client ID stays
-/// the same, because the user may have selected a different Google account.
+/// Drive uses its verified account identity and OAuth client, so reconnecting the
+/// same account preserves pending uploads while another account stays separate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackupTarget {
     Local(String),
@@ -85,14 +88,74 @@ pub trait BackupProvider: Send + Sync {
     async fn upload(&self, name: &str, data: Vec<u8>) -> anyhow::Result<String>;
     async fn download(&self, id: &str) -> anyhow::Result<Vec<u8>>;
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
+    async fn reserve(&self, _name: &str, _data: &[u8]) -> anyhow::Result<PreparedUpload> {
+        anyhow::bail!("This backup provider does not support recoverable uploads.")
+    }
+    async fn upload_prepared(
+        &self,
+        _upload: &mut PreparedUpload,
+        _data: &[u8],
+        _checkpoint: &dyn UploadCheckpoint,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("This backup provider does not support recoverable uploads.")
+    }
+    async fn verify_upload(&self, upload: &PreparedUpload) -> anyhow::Result<bool> {
+        upload.verify(&self.download(&upload.id).await?)?;
+        Ok(true)
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PreparedUpload {
+    pub id: String,
+    pub name: String,
+    pub size: u64,
+    pub sha256: String,
+    pub session: Option<String>,
+}
+impl PreparedUpload {
+    pub fn new(id: String, name: String, data: &[u8]) -> Self {
+        use sha2::{Digest, Sha256};
+        Self {
+            id,
+            name,
+            size: data.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(data)),
+            session: None,
+        }
+    }
+    pub fn verify(&self, data: &[u8]) -> anyhow::Result<()> {
+        use sha2::{Digest, Sha256};
+        anyhow::ensure!(
+            valid_name(&self.name) && self.size > 0 && self.size <= MAX_DECODED,
+            "Invalid pending backup metadata."
+        );
+        anyhow::ensure!(
+            self.size == data.len() as u64 && self.sha256 == format!("{:x}", Sha256::digest(data)),
+            "The pending backup archive is damaged. Its upload was not retried."
+        );
+        Ok(())
+    }
+}
+#[async_trait]
+pub trait UploadCheckpoint: Send + Sync {
+    async fn save(&self, upload: &PreparedUpload) -> anyhow::Result<()>;
+}
+struct NoCheckpoint;
+#[async_trait]
+impl UploadCheckpoint for NoCheckpoint {
+    async fn save(&self, _: &PreparedUpload) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 pub struct LocalBackup {
     pub directory: PathBuf,
 }
 pub struct DriveBackup {
-    pub google: Google,
-    pub preferences: Preferences,
+    google: Google,
+    preferences: Preferences,
+    verified: tokio::sync::OnceCell<()>,
 }
 
 pub fn encrypt(snapshot: &Snapshot, passphrase: &SecretString) -> anyhow::Result<Vec<u8>> {
@@ -127,7 +190,10 @@ pub fn encrypt(snapshot: &Snapshot, passphrase: &SecretString) -> anyhow::Result
     header.extend(ciphertext);
     Ok(header)
 }
-pub fn decrypt(bytes: &[u8], passphrase: &SecretString) -> anyhow::Result<Snapshot> {
+fn decrypt_compressed(
+    bytes: &[u8],
+    passphrase: &SecretString,
+) -> anyhow::Result<Zeroizing<Vec<u8>>> {
     anyhow::ensure!(
         bytes.len() >= 52 && &bytes[..8] == MAGIC,
         "This is not a supported Shep backup."
@@ -153,6 +219,17 @@ pub fn decrypt(bytes: &[u8], passphrase: &SecretString) -> anyhow::Result<Snapsh
             )
             .map_err(|_| anyhow::anyhow!("Incorrect passphrase or damaged backup."))?,
     );
+    Ok(compressed)
+}
+
+pub(crate) fn verify_passphrase(bytes: &[u8], passphrase: &SecretString) -> anyhow::Result<()> {
+    // Authenticate a pending archive without allocating its expanded mail/JSON.
+    // Its exact ciphertext was already verified against the durable journal.
+    decrypt_compressed(bytes, passphrase).map(|_| ())
+}
+
+pub fn decrypt(bytes: &[u8], passphrase: &SecretString) -> anyhow::Result<Snapshot> {
+    let compressed = decrypt_compressed(bytes, passphrase)?;
     let mut decoded = Zeroizing::new(Vec::new());
     zstd::Decoder::new(compressed.as_slice())?
         .take(MAX_DECODED + 1)
@@ -218,6 +295,37 @@ fn valid_name(name: &str) -> bool {
 
 #[async_trait]
 impl BackupProvider for LocalBackup {
+    async fn verify_upload(&self, upload: &PreparedUpload) -> anyhow::Result<bool> {
+        if !tokio::fs::try_exists(self.directory.join(&upload.id)).await? {
+            return Ok(false);
+        }
+        upload.verify(&self.download(&upload.id).await?)?;
+        Ok(true)
+    }
+    async fn reserve(&self, name: &str, data: &[u8]) -> anyhow::Result<PreparedUpload> {
+        anyhow::ensure!(valid_name(name), "Invalid backup filename.");
+        Ok(PreparedUpload::new(name.into(), name.into(), data))
+    }
+    async fn upload_prepared(
+        &self,
+        upload: &mut PreparedUpload,
+        data: &[u8],
+        _: &dyn UploadCheckpoint,
+    ) -> anyhow::Result<()> {
+        upload.verify(data)?;
+        anyhow::ensure!(upload.id == upload.name, "Invalid local backup identity.");
+        match self.upload(&upload.name, data.to_vec()).await {
+            Ok(_) => Ok(()),
+            Err(original) => {
+                // A retry after losing the local commit acknowledgment may find
+                // the reserved filename. Only identical ciphertext is success.
+                match self.download(&upload.id).await {
+                    Ok(bytes) if upload.verify(&bytes).is_ok() => Ok(()),
+                    _ => Err(original),
+                }
+            }
+        }
+    }
     async fn list(&self) -> anyhow::Result<Vec<BackupCopy>> {
         tokio::fs::create_dir_all(&self.directory).await?;
         let mut entries = tokio::fs::read_dir(&self.directory).await?;
@@ -298,118 +406,4 @@ impl BackupProvider for LocalBackup {
         }
         Ok(())
     }
-}
-
-#[async_trait]
-impl BackupProvider for DriveBackup {
-    async fn list(&self) -> anyhow::Result<Vec<BackupCopy>> {
-        let token = self.google.token(&self.preferences).await?;
-        let mut next = String::new();
-        let mut copies = Vec::new();
-        loop {
-            let data: serde_json::Value = self
-                .google
-                .http
-                .get("https://www.googleapis.com/drive/v3/files")
-                .bearer_auth(token.expose_secret())
-                .query(&[
-                    ("spaces", "appDataFolder"),
-                    (
-                        "q",
-                        "trashed = false and appProperties has { key='shepBackup' and value='1' }",
-                    ),
-                    ("fields", "nextPageToken,files(id,name,createdTime)"),
-                    ("pageSize", "100"),
-                    ("pageToken", &next),
-                ])
-                .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await?;
-            if let Some(files) = data["files"].as_array() {
-                for file in files {
-                    let name = file["name"].as_str().unwrap_or_default();
-                    if valid_name(name) {
-                        copies.push(BackupCopy {
-                            id: file["id"].as_str().context("Missing Drive file ID")?.into(),
-                            name: name.into(),
-                            created_at: file["createdTime"].as_str().unwrap_or("").into(),
-                        });
-                    }
-                }
-            }
-            match data["nextPageToken"].as_str() {
-                Some(n) => next = n.into(),
-                None => break,
-            }
-        }
-        copies.sort_by(|a, b| b.name.cmp(&a.name));
-        Ok(copies)
-    }
-    async fn upload(&self, name: &str, data: Vec<u8>) -> anyhow::Result<String> {
-        let token = self.google.token(&self.preferences).await?;
-        let boundary = format!("shep-{}", uuid::Uuid::new_v4());
-        let metadata = serde_json::json!({"name":name,"parents":["appDataFolder"],"appProperties":{"shepBackup":"1"}});
-        let mut body=format!("--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{metadata}\r\n--{boundary}\r\nContent-Type: application/octet-stream\r\n\r\n").into_bytes();
-        body.extend(data);
-        body.extend(format!("\r\n--{boundary}--\r\n").as_bytes());
-        let response: serde_json::Value = self
-            .google
-            .http
-            .post("https://www.googleapis.com/upload/drive/v3/files")
-            .query(&[("uploadType", "multipart"), ("fields", "id")])
-            .bearer_auth(token.expose_secret())
-            .header(
-                "Content-Type",
-                format!("multipart/related; boundary={boundary}"),
-            )
-            .body(body)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        Ok(response["id"]
-            .as_str()
-            .context("Google Drive did not confirm the upload")?
-            .into())
-    }
-    async fn download(&self, id: &str) -> anyhow::Result<Vec<u8>> {
-        let token = self.google.token(&self.preferences).await?;
-        let mut response = self
-            .google
-            .http
-            .get(drive_url(id)?)
-            .query(&[("alt", "media")])
-            .bearer_auth(token.expose_secret())
-            .send()
-            .await?
-            .error_for_status()?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            anyhow::ensure!(
-                (bytes.len() + chunk.len()) as u64 <= MAX_DECODED,
-                "The backup exceeds the restore size limit."
-            );
-            bytes.extend(chunk);
-        }
-        Ok(bytes)
-    }
-    async fn delete(&self, id: &str) -> anyhow::Result<()> {
-        let token = self.google.token(&self.preferences).await?;
-        self.google
-            .http
-            .delete(drive_url(id)?)
-            .bearer_auth(token.expose_secret())
-            .send()
-            .await?
-            .error_for_status()?;
-        Ok(())
-    }
-}
-fn drive_url(id: &str) -> anyhow::Result<url::Url> {
-    let mut url = url::Url::parse("https://www.googleapis.com/drive/v3/files/")?;
-    url.path_segments_mut().unwrap().pop_if_empty().push(id);
-    Ok(url)
 }

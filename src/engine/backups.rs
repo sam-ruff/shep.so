@@ -1,6 +1,28 @@
 use super::*;
 
 impl Engine {
+    pub(super) async fn backup_journal(&self) -> anyhow::Result<backup::journal::Journal> {
+        self.backup_uploads
+            .get_or_try_init(|| async {
+                let path = self
+                    .store
+                    .run(|connection| {
+                        Ok(connection
+                            .path()
+                            .filter(|path| !path.is_empty())
+                            .map(|path| {
+                                std::path::PathBuf::from(path)
+                                    .with_file_name("backup-uploads.sqlite")
+                            }))
+                    })
+                    .await?;
+                tokio::task::spawn_blocking(move || backup::journal::Journal::open(path.as_deref()))
+                    .await?
+            })
+            .await
+            .cloned()
+    }
+
     pub(super) async fn backup_connection_guard(
         &self,
         target: &BackupTarget,
@@ -65,6 +87,88 @@ impl Engine {
             "Use a backup passphrase of at least 12 characters."
         );
         let provider = self.backup_provider(&prefs).await?;
+        let journal = self.backup_journal().await?;
+        let mut pending = journal.pending(&target).await?;
+        if let Some(previous) = &pending
+            && previous.committed
+            && !provider.verify_upload(&previous.upload).await?
+        {
+            // A known successful copy can have been removed later. This is not
+            // an ambiguous upload, so a new snapshot may safely replace it.
+            journal.remove(&target, &previous.upload.id).await?;
+            pending = None;
+        }
+        let pending = match pending {
+            Some(pending) => pending,
+            None => {
+                let bytes = self.encrypted_snapshot(&prefs, &passphrase).await?;
+                let name = format!(
+                    "shep-{}-{}.shepbackup",
+                    chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
+                    uuid::Uuid::new_v4()
+                );
+                let upload = provider.reserve(&name, &bytes).await?;
+                journal.prepare(&target, upload, bytes).await?
+            }
+        };
+        // Never associate a new passphrase with a previously staged archive.
+        let secret = passphrase.clone();
+        let mut pending = tokio::task::spawn_blocking(move || {
+            backup::verify_passphrase(&pending.data, &secret)
+                .context("Enter the original passphrase to resume this pending backup")?;
+            Ok::<_, anyhow::Error>(pending)
+        })
+        .await??;
+        if !pending.committed {
+            let checkpoint = backup::journal::Checkpoint {
+                journal: journal.clone(),
+                target: target.clone(),
+            };
+            provider.upload_prepared(&mut pending.upload, &pending.data, &checkpoint).await
+                .context("The pending encrypted copy was kept. Retry Back up now with its original passphrase to resume")?;
+        }
+        let upload = pending.upload;
+        let marked = journal.committed(&target, &upload.id).await;
+        let created_at = upload
+            .name
+            .strip_prefix("shep-")
+            .and_then(|name| name.get(..16))
+            .and_then(|time| chrono::NaiveDateTime::parse_from_str(time, "%Y%m%dT%H%M%SZ").ok())
+            .map(|time| time.and_utc().to_rfc3339())
+            .unwrap_or_default();
+        let clean = self
+            .finish_backup(
+                provider.as_ref(),
+                &prefs,
+                target.clone(),
+                BackupCopy {
+                    id: upload.id.clone(),
+                    name: upload.name,
+                    created_at,
+                },
+                passphrase,
+                output,
+            )
+            .await?;
+        match marked {
+            Ok(()) if clean => {
+                if let Err(error) = journal.remove(&target, &upload.id).await {
+                    output.send(Event::Error(format!("Encrypted backup saved. Could not clear its completed upload record: {error}"))).await?;
+                }
+            }
+            Err(error) => {
+                output.send(Event::Error(format!("Encrypted backup saved. Could not record its upload acknowledgment: {error}"))).await?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn encrypted_snapshot(
+        &self,
+        prefs: &Preferences,
+        passphrase: &SecretString,
+    ) -> anyhow::Result<Vec<u8>> {
         let accounts: Vec<Account> = self.store.get("accounts").await?;
         let calendars: Vec<CalendarSource> = self.store.get("calendars").await?;
         let mut credentials = Vec::new();
@@ -104,28 +208,7 @@ impl Engine {
             credentials,
         };
         let secret = passphrase.clone();
-        let bytes =
-            tokio::task::spawn_blocking(move || backup::encrypt(&snapshot, &secret)).await??;
-        let now = chrono::Utc::now();
-        let name = format!(
-            "shep-{}-{}.shepbackup",
-            now.format("%Y%m%dT%H%M%SZ"),
-            uuid::Uuid::new_v4()
-        );
-        let id = provider.upload(&name, bytes).await?;
-        self.finish_backup(
-            provider.as_ref(),
-            &prefs,
-            target,
-            BackupCopy {
-                id,
-                name,
-                created_at: now.to_rfc3339(),
-            },
-            passphrase,
-            output,
-        )
-        .await
+        tokio::task::spawn_blocking(move || backup::encrypt(&snapshot, &secret)).await?
     }
 
     /// Upload acknowledgement is final even if cleanup or local metadata fails.
@@ -137,12 +220,14 @@ impl Engine {
         copy: BackupCopy,
         passphrase: SecretString,
         output: &mut Output,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         output
             .send(Event::BackupSaved(target.clone(), copy.clone()))
             .await?;
         let mut warnings = Vec::new();
-        let time = chrono::Utc::now().timestamp();
+        let time = chrono::DateTime::parse_from_rfc3339(&copy.created_at)
+            .map(|time| time.timestamp())
+            .unwrap_or_else(|_| chrono::Utc::now().timestamp());
         // Record the commit before keychain/retention work, so a later failure
         // does not schedule another upload on the next timer tick.
         if let Err(error) = self.store.record_backup(target.clone(), time, false).await {
@@ -173,13 +258,14 @@ impl Engine {
             warnings.push(format!("Could not refresh local backup settings: {error}."));
         }
         output.send(Event::BackupFinished(target)).await?;
+        let clean = warnings.is_empty();
         output
-            .send(if warnings.is_empty() {
+            .send(if clean {
                 Event::Notice("Encrypted backup saved.".into())
             } else {
                 Event::Error(format!("Encrypted backup saved. {}", warnings.join(" ")))
             })
             .await?;
-        Ok(())
+        Ok(clean)
     }
 }

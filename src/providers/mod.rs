@@ -1,6 +1,8 @@
 pub mod calendar;
 pub mod google;
 pub mod mail;
+#[cfg(test)]
+pub(crate) mod test_http;
 
 use crate::model::*;
 use async_trait::async_trait;

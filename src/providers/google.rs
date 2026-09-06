@@ -18,6 +18,8 @@ pub struct Google {
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Tokens {
+    #[serde(default)]
+    client_id: String,
     access_token: String,
     refresh_token: Option<String>,
     expires_at: i64,
@@ -97,6 +99,7 @@ impl Google {
             .json()
             .await?;
         let tokens = Tokens {
+            client_id: prefs.google_client_id.clone(),
             access_token: data["access_token"]
                 .as_str()
                 .context("Google did not return an access token")?
@@ -114,6 +117,10 @@ impl Google {
         Ok(())
     }
     pub async fn token(&self, prefs: &Preferences) -> anyhow::Result<SecretString> {
+        anyhow::ensure!(
+            !prefs.google_client_id.trim().is_empty(),
+            "Connect Google in Preferences before syncing or backing up to Drive."
+        );
         let mut guard = self.tokens.lock().await;
         if guard.is_none() {
             let secret = super::read_secret("google-oauth")
@@ -122,6 +129,10 @@ impl Google {
             *guard = Some(serde_json::from_str(secret.expose_secret())?);
         }
         let tokens = guard.as_mut().context("Google is not connected")?;
+        anyhow::ensure!(
+            tokens.client_id == prefs.google_client_id && !tokens.client_id.is_empty(),
+            "Reconnect Google in Preferences to verify access for this OAuth application."
+        );
         if tokens.expires_at < chrono::Utc::now().timestamp() + 60 {
             let refresh = tokens
                 .refresh_token
@@ -201,4 +212,63 @@ fn random() -> String {
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn cached_google_tokens_cannot_be_used_by_another_oauth_application() {
+        let google = Google {
+            http: crate::providers::test_http::client(),
+            tokens: Arc::new(Mutex::new(Some(Tokens {
+                client_id: "issuing-client".into(),
+                access_token: "fixture-access".into(),
+                refresh_token: None,
+                expires_at: chrono::Utc::now().timestamp() + 3600,
+            }))),
+        };
+        let mut prefs = Preferences {
+            google_client_id: "other-client".into(),
+            ..Default::default()
+        };
+        assert!(
+            google
+                .token(&prefs)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Reconnect Google")
+        );
+        prefs.google_client_id = "issuing-client".into();
+        assert_eq!(
+            google.token(&prefs).await.unwrap().expose_secret(),
+            "fixture-access"
+        );
+        google
+            .tokens
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .client_id
+            .clear();
+        assert!(
+            google
+                .token(&prefs)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Reconnect Google")
+        );
+        prefs.google_client_id.clear();
+        assert!(
+            google
+                .token(&prefs)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Connect Google")
+        );
+    }
 }

@@ -114,6 +114,52 @@ async fn old_ui_cannot_restore_a_previous_google_connection_or_backup_metadata()
 }
 
 #[tokio::test]
+async fn reconnecting_the_same_drive_account_preserves_history_but_other_accounts_do_not() {
+    use shep::model::BackupDestination;
+    let store = Store::memory().unwrap();
+    store
+        .save_preferences(Preferences {
+            google_client_id: "client".into(),
+            backup_destination: BackupDestination::GoogleDrive,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let connected = store
+        .record_google_connection("client".into(), "drive:first".into())
+        .await
+        .unwrap();
+    let target = BackupTarget::from_preferences(&connected.value);
+    store
+        .record_backup(target.clone(), 123, true)
+        .await
+        .unwrap();
+    let reconnected = store
+        .record_google_connection("client".into(), "drive:first".into())
+        .await
+        .unwrap();
+    assert_eq!(reconnected.value.last_backup, Some(123));
+    assert!(reconnected.value.backup_ready);
+    assert_eq!(BackupTarget::from_preferences(&reconnected.value), target);
+    let other = store
+        .record_google_connection("client".into(), "drive:other".into())
+        .await
+        .unwrap();
+    assert_eq!(other.value.last_backup, None);
+    assert!(!other.value.backup_ready);
+    let revision = other.revision;
+    assert!(
+        store
+            .record_google_connection("stale-client".into(), "drive:first".into())
+            .await
+            .is_err()
+    );
+    let saved = store.workspace().await.unwrap();
+    assert_eq!(saved.preferences_revision, revision);
+    assert_eq!(saved.preferences.google_connection_id, "drive:other");
+}
+
+#[tokio::test]
 async fn preferences_revision_survives_reopen_and_failed_validation_is_atomic() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("prefs.sqlite");

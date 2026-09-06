@@ -41,6 +41,7 @@ fn engine(secrets: Arc<Secrets>) -> Engine {
         calendar_locks: Default::default(),
         google_connection_lock: Default::default(),
         passphrases: secrets,
+        backup_uploads: Default::default(),
     }
 }
 fn passphrase() -> SecretString {
@@ -281,4 +282,191 @@ async fn unavailable_automatic_passphrase_pauses_with_recovery_and_never_creates
         .await
         .unwrap_err();
     assert!(error.to_string().contains("destination changed"));
+}
+
+#[tokio::test]
+async fn engine_recovers_lost_local_commit_after_reopen_without_reencrypting_or_duplicating() {
+    let directory = tempfile::tempdir().unwrap();
+    let store_path = directory.path().join("mail.sqlite");
+    let backup_path = directory.path().join("copies");
+    let secrets = Arc::new(Secrets::default());
+    let prefs = Preferences {
+        backup_folder: backup_path.to_string_lossy().into(),
+        ..Default::default()
+    };
+    let target = BackupTarget::from_preferences(&prefs);
+    let provider = backup::LocalBackup {
+        directory: backup_path.clone(),
+    };
+    let archive = backup::encrypt(
+        &Snapshot {
+            version: 1,
+            created_at: 1,
+            messages: Vec::new(),
+            accounts: Vec::new(),
+            calendars: Vec::new(),
+            preferences: prefs.clone(),
+            credentials: Vec::new(),
+        },
+        &passphrase(),
+    )
+    .unwrap();
+    let filename = format!("shep-20260906T120000Z-{}.shepbackup", uuid::Uuid::nil());
+    {
+        let mut first = engine(secrets.clone());
+        first.store = Store::open(&store_path).unwrap();
+        first.store.save_preferences(prefs.clone()).await.unwrap();
+        let journal = first.backup_journal().await.unwrap();
+        journal
+            .prepare(
+                &target,
+                provider.reserve(&filename, &archive).await.unwrap(),
+                archive.clone(),
+            )
+            .await
+            .unwrap();
+        provider.upload(&filename, archive.clone()).await.unwrap();
+        assert!(directory.path().join("backup-uploads.sqlite").exists());
+        assert!(
+            !first
+                .store
+                .run(|connection| Ok(connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='uploads')",
+                    [],
+                    |row| row.get::<_, bool>(0)
+                )?))
+                .await
+                .unwrap()
+        );
+    }
+    let mut resumed = engine(secrets.clone());
+    resumed.store = Store::open(&store_path).unwrap();
+    // New mail arrives after the staged snapshot. Recovery must use the exact
+    // original ciphertext, then allow a later backup to include that new mail.
+    resumed
+        .store
+        .upsert(vec![
+            parse_mail(
+                "fixture",
+                "1",
+                "INBOX",
+                b"From: a@example.com\r\nSubject: New after interruption\r\n\r\nnew mail".to_vec(),
+                true,
+                false,
+            )
+            .unwrap(),
+        ])
+        .await
+        .unwrap();
+    let (mut output, _events) = futures::channel::mpsc::channel(32);
+    assert!(
+        resumed
+            .run_backup(
+                target.clone(),
+                Some(SecretString::from("a different passphrase")),
+                &mut output
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("original passphrase")
+    );
+    assert!(secrets.entries.lock().unwrap().is_empty());
+    resumed
+        .run_backup(target.clone(), Some(passphrase()), &mut output)
+        .await
+        .unwrap();
+    assert_eq!(provider.list().await.unwrap().len(), 1);
+    assert_eq!(provider.download(&filename).await.unwrap(), archive);
+    assert!(
+        resumed
+            .backup_journal()
+            .await
+            .unwrap()
+            .pending(&target)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    resumed
+        .run_backup(target, Some(passphrase()), &mut output)
+        .await
+        .unwrap();
+    let copies = provider.list().await.unwrap();
+    assert_eq!(copies.len(), 2);
+    let new = copies.iter().find(|copy| copy.id != filename).unwrap();
+    let snapshot =
+        backup::decrypt(&provider.download(&new.id).await.unwrap(), &passphrase()).unwrap();
+    assert_eq!(snapshot.messages.len(), 1);
+}
+
+#[tokio::test]
+async fn retry_after_postcommit_failure_finishes_setup_without_uploading_another_copy() {
+    let secrets = Arc::new(Secrets::default());
+    secrets.fail_write.store(true, Ordering::Relaxed);
+    let engine = engine(secrets.clone());
+    let directory = tempfile::tempdir().unwrap();
+    let prefs = Preferences {
+        backup_folder: directory.path().to_string_lossy().into(),
+        ..Default::default()
+    };
+    engine.store.save_preferences(prefs.clone()).await.unwrap();
+    let target = BackupTarget::from_preferences(&prefs);
+    let (mut output, _events) = futures::channel::mpsc::channel(32);
+    engine
+        .run_backup(target.clone(), Some(passphrase()), &mut output)
+        .await
+        .unwrap();
+    let journal = engine.backup_journal().await.unwrap();
+    let id = journal.pending(&target).await.unwrap().unwrap().upload.id;
+    assert!(journal.pending(&target).await.unwrap().unwrap().committed);
+    secrets.fail_write.store(false, Ordering::Relaxed);
+    engine
+        .run_backup(target.clone(), Some(passphrase()), &mut output)
+        .await
+        .unwrap();
+    let provider = backup::LocalBackup {
+        directory: directory.path().into(),
+    };
+    let copies = provider.list().await.unwrap();
+    assert_eq!(copies.len(), 1);
+    assert_eq!(copies[0].id, id);
+    assert!(journal.pending(&target).await.unwrap().is_none());
+    assert!(
+        engine
+            .store
+            .get::<Preferences>("preferences")
+            .await
+            .unwrap()
+            .backup_ready
+    );
+}
+
+#[tokio::test]
+async fn in_memory_test_workspaces_have_independent_upload_journals() {
+    let first = engine(Arc::new(Secrets::default()));
+    let second = engine(Arc::new(Secrets::default()));
+    let target = BackupTarget::Local("same-fixture-target".into());
+    let upload = backup::PreparedUpload::new(
+        "one".into(),
+        format!("shep-20260906T120000Z-{}.shepbackup", uuid::Uuid::nil()),
+        b"fixture",
+    );
+    first
+        .backup_journal()
+        .await
+        .unwrap()
+        .prepare(&target, upload, b"fixture".to_vec())
+        .await
+        .unwrap();
+    assert!(
+        second
+            .backup_journal()
+            .await
+            .unwrap()
+            .pending(&target)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
