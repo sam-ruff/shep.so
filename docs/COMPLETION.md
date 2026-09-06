@@ -563,3 +563,7 @@ The installed Linux binary matches the verified optimized release at SHA-256
 `745bae0c21cf1c908c4b5f17185242f7e25aeffaf12495f22e974c6b17b5b738`.
 Personal windows were left running; reopening uses the new binary. R70 and the
 full product goal remain active for their explicitly recorded remaining work.
+
+Shipped to main as `90776fad7d344eeada6ba910e0aad4277170b157`. The Linux
+installation and all 108 native functional scenarios are verified. R70 remains
+open for its platform/rendering/recovery follow-ups; the full goal is active.
