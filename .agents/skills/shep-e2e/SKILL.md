@@ -3,7 +3,7 @@ name: shep-e2e
 description: Run and extend realistic Shep native desktop tests through its batchable MCP harness, with automated equivalents and visual evidence. Use for Shep mail, calendar, preferences, shortcut, or responsiveness UI changes.
 ---
 
-Use the native iced window. This repository has no browser UI; Playwright does not exercise the app.
+For root Rust desktop changes, use the native iced window: Playwright does not exercise iced. The monorepo also has separate `flutter/`, `web/` and `website/` clients; use their saved Playwright/Appium/Flutter integration scenarios for those surfaces, retaining the isolation, real-input and visual-evidence requirements below.
 
 Read `AGENTS.md` for performance budgets, disabled CI, and platform setup. Build the isolated test executable with `cargo build --profile test-ui --features test-support`. Run `python3 scripts/e2e.py` for the repeatable suite, or `python3 scripts/e2e.py --capture-only` for the initial layout.
 

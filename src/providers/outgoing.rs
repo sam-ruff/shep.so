@@ -1,29 +1,9 @@
 //! Object-scoped outgoing transports; test implementations never use real credentials.
 use super::*;
 use crate::outgoing::Submission;
-use mail::{
-    DeliveryFailure,
-    sent::{SentMailbox, SentReceipt},
-};
+use mail::{DeliveryFailure, sent::SentMailbox};
 
-#[async_trait]
-pub trait SentConnection: Send {
-    fn folder(&self) -> &str;
-    async fn find(&mut self, id: &str) -> anyhow::Result<Option<SentReceipt>>;
-    async fn append(&mut self, raw: &[u8], timestamp: i64) -> anyhow::Result<SentReceipt>;
-}
-#[async_trait]
-impl SentConnection for SentMailbox {
-    fn folder(&self) -> &str {
-        &self.folder
-    }
-    async fn find(&mut self, id: &str) -> anyhow::Result<Option<SentReceipt>> {
-        self.find(id).await
-    }
-    async fn append(&mut self, raw: &[u8], timestamp: i64) -> anyhow::Result<SentReceipt> {
-        self.append(raw, timestamp).await
-    }
-}
+pub use mail::sent::SentConnection;
 #[async_trait]
 pub trait Outbound: Send + Sync {
     async fn submit(&self, message: &Submission) -> Result<(), DeliveryFailure>;

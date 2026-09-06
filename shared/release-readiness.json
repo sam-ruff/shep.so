@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "desktop_mobile_browser_parity": false,
+  "provider_contracts_and_recovery": false,
+  "android_and_apple_execution": false,
+  "android_and_apple_distribution_signing": false,
+  "beta_gateway_vps_verification": false,
+  "coordinated_artifact_publication": false,
+  "note": "Development previews only. These requirements must be evidenced before the dormant release workflow publishes all clients."
+}

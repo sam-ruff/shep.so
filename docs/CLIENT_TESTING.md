@@ -1,0 +1,86 @@
+# Client testing
+
+Use [the parity matrix](CLIENT_PARITY.md) to distinguish preview behavior from real provider/platform evidence. Tests use `shared/preview.json`, fake transports and synthetic mail; never personal accounts. Keep every new scenario reproducible and keep screenshots/logs in ignored `artifacts/`.
+
+## Flutter
+
+Flutter is pinned to **3.44.2 / Dart 3.12.2**, with flutter_rust_bridge 2.13.0 and Rust 1.96.0. The native-assets hook builds `flutter/rust` against `shared/mail-core`; Android builds require SDK 37, NDK 28.2, Perl and make. The hook honors Android minSdk 24 for C/OpenSSL and handles the Linux Snap Perl mismatch. Apple native TLS uses platform trust. From `flutter/`:
+
+```sh
+flutter pub get
+flutter analyze
+flutter test
+flutter build web --target test/preview_main.dart --no-web-resources-cdn
+```
+
+The host suite includes an actual FFI/SQLite reopen test. It also uses the same generated Outbox fixture as Android to test local IMAP Sent flag/read/move/reopen without touching a locked credential store, and missing/locked credential refusal for server-backed mail. Python 3 prepares each temporary profile before the native bridge opens it. It loads the library from Flutter’s native-assets output because the bridge’s legacy widget-test loader still expects Cargo’s old target directory. Run `cargo test --manifest-path flutter/rust/Cargo.toml` from the root for paging/search, POP3 local state, FIFO/cancellation, draft/discard and outgoing contracts. Outgoing tests hold an SMTP operation open, reject a second process, inject terminal-record/Sent-cache write failures, and verify immutable recovery, paging and no repeated send. These tests use temporary profiles and fictional data.
+
+From the root, run the self-contained browser runner:
+
+```sh
+npm --prefix flutter/e2e ci
+npm --prefix flutter/e2e exec -- playwright install chromium
+python3 scripts/clients/flutter_web_e2e.py
+```
+
+This follows Walkie Textie Flutter: Playwright drives Flutter's accessibility tree and real pointer gestures; Appium/UiAutomator2 drives native Android. Semantics/state are observations, not an action API. No direct workspace calls replace native clicks/swipes. The hosted desktop client is tested separately in `web/`.
+
+Create a dedicated AVD named `shep-e2e` with Android API 36 and start it. With Android SDK, Appium 3.5.2 and Node 24 installed:
+
+```sh
+python3 scripts/clients/android_e2e.py --device emulator-5554
+```
+
+The runner refuses personal devices, runs preview and actual native-bridge integration tests sequentially, rebuilds the isolated preview APK, then runs Appium. Never run the two native drivers against the same emulator concurrently, or run competing Flutter builds/tests in one checkout; generated shader assets are shared. Only `so.shep.shep_mobile.preview` is reset. Native bridge scenarios save/reopen/edit/discard a draft through controls, reject an isolated loopback account probe roundtrip test-only credential pairs, and open the real production entry in this isolated preview package. Rust profiles use fresh temporary directories; credential entries use unique fixture identifiers and are removed afterward. No production app/account data is touched. The `test_driver/native_driver.dart` host callback saves captures from `flutter drive`; Flutter test cleanup can uninstall its test package, so screenshots must be collected before cleanup. Screenshots are in `artifacts/flutter/`; convert review copies to WebP with a standard lossless image converter.
+
+The Android runner also pairs `attachments_android_test.dart` with `android_compose_fixture.py`. The host hands over a generated SQLite mailbox before the app opens it, then uses actual DocumentsUI input to cancel one picker and select two files. Flutter controls exercise cached Reply all, save/reopen, file removal, pending text saves and send refusal without credentials. `--compose-only` reruns just this scenario while developing; it is not the full Android suite. The helper accepts only the dedicated emulator and preview package. Apple file-picker coverage remains open.
+
+The runner then pairs `outbox_android_test.dart` with `android_outbox_fixture.py` before rebuilding the preview for Appium. Its synthetic SQLite records are handed over before the native profile opens. A separate Android process verifies refusal to acquire the held profile lock, with an independent successful lock as a control. Real Flutter controls exercise light/dark Outbox review, disabled uncertainty actions, recovered text/Bcc/files, file removal, manual mark, local Sent and reopen. `--outbox-only` reruns this scenario. Recovery never sends; an explicit later Send without credentials remains refused with the recovered text intact. The native driver also runs the same Sent-handover control scenario as the host suite: a held sync, retained reader, late body result and pre-handover Undo, with transport-only fixture gates. The Outbox fixture additionally hands over a saved receipt plus cached provider row before startup, and real controls repair/deduplicate it through Rust. These are eleven integration scenarios in total, followed by five Appium stages; test teardown callbacks are not additional scenarios.
+
+Native handles for one canonical profile share their database and account-operation coordination. The companion owner-lock file is never removed; blocking SQLite work retains its lease through caller cancellation. Only a new exclusive owner reclassifies abandoned submissions as uncertain. Android uses Bionic `flock` because the pinned Rust standard-library Android implementation does not implement file locking. The emulator checks the actual OS lock, beyond the host subprocess test. Apple locking/runtime execution still requires macOS verification.
+
+Sent-copy tests use the same shared `SentConnection` contract as the desktop. Native Rust fixtures hold an APPEND open, cancel its waiter, fail journal/cache writes before and after acknowledgment, change account/policy settings, restart an unfinished upload, and reconcile a synced copy without removing local edits. The Android Outbox scenario also repairs a preloaded provider acknowledgment without credentials, exercises refused lookup/retry with missing credentials, and saves/reopens Sent policy/folder preferences through real controls. The saved Android scenario additionally flags, marks unread and archives a local IMAP Sent message with the fixture credential store locked, then reopens it and checks the saved controls. The same scenario checks missing/locked credential rollback on cached server mail and visible reader recovery/dismiss controls. This proves device/cache behavior; the separate shared-core TLS transcripts prove the production IMAP lookup/APPEND path. Neither is live-provider verification.
+
+Shared Sent lookup reads final command responses explicitly, rejecting NO/BAD, missing UID/header results and conflicting identities. Pinned gateway tests exercise Sent discovery, lookup and exact binary APPEND through both implicit TLS and STARTTLS; the wrong hostname must fail before authentication. See [IMAP command completion and APPEND](https://www.rfc-editor.org/rfc/rfc9051.html#section-6.3.12) and [special-use mailbox discovery](https://www.rfc-editor.org/rfc/rfc6154.html). Browser Sent gateway endpoints and UI recovery remain a separate open parity task.
+
+
+On a Mac with Xcode and an installed iOS runtime:
+
+```sh
+python3 scripts/clients/apple_simulator.py
+```
+
+It creates and deletes only its own simulator. Apple execution, native XCUITest/Appium coverage and signing remain open until run on macOS; Android/Chromium evidence is not Apple verification.
+
+## Browser and gateway
+
+```sh
+npm --prefix web ci
+npm --prefix web test
+npm --prefix web run e2e
+cargo test --manifest-path backend/Cargo.toml
+cargo test -p shep-mail-core --all-features
+npm --prefix web run build
+cargo test --manifest-path backend/Cargo.toml real_browser_beta_gate -- --ignored
+cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings
+```
+
+Playwright drives the browser list/reader, input-safe shortcuts, resizing, compose/calendar forms and login presentation. Axe checks light/dark at 1440×920 and 900×640. Rust gateway tests check the actual middleware/session routes plus signed synthetic Google-token claims. The explicitly selected `real_browser_beta_gate` test runs production web assets against the real Rust router through an isolated local HTTPS proxy, checking anonymous assets/API denial, denied/allowed users, callback replay, secure cookies, CSRF and UI logout. The saved provider flows also exercise account probe failure/retry, streamed mail, flags and draft reload, password reconnect, and lost/uncertain SMTP delivery recovery through actual controls and IndexedDB. Google identity exchange and mail transport are object-scoped `cfg(test)` fixtures; no production bypass exists. Separate shared-core loopback TLS tests exercise real IMAP/POP3/SMTP and STARTTLS with hostname verification. Backend tests additionally disconnect an accepted SMTP HTTP waiter and inject a provider panic; the supervised operation still records its final or uncertain status. Its self-signed HTTPS test key is public fixture material. Browser evidence is in `artifacts/beta-browser/`. These do not establish live Google, SMTP or VPS behavior.
+
+`shared/compose-fixtures.json` is consumed by both the Rust and browser reply tests. Browser provider controls also cover offline Reply all, real multi-file selection, removal after reload, compact composer actions and exact MIME bytes/headers at the Rust send boundary. Draft blobs live separately from text in IndexedDB/SQLite; native file revisions and browser attachment snapshots prevent sending stale file selections. These contracts do not establish live SMTP delivery or complete Sent/Outbox recovery.
+
+Use `python3 scripts/clients/check_parity.py --base REV` when desktop or shared-core code changes. `python3 -m unittest discover -s tests -p 'test_*.py'` covers separated static staging, fail-closed release readiness and aligned client/lockfile version stamping. Existing iced MCP flows stay in `scripts/e2e.py`.
+
+The browser Outbox flow observes IndexedDB before allowing Send through, proving the exact prepared MIME is committed. It drives loss of preparation and Send responses, local Sent after reload, disabled uncertainty controls, explicit review/return, attachment ownership, a separate new Send, manual mark, rejected recovery and atomic reservation cancellation. The Rust fixture counts SMTP calls, so status/recovery cannot hide a resend. Compact layout checks compare cards with their scrolling container, alongside axe and reviewed light/dark screenshots. Provider tests cover storage failure, stale editors, active-send refusal and terminal acknowledgments surviving receipt expiry. Provider Sent lookup/append parity and bounded browser Outbox reads remain open.
+
+## Worktree staging and release
+
+The promo agent built `website/` in `shep-website`; its reviewed source is also copied into the combined `shep-clients` worktree. The combined review branch is `feat/mobile-web-clients`; checkpoint shipping evidence is recorded in [the completion log](COMPLETION.md). Main is unchanged by this client work. After building both clients, stage their **separate** public/protected directories with:
+
+```sh
+python3 scripts/clients/assemble_site.py \
+  --website website/dist --web web/dist \
+  --output artifacts/staged-beta
+```
+
+The Rust gateway alone serves the protected `web/` directory; do not put it under the public promo root. Staging does not deploy. Quality/release workflow filenames stay `.yml.disabled`. The production APK check is `python3 scripts/clients/verify_android.py flutter/build/app/outputs/flutter-apk/app-production-debug.apk`; it verifies native libraries, Internet permission and fixture exclusion, while signing verification remains separate. One quality workflow now includes all client jobs; release readiness, signed artifacts and coordinated version/publication work remain explicit prerequisites. Re-enable workflows only when Sam's trusted runners and release requirements are ready.

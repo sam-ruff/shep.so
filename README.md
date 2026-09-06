@@ -32,6 +32,8 @@ bash scripts/install-linux.sh
 
 Add accounts and calendars in **Preferences**.
 
+Mobile (`flutter/`), a separate browser client (`web/`), the promo site (`website/`) and a Rust beta gateway (`backend/`) are being developed in this monorepo. [Client parity and remaining work](docs/CLIENT_PARITY.md) records what is available; the new clients are previews, not replacements yet.
+
 ## Still in development
 
 Fastmail login and Inbox sync have been verified. Live Google, other providers and Windows/macOS still need verification.

@@ -23,6 +23,8 @@ jobs:
       - name: Refuse to release an untested newer commit
         shell: bash
         run: test "$(git rev-parse HEAD)" = "${{ github.event.workflow_run.head_sha }}"
+      - name: Require coordinated client release readiness
+        run: python3 scripts/clients/release_ready.py
       - name: Install pinned release tooling
         run: npm ci
       - name: Publish version, notes, and Linux archive
