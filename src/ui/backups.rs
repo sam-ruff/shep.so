@@ -25,7 +25,8 @@ impl App {
 
     pub(super) fn visible_backups(&self) -> &[BackupCopy] {
         if self.preferences.backup_destination == BackupDestination::GoogleDrive
-            && self.preferences.google_lifecycle.disconnected
+            && (self.preferences.google_lifecycle.disconnected
+                || !self.preferences.google_grant.access.drive_allowed())
         {
             return &[];
         }
@@ -49,9 +50,13 @@ impl App {
         }
         let target = self.configured_backup_target();
         if matches!(target, BackupTarget::GoogleDrive { .. })
-            && self.preferences.google_lifecycle.disconnected
+            && (self.preferences.google_lifecycle.disconnected
+                || !self.preferences.google_grant.access.drive_allowed())
         {
-            self.notice("Reconnect Google before accessing Drive backups.", true);
+            self.notice(
+                "Reconnect Google and approve Drive backup access before accessing copies.",
+                true,
+            );
             return;
         }
         if let BackupTarget::Local(path) = &target

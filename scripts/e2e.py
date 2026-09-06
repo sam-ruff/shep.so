@@ -272,6 +272,31 @@ class NativeFlows(unittest.TestCase):
                        shot("outbox-empty-compact"), key("Escape"), check("dialog", None),
                        click(87, 359), check("folder", "Sent"), check("total", 2), shot("local-sent-copies-compact"))
 
+    def test_google_partial_permissions(self):
+        for mode in ("drive", "calendar", "read-only"):
+            self.mcp.call("desktop.start", google_permissions=mode)
+            self.mcp.batch(check("google_connected", True), check("google_grant.access.known", True),
+                           check("google_grant.access.drive", mode == "drive"),
+                           check("google_grant.access.calendar_read", mode != "drive"),
+                           key("ctrl+comma"), check("tab", "Preferences"),
+                           click(470, 156), check("settings_tab", "Calendars"),
+                           click(1240, 820), {"type": "scroll", "amount": 8}, wait(150), shot("google-permissions-" + mode),
+                           key("ctrl+2"), check("tab", "Calendar"), click(1260, 395), check("dialog", "Event"),
+                           check("event_access.update", mode == "calendar"), shot("google-event-" + mode),
+                           key("Escape"), check("dialog", None), key("ctrl+comma"),
+                           click(559, 156), check("settings_tab", "Backups"), shot("google-backup-" + mode),
+                           key("ctrl+1"), check("tab", "Mail"), key("Down"),
+                           check("selected", "Your weekly workspace digest"))
+
+    def test_google_readonly_permissions_compact_dark(self):
+        self.mcp.call("desktop.start", width=900, height=640, google_permissions="read-only")
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       click(470, 156), check("settings_tab", "Calendars"),
+                       click(764, 549), {"type": "scroll", "amount": 12}, wait(150),
+                       check("google_grant.access.calendar_read", True), check("google_grant.access.calendar_write", False),
+                       shot("google-permissions-compact-dark"), key("ctrl+1"), check("tab", "Mail"),
+                       key("Down"), check("selected", "Your weekly workspace digest"))
+
     def test_google_disconnect_preserves_cached_calendars(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
                        click(470, 156), check("settings_tab", "Calendars"),
@@ -295,7 +320,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
                        click(470, 156), check("settings_tab", "Calendars"), shot("google-connection-compact-dark"))
         self.mcp.batch(click(764, 549), {"type": "scroll", "amount": 9}, wait(150), shot("google-connection-controls-compact"),
-                       click(480, 524), check("dialog", "GoogleDisconnect"), shot("google-disconnect-review-compact"),
+                       click(480, 482), check("dialog", "GoogleDisconnect"), shot("google-disconnect-review-compact"),
                        click(269, 412), check("dialog", None), check("google_lifecycle.disconnected", True),
                        check("google_lifecycle.cleanup_pending", False), check("events", 5),
                        shot("google-disconnected-compact"), key("ctrl+1"), check("tab", "Mail"),

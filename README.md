@@ -76,11 +76,13 @@ Disconnect Google from Preferences → Accounts or Calendars. This stops Google 
 
 1. Create a Google Cloud project and enable **Drive API** and **Google Calendar API**.
 2. Configure its OAuth consent screen; add your Google address as a test user if the app is in testing.
-3. Create an OAuth client of type **Desktop app**. Enter its client ID and desktop client secret in Preferences → General, or set `SHEP_GOOGLE_CLIENT_ID` and `SHEP_GOOGLE_CLIENT_SECRET` before the first launch.
+3. Create an OAuth client of type **Desktop app**. Enter its client ID and desktop client secret in Preferences → Accounts or Calendars, or set `SHEP_GOOGLE_CLIENT_ID` and `SHEP_GOOGLE_CLIENT_SECRET` before the first launch.
 4. Save preferences, then choose **Connect Google**. Authorization opens the system browser, using PKCE, state validation and a temporary loopback callback, following Google's [desktop OAuth flow](https://developers.google.com/identity/protocols/oauth2/native-app).
 5. In Preferences → Backups, choose Local folder or Google Drive, set retention (1–100 copies) and interval (1–8760 hours), enter a passphrase of at least 12 characters, and make the first backup. Enable automatic backups if wanted.
 
-Google refresh tokens and saved account passwords are kept in the OS keychain. Desktop OAuth client configuration is stored with local preferences; it is not a confidential server credential. Google login currently requests Drive app-data and Calendar permissions together.
+Google refresh tokens and saved account passwords are kept in the OS keychain. Desktop OAuth client configuration is stored with local preferences; it is not a confidential server credential. Sign-in requests Drive app-data and Calendar permissions together. You can grant either service independently. Preferences shows which permissions were granted; Calendar also supports read-only access. Drive backups require Drive permission, and missing Calendar permission leaves cached calendars readable as offline archives.
+
+Connecting another Google account keeps the current login until the new grant is saved and validated. Calendar access and the selected credential then commit together. If validation fails, **Reconnect Google** retries the staged connection, including after a restart. **Start a new sign-in** opens Google's account chooser for a different attempt. Changed OAuth setup fields do not replace an already committed client until sign-in succeeds.
 
 Google access refreshes in the background and saves any replacement refresh token. If saving fails, keep Shep open, unlock the keychain and retry Sync; the received credentials remain pending until saved. If this happens during sign-in, choose **Reconnect Google** after unlocking to finish the received authorization without another browser prompt. Revoked Google access requires reconnecting. A fresh sign-in must include offline access; it never reuses another account's refresh token.
 

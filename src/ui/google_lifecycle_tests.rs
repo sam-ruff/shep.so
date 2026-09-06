@@ -44,3 +44,37 @@ fn google_disconnect_completion_leaves_an_unrelated_editor_open() {
     assert_eq!(app.dialog, Some(Dialog::Event));
     assert_eq!(app.field("title"), "Keep this event");
 }
+
+#[tokio::test]
+async fn google_partial_grant_metadata_survives_newer_local_edits_and_old_workspace_results() {
+    let store = Store::memory().unwrap();
+    let before = Arc::new(store.workspace().await.unwrap());
+    let (mut app, _) = App::new();
+    let _ = app.handle(Message::Backend(Event::Workspace(before.clone())));
+    app.preferences.appearance = Appearance::Dark;
+    app.preference_sync.changed();
+    let prefs: Preferences = store.get("preferences").await.unwrap();
+    let grant = GoogleGrant {
+        id: "fixture".into(),
+        client_id: prefs.google_client_id.clone(),
+        access: GoogleAccess {
+            known: true,
+            calendar_read: true,
+            ..Default::default()
+        },
+    };
+    store
+        .activate_google(prefs, grant.clone(), None, vec![])
+        .await
+        .unwrap();
+    let after = Arc::new(store.workspace().await.unwrap());
+    let _ = app.handle(Message::Backend(Event::Workspace(after)));
+    let _ = app.handle(Message::Backend(Event::Workspace(before)));
+    assert_eq!(app.preferences.google_grant, grant);
+    assert_eq!(app.preferences.appearance, Appearance::Dark);
+    app.preferences.backup_destination = BackupDestination::GoogleDrive;
+    app.settings_fields();
+    app.begin_backup_request(backups::BackupAction::List);
+    assert!(app.pending_backup.is_none());
+    assert!(app.visible_backups().is_empty());
+}

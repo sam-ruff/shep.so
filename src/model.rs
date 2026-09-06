@@ -480,6 +480,7 @@ pub struct Preferences {
     pub last_backup: Option<i64>,
     pub backup_ready: bool,
     pub google_connection_id: String,
+    pub google_grant: GoogleGrant,
     pub google_lifecycle: GoogleLifecycle,
     pub sync_minutes: u64,
     pub google_client_id: String,
@@ -512,6 +513,7 @@ impl Default for Preferences {
             last_backup: None,
             backup_ready: false,
             google_connection_id: String::new(),
+            google_grant: Default::default(),
             google_lifecycle: Default::default(),
             sync_minutes: 5,
             google_client_id: std::env::var("SHEP_GOOGLE_CLIENT_ID").unwrap_or_default(),
@@ -527,6 +529,45 @@ pub struct GoogleLifecycle {
     pub revision: u64,
     pub disconnected: bool,
     pub cleanup_pending: bool,
+}
+
+/// Non-secret pointer to the credential selected by the connection transaction.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GoogleGrant {
+    pub id: String,
+    pub client_id: String,
+    pub access: GoogleAccess,
+}
+
+impl Preferences {
+    pub fn active_google_client(&self) -> &str {
+        if self.google_grant.client_id.is_empty() {
+            &self.google_client_id
+        } else {
+            &self.google_grant.client_id
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GoogleAccess {
+    pub known: bool,
+    pub drive: bool,
+    pub calendar_read: bool,
+    pub calendar_write: bool,
+}
+impl GoogleAccess {
+    pub fn drive_allowed(self) -> bool {
+        !self.known || self.drive
+    }
+    pub fn calendar_allowed(self) -> bool {
+        !self.known || self.calendar_read
+    }
+    pub fn calendar_write_allowed(self) -> bool {
+        !self.known || self.calendar_write
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

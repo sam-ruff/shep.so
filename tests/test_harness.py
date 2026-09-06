@@ -14,6 +14,13 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_google_permission_fixtures_reject_unknown_values_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            with self.assertRaisesRegex(ValueError, "Unknown Google permissions"):
+                desktop.start(google_permissions="unsupported")
+            launch.assert_not_called()
+
     def test_native_file_picker_uses_real_input_and_restricts_files_to_the_run(self):
         with tempfile.TemporaryDirectory() as directory:
             desktop = harness.Desktop()

@@ -160,11 +160,13 @@ impl Store {
             let previous_target = crate::backup::BackupTarget::from_preferences(current);
             let connection = current.google_connection_id.clone();
             let lifecycle = current.google_lifecycle;
+            let grant = current.google_grant.clone();
             *current = requested;
             // These are backend-owned metadata, not user preferences.
             current.google_connection_id = connection;
             current.google_lifecycle = lifecycle;
-            if lifecycle.disconnected
+            current.google_grant = grant;
+            if (lifecycle.disconnected || !current.google_grant.access.drive_allowed())
                 && current.backup_destination == BackupDestination::GoogleDrive
             {
                 current.auto_backup = false;
@@ -199,25 +201,6 @@ impl Store {
             Ok(())
         })
         .await
-    }
-    pub async fn record_google_connection(
-        &self,
-        client_id: String,
-        identity: String,
-    ) -> anyhow::Result<PreferenceSnapshot> {
-        self.update_preferences_checked(move |current| {
-            anyhow::ensure!(current.google_client_id == client_id, "Google client details changed during sign-in. Reconnect Google with the current settings.");
-            anyhow::ensure!(!current.google_lifecycle.cleanup_pending, "Finish removing the previous Google credential before reconnecting.");
-            let changed = current.google_connection_id != identity;
-            current.google_connection_id = identity;
-            current.google_lifecycle.revision = current.google_lifecycle.revision.checked_add(1).context("Google connection revision overflow")?;
-            current.google_lifecycle.disconnected = false;
-            if changed && current.backup_destination == BackupDestination::GoogleDrive {
-                current.last_backup = None;
-                current.backup_ready = false;
-            }
-            Ok(())
-        }).await
     }
     async fn update_preferences_checked<F>(&self, update: F) -> anyhow::Result<PreferenceSnapshot>
     where
@@ -519,11 +502,16 @@ impl Store {
             let tx = c.transaction()?;
             let c = &tx;
             let mut current: Vec<CalendarSource> = get(c, "calendars")?;
-            let disconnected = get::<Preferences>(c, "preferences")?
-                .google_lifecycle
-                .disconnected;
+            let prefs: Preferences = get(c, "preferences")?;
+            let disconnected = prefs.google_lifecycle.disconnected
+                || !prefs.google_grant.access.calendar_allowed();
             let mut archived: std::collections::HashSet<String> = get(c, "google_archived")?;
             for mut source in sources {
+                if source.kind == CalendarKind::Google
+                    && !prefs.google_grant.access.calendar_write_allowed()
+                {
+                    source.access = CalendarAccess::READ_ONLY;
+                }
                 if disconnected && source.kind == CalendarKind::Google {
                     source.access = CalendarAccess::READ_ONLY;
                     archived.insert(source.id.clone());
@@ -551,30 +539,14 @@ impl Store {
             anyhow::ensure!(
                 !get::<Preferences>(c, "preferences")?
                     .google_lifecycle
-                    .disconnected,
+                    .disconnected
+                    && get::<Preferences>(c, "preferences")?
+                        .google_grant
+                        .access
+                        .calendar_allowed(),
                 "Reconnect Google before refreshing calendars."
             );
-            let mut archived: std::collections::HashSet<String> = get(c, "google_archived")?;
-            let mut current: Vec<CalendarSource> = get(c, "calendars")?;
-            // Keep cached events when access disappears, but never preserve a
-            // stale grant to edit a calendar absent from a complete listing.
-            for source in &mut current {
-                if source.kind == CalendarKind::Google {
-                    source.access = CalendarAccess::READ_ONLY;
-                    archived.insert(source.id.clone());
-                }
-            }
-            for source in sources {
-                if connections::removed(c, ConnectionKind::Calendar, &source.id)?.is_some() {
-                    continue;
-                }
-                current.retain(|s| s.id != source.id);
-                archived.remove(&source.id);
-                current.push(source);
-            }
-            put(c, "calendars", &current)?;
-            put(c, "google_archived", &archived)?;
-            connections::changed(c)?;
+            google_lifecycle::refresh_sources(c, sources)?;
             tx.commit()?;
             Ok(())
         })

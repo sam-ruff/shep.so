@@ -41,8 +41,9 @@ impl Engine {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             !matches!(target, BackupTarget::GoogleDrive { .. })
-                || !prefs.google_lifecycle.disconnected,
-            "Reconnect Google before accessing Drive backups."
+                || (!prefs.google_lifecycle.disconnected
+                    && prefs.google_grant.access.drive_allowed()),
+            "Reconnect Google and approve Drive backup access before accessing copies."
         );
         anyhow::ensure!(
             *target == BackupTarget::from_preferences(prefs),

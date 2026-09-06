@@ -234,10 +234,16 @@ impl CalendarProvider for GoogleCalendar {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> anyhow::Result<Vec<CalendarEvent>> {
-        let token = self.google.token(&self.preferences).await?;
+        let token = self
+            .google
+            .token_for(
+                &self.preferences,
+                crate::providers::google::Service::CalendarRead,
+            )
+            .await?;
         Api {
             http: &self.google.http,
-            base: url::Url::parse("https://www.googleapis.com/calendar/v3/calendars/")?,
+            base: self.google.api_base.join("calendar/v3/calendars/")?,
             token: token.expose_secret(),
         }
         .events(source, start, end)
@@ -248,10 +254,16 @@ impl CalendarProvider for GoogleCalendar {
         source: &CalendarSource,
         event: &CalendarEvent,
     ) -> anyhow::Result<CalendarEvent> {
-        let token = self.google.token(&self.preferences).await?;
+        let token = self
+            .google
+            .token_for(
+                &self.preferences,
+                crate::providers::google::Service::CalendarWrite,
+            )
+            .await?;
         Api {
             http: &self.google.http,
-            base: url::Url::parse("https://www.googleapis.com/calendar/v3/calendars/")?,
+            base: self.google.api_base.join("calendar/v3/calendars/")?,
             token: token.expose_secret(),
         }
         .save(source, event)
@@ -262,10 +274,16 @@ impl CalendarProvider for GoogleCalendar {
         source: &CalendarSource,
         event: &CalendarEvent,
     ) -> anyhow::Result<()> {
-        let token = self.google.token(&self.preferences).await?;
+        let token = self
+            .google
+            .token_for(
+                &self.preferences,
+                crate::providers::google::Service::CalendarWrite,
+            )
+            .await?;
         Api {
             http: &self.google.http,
-            base: url::Url::parse("https://www.googleapis.com/calendar/v3/calendars/")?,
+            base: self.google.api_base.join("calendar/v3/calendars/")?,
             token: token.expose_secret(),
         }
         .delete(source, event)

@@ -57,7 +57,19 @@ impl Credentials {
         *self.saved.lock().unwrap() = Some(SecretString::from(value.to_string()));
     }
     fn value(&self) -> Value {
-        serde_json::from_str(self.saved.lock().unwrap().as_ref().unwrap().expose_secret()).unwrap()
+        let value: Value =
+            serde_json::from_str(self.saved.lock().unwrap().as_ref().unwrap().expose_secret())
+                .unwrap();
+        if let Some(grants) = value["grants"].as_array() {
+            assert_eq!(
+                grants.len(),
+                1,
+                "Use the raw vault for multi-grant assertions"
+            );
+            grants[0].clone()
+        } else {
+            value
+        }
     }
 }
 fn prefs() -> Preferences {
@@ -83,6 +95,7 @@ fn google(server: &Server, credentials: Arc<Credentials>) -> Google {
         state: Default::default(),
         credentials,
         token_endpoint: server.url.join("/token").unwrap(),
+        api_base: server.url.join("/").unwrap(),
     }
 }
 fn form(server: &Server, index: usize) -> HashMap<String, String> {
@@ -224,21 +237,26 @@ async fn pending_google_sign_in_cannot_mix_accounts_or_repeat_an_exchanged_code(
         .unwrap_err();
     assert!(error.to_string().contains("authorization was received"));
     assert_eq!(credentials.value()["refresh_token"], "old-refresh&+/");
-    assert!(
-        google
-            .token(&prefs())
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("Finish Google sign-in")
+    assert_eq!(
+        google.token(&prefs()).await.unwrap().expose_secret(),
+        "old-access"
     );
     assert!(google.finish_pending_login(&prefs()).await.is_err());
     assert_eq!(server.requests().len(), 1);
     credentials.locked.store(false, Ordering::SeqCst);
     // Production login's pending-grant branch must return before browser launch.
-    google.login(&prefs()).await.unwrap();
+    let grant = google.login(&prefs()).await.unwrap();
     assert_eq!(
         google.token(&prefs()).await.unwrap().expose_secret(),
+        "old-access"
+    );
+    let authorized = Preferences {
+        google_grant: grant,
+        ..prefs()
+    };
+    google.finish_activation(&authorized).await.unwrap();
+    assert_eq!(
+        google.token(&authorized).await.unwrap().expose_secret(),
         "new-account-access"
     );
     assert_eq!(credentials.value()["refresh_token"], "new-account-refresh");
@@ -279,7 +297,16 @@ async fn google_login_waits_for_inflight_refresh_persistence_and_then_wins() {
     assert_eq!(server.requests().len(), 1);
     release.notify_one();
     assert_eq!(refresh.await.unwrap().unwrap().expose_secret(), "refreshed");
-    login.await.unwrap();
+    let grant = login.await.unwrap();
+    assert_eq!(
+        google.token(&prefs).await.unwrap().expose_secret(),
+        "refreshed"
+    );
+    let prefs = Preferences {
+        google_grant: grant,
+        ..prefs
+    };
+    google.finish_activation(&prefs).await.unwrap();
     assert_eq!(credentials.value()["refresh_token"], "new-grant");
     assert_eq!(
         google.token(&prefs).await.unwrap().expose_secret(),
@@ -555,7 +582,7 @@ async fn disconnect_clears_cached_and_saved_grants_and_fresh_signin_can_reconnec
     assert!(google.token(&prefs()).await.is_err());
     assert!(credentials.saved.lock().unwrap().is_none());
     google.clear_credentials().await.unwrap();
-    google
+    let grant = google
         .exchange_code(
             &prefs(),
             "new-code",
@@ -564,8 +591,13 @@ async fn disconnect_clears_cached_and_saved_grants_and_fresh_signin_can_reconnec
         )
         .await
         .unwrap();
+    let prefs = Preferences {
+        google_grant: grant,
+        ..prefs()
+    };
+    google.finish_activation(&prefs).await.unwrap();
     assert_eq!(
-        google.token(&prefs()).await.unwrap().expose_secret(),
+        google.token(&prefs).await.unwrap().expose_secret(),
         "new-account"
     );
     assert_eq!(credentials.value()["refresh_token"], "new-refresh");
@@ -601,4 +633,336 @@ async fn failed_credential_deletion_blocks_cached_grants_and_is_retryable() {
     google.clear_credentials().await.unwrap();
     assert!(credentials.saved.lock().unwrap().is_none());
     assert!(server.requests().is_empty());
+}
+
+fn scoped_response(scope: &str) -> Reply {
+    Reply::new(200, json!({"access_token":"candidate-access", "refresh_token":"candidate-refresh", "expires_in":3600, "token_type":"Bearer", "scope":scope}).to_string())
+}
+
+#[tokio::test]
+async fn partial_google_grants_validate_only_granted_services_and_enforce_readonly_access() {
+    for (scope, drive, write) in [
+        ("https://www.googleapis.com/auth/drive.appdata", true, false),
+        (
+            "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+            false,
+            true,
+        ),
+        (
+            "https://www.googleapis.com/auth/calendar.readonly",
+            false,
+            false,
+        ),
+    ] {
+        let reply = if drive {
+            r#"{"user":{"permissionId":"candidate"}}"#
+        } else {
+            r#"{"items":[{"id":"work","accessRole":"owner","summary":"Work"}]}"#
+        };
+        let mut server = Server::start(vec![scoped_response(scope), Reply::new(200, reply)]).await;
+        let credentials = Arc::new(Credentials::default());
+        credentials.seed(saved(chrono::Utc::now().timestamp() + 3600));
+        let google = google(&server, credentials.clone());
+        let prefs = prefs();
+        let grant = google
+            .exchange_code(&prefs, "once", "http://127.0.0.1/callback", "verifier")
+            .await
+            .unwrap();
+        assert_eq!(
+            google.token(&prefs).await.unwrap().expose_secret(),
+            "old-access"
+        );
+        let (grant, identity, sources) = google.prepare_grant(&prefs, grant).await.unwrap();
+        assert_eq!(grant.access.drive, drive);
+        assert_eq!(grant.access.calendar_write, write);
+        assert_eq!(identity, drive.then(|| "drive:candidate".into()));
+        if !drive {
+            assert_eq!(sources[0].access.create, write);
+        }
+        let authorized = Preferences {
+            google_grant: grant,
+            ..prefs
+        };
+        let denied = if drive {
+            Service::CalendarRead
+        } else {
+            Service::Drive
+        };
+        assert!(
+            google
+                .token_for(&authorized, denied)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("did not grant")
+        );
+        if !write {
+            assert!(
+                google
+                    .token_for(&authorized, Service::CalendarWrite)
+                    .await
+                    .is_err()
+            );
+        }
+        let requests = server.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].target.starts_with(if drive {
+            "/drive/v3/about"
+        } else {
+            "/calendar/v3/users/me/calendarList"
+        }));
+        assert_eq!(
+            requests[1].headers["authorization"],
+            "Bearer candidate-access"
+        );
+        server.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn staged_google_activation_survives_validation_failure_database_rollback_and_restart() {
+    let mut server = Server::start(vec![
+        scoped_response("https://www.googleapis.com/auth/calendar.readonly"),
+        Reply::new(503, "NEVER-EXPOSE-service-error"),
+        Reply::new(200, r#"{"items":[{"id":"new","accessRole":"owner"}]}"#),
+    ])
+    .await;
+    let credentials = Arc::new(Credentials::default());
+    credentials.seed(saved(chrono::Utc::now().timestamp() + 3600));
+    let google = google(&server, credentials.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.sqlite");
+    let store = crate::store::Store::open(&path).unwrap();
+    let prefs = prefs();
+    store.put("preferences", prefs.clone()).await.unwrap();
+    let grant = google
+        .exchange_code(&prefs, "once", "http://127.0.0.1/callback", "verifier")
+        .await
+        .unwrap();
+    let error = google
+        .prepare_grant(&prefs, grant.clone())
+        .await
+        .unwrap_err();
+    assert!(!format!("{error:#}").contains("NEVER-EXPOSE"));
+    assert_eq!(
+        google.token(&prefs).await.unwrap().expose_secret(),
+        "old-access"
+    );
+    drop(google);
+    let google = self::google(&server, credentials.clone());
+    // Retry uses the saved candidate, without browser or repeating the one-use code.
+    assert_eq!(google.login(&prefs).await.unwrap(), grant);
+    let (grant, identity, sources) = google.prepare_grant(&prefs, grant).await.unwrap();
+    store.run(|c| { c.execute_batch("CREATE TRIGGER fail_grant BEFORE INSERT ON kv WHEN NEW.key='google_archived' BEGIN SELECT RAISE(ABORT,'fixture failure'); END;")?; Ok(()) }).await.unwrap();
+    assert!(
+        store
+            .activate_google(
+                prefs.clone(),
+                grant.clone(),
+                identity.clone(),
+                sources.clone()
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store.get::<Preferences>("preferences").await.unwrap(),
+        prefs
+    );
+    assert!(store.workspace().await.unwrap().calendars.is_empty());
+    assert_eq!(
+        google.token(&prefs).await.unwrap().expose_secret(),
+        "old-access"
+    );
+    store
+        .run(|c| {
+            c.execute_batch("DROP TRIGGER fail_grant")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    store
+        .activate_google(prefs.clone(), grant.clone(), identity, sources)
+        .await
+        .unwrap();
+    // Simulate exit immediately after DB commit and before credential pruning.
+    drop(store);
+    drop(google);
+    let store = crate::store::Store::open(&path).unwrap();
+    let committed: Preferences = store.get("preferences").await.unwrap();
+    assert_eq!(committed.google_grant, grant);
+    let google = self::google(&server, credentials.clone());
+    assert_eq!(
+        google.token(&committed).await.unwrap().expose_secret(),
+        "candidate-access"
+    );
+    assert!(
+        google
+            .finish_pending_login(&committed)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    credentials.locked.store(true, Ordering::SeqCst);
+    assert!(google.finish_activation(&committed).await.is_err());
+    assert_eq!(
+        google.token(&committed).await.unwrap().expose_secret(),
+        "candidate-access"
+    );
+    credentials.locked.store(false, Ordering::SeqCst);
+    google.finish_activation(&committed).await.unwrap();
+    let restarted = self::google(&server, credentials.clone());
+    assert_eq!(
+        restarted.token(&committed).await.unwrap().expose_secret(),
+        "candidate-access"
+    );
+    assert!(restarted.token(&prefs).await.is_err());
+    assert_eq!(credentials.value()["refresh_token"], "candidate-refresh");
+    server.finish().await;
+}
+
+#[tokio::test]
+async fn unhelpful_partial_grants_keep_the_working_google_connection() {
+    for scope in [
+        "",
+        "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+        "openid email",
+    ] {
+        let mut server = Server::start(vec![scoped_response(scope)]).await;
+        let credentials = Arc::new(Credentials::default());
+        credentials.seed(saved(chrono::Utc::now().timestamp() + 3600));
+        let google = google(&server, credentials.clone());
+        assert!(
+            google
+                .exchange_code(&prefs(), "once", "http://127.0.0.1/callback", "verifier")
+                .await
+                .is_err()
+        );
+        assert_eq!(credentials.writes.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            google.token(&prefs()).await.unwrap().expose_secret(),
+            "old-access"
+        );
+        server.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn editing_new_oauth_client_details_keeps_the_committed_client_and_refresh_secret() {
+    let mut server = Server::start(vec![
+        response("candidate", Some("candidate-refresh")),
+        response("renewed", None),
+    ])
+    .await;
+    let credentials = Arc::new(Credentials::default());
+    let google = google(&server, credentials.clone());
+    let grant = google
+        .exchange_code(&prefs(), "once", "http://127.0.0.1/callback", "verifier")
+        .await
+        .unwrap();
+    let mut committed = Preferences {
+        google_grant: grant,
+        ..prefs()
+    };
+    google.finish_activation(&committed).await.unwrap();
+    let mut value = credentials.value();
+    value["expires_at"] = 0.into();
+    credentials.seed(value);
+    drop(google);
+    let google = self::google(&server, credentials.clone());
+    committed.google_client_id = "edited-new-client".into();
+    committed.google_client_secret = "edited-new-secret".into();
+    assert!(google.connected(&committed).await.unwrap());
+    assert_eq!(
+        google.token(&committed).await.unwrap().expose_secret(),
+        "renewed"
+    );
+    assert_eq!(form(&server, 1)["client_id"], "fixture-client");
+    assert_eq!(form(&server, 1)["client_secret"], "fixture&secret+/");
+    assert_eq!(credentials.value()["client_id"], "fixture-client");
+    server.finish().await;
+}
+
+#[test]
+fn google_scope_aliases_require_both_list_and_event_access() {
+    for scope in [
+        "calendar",
+        "calendar.events calendar.calendarlist",
+        "calendar.events calendar.calendarlist.readonly",
+    ] {
+        let scope = scope
+            .split(' ')
+            .map(|s| format!("https://www.googleapis.com/auth/{s}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let access = scopes::access(Some(&scope));
+        assert!(access.calendar_read && access.calendar_write && !access.drive);
+    }
+    assert!(!scopes::access(Some("https://www.googleapis.com/auth/calendar.events")).calendar_read);
+    assert!(scopes::access(None).calendar_allowed()); // legacy permission metadata
+    assert!(!scopes::access(Some("unrelated")).calendar_allowed());
+}
+
+#[tokio::test]
+async fn resumed_google_candidate_rechecks_scopes_after_refresh_before_service_validation() {
+    let mut server = Server::start(vec![
+        response("initial-candidate", Some("candidate-refresh")),
+        Reply::new(200, json!({"access_token":"renewed-candidate", "expires_in":3600, "token_type":"Bearer", "scope":"https://www.googleapis.com/auth/calendar.readonly"}).to_string()),
+        Reply::new(200, r#"{"items":[]}"#),
+    ]).await;
+    let credentials = Arc::new(Credentials::default());
+    credentials.seed(saved(chrono::Utc::now().timestamp() + 3600));
+    let google = google(&server, credentials.clone());
+    let grant = google
+        .exchange_code(&prefs(), "once", "http://127.0.0.1/callback", "verifier")
+        .await
+        .unwrap();
+    assert!(grant.access.drive);
+    let mut vault: Value = serde_json::from_str(
+        credentials
+            .saved
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .expose_secret(),
+    )
+    .unwrap();
+    vault["grants"][1]["expires_at"] = 0.into();
+    credentials.seed(vault);
+    drop(google);
+    let google = self::google(&server, credentials.clone());
+    let (grant, identity, sources) = google.prepare_grant(&prefs(), grant).await.unwrap();
+    assert!(grant.access.calendar_read && !grant.access.calendar_write && !grant.access.drive);
+    assert!(identity.is_none() && sources.is_empty());
+    assert_eq!(server.requests().len(), 3);
+    assert!(server.requests()[2].target.starts_with("/calendar/"));
+    assert_eq!(
+        google.token(&prefs()).await.unwrap().expose_secret(),
+        "old-access"
+    );
+    server.finish().await;
+}
+
+#[tokio::test]
+async fn calendar_roles_cannot_restore_writes_after_refresh_reduces_scope() {
+    let mut server = Server::start(vec![
+        Reply::new(200, json!({"access_token":"renewed", "expires_in":3600, "token_type":"Bearer", "scope":"https://www.googleapis.com/auth/calendar.readonly"}).to_string()),
+        Reply::new(200, r#"{"items":[{"id":"work","accessRole":"owner"}]}"#),
+    ]).await;
+    let credentials = Arc::new(Credentials::default());
+    let mut value = saved(0);
+    value["scope"] = SCOPES.into();
+    credentials.seed(value);
+    let google = google(&server, credentials);
+    let sources = google.calendars(&prefs()).await.unwrap();
+    assert!(sources[0].access.read_only());
+    assert!(
+        google
+            .token_for(&prefs(), Service::CalendarWrite)
+            .await
+            .is_err()
+    );
+    assert_eq!(server.requests().len(), 2);
+    server.finish().await;
 }

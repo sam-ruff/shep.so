@@ -1128,7 +1128,9 @@ impl App {
             )
             .padding([12, 18])
             .style(outline)
-            .on_press_maybe((!busy && !lifecycle.cleanup_pending).then_some(Message::GoogleLogin))
+            .on_press_maybe(
+                (!busy && !lifecycle.cleanup_pending).then_some(Message::GoogleLogin(true))
+            )
         ]
         .spacing(10)
         .align_y(Alignment::Center);
@@ -1178,6 +1180,36 @@ impl App {
         } else if lifecycle.disconnected {
             body = body
                 .push(muted("Disconnected · cached calendars remain available to read.").size(12));
+        }
+        let access = self.preferences.google_grant.access;
+        if access.known && !lifecycle.disconnected {
+            body = body.push(
+                row![
+                    text(if access.calendar_write {
+                        "Calendar · read & write"
+                    } else if access.calendar_read {
+                        "Calendar · read only"
+                    } else {
+                        "Calendar · not granted"
+                    })
+                    .size(12),
+                    text(if access.drive {
+                        "Drive backup · granted"
+                    } else {
+                        "Drive backup · not granted"
+                    })
+                    .size(12),
+                ]
+                .spacing(24)
+                .wrap(),
+            );
+        }
+        if !busy && !lifecycle.cleanup_pending {
+            body = body.push(
+                button(text("Start a new sign-in").size(12))
+                    .style(button::text)
+                    .on_press(Message::GoogleLogin(false)),
+            );
         }
         body = body.push(muted("Enable the Drive and Calendar APIs in your Google Cloud project. Sign-in opens your browser; backups stay off until you enable them.").size(11));
         settings_card(
@@ -1291,9 +1323,9 @@ impl App {
                 .spacing(12)
                 .align_y(Alignment::End),
             );
-        } else if !self.google_connected {
+        } else if !self.google_connected || !self.preferences.google_grant.access.drive_allowed() {
             form = form.push(action(
-                "Connect Google",
+                "Connect Google / approve Drive access",
                 Message::SettingsTab(SettingsTab::Calendars),
             ));
         }

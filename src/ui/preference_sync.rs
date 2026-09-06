@@ -32,7 +32,8 @@ impl PreferenceSync {
         if self.dirty() {
             live.google_connection_id = self.saved.value.google_connection_id.clone();
             live.google_lifecycle = self.saved.value.google_lifecycle;
-            if live.google_lifecycle.disconnected
+            live.google_grant = self.saved.value.google_grant.clone();
+            if (live.google_lifecycle.disconnected || !live.google_grant.access.drive_allowed())
                 && live.backup_destination == crate::model::BackupDestination::GoogleDrive
             {
                 live.auto_backup = false;
