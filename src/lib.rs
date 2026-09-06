@@ -5,6 +5,7 @@ pub mod engine;
 pub mod fuzzy;
 pub mod html_render;
 pub mod mail_actions;
+pub mod message_find;
 pub mod model;
 pub mod outgoing;
 pub mod providers;

@@ -10,7 +10,7 @@ The unified inbox brings your accounts together. Choose a folder in the sidebar,
 
 Click a message to read it. Moving on to another message, folder or tab marks it read. An explicit **Mark as unread** remains unread until you choose to read it again. Double-click for a full-window reader. Related messages appear as collapsible cards; disable grouping in **Preferences → General** if you prefer individual messages.
 
-HTML mail retains its layout, fonts, tables and inline images. Use **Plain text** for the text alternative. Select and copy text in either view; quoted text follows your reply-history preference.
+HTML mail retains its layout, fonts, tables and inline images. Use **Plain text** for the text alternative. Select and copy text in either view; quoted text follows your reply-history preference. Use `Ctrl+F` or the reader’s search icon to find text in the open message. Enter and Shift+Enter move between matches; **Aa** matches case. Escape closes the find bar.
 
 Drag the pane edges to give your inbox or reader more room.
 

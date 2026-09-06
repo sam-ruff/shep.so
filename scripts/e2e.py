@@ -70,6 +70,80 @@ class NativeFlows(unittest.TestCase):
         self.artifacts = Path(result["artifacts"])
         print(f"\nEvidence: {result['artifacts']}", flush=True)
 
+    def test_find_formatted_message_navigation_and_keyboard_isolation(self):
+        self.mcp.call("desktop.start", html_mail=True)
+        self.mcp.batch(click(400,558), check("selected", "Long formatted letter"), check("html_ready", True),
+                       key("ctrl+f"), check("find_open", True), check("focused_input", "find-message"),
+                       type_text("Paragraph"), check("find_count", 201), check("find_pending", False),
+                       check("find_active", 0), shot("find-html-first"),
+                       click(1261,158), check("find_match_case", True), check("find_count", 200),
+                       click(1261,158), check("find_match_case", False), check("find_count", 201),
+                       click(1344,158), check("find_active", 1), click(1300,158), check("find_active", 0),
+                       key("Return"), check("find_active", 1), key("shift+Return"), check("find_active", 0),
+                       key("shift+Return"), check("find_active", 200), check("html_scroll", 5000, "gte"),
+                       shot("find-html-last"), key("ctrl+d"), check("total", 124),
+                       key("Escape"), check("find_open", False), check("full_reader", False),
+                       double_click(400,555), check("full_reader", True), key("ctrl+f"),
+                       check("find_open", True), check("find_count", 201), key("Escape"),
+                       check("find_open", False), check("full_reader", True), key("Escape"), check("full_reader", False))
+
+    def test_find_plain_message_and_switching_messages_discards_old_results(self):
+        self.mcp.call("desktop.start", html_mail=True)
+        self.mcp.batch(click(400,558), check("selected", "Long formatted letter"), check("html_ready", True),
+                       click(770,320), check("html_formatted", False), check("reader_text_ready", True),
+                       key("ctrl+f"), check("focused_input", "find-message"), type_text("Paragraph"),
+                       check("find_count", 201), check("find_pending", False), check("find_error", None),
+                       shot("find-plain-first"), key("shift+Return"), check("find_active", 200),
+                       shot("find-plain-last"), click(400,450), check("selected", "Escaped HTML request"), check("focused_input", None),
+                       check("find_count", 0), check("find_pending", False), key("ctrl+f"),
+                       check("focused_input", "find-message"), key("ctrl+a"), type_text("Readable content"),
+                       check("find_count", 1), check("find_pending", False), shot("find-new-message"),
+                       key("ctrl+a"), type_text("[not.*present]"), check("find_count", 0),
+                       check("find_pending", False), check("find_error", None), shot("find-no-results"),
+                       key("Escape"), check("find_open", False))
+
+    def test_find_wide_message_reveals_match_in_dark_compact_reader(self):
+        self.mcp.call("desktop.start", html_mail=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(690,366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"), click(100,536), check("folder", "Projects"),
+                       check("selected", "Wide HTML report"), check("html_ready", True),
+                       click(828,100), check("find_open", True), check("focused_input", "find-message"),
+                       type_text("Right report column"), check("find_count", 1), shot("find-wide-dark"),
+                       {"type":"resize","width":900,"height":640}, check("window_size", [900,640]),
+                       check("html_pan", 100, "gte"), check("find_count", 1), {"type":"hover","x":230,"y":40}, wait(100), shot("find-wide-dark-compact"),
+                       double_click(380,245), check("full_reader", True), check("find_count", 1),
+                       shot("find-wide-dark-full"), key("Escape"), check("find_open", False),
+                       check("full_reader", True), key("Escape"), check("full_reader", False))
+
+    def test_find_remap_secondary_binding_disable_and_mouse_close(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(645,156), check("settings_tab", "Shortcuts"),
+                       {"type":"hover","x":1200,"y":700}, {"type":"scroll","amount":30}, wait(150), shot("find-shortcut-settings"),
+                       click(905,780), key("F3"), check("shortcuts.Find", "F3"), check("preferences_saved", True),
+                       click(1070,780), key("ctrl+f"), check("shortcut_secondary.Find", "Mod+F"), check("preferences_saved", True),
+                       key("ctrl+1"), check("tab", "Mail"), key("F3"), check("find_open", True), check("focused_input", "find-message"),
+                       type_text("conversation"), check("find_query", "conversation"), check("find_pending", False),
+                       shot("find-remapped-open"), click(1388,158), check("find_open", False),
+                       key("ctrl+f"), check("find_open", True), key("Escape"), check("find_open", False),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       {"type":"hover","x":1200,"y":700}, {"type":"scroll","amount":30}, wait(100),
+                       click(988,780), check("shortcuts.Find", ""), click(1157,780), check("shortcut_secondary.Find", ""),
+                       check("preferences_saved", True), key("ctrl+1"), check("tab", "Mail"),
+                       key("F3"), wait(80), check("find_open", False), key("ctrl+f"), wait(80), check("find_open", False))
+
+    def test_find_respects_html_and_plain_quoted_history(self):
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prototype"), check("total", 1),
+                       key("Escape"), check("html_ready", True), check("html_quotes_hidden", True),
+                       key("ctrl+f"), check("focused_input", "find-message"), type_text("updated"),
+                       check("find_pending", False), check("find_count", 0), key("Escape"), check("find_open", False), wait(80),
+                       click(713,574), check("html_quotes_hidden", False), key("ctrl+f"), check("focused_input", "find-message"),
+                       check("find_count", 1), shot("find-html-quote"), key("Escape"), check("find_open", False), wait(80),
+                       click(712,623), check("html_quotes_hidden", True), key("ctrl+f"), check("find_open", True), check("focused_input", "find-message"), check("find_pending", False),
+                       check("find_count", 0), key("Escape"), check("find_open", False), wait(80),
+                       {"type":"hover","x":1050,"y":500}, {"type":"scroll","amount":-30}, wait(100), click(770,320), check("html_formatted", False), check("reader_text_ready", True),
+                       key("ctrl+f"), check("find_open", True), check("focused_input", "find-message"), check("find_pending", False), check("find_count", 0), key("Escape"), check("find_open", False), wait(80),
+                       click(740,419), check("expanded_replies", [0]), key("ctrl+f"), check("find_count", 1),
+                       shot("find-plain-quote"), key("Escape"), check("find_open", False))
+
     def test_html_styled_message_plain_alternative_and_raw_xhtml(self):
         self.mcp.call("desktop.start", html_mail=True)
         self.mcp.batch(check("selected", "Styled sign-in sample"), check("html_ready", True),
@@ -583,7 +657,7 @@ class NativeFlows(unittest.TestCase):
                        key("Escape"), key("ctrl+comma"), check("tab","Preferences"), wait(80),
                        click(645,156), check("settings_tab","Shortcuts"),
                        {"type":"hover","x":1200,"y":700},{"type":"scroll","amount":30},wait(150),
-                       click(920,720),key("alt+d"),check("shortcuts.Delete","Alt+D"),check("preferences_saved",True),
+                       click(920,660),key("alt+d"),check("shortcuts.Delete","Alt+D"),check("preferences_saved",True),
                        key("ctrl+1"),check("tab","Mail"),wait(80),
                        click(415,154),type_text("invoice"),check("total",1),key("alt+d"),
                        key("ctrl+a"),key("BackSpace"),check("total",120),check("action_toast",None),
@@ -601,12 +675,12 @@ class NativeFlows(unittest.TestCase):
                        click(85, 115), check("folder", "INBOX"), check("total", 121),
                        key("ctrl+comma"), check("tab", "Preferences"), click(645, 156), check("settings_tab", "Shortcuts"),
                        {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(150), shot("sidebar-inbox-key-settings"),
-                       click(988, 780), check("shortcuts.Inbox", ""), check("shortcuts.Delete", "Mod+D"), check("preferences_saved", True),
+                       click(988, 720), check("shortcuts.Inbox", ""), check("shortcuts.Delete", "Mod+D"), check("preferences_saved", True),
                        key("ctrl+1"), check("tab", "Mail"), click(100, 537), check("folder", "Projects"),
                        key("i"), wait(80), check("folder", "Projects"),
                        key("ctrl+comma"), check("tab", "Preferences"),
                        {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(120),
-                       click(920, 780), key("alt+i"), check("shortcuts.Inbox", "Alt+I"), check("preferences_saved", True),
+                       click(920, 720), key("alt+i"), check("shortcuts.Inbox", "Alt+I"), check("preferences_saved", True),
                        key("ctrl+1"), check("tab", "Mail"), click(100, 537), check("folder", "Projects"), key("alt+i"), check("folder", "INBOX"))
 
     def test_secondary_shortcut_remap_conflict_and_disable(self):

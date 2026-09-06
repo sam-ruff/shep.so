@@ -7,6 +7,7 @@ struct Run {
     boundaries: Vec<usize>,
     font: FontHandle,
     bounds: Position,
+    offset: std::ops::Range<usize>,
 }
 #[derive(Default)]
 pub(super) struct Selection {
@@ -15,6 +16,7 @@ pub(super) struct Selection {
     max_height: f32,
     start: Option<(usize, usize)>,
     end: Option<(usize, usize)>,
+    index: crate::message_find::TextIndex,
 }
 impl Selection {
     pub fn layout(&mut self, document: &Document<'_>) {
@@ -36,6 +38,7 @@ impl Selection {
                         boundaries,
                         bounds,
                         font: element.font(),
+                        offset: 0..0,
                     });
                 }
             }
@@ -48,6 +51,64 @@ impl Selection {
         self.spatial = (0..self.runs.len()).collect();
         self.spatial
             .sort_by(|&a, &b| self.runs[a].bounds.y.total_cmp(&self.runs[b].bounds.y));
+        let mut text = String::new();
+        let mut last: Option<Position> = None;
+        for run in &mut self.runs {
+            if let Some(previous) = last {
+                if run.bounds.y >= previous.y + previous.height * 0.8
+                    || run.bounds.y + run.bounds.height <= previous.y
+                {
+                    if !text.ends_with('\n') {
+                        text.push('\n');
+                    }
+                } else if run.bounds.x > previous.x + previous.width + 2.
+                    && !text.ends_with(char::is_whitespace)
+                {
+                    text.push('\t');
+                }
+            }
+            let start = text.len();
+            text.push_str(&run.text);
+            run.offset = start..text.len();
+            last = Some(run.bounds);
+        }
+        self.index = crate::message_find::TextIndex::new(&text);
+    }
+    pub fn find(
+        &self,
+        query: &str,
+        match_case: bool,
+        measure: &Measure<'_>,
+    ) -> Result<crate::message_find::Results, regex::Error> {
+        let mut matches = Vec::new();
+        for range in self.index.find(query, match_case)? {
+            let first = self
+                .runs
+                .partition_point(|run| run.offset.end <= range.start);
+            let mut rectangles = Vec::new();
+            for run in self.runs[first..]
+                .iter()
+                .take_while(|run| run.offset.start < range.end)
+            {
+                let from = range.start.saturating_sub(run.offset.start);
+                let to = range.end.min(run.offset.end) - run.offset.start;
+                let left = measure(&run.text[..from], run.font);
+                let right = measure(&run.text[..to], run.font);
+                rectangles.push([
+                    run.bounds.x + left,
+                    run.bounds.y,
+                    (right - left).max(1.),
+                    run.bounds.height,
+                ]);
+            }
+            if !rectangles.is_empty() {
+                matches.push(crate::message_find::Match {
+                    block: 0,
+                    rectangles,
+                });
+            }
+        }
+        Ok(crate::message_find::Results::new(matches))
     }
     fn hit(&self, measure: &Measure<'_>, x: f32, y: f32) -> Option<(usize, usize)> {
         if self.runs.is_empty() {

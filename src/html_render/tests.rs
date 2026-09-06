@@ -8,6 +8,58 @@ async fn next(rx: &mut mpsc::Receiver<Event>) -> Event {
         .unwrap()
         .unwrap()
 }
+
+#[tokio::test]
+async fn find_uses_visible_text_across_styles_and_rebuilds_after_wrapping() {
+    let (tx, mut rx, thread) = start();
+    tx.send(Input::Load { generation: 90, body: body("<p>CAFÉ <b>project</b> plan and café project plan.</p><blockquote>Invisible project plan</blockquote><p style='display:none'>Hidden project plan</p><p>Literal [a.*] Σ σ ς</p>"), viewport: viewport(), font_size: 14, hide_quotes: true }).await.unwrap();
+    assert!(matches!(next(&mut rx).await, Event::Frame(_)));
+    tx.send(Input::Find(90, 1, "café project plan".into(), false))
+        .await
+        .unwrap();
+    let Event::Found(90, 1, layout, Ok(found)) = next(&mut rx).await else {
+        panic!()
+    };
+    assert_eq!(found.matches.len(), 2);
+    assert_eq!(
+        found.matches[0].rectangles.len(),
+        1,
+        "Adjacent styled words share one highlight"
+    );
+    tx.send(Input::Find(90, 2, "project plan".into(), false))
+        .await
+        .unwrap();
+    assert!(
+        matches!(next(&mut rx).await, Event::Found(90, 2, _, Ok(found)) if found.matches.len() == 2)
+    );
+    tx.send(Input::Resize(
+        90,
+        Viewport {
+            width: 100,
+            ..viewport()
+        },
+    ))
+    .await
+    .unwrap();
+    assert!(matches!(next(&mut rx).await, Event::Frame(_)));
+    assert!(
+        matches!(next(&mut rx).await, Event::Found(90, 2, revision, Ok(found)) if revision > layout && found.matches.len() == 2)
+    );
+    tx.send(Input::Find(90, 3, "[a.*]".into(), false))
+        .await
+        .unwrap();
+    assert!(
+        matches!(next(&mut rx).await, Event::Found(90, 3, _, Ok(found)) if found.matches.len() == 1)
+    );
+    tx.send(Input::Find(90, 4, "CAFÉ".into(), true))
+        .await
+        .unwrap();
+    assert!(
+        matches!(next(&mut rx).await, Event::Found(90, 4, _, Ok(found)) if found.matches.len() == 1)
+    );
+    drop(tx);
+    thread.join().unwrap();
+}
 fn body(source: &str) -> Arc<HtmlBody> {
     Arc::new(HtmlBody::new(source.into(), HashMap::new()))
 }
