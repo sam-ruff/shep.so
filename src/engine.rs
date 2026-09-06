@@ -2,6 +2,9 @@ mod backups;
 #[cfg(test)]
 mod backups_tests;
 mod dispatch;
+mod restore;
+#[cfg(test)]
+mod restore_tests;
 pub use dispatch::CommandSender;
 
 use crate::{
@@ -117,6 +120,7 @@ struct Engine {
     calendar_locks: AccountLocks,
     google_connection_lock: Arc<tokio::sync::Mutex<()>>,
     passphrases: Arc<dyn backup::PassphraseStore>,
+    restore_credentials: Arc<dyn backup::restore::CredentialRestorer>,
     backup_uploads: Arc<tokio::sync::OnceCell<backup::journal::Journal>>,
 }
 type Output = futures::channel::mpsc::Sender<Event>;
@@ -172,6 +176,7 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             calendar_locks: Default::default(),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore),
+            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
             backup_uploads: Default::default(),
         };
         let workspace = match engine.store.workspace().await {
@@ -392,6 +397,7 @@ impl Engine {
                     "Account changes are disabled in preview. Relaunch without --demo to add an account."
                 );
                 account.validate()?;
+                let _guard = self.account_lock(&account.id).await;
                 let password = if password.expose_secret().is_empty() {
                     providers::read_secret(&account.id)
                         .await
@@ -667,6 +673,7 @@ impl Engine {
             }
             Command::SaveCalendar(source, password) => {
                 anyhow::ensure!(!self.demo, "Calendar connections are disabled in preview.");
+                let _guard = self.calendar_lock(&source.id).await;
                 providers::calendar::validate_caldav_url(&source.url)?;
                 anyhow::ensure!(
                     !source.name.is_empty() && !source.username.is_empty(),
@@ -770,29 +777,8 @@ impl Engine {
                     .await?;
             }
             Command::Restore(target, id, passphrase) => {
-                anyhow::ensure!(!self.demo, "Restore is disabled in preview.");
-                let _guard = self.backup_connection_guard(&target).await;
-                let prefs = self.store.get("preferences").await?;
-                Self::check_backup_target(&target, &prefs)?;
-                let bytes = self.backup_provider(&prefs).await?.download(&id).await?;
-                let snapshot =
-                    tokio::task::spawn_blocking(move || backup::decrypt(&bytes, &passphrase))
-                        .await??;
-                for (id, secret) in snapshot.credentials {
-                    providers::write_secret(&id, SecretString::from(secret)).await?;
-                }
-                for account in snapshot.accounts {
-                    self.store.save_account(account).await?;
-                }
-                for source in snapshot.calendars {
-                    self.store.save_source(source).await?;
-                }
-                for chunk in snapshot.messages.chunks(50) {
-                    self.store.upsert(chunk.to_vec()).await?;
-                }
-                self.workspace(&mut output).await?;
-                output.send(Event::Changed).await?;
-                output.send(Event::Notice("Backup restored. Accounts without included passwords need their passwords entered again.".into())).await?;
+                self.run_restore(target, id, passphrase, &mut output)
+                    .await?;
             }
             Command::ExportAttachment(id, index, path) => {
                 let detail = self.store.detail(id).await?;
@@ -918,6 +904,7 @@ mod calendar_tests {
             calendar_locks: Default::default(),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore),
+            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
             backup_uploads: Default::default(),
         }
     }
