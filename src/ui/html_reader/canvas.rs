@@ -88,6 +88,7 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
                 self.state.generation,
                 presentation.0,
                 presentation.1,
+                viewport.width,
             )));
         }
         {
@@ -202,7 +203,7 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
                 self.state.generation,
                 kind,
                 position.x + self.state.frame.as_ref().map_or(0., |frame| frame.pan),
-                position.y,
+                position.y - self.state.anchor_shift(bounds.y, viewport.y),
             ))));
             if !matches!(kind, Pointer::Leave | Pointer::Move) || state.dragging {
                 shell.capture_event();
@@ -285,7 +286,7 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
                     image::Image::new(handle.clone()),
                     Rectangle {
                         x: bounds.x,
-                        y: bounds.y + frame.scroll,
+                        y: bounds.y + frame.scroll + self.state.anchor_shift(bounds.y, viewport.y),
                         width: frame.viewport.width as f32,
                         height: frame.viewport.height as f32,
                     },
@@ -294,7 +295,7 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
                 for &[x, y, width, height] in &self.state.rectangles {
                     if let Some(bounds) = (Rectangle {
                         x: bounds.x + x - frame.pan,
-                        y: bounds.y + y,
+                        y: bounds.y + y + self.state.anchor_shift(bounds.y, viewport.y),
                         width,
                         height,
                     })

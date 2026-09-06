@@ -20,6 +20,7 @@ struct Highlights<'a> {
     block: usize,
     pan: Option<f32>,
     content_width: Option<f32>,
+    ready: bool,
 }
 pub(super) fn wrap<'a>(
     child: Element<'a, Message>,
@@ -28,6 +29,7 @@ pub(super) fn wrap<'a>(
     block: usize,
     pan: Option<f32>,
     content_width: Option<f32>,
+    ready: bool,
 ) -> Element<'a, Message> {
     Element::new(Highlights {
         child,
@@ -36,6 +38,7 @@ pub(super) fn wrap<'a>(
         block,
         pan,
         content_width,
+        ready,
     })
 }
 impl Widget<Message, Theme, Renderer> for Highlights<'_> {
@@ -97,6 +100,9 @@ impl Widget<Message, Theme, Renderer> for Highlights<'_> {
             viewport,
         );
         let state = tree.state.downcast_mut::<NativeState>();
+        if !self.ready {
+            return;
+        }
         let bounds = layout.bounds();
         if state
             .key
@@ -157,6 +163,9 @@ impl Widget<Message, Theme, Renderer> for Highlights<'_> {
         let Some(mut clip) = bounds.intersection(viewport) else {
             return;
         };
+        if !self.ready {
+            return;
+        }
         if self
             .content_width
             .is_some_and(|width| width > bounds.width + 1.)

@@ -81,6 +81,137 @@ fn start() -> (
     (tx, rx, thread)
 }
 #[tokio::test]
+async fn image_reflows_keep_visible_pixels_and_coalesce_until_native_acknowledgement() {
+    let (tx, mut rx, thread) = start();
+    let source = format!(
+        "<img src='https://example.test/one.webp' style='display:block;width:200px;height:auto'><img src='https://example.test/two.webp' style='display:block;width:200px;height:auto'>{}",
+        (0..80)
+            .map(|i| format!("<p>Reading paragraph {i}: keep this text steady.</p>"))
+            .collect::<String>()
+    );
+    tx.send(Input::Load {
+        generation: 44,
+        body: body(&source),
+        viewport: viewport(),
+        font_size: 14,
+        hide_quotes: false,
+        images: vec![],
+    })
+    .await
+    .unwrap();
+    assert!(matches!(next(&mut rx).await, Event::Frame(_)));
+    tx.send(Input::View(44, viewport(), 600.)).await.unwrap();
+    let Event::Frame(before) = next(&mut rx).await else {
+        panic!()
+    };
+    let bytes: Arc<[u8]> = Arc::from(include_bytes!("../../assets/logo-light.webp").as_slice());
+    tx.send(Input::Image(
+        44,
+        "https://example.test/one.webp".into(),
+        bytes.clone(),
+    ))
+    .await
+    .unwrap();
+    let Event::Frame(first) = next(&mut rx).await else {
+        panic!()
+    };
+    assert_eq!(first.reflow.unwrap().from, 600.);
+    assert_eq!(first.reflow.unwrap().to, 800.);
+    assert_eq!(
+        first.pixels, before.pixels,
+        "The paragraph must stay at exactly the same pixel position"
+    );
+    tx.send(Input::Image(
+        44,
+        "https://example.test/two.webp".into(),
+        bytes,
+    ))
+    .await
+    .unwrap();
+    tx.send(Input::Copy(44)).await.unwrap();
+    assert!(
+        matches!(next(&mut rx).await, Event::Copy(44, _)),
+        "An image arrival must not block input while waiting for the scroller"
+    );
+    tx.send(Input::ReflowApplied(44, first.layout_revision, 800.))
+        .await
+        .unwrap();
+    let Event::Frame(second) = next(&mut rx).await else {
+        panic!()
+    };
+    assert_eq!(second.content_height, before.content_height + 400.);
+    assert_eq!(second.reflow.unwrap().from, 800.);
+    assert_eq!(second.reflow.unwrap().to, 1000.);
+    assert_eq!(second.pixels, before.pixels);
+    tx.send(Input::ReflowApplied(44, second.layout_revision, 1000.))
+        .await
+        .unwrap();
+    assert!(
+        matches!(next(&mut rx).await, Event::Frame(f) if f.reflow.is_none() && f.scroll == 1000.)
+    );
+    drop(tx);
+    thread.join().unwrap();
+}
+#[tokio::test]
+async fn images_below_the_reader_and_acknowledgements_for_old_documents_cannot_move_it() {
+    let (tx, mut rx, thread) = start();
+    let source = format!(
+        "{}<img src='https://example.test/below.webp' style='display:block;width:200px;height:auto'>",
+        (0..80)
+            .map(|i| format!("<p>Reading paragraph {i}: visible content.</p>"))
+            .collect::<String>()
+    );
+    tx.send(Input::Load {
+        generation: 50,
+        body: body(&source),
+        viewport: viewport(),
+        font_size: 14,
+        hide_quotes: false,
+        images: vec![],
+    })
+    .await
+    .unwrap();
+    assert!(matches!(next(&mut rx).await, Event::Frame(_)));
+    tx.send(Input::View(50, viewport(), 600.)).await.unwrap();
+    let Event::Frame(before) = next(&mut rx).await else {
+        panic!()
+    };
+    tx.send(Input::Image(
+        50,
+        "https://example.test/below.webp".into(),
+        Arc::from(include_bytes!("../../assets/logo-light.webp").as_slice()),
+    ))
+    .await
+    .unwrap();
+    let Event::Frame(after) = next(&mut rx).await else {
+        panic!()
+    };
+    assert_eq!(after.content_height, before.content_height + 200.);
+    assert!(after.reflow.is_none());
+    assert_eq!(after.scroll, before.scroll);
+    assert_eq!(after.pixels, before.pixels);
+    tx.send(Input::Load {
+        generation: 51,
+        body: body("<p>A different message.</p>"),
+        viewport: viewport(),
+        font_size: 14,
+        hide_quotes: false,
+        images: vec![],
+    })
+    .await
+    .unwrap();
+    assert!(matches!(next(&mut rx).await, Event::Frame(f) if f.generation == 51 && f.scroll == 0.));
+    tx.send(Input::ReflowApplied(50, after.layout_revision, 1200.))
+        .await
+        .unwrap();
+    tx.send(Input::SelectAll(51)).await.unwrap();
+    assert!(
+        matches!(next(&mut rx).await, Event::Selection(51, text, ..) if text == "A different message.")
+    );
+    drop(tx);
+    thread.join().unwrap();
+}
+#[tokio::test]
 async fn superseded_loads_are_discarded_before_parsing_or_reporting_an_error() {
     let (tx, input) = commands::channel(16);
     let (output, mut rx) = mpsc::channel(4);

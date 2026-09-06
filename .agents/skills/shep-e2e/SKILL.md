@@ -140,6 +140,22 @@ button below `html_body_bounds`, rather than reusing a pre-render coordinate.
 The compact Prototype flow asserts usable visible body space with all four
 attachments and opens Forward to establish the files remain available.
 
+For image-arrival scroll stability, start with `html_mail=true` and
+`image_delay_ms=2000` (0–5000). Open Trash → Delayed illustrated report, allow its
+images, scroll with real Page Down input and capture the reading position before
+arrival. Both images add 400 logical pixels above the viewport; the scroll must
+advance by that amount while the same paragraph stays visually fixed. Repeat in
+compact dark mode with an active Find match. Observe pending downloads rather
+than sleeping through navigation: `remote_image_pending == 0` plus cached bytes
+proves the late results arrived after switching to another message. Verify that
+the new message remains at the start with its own image policy.
+
+`html_failure_once=true` rejects the first current Load in the fixture renderer.
+Click the actual Retry formatted message button, verify the same subject returns,
+and exercise Plain text/Formatted afterward. The normal fixture Retry is near
+x=733,y=468. Preserve these four `test_html_*` automated equivalents and review
+their before/after WebP captures. No personal mail or desktop processes are used.
+
 The 120% scaling scenario uses Preferences → General → Interface size. At the
 standard fixture size, open near x=1145,y=623; its menu opens upward and 120 is
 near x=1140,y=509. Wait for interface_scale == 120 and html_view_current after

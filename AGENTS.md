@@ -125,7 +125,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 100 functional flows plus the navigation performance gate.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 104 functional flows plus the navigation performance gate.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -422,3 +422,36 @@ pane drag and compact resize through actual input; observe html_view_current,
 html_cache_ids, html_cache_hits and html_cache_bytes. These are correctness
 observations, not latency measurements. Preserve existing selection, Find,
 quote/image-policy and delayed-action scenarios and review their WebP captures.
+
+## HTML image reflow and recovery
+
+When an image changes layout above a scrolled reading position, retain a visible
+text-node anchor on the renderer worker. Use its DOM traversal identity and text
+fingerprint, including identities for zero-size text nodes; visible-run indices
+alone are not stable identities. The new viewport pixels account for the anchor's
+displacement. Image arrivals may decode into the existing document resources, but
+coalesce additional layouts until the native scroller acknowledges the first
+adjustment. This adds no deferred image queue and must not block Copy, navigation
+or a replacement Load. Images below the reading position do not move it; a reader
+at the start stays at the start.
+
+`ui/html_reader/anchor.rs` applies an absolute native scroll only when the target,
+view version, current offset and viewport geometry still match the snapshot.
+Newer user navigation wins. An acknowledgement updates the renderer, never the
+UI's newer observed viewport. Temporary image/selection positioning bridges the
+adjustment; Find overlays wait for it to settle. Ignore older document/layout
+acknowledgements. Preserve the pixel-equality, coalescing, below-viewport and
+stale-navigation regressions when changing this protocol.
+
+Recoverable render failures offer Retry formatted message and retain Plain text.
+Retry creates a fresh generation for the same selected message, waits for real
+canvas geometry and rejects old errors. A stopped worker keeps its explicit
+reopen instruction instead of offering an ineffective Retry button.
+
+The isolated harness accepts `image_delay_ms` (0–5000) and
+`html_failure_once` (boolean), honored only by demo/test-support code. The HTML
+fixture's Trash contains Delayed illustrated report, with two undimensioned
+images above the text. `remote_image_pending` and `remote_image_cached` are
+read-only observations. Save light/compact-dark/Find, navigate-before-arrival and
+native Retry scenarios in the automated suite. These controlled waits establish
+correctness, not performance measurements.

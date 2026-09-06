@@ -166,6 +166,7 @@ mod tests {
             pan: 0.,
             scroll: 0.,
             images: vec![],
+            reflow: None,
         });
         let mut cache = Cache::default();
         for i in 0..3 {

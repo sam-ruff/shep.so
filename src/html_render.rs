@@ -66,6 +66,7 @@ pub enum Input {
     Pointer(u64, Pointer, f32, f32),
     Copy(u64),
     Image(u64, String, Arc<[u8]>),
+    ReflowApplied(u64, u64, f32),
     Find(u64, u64, String, bool),
     PlainFind(crate::message_find::plain::Request),
     Clear,
@@ -76,6 +77,11 @@ pub enum Pointer {
     Move,
     Up,
     Leave,
+}
+#[derive(Debug, Clone, Copy)]
+pub struct Reflow {
+    pub from: f32,
+    pub to: f32,
 }
 #[derive(Debug, Clone)]
 pub struct Frame {
@@ -90,6 +96,7 @@ pub struct Frame {
     pub pan: f32,
     pub scroll: f32,
     pub images: Vec<String>,
+    pub reflow: Option<Reflow>,
 }
 impl Frame {
     pub fn matches_view(&self, viewport: Viewport, top: f32) -> bool {
@@ -138,6 +145,9 @@ fn worker(
     current: Arc<AtomicU64>,
 ) {
     #[cfg(feature = "test-support")]
+    let mut failure_once = std::env::args().any(|arg| arg == "--demo")
+        && std::env::var("SHEP_TEST_HTML_FAILURE_ONCE").is_ok_and(|v| v == "1");
+    #[cfg(feature = "test-support")]
     let delay = if std::env::args().any(|arg| arg == "--demo") {
         std::env::var("SHEP_TEST_HTML_DELAY_MS")
             .ok()
@@ -180,6 +190,19 @@ fn worker(
             continue;
         }
         #[cfg(feature = "test-support")]
+        if std::mem::take(&mut failure_once) {
+            if !emit(
+                &mut output,
+                Event::Error(
+                    generation,
+                    "The formatted preview could not be prepared. Try again.".into(),
+                ),
+            ) {
+                return;
+            }
+            continue;
+        }
+        #[cfg(feature = "test-support")]
         if delay > 0 {
             std::thread::sleep(std::time::Duration::from_millis(delay));
         }
@@ -207,7 +230,7 @@ fn worker(
                     Event::Error(
                         generation,
                         format!(
-                            "The HTML message could not be displayed. Use Plain text or try reopening it. {error}"
+                            "The HTML message could not be displayed. Use Plain text or retry. {error}"
                         ),
                     ),
                 ) {
@@ -261,6 +284,9 @@ fn document(
     let mut dragging = false;
     let mut drag_origin = (0., 0.);
     let mut scroll = 0.;
+    let mut view_top = 0.;
+    let mut reflow = None;
+    let mut images_changed = false;
     let mut pan = 0.;
     let mut repaint = true;
     let mut buffered = None;
@@ -270,6 +296,23 @@ fn document(
     loop {
         if current.is_some_and(|current| current.load(Ordering::Relaxed) > generation) {
             return Ok(None);
+        }
+        if images_changed && reflow.is_none() {
+            let anchor =
+                selection.anchor(view_top, pan, viewport.width as f32, viewport.height as f32);
+            let _ = document.render(viewport.width as f32);
+            selection.layout(&document);
+            layout_revision += 1;
+            find_pending = true;
+            if let Some(delta) = anchor.and_then(|a| selection.displacement(a))
+                && delta.abs() >= 1.
+            {
+                let to = (view_top + delta).max(0.).floor();
+                reflow = Some(Reflow { from: view_top, to });
+                scroll = to.clamp(0., (document.height() - viewport.height as f32).max(0.));
+            }
+            images_changed = false;
+            repaint = true;
         }
         if repaint {
             let pixels = {
@@ -320,6 +363,7 @@ fn document(
                         .map(|(url, _)| url)
                         .chain(used_seeded_images)
                         .collect(),
+                    reflow,
                 }
             };
             if !emit(output, Event::Frame(Arc::new(frame))) {
@@ -368,6 +412,11 @@ fn document(
             Input::Load { .. } | Input::PlainFind(..) | Input::Clear => return Ok(Some(command)),
             Input::View(id, size, top) if id == generation && top.is_finite() => {
                 let size = size.validate()?;
+                if reflow.is_some_and(|r| size == viewport && (top - r.from).abs() < 1.) {
+                    continue;
+                }
+                reflow = None;
+                view_top = top;
                 if size == viewport
                     && scroll == top.clamp(0., (document.height() - size.height as f32).max(0.))
                 {
@@ -392,6 +441,7 @@ fn document(
                 repaint = true;
             }
             Input::Resize(id, size) if id == generation => {
+                reflow = None;
                 viewport = size.validate()?;
                 surface.0.borrow_mut().resize_with_scale(
                     viewport.width,
@@ -413,6 +463,8 @@ fn document(
                 repaint = true;
             }
             Input::Scroll(id, delta) if id == generation && delta.is_finite() => {
+                reflow = None;
+                view_top = delta;
                 scroll = delta.clamp(0., (document.height() - viewport.height as f32).max(0.));
                 repaint = true;
             }
@@ -475,12 +527,21 @@ fn document(
                 if let Ok(webp) = crate::remote_images::convert_to_webp(&bytes) {
                     surface.0.borrow_mut().load_image_data(&url, &webp);
 
-                    let _ = document.render(viewport.width as f32);
-                    selection.layout(&document);
-                    layout_revision += 1;
-                    find_pending = true;
-                    repaint = true;
+                    // Decode arrivals as usual, but coalesce subsequent layouts
+                    // until the native scroller acknowledges the first anchor.
+                    images_changed = true;
                 }
+            }
+            Input::ReflowApplied(id, layout, top)
+                if id == generation
+                    && layout == layout_revision
+                    && top.is_finite()
+                    && reflow.is_some() =>
+            {
+                reflow = None;
+                view_top = top;
+                scroll = top.clamp(0., (document.height() - viewport.height as f32).max(0.));
+                repaint = true;
             }
             _ => {}
         }

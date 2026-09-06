@@ -363,6 +363,7 @@ impl App {
                     .as_ref()
                     .map_or(0., |f| f.content_width)
             }),
+            !self.formatted(detail) || !self.html_reader.anchoring(),
         )
     }
 }
