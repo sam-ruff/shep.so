@@ -10,7 +10,9 @@ Keep the restrained shadcn-inspired design: clear hierarchy, comfortable spacing
 
 ## Documentation CI is enabled; quality and release are DISABLED
 
-**The user authorized automatic Zensical documentation publishing to GitHub Pages.** Repository: `sam-ruff/shep.so`, private, default branch `main`. Direct pushes to `main` are currently authorized. `.github/workflows/docs.yml` builds documentation on GitHub-hosted Linux runners and deploys changes from `main`; pull requests only build. Repository Actions must be enabled for this workflow.
+**The user authorized the public repository and automatic Zensical documentation publishing to GitHub Pages.** Repository: `sam-ruff/shep.so`, public, default branch `main`. Direct pushes to `main` are currently authorized. `.github/workflows/docs.yml` builds documentation on GitHub-hosted Linux runners and deploys changes from `main`; pull requests only build. Repository Actions must be enabled for this workflow.
+
+Use `Sam R <sam@technesci.co.uk>` for this owner's Git author/committer identity. Do not add the owner's private contact details or exact workstation hardware to public documentation. Keep old private history backups and audit reports under ignored `artifacts/`.
 
 Quality and release workflow definitions remain deliberately named `.github/workflows/ci.yml.disabled` and `release.yml.disabled`. Do not enable them as a side effect of ordinary development or docs publishing. Remind Sam to re-enable them when the self-hosted runners are ready.
 
