@@ -1,157 +1,13 @@
-use super::{CalendarProvider, google::Google};
 use crate::model::*;
 use anyhow::Context;
-use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
-use secrecy::ExposeSecret;
 
-pub struct GoogleCalendar {
-    pub google: Google,
-    pub preferences: Preferences,
-}
-pub struct CalDav {
-    pub http: reqwest::Client,
-}
-
-fn google_url(source: &CalendarSource, suffix: &str) -> anyhow::Result<url::Url> {
-    let mut url = url::Url::parse("https://www.googleapis.com/calendar/v3/calendars/")?;
-    url.path_segments_mut()
-        .map_err(|_| anyhow::anyhow!("Invalid API URL"))?
-        .pop_if_empty()
-        .push(&source.url)
-        .push("events");
-    if !suffix.is_empty() {
-        url.path_segments_mut().unwrap().push(suffix);
-    }
-    Ok(url)
-}
-#[async_trait]
-impl CalendarProvider for GoogleCalendar {
-    async fn events(
-        &self,
-        source: &CalendarSource,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
-    ) -> anyhow::Result<Vec<CalendarEvent>> {
-        let token = self.google.token(&self.preferences).await?;
-        let mut events = Vec::new();
-        let mut next = String::new();
-        loop {
-            let data: serde_json::Value = self
-                .google
-                .http
-                .get(google_url(source, "")?)
-                .bearer_auth(token.expose_secret())
-                .query(&[
-                    ("timeMin", start.to_rfc3339()),
-                    ("timeMax", end.to_rfc3339()),
-                    ("singleEvents", "true".into()),
-                    ("orderBy", "startTime".into()),
-                    ("maxResults", "250".into()),
-                    ("pageToken", next),
-                ])
-                .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await?;
-            if let Some(items) = data["items"].as_array() {
-                for item in items {
-                    if item["status"] == "cancelled" {
-                        continue;
-                    }
-                    let parse = |key: &str| -> anyhow::Result<DateTime<Utc>> {
-                        if let Some(s) = item[key]["dateTime"].as_str() {
-                            Ok(DateTime::parse_from_rfc3339(s)?.with_timezone(&Utc))
-                        } else {
-                            Ok(NaiveDate::parse_from_str(
-                                item[key]["date"].as_str().context("Missing event date")?,
-                                "%Y-%m-%d",
-                            )?
-                            .and_hms_opt(0, 0, 0)
-                            .unwrap()
-                            .and_utc())
-                        }
-                    };
-                    events.push(CalendarEvent {
-                        id: item["id"]
-                            .as_str()
-                            .context("Missing Google event ID")?
-                            .into(),
-                        source_id: source.id.clone(),
-                        title: item["summary"].as_str().unwrap_or("Untitled event").into(),
-                        start: parse("start")?,
-                        end: parse("end")?,
-                        location: item["location"].as_str().unwrap_or("").into(),
-                        description: item["description"].as_str().unwrap_or("").into(),
-                        all_day: item["start"]["date"].is_string(),
-                        etag: item["etag"].as_str().map(str::to_owned),
-                        remote_url: None,
-                    });
-                }
-            }
-            anyhow::ensure!(
-                events.len() <= 5000,
-                "This calendar has more than 5,000 events in the sync window."
-            );
-            match data["nextPageToken"].as_str() {
-                Some(n) => next = n.into(),
-                None => break,
-            }
-        }
-        Ok(events)
-    }
-    async fn save_event(
-        &self,
-        source: &CalendarSource,
-        event: &CalendarEvent,
-    ) -> anyhow::Result<()> {
-        let token = self.google.token(&self.preferences).await?;
-        let start = if event.all_day {
-            serde_json::json!({"date":event.start.format("%Y-%m-%d").to_string()})
-        } else {
-            serde_json::json!({"dateTime":event.start.to_rfc3339()})
-        };
-        let end = if event.all_day {
-            serde_json::json!({"date":event.end.format("%Y-%m-%d").to_string()})
-        } else {
-            serde_json::json!({"dateTime":event.end.to_rfc3339()})
-        };
-        let body = serde_json::json!({"summary":event.title,"location":event.location,"description":event.description,"start":start,"end":end});
-        let request = if let Some(etag) = &event.etag {
-            self.google
-                .http
-                .patch(google_url(source, &event.id)?)
-                .header("If-Match", etag)
-        } else {
-            self.google.http.post(google_url(source, "")?)
-        };
-        request
-            .bearer_auth(token.expose_secret())
-            .json(&body)
-            .send()
-            .await?
-            .error_for_status()?;
-        Ok(())
-    }
-    async fn delete_event(
-        &self,
-        source: &CalendarSource,
-        event: &CalendarEvent,
-    ) -> anyhow::Result<()> {
-        let token = self.google.token(&self.preferences).await?;
-        let mut request = self
-            .google
-            .http
-            .delete(google_url(source, &event.id)?)
-            .bearer_auth(token.expose_secret());
-        if let Some(etag) = &event.etag {
-            request = request.header("If-Match", etag);
-        }
-        request.send().await?.error_for_status()?;
-        Ok(())
-    }
-}
+mod caldav;
+mod google_calendar;
+#[cfg(test)]
+mod test_server;
+pub use caldav::CalDav;
+pub use google_calendar::GoogleCalendar;
 
 pub fn validate_caldav_url(input: &str) -> anyhow::Result<url::Url> {
     let url = url::Url::parse(input).context("Enter the full CalDAV calendar collection URL")?;
@@ -167,113 +23,6 @@ pub fn validate_caldav_url(input: &str) -> anyhow::Result<url::Url> {
     );
     Ok(url)
 }
-#[async_trait]
-impl CalendarProvider for CalDav {
-    async fn events(
-        &self,
-        source: &CalendarSource,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
-    ) -> anyhow::Result<Vec<CalendarEvent>> {
-        let url = validate_caldav_url(&source.url)?;
-        let secret = super::read_secret(&source.id).await?;
-        let start = start.format("%Y%m%dT%H%M%SZ");
-        let end = end.format("%Y%m%dT%H%M%SZ");
-        let xml = format!(
-            r#"<?xml version="1.0" encoding="utf-8"?><c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><d:getetag/><c:calendar-data><c:expand start="{start}" end="{end}"/></c:calendar-data></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range start="{start}" end="{end}"/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>"#
-        );
-        let mut response = self
-            .http
-            .request(reqwest::Method::from_bytes(b"REPORT")?, url.clone())
-            .basic_auth(&source.username, Some(secret.expose_secret()))
-            .header("Depth", "1")
-            .header("Content-Type", "application/xml; charset=utf-8")
-            .body(xml)
-            .send()
-            .await?
-            .error_for_status()?;
-        anyhow::ensure!(
-            response.content_length().unwrap_or(0) <= 16 * 1024 * 1024,
-            "Calendar response is too large."
-        );
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            anyhow::ensure!(
-                bytes.len() + chunk.len() <= 16 * 1024 * 1024,
-                "Calendar response is too large."
-            );
-            bytes.extend_from_slice(&chunk);
-        }
-        let text = String::from_utf8(bytes)?;
-        anyhow::ensure!(
-            text.len() <= 16 * 1024 * 1024,
-            "Calendar response is too large."
-        );
-        let source = source.clone();
-        tokio::task::spawn_blocking(move || parse_caldav(&text, &source, &url)).await?
-    }
-    async fn save_event(
-        &self,
-        source: &CalendarSource,
-        event: &CalendarEvent,
-    ) -> anyhow::Result<()> {
-        let base = validate_caldav_url(&source.url)?;
-        let url = if let Some(remote) = &event.remote_url {
-            base.join(remote)?
-        } else {
-            base.join(&format!("{}.ics", event.id))?
-        };
-        anyhow::ensure!(
-            url.origin() == base.origin(),
-            "Refusing to send calendar credentials to another server."
-        );
-        let secret = super::read_secret(&source.id).await?;
-        let mut request = self
-            .http
-            .put(url)
-            .basic_auth(&source.username, Some(secret.expose_secret()))
-            .header("Content-Type", "text/calendar; charset=utf-8");
-        request = if let Some(etag) = &event.etag {
-            request.header("If-Match", etag)
-        } else {
-            request.header("If-None-Match", "*")
-        };
-        request
-            .body(encode_ical(event))
-            .send()
-            .await?
-            .error_for_status()?;
-        Ok(())
-    }
-    async fn delete_event(
-        &self,
-        source: &CalendarSource,
-        event: &CalendarEvent,
-    ) -> anyhow::Result<()> {
-        let base = validate_caldav_url(&source.url)?;
-        let url = base.join(
-            event
-                .remote_url
-                .as_deref()
-                .context("Missing calendar resource URL")?,
-        )?;
-        anyhow::ensure!(
-            url.origin() == base.origin(),
-            "Refusing to send calendar credentials to another server."
-        );
-        let secret = super::read_secret(&source.id).await?;
-        let mut request = self
-            .http
-            .delete(url)
-            .basic_auth(&source.username, Some(secret.expose_secret()));
-        if let Some(etag) = &event.etag {
-            request = request.header("If-Match", etag);
-        }
-        request.send().await?.error_for_status()?;
-        Ok(())
-    }
-}
-
 pub fn parse_caldav(
     xml: &str,
     source: &CalendarSource,
@@ -289,7 +38,7 @@ pub fn parse_caldav(
             .descendants()
             .find(|n| n.has_tag_name(("DAV:", "href")))
             .and_then(|n| n.text())
-            .unwrap_or("");
+            .context("The calendar server returned an event without a resource URL.")?;
         anyhow::ensure!(
             base.join(href)?.origin() == base.origin(),
             "CalDAV returned a resource on another server."
@@ -299,6 +48,15 @@ pub fn parse_caldav(
             .find(|n| n.has_tag_name(("DAV:", "getetag")))
             .and_then(|n| n.text())
             .map(str::to_owned);
+        for status in response
+            .descendants()
+            .filter(|n| n.has_tag_name(("DAV:", "status")))
+        {
+            anyhow::ensure!(
+                status.text().and_then(|s| s.split_whitespace().nth(1)) == Some("200"),
+                "The calendar server returned an incomplete response. Check calendar access and sync again."
+            );
+        }
         let Some(data) = response
             .descendants()
             .find(|n| n.has_tag_name(("urn:ietf:params:xml:ns:caldav", "calendar-data")))
@@ -306,58 +64,75 @@ pub fn parse_caldav(
         else {
             continue;
         };
-        for calendar in ical::IcalParser::new(std::io::BufReader::new(data.as_bytes())) {
-            for event in calendar?.events {
-                let value = |key: &str| {
-                    event
-                        .properties
-                        .iter()
-                        .find(|p| p.name == key)
-                        .and_then(|p| p.value.clone())
-                        .unwrap_or_default()
-                };
-                let start = event
+        out.extend(parse_resource(data, source, href, etag)?);
+        anyhow::ensure!(
+            out.len() <= 5000,
+            "This calendar has more than 5,000 events in the sync window."
+        );
+    }
+    Ok(out)
+}
+
+fn parse_resource(
+    data: &str,
+    source: &CalendarSource,
+    href: &str,
+    etag: Option<String>,
+) -> anyhow::Result<Vec<CalendarEvent>> {
+    let mut out = Vec::new();
+    for calendar in ical::IcalParser::new(std::io::BufReader::new(data.as_bytes())) {
+        for event in calendar?.events {
+            let value = |key: &str| {
+                event
                     .properties
                     .iter()
-                    .find(|p| p.name == "DTSTART")
-                    .context("Calendar event has no start")?;
-                let begin = parse_ical_date(start)?;
-                let end = event
-                    .properties
-                    .iter()
-                    .find(|p| p.name == "DTEND")
-                    .map(parse_ical_date)
-                    .transpose()?
-                    .unwrap_or(begin + chrono::Duration::hours(1));
-                let uid = value("UID");
-                // Expanded recurrence instances are shown but never overwrite an entire recurring resource.
-                let recurrence = value("RECURRENCE-ID");
-                let recurring =
-                    !recurrence.is_empty() || event.properties.iter().any(|p| p.name == "RRULE");
-                out.push(CalendarEvent {
-                    id: if recurrence.is_empty() {
-                        uid
-                    } else {
-                        format!("{uid}/{recurrence}")
-                    },
-                    source_id: source.id.clone(),
-                    title: unescape(&value("SUMMARY")),
-                    start: begin,
-                    end,
-                    location: unescape(&value("LOCATION")),
-                    description: if recurring {
-                        format!(
-                            "Recurring event · edit the series on your calendar server.\n{}",
-                            unescape(&value("DESCRIPTION"))
-                        )
-                    } else {
+                    .find(|p| p.name == key)
+                    .and_then(|p| p.value.clone())
+                    .unwrap_or_default()
+            };
+            let start = event
+                .properties
+                .iter()
+                .find(|p| p.name == "DTSTART")
+                .context("Calendar event has no start")?;
+            let begin = parse_ical_date(start)?;
+            let end = event
+                .properties
+                .iter()
+                .find(|p| p.name == "DTEND")
+                .map(parse_ical_date)
+                .transpose()?
+                .map(Ok)
+                .unwrap_or_else(|| event_default_end(start, &value("DURATION")))?;
+            let uid = value("UID");
+            anyhow::ensure!(!uid.is_empty(), "Calendar event has no UID.");
+            // Expanded recurrence instances are shown but never overwrite an entire recurring resource.
+            let recurrence = value("RECURRENCE-ID");
+            let recurring =
+                !recurrence.is_empty() || event.properties.iter().any(|p| p.name == "RRULE");
+            out.push(CalendarEvent {
+                id: if recurrence.is_empty() {
+                    uid
+                } else {
+                    format!("{uid}/{recurrence}")
+                },
+                source_id: source.id.clone(),
+                title: unescape(&value("SUMMARY")),
+                start: begin,
+                end,
+                location: unescape(&value("LOCATION")),
+                description: if recurring {
+                    format!(
+                        "Recurring event · edit the series on your calendar server.\n{}",
                         unescape(&value("DESCRIPTION"))
-                    },
-                    all_day: start.value.as_ref().is_some_and(|v| v.len() == 8),
-                    etag: etag.clone(),
-                    remote_url: if recurring { None } else { Some(href.into()) },
-                });
-            }
+                    )
+                } else {
+                    unescape(&value("DESCRIPTION"))
+                },
+                all_day: start.value.as_ref().is_some_and(|v| v.len() == 8),
+                etag: etag.clone(),
+                remote_url: if recurring { None } else { Some(href.into()) },
+            });
         }
     }
     Ok(out)
@@ -396,11 +171,25 @@ fn parse_ical_date(p: &ical::property::Property) -> anyhow::Result<DateTime<Utc>
         .with_timezone(&Utc))
 }
 fn unescape(s: &str) -> String {
-    s.replace("\\n", "\n")
-        .replace("\\N", "\n")
-        .replace("\\,", ",")
-        .replace("\\;", ";")
-        .replace("\\\\", "\\")
+    let mut out = String::new();
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n' | 'N') => out.push('\n'),
+            Some(ch @ (',' | ';' | '\\')) => out.push(ch),
+            other => {
+                out.push('\\');
+                if let Some(ch) = other {
+                    out.push(ch);
+                }
+            }
+        }
+    }
+    out
 }
 fn escape(s: &str) -> String {
     s.replace('\\', "\\\\")
@@ -429,8 +218,12 @@ pub fn encode_ical(e: &CalendarEvent) -> String {
         escape(&e.location),
         escape(&e.description)
     );
+    fold_lines(text.lines())
+}
+
+fn fold_lines<'a>(lines: impl Iterator<Item = &'a str>) -> String {
     let mut folded = String::new();
-    for line in text.split("\r\n").filter(|l| !l.is_empty()) {
+    for line in lines.filter(|l| !l.is_empty()) {
         let mut width = 0;
         for ch in line.chars() {
             if width + ch.len_utf8() > 74 {
@@ -443,4 +236,249 @@ pub fn encode_ical(e: &CalendarEvent) -> String {
         folded.push_str("\r\n");
     }
     folded
+}
+
+fn successful(response: reqwest::Response) -> anyhow::Result<reqwest::Response> {
+    let response = response.error_for_status()?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "The calendar server returned HTTP {} instead of a successful response.",
+        response.status()
+    );
+    Ok(response)
+}
+
+async fn response_text(response: reqwest::Response) -> anyhow::Result<String> {
+    let mut response = successful(response)?;
+    const LIMIT: usize = 16 * 1024 * 1024;
+    anyhow::ensure!(
+        response.content_length().unwrap_or(0) <= LIMIT as u64,
+        "Calendar response is too large."
+    );
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        anyhow::ensure!(
+            bytes.len() + chunk.len() <= LIMIT,
+            "Calendar response is too large."
+        );
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8(bytes)?)
+}
+
+async fn response_json(response: reqwest::Response) -> anyhow::Result<serde_json::Value> {
+    Ok(serde_json::from_str(&response_text(response).await?)?)
+}
+
+fn same_event_content(a: &CalendarEvent, b: &CalendarEvent) -> bool {
+    a.source_id == b.source_id
+        && a.title == b.title
+        && a.start == b.start
+        && a.end == b.end
+        && a.location == b.location
+        && a.description == b.description
+        && a.all_day == b.all_day
+}
+
+fn edit_ical(
+    original: &str,
+    current: &CalendarEvent,
+    event: &CalendarEvent,
+) -> anyhow::Result<String> {
+    anyhow::ensure!(
+        current.id == event.id && current.remote_url.is_some(),
+        "Cannot edit this calendar resource."
+    );
+    let mut lines: Vec<String> = Vec::new();
+    for line in original.lines() {
+        if let Some(continuation) = line.strip_prefix([' ', '\t']) {
+            lines
+                .last_mut()
+                .context("Invalid folded calendar property")?
+                .push_str(continuation);
+        } else {
+            lines.push(line.into());
+        }
+    }
+    anyhow::ensure!(
+        lines
+            .iter()
+            .filter(|s| s.eq_ignore_ascii_case("BEGIN:VEVENT"))
+            .count()
+            == 1,
+        "Edit recurring events on your calendar server."
+    );
+    let mut replacements = std::collections::BTreeMap::new();
+    for (key, old, new) in [
+        ("SUMMARY", &current.title, &event.title),
+        ("LOCATION", &current.location, &event.location),
+        ("DESCRIPTION", &current.description, &event.description),
+    ] {
+        if old != new {
+            replacements.insert(key, format!("{key}:{}", escape(new)));
+        }
+    }
+    let dates_changed = current.start != event.start
+        || current.end != event.end
+        || current.all_day != event.all_day;
+    if dates_changed {
+        for (key, date) in [("DTSTART", event.start), ("DTEND", event.end)] {
+            replacements.insert(
+                key,
+                if event.all_day {
+                    format!("{key};VALUE=DATE:{}", date.format("%Y%m%d"))
+                } else {
+                    format!("{key}:{}", date.format("%Y%m%dT%H%M%SZ"))
+                },
+            );
+        }
+    }
+    let now = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    replacements.insert("DTSTAMP", format!("DTSTAMP:{now}"));
+    replacements.insert("LAST-MODIFIED", format!("LAST-MODIFIED:{now}"));
+    let mut out = Vec::new();
+    let mut depth = 0;
+    for line in lines {
+        if line.eq_ignore_ascii_case("BEGIN:VEVENT") {
+            depth = 1;
+            out.push(line);
+            continue;
+        }
+        if depth > 0 {
+            if line.to_ascii_uppercase().starts_with("BEGIN:") {
+                depth += 1;
+            }
+            if line.to_ascii_uppercase().starts_with("END:") {
+                if depth == 1 {
+                    out.extend(std::mem::take(&mut replacements).into_values());
+                    depth = 0;
+                    out.push(line);
+                    continue;
+                }
+                depth -= 1;
+                out.push(line);
+                continue;
+            }
+            if depth == 1 {
+                let name = line
+                    .split([';', ':'])
+                    .next()
+                    .unwrap_or("")
+                    .to_ascii_uppercase();
+                if dates_changed && name == "DURATION" {
+                    continue;
+                }
+                if name == "SEQUENCE" {
+                    let sequence = line
+                        .split_once(':')
+                        .context("Invalid calendar sequence")?
+                        .1
+                        .parse::<u32>()?;
+                    out.push(format!(
+                        "SEQUENCE:{}",
+                        sequence
+                            .checked_add(1)
+                            .context("Calendar sequence overflow")?
+                    ));
+                    continue;
+                }
+                if let Some(replacement) = replacements.remove(name.as_str()) {
+                    out.push(replacement);
+                    continue;
+                }
+            }
+        }
+        out.push(line);
+    }
+    anyhow::ensure!(depth == 0, "Incomplete calendar resource");
+    Ok(fold_lines(out.iter().map(String::as_str)))
+}
+
+fn event_default_end(
+    start: &ical::property::Property,
+    duration: &str,
+) -> anyhow::Result<DateTime<Utc>> {
+    let value = start.value.as_deref().context("Missing event start")?;
+    let all_day = value.len() == 8;
+    if duration.is_empty() {
+        return parse_ical_date(start)?
+            .checked_add_signed(chrono::Duration::days(i64::from(all_day)))
+            .context("Calendar date overflow");
+    }
+    let duration = duration.strip_prefix('+').unwrap_or(duration);
+    let input = duration
+        .strip_prefix('P')
+        .context("Invalid event duration")?;
+    let mut number = String::new();
+    let (mut days, mut seconds, mut time, mut rank, mut components) = (0_i64, 0_i64, false, 0, 0);
+    for ch in input.chars() {
+        if ch.is_ascii_digit() {
+            number.push(ch);
+            continue;
+        }
+        if ch == 'T' {
+            anyhow::ensure!(
+                !time && number.is_empty() && rank != 1,
+                "Invalid event duration"
+            );
+            time = true;
+            continue;
+        }
+        let n: i64 = number.parse().context("Invalid event duration")?;
+        number.clear();
+        let (next_rank, multiplier) = match (time, ch) {
+            (false, 'W') => (1, 7),
+            (false, 'D') => (2, 1),
+            (true, 'H') => (3, 3600),
+            (true, 'M') => (4, 60),
+            (true, 'S') => (5, 1),
+            _ => anyhow::bail!("Invalid event duration"),
+        };
+        anyhow::ensure!(
+            next_rank > rank && !(rank == 1 || next_rank == 1 && components > 0),
+            "Invalid event duration"
+        );
+        rank = next_rank;
+        components += 1;
+        let value = n
+            .checked_mul(multiplier)
+            .context("Event duration overflow")?;
+        if time {
+            seconds = seconds
+                .checked_add(value)
+                .context("Event duration overflow")?;
+        } else {
+            days = value;
+        }
+    }
+    anyhow::ensure!(
+        components > 0 && number.is_empty() && !input.ends_with('T') && (!all_day || !time),
+        "Invalid event duration"
+    );
+    // Nominal days retain wall-clock time across DST; hours/minutes/seconds are exact.
+    let mut shifted = start.clone();
+    if days != 0 {
+        let delta = chrono::Duration::try_days(days).context("Event duration overflow")?;
+        shifted.value = Some(if all_day {
+            NaiveDate::parse_from_str(value, "%Y%m%d")?
+                .checked_add_signed(delta)
+                .context("Calendar date overflow")?
+                .format("%Y%m%d")
+                .to_string()
+        } else {
+            let date = NaiveDateTime::parse_from_str(value.trim_end_matches('Z'), "%Y%m%dT%H%M%S")?
+                .checked_add_signed(delta)
+                .context("Calendar date overflow")?;
+            format!(
+                "{}{}",
+                date.format("%Y%m%dT%H%M%S"),
+                if value.ends_with('Z') { "Z" } else { "" }
+            )
+        });
+    }
+    parse_ical_date(&shifted)?
+        .checked_add_signed(
+            chrono::Duration::try_seconds(seconds).context("Event duration overflow")?,
+        )
+        .context("Calendar date overflow")
 }

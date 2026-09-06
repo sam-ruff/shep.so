@@ -50,7 +50,7 @@ impl Command {
             Self::GoogleLogin(_) => Some("google".into()),
             Self::Backup(_) | Self::Restore(..) => Some("backup".into()),
             Self::Send(d) => Some(format!("send:{}", d.id)),
-            Self::SaveEvent(e) | Self::DeleteEvent(e) => Some(format!("event:{}", e.id)),
+            Self::SaveEvent(e) | Self::DeleteEvent(e) => Some(format!("event:{}", e.key())),
             Self::Flags(m) | Self::Move(m, _) | Self::Transfer(m, _, _) => {
                 Some(format!("message:{}", m.id))
             }
@@ -76,7 +76,7 @@ pub enum Event {
     CalendarSaved,
     Sent(String),
     ReadyToClose,
-    CalendarEventSaved,
+    CalendarEventSaved(String),
     ConnectionTest(ConnectionTarget, Result<String, String>),
 }
 type AccountLocks =
@@ -87,6 +87,7 @@ struct Engine {
     google: providers::google::Google,
     demo: bool,
     account_locks: AccountLocks,
+    calendar_locks: AccountLocks,
 }
 type Output = futures::channel::mpsc::Sender<Event>;
 
@@ -138,6 +139,7 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             google: Default::default(),
             demo,
             account_locks: Default::default(),
+            calendar_locks: Default::default(),
         };
         let workspace = match engine.store.workspace().await {
             Ok(w) => w,
@@ -206,6 +208,16 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
 }
 
 impl Engine {
+    async fn calendar_lock(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = self
+            .calendar_locks
+            .lock()
+            .expect("calendar lock map poisoned")
+            .entry(id.into())
+            .or_default()
+            .clone();
+        lock.lock_owned().await
+    }
     async fn account_lock(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
         let lock = self
             .account_locks
@@ -245,6 +257,48 @@ impl Engine {
             }),
         })
     }
+    async fn complete_calendar_write(
+        &self,
+        event: &CalendarEvent,
+        saved: CalendarEvent,
+        deleting: bool,
+        committed: bool,
+        output: &mut Output,
+    ) -> anyhow::Result<()> {
+        let needs_refresh = !deleting && committed && saved.etag.is_none();
+        let cache_result = if deleting {
+            self.store
+                .delete_event(event.source_id.clone(), event.id.clone())
+                .await
+        } else {
+            self.store.save_event(saved).await
+        };
+        // A successful remote write must never be presented as an unsaved form
+        // because a subsequent cache operation or refresh failed.
+        if committed || cache_result.is_ok() {
+            output.send(Event::CalendarEventSaved(event.key())).await?;
+        }
+        cache_result.context(if committed {
+            "The calendar change was saved, but the local cache could not be updated. Sync calendar to reload it."
+        } else { "Could not save the calendar change locally." })?;
+        output
+            .send(Event::Calendar(Arc::new(self.store.events().await?)))
+            .await?;
+        output
+            .send(Event::Notice(
+                if deleting {
+                    "Event deleted."
+                } else if needs_refresh {
+                    "Event saved. Sync calendar before editing it again."
+                } else {
+                    "Event saved."
+                }
+                .into(),
+            ))
+            .await?;
+        Ok(())
+    }
+
     async fn backup_provider(
         &self,
         prefs: &Preferences,
@@ -616,6 +670,7 @@ impl Engine {
                     let sources: Vec<CalendarSource> = self.store.get("calendars").await?;
                     let now = chrono::Utc::now();
                     for source in sources {
+                        let _guard = self.calendar_lock(&source.id).await;
                         let result = async {
                             let events = self
                                 .calendar_provider(&source)
@@ -642,18 +697,12 @@ impl Engine {
             }
             Command::SaveEvent(event) | Command::DeleteEvent(event) => {
                 anyhow::ensure!(
-                    event.end > event.start,
+                    deleting_event || event.end > event.start,
                     "The event must end after it starts."
                 );
-                if self.demo {
-                    let mut events = self.store.events().await?;
-                    events.retain(|e| e.id != event.id);
-                    if !deleting_event {
-                        events.push(event.clone());
-                    }
-                    self.store
-                        .replace_events(event.source_id.clone(), events)
-                        .await?;
+                let _guard = self.calendar_lock(&event.source_id).await;
+                let saved = if self.demo {
+                    event.clone()
                 } else {
                     let source = self
                         .store
@@ -665,33 +714,19 @@ impl Engine {
                     let provider = self.calendar_provider(&source).await?;
                     if deleting_event {
                         provider.delete_event(&source, &event).await?;
+                        event.clone()
                     } else {
-                        provider.save_event(&source, &event).await?;
+                        provider.save_event(&source, &event).await?
                     }
-                    let now = chrono::Utc::now();
-                    let events = provider
-                        .events(
-                            &source,
-                            now - chrono::Duration::days(90),
-                            now + chrono::Duration::days(365),
-                        )
-                        .await?;
-                    self.store.replace_events(source.id, events).await?;
-                }
-                output
-                    .send(Event::Calendar(Arc::new(self.store.events().await?)))
-                    .await?;
-                output.send(Event::CalendarEventSaved).await?;
-                output
-                    .send(Event::Notice(
-                        if deleting_event {
-                            "Event deleted."
-                        } else {
-                            "Event saved."
-                        }
-                        .into(),
-                    ))
-                    .await?;
+                };
+                self.complete_calendar_write(
+                    &event,
+                    saved,
+                    deleting_event,
+                    !self.demo,
+                    &mut output,
+                )
+                .await?;
             }
             Command::Backup(passphrase) => {
                 anyhow::ensure!(!self.demo, "Backup is disabled in preview.");
@@ -902,4 +937,99 @@ async fn write_new(path: &str, bytes: &[u8]) -> anyhow::Result<()> {
     file.write_all(bytes).await?;
     file.sync_all().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod calendar_tests {
+    use super::*;
+
+    fn engine() -> Engine {
+        Engine {
+            store: Store::memory().unwrap(),
+            google: Default::default(),
+            demo: true,
+            account_locks: Default::default(),
+            calendar_locks: Default::default(),
+        }
+    }
+    fn event(source: &str) -> CalendarEvent {
+        let start = chrono::Utc::now();
+        CalendarEvent {
+            id: "shared-uid".into(),
+            source_id: source.into(),
+            title: source.into(),
+            start,
+            end: start + chrono::Duration::hours(1),
+            location: String::new(),
+            description: String::new(),
+            all_day: false,
+            etag: None,
+            remote_url: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn calendar_engine_save_and_delete_keep_other_calendars_with_same_uid() {
+        let engine = engine();
+        let (output, mut events) = futures::channel::mpsc::channel(32);
+        let home = event("home");
+        let work = event("work");
+        engine
+            .execute(Command::SaveEvent(home.clone()), output.clone())
+            .await
+            .unwrap();
+        engine
+            .execute(Command::SaveEvent(work.clone()), output.clone())
+            .await
+            .unwrap();
+        engine
+            .execute(Command::DeleteEvent(work), output.clone())
+            .await
+            .unwrap();
+        drop(output);
+        let stored = engine.store.events().await.unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].source_id, "home");
+        let mut completions = Vec::new();
+        while let Some(event) = events.next().await {
+            if let Event::CalendarEventSaved(key) = event {
+                completions.push(key);
+            }
+        }
+        assert_eq!(completions.len(), 3);
+        assert_eq!(completions[0], home.key());
+        assert_ne!(completions[0], completions[1]);
+        assert_eq!(completions[1], completions[2]);
+    }
+
+    #[tokio::test]
+    async fn calendar_remote_commit_closes_form_even_if_cache_update_fails() {
+        let engine = engine();
+        engine
+            .store
+            .run(|c| {
+                c.execute("DROP TABLE events", [])?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let event = event("home");
+        let (mut output, mut events) = futures::channel::mpsc::channel(8);
+        let error = engine
+            .complete_calendar_write(&event, event.clone(), false, true, &mut output)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("change was saved"));
+        assert!(
+            matches!(events.next().await, Some(Event::CalendarEventSaved(key)) if key == event.key())
+        );
+        // A failed local-only fixture write must not be acknowledged as saved.
+        let error = engine
+            .complete_calendar_write(&event, event.clone(), false, false, &mut output)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("Could not save"));
+        drop(output);
+        assert!(events.next().await.is_none());
+    }
 }

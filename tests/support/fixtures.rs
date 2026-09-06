@@ -169,6 +169,12 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
         username: String::new(),
     };
     store.save_source(source.clone()).await?;
+    let home = CalendarSource {
+        id: "preview-home-calendar".into(),
+        name: "Home calendar".into(),
+        ..source.clone()
+    };
+    store.save_source(home.clone()).await?;
     let day = chrono::Local::now().date_naive();
     let mut events = Vec::new();
     for (i, title) in [
@@ -181,13 +187,18 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
     .iter()
     .enumerate()
     {
-        let start = (day + chrono::Duration::days(i as i64))
+        let start = (day + chrono::Duration::days(if i == 4 { 0 } else { i as i64 }))
             .and_hms_opt(9 + i as u32, 0, 0)
             .unwrap()
             .and_utc();
         events.push(CalendarEvent {
-            id: format!("demo-{i}"),
-            source_id: source.id.clone(),
+            // The same remote UID in different calendars must remain independent.
+            id: format!("demo-{}", if i == 4 { 0 } else { i }),
+            source_id: if i == 4 {
+                home.id.clone()
+            } else {
+                source.id.clone()
+            },
             title: (*title).into(),
             start,
             end: start + chrono::Duration::minutes(45),
@@ -198,6 +209,13 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
             remote_url: None,
         });
     }
+    let home_events = events
+        .iter()
+        .filter(|e| e.source_id == home.id)
+        .cloned()
+        .collect();
+    events.retain(|e| e.source_id == source.id);
     store.replace_events(source.id, events).await?;
+    store.replace_events(home.id, home_events).await?;
     Ok(())
 }

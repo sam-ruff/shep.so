@@ -350,6 +350,17 @@ pub struct CalendarEvent {
     pub remote_url: Option<String>,
 }
 
+impl CalendarEvent {
+    /// Remote identifiers are unique within a calendar, not across calendars.
+    pub fn key(&self) -> String {
+        Self::scoped_key(&self.source_id, &self.id)
+    }
+
+    pub fn scoped_key(source: &str, id: &str) -> String {
+        format!("{}:{source}{id}", source.len())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum BackupDestination {
     #[default]
