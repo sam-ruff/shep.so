@@ -70,6 +70,51 @@ class NativeFlows(unittest.TestCase):
         self.artifacts = Path(result["artifacts"])
         print(f"\nEvidence: {result['artifacts']}", flush=True)
 
+    def test_refresh_icons_in_mail_calendar_and_compact_dark(self):
+        self.mcp.batch(check("reader_text_ready", True), wait(150), shot("refresh-mail-light"),
+                       click(1400,36), check("refreshing",True), {"type":"hover","x":1100,"y":35},
+                       shot("refresh-mail-light-busy"), key("ctrl+2"), check("tab","Calendar"),
+                       wait(120), shot("refresh-calendar-light"), check("busy",[]),
+                       key("ctrl+comma"), check("tab","Preferences"), wait(80),
+                       click(690,366), check("dark",True), key("ctrl+1"), check("tab","Mail"),
+                       {"type":"resize","width":900,"height":640}, wait(150), shot("refresh-mail-dark-compact"),
+                       click(852,34), check("refreshing",True), {"type":"hover","x":750,"y":35},
+                       shot("refresh-mail-dark-compact-busy"), key("ctrl+2"), check("tab","Calendar"),
+                       wait(150), shot("refresh-calendar-dark-compact"), check("busy",[]))
+
+    def test_refresh_icons_and_html_at_larger_interface_scale(self):
+        result = self.mcp.call("desktop.start", html_mail=True)
+        print(f"Scaled refresh evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("html_view_current",True), key("ctrl+comma"), check("tab","Preferences"),
+                       wait(120), click(1145,623), wait(80), shot("interface-scale-menu"),
+                       click(1140,509), check("interface_scale",120), check("preferences_saved",True),
+                       key("ctrl+1"), check("tab","Mail"), check("html_view_current",True),
+                       wait(150), shot("refresh-html-scaled"), click(1392,43), check("refreshing",True),
+                       {"type":"hover","x":1000,"y":43}, shot("refresh-scaled-busy"),
+                       key("ctrl+2"), check("tab","Calendar"), wait(120), shot("refresh-calendar-scaled"))
+
+    def test_html_prepared_neighbors_rapid_navigation_and_resize(self):
+        result = self.mcp.call("desktop.start", html_mail=True)
+        print(f"HTML preparation evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("html_view_current",True))
+        state = self.mcp.call("desktop.state")
+        second = state["mail_rows"][1]["id"]
+        self.mcp.batch(check("html_cache_ids",second,"contains"),
+                       click(400,351), check("selected","Mislabeled XHTML request"),
+                       check("html_cache_hits",state["html_cache_hits"] + 1,"gte"),
+                       check("html_view_current",True), wait(120), shot("html-prepared-neighbor"),
+                       click(400,452), click(400,558), click(400,245), click(400,558),
+                       check("selected","Long formatted letter"), check("html_view_current",True),
+                       check("html_height",6000,"gte"), wait(100),
+                       click(850,440), key("ctrl+a"), check("html_selected_text","Last visible paragraph.","contains"),
+                       key("End"), check("html_scroll",5000,"gte"), check("html_view_current",True),
+                       wait(120), shot("html-current-bottom"), key("Home"), check("html_scroll",0),
+                       drag(616,500,750,500), check("reader_split",.4,"gte"), check("html_view_current",True),
+                       wait(120), shot("html-current-narrower"),
+                       {"type":"resize","width":900,"height":640}, check("window_size",[900,640]),
+                       check("html_view_current",True), wait(120), shot("html-current-compact"),
+                       check("html_error",None), check("html_cache_bytes",33554432,"lte"))
+
     def test_print_formatted_plain_and_long_messages_to_real_browser_pdfs(self):
         result = self.mcp.call("desktop.start", html_mail=True, print_browser="pdf")
         print(f"Print evidence: {result['artifacts']}", flush=True)

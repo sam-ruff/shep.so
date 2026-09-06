@@ -1,5 +1,6 @@
 //! Small UI-side state only. DOM, fonts, image decoding and rasterization belong
 //! to the renderer worker. Geometry/hover requests coalesce under backpressure.
+mod cache;
 mod canvas;
 use super::*;
 use crate::html_render::{self, Input, Viewport};
@@ -7,6 +8,7 @@ use crate::html_render::{self, Input, Viewport};
 #[derive(Debug, Clone)]
 pub enum Message {
     Backend(html_render::Event),
+    Prepared(html_render::preparation::Event),
     Input(Input),
     Pump,
     Plain(bool),
@@ -21,6 +23,8 @@ pub(super) struct State {
     tx: Option<tokio::sync::mpsc::Sender<Input>>,
     queue: VecDeque<Input>,
     pumping: bool,
+    pending: bool,
+    pub cache: cache::Cache,
     pub generation: u64,
     key: Option<(String, [u8; 32], u16, bool, bool, u16)>,
     plain: Option<String>,
@@ -38,6 +42,13 @@ pub(super) struct State {
     pub system_scale: f32,
 }
 impl State {
+    pub fn view_current(&self) -> bool {
+        self.frame.as_ref().is_some_and(|frame| {
+            self.viewport
+                .is_some_and(|(size, top)| frame.matches_view(size, top))
+        })
+    }
+
     fn enqueue(&mut self, command: Input) {
         // A new view supersedes unprocessed geometry; moves supersede adjacent
         // hover/drag positions, but never a Down/Up/Copy boundary.
@@ -62,6 +73,11 @@ impl State {
         self.queue.push_back(command);
     }
     fn pump(&mut self) -> Task<super::Message> {
+        // The native canvas provides the first real viewport. Keep Find/input
+        // behind Load while geometry is still unknown.
+        if self.pending {
+            return Task::none();
+        }
         if let Some(tx) = &self.tx {
             while let Some(command) = self.queue.pop_front() {
                 if let Err(error) = tx.try_send(command) {
@@ -132,24 +148,13 @@ impl App {
             state.link = false;
             state.key = key;
             state.viewport = None;
-            state.enqueue(Input::Clear);
-            if let Some(detail) = detail {
-                let viewport = Viewport {
-                    width: 600,
-                    height: 600,
-                    scale: state.key.as_ref().unwrap().5 as f32 / 100.,
-                };
-                let hide_quotes = state.key.as_ref().unwrap().3;
-                state.enqueue(Input::Load {
-                    generation: state.generation,
-                    body: detail.html.clone().unwrap(),
-                    viewport,
-                    font_size: self.preferences.reader_font_size,
-                    hide_quotes,
-                });
+            state.pending = detail.is_some();
+            if !state.pending {
+                state.enqueue(Input::Clear);
             }
         }
         self.load_html_images();
+        self.preload_html();
         let scroll = if reset_scroll {
             widget::operation::snap_to("message-reader", widget::scrollable::RelativeOffset::START)
         } else {
@@ -165,6 +170,14 @@ impl App {
     pub(super) fn handle_html(&mut self, message: Message) -> Task<super::Message> {
         use html_render::Event;
         match message {
+            Message::Prepared(html_render::preparation::Event::Ready(tx)) => {
+                self.html_reader.cache.tx = Some(tx);
+            }
+            Message::Prepared(html_render::preparation::Event::Prepared(key, frame)) => {
+                if let Some(frame) = frame {
+                    self.html_reader.cache.insert(key, frame);
+                }
+            }
             Message::Backend(Event::Found(generation, revision, layout, result))
                 if generation == self.html_reader.generation
                     && self
@@ -183,6 +196,18 @@ impl App {
             Message::Backend(Event::Frame(frame))
                 if frame.generation == self.html_reader.generation =>
             {
+                // Resource discovery must survive a superseded geometry frame:
+                // the worker reports each requested URL only once per document.
+                self.html_reader
+                    .resources
+                    .extend(frame.images.iter().filter(|u| remote_url(u)).cloned());
+                if self
+                    .html_reader
+                    .viewport
+                    .is_none_or(|(viewport, top)| !frame.matches_view(viewport, top))
+                {
+                    return Task::none();
+                }
                 if self
                     .html_reader
                     .frame
@@ -193,14 +218,7 @@ impl App {
                     self.html_reader.selection.clear();
                     self.html_reader.rectangles.clear();
                 }
-                self.html_reader
-                    .resources
-                    .extend(frame.images.iter().filter(|u| remote_url(u)).cloned());
-                self.html_reader.handle = Some(widget::image::Handle::from_rgba(
-                    frame.width,
-                    frame.height,
-                    bytes::Bytes::from_owner(frame.pixels.clone()),
-                ));
+                self.html_reader.handle = Some(cache::handle(&frame));
                 self.html_reader.frame = Some(frame);
             }
             Message::Backend(Event::Selection(id, text, rects, link))
@@ -268,6 +286,35 @@ impl App {
                         && self.html_reader.viewport != Some((size, top))
                     {
                         self.html_reader.viewport = Some((size, top));
+                        if self.html_reader.pending
+                            && let Some(request) = self
+                                .detail
+                                .as_ref()
+                                .and_then(|d| self.html_preparation(d, size))
+                        {
+                            let state = &mut self.html_reader;
+                            state.pending = false;
+                            if top == 0.
+                                && let Some((frame, handle)) = state.cache.get(&request.key, id)
+                            {
+                                state
+                                    .resources
+                                    .extend(frame.images.iter().filter(|u| remote_url(u)).cloned());
+                                state.frame = Some(frame);
+                                state.handle = Some(handle);
+                            }
+                            state
+                                .supplied
+                                .extend(request.source.images.iter().map(|(url, _)| url.clone()));
+                            state.queue.push_front(Input::Load {
+                                generation: id,
+                                body: request.source.body,
+                                viewport: size,
+                                font_size: request.source.font_size,
+                                hide_quotes: request.source.hide_quotes,
+                                images: request.source.images,
+                            });
+                        }
                         self.html_reader.enqueue(command);
                     }
                 } else {
@@ -371,6 +418,150 @@ mod tests {
         app.selected = Some(id.clone());
         app.detail = Some(Arc::new(store.detail(id).await.unwrap()));
         app
+    }
+    fn frame(generation: u64, viewport: Viewport, scroll: f32) -> Arc<html_render::Frame> {
+        Arc::new(html_render::Frame {
+            generation,
+            layout_revision: 1,
+            viewport,
+            pixels: Arc::from([0; 4]),
+            width: 1,
+            height: 1,
+            content_height: 2000.,
+            content_width: viewport.width as f32,
+            scroll,
+            pan: 0.,
+            images: vec!["https://example.test/image.webp".into()],
+        })
+    }
+    #[tokio::test]
+    async fn html_waits_for_native_geometry_and_keeps_find_behind_load() {
+        let mut app = app().await;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        app.html_reader.tx = Some(tx);
+        let _ = app.prepare_html();
+        let id = app.html_reader.generation;
+        app.html_reader
+            .enqueue(Input::Find(id, 1, "Visible".into(), false));
+        let _ = app.html_reader.pump();
+        assert!(
+            rx.try_recv().is_err(),
+            "No provisional render or lost Find before geometry"
+        );
+        let viewport = Viewport {
+            width: 723,
+            height: 387,
+            scale: 1.5,
+        };
+        let _ = app.handle_html(Message::Input(Input::View(id, viewport, 0.)));
+        let _ = app.html_reader.pump();
+        assert!(
+            matches!(rx.try_recv().unwrap(), Input::Load { viewport: size, images, .. } if size == viewport && images.is_empty())
+        );
+        assert!(matches!(rx.try_recv().unwrap(), Input::Find(_, 1, ..)));
+        assert!(matches!(rx.try_recv().unwrap(), Input::View(_, size, 0.) if size == viewport));
+    }
+    #[tokio::test]
+    async fn html_rejects_old_geometry_but_retains_resource_discovery() {
+        let mut app = app().await;
+        let _ = app.prepare_html();
+        let id = app.html_reader.generation;
+        let old = Viewport {
+            width: 600,
+            height: 600,
+            scale: 1.,
+        };
+        let size = Viewport {
+            width: 723,
+            height: 387,
+            scale: 1.5,
+        };
+        let _ = app.handle_html(Message::Input(Input::View(id, size, 0.)));
+        let _ = app.handle_html(Message::Backend(html_render::Event::Frame(frame(
+            id, old, 0.,
+        ))));
+        assert!(app.html_reader.frame.is_none());
+        assert!(
+            app.html_reader
+                .resources
+                .contains("https://example.test/image.webp")
+        );
+        let _ = app.handle_html(Message::Backend(html_render::Event::Frame(frame(
+            id, size, 0.,
+        ))));
+        assert!(app.html_reader.view_current());
+        let _ = app.handle_html(Message::Input(Input::View(id, size, 300.)));
+        let _ = app.handle_html(Message::Backend(html_render::Event::Frame(frame(
+            id, size, 0.,
+        ))));
+        assert!(!app.html_reader.view_current());
+        let _ = app.handle_html(Message::Backend(html_render::Event::Frame(frame(
+            id, size, 300.,
+        ))));
+        assert!(app.html_reader.view_current());
+        let _ = app.handle_html(Message::Backend(html_render::Event::Frame(frame(
+            id - 1,
+            size,
+            600.,
+        ))));
+        assert!(app.html_reader.view_current());
+    }
+    #[tokio::test]
+    async fn html_prepared_frames_respect_images_fonts_quotes_and_viewport_changes() {
+        let mut app = app().await;
+        let size = Viewport {
+            width: 600,
+            height: 400,
+            scale: 1.,
+        };
+        app.preferences.image_policy = ImagePolicy::AllowAll;
+        app.remote_bytes
+            .push_back(("https://example.test/image.webp".into(), Arc::from([1; 4])));
+        let allowed = app
+            .html_preparation(app.detail.as_ref().unwrap(), size)
+            .unwrap();
+        assert_eq!(allowed.source.images.len(), 1);
+        app.html_reader
+            .cache
+            .insert(allowed.key.clone(), frame(0, size, 0.));
+        assert!(
+            app.html_reader
+                .cache
+                .get(&allowed.key, 3)
+                .is_some_and(|(f, _)| f.generation == 3)
+        );
+        app.preferences.image_policy = ImagePolicy::BlockAll;
+        let blocked = app
+            .html_preparation(app.detail.as_ref().unwrap(), size)
+            .unwrap();
+        assert!(blocked.source.images.is_empty());
+        assert!(app.html_reader.cache.get(&blocked.key, 3).is_none());
+        app.preferences.image_policy = ImagePolicy::AllowAll;
+        app.html_reader.cache.image_revision += 1;
+        let changed = app
+            .html_preparation(app.detail.as_ref().unwrap(), size)
+            .unwrap();
+        assert!(app.html_reader.cache.get(&changed.key, 3).is_none());
+        for key in [
+            html_render::preparation::Key {
+                font_size: 20,
+                ..allowed.key.clone()
+            },
+            html_render::preparation::Key {
+                hide_quotes: !allowed.key.hide_quotes,
+                ..allowed.key.clone()
+            },
+            html_render::preparation::Key {
+                viewport: Viewport { width: 300, ..size },
+                ..allowed.key.clone()
+            },
+            html_render::preparation::Key {
+                signature: [0; 32],
+                ..allowed.key.clone()
+            },
+        ] {
+            assert!(app.html_reader.cache.get(&key, 3).is_none());
+        }
     }
     #[tokio::test]
     async fn metadata_refresh_preserves_html_but_policy_revocation_and_plain_mode_clear_it() {

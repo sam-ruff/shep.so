@@ -518,6 +518,8 @@ impl App {
             Subscription::run_with(self.demo, engine::subscription).map(Message::Backend),
             Subscription::run(crate::html_render::subscription)
                 .map(|e| Message::Html(html_reader::Message::Backend(e))),
+            Subscription::run(crate::html_render::preparation::subscription)
+                .map(|e| Message::Html(html_reader::Message::Prepared(e))),
             iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick),
             iced::system::theme_changes().map(Message::SystemTheme),
             iced::event::listen_with(|e, status, id| match e {
@@ -1215,6 +1217,7 @@ impl App {
                     self.requested_images.remove(&url);
                     match result {
                         Ok(bytes) => {
+                            self.html_reader.cache.image_revision += 1;
                             self.remote_bytes.retain(|(u, _)| u != &url);
                             self.remote_bytes
                                 .push_back((url.clone(), Arc::from(bytes.clone())));
@@ -3115,11 +3118,21 @@ impl App {
                 .map_or(0, |r| r.matches.len())
         );
         data["find_error"] = serde_json::json!(self.find_message.error);
+        data["interface_scale"] = serde_json::json!(self.preferences.interface_scale);
+        data["html_cache_ids"] = serde_json::json!(self.html_reader.cache.ids());
+        data["html_cache_bytes"] = serde_json::json!(self.html_reader.cache.bytes());
+        data["html_cache_hits"] = serde_json::json!(self.html_reader.cache.hits);
+        data["html_view_current"] = serde_json::json!(self.html_reader.view_current());
         data["html_ready"] = serde_json::json!(self.html_reader.frame.is_some());
         data["html_formatted"] =
             serde_json::json!(self.detail.as_ref().is_some_and(|d| self.formatted(d)));
         data["html_selected_text"] = serde_json::json!(self.html_reader.selection);
-        data["html_loaded_images"] = serde_json::json!(self.html_reader.supplied.len());
+        data["html_loaded_images"] = serde_json::json!(
+            self.html_reader
+                .supplied
+                .intersection(&self.html_reader.resources)
+                .count()
+        );
         data["html_resources"] = serde_json::json!(self.html_reader.resources.len());
         data["html_error"] = serde_json::json!(self.html_reader.error);
         data["html_pan"] = serde_json::json!(self.html_reader.frame.as_ref().map(|f| f.pan));

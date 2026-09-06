@@ -1,21 +1,35 @@
 //! The renderer has no network or filesystem resource loader. Images enter only
 //! through the application's validated byte pipeline; CSS imports stay disabled.
 use litehtml::*;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
+
+#[derive(Default)]
+struct SeededImages {
+    available: HashMap<String, Arc<[u8]>>,
+    used: Vec<String>,
+}
 
 #[derive(Clone)]
 pub(super) struct Surface(
     pub Rc<RefCell<shep_html_pixbuf::PixbufContainer>>,
     Rc<RefCell<String>>,
+    Rc<RefCell<SeededImages>>,
 );
 impl Surface {
-    pub fn new(width: u32, height: u32, scale: f32) -> Self {
+    pub fn new(width: u32, height: u32, scale: f32, fonts: super::Fonts) -> Self {
         Self(
             Rc::new(RefCell::new(
-                shep_html_pixbuf::PixbufContainer::new_with_scale(width, height, scale),
+                shep_html_pixbuf::PixbufContainer::with_font_system(width, height, scale, fonts),
             )),
             Rc::new(RefCell::new(String::new())),
+            Rc::new(RefCell::new(SeededImages::default())),
         )
+    }
+    pub fn seed_images(&self, images: Vec<(String, Arc<[u8]>)>) {
+        self.2.borrow_mut().available.extend(images);
+    }
+    pub fn used_seeded_images(&self) -> Vec<String> {
+        self.2.borrow().used.clone()
     }
 }
 impl Surface {
@@ -68,6 +82,11 @@ impl DocumentContainer for Surface {
     }
     fn load_image(&mut self, src: &str, base: &str, redraw: bool) {
         let url = self.resolve(src, base);
+        let seeded = self.2.borrow_mut().available.remove(&url);
+        if let Some(bytes) = seeded {
+            self.0.borrow_mut().load_image_data(&url, &bytes);
+            self.2.borrow_mut().used.push(url.clone());
+        }
         if url.starts_with("data:") && self.0.borrow().get_image_size(&url, "").width == 0. {
             use base64::Engine;
             if let Some((header, encoded)) = url.split_once(',')
