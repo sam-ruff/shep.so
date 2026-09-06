@@ -297,6 +297,8 @@ impl Store {
     }
     pub async fn query(&self, query: MailQuery) -> anyhow::Result<MailPage> {
         self.run(move |c| {
+            let transaction = c.transaction()?;
+            let c = &transaction;
             let mut filters = vec!["1=1".to_string()];
             let mut values: Vec<rusqlite::types::Value> = Vec::new();
             let sent = "((folder='Sent' AND (id LIKE '%:local-sent-%' OR account NOT IN (SELECT account FROM sent_folders))) OR (account,folder) IN (SELECT account,folder FROM sent_folders))";
@@ -353,7 +355,16 @@ impl Store {
             let inbox_unread = c.prepare("SELECT account,COUNT(*) FROM messages WHERE folder='INBOX' AND unread=1 GROUP BY account")?
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))?
                 .collect::<rusqlite::Result<_>>()?;
-            Ok(MailPage { rows, total:total as usize, unread:unread as usize, inbox_unread })
+            let mut observed = std::collections::HashMap::new();
+            let mut statement = c.prepare("SELECT account,folder,unread FROM messages WHERE id=?")?;
+            for id in query.observe {
+                use rusqlite::OptionalExtension;
+                let value = statement.query_row([&id], |row| Ok(MailMembership {
+                    account: row.get(0)?, folder: row.get(1)?, unread: row.get(2)?,
+                })).optional()?;
+                observed.insert(id, value);
+            }
+            Ok(MailPage { rows, total:total as usize, unread:unread as usize, inbox_unread, observed })
         }).await
     }
     pub async fn detail(&self, id: String) -> anyhow::Result<MailDetail> {

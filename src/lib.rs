@@ -1,5 +1,6 @@
 pub mod backup;
 pub mod compose;
+pub mod desktop_badge;
 pub mod email_content;
 pub mod engine;
 pub mod fuzzy;

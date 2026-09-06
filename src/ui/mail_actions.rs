@@ -1,5 +1,6 @@
 use super::*;
 use crate::mail_actions::{Flags, MoveReceipt};
+mod counts;
 mod undo;
 
 #[derive(Default)]
@@ -134,6 +135,7 @@ impl App {
             keep
         });
         self.project_undo(&mut page);
+        page.inbox_unread = self.project_inbox_counts();
         self.page = Arc::new(page);
     }
 
@@ -172,6 +174,7 @@ impl App {
             entry.edits.1 += 1;
         }
         self.dispatch_flags(&id);
+        self.invalidate_action_snapshot();
         self.project_mail_flags();
     }
 
@@ -229,6 +232,7 @@ impl App {
         );
         self.dispatch_transfer(&id);
         if self.mail_actions.transfers.contains_key(&id) {
+            self.invalidate_action_snapshot();
             self.dialog = None;
             self.focused_input = None;
             self.pending_focus = None;
@@ -340,6 +344,7 @@ impl App {
         if !self.mail_actions.moves.contains_key(&id) {
             return;
         }
+        self.invalidate_action_snapshot();
         self.dialog = None;
         self.focused_input = None;
         self.pending_focus = None;
@@ -402,18 +407,15 @@ impl App {
             Ok(receipt) => {
                 if let Some(record) = self.mail_actions.undo.get_mut(&entry.toast) {
                     record.original = entry.mail.clone();
-                    record.receipt = Some(receipt);
+                    record.receipt = Some(receipt.clone());
                 }
                 let mut base = (*self.mail_actions.base_page).clone();
+                counts::confirm_move(&mut base, &entry.mail, receipt.current.as_ref());
                 if let Some(index) = base.rows.iter().position(|m| m.id == mail.id) {
                     let removed = base.rows.remove(index);
                     base.total = base.total.saturating_sub(1);
                     if removed.unread {
                         base.unread = base.unread.saturating_sub(1);
-                        if removed.folder.eq_ignore_ascii_case("INBOX") {
-                            let count = base.inbox_unread.entry(removed.account_id).or_default();
-                            *count = count.saturating_sub(1);
-                        }
                     }
                 }
                 self.mail_actions.base_page = Arc::new(base);
@@ -526,6 +528,9 @@ impl App {
             entry.mail.starred = confirmed.starred;
         }
         let mut base = (*self.mail_actions.base_page).clone();
+        if result.is_ok() {
+            counts::confirm_flags(&mut base, &confirmed);
+        }
         if let Some(mail) = base.rows.iter_mut().find(|m| m.id == sent.id) {
             if mail.unread != confirmed.unread {
                 let adjust = |count: &mut usize| {
@@ -536,13 +541,6 @@ impl App {
                     };
                 };
                 adjust(&mut base.unread);
-                if mail.folder.eq_ignore_ascii_case("INBOX") {
-                    adjust(
-                        base.inbox_unread
-                            .entry(mail.account_id.clone())
-                            .or_default(),
-                    );
-                }
             }
             mail.unread = confirmed.unread;
             mail.starred = confirmed.starred;

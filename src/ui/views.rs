@@ -1357,12 +1357,19 @@ impl App {
                         .width(90)
                     ]
                     .align_y(Alignment::Center),
-                    line(),
-                    row![
-                        icon("check", 16.),
-                        muted("Next messages and the next page preload automatically.")
-                    ]
-                    .spacing(10)
+                    if crate::desktop_badge::SUPPORTED {
+                        Element::from(
+                            column![
+                                checkbox(self.preferences.unread_badge)
+                                    .label("Show unread Inbox count on the dock icon")
+                                    .on_toggle(Message::PrefUnreadBadge),
+                                muted("Counts unread Inbox messages across all accounts.").size(11)
+                            ]
+                            .spacing(19),
+                        )
+                    } else {
+                        space().into()
+                    }
                 ]
                 .spacing(19)
                 .into()

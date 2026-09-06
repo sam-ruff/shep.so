@@ -160,3 +160,19 @@ The 120% scaling scenario uses Preferences → General → Interface size. At th
 standard fixture size, open near x=1145,y=623; its menu opens upward and 120 is
 near x=1140,y=509. Wait for interface_scale == 120 and html_view_current after
 returning to Mail. Review both the scaled HTML and Mail/Calendar refresh icons.
+
+For unread launcher badges, use `desktop.start(desktop_badges=true)`. This starts a
+private session bus without service activation and observes Shep's actual LauncherEntry signals. The default
+harness still has no session bus. Never point this fixture at the user's bus.
+Observe `desktop_badge.count`, `visible`, `history` and `uri`; count history catches
+brief regressions that a final-state assertion misses. `count_observed_ids` proves
+that the new page snapshot includes the pending message even outside its folder.
+These are observations only. Install `dbus-daemon` and `busctl` for this coverage.
+
+Preserve the four saved `test_desktop_badge_*` scenarios: read and leave the folder,
+background arrival and failure, archive/delete/move with Undo, and the preference.
+Search Preferences for badge, open Mail & performance, then click the actual
+checkbox near x=340,y=431 in the standard fixture. Wait for the private-bus zero
+and hidden signal when disabling. The badge count always spans all mail accounts.
+Review the preference/mail WebP captures; the private-bus observer does not render
+a desktop dock, and its results must not be described as a GNOME visual test.

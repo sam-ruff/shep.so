@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -14,6 +15,46 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_badge_fixture_requires_a_boolean_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (0, 1, "1", None):
+                with self.assertRaisesRegex(ValueError, "Desktop badge fixture"):
+                    desktop.start(desktop_badges=value)
+            launch.assert_not_called()
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux launcher protocol")
+    def test_badge_observer_reads_real_signals_on_an_owned_bus(self):
+        desktop = harness.Desktop()
+        with tempfile.TemporaryDirectory() as directory:
+            desktop.directory = Path(directory)
+            try:
+                desktop.start_badge_bus()
+                address = desktop.env["DBUS_SESSION_BUS_ADDRESS"]
+                self.assertEqual(address, f"unix:path={directory}/badge-bus")
+                activatable = json.loads(desktop.command("busctl", f"--address={address}", "--json=short", "call",
+                    "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListActivatableNames"))
+                self.assertEqual(activatable["data"], [["org.freedesktop.DBus"]])
+                self.assertEqual(desktop.env["XDG_RUNTIME_DIR"], str(Path(directory)/"runtime"))
+                for count in (2, 0):
+                    desktop.command("busctl", f"--address={address}", "emit", "/so/shep/Shep/Launcher",
+                                    "com.canonical.Unity.LauncherEntry", "Update", "sa{sv}",
+                                    "application://so.shep.Shep.desktop", "2", "count", "x", str(count),
+                                    "count-visible", "b", "true" if count else "false")
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline:
+                        observed = desktop.badge_state()
+                        if observed and observed["count"] == count:
+                            break
+                        time.sleep(0.02)
+                    self.assertEqual(observed["count"], count)
+                    self.assertEqual(observed["visible"], bool(count))
+                bus, monitor = desktop.badge_bus, desktop.badge_monitor
+            finally:
+                desktop.stop()
+            self.assertIsNotNone(bus.poll())
+            self.assertIsNotNone(monitor.poll())
+
     def test_html_failure_fixture_rejects_non_boolean_values(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

@@ -6,6 +6,7 @@ The inspection file is a read-only oracle, enabled only in a test-support build.
 """
 import atexit
 import base64
+import html
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,10 @@ class Desktop:
         self.xvfb_log = None
         self.browser = None
         self.browser_log = None
+        self.badge_bus = None
+        self.badge_monitor = None
+        self.badge_log = None
+        self.badge_events = None
         atexit.register(self.stop)
 
     def stop(self):
@@ -48,7 +53,7 @@ class Desktop:
             self.browser_log.close()
             self.browser_log = None
         self.env.pop("SHEP_TEST_PRINT_BROWSER", None)
-        for process in (self.clipboard, self.app, self.xvfb):
+        for process in (self.clipboard, self.app, self.badge_monitor, self.badge_bus, self.xvfb):
             if process and process.poll() is None:
                 process.terminate()
                 try:
@@ -58,6 +63,11 @@ class Desktop:
                     process.wait(timeout=3)
         self.app = self.xvfb = None
         self.clipboard = None
+        self.badge_bus = self.badge_monitor = None
+        for stream in (self.badge_log, self.badge_events):
+            if stream:
+                stream.close()
+        self.badge_log = self.badge_events = None
         if self.log:
             self.log.close()
             self.log = None
@@ -70,8 +80,10 @@ class Desktop:
         return subprocess.run(args, env=self.env, capture_output=True, text=True,
                               check=True, timeout=10).stdout.strip()
 
-    def start(self, width=1440, height=920, empty_calendars=False, conversation_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False):
+    def start(self, width=1440, height=920, empty_calendars=False, conversation_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False):
         self.stop()
+        if type(desktop_badges) is not bool:
+            raise ValueError("Desktop badge fixture must be a boolean.")
         if type(html_delay_ms) is not int or not 0 <= html_delay_ms <= 2000:
             raise ValueError("HTML fixture delay must be 0–2000 milliseconds.")
         if type(html_failure_once) is not bool:
@@ -117,6 +129,8 @@ class Desktop:
         self.env["SHEP_TEST_IMAGE_DELAY_MS"] = str(image_delay_ms)
         self.env["SHEP_TEST_HTML_FAILURE_ONCE"] = "1" if html_failure_once else "0"
         self.env.pop("WAYLAND_DISPLAY", None)
+        if desktop_badges:
+            self.start_badge_bus()
         if print_browser:
             self.start_print_browser(print_browser)
         self.log = (self.directory / "app.log").open("w")
@@ -142,6 +156,70 @@ class Desktop:
                 pass
             time.sleep(0.05)
         raise RuntimeError("Shep was not ready within 20 seconds; check the app log and test-support feature.")
+
+    def start_badge_bus(self):
+        for tool in ("dbus-daemon", "busctl"):
+            if not shutil.which(tool):
+                raise RuntimeError(f"Install {tool} for isolated desktop badge tests.")
+        address = f"unix:path={self.directory}/badge-bus"
+        self.env["DBUS_SESSION_BUS_ADDRESS"] = address
+        runtime = self.directory / "runtime"
+        runtime.mkdir(mode=0o700, exist_ok=True)
+        self.env["XDG_RUNTIME_DIR"] = str(runtime)
+        # A normal --session config loads the host's service directories and can
+        # activate portals/keyrings. This fixture bus has no activatable services.
+        config = self.directory / "badge-bus.conf"
+        config.write_text(f'''<busconfig>
+  <type>session</type><listen>{html.escape(address)}</listen><auth>EXTERNAL</auth>
+  <policy user="{os.getuid()}">
+    <allow own="*"/><allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+  </policy>
+</busconfig>''')
+        self.badge_log = (self.directory / "badge-bus.log").open("w")
+        self.badge_events = (self.directory / "badge-events.jsonl").open("w")
+        self.badge_bus = subprocess.Popen(
+            ["dbus-daemon", f"--config-file={config}", "--nofork", "--nopidfile"],
+            env=self.env, stdout=subprocess.DEVNULL, stderr=self.badge_log)
+        deadline = time.monotonic() + 5
+        while not (self.directory / "badge-bus").exists():
+            if self.badge_bus.poll() is not None or time.monotonic() > deadline:
+                raise RuntimeError("Isolated badge bus did not start.")
+            time.sleep(0.02)
+        self.badge_monitor = subprocess.Popen(
+            ["busctl", f"--address={address}", "--json=short",
+             "--match=type='signal',interface='com.canonical.Unity.LauncherEntry'", "monitor"],
+            env=self.env, stdout=self.badge_events, stderr=self.badge_log)
+        while "became a monitor" not in (self.directory / "badge-bus.log").read_text():
+            if self.badge_monitor.poll() is not None or time.monotonic() > deadline:
+                raise RuntimeError("Isolated badge observer did not start: " + (self.directory / "badge-bus.log").read_text())
+            time.sleep(0.02)
+
+    def badge_state(self):
+        if self.badge_monitor is None:
+            return None
+        latest = None
+        history = []
+        for line in (self.directory / "badge-events.jsonl").read_text().splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # The monitor may still be writing its final line.
+            if event.get("member") != "Update":
+                continue
+            payload = event.get("payload", {})
+            if payload.get("type") != "sa{sv}":
+                continue
+            uri, properties = payload["data"]
+            if uri != "application://so.shep.Shep.desktop":
+                continue
+            latest = {"count": properties["count"]["data"],
+                      "visible": properties["count-visible"]["data"],
+                      "sender": event["sender"], "uri": uri}
+            history.append(latest["count"])
+        if latest:
+            latest["history"] = history[-128:]
+        return latest
 
     def start_print_browser(self, mode):
         """A fresh browser profile on the owned display; never the personal browser."""
@@ -222,7 +300,9 @@ class Desktop:
     def state(self):
         if not self.directory:
             raise RuntimeError("Call desktop.start first.")
-        return json.loads((self.directory / "state.json").read_text())
+        state = json.loads((self.directory / "state.json").read_text())
+        state["desktop_badge"] = self.badge_state()
+        return state
 
     def screenshot(self, name="screenshot"):
         if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name):
@@ -467,7 +547,7 @@ class Desktop:
 
 TOOLS = [
     {"name": "desktop.start", "description": "Launch an isolated Shep fixture workspace on Xvfb. Requires cargo build --profile test-ui --features test-support. No real credentials or network writes.",
-     "inputSchema": {"type": "object", "properties": {"html_failure_once": {"type": "boolean", "default": False}, "image_delay_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0}, "html_delay_ms": {"type": "integer", "minimum": 0, "maximum": 2000, "default": 0}, "print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail"]}, "search_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
+     "inputSchema": {"type": "object", "properties": {"desktop_badges": {"type": "boolean", "default": False}, "html_failure_once": {"type": "boolean", "default": False}, "image_delay_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0}, "html_delay_ms": {"type": "integer", "minimum": 0, "maximum": 2000, "default": 0}, "print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail"]}, "search_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
     {"name": "desktop.batch", "description": "Run 1–100 real mouse/keyboard actions in order, including short waits, state assertions and WebP screenshots. Stops at first failure and captures evidence. Prefer batches to one call per action.",
      "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"type": {"enum": ["click", "double_click", "hover", "resize", "drag", "type", "key", "choose_file", "print_output", "cancel_print", "focus_app", "browser_screenshot", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "count": {"type": "integer"}, "pages": {"type": "integer"}, "x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "button": {"type": "integer", "enum": [1, 2, 3]}, "modifiers": {"type": "array", "items": {"type": "string", "enum": ["ctrl", "shift", "alt", "super"]}}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
     {"name": "desktop.state", "description": "Read observed UI state, cache counts, shortcuts and handler timings; does not change app state.", "inputSchema": {"type": "object", "properties": {}}},

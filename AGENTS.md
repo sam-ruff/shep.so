@@ -29,7 +29,7 @@ Quality and release workflow definitions remain deliberately named `.github/work
 To enable when Sam asks:
 
 1. Provision trusted self-hosted runner labels from the CI matrix: `[self-hosted, Linux, X64]`, `[self-hosted, Windows, X64]`, `[self-hosted, macOS, ARM64]`. Adjust labels to the actual machines first. Do not run untrusted fork code on persistent self-hosted runners.
-2. Install Rust with `rustfmt` and `clippy`, CMake and a C++ compiler for vendored litehtml, Python 3, Node 24, and platform development libraries. The Linux GUI harness additionally needs `Xvfb`, `xdotool`, `zenity`, `xclip`, and ImageMagick `import` with WebP support. Print flows need Chrome/Chromium, Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and ImageMagick `convert`. Linux needs OpenSSL/dbus/X11/Wayland development packages and a Secret Service for real credentials.
+2. Install Rust with `rustfmt` and `clippy`, CMake and a C++ compiler for vendored litehtml, Python 3, Node 24, and platform development libraries. The Linux GUI harness additionally needs `Xvfb`, `xdotool`, `zenity`, `xclip`, `dbus-daemon`, `busctl`, and ImageMagick `import` with WebP support. Print flows need Chrome/Chromium, Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and ImageMagick `convert`. Linux needs OpenSSL/dbus/X11/Wayland development packages and a Secret Service for real credentials.
 3. Rename both `.yml.disabled` files to `.yml`.
 4. `gh api --method PUT repos/sam-ruff/shep.so/actions/permissions -F enabled=true`
 5. Run the quality workflow manually, inspect results, then let the release workflow run only after a successful push build on `main`.
@@ -125,7 +125,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 104 functional flows plus the navigation performance gate.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 108 functional flows plus the navigation performance gate.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -455,3 +455,42 @@ images above the text. `remote_image_pending` and `remote_image_cached` are
 read-only observations. Save light/compact-dark/Find, navigate-before-arrival and
 native Retry scenarios in the automated suite. These controlled waits establish
 correctness, not performance measurements.
+
+## Unread launcher badges
+
+`desktop_badge` owns native badge publication separately from mail/provider work.
+The Linux adapter maintains a session-bus connection and publishes the Unity
+LauncherEntry Update/Query protocol for `application://so.shep.Shep.desktop`,
+matching the installed desktop entry and iced application ID. A watch channel
+retains only the newest count. Zero hides the badge; disconnection retries off
+thread; a new `com.canonical.Unity` owner receives the current value. Keep IPC
+bounded and never invoke a shell command from an iced handler. Windows/macOS
+adapters remain R70 work; show the preference only on implemented platforms.
+
+The badge counts unread Inbox messages across all connected mail accounts,
+independent of the open folder, filter, search or unified-inbox setting. Removing
+an account excludes it immediately. Preferences → General → Mail & performance
+has the persisted toggle, also searchable as badge/dock/taskbar. Publish only
+changed values; badges do not depend on whether a body has loaded.
+
+`MailQuery.observe` requests small pending-message membership records in the
+same SQLite read transaction as page rows and global counts. Never retrieve raw
+mail for this. `ui/mail_actions/counts.rs` projects intent independently of visible
+rows, distinguishes a missing observed identity from an unobserved one, and
+reconciles acknowledgements without double-counting a completed cache write.
+Invalidate older page/prefetch generations when an intent starts. Preserve tests
+for filtered pages, read rollback, Inbox moves, cross-account rekeying and Undo.
+Ambiguous provider receipts and durable pending-action recovery remain R50/R60.
+
+The MCP `desktop.start(desktop_badges=true)` option starts an owned private
+`dbus-daemon` and a `busctl` observer before the fixture app. Its explicit bus
+configuration has no service directories or activatable portal/keyring services,
+and it owns a private runtime directory. It never uses the personal session bus. `desktop_badge` in harness state comes from actual protocol
+messages, with count/visible/URI/sender and recent count history; it is not an app
+self-report or action API. Stop only owned processes. Backend tests also use a
+private bus for Query, zero visibility, owner changes, bus loss and reconnect.
+Native tests operate the real preference, mail controls and Undo. Protocol/native
+input evidence does not establish an actual GNOME/KDE/Windows/macOS dock render.
+
+Protocol references: [Unity Launcher API](https://wiki.ubuntu.com/Unity/LauncherAPI)
+and [Dash to Dock's receiver](https://github.com/micheleg/dash-to-dock/blob/master/launcherAPI.js).

@@ -101,6 +101,7 @@ impl App {
             accepted.push(token);
         }
         if !accepted.is_empty() {
+            self.invalidate_action_snapshot();
             self.action_toasts.restored(accepted, Instant::now());
         }
         self.dispatch_undos();
@@ -196,6 +197,8 @@ impl App {
                     self.notice = None;
                 }
                 let mut page = (*self.mail_actions.base_page).clone();
+                counts::confirm_restore(&mut page, &record, &receipt);
+                let inbox_counts = page.inbox_unread.clone();
                 remove_row(&mut page, &original.id);
                 if let Some(current) = record.receipt.as_ref().and_then(|r| r.current.as_ref()) {
                     remove_row(&mut page, &current.id);
@@ -215,6 +218,7 @@ impl App {
                     }
                 }
                 self.mail_actions.flags.remove(&original.id);
+                page.inbox_unread = inbox_counts;
                 self.mail_actions.base_page = Arc::new(page);
             }
             Err(error) => {

@@ -259,6 +259,9 @@ impl fmt::Display for MailFilter {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MailQuery {
+    /// Small pending-action identities observed in the same snapshot as counts.
+    /// This does not alter the folder/search result scope.
+    pub observe: Vec<String>,
     pub folders: Option<Vec<FolderSelection>>,
     pub sent_only: bool,
     pub account: Option<String>,
@@ -285,6 +288,23 @@ pub struct MailPage {
     pub total: usize,
     pub unread: usize,
     pub inbox_unread: std::collections::BTreeMap<String, usize>,
+    pub observed: std::collections::HashMap<String, Option<MailMembership>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MailMembership {
+    pub account: String,
+    pub folder: String,
+    pub unread: bool,
+}
+impl From<&Mail> for MailMembership {
+    fn from(mail: &Mail) -> Self {
+        Self {
+            account: mail.account_id.clone(),
+            folder: mail.folder.clone(),
+            unread: mail.unread,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -499,6 +519,7 @@ pub struct Preferences {
     pub interface_scale: u16,
     pub tooltips: bool,
     pub shortcut_tooltips: bool,
+    pub unread_badge: bool,
     pub image_policy: ImagePolicy,
     pub reply_display: ReplyDisplay,
     pub group_conversations: bool,
@@ -539,6 +560,7 @@ impl Default for Preferences {
             interface_scale: 100,
             tooltips: true,
             shortcut_tooltips: true,
+            unread_badge: true,
             image_policy: ImagePolicy::BlockAll,
             reply_display: ReplyDisplay::Collapsed,
             group_conversations: true,
