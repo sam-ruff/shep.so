@@ -60,6 +60,9 @@ impl App {
             checkbox(self.preferences.cross_account_moves)
                 .label("Allow moving mail between accounts")
                 .on_toggle(Message::PrefCrossAccount),
+            checkbox(self.preferences.group_conversations)
+                .label("Group related messages in the reader")
+                .on_toggle(Message::PrefConversations),
         ]
         .spacing(16)
         .into()

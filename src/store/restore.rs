@@ -80,6 +80,7 @@ impl Store {
                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(id) DO NOTHING",
                     params![m.id,m.account_id,m.folder,m.sender,m.subject,message.text,m.timestamp,m.unread,m.starred,serde_json::to_string(m)?,message.raw])?;
                 if added > 0 {
+                    conversations::index_message(&tx, &m.id)?;
                     tx.execute("INSERT INTO restored_messages(id) VALUES(?)", [&m.id])?;
                     messages += added;
                 }

@@ -2,6 +2,7 @@ mod account;
 mod backups;
 mod components;
 mod composing;
+mod conversations;
 mod preference_sync;
 mod reading;
 #[cfg(test)]
@@ -154,6 +155,12 @@ pub enum Message {
     CopyAddress(String),
     ToggleReply(usize),
     PrefReplies(ReplyDisplay),
+    PrefConversations(bool),
+    ConversationMessage(String),
+    ConversationFlag(String),
+    ConversationPage(bool),
+    ConversationScroll(u64),
+    RetryConversation,
     PrefImages(ImagePolicy),
     AllowImages(u8),
     ClearImageTrust,
@@ -173,6 +180,7 @@ pub struct App {
     last_list_query: MailQuery,
     draft_dirty: Option<Instant>,
     composer: composing::Composer,
+    conversation: conversations::Conversation,
     inbox_expanded: bool,
     sidebar_focus: bool,
     sidebar_index: usize,
@@ -284,6 +292,7 @@ impl App {
                 last_list_query: MailQuery::default(),
                 draft_dirty: None,
                 composer: Default::default(),
+                conversation: Default::default(),
                 inbox_expanded: false,
                 sidebar_focus: false,
                 sidebar_index: 0,
@@ -489,20 +498,11 @@ impl App {
     fn select(&mut self, id: String) {
         if self.selected.as_deref() != Some(&id) {
             self.expanded_replies.clear();
+            self.conversation.page = Default::default();
         }
         self.selected = Some(id.clone());
-        self.detail = self
-            .detail_cache
-            .iter()
-            .find(|d| d.summary.id == id)
-            .cloned();
-        if self.detail.is_none() {
-            self.send(Command::Detail {
-                revision: self.detail_revision,
-                id: id.clone(),
-                prefetch: false,
-            });
-        }
+        self.focus_conversation_message(id.clone());
+        self.request_conversation(None);
         if let Some(i) = self.page.rows.iter().position(|m| m.id == id) {
             if let Some(next) = self.page.rows.get(i + 1) {
                 self.preload(next.id.clone());
@@ -621,6 +621,18 @@ impl App {
                     self.observe_draft_files();
                     self.update_saved_preferences();
                 }
+                Event::Conversation(generation, anchor, result) => {
+                    return self.conversation_result(generation, anchor, result);
+                }
+                Event::ConversationsIndexed(result) => match result {
+                    Ok(()) => self.request_conversation(None),
+                    Err(error) => self.notice(
+                        format!(
+                            "Related mail could not be indexed: {error}. Reopen Shep to retry."
+                        ),
+                        true,
+                    ),
+                },
                 Event::PreferencesSaved(request, snapshot) => {
                     self.preference_sync.acknowledge(
                         request,
@@ -692,7 +704,7 @@ impl App {
                     self.pending_details.remove(&id);
                     match result {
                         Ok(detail) => {
-                            if self.selected.as_deref() == Some(&id) {
+                            if self.reader_id() == Some(&id) {
                                 self.detail = Some(detail.clone());
                             }
                             if !prefetch || self.detail_cache.len() < 8 {
@@ -700,7 +712,7 @@ impl App {
                             }
                             self.load_remote_images();
                         }
-                        Err(error) if !prefetch && self.selected.as_deref() == Some(&id) => {
+                        Err(error) if !prefetch && self.reader_id() == Some(&id) => {
                             self.notice(format!("Could not load this message: {error}"), true)
                         }
                         Err(_) => {}
@@ -712,7 +724,8 @@ impl App {
                     self.detail_cache.clear();
                     self.pending_details.clear();
                     self.request_page();
-                    if let Some(id) = self.selected.clone() {
+                    self.request_conversation(None);
+                    if let Some(id) = self.reader_id().map(str::to_owned) {
                         self.send(Command::Detail {
                             revision: self.detail_revision,
                             id,
@@ -1606,6 +1619,52 @@ impl App {
                     self.expanded_replies.insert(index);
                 }
             }
+            Message::PrefConversations(value) => {
+                self.preferences.group_conversations = value;
+                self.conversation.page = Default::default();
+                if let Some(id) = self.selected.clone() {
+                    self.focus_conversation_message(id);
+                }
+                self.request_conversation(None);
+                self.save_preferences();
+            }
+            Message::ConversationMessage(id) => {
+                if self.conversation.page.rows.iter().any(|mail| mail.id == id) {
+                    if self.reader_id() == Some(&id) {
+                        self.conversation.collapsed = !self.conversation.collapsed;
+                    } else {
+                        self.focus_conversation_message(id);
+                    }
+                }
+            }
+            Message::ConversationFlag(id) => {
+                if let Some(mut mail) = self
+                    .conversation
+                    .page
+                    .rows
+                    .iter()
+                    .find(|mail| mail.id == id)
+                    .cloned()
+                {
+                    mail.starred = !mail.starred;
+                    self.send(Command::Flags(mail));
+                }
+            }
+            Message::ConversationPage(next) => {
+                let offset = if next {
+                    self.conversation.page.offset + crate::store::CONVERSATION_PAGE_SIZE
+                } else {
+                    self.conversation
+                        .page
+                        .offset
+                        .saturating_sub(crate::store::CONVERSATION_PAGE_SIZE)
+                };
+                self.request_conversation(Some(offset));
+            }
+            Message::ConversationScroll(generation) => return self.conversation_scroll(generation),
+            Message::RetryConversation => {
+                self.request_conversation(Some(self.conversation.page.offset))
+            }
             Message::PrefReplies(mode) => {
                 self.preferences.reply_display = mode;
                 self.expanded_replies.clear();
@@ -2039,6 +2098,14 @@ impl App {
         let mut samples: Vec<_> = self.update_samples.iter().copied().collect();
         samples.sort_by(f64::total_cmp);
         let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|d.summary.starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
+        data["conversation_total"] = serde_json::json!(self.conversation.page.total);
+        data["conversation_rows"] = serde_json::json!(self.conversation.page.rows);
+        data["conversation_offset"] = serde_json::json!(self.conversation.page.offset);
+        data["conversation_collapsed"] = serde_json::json!(self.conversation.collapsed);
+        data["loaded_message_id"] =
+            serde_json::json!(self.detail.as_ref().map(|detail| &detail.summary.id));
+        data["reader_message_id"] = serde_json::json!(self.reader_id());
+        data["group_conversations"] = serde_json::json!(self.preferences.group_conversations);
         data["draft_attachments"] = serde_json::json!(self.composer.draft.attachments);
         data["draft_io"] = serde_json::json!(self.composer.io.is_some());
         data["draft_in_reply_to"] = serde_json::json!(self.composer.draft.in_reply_to);

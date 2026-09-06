@@ -412,6 +412,9 @@ impl App {
         .into()
     }
     fn reader(&self) -> Element<'_, Message> {
+        if self.conversation_visible() {
+            return self.conversation_reader();
+        }
         let Some(detail) = &self.detail else {
             return container(
                 column![
@@ -432,6 +435,25 @@ impl App {
             .center_y(Length::Fill)
             .into();
         };
+        let footer = column![self.reader_actions(detail), self.reader_navigation()].spacing(4);
+        column![
+            container(self.reader_toolbar(detail)).padding([10, 18]),
+            line(),
+            scrollable(
+                container(self.reader_body(detail, true)).padding(if self.size.width < 1200. {
+                    22.
+                } else {
+                    35.
+                })
+            )
+            .height(Length::Fill),
+            container(footer).padding([10, 20])
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+    pub(super) fn reader_toolbar<'a>(&'a self, detail: &'a MailDetail) -> Element<'a, Message> {
         let toolbar = row![
             icon_action("archive", "Archive", Message::Move("Archive".into())),
             icon_action("trash", "Move to Trash", Message::Move("Trash".into())),
@@ -444,13 +466,14 @@ impl App {
                 },
                 Message::ToggleRead
             ),
-            icon_action(
+            toggle_icon_action(
                 "flag",
                 if detail.summary.starred {
                     "Remove flag"
                 } else {
                     "Flag message"
                 },
+                detail.summary.starred,
                 Message::ToggleStar
             ),
             space().width(Length::Fill),
@@ -484,6 +507,13 @@ impl App {
         ]
         .spacing(4)
         .align_y(Alignment::Center);
+        toolbar.into()
+    }
+    pub(super) fn reader_body<'a>(
+        &'a self,
+        detail: &'a MailDetail,
+        subject: bool,
+    ) -> iced::widget::Column<'a, Message> {
         let sender = sender_name(&detail.summary.sender);
         let date = chrono::DateTime::from_timestamp(detail.summary.timestamp, 0)
             .unwrap_or_default()
@@ -495,8 +525,8 @@ impl App {
                 muted(&detail.summary.sender).size(10),
                 muted(format!("To: {}", detail.summary.recipient)).size(10)
             ]
-            .spacing(5),
-            space().width(Length::Fill),
+            .spacing(5)
+            .width(Length::Fill),
             column![
                 muted(date.format("%d %b %Y").to_string()).size(10),
                 muted(date.format("%H:%M").to_string()).size(10)
@@ -507,7 +537,6 @@ impl App {
         .align_y(Alignment::Center);
         let body = &detail.latest_body;
         let mut reading = column![
-            text(&detail.summary.subject).size(25).font(BOLD),
             button(sender_header)
                 .padding(0)
                 .style(ghost)
@@ -515,6 +544,10 @@ impl App {
             line()
         ]
         .spacing(18);
+        if subject {
+            reading =
+                column![text(&detail.summary.subject).size(25).font(BOLD), reading].spacing(18);
+        }
         if !detail.remote_images.is_empty()
             && !crate::remote_images::allowed(&self.preferences, &detail.summary)
         {
@@ -586,6 +619,9 @@ impl App {
         if detail.body_truncated {
             reading=reading.push(muted("Showing the first 32,000 characters. Export the original email to read the full message."));
         }
+        reading
+    }
+    pub(super) fn reader_actions<'a>(&'a self, detail: &'a MailDetail) -> Element<'a, Message> {
         let mut footer = row![
             button(
                 row![
@@ -619,25 +655,23 @@ impl App {
                 .on_press(Message::ExportAttachment(index)),
             );
         }
-        let footer = column![
-            footer.wrap(),
-            row![
-                space().width(Length::Fill),
-                icon_action("left", "Previous message", Message::PreviousMessage(true)),
-                icon_action("chevron", "Next message", Message::PreviousMessage(false))
-            ]
-            .spacing(4)
+        footer.wrap().into()
+    }
+    pub(super) fn reader_navigation(&self) -> Element<'_, Message> {
+        row![
+            space().width(Length::Fill),
+            icon_action(
+                "left",
+                "Previous inbox message",
+                Message::PreviousMessage(true)
+            ),
+            icon_action(
+                "chevron",
+                "Next inbox message",
+                Message::PreviousMessage(false)
+            )
         ]
-        .spacing(4);
-        column![
-            container(toolbar).padding([10, 18]),
-            line(),
-            scrollable(container(reading).padding(if self.size.width < 1200. { 22. } else { 35. }))
-                .height(Length::Fill),
-            container(footer).padding([10, 20])
-        ]
-        .width(Length::Fill)
-        .height(Length::Fill)
+        .spacing(4)
         .into()
     }
     fn calendar_view(&self) -> Element<'_, Message> {
@@ -1286,7 +1320,7 @@ impl App {
                 "Bring your home server calendar into Shep with CalDAV.",
             ),
             Dialog::Move => (
-                "Move conversation",
+                "Move message",
                 "Choose a destination folder. POP3 folders are local to this device.",
             ),
             Dialog::Compose => ("New message", ""),
@@ -1388,7 +1422,7 @@ fn form_field<'a>(
     .width(Length::Fill)
     .into()
 }
-fn sender_name(from: &str) -> String {
+pub(super) fn sender_name(from: &str) -> String {
     from.split('<')
         .next()
         .unwrap_or(from)

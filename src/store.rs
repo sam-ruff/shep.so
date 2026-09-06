@@ -1,7 +1,9 @@
 use crate::model::*;
+mod conversations;
 mod drafts;
 mod restore;
 use anyhow::Context;
+pub use conversations::{CONVERSATION_PAGE_SIZE, ConversationPage};
 pub use drafts::DraftState;
 use rusqlite::{Connection, params};
 use serde::{Serialize, de::DeserializeOwned};
@@ -73,6 +75,7 @@ impl Store {
             CREATE TABLE IF NOT EXISTS draft_sent (id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, source TEXT NOT NULL, start INTEGER NOT NULL, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS event_start ON events(start);")?;
+        conversations::schema(&conn)?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 2 {
             let tx = conn.transaction()?;
@@ -265,6 +268,7 @@ impl Store {
                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
                     ON CONFLICT(id) DO UPDATE SET unread=excluded.unread,starred=excluded.starred",
                     params![m.id,m.account_id,m.folder,m.sender,m.subject,message.text,m.timestamp,m.unread,m.starred,serde_json::to_string(m)?,message.raw])?;
+                conversations::index_message(&tx, &m.id)?;
             }
             tx.commit()?; Ok(())
         }).await

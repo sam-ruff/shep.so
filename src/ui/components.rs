@@ -246,10 +246,18 @@ pub fn action<'a>(label: &'a str, message: Message) -> widget::Button<'a, Messag
         .on_press(message)
 }
 pub fn icon_action<'a>(name: &str, label: &'a str, message: Message) -> Element<'a, Message> {
+    toggle_icon_action(name, label, false, message)
+}
+pub fn toggle_icon_action<'a>(
+    name: &str,
+    label: &'a str,
+    active: bool,
+    message: Message,
+) -> Element<'a, Message> {
     tooltip(
         button(icon(name, 20.))
             .padding(10)
-            .style(ghost)
+            .style(if active { selected } else { ghost })
             .on_press(message),
         container(text(label).size(12)).padding(8).style(card),
         tooltip::Position::Bottom,

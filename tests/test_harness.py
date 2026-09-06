@@ -84,6 +84,21 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(len(commands), 4)
         desktop.app = None
 
+    def test_wait_for_retries_until_async_list_entries_exist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            desktop = harness.Desktop()
+            desktop.directory = Path(directory)
+            desktop.app = Mock()
+            desktop.app.poll.return_value = None
+            desktop.state = Mock(side_effect=[{}, {"rows": []}, {"rows": [{"folder": "Projects"}]}, {}])
+            with patch.object(harness.time, "sleep"):
+                result = desktop.batch([{"type": "wait_for", "path": "rows.0.folder", "value": "Projects"}])
+            self.assertEqual(result["actions"][0]["result"], "Projects")
+            desktop.state = Mock(return_value={"rows": []})
+            with self.assertRaises(AssertionError):
+                desktop.assertion({"path": "rows.0.folder", "value": "Projects"})
+            desktop.app = None
+
     def test_batch_limits_reject_excessive_waits_and_actions(self):
         desktop = harness.Desktop()
         desktop.app = Mock()

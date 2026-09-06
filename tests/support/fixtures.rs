@@ -144,6 +144,9 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
         true,
     )?;
     store.upsert(mails).await?;
+    if std::env::args().any(|arg| arg == "--conversation-mail") {
+        seed_conversations(store).await?;
+    }
     for account in ["preview-work", "preview-personal"] {
         store
             .save_folders(
@@ -218,4 +221,76 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
     store.replace_events(source.id, events).await?;
     store.replace_events(home.id, home_events).await?;
     Ok(())
+}
+
+async fn seed_conversations(store: &Store) -> anyhow::Result<()> {
+    let mut messages = Vec::new();
+    for (i, folder, from, to, body) in [
+        (
+            0,
+            "Archive",
+            "Maya <maya@example.com>",
+            "alex@studio.example",
+            "Shall we launch on Monday?",
+        ),
+        (
+            1,
+            "Sent",
+            "Alex <alex@studio.example>",
+            "maya@example.com",
+            "Monday works. Here is the schedule.",
+        ),
+        (
+            2,
+            "INBOX",
+            "Maya <maya@example.com>",
+            "alex@studio.example",
+            "Confirmed. See you on Monday.",
+        ),
+    ] {
+        let date = chrono::Utc::now() + chrono::Duration::minutes(i);
+        let references = if i == 0 {
+            String::new()
+        } else {
+            format!(
+                "References: <launch-0@example.com>\r\nIn-Reply-To: <launch-{}@example.com>\r\n",
+                i - 1
+            )
+        };
+        let content = if i == 1 {
+            format!(
+                "Content-Type: multipart/mixed; boundary=launch\r\n\r\n--launch\r\nContent-Type: text/plain\r\n\r\n{body}\r\n--launch\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=\"schedule.txt\"\r\n\r\nMonday at nine.\r\n--launch--\r\n"
+            )
+        } else {
+            format!("Content-Type: text/plain\r\n\r\n{body}")
+        };
+        let raw = format!(
+            "From: {from}\r\nTo: {to}\r\nSubject: Re: Launch schedule\r\nMessage-ID: <launch-{i}@example.com>\r\n{references}Date: {}\r\n{content}",
+            date.to_rfc2822()
+        );
+        messages.push(parse_mail(
+            "preview-work",
+            &format!("launch-{i}"),
+            folder,
+            raw.into_bytes(),
+            i == 2,
+            false,
+        )?);
+    }
+    for i in 0..25 {
+        let date = chrono::Utc::now() - chrono::Duration::hours(25 - i);
+        let raw = format!(
+            "From: Project team <team@example.com>\r\nTo: alex@studio.example\r\nSubject: Long project review\r\nMessage-ID: <long-{i}@example.com>\r\nReferences: <long-root@example.com>\r\nDate: {}\r\n\r\nReview update {i}. Each message stays separate.",
+            date.to_rfc2822()
+        );
+        messages.push(parse_mail(
+            "preview-work",
+            &format!("long-{i}"),
+            if i == 24 { "INBOX" } else { "Projects" },
+            raw.into_bytes(),
+            false,
+            false,
+        )?);
+    }
+    store.upsert(messages).await
 }

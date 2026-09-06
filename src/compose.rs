@@ -147,7 +147,7 @@ fn valid_message_id(id: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_graphic() && !matches!(byte, b'<' | b'>'))
 }
-fn message_ids(value: &str) -> Vec<String> {
+pub(crate) fn message_ids(value: &str) -> Vec<String> {
     let mut ids = Vec::new();
     for part in value.split('<').skip(1) {
         if let Some(end) = part.find('>') {
