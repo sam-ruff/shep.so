@@ -89,5 +89,16 @@ Content-Transfer-Encoding: base64
             false,
         )?])
         .await?;
+    let css = b"From: Reports <reports@example.test>\r\nTo: alex@studio.example\r\nSubject: CSS background report\r\nContent-Type: text/html\r\n\r\n<html><head><base href=\"https://images.example.test/reports/\"><style>.banner{height:96px;background:#e2e8f0 url('../report.webp') 12px center/48px 48px no-repeat;padding-left:80px;line-height:96px}</style></head><body><div class=\"banner\">Project overview</div><table style=\"width:1000px;border-collapse:collapse\"><tr><td style=\"width:500px;padding:20px\">First report column</td><td style=\"width:500px;padding:20px\">Last report column</td></tr></table></body></html>";
+    store
+        .upsert(vec![parse_mail(
+            "preview-work",
+            "html-css",
+            "Archive",
+            css.to_vec(),
+            false,
+            false,
+        )?])
+        .await?;
     Ok(())
 }

@@ -125,7 +125,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 86 functional flows plus the navigation performance gate.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 100 functional flows plus the navigation performance gate.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -375,6 +375,30 @@ References: [Window.print](https://developer.mozilla.org/en-US/docs/Web/API/Wind
 
 
 ## HTML frame preparation and geometry
+
+Discover remote image references while preparing `HtmlBody` on the backend,
+including CSS backgrounds and base-relative URLs. The blocked-image control
+must exist before the first frame; rendering must never insert that control
+above an already displayed body. Discovery is metadata only: fetch only resources
+actually requested by the renderer and permitted by the existing image policy.
+
+Horizontal panning belongs inside the visible HTML canvas. Reserve its small
+bottom band from the first layout, clip text selection/Find highlights above the
+track, and update the thumb immediately while the worker prepares pixels. Reject
+superseded pan frames. Horizontal arrows and Shift+wheel act only on the focused
+body and must not capture editing keys from Find. Keep compact attachments in
+two columns, with navigation sharing the action row so the body remains readable.
+Retain at most one set of current-query Find results that arrives before its
+matching layout frame. A rejected resize paint followed by a pan-only paint
+must not lose those results; reject older query/document revisions as usual.
+
+The fixture-only `html_delay_ms` MCP start option (0–2000) pauses the renderer
+worker, never iced, and must be paired with `--demo`. Use it for readiness/layout
+correctness checks, not performance claims. The native observations
+`html_body_bounds` and `html_body_visible` are in the parent's content coordinates;
+reset parent scroll before using them for native clicks. `html_pan_target` is
+desired horizontal position. These are observations, never an action API. Preserve the
+saved CSS-background delayed-render and compact attachment/body-space scenarios.
 
 The first HTML Load waits for the native canvas viewport, including when the body
 is below the visible portion of the reader. Keep Find and input behind that Load.

@@ -7,7 +7,10 @@ use crate::email_content::HtmlBody;
 use futures::{SinkExt, channel::mpsc};
 use litehtml::{Document, DrawContext, Position};
 use selection::Selection;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 type Fonts = shep_html_pixbuf::FontSystem;
 fn fonts() -> Fonts {
     shep_html_pixbuf::new_font_system()
@@ -98,7 +101,7 @@ impl Frame {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
-    Ready(commands::Sender<Input>),
+    Ready(commands::Sender<Input>, Arc<AtomicU64>),
     Frame(Arc<Frame>),
     Selection(u64, String, Vec<[f32; 4]>, bool),
     Copy(u64, String),
@@ -115,16 +118,35 @@ pub enum Event {
 pub fn subscription() -> impl futures::Stream<Item = Event> {
     iced::stream::channel(4, |mut output: mpsc::Sender<Event>| async move {
         let (tx, rx) = commands::channel(16);
-        if output.send(Event::Ready(tx)).await.is_err() {
+        let current = Arc::new(AtomicU64::new(0));
+        if output
+            .send(Event::Ready(tx, current.clone()))
+            .await
+            .is_err()
+        {
             return;
         }
-        let _ = tokio::task::spawn_blocking(move || worker(rx, output)).await;
+        let _ = tokio::task::spawn_blocking(move || worker(rx, output, current)).await;
     })
 }
 fn emit(output: &mut mpsc::Sender<Event>, event: Event) -> bool {
     futures::executor::block_on(output.send(event)).is_ok()
 }
-fn worker(mut input: commands::Receiver<Input>, mut output: mpsc::Sender<Event>) {
+fn worker(
+    mut input: commands::Receiver<Input>,
+    mut output: mpsc::Sender<Event>,
+    current: Arc<AtomicU64>,
+) {
+    #[cfg(feature = "test-support")]
+    let delay = if std::env::args().any(|arg| arg == "--demo") {
+        std::env::var("SHEP_TEST_HTML_DELAY_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0)
+            .min(2000)
+    } else {
+        0
+    };
     let mut next = None;
     let mut plain_fonts = None;
     let mut html_fonts = None;
@@ -154,6 +176,16 @@ fn worker(mut input: commands::Receiver<Input>, mut output: mpsc::Sender<Event>)
         else {
             continue;
         };
+        if current.load(Ordering::Relaxed) > generation {
+            continue;
+        }
+        #[cfg(feature = "test-support")]
+        if delay > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(delay));
+        }
+        if current.load(Ordering::Relaxed) > generation {
+            continue;
+        }
         match document(
             generation,
             Source {
@@ -164,6 +196,7 @@ fn worker(mut input: commands::Receiver<Input>, mut output: mpsc::Sender<Event>)
             },
             viewport,
             html_fonts.get_or_insert_with(fonts).clone(),
+            Some(&current),
             &mut input,
             &mut output,
         ) {
@@ -189,6 +222,7 @@ fn document(
     source: Source,
     mut viewport: Viewport,
     fonts: Fonts,
+    current: Option<&AtomicU64>,
     input: &mut commands::Receiver<Input>,
     output: &mut mpsc::Sender<Event>,
 ) -> anyhow::Result<Option<Input>> {
@@ -234,6 +268,9 @@ fn document(
     let mut find: Option<(u64, String, bool)> = None;
     let mut find_pending = false;
     loop {
+        if current.is_some_and(|current| current.load(Ordering::Relaxed) > generation) {
+            return Ok(None);
+        }
         if repaint {
             let pixels = {
                 surface.0.borrow_mut().resize_with_scale(

@@ -377,7 +377,7 @@ impl Store {
             let remote_images = content
                 .html
                 .as_ref()
-                .map(|h| crate::remote_images::extract_html(&h.source))
+                .map(|h| h.remote_images.clone())
                 .unwrap_or_default();
             Ok(MailDetail {
                 html: content.html.map(Arc::new),

@@ -51,6 +51,7 @@ fn worker(mut input: watch::Receiver<Vec<Request>>, mut output: mpsc::Sender<Eve
                 request.source,
                 request.key.viewport,
                 font_system.get_or_insert_with(fonts).clone(),
+                None,
                 &mut commands,
                 &mut frames,
             );

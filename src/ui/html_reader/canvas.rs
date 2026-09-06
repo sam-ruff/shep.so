@@ -15,8 +15,11 @@ use renderer::Renderer as _;
 struct NativeState {
     generation: u64,
     geometry: Option<(Viewport, f32)>,
+    presentation: Option<([f32; 4], Option<[f32; 4]>)>,
     focused: bool,
     dragging: bool,
+    pan_grab: Option<f32>,
+    modifiers: iced::keyboard::Modifiers,
 }
 pub(super) struct Canvas<'a> {
     state: &'a State,
@@ -53,7 +56,8 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
             self.state
                 .frame
                 .as_ref()
-                .map_or(400., |f| f.content_height.max(40.)),
+                .map_or(400., |f| f.content_height.max(40.))
+                + super::SCROLLBAR_SPACE,
         ))
     }
     fn update(
@@ -76,6 +80,16 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
         }
         let bounds = layout.bounds();
         let visible = bounds.intersection(viewport);
+        let rect = |r: Rectangle| [r.x, r.y, r.width, r.height];
+        let presentation = (rect(bounds), visible.map(rect));
+        if state.presentation != Some(presentation) {
+            state.presentation = Some(presentation);
+            shell.publish(Message::Html(HtmlMessage::Geometry(
+                self.state.generation,
+                presentation.0,
+                presentation.1,
+            )));
+        }
         {
             let size = Viewport {
                 width: bounds.width.ceil().max(1.) as u32,
@@ -92,10 +106,74 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
                 ))));
             }
         }
+        if shell.is_event_captured() && matches!(event, Event::Keyboard(_)) {
+            return;
+        }
         if !self.enabled {
             state.focused = false;
             state.dragging = false;
+            state.pan_grab = None;
+            state.modifiers = Default::default();
             return;
+        }
+        if let Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) = event {
+            state.modifiers = *modifiers;
+        }
+        let bar = self.state.frame.as_ref().and_then(|f| {
+            super::pan::Geometry::new(bounds, *viewport, f.content_width, self.state.pan)
+        });
+        if let Some(bar) = &bar {
+            let over_bar = cursor.is_over(bar.track);
+            let pointer = cursor.position().unwrap_or(Point::ORIGIN);
+            let mut pan = None;
+            match event {
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if over_bar => {
+                    state.focused = true;
+                    state.dragging = false;
+                    let grab = if cursor.is_over(bar.thumb) {
+                        pointer.x - bar.thumb.x
+                    } else {
+                        bar.thumb.width / 2.
+                    };
+                    state.pan_grab = Some(grab);
+                    pan = Some(bar.position(pointer.x, grab));
+                }
+                Event::Mouse(mouse::Event::CursorMoved { .. }) if state.pan_grab.is_some() => {
+                    pan = Some(bar.position(pointer.x, state.pan_grab.unwrap()));
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                    if state.pan_grab.take().is_some() =>
+                {
+                    shell.capture_event();
+                    return;
+                }
+                Event::Mouse(mouse::Event::WheelScrolled { delta })
+                    if visible.is_some_and(|clip| cursor.is_over(clip)) =>
+                {
+                    let (x, y, multiplier) = match delta {
+                        mouse::ScrollDelta::Lines { x, y } => (*x, *y, 40.),
+                        mouse::ScrollDelta::Pixels { x, y } => (*x, *y, 1.),
+                    };
+                    if x != 0. || state.modifiers.shift() {
+                        pan = Some(self.state.pan - if x != 0. { x } else { y } * multiplier);
+                    }
+                }
+                Event::Window(iced::window::Event::Unfocused) => state.pan_grab = None,
+                _ => {}
+            }
+            if let Some(pan) = pan {
+                shell.publish(Message::Html(HtmlMessage::Input(Input::Pan(
+                    self.state.generation,
+                    pan,
+                ))));
+                shell.capture_event();
+                return;
+            }
+            if over_bar && matches!(event, Event::Mouse(_)) {
+                return;
+            }
+        } else {
+            state.pan_grab = None;
         }
         let over = visible.is_some_and(|clip| cursor.is_over(clip));
         let position = cursor.position().unwrap_or(Point::ORIGIN) - layout.position();
@@ -157,6 +235,12 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
             use iced::keyboard::key::Named;
             let id = self.state.generation;
             let navigation = match key {
+                Named::ArrowLeft if !modifiers.command() && bar.is_some() => {
+                    Some(HtmlMessage::Input(Input::Pan(id, self.state.pan - 40.)))
+                }
+                Named::ArrowRight if !modifiers.command() && bar.is_some() => {
+                    Some(HtmlMessage::Input(Input::Pan(id, self.state.pan + 40.)))
+                }
                 Named::ArrowUp if !modifiers.command() => Some(HtmlMessage::Scroll(id, -40.)),
                 Named::ArrowDown if !modifiers.command() => Some(HtmlMessage::Scroll(id, 40.)),
                 Named::PageUp => Some(HtmlMessage::Scroll(id, -viewport.height * 0.8)),
@@ -185,11 +269,18 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
         let Some(clip) = bounds.intersection(viewport) else {
             return;
         };
+        let bar = self.state.frame.as_ref().and_then(|f| {
+            super::pan::Geometry::new(bounds, *viewport, f.content_width, self.state.pan)
+        });
+        let body_clip = Rectangle {
+            height: (clip.height - bar.as_ref().map_or(0., |_| super::SCROLLBAR_SPACE)).max(0.),
+            ..clip
+        };
         if let (Some(frame), Some(handle)) = (&self.state.frame, &self.state.handle)
             && frame.viewport.width == bounds.width.ceil().max(1.) as u32
             && (frame.viewport.scale - self.scale).abs() < 0.001
         {
-            renderer.with_layer(clip, |renderer| {
+            renderer.with_layer(body_clip, |renderer| {
                 renderer.draw_image(
                     image::Image::new(handle.clone()),
                     Rectangle {
@@ -224,7 +315,7 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
         } else {
             // Loading occupies the body itself; it must not add/remove a row
             // above the document when the first frame arrives.
-            renderer.with_layer(clip, |renderer| {
+            renderer.with_layer(body_clip, |renderer| {
                 for (i, fraction) in [0.66, 0.9, 0.78].into_iter().enumerate() {
                     renderer.fill_quad(
                         renderer::Quad {
@@ -247,6 +338,33 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
                 }
             });
         }
+        if let Some(bar) = bar {
+            let colors = super::super::components::colors(theme);
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: bar.track,
+                    ..Default::default()
+                },
+                colors.surface,
+            );
+            for (bounds, color) in [(bar.track, colors.subtle), (bar.thumb, colors.muted)] {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: Rectangle {
+                            y: bounds.y + 5.,
+                            height: 6.,
+                            ..bounds
+                        },
+                        border: iced::Border {
+                            radius: 3.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    color,
+                );
+            }
+        }
     }
     fn mouse_interaction(
         &self,
@@ -256,6 +374,19 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
         viewport: &Rectangle,
         _renderer: &Renderer,
     ) -> mouse::Interaction {
+        if self.enabled
+            && let Some(bar) = self.state.frame.as_ref().and_then(|f| {
+                super::pan::Geometry::new(
+                    layout.bounds(),
+                    *viewport,
+                    f.content_width,
+                    self.state.pan,
+                )
+            })
+            && cursor.is_over(bar.track)
+        {
+            return mouse::Interaction::Grab;
+        }
         if self.enabled
             && layout
                 .bounds()

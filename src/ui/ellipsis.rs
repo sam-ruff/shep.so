@@ -20,10 +20,19 @@ struct State {
 pub(super) struct Ellipsis {
     label: String,
     size: f32,
+    font: Option<Font>,
 }
 impl Ellipsis {
     pub fn new(label: String, size: f32) -> Self {
-        Self { label, size }
+        Self {
+            label,
+            size,
+            font: None,
+        }
+    }
+    pub fn font(mut self, font: Font) -> Self {
+        self.font = Some(font);
+        self
     }
 }
 impl Widget<Message, Theme, Renderer> for Ellipsis {
@@ -44,10 +53,11 @@ impl Widget<Message, Theme, Renderer> for Ellipsis {
     ) -> layout::Node {
         let state = tree.state.downcast_mut::<State>();
         let width = limits.max().width;
+        let font = self.font.unwrap_or(renderer.default_font());
         if state.original != self.label
             || state.width != width
             || state.size != self.size
-            || state.font != renderer.default_font()
+            || state.font != font
         {
             let shape = |state: &mut State, label: &str| {
                 state.paragraph.update(text::Text {
@@ -55,7 +65,7 @@ impl Widget<Message, Theme, Renderer> for Ellipsis {
                     bounds: Size::INFINITE,
                     size: self.size.into(),
                     line_height: text::LineHeight::Relative(1.),
-                    font: renderer.default_font(),
+                    font,
                     align_x: text::Alignment::Left,
                     align_y: iced::alignment::Vertical::Top,
                     shaping: text::Shaping::Advanced,
@@ -84,7 +94,7 @@ impl Widget<Message, Theme, Renderer> for Ellipsis {
             state.original.clone_from(&self.label);
             state.width = width;
             state.size = self.size;
-            state.font = renderer.default_font();
+            state.font = font;
         }
         layout::Node::new(Size::new(width, self.size))
     }

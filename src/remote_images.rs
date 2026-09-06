@@ -35,34 +35,98 @@ pub fn allowed(preferences: &Preferences, mail: &Mail) -> bool {
 pub fn extract(parsed: &mailparse::ParsedMail<'_>) -> Vec<RemoteImage> {
     crate::email_content::extract(parsed)
         .html
-        .as_ref()
-        .map(|h| extract_html(&h.source))
+        .map(|h| h.remote_images)
         .unwrap_or_default()
 }
 pub fn extract_html(source: &str) -> Vec<RemoteImage> {
-    let html = scraper::Html::parse_document(source);
-    let selector = scraper::Selector::parse("img[src]").expect("static selector");
+    extract_document(&scraper::Html::parse_document(source))
+}
+pub(crate) fn extract_document(html: &scraper::Html) -> Vec<RemoteImage> {
+    use std::collections::HashSet;
+    let base = html
+        .select(&scraper::Selector::parse("base[href]").expect("static selector"))
+        .next()
+        .and_then(|e| url::Url::parse(e.value().attr("href")?).ok());
     let mut images = Vec::new();
-    for element in html.select(&selector) {
-        let value = element.value();
-        if let Ok(url) = url::Url::parse(value.attr("src").unwrap_or_default())
+    let mut seen = HashSet::new();
+    let mut add = |src: &str, alt: &str| {
+        let parsed = url::Url::parse(src).or_else(|_| {
+            base.as_ref()
+                .ok_or(url::ParseError::RelativeUrlWithoutBase)?
+                .join(src)
+        });
+        if let Ok(url) = parsed
             && matches!(url.scheme(), "https" | "http")
             && url.username().is_empty()
             && url.password().is_none()
-            && !images.iter().any(|i: &RemoteImage| i.url == url.as_str())
+            && seen.insert(url.to_string())
         {
             images.push(RemoteImage {
                 url: url.to_string(),
-                alt: value
-                    .attr("alt")
-                    .unwrap_or("Email image")
-                    .chars()
-                    .take(160)
-                    .collect(),
+                alt: alt.chars().take(160).collect(),
             });
+        }
+    };
+    for element in html.select(&scraper::Selector::parse("img[src],body[background],table[background],td[background],th[background],[style],style").expect("static selector")) {
+        let value = element.value();
+        if value.name() == "img" && let Some(src) = value.attr("src") {
+            add(src, value.attr("alt").unwrap_or("Email image"));
+        }
+        if matches!(value.name(), "body" | "table" | "td" | "th") && let Some(src) = value.attr("background") {
+            add(src, "Email background");
+        }
+        if let Some(style) = value.attr("style") {
+            css_images(style, &mut add);
+        }
+        if value.name() == "style" {
+            css_images(&element.text().collect::<String>(), &mut add);
         }
     }
     images
+}
+fn css_images(source: &str, add: &mut impl FnMut(&str, &str)) {
+    use cssparser::{Parser, ParserInput, Token};
+    fn scan<'i>(parser: &mut Parser<'i, '_>, add: &mut impl FnMut(&str, &str), depth: u8) {
+        while let Ok(token) = parser.next().cloned() {
+            match token {
+                Token::AtKeyword(name)
+                    if name.eq_ignore_ascii_case("import")
+                        || name.eq_ignore_ascii_case("font-face")
+                        || name.eq_ignore_ascii_case("namespace") =>
+                {
+                    while let Ok(token) = parser.next() {
+                        if matches!(token, Token::Semicolon | Token::CurlyBracketBlock) {
+                            break;
+                        }
+                    }
+                }
+                Token::UnquotedUrl(url) => add(&url, "Email background"),
+                Token::Function(name) if name.eq_ignore_ascii_case("url") => {
+                    let _: Result<(), cssparser::ParseError<'i, ()>> =
+                        parser.parse_nested_block(|p| {
+                            if let Ok(value) = p.expect_string() {
+                                add(value, "Email background");
+                            }
+                            Ok(())
+                        });
+                }
+                Token::Function(_)
+                | Token::ParenthesisBlock
+                | Token::SquareBracketBlock
+                | Token::CurlyBracketBlock
+                    if depth < 64 =>
+                {
+                    let _: Result<(), cssparser::ParseError<'i, ()>> =
+                        parser.parse_nested_block(|p| {
+                            scan(p, add, depth + 1);
+                            Ok(())
+                        });
+                }
+                _ => {}
+            }
+        }
+    }
+    scan(&mut Parser::new(&mut ParserInput::new(source)), add, 0);
 }
 pub fn public_ip(ip: IpAddr) -> bool {
     match ip {

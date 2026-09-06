@@ -129,6 +129,17 @@ The refresh-icon scenario captures Mail and Calendar in light/dark and compact
 layouts, including a pending mail refresh. Inspect the icon geometry in the
 actual WebP captures, rather than relying on state assertions alone.
 
+Use `html_delay_ms` (integer 0–2000) with `html_mail=true` to inspect loading
+without blocking iced. The HTML fixture adds a CSS-background report in Archive.
+Save before/after captures and assert the body origin stays fixed. The horizontal
+track now sits at the bottom of `html_body_visible`; at the parent scroll origin,
+derive real drag coordinates from that observed rectangle. `html_pan_target` is immediate thumb intent and
+`html_pan` is the painted position. Find editing keys must leave pan unchanged.
+For quote controls, close Find, scroll the parent to the top, await geometry and derive the
+button below `html_body_bounds`, rather than reusing a pre-render coordinate.
+The compact Prototype flow asserts usable visible body space with all four
+attachments and opens Forward to establish the files remain available.
+
 The 120% scaling scenario uses Preferences → General → Interface size. At the
 standard fixture size, open near x=1145,y=623; its menu opens upward and 120 is
 near x=1140,y=509. Wait for interface_scale == 120 and html_view_current after

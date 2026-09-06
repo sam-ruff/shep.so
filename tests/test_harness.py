@@ -14,6 +14,14 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_html_delay_is_bounded_and_invalid_values_never_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for delay in (-1, 2001, True, "500", 1.5):
+                with self.assertRaisesRegex(ValueError, "HTML fixture delay"):
+                    desktop.start(html_delay_ms=delay)
+            launch.assert_not_called()
+
     def test_print_fixture_is_explicit_and_schema_matches_batch_actions(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:
