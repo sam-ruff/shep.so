@@ -496,3 +496,8 @@ The installed Linux release matches `target/release/shep` at SHA-256
 `a7803f07d0a3b6b3baed85c98a73ca5834b31db61bd97c635b0ac892c05f2273`.
 Personal windows remain untouched; reopening starts the new binary. Logs are
 under `artifacts/logs/html-anchor-*`. Strict documentation validation passes.
+
+Shipped to main as `cc38af9d04eca6284214a030d5015262d19effed`. R69 is
+closed after the full native run, reviewed captures, installer verification and
+push. Final idle-host performance gates remain R03/R09; the full product goal
+remains active.
