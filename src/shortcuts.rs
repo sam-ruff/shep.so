@@ -18,9 +18,11 @@ pub enum Action {
     OpenMessage,
     ClosePreview,
     ReplyAll,
+    Delete,
+    Inbox,
 }
 impl Action {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 17] = [
         Self::Move,
         Self::Compose,
         Self::Reply,
@@ -36,6 +38,8 @@ impl Action {
         Self::OpenMessage,
         Self::ClosePreview,
         Self::ReplyAll,
+        Self::Delete,
+        Self::Inbox,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -54,18 +58,93 @@ impl Action {
             Self::OpenMessage => "Open full-window reader",
             Self::ClosePreview => "Close full-window reader",
             Self::ReplyAll => "Reply to all",
+            Self::Delete => "Move to Trash",
+            Self::Inbox => "Go to Inbox (sidebar)",
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Keymap(pub BTreeMap<Action, String>);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Slot {
+    Primary,
+    Secondary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Keymap(pub BTreeMap<Action, String>, pub BTreeMap<Action, String>);
+#[derive(Serialize, Deserialize)]
+struct SavedKeys {
+    version: u8,
+    primary: BTreeMap<Action, String>,
+    secondary: BTreeMap<Action, String>,
+}
+impl Serialize for Keymap {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        SavedKeys {
+            version: 2,
+            primary: self.0.clone(),
+            secondary: self.1.clone(),
+        }
+        .serialize(serializer)
+    }
+}
 impl<'de> Deserialize<'de> for Keymap {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let bindings = BTreeMap::<Action, String>::deserialize(deserializer)?;
-        let mut keys = Self::default();
-        keys.0.extend(bindings);
-        Ok(keys)
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Saved {
+            Current(SavedKeys),
+            Legacy(BTreeMap<Action, String>),
+        }
+        match Saved::deserialize(deserializer)? {
+            Saved::Current(saved) => {
+                if saved.version != 2 {
+                    return Err(serde::de::Error::custom(
+                        "Unsupported shortcut settings version",
+                    ));
+                }
+                let mut keys = Self(saved.primary, saved.secondary);
+                for (action, key) in Self::default().0 {
+                    if !keys.0.contains_key(&action) {
+                        let key = if keys.resolve(&key).is_none() {
+                            key
+                        } else {
+                            String::new()
+                        };
+                        keys.0.insert(action, key);
+                    }
+                }
+                Ok(keys)
+            }
+            Saved::Legacy(mut primary) => {
+                // Migrate the old Archive default, without taking a custom key
+                // from any other action. Non-default mappings remain intact.
+                let unused = |keys: &BTreeMap<Action, String>, key: &str| {
+                    !keys.values().any(|k| k.eq_ignore_ascii_case(key))
+                };
+                if primary.get(&Action::Archive).is_none_or(|k| k == "E")
+                    && unused(&primary, "Backspace")
+                {
+                    primary.insert(Action::Archive, "Backspace".into());
+                }
+                for (action, key) in Self::default().0 {
+                    if !primary.contains_key(&action) {
+                        let key = if unused(&primary, &key) {
+                            key
+                        } else {
+                            String::new()
+                        };
+                        primary.insert(action, key);
+                    }
+                }
+                let secondary = if unused(&primary, "Delete") {
+                    BTreeMap::from([(Action::Archive, "Delete".into())])
+                } else {
+                    BTreeMap::new()
+                };
+                Ok(Self(primary, secondary))
+            }
+        }
     }
 }
 impl Default for Keymap {
@@ -74,11 +153,27 @@ impl Default for Keymap {
             Action::ALL
                 .into_iter()
                 .zip([
-                    "M", "C", "R", "E", "S", "Mod+K", "Mod+R", "J", "K", "Mod+1", "Mod+2", "Mod+,",
-                    "Enter", "Escape", "Shift+R",
+                    "M",
+                    "C",
+                    "R",
+                    "Backspace",
+                    "S",
+                    "Mod+K",
+                    "Mod+R",
+                    "J",
+                    "K",
+                    "Mod+1",
+                    "Mod+2",
+                    "Mod+,",
+                    "Enter",
+                    "Escape",
+                    "Shift+R",
+                    "Mod+D",
+                    "I",
                 ])
                 .map(|(a, k)| (a, k.into()))
                 .collect(),
+            BTreeMap::from([(Action::Archive, "Delete".into())]),
         )
     }
 }
@@ -86,21 +181,49 @@ impl Keymap {
     pub fn resolve(&self, chord: &str) -> Option<Action> {
         self.0
             .iter()
-            .find(|(_, k)| k.eq_ignore_ascii_case(chord))
+            .chain(&self.1)
+            .find(|(_, k)| !k.is_empty() && k.eq_ignore_ascii_case(chord))
             .map(|(a, _)| *a)
     }
     pub fn key(&self, action: Action) -> &str {
-        self.0.get(&action).map(String::as_str).unwrap_or("")
+        self.binding(action, Slot::Primary)
+    }
+    pub fn binding(&self, action: Action, slot: Slot) -> &str {
+        match slot {
+            Slot::Primary => &self.0,
+            Slot::Secondary => &self.1,
+        }
+        .get(&action)
+        .map(String::as_str)
+        .unwrap_or("")
+    }
+    pub fn label(&self, action: Action) -> String {
+        [self.key(action), self.binding(action, Slot::Secondary)]
+            .into_iter()
+            .filter(|k| !k.is_empty())
+            .collect::<Vec<_>>()
+            .join(" / ")
+            .replace(
+                "Mod",
+                if cfg!(target_os = "macos") {
+                    "⌘"
+                } else {
+                    "Ctrl"
+                },
+            )
     }
     pub fn validate(&self) -> anyhow::Result<()> {
         let mut seen = std::collections::HashSet::new();
-        for action in Action::ALL {
-            let key = self.key(action).to_uppercase();
+        for (action, key) in self.0.iter().chain(&self.1) {
+            let key = key.to_uppercase();
+            if key.is_empty() {
+                continue;
+            }
             anyhow::ensure!(
-                !key.is_empty()
-                    && (key != "ESCAPE" || action == Action::ClosePreview)
-                    && key != "TAB",
-                "Every action needs a shortcut; Escape and Tab are reserved."
+                (key != "ESCAPE" || *action == Action::ClosePreview)
+                    && key != "TAB"
+                    && key != "MOD+A",
+                "Escape, Tab and Select all are reserved."
             );
             anyhow::ensure!(
                 seen.insert(key.clone()),
@@ -110,8 +233,15 @@ impl Keymap {
         Ok(())
     }
     pub fn remap(&mut self, action: Action, chord: String) -> anyhow::Result<()> {
+        self.remap_slot(action, Slot::Primary, chord)
+    }
+    pub fn remap_slot(&mut self, action: Action, slot: Slot, chord: String) -> anyhow::Result<()> {
         let mut next = self.clone();
-        next.0.insert(action, chord);
+        match slot {
+            Slot::Primary => &mut next.0,
+            Slot::Secondary => &mut next.1,
+        }
+        .insert(action, chord);
         next.validate()?;
         *self = next;
         Ok(())

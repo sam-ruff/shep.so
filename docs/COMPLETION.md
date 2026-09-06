@@ -17,26 +17,11 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 | Outgoing recovery and Sent copies | Durable pre-SMTP MIME/envelope records, atomic local Sent/draft cleanup, explicit Outbox recovery, IMAP Sent discovery/APPEND and deduplication; Rust fault tests and native recovery flows | Live SMTP/Sent verification; broader authentication contracts |
 | Logo, WebP, appearance | Approved Swiss Shepherd assets and dark variant; cached WebP, Light/Dark/System | Continue visual review after layout changes |
 | Testing, release, installer | Repo MCP skill, deterministic native scenarios, Rust/Python tests, hooks, semantic-release files, Linux installer | Final artifact/build verification after remaining changes; non-Linux execution/distribution |
-| CI and performance gates | Dormant workflow definitions, strict backend/native budgets, Actions disabled by user request | Keep disabled until Sam asks; run measurements only at the end on an idle host |
+| CI and performance gates | Dormant quality/release workflows and strict backend/native budgets; documentation publishing has a separately recorded exception | Keep disabled until Sam asks; run measurements only at the end on an idle host |
 
-## New explicit requests (active)
+## Active request tracking
 
-- Encrypt the local mail cache at rest, with safe migration of existing personal data; OS credential storage and encrypted backups alone do not satisfy this.
-- Remove the 25 MiB incoming-message, 256 MiB snapshot and 32,000-character preview ceilings. Use bounded streaming/background processing for large mail and backups; large downloads must not hold up smaller messages. Do not replace these with higher arbitrary caps or claim unlimited RAM/storage.
-- Fix sidebar horizontal overflow at compact/scaled widths. Ctrl+click toggles folders into a combined mail view; ordinary click selects one. Account headings expand/collapse their folders with a chevron. Remove Add account from the main sidebar; keep it in Preferences.
-- Replace Sync calendar with a refresh icon, remove the Workspace / Calendar breadcrumb and calendar footer caption and use the freed space for the grid/agenda.
-- Make the sidebar draggable for width, and persist window sizes across sessions, including closing promptly after resize.
-- Inbox context menus must expose common message actions, with mouse and keyboard parity.
-- Draft navigation must be a collapsible group and support right-click deletion. Action tooltips must show current remapped shortcuts.
-- Email body text must support native mouse selection and copying in preview and full-window reading, including formatted HTML content.
-- Render HTML email with its layout, typography, tables, spacing, backgrounds, links and inline image placement preserved; current plain-text conversion plus appended images is insufficient (user supplied comparison). Keep selectable text, a plain-text option, existing remote-image policy and per-message/sender/domain exceptions; no active email scripts or uncontrolled resource requests. Use synthetic equivalents in tests, never commit personal verification-mail contents/screenshots.
-- Compose new messages and replies inside the preview pane. Autosave while typing and support switching between multiple open drafts and reading other mail without losing content, attachments or recipient context.
-- Contacts need a separate Preferences section. Confirm explicit saves with an acknowledgment-based toast and give buttons a visible pressed state.
-- Backups must support multiple independently configured destinations (local disk, Google Drive, S3, FTP/FTPS and SFTP), configurable compression and passphrase encryption at setup, parallel destination outcomes and per-destination rolling retention. Restore must prompt for the passphrase. Design destination setup and management as a clear, polished list/wizard.
-- Folder context menus must support delete and moving folders inside other folders. Render folder hierarchies as collapsible groups, defaulting nested groups to collapsed; preserve provider-specific hierarchy delimiters and account scope.
-- Make flagged states visibly outlined in red. Provide a UI panel for configurable primary/secondary/background/surface/text/accent and related scheme colors, with persistence and usable light/dark behavior.
-
-These requests extend the active full-product goal. The sidebar/flag/color changes are the next visible priority, followed by cache encryption and bounded large-mail/backup support. No performance measurements until the end on an idle host.
+[TODO.md](../TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
 ## Remaining implementation audit
 
@@ -139,3 +124,16 @@ The sidebar now measures/truncates long labels without horizontal overflow, rese
 Inbox context actions retain the right-clicked identity, support mouse plus Shift+F10/arrow/Enter/Escape, and wait for the correct body before reply/move/export. Navigation cancels delayed actions. Flags use a red outline; supported button tooltips show remapped keys. Contacts has a dedicated Preferences tab. Explicit saves show a dismissible acknowledgment-based toast. Calendar uses a refresh icon and frees header/footer space for its grid.
 
 Validation: formatting, Clippy with warnings denied, 184 Rust tests (two opt-in live diagnostics ignored), 15 Python tests and all 45 native functional flows pass. SQLite reopen verifies layout persistence; UI unit tests cover close during debounce, failed saves, full-queue coalescing, stale acknowledgments and late context-body results. Native light/dark/900×640 evidence was visually reviewed. No performance measurements were run. This completes the listed increment only; folder trees/mutations, inline multi-draft composition, palette editing, encrypted large-mail streaming and multiple backup destinations remain active requirements above.
+
+
+## Reader selection, shortcuts and settings interaction evidence
+
+This increment adds read-only native text selection/copy in preview, quoted history and the full reader, with off-thread buffer preparation and stale-result guards. Shortcut settings now have primary and optional secondary slots. Ctrl+D moves to Trash; Backspace and Delete archive. Sidebar-only I can be disabled/remapped. Legacy custom bindings survive migration. Captured text editing does not mutate mail.
+
+Mail returns to the configured Inbox when clicked from another mail folder; sidebar unread counts remain independent of search/filter scope. The Move chooser labels INBOX as Inbox and highlights its Enter target. A wire test covers moving from a spaced custom folder to INBOX and preserves the MOVE acknowledgment if logout disconnects. The user's personal A. Keep report still needs confirmation; no personal messages were moved by automation.
+
+Background mail updates preserve the right-click menu and refresh its owned target metadata; native tests wait through a simulated sync, select an action and check outside/Escape dismissal. Preferences search opens matching editable sections. Labeled controls have no tooltips; icon hints use only the primary key and have independent tooltip/key-hint toggles. Mail sync is a refresh icon.
+
+Validation: formatting, Clippy with warnings denied, 191 Rust tests (two opt-in live diagnostics ignored), 16 Python tests and all 52 native functional flows. The last full invocation passed 51; the remaining conversation-paging flow passed separately after its click coordinate was updated for the refresh icon. Light/dark/compact screenshots were reviewed. Release checksum/extraction/bundled-installer verification passes. No performance measurements were run. Exact shipped commit and installation are recorded after publication below.
+
+The complete conversation is mapped in REQUEST_AUDIT.md. TODO.md is the active checklist; the AGENTS rule requires immediate updates for new requests and retains incomplete work through compaction. Faithful HTML, Ctrl+F/relevance search, optimistic flags, bulk/drag actions and the larger storage/sync/draft/backend features are not claimed complete by these tests.

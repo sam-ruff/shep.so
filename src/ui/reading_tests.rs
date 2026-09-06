@@ -111,3 +111,63 @@ async fn context_reply_waits_for_clicked_body_and_navigation_cancels_it() {
     assert_eq!(app.field("to"), "second@example.com");
     assert_eq!(app.field("subject"), "Re: Message 2");
 }
+
+#[tokio::test]
+async fn mail_refresh_preserves_context_target_and_updates_its_flags() {
+    let mail = parse_mail(
+        "test",
+        "1",
+        "INBOX",
+        b"From: fixture@example.test\r\nSubject: Keep menu open\r\n\r\nBody".to_vec(),
+        true,
+        false,
+    )
+    .unwrap()
+    .summary;
+    let (mut app, _) = App::new();
+    app.page = Arc::new(MailPage {
+        rows: vec![mail.clone()],
+        ..Default::default()
+    });
+    let _ = app.handle(Message::MailContext(
+        mail.id.clone(),
+        iced::Point::new(400., 250.),
+    ));
+    let _ = app.handle(Message::Backend(Event::Changed));
+    assert_eq!(app.context_menu.as_ref().unwrap().mail.id, mail.id);
+    let mut updated = mail;
+    updated.unread = false;
+    updated.starred = true;
+    let page = Arc::new(MailPage {
+        rows: vec![updated],
+        ..Default::default()
+    });
+    let _ = app.handle(Message::Backend(Event::Page(app.generation, page, false)));
+    let menu = app.context_menu.as_ref().unwrap();
+    assert!(!menu.mail.unread);
+    assert!(menu.mail.starred);
+    let _ = app.handle(Message::DismissContext);
+    assert!(app.context_menu.is_none());
+}
+
+#[tokio::test]
+async fn tooltip_hints_use_only_primary_and_can_be_disabled() {
+    let (mut app, _) = App::new();
+    assert!(
+        app.shortcut_hint("Archive", Action::Archive)
+            .contains("Backspace")
+    );
+    assert!(
+        !app.shortcut_hint("Archive", Action::Archive)
+            .contains("Delete")
+    );
+    app.preferences.shortcut_tooltips = false;
+    assert_eq!(app.shortcut_hint("Archive", Action::Archive), "Archive");
+    let _ = app.key(
+        Key::Named(keyboard::key::Named::Backspace),
+        keyboard::Modifiers::default(),
+        true,
+    );
+    let _ = app.key(Key::Character("d".into()), keyboard::Modifiers::CTRL, true);
+    assert!(app.notice.is_none());
+}

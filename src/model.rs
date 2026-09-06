@@ -275,6 +275,7 @@ pub struct MailPage {
     pub rows: Vec<Mail>,
     pub total: usize,
     pub unread: usize,
+    pub inbox_unread: std::collections::BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -481,6 +482,8 @@ pub struct Preferences {
     pub cross_account_moves: bool,
     pub reader_font_size: u16,
     pub interface_scale: u16,
+    pub tooltips: bool,
+    pub shortcut_tooltips: bool,
     pub image_policy: ImagePolicy,
     pub reply_display: ReplyDisplay,
     pub group_conversations: bool,
@@ -517,6 +520,8 @@ impl Default for Preferences {
             cross_account_moves: false,
             reader_font_size: 14,
             interface_scale: 100,
+            tooltips: true,
+            shortcut_tooltips: true,
             image_policy: ImagePolicy::BlockAll,
             reply_display: ReplyDisplay::Collapsed,
             group_conversations: true,

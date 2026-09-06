@@ -335,21 +335,9 @@ impl MailProvider for Imap {
         mail: &Mail,
         folder: &str,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            !folder.is_empty() && !folder.contains(['\r', '\n']),
-            "Choose a valid folder."
-        );
-        let mut session = imap(account, password).await?;
-        let mailbox = session.select(&mail.folder).await?;
-        let uid = validate_uid(mail, mailbox.uid_validity)?;
-        anyhow::ensure!(
-            session.capabilities().await?.has_str("MOVE"),
-            "This IMAP server does not support safe MOVE. Move this message with your server's webmail."
-        );
-        session.uid_mv(uid, folder).await?;
-        session.logout().await?;
-        Ok(())
+        move_imap_session(imap(account, password).await?, mail, folder).await
     }
+
     async fn set_flags(
         &self,
         account: &Account,
@@ -373,6 +361,30 @@ impl MailProvider for Imap {
         session.logout().await?;
         Ok(())
     }
+}
+
+async fn move_imap_session<
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
+>(
+    mut session: async_imap::Session<T>,
+    mail: &Mail,
+    folder: &str,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !folder.is_empty() && !folder.contains(['\r', '\n']),
+        "Choose a valid folder."
+    );
+    let mailbox = session.select(&mail.folder).await?;
+    let uid = validate_uid(mail, mailbox.uid_validity)?;
+    anyhow::ensure!(
+        session.capabilities().await?.has_str("MOVE"),
+        "This IMAP server does not support safe MOVE. Move this message with your server's webmail."
+    );
+    session.uid_mv(uid, folder).await?;
+    // The tagged MOVE acknowledgment commits the action. A dropped connection
+    // during logout must not retain the old source or invite a duplicate retry.
+    let _ = session.logout().await;
+    Ok(())
 }
 
 fn validate_uid(mail: &Mail, validity: Option<u32>) -> anyhow::Result<String> {
@@ -737,6 +749,58 @@ mod smtp_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn move_from_spaced_folder_to_inbox_commits_before_logout_disconnect() {
+        let (client, server) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            let mut server = BufReader::new(server);
+            for expected in [
+                "LOGIN \"fixture\" \"secret\"",
+                "SELECT \"A. Keep folder\"",
+                "CAPABILITY",
+                "UID MOVE 7 \"INBOX\"",
+                "LOGOUT",
+            ] {
+                let mut line = String::new();
+                server.read_line(&mut line).await.unwrap();
+                let (tag, command) = line.trim_end().split_once(' ').unwrap();
+                assert_eq!(command, expected);
+                if command == "LOGOUT" {
+                    break;
+                }
+                let response = if command.starts_with("SELECT") {
+                    "* 1 EXISTS\r\n* OK [UIDVALIDITY 42] valid\r\n"
+                } else if command == "CAPABILITY" {
+                    "* CAPABILITY IMAP4rev1 MOVE UIDPLUS\r\n"
+                } else {
+                    ""
+                };
+                server
+                    .get_mut()
+                    .write_all(format!("{response}{tag} OK completed\r\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+        });
+        let session = async_imap::Client::new(client)
+            .login("fixture", "secret")
+            .await
+            .unwrap();
+        let mail = parse_mail(
+            "fixture",
+            "42.7",
+            "A. Keep folder",
+            b"From: fixture@example.test\r\nSubject: Move fixture\r\n\r\nTest".to_vec(),
+            true,
+            false,
+        )
+        .unwrap();
+        move_imap_session(session, &mail.summary, "INBOX")
+            .await
+            .unwrap();
+        server.await.unwrap();
+    }
 
     #[tokio::test]
     async fn imap_sync_uses_valid_fetch_lists_and_batches_bodies() {

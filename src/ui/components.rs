@@ -260,21 +260,23 @@ pub fn action<'a>(label: &'a str, message: Message) -> widget::Button<'a, Messag
         .style(outline)
         .on_press(message)
 }
-pub fn icon_action<'a>(
-    name: &str,
-    label: impl Into<std::borrow::Cow<'a, str>>,
-    message: Message,
-) -> Element<'a, Message> {
-    toggle_icon_action(name, label, false, message)
-}
-pub fn toggle_icon_action<'a>(
-    name: &str,
-    label: impl Into<std::borrow::Cow<'a, str>>,
-    active: bool,
-    message: Message,
-) -> Element<'a, Message> {
-    tooltip(
-        button(if name == "flag" {
+impl super::App {
+    pub(super) fn icon_action<'a>(
+        &self,
+        name: &str,
+        label: impl Into<std::borrow::Cow<'a, str>>,
+        message: Message,
+    ) -> Element<'a, Message> {
+        self.toggle_icon_action(name, label, false, message)
+    }
+    pub(super) fn toggle_icon_action<'a>(
+        &self,
+        name: &str,
+        label: impl Into<std::borrow::Cow<'a, str>>,
+        active: bool,
+        message: Message,
+    ) -> Element<'a, Message> {
+        let control = button(if name == "flag" {
             flag_icon(active, 20.)
         } else {
             icon(name, 20.)
@@ -287,14 +289,20 @@ pub fn toggle_icon_action<'a>(
         } else {
             ghost
         })
-        .on_press(message),
-        container(text(label.into()).size(12))
-            .padding(8)
-            .style(card),
-        tooltip::Position::Bottom,
-    )
-    .gap(5)
-    .into()
+        .on_press(message);
+        if !self.preferences.tooltips {
+            return control.into();
+        }
+        tooltip(
+            control,
+            container(text(label.into()).size(12))
+                .padding(8)
+                .style(card),
+            tooltip::Position::Bottom,
+        )
+        .gap(5)
+        .into()
+    }
 }
 pub fn badge<'a>(label: impl Into<std::borrow::Cow<'a, str>>) -> Element<'a, Message> {
     container(text(label.into()).size(10).font(BOLD))

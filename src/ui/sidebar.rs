@@ -1,7 +1,7 @@
 use super::*;
 use iced::{
     Alignment, Length,
-    widget::{button, column, container, image, row, scrollable, space, text, tooltip},
+    widget::{button, column, container, image, row, scrollable, space, text},
 };
 
 pub(super) struct SidebarItem {
@@ -13,11 +13,21 @@ pub(super) struct SidebarItem {
     pub section: bool,
 }
 impl App {
+    fn inbox_label(&self, account: Option<&str>, name: &str) -> String {
+        let unread = account
+            .map(|id| self.page.inbox_unread.get(id).copied().unwrap_or(0))
+            .unwrap_or_else(|| self.page.inbox_unread.values().sum());
+        if unread == 0 {
+            name.into()
+        } else {
+            format!("{name} ({unread})")
+        }
+    }
     pub(super) fn sidebar_items(&self) -> Vec<SidebarItem> {
         let mut items = Vec::new();
         if self.preferences.unified_inbox {
             items.push(SidebarItem {
-                label: "Inbox".into(),
+                label: self.inbox_label(None, "Inbox"),
                 icon: "inbox",
                 action: Message::AccountFolderUnified,
                 active: self.query.folder == "INBOX" && self.query.account.is_none(),
@@ -27,7 +37,7 @@ impl App {
             if self.inbox_expanded {
                 for account in &self.workspace.accounts {
                     items.push(SidebarItem {
-                        label: account.email.clone(),
+                        label: self.inbox_label(Some(&account.id), &account.email),
                         icon: "mail",
                         action: Message::AccountFolder(account.id.clone(), "INBOX".into()),
                         active: self.query.folder == "INBOX"
@@ -114,7 +124,7 @@ impl App {
                 }
                 items.push(SidebarItem {
                     label: if folder == "INBOX" {
-                        "Inbox".into()
+                        self.inbox_label(Some(&account.id), "Inbox")
                     } else {
                         folder.clone()
                     },
@@ -152,45 +162,33 @@ impl App {
         let mut content = column![
             container(brand).padding([6, 7]),
             space().height(14),
-            self.with_shortcut(
-                nav(
-                    "mail",
-                    "Mail",
-                    self.tab == Tab::Mail,
-                    Message::Tab(Tab::Mail),
-                    None
-                ),
+            nav(
+                "mail",
                 "Mail",
-                Action::Mail
+                self.tab == Tab::Mail,
+                Message::Tab(Tab::Mail),
+                None
             ),
-            self.with_shortcut(
-                nav(
-                    "calendar",
-                    "Calendar",
-                    self.tab == Tab::Calendar,
-                    Message::Tab(Tab::Calendar),
-                    None
-                ),
+            nav(
+                "calendar",
                 "Calendar",
-                Action::Calendar
+                self.tab == Tab::Calendar,
+                Message::Tab(Tab::Calendar),
+                None
             ),
             space().height(14),
-            self.with_shortcut(
-                button(
-                    row![
-                        icon_bright("compose", 20.),
-                        text("New message").size(13).line_height(1.)
-                    ]
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                )
-                .width(Length::Fill)
-                .padding([12, 14])
-                .style(primary)
-                .on_press(Message::Open(Dialog::Compose)),
-                "New message",
-                Action::Compose
-            ),
+            button(
+                row![
+                    icon_bright("compose", 20.),
+                    text("New message").size(13).line_height(1.)
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center)
+            )
+            .width(Length::Fill)
+            .padding([12, 14])
+            .style(primary)
+            .on_press(Message::Open(Dialog::Compose)),
             space().height(12)
         ]
         .spacing(3)
@@ -235,7 +233,7 @@ impl App {
                 ));
             }
             content = content.push(
-                container(tooltip(
+                container(super::context_menu::ContextArea::sidebar(
                     button(label.width(Length::Fill))
                         .width(Length::Fill)
                         .padding([9, 10])
@@ -255,11 +253,6 @@ impl App {
                             style
                         })
                         .on_press(Message::SidebarAction(index)),
-                    container(text(item.label).size(12))
-                        .padding(8)
-                        .max_width(360)
-                        .style(card),
-                    tooltip::Position::Right,
                 ))
                 .width(Length::Fill)
                 .clip(true)
@@ -282,22 +275,18 @@ impl App {
                             .spacing(4)
                     )),
                 line(),
-                self.with_shortcut(
-                    button(
-                        row![
-                            icon("settings", 20.),
-                            text("Preferences").size(12).line_height(1.)
-                        ]
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                    )
-                    .padding([12, 10])
-                    .width(Length::Fill)
-                    .style(ghost)
-                    .on_press(Message::Tab(Tab::Preferences)),
-                    "Preferences",
-                    Action::Settings
+                button(
+                    row![
+                        icon("settings", 20.),
+                        text("Preferences").size(12).line_height(1.)
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center)
                 )
+                .padding([12, 10])
+                .width(Length::Fill)
+                .style(ghost)
+                .on_press(Message::Tab(Tab::Preferences))
             ]
             .spacing(12),
         )

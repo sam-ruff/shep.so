@@ -15,6 +15,8 @@ mod reading;
 #[cfg(test)]
 mod reading_tests;
 mod removals;
+mod selectable;
+mod settings_search;
 mod sidebar;
 mod views;
 
@@ -22,7 +24,7 @@ use crate::{
     backup::{BackupCopy, BackupTarget},
     engine::{self, Command, Event},
     model::*,
-    shortcuts::Action,
+    shortcuts::{Action, Slot},
     store::{PreferenceSnapshot, Workspace},
 };
 use chrono::{Datelike, NaiveDate, TimeZone};
@@ -147,7 +149,8 @@ pub enum Message {
     Restore(String),
     ConfirmRestore,
     Key(Key, keyboard::Modifiers, bool),
-    Remap(Action),
+    Remap(Action, Slot),
+    ClearShortcut(Action, Slot),
     ResetShortcuts,
     Editor(text_editor::Action),
     Month(i32),
@@ -166,6 +169,8 @@ pub enum Message {
     MailContext(String, iced::Point),
     MailContextAction(context_menu::MailAction),
     DismissContext,
+    ReaderSelectionReady(u64, Option<Box<selectable::Content>>),
+    ReaderSelection(String, usize, text_editor::Action),
     Dismiss,
     BrowseBackup,
     BrowseExport,
@@ -175,12 +180,19 @@ pub enum Message {
     InboxScroll(f32),
     WindowClose(iced::window::Id),
     SidebarAction(usize),
+    SidebarClick(usize, keyboard::Modifiers),
+    SelectClick(String, keyboard::Modifiers),
     ToggleInboxExpanded,
     ToggleAccountFolders(String),
     Modifiers(keyboard::Modifiers),
     AccountFolder(String, String),
     AccountFolderUnified,
     PrefUnified(bool),
+    PrefTooltips(bool),
+    PrefShortcutTooltips(bool),
+    SettingsSearch(String),
+    FindSetting(SettingsTab, &'static str),
+    ShowAllSettings,
     PrefCrossAccount(bool),
     PrefReaderSize(u16),
     PrefScale(u16),
@@ -212,6 +224,10 @@ pub struct App {
     saved_toast: Option<Instant>,
     context_menu: Option<context_menu::Menu>,
     pending_mail_action: Option<(String, context_menu::MailAction)>,
+    reader_selection: Option<Box<selectable::Content>>,
+    pending_reader_selection: Option<Arc<MailDetail>>,
+    reader_selection_generation: u64,
+    reader_preparation: Option<iced::task::Handle>,
     inbox_scroll: f32,
     last_click: Option<(String, Instant)>,
     pending_focus: Option<&'static str>,
@@ -242,6 +258,8 @@ pub struct App {
     pending_backup: Option<backups::PendingBackup>,
     tab: Tab,
     settings_tab: SettingsTab,
+    settings_search: String,
+    settings_group: Option<&'static str>,
     dialog: Option<Dialog>,
     fields: HashMap<&'static str, String>,
     protocol: Protocol,
@@ -265,7 +283,7 @@ pub struct App {
     outbox: outgoing::Outbox,
     editor: text_editor::Content,
     draft_id: String,
-    remapping: Option<Action>,
+    remapping: Option<(Action, Slot)>,
     busy: HashSet<String>,
     notice: Option<(String, bool, Instant)>,
     google_connected: bool,
@@ -336,6 +354,10 @@ impl App {
                 saved_toast: None,
                 context_menu: None,
                 pending_mail_action: None,
+                reader_selection: None,
+                pending_reader_selection: None,
+                reader_selection_generation: 0,
+                reader_preparation: None,
                 inbox_scroll: 0.,
                 last_click: None,
                 pending_focus: None,
@@ -366,6 +388,8 @@ impl App {
                 pending_backup: None,
                 tab: Tab::Mail,
                 settings_tab: SettingsTab::General,
+                settings_search: String::new(),
+                settings_group: None,
                 dialog: None,
                 fields: HashMap::new(),
                 protocol: Protocol::Imap,
@@ -651,6 +675,7 @@ impl App {
         }
         let start = Instant::now();
         let task = self.handle(message);
+        let task = Task::batch([task, self.prepare_reader_selection()]);
         self.update_samples
             .push_back(start.elapsed().as_secs_f64() * 1000.);
         if self.update_samples.len() > 1000 {
@@ -666,6 +691,24 @@ impl App {
         match message {
             Message::Noop => return Task::none(),
             Message::DismissContext => self.context_menu = None,
+            Message::ReaderSelectionReady(generation, content) => {
+                if generation == self.reader_selection_generation {
+                    self.reader_preparation = None;
+                    self.pending_reader_selection = None;
+                    if let Some(content) = content
+                        && self.detail.as_ref().is_some_and(|d| content.same_text(d))
+                    {
+                        self.reader_selection = Some(content);
+                    }
+                }
+            }
+            Message::ReaderSelection(id, index, action) => {
+                if self.reader_id() == Some(&id)
+                    && let Some(content) = &mut self.reader_selection
+                {
+                    content.apply(&id, index, action);
+                }
+            }
             Message::MailContext(id, position) => {
                 if self.dialog.is_none()
                     && let Some(mail) = self.page.rows.iter().find(|m| m.id == id).cloned()
@@ -846,6 +889,12 @@ impl App {
                         }
                     } else {
                         self.page = page;
+                        if let Some(menu) = &mut self.context_menu
+                            && let Some(current) =
+                                self.page.rows.iter().find(|mail| mail.id == menu.mail.id)
+                        {
+                            menu.mail = current.clone();
+                        }
                         if self
                             .selected
                             .as_ref()
@@ -906,7 +955,6 @@ impl App {
                     }
                 }
                 Event::Changed => {
-                    self.context_menu = None;
                     self.detail_revision += 1;
                     self.prefetch_page = None;
                     self.detail_cache.clear();
@@ -1167,6 +1215,20 @@ impl App {
                 if self.defer_draft_exit(composing::Exit::Tab(tab)) {
                     return Task::none();
                 }
+                if tab == Tab::Mail && self.tab == Tab::Mail {
+                    self.query.account = if self.preferences.unified_inbox {
+                        None
+                    } else {
+                        self.workspace.accounts.first().map(|a| a.id.clone())
+                    };
+                    self.query = MailQuery {
+                        account: self.query.account.take(),
+                        sort: self.query.sort,
+                        ..Default::default()
+                    };
+                    self.full_reader = false;
+                    self.open_mail_folder("INBOX".into(), false);
+                }
                 self.tab = tab;
                 self.dialog = None;
                 if tab == Tab::Preferences {
@@ -1174,7 +1236,30 @@ impl App {
                     self.settings_fields();
                 }
             }
+            Message::SettingsSearch(query) => {
+                self.settings_search = query;
+                self.settings_group = None;
+            }
+            Message::FindSetting(tab, group) => {
+                let task = self.handle(Message::SettingsTab(tab));
+                self.settings_group = Some(group);
+                return task;
+            }
+            Message::ShowAllSettings => {
+                self.settings_group = None;
+                self.settings_search.clear();
+            }
+            Message::PrefTooltips(value) => {
+                self.preferences.tooltips = value;
+                self.save_preferences();
+            }
+            Message::PrefShortcutTooltips(value) => {
+                self.preferences.shortcut_tooltips = value;
+                self.save_preferences();
+            }
             Message::SettingsTab(tab) => {
+                self.settings_search.clear();
+                self.settings_group = None;
                 self.tab = Tab::Preferences;
                 self.settings_tab = tab;
                 self.fields.clear();
@@ -1394,18 +1479,23 @@ impl App {
                         self.dialog = None;
                         return Task::none();
                     }
-                    if transfer {
-                        self.send(Command::Transfer(
-                            d.summary.clone(),
-                            destination.to_owned(),
-                            folder,
-                        ));
+                    let label = if folder.eq_ignore_ascii_case("INBOX") {
+                        "Inbox"
                     } else {
-                        self.send(Command::Move(d.summary.clone(), folder));
+                        &folder
                     }
-                    self.dialog = None;
-                    self.selected = None;
-                    self.detail = None;
+                    .to_owned();
+                    let command = if transfer {
+                        Command::Transfer(d.summary.clone(), destination.to_owned(), folder)
+                    } else {
+                        Command::Move(d.summary.clone(), folder)
+                    };
+                    if self.try_command(command) {
+                        self.dialog = None;
+                        self.notice(format!("Moving to {label}…"), false);
+                        self.selected = None;
+                        self.detail = None;
+                    }
                 }
             }
             Message::ToggleStar | Message::ToggleRead => {
@@ -1721,8 +1811,16 @@ impl App {
                 }
             }
             Message::Key(key, modifiers, captured) => return self.key(key, modifiers, captured),
-            Message::Remap(action) => {
-                self.remapping = Some(action);
+            Message::Remap(action, slot) => {
+                self.remapping = Some((action, slot));
+            }
+            Message::ClearShortcut(action, slot) => {
+                let _ = self
+                    .preferences
+                    .shortcuts
+                    .remap_slot(action, slot, String::new());
+                self.remapping = None;
+                self.save_preferences();
             }
             Message::ResetShortcuts => {
                 self.preferences.shortcuts = Default::default();
@@ -1922,6 +2020,14 @@ impl App {
                 self.save_preferences();
             }
             Message::ToggleInboxExpanded => self.inbox_expanded = !self.inbox_expanded,
+            Message::SidebarClick(index, modifiers) => {
+                self.modifiers = modifiers;
+                return self.handle(Message::SidebarAction(index));
+            }
+            Message::SelectClick(id, modifiers) => {
+                self.modifiers = modifiers;
+                return self.handle(Message::Select(id));
+            }
             Message::SidebarAction(index) => {
                 self.sidebar_focus = true;
                 self.sidebar_index = index;
@@ -2397,9 +2503,9 @@ impl App {
                 self.test_keys.pop_front();
             }
         }
-        if let Some(action) = self.remapping {
+        if let Some((action, slot)) = self.remapping {
             if let Some(chord) = chord {
-                match self.preferences.shortcuts.remap(action, chord) {
+                match self.preferences.shortcuts.remap_slot(action, slot, chord) {
                     Ok(()) => {
                         self.remapping = None;
                         self.save_preferences();
@@ -2430,7 +2536,15 @@ impl App {
                 widget::operation::focus_next()
             };
         }
-        if captured && !modifiers.command() {
+        if captured
+            && (!modifiers.command()
+                || !matches!(
+                    chord
+                        .as_deref()
+                        .and_then(|k| self.preferences.shortcuts.resolve(k)),
+                    Some(Action::Search | Action::Mail | Action::Calendar | Action::Settings)
+                ))
+        {
             return Task::none();
         }
         if self.dialog.is_some() {
@@ -2490,11 +2604,19 @@ impl App {
                 Action::Reply => self.handle(Message::Reply),
                 Action::ReplyAll => self.handle(Message::ReplyAll),
                 Action::Archive => self.handle(Message::Move("Archive".into())),
+                Action::Delete => self.handle(Message::Move("Trash".into())),
                 Action::Star => self.handle(Message::ToggleStar),
                 Action::Sync => self.handle(Message::Sync),
                 Action::Next => self.handle(Message::PreviousMessage(false)),
                 Action::Previous => self.handle(Message::PreviousMessage(true)),
                 Action::Mail => self.handle(Message::Tab(Tab::Mail)),
+                Action::Inbox => {
+                    if self.tab == Tab::Mail && self.sidebar_focus {
+                        self.handle(Message::Tab(Tab::Mail))
+                    } else {
+                        Task::none()
+                    }
+                }
                 Action::Calendar => self.handle(Message::Tab(Tab::Calendar)),
                 Action::Settings => self.handle(Message::Tab(Tab::Preferences)),
                 Action::OpenMessage => {
@@ -2516,7 +2638,26 @@ impl App {
         self.test_revision += 1;
         let mut samples: Vec<_> = self.update_samples.iter().copied().collect();
         samples.sort_by(f64::total_cmp);
-        let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|d.summary.starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
+        let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|d.summary.starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts.0,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
+        data["move_enter_destination"] = serde_json::json!(if self.dialog == Some(Dialog::Move) {
+            crate::fuzzy::ranked(self.field("folder_search"), self.move_folders())
+                .first()
+                .cloned()
+        } else {
+            None
+        });
+        data["tooltips"] = serde_json::json!(self.preferences.tooltips);
+        data["shortcut_tooltips"] = serde_json::json!(self.preferences.shortcut_tooltips);
+        data["settings_search"] = serde_json::json!(self.settings_search);
+        data["settings_group"] = serde_json::json!(self.settings_group);
+        data["settings_matches"] = serde_json::json!(
+            self.settings_matches()
+                .iter()
+                .map(|s| s.title)
+                .collect::<Vec<_>>()
+        );
+        data["inbox_unread"] = serde_json::json!(self.page.inbox_unread);
+        data["shortcut_secondary"] = serde_json::json!(self.preferences.shortcuts.1);
         data["conversation_total"] = serde_json::json!(self.conversation.page.total);
         data["conversation_rows"] = serde_json::json!(self.conversation.page.rows);
         data["conversation_offset"] = serde_json::json!(self.conversation.page.offset);
@@ -2571,6 +2712,17 @@ impl App {
         data["saved_sidebar_width"] = serde_json::json!(self.workspace.preferences.sidebar_width);
         data["window_size"] = serde_json::json!([self.size.width, self.size.height]);
         data["saved_window_size"] = serde_json::json!(self.workspace.preferences.window_size);
+        data["reader_text_ready"] =
+            serde_json::json!(self.reader_selection.as_ref().is_some_and(|c| {
+                self.detail
+                    .as_ref()
+                    .is_some_and(|d| Arc::ptr_eq(d, &c.source))
+            }));
+        data["reader_selected_text"] = serde_json::json!(
+            self.reader_selection
+                .as_ref()
+                .and_then(|c| c.blocks.iter().find_map(|b| b.selection()))
+        );
         data["context_menu"] = serde_json::json!(self.context_menu.as_ref().map(|m| &m.mail.id));
         data["context_subject"] =
             serde_json::json!(self.context_menu.as_ref().map(|m| &m.mail.subject));
