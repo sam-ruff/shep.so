@@ -608,16 +608,26 @@ impl Store {
         })
         .await
     }
-    pub async fn delete_draft(&self, id: String) -> anyhow::Result<()> {
+    pub async fn delete_draft(&self, id: String) -> anyhow::Result<DraftState> {
         self.run(move |c| {
             let tx = c.transaction()?;
+            anyhow::ensure!(!id.is_empty() && id.len() <= 256, "Invalid draft identity.");
+            let pending: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM outgoing WHERE draft=? AND stage IN ('Submitting','Uncertain','Accepted'))", [&id], |r| r.get(0))?;
+            anyhow::ensure!(!pending, "Review this message in Outbox before discarding its draft.");
+            // A discarded identity is retired permanently, including revisions
+            // captured by a file picker or autosave before the delete committed.
+            tx.execute("INSERT INTO draft_sent(id,revision) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision", params![id, i64::MAX])?;
             let mut drafts: Vec<Draft> = get(&tx, "drafts")?;
             drafts.retain(|d| d.id != id);
             put(&tx, "drafts", &drafts)?;
-            tx.execute("DELETE FROM draft_attachments WHERE draft=?", [id])?;
+            tx.execute("DELETE FROM draft_attachments WHERE draft=?", [&id])?;
+            if tx.execute("DELETE FROM outgoing WHERE draft=? AND stage IN ('Rejected','Released')", [&id])? > 0 {
+                outgoing::changed(&tx)?;
+            }
             drafts::changed(&tx)?;
+            let state = drafts::snapshot(&tx)?;
             tx.commit()?;
-            Ok(())
+            Ok(state)
         })
         .await
     }

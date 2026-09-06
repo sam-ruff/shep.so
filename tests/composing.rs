@@ -219,3 +219,101 @@ async fn legacy_drafts_load_and_oversized_files_do_not_enter_storage() {
     assert!(store.add_draft_files(old, vec![path]).await.is_err());
     assert!(store.draft_state().await.unwrap().drafts.is_empty());
 }
+
+#[tokio::test]
+async fn discard_retires_all_revisions_and_files_across_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("drafts.sqlite");
+    let file = dir.path().join("attachment.txt");
+    std::fs::write(&file, "Private draft attachment").unwrap();
+    let store = Store::open(&path).unwrap();
+    let original = draft();
+    let mut other = original.clone();
+    other.id = "other-draft".into();
+    store.save_draft(other.clone()).await.unwrap();
+    let state = store
+        .add_draft_files(original.clone(), vec![file.clone()])
+        .await
+        .unwrap();
+    let attached = state
+        .drafts
+        .iter()
+        .find(|d| d.id == original.id)
+        .unwrap()
+        .clone();
+    let deleted = store.delete_draft(original.id.clone()).await.unwrap();
+    assert_eq!(deleted.drafts, [other.clone()]);
+    assert!(deleted.revision > state.revision);
+    assert!(store.draft_files(attached).await.is_err());
+    drop(store);
+    let store = Store::open(path).unwrap();
+    for revision in [
+        0,
+        original.revision,
+        original.revision + 10,
+        i64::MAX as u64,
+    ] {
+        let mut late = original.clone();
+        late.revision = revision;
+        store.save_draft(late.clone()).await.unwrap();
+        assert!(store.ensure_draft_unsent(late.clone()).await.is_err());
+        assert!(
+            store
+                .add_draft_files(late, vec![file.clone()])
+                .await
+                .is_err()
+        );
+    }
+    // Stale send cleanup cannot weaken the permanent tombstone.
+    store.finish_draft_send(original.clone()).await.unwrap();
+    store.save_draft(original.clone()).await.unwrap();
+    assert_eq!(store.draft_state().await.unwrap().drafts, [other]);
+    let files: i64 = store
+        .run(|c| Ok(c.query_row("SELECT COUNT(*) FROM draft_attachments", [], |r| r.get(0))?))
+        .await
+        .unwrap();
+    assert_eq!(files, 0);
+    store.delete_draft(original.id).await.unwrap();
+}
+
+#[tokio::test]
+async fn failed_discard_rolls_back_text_files_and_retirement_then_can_retry() {
+    let store = Store::memory().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("notes.txt");
+    std::fs::write(&file, "Still attached").unwrap();
+    let saved = store.add_draft_files(draft(), vec![file]).await.unwrap();
+    let draft = saved.drafts[0].clone();
+    store.run(|c| { c.execute_batch("CREATE TRIGGER fail_discard BEFORE DELETE ON draft_attachments BEGIN SELECT RAISE(ABORT,'fixture disk error'); END;")?; Ok(()) }).await.unwrap();
+    assert!(
+        store
+            .delete_draft(draft.id.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("fixture disk error")
+    );
+    let current = store.draft_state().await.unwrap();
+    assert_eq!(current.revision, saved.revision);
+    assert_eq!(current.drafts, saved.drafts);
+    assert_eq!(
+        store.draft_files(draft.clone()).await.unwrap()[0].bytes,
+        b"Still attached"
+    );
+    store.ensure_draft_unsent(draft.clone()).await.unwrap();
+    store
+        .run(|c| {
+            c.execute_batch("DROP TRIGGER fail_discard")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert!(
+        store
+            .delete_draft(draft.id)
+            .await
+            .unwrap()
+            .drafts
+            .is_empty()
+    );
+}

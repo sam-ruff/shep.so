@@ -623,4 +623,17 @@ mod tests {
         assert!(app.pending_close.is_none());
         assert!(app.page.rows[0].unread);
     }
+    #[test]
+    fn choosing_a_sort_cancels_stale_search_focus_observations_and_retries() {
+        let (mut app, _) = App::new();
+        app.focused_input = Some("search");
+        app.pending_focus = Some("search");
+        let _ = app.handle(Message::Sort(MailSort::Oldest));
+        assert!(app.focused_input.is_none());
+        assert!(app.pending_focus.is_none());
+        let _ = app.handle(Message::Focus("search", 1));
+        let _ = app.handle(Message::FocusChecked("search", true));
+        assert!(app.focused_input.is_none());
+        assert!(app.pending_focus.is_none());
+    }
 }

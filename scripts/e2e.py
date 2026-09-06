@@ -76,7 +76,7 @@ class NativeFlows(unittest.TestCase):
                        check("sort", "Relevance"), check("selected", "Quick note"),
                        check("mail_rows.0.subject", "Quick note"), shot("search-exact-body-first"),
                        click(531, 100), wait(100), shot("search-sort-menu"), click(531, 155),
-                       check("sort", "Newest"), check("selected", "Testing checklist"),
+                       check("sort", "Newest"), check("selected", "Testing checklist"), check("focused_input", None),
                        key("ctrl+k"), check("focused_input", "search"), wait(80), key("ctrl+a"), type_text("testing"), check("query", "testing"), check("sort", "Newest"),
                        key("ctrl+a"), key("BackSpace"), check("query", ""), check("sort", "Newest"),
                        type_text("test"), check("sort", "Relevance"), check("selected", "Quick note"),
@@ -410,9 +410,56 @@ class NativeFlows(unittest.TestCase):
                        click(650, 362), type_text("Meet me Monday"), check("dialog", "Compose"),
                        click(650, 485), type_text("A message written with the mouse and keyboard."),
                        click(990, 720), check("draft_count", 1), check("dialog", None), shot("saved-draft"),
-                       click(98, 478), check("dialog", "Compose"),
+                       click(98, 517), check("dialog", "Compose"),
                        check("fields.to", "friend@example.com"), check("fields.subject", "Meet me Monday"),
                        check("editor", "A message written with the mouse and keyboard.", "contains"), shot("reopened-draft"))
+
+    def test_drafts_collapse_context_cancel_and_discard(self):
+        self.mcp.batch(key("c"), check("dialog", "Compose"), wait(80),
+                       click(650, 362), type_text("First draft to keep"), check("draft_count", 1),
+                       key("Escape"), check("dialog", None),
+                       key("c"), check("dialog", "Compose"), wait(80),
+                       click(650, 362), type_text("Second draft to discard"), check("draft_count", 2),
+                       key("Escape"), check("dialog", None), wait(80), shot("drafts-expanded"),
+                       click(98, 478), check("drafts_collapsed", True), check("saved_drafts_collapsed", True),
+                       shot("drafts-collapsed"), key("ctrl+2"), check("tab", "Calendar"),
+                       key("ctrl+1"), check("tab", "Mail"), check("drafts_collapsed", True),
+                       click(98, 478), check("drafts_collapsed", False), check("saved_drafts_collapsed", False),
+                       click(1400, 36), check("busy", "sync", "contains"), {"type":"click", "x":100,"y":553,"button":3},
+                       check("draft_context", None, "ne"), check("busy", []),
+                       check("draft_context", None, "ne"), shot("draft-context-after-refresh"),
+                       key("Down"), key("Return"), check("dialog", "DiscardDraft"), shot("discard-review-light"),
+                       key("n"), check("dialog", None), check("draft_count", 2),
+                       {"type":"click", "x":100,"y":553,"button":3}, check("draft_context", None,"ne"),
+                       click(190, 610), check("dialog", "DiscardDraft"), key("Return"),
+                       check("dialog", None), check("draft_count", 1),
+                       check("draft_rows.0.1", "First draft to keep"), shot("draft-discarded"),
+                       click(98, 517), check("dialog", "Compose"), check("fields.subject", "First draft to keep"))
+
+    def test_draft_bin_cancel_failure_retry_and_compact_dark_review(self):
+        result = self.mcp.call("desktop.start", discard_failure_once=True)
+        fixture = Path(result["artifacts"]) / "discard attachment.txt"
+        fixture.write_text("Cached bytes to remove with the draft")
+        self.mcp.batch(key("c"), check("dialog", "Compose"), wait(80),
+                       click(650,362), type_text("Draft with an attachment"),
+                       click(650,485), type_text("Do not lose this on a failed discard."),
+                       click(583,720), {"type":"choose_file","path":str(fixture)},
+                       check("draft_attachments.0.name", fixture.name), check("draft_io",False), wait(150),
+                       click(916,741), check("dialog","DiscardDraft"), shot("discard-attachment-review"),
+                       key("Escape"), check("dialog","Compose"),
+                       check("editor","Do not lose this on a failed discard.","contains"),
+                       click(916,741), check("dialog","DiscardDraft"), key("y"),
+                       check("notice","Preview storage failure","contains"), check("discard_pending",False),
+                       check("draft_count",1), shot("discard-failure-keeps-draft"), key("Escape"),
+                       check("dialog","Compose"), check("draft_attachments.0.name",fixture.name), wait(80),
+                       click(916,716), check("dialog","DiscardDraft"), key("Return"),
+                       check("draft_count",0), check("dialog",None), check("draft_attachments",[]))
+        self.mcp.call("desktop.start", width=900,height=640)
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"), click(563,366),check("dark",True),
+                       key("ctrl+1"),check("tab","Mail"), key("c"),check("dialog","Compose"),wait(80),
+                       click(450,257),type_text("Compact draft"),check("draft_count",1),
+                       click(646,527),check("dialog","DiscardDraft"),shot("discard-review-dark-compact"),
+                       key("Escape"),check("dialog","Compose"),check("fields.subject","Compact draft"))
 
     def test_compose_autosaves_and_move_accepts_typed_folder(self):
         self.mcp.batch(key("c"), check("dialog", "Compose"),
@@ -442,14 +489,14 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(click(575, 726), check("draft_io", False), check("draft_attachments.0.name", second.name),
                        check("draft_attachments.1.name", third.name), wait(150), click(990, 790), check("dialog", None))
         fixture.unlink(); second.unlink(); third.unlink()
-        self.mcp.batch(click(98, 478), check("dialog", "Compose"), check("fields.cc", "copy@example.com"),
+        self.mcp.batch(click(98, 517), check("dialog", "Compose"), check("fields.cc", "copy@example.com"),
                        check("fields.bcc", "hidden@example.com"), check("draft_attachments.0.name", second.name),
                        check("editor", "Please read the attached notes.", "contains"), shot("reopened-attachments"),
                        click(465, 790), check("notice", "Sending is disabled in preview", "contains"),
                        check("dialog", "Compose"), check("draft_attachments.1.name", third.name), shot("send-failure-keeps-draft"),
                        key("Escape"), check("dialog", None), key("ctrl+comma"), check("tab", "Preferences"),
                        click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
-                       click(98, 478), check("dialog", "Compose"), shot("composer-dark-attachments"),
+                       click(98, 517), check("dialog", "Compose"), shot("composer-dark-attachments"),
                        click(583, 790), {"type": "choose_file"}, check("draft_io", False),
                        check("draft_attachments.1.name", third.name), key("Escape"), check("dialog", None))
 
@@ -531,7 +578,7 @@ class NativeFlows(unittest.TestCase):
                        check("outgoing_pending", 1), wait(150), shot("outbox-copy-retry-error"),
                        click(799, 584), check("outgoing_pending", 0), check("outgoing_rows", []),
                        shot("outbox-empty-light"), key("Escape"), check("dialog", None),
-                       click(100, 478), check("dialog", "Compose"),
+                       click(100, 517), check("dialog", "Compose"),
                        check("fields.subject", "Delivery needs review"),
                        check("editor", "A saved message for the outgoing recovery flow.", "contains"),
                        check("draft_count", 1), shot("reviewed-delivery-returned-draft"))

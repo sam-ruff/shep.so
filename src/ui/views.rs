@@ -111,13 +111,17 @@ impl App {
             // Keep the base widget tree alive as dialogs open and close. Replacing the
             // root Stack with a Container drops native input focus and shaped text.
             let mut layers = stack![base];
-            if self.context_menu.is_some() {
+            if self.context_menu.is_some() || self.composer.context.is_some() {
                 layers = layers.push(opaque(
                     mouse_area(container(space()).width(Length::Fill).height(Length::Fill))
                         .on_press(Message::DismissContext)
                         .on_right_press(Message::DismissContext),
                 ));
-                layers = layers.push(self.mail_context_view());
+                layers = layers.push(if self.composer.context.is_some() {
+                    self.draft_context_view()
+                } else {
+                    self.mail_context_view()
+                });
             }
             if self.saved_toast.is_some() {
                 layers = layers.push(
@@ -1619,6 +1623,7 @@ impl App {
             ),
             Dialog::Move => ("Move message", "Choose a destination folder."),
             Dialog::Compose => ("New message", ""),
+            Dialog::DiscardDraft => ("Discard draft?", ""),
             Dialog::Event => ("Calendar event", "Times use this device's timezone."),
             Dialog::Export => (
                 "Save a copy",
@@ -1674,6 +1679,7 @@ impl App {
                 }
             }
             Dialog::Compose => body = body.spacing(14).push(self.compose_form()),
+            Dialog::DiscardDraft => body = body.push(self.discard_draft_form()),
             Dialog::Event if self.editing_event.is_some() && !self.event_access().update => body = body.push(self.read_only_event()),
             Dialog::Event=>{
                 let choices:Vec<_>=self.workspace.calendars.iter().filter(|s| if let Some(event) = &self.editing_event { s.id == event.source_id } else { s.access.create }).map(|a|Choice(a.id.clone(),a.name.clone())).collect();let chosen=choices.iter().find(|a|a.0==self.field("source")).cloned();

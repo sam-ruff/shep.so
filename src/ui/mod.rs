@@ -66,6 +66,7 @@ pub enum Dialog {
     Calendar,
     Move,
     Compose,
+    DiscardDraft,
     Event,
     Export,
     Restore,
@@ -100,6 +101,11 @@ pub enum Message {
     NextPage(bool),
     PreviousMessage(bool),
     Draft(String),
+    ToggleDrafts,
+    DraftContext(String, iced::Point),
+    DraftContextAction(bool),
+    ReviewDiscardDraft(String),
+    ConfirmDiscardDraft,
     Sync,
     SyncCalendar,
     Move(String),
@@ -703,7 +709,38 @@ impl App {
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Noop => return Task::none(),
-            Message::DismissContext => self.context_menu = None,
+            Message::DismissContext => {
+                self.context_menu = None;
+                self.composer.context = None;
+            }
+            Message::ToggleDrafts => {
+                self.preferences.collapsed_drafts = !self.preferences.collapsed_drafts;
+                self.save_preferences();
+            }
+            Message::DraftContext(id, position) => {
+                if self.dialog.is_none()
+                    && self.workspace.drafts.iter().any(|draft| draft.id == id)
+                    && !self.workspace.outgoing_drafts.contains(&id)
+                {
+                    self.context_menu = None;
+                    self.composer.context = Some(composing::DraftMenu {
+                        id,
+                        position,
+                        discard: false,
+                    });
+                }
+            }
+            Message::DraftContextAction(discard) => {
+                if let Some(menu) = self.composer.context.take() {
+                    return self.handle(if discard {
+                        Message::ReviewDiscardDraft(menu.id)
+                    } else {
+                        Message::Draft(menu.id)
+                    });
+                }
+            }
+            Message::ReviewDiscardDraft(id) => self.review_discard_draft(id),
+            Message::ConfirmDiscardDraft => self.confirm_discard_draft(),
             Message::ReaderSelectionReady(generation, content) => {
                 if generation == self.reader_selection_generation {
                     self.reader_preparation = None;
@@ -1070,6 +1107,7 @@ impl App {
                 Event::DraftSaved(id, revision, result) => {
                     return self.draft_saved(id, revision, result);
                 }
+                Event::DraftDeleted(id, result) => self.draft_deleted(id, result),
                 Event::DraftFiles(id, result) => {
                     if self.composer.io.as_deref() == Some(&id) {
                         self.composer.io = None;
@@ -1191,6 +1229,9 @@ impl App {
                 _ => {}
             },
             Message::WindowClose(window) => {
+                if self.dialog == Some(Dialog::DiscardDraft) && !self.composer.discard_pending {
+                    self.cancel_discard_draft();
+                }
                 if self.mail_actions.pending() > 0 {
                     self.pending_close = Some(window);
                     self.notice("Finishing your mail changes before closing…", false);
@@ -1219,6 +1260,11 @@ impl App {
                 } else if self.busy.iter().any(|key| key.starts_with("send:")) {
                     self.notice(
                         "A message is being sent. Wait for delivery to finish before closing.",
+                        true,
+                    );
+                } else if self.composer.discard_pending {
+                    self.notice(
+                        "Wait for the draft to finish discarding before closing.",
                         true,
                     );
                 } else if self.composer.io.is_some() {
@@ -1318,6 +1364,10 @@ impl App {
                 }
             }
             Message::Close => {
+                if self.dialog == Some(Dialog::DiscardDraft) {
+                    self.cancel_discard_draft();
+                    return Task::none();
+                }
                 if matches!(
                     self.dialog,
                     Some(Dialog::Calendar | Dialog::Removal | Dialog::GoogleDisconnect)
@@ -1377,6 +1427,8 @@ impl App {
                 self.request_page();
             }
             Message::Sort(sort) => {
+                self.focused_input = None;
+                self.pending_focus = None;
                 self.query.sort = sort;
                 if self.query.search.trim().is_empty() && sort != MailSort::Relevance {
                     self.preferences.mail_sort = sort;
@@ -1388,6 +1440,8 @@ impl App {
                 self.request_page();
             }
             Message::Filter(filter) => {
+                self.focused_input = None;
+                self.pending_focus = None;
                 self.query.unread_only = filter == MailFilter::Unread;
                 self.query.read_only = filter == MailFilter::Read;
                 self.query.starred_only = filter == MailFilter::Flagged;
@@ -2526,6 +2580,34 @@ impl App {
         })
     }
     fn key(&mut self, key: Key, modifiers: keyboard::Modifiers, captured: bool) -> Task<Message> {
+        if self.dialog == Some(Dialog::DiscardDraft) && modifiers.is_empty() {
+            match &key {
+                Key::Named(keyboard::key::Named::Enter) => {
+                    return self.handle(Message::ConfirmDiscardDraft);
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("y") => {
+                    return self.handle(Message::ConfirmDiscardDraft);
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("n") => {
+                    return self.handle(Message::Close);
+                }
+                _ => {}
+            }
+        }
+        if let Some(menu) = &mut self.composer.context {
+            match key {
+                Key::Named(keyboard::key::Named::Escape) => self.composer.context = None,
+                Key::Named(keyboard::key::Named::ArrowDown | keyboard::key::Named::ArrowUp) => {
+                    menu.discard = !menu.discard
+                }
+                Key::Named(keyboard::key::Named::Enter) => {
+                    let discard = menu.discard;
+                    return self.handle(Message::DraftContextAction(discard));
+                }
+                _ => {}
+            }
+            return Task::none();
+        }
         if self.context_menu.is_some() {
             use keyboard::key::Named;
             match key {
@@ -2774,6 +2856,19 @@ impl App {
         data["event_access"] = serde_json::json!(self.event_access());
         data["group_conversations"] = serde_json::json!(self.preferences.group_conversations);
         data["draft_attachments"] = serde_json::json!(self.composer.draft.attachments);
+        data["drafts_collapsed"] = serde_json::json!(self.preferences.collapsed_drafts);
+        data["saved_drafts_collapsed"] =
+            serde_json::json!(self.workspace.preferences.collapsed_drafts);
+        data["draft_context"] =
+            serde_json::json!(self.composer.context.as_ref().map(|menu| &menu.id));
+        data["draft_rows"] = serde_json::json!(
+            self.workspace
+                .drafts
+                .iter()
+                .map(|draft| (&draft.id, &draft.subject))
+                .collect::<Vec<_>>()
+        );
+        data["discard_pending"] = serde_json::json!(self.composer.discard_pending);
         data["draft_io"] = serde_json::json!(self.composer.io.is_some());
         data["draft_in_reply_to"] = serde_json::json!(self.composer.draft.in_reply_to);
         data["focused_input"] = serde_json::json!(self.focused_input);

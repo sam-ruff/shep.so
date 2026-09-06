@@ -16,7 +16,7 @@ Drag the pane edges to give your inbox or reader more room.
 
 Use the visible message controls or right-click a message to reply, flag, move, archive, send to Trash or export it. Use `M` to move, `Ctrl+D` to send to Trash, and `Backspace` or `Delete` to archive. With the sidebar focused, `I` returns to Inbox. Change either shortcut slot, or disable the sidebar key, in **Preferences → Shortcuts**. On macOS, Command replaces Ctrl for the defaults.
 
-Drafts save automatically. Attached files are copied into the draft, so moving the originals will not break it. Interrupted sends appear in **Outbox** for review; they are not retried automatically.
+Drafts save automatically and appear in the collapsible **Drafts** group. Right-click a draft or use the bin in its editor to discard it. Review the draft and any attached files before confirming; **Keep draft** or Escape cancels. Attached files are copied into the draft, so moving the originals will not break it. Interrupted sends appear in **Outbox** for review; they are not retried automatically.
 
 ## Adjust your reading preferences
 
