@@ -182,6 +182,91 @@ class NativeFlows(unittest.TestCase):
                        check("folder", "Archive"), check("total", 0),
                        click(84, 278), check("folder", "INBOX"), check("total", 120))
 
+    def test_action_toasts_count_immediately_and_dismiss_before_saving(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch(click(652,100), check("total",119), check("mail_pending",1),
+                       check("action_toast.label","Archived 1 message"),
+                       key("Delete"), check("total",118), check("mail_pending",2),
+                       check("action_toast.label","Archived 2 messages"), shot("counted-archive-pending"),
+                       click(1390,874), check("action_toast",None),
+                       {**check("mail_pending",0),"timeout_ms":6000}, check("action_toast",None),
+                       key("ctrl+d"), check("total",117), check("mail_pending",1),
+                       check("action_toast.label","Deleted 1 message"),
+                       key("ctrl+d"), check("total",116), check("mail_pending",2),
+                       check("action_toast.label","Deleted 2 messages"), shot("counted-delete-pending"),
+                       {**check("mail_pending",0),"timeout_ms":6000}, check("total",116))
+
+    def test_move_toast_counts_and_failing_actions_remove_their_feedback(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        for count in (1,2):
+            self.mcp.batch(key("m"), check("dialog","Move"), check("focused_input","folder-search"),
+                           type_text("Projects"), key("Return"), check("dialog",None),
+                           check("action_toast.label",f"Moved {count} message{'s' if count>1 else ''} to Projects"),
+                           check("total",120-count))
+        self.mcp.batch(check("mail_pending",2), shot("counted-move-pending"),
+                       {**check("mail_pending",0),"timeout_ms":6000})
+        self.mcp.call("desktop.start",mail_actions="fail")
+        self.mcp.batch(key("BackSpace"), check("action_toast.label","Archived 1 message"),
+                       key("ctrl+d"), check("action_toast.label","Deleted 1 message"),
+                       check("total",118), check("mail_pending",2), shot("latest-action-before-failure"),
+                       {**check("mail_pending",0),"timeout_ms":6000}, check("total",120),
+                       check("action_toast",None), check("notice","restored","contains"), shot("action-toast-failure"))
+
+    def test_compact_dark_action_toast_and_cross_account_slow_failure(self):
+        self.mcp.call("desktop.start",mail_actions="fail")
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),
+                       click(690,366),check("dark",True),
+                       click(286,773),check("cross_account_moves",True),
+                       key("ctrl+1"),check("tab","Mail"),wait(80),
+                       key("m"),check("dialog","Move"),wait(80),
+                       click(710,327),wait(80),click(710,403),check("fields.move_account","preview-personal"),
+                       click(670,385),type_text("Archive"),key("Return"),check("dialog",None),
+                       check("total",119),check("mail_pending",1),check("action_toast.label","Archived 1 message"),
+                       shot("cross-account-toast-pending"),
+                       {**check("mail_pending",0),"timeout_ms":6000},check("total",120),check("action_toast",None),
+                       check("notice","Fixture server rejected","contains"),
+                       click(1390,900),
+                       {"type":"resize","width":900,"height":640},wait(150),
+                       key("ctrl+d"),check("total",119),check("action_toast.label","Deleted 1 message"),
+                       shot("dark-compact-toast"),
+                       {**check("mail_pending",0),"timeout_ms":6000},check("action_toast",None))
+
+    def test_read_on_leave_updates_immediately_and_preserves_explicit_unread(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), key("ctrl+1"), check("tab", "Mail"), wait(80),
+                       check("mail_rows.0.unread", True), check("mail_pending", 0),
+                       click(420,246), check("selected", "A little more room to think"), check("unread", True), check("read_candidate", "A little more room to think"),
+                       click(420,345), check("selected", "Your weekly workspace digest"),
+                       check("mail_rows.0.unread", False), check("mail_rows.1.unread", True),
+                       check("mail_pending", 1), shot("read-on-leave-before-save"),
+                       {**check("mail_pending", 0), "timeout_ms":5000},
+                       click(420,246), check("selected", "A little more room to think"),
+                       {**check("mail_pending", 0), "timeout_ms":5000},
+                       click(740,100), check("unread", True), check("mail_pending",1),
+                       click(420,345), check("selected", "Your weekly workspace digest"),
+                       {**check("mail_pending", 0), "timeout_ms":5000}, check("mail_rows.0.unread",True),
+                       key("ctrl+r"), check("refreshing", True), check("refreshing", False),
+                       check("mail_rows.0.unread",True), shot("explicit-unread-survives-leaving"))
+
+    def test_read_on_leave_failure_preserves_folder_and_unread(self):
+        self.mcp.call("desktop.start", mail_actions="fail")
+        self.mcp.batch(click(420,246), check("selected", "A little more room to think"),
+                       click(84,398), check("folder", "Archive"), check("mail_pending",1),
+                       {**check("mail_pending",0),"timeout_ms":5000},
+                       check("notice","Could not update this message","contains"), check("folder","Archive"),
+                       shot("read-on-leave-failure"), click(84,278), check("folder","INBOX"),
+                       check("mail_rows.0.unread",True), check("mail_pending",0))
+
+    def test_read_on_leave_with_arrows_in_unread_filter_keeps_next_selection(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch(click(350,100), wait(100), click(350,155), check("filter","Unread"), check("total",4),
+                       click(420,246), check("selected","A little more room to think"), key("Down"),
+                       check("selected","Your weekly workspace digest"), check("total",3),
+                       check("mail_rows.0.subject","Your weekly workspace digest"), check("mail_pending",1),
+                       key("Down"), check("selected","Coffee next Thursday?"), check("total",2),
+                       {**check("mail_pending",0),"timeout_ms":5000},
+                       check("selected","Coffee next Thursday?"), check("total",2), shot("read-on-leave-unread-navigation"))
+
     def test_context_read_and_inbox_flag_use_the_clicked_message_during_slow_save(self):
         self.mcp.call("desktop.start", mail_actions="slow")
         self.mcp.batch({"type": "click", "x": 403, "y": 450, "button": 3},
@@ -355,6 +440,19 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+1"), check("tab", "Mail"), click(85, 358), check("folder", "Archive"),
                        click(85, 115), check("folder", "INBOX"), check("account", "preview-work"), shot("account-inbox-unread-count"))
 
+    def test_search_mouse_focus_blocks_default_and_remapped_delete_chords(self):
+        self.mcp.batch(click(415,154), type_text("invoice"), check("total",1), key("ctrl+d"),
+                       key("ctrl+a"), key("BackSpace"), check("total",120), check("action_toast",None),
+                       key("Escape"), key("ctrl+comma"), check("tab","Preferences"), wait(80),
+                       click(645,156), check("settings_tab","Shortcuts"),
+                       {"type":"hover","x":1200,"y":700},{"type":"scroll","amount":30},wait(150),
+                       click(920,720),key("alt+d"),check("shortcuts.Delete","Alt+D"),check("preferences_saved",True),
+                       key("ctrl+1"),check("tab","Mail"),wait(80),
+                       click(415,154),type_text("invoice"),check("total",1),key("alt+d"),
+                       key("ctrl+a"),key("BackSpace"),check("total",120),check("action_toast",None),
+                       key("Escape"),key("alt+d"),check("total",119),check("action_toast.label","Deleted 1 message"),
+                       shot("remapped-delete-respects-search-focus"))
+
     def test_sidebar_inbox_shortcut_and_highlighted_return_move(self):
         self.mcp.call("desktop.start", long_folders=True)
         self.mcp.batch(click(100, 537), check("folder", "Projects"), check("sidebar_focus", True),
@@ -366,12 +464,12 @@ class NativeFlows(unittest.TestCase):
                        click(85, 115), check("folder", "INBOX"), check("total", 121),
                        key("ctrl+comma"), check("tab", "Preferences"), click(645, 156), check("settings_tab", "Shortcuts"),
                        {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(150), shot("sidebar-inbox-key-settings"),
-                       click(988, 738), check("shortcuts.Inbox", ""), check("preferences_saved", True),
+                       click(988, 780), check("shortcuts.Inbox", ""), check("shortcuts.Delete", "Mod+D"), check("preferences_saved", True),
                        key("ctrl+1"), check("tab", "Mail"), click(100, 537), check("folder", "Projects"),
                        key("i"), wait(80), check("folder", "Projects"),
                        key("ctrl+comma"), check("tab", "Preferences"),
                        {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(120),
-                       click(920, 738), key("alt+i"), check("shortcuts.Inbox", "Alt+I"), check("preferences_saved", True),
+                       click(920, 780), key("alt+i"), check("shortcuts.Inbox", "Alt+I"), check("preferences_saved", True),
                        key("ctrl+1"), check("tab", "Mail"), click(100, 537), check("folder", "Projects"), key("alt+i"), check("folder", "INBOX"))
 
     def test_secondary_shortcut_remap_conflict_and_disable(self):

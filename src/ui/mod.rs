@@ -1,4 +1,5 @@
 mod account;
+mod action_toasts;
 mod backups;
 mod calendar_setup;
 mod components;
@@ -12,6 +13,7 @@ mod layout;
 mod mail_actions;
 mod outgoing;
 mod preference_sync;
+mod read_tracking;
 mod reading;
 #[cfg(test)]
 mod reading_tests;
@@ -81,6 +83,7 @@ enum MailPane {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    WindowUnfocused,
     Backend(Event),
     Tick,
     Noop,
@@ -157,6 +160,7 @@ pub enum Message {
     Restore(String),
     ConfirmRestore,
     Key(Key, keyboard::Modifiers, bool),
+    KeyFocusChecked(Key, keyboard::Modifiers, bool),
     Remap(Action, Slot),
     ClearShortcut(Action, Slot),
     ResetShortcuts,
@@ -174,6 +178,7 @@ pub enum Message {
     Resize(Size),
     SidebarResize(f32),
     DismissToast,
+    DismissActionToast,
     MailContext(String, iced::Point),
     MailContextAction(context_menu::MailAction),
     DismissContext,
@@ -230,6 +235,7 @@ pub struct App {
     pending_close: Option<iced::window::Id>,
     confirm_save: Option<u64>,
     saved_toast: Option<Instant>,
+    action_toasts: action_toasts::ActionToasts,
     context_menu: Option<context_menu::Menu>,
     pending_mail_action: Option<(String, context_menu::MailAction)>,
     mail_actions: mail_actions::Actions,
@@ -365,6 +371,7 @@ impl App {
                 pending_close: None,
                 confirm_save: None,
                 saved_toast: None,
+                action_toasts: Default::default(),
                 context_menu: None,
                 pending_mail_action: None,
                 mail_actions: Default::default(),
@@ -501,7 +508,7 @@ impl App {
                     Some(Message::Modifiers(modifiers))
                 }
                 iced::Event::Window(iced::window::Event::Unfocused) => {
-                    Some(Message::Modifiers(keyboard::Modifiers::default()))
+                    Some(Message::WindowUnfocused)
                 }
                 iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => Some(
                     Message::Key(key, modifiers, status == event::Status::Captured),
@@ -707,7 +714,11 @@ impl App {
         }
     }
     fn handle(&mut self, message: Message) -> Task<Message> {
+        if !self.read_navigation(&message) {
+            return Task::none();
+        }
         match message {
+            Message::WindowUnfocused => self.modifiers = keyboard::Modifiers::default(),
             Message::Noop => return Task::none(),
             Message::DismissContext => {
                 self.context_menu = None;
@@ -1024,6 +1035,9 @@ impl App {
                         self.sync_notice = self.notice.as_ref().map(|notice| notice.2);
                     }
                 },
+                Event::TransferFinished(request, mail, result) => {
+                    return self.transfer_finished(request, mail, result);
+                }
                 Event::MoveFinished(request, mail, folder, result) => {
                     return self.move_finished(request, mail, folder, result);
                 }
@@ -1283,6 +1297,7 @@ impl App {
                 }
             }
             Message::Tick => {
+                self.action_toasts.expire(Instant::now());
                 if let Some((request, prefs)) = self.pending_preference_save.take() {
                     self.persist_preferences(request, prefs);
                 }
@@ -1479,7 +1494,7 @@ impl App {
                     return self.handle(Message::OpenMessage(id));
                 }
                 self.sidebar_focus = false;
-                self.select(id);
+                self.select_for_read(id);
             }
             Message::Hover(id) => self.preload(id),
             Message::NextPage(next) => {
@@ -1513,7 +1528,14 @@ impl App {
                         (i + 1).min(self.page.rows.len().saturating_sub(1))
                     };
                     if let Some(m) = self.page.rows.get(next) {
-                        self.select(m.id.clone());
+                        let id = m.id.clone();
+                        self.select_for_read(id.clone());
+                        let next = self
+                            .page
+                            .rows
+                            .iter()
+                            .position(|mail| mail.id == id)
+                            .unwrap_or(next);
                         let viewport = (self.size.height
                             / (self.preferences.interface_scale as f32 / 100.)
                             - 220.)
@@ -1602,25 +1624,10 @@ impl App {
                         self.pending_focus = None;
                         return Task::none();
                     }
-                    let label = if folder.eq_ignore_ascii_case("INBOX") {
-                        "Inbox"
-                    } else {
-                        &folder
-                    }
-                    .to_owned();
-                    let command = if transfer {
-                        Command::Transfer(mail, destination.to_owned(), folder)
+                    if transfer {
+                        self.transfer_mail(mail, destination.to_owned(), folder);
                     } else {
                         self.move_mail(mail, folder);
-                        return Task::none();
-                    };
-                    if self.try_command(command) {
-                        self.dialog = None;
-                        self.focused_input = None;
-                        self.pending_focus = None;
-                        self.notice(format!("Moving to {label}…"), false);
-                        self.selected = None;
-                        self.detail = None;
                     }
                 }
             }
@@ -1928,7 +1935,54 @@ impl App {
                     self.notice("The backup destination changed. Close this dialog and refresh copies before restoring.", true);
                 }
             }
-            Message::Key(key, modifiers, captured) => return self.key(key, modifiers, captured),
+            Message::Key(key, modifiers, captured) => {
+                let input_guard = !captured
+                    && self.dialog.is_none()
+                    && self.remapping.is_none()
+                    && self.context_menu.is_none()
+                    && self.composer.context.is_none()
+                    && chord(&key, modifiers)
+                        .as_deref()
+                        .and_then(|key| self.preferences.shortcuts.resolve(key))
+                        .is_some_and(|action| {
+                            !matches!(
+                                action,
+                                Action::Search
+                                    | Action::Mail
+                                    | Action::Calendar
+                                    | Action::Settings
+                                    | Action::Compose
+                                    | Action::Sync
+                            )
+                        });
+                if input_guard {
+                    if self.tab != Tab::Mail {
+                        return Task::none();
+                    }
+                    if self.full_reader {
+                        // The full-window reader has no search widget. A focus
+                        // operation for a missing widget emits no response.
+                        return self.key(key, modifiers, captured);
+                    }
+                    // iced may leave unhandled modified chords uncaptured in a
+                    // focused text input. Inspect native focus, not the cached
+                    // focus observation used by the UI harness.
+                    return widget::operation::is_focused("search").map(move |focused| {
+                        Message::KeyFocusChecked(key.clone(), modifiers, focused)
+                    });
+                }
+                return self.key(key, modifiers, captured);
+            }
+            Message::KeyFocusChecked(key, modifiers, focused) => {
+                if self.tab == Tab::Mail
+                    && self.dialog.is_none()
+                    && self.remapping.is_none()
+                    && self.context_menu.is_none()
+                    && self.composer.context.is_none()
+                {
+                    return self.key(key, modifiers, focused);
+                }
+            }
             Message::Remap(action, slot) => {
                 self.remapping = Some((action, slot));
             }
@@ -2096,6 +2150,7 @@ impl App {
                 return self.debounce_layout();
             }
             Message::DismissToast => self.saved_toast = None,
+            Message::DismissActionToast => self.action_toasts.current = None,
             Message::Dismiss => self.notice = None,
             Message::BrowseBackup => {
                 return Task::perform(
@@ -2197,7 +2252,7 @@ impl App {
                 self.save_preferences();
             }
             Message::OpenMessage(id) => {
-                self.select(id);
+                self.select_for_read(id);
                 self.full_reader = true;
                 self.sidebar_focus = false;
             }
@@ -2817,6 +2872,12 @@ impl App {
         data["background_sync"] = serde_json::json!(self.busy.contains("background-sync"));
         data["mail_check_seconds"] = serde_json::json!(self.preferences.mail_check_seconds);
         data["mail_pending"] = serde_json::json!(self.mail_actions.pending());
+        data["read_candidate"] = serde_json::json!(
+            self.mail_actions
+                .read_candidate
+                .as_ref()
+                .map(|mail| &mail.subject)
+        );
         data["unread"] = serde_json::json!(
             self.detail
                 .as_ref()
@@ -2903,6 +2964,15 @@ impl App {
         data["context_menu"] = serde_json::json!(self.context_menu.as_ref().map(|m| &m.mail.id));
         data["context_subject"] =
             serde_json::json!(self.context_menu.as_ref().map(|m| &m.mail.subject));
+        #[cfg(feature = "test-support")]
+        {
+            data["action_toast"] = serde_json::json!(
+                self.action_toasts
+                    .current
+                    .as_ref()
+                    .map(|t| serde_json::json!({"label": t.label(), "count": t.count()}))
+            );
+        }
         data["saved_toast"] = serde_json::json!(self.saved_toast.is_some());
         data["contacts"] = serde_json::json!(self.preferences.contacts);
         data["sidebar_labels"] = serde_json::json!(

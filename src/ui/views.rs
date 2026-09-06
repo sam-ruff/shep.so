@@ -123,24 +123,44 @@ impl App {
                     self.mail_context_view()
                 });
             }
+            let mut toasts = column![].spacing(8).align_x(Alignment::End);
+            if let Some(toast) = &self.action_toasts.current {
+                toasts = toasts.push(opaque(
+                    container(
+                        row![
+                            icon("check", 18.),
+                            text(toast.label()).size(13),
+                            self.icon_action("close", "Dismiss", Message::DismissActionToast)
+                        ]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding([8, 14])
+                    .max_width(580)
+                    .style(card),
+                ));
+            }
             if self.saved_toast.is_some() {
+                toasts = toasts.push(opaque(
+                    container(
+                        row![
+                            icon("check", 18.),
+                            text("Changes saved").size(13),
+                            self.icon_action("close", "Dismiss", Message::DismissToast)
+                        ]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding([8, 14])
+                    .style(card),
+                ));
+            }
+            if self.saved_toast.is_some() || self.action_toasts.current.is_some() {
                 layers = layers.push(
-                    container(opaque(
-                        container(
-                            row![
-                                icon("check", 18.),
-                                text("Changes saved").size(13),
-                                self.icon_action("close", "Dismiss", Message::DismissToast)
-                            ]
-                            .spacing(10)
-                            .align_y(Alignment::Center),
-                        )
-                        .padding([8, 14])
-                        .style(card),
-                    ))
-                    .align_right(Length::Fill)
-                    .align_bottom(Length::Fill)
-                    .padding(20),
+                    container(toasts)
+                        .align_right(Length::Fill)
+                        .align_bottom(Length::Fill)
+                        .padding(20),
                 );
             }
             layers.into()

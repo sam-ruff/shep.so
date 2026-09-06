@@ -4,6 +4,8 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Current UI and interaction work
 
+- [ ] **R63 — Search shortcut isolation regression:** the full native suite exposed Ctrl+D reaching Delete while the search input was focused but iced did not capture that chord. Guard using actual native input focus, cover remapped chords and mouse-focus paths, and verify the shortcut-clear flow before shipping.
+
 - [ ] **R68 — Action toasts:** archive, delete and move show an immediate toast in the same optimistic UI update, before any database/server acknowledgment; repeated actions immediately refresh its timeout and increment a counter (user explicitly reiterated responsiveness). Include Undo for archive, delete and move, restoring each message to its original folder even when the initial operation is still pending. Keep destination/action scope accurate and reconcile failures without hiding their errors. Cover grouped Undo, mouse/shortcut input and slow/failing backend results.
 
 - [ ] **R67 — Read after leaving:** selecting an inbox message and then clicking away marks it read with immediate visual feedback and background persistence. Preserve explicit mark-unread intent, avoid marking hover/prefetch or an unseen initial selection, and test inbox/sidebar/navigation plus slow/failing saves.
