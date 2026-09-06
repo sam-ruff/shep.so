@@ -108,6 +108,20 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+1"), check("tab", "Mail"), key("m"), wait(), check("dialog", None),
                        key("alt+m"), check("dialog", "Move"), key("Escape"))
 
+    def test_preferences_and_resize_keep_latest_changes(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(690, 366), check("dark", True),
+                       click(286, 737), check("unified", False),
+                       click(286, 773), check("cross_account_moves", True),
+                       key("ctrl+1"), check("tab", "Mail"),
+                       drag(616, 500, 785, 500), check("reader_split", .44, "gte"),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(399, 366), check("dark", False),
+                       check("preferences_saved", True), check("saved_appearance", "Light"),
+                       check("saved_reader_split", .44, "gte"), check("unified", False),
+                       check("cross_account_moves", True), shot("latest-preferences-saved"),
+                       key("ctrl+1"), check("tab", "Mail"), check("reader_split", .44, "gte"),
+                       shot("latest-resize-preserved"))
+
     def test_compose_save_and_reopen_draft(self):
         self.mcp.batch(click(101, 214), check("dialog", "Compose"), shot("compose"))
         # Actual typing, including M, must remain in the input field.

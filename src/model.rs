@@ -376,7 +376,7 @@ impl fmt::Display for BackupDestination {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
     pub appearance: Appearance,
