@@ -95,6 +95,16 @@ class HarnessTests(unittest.TestCase):
             finally:
                 desktop.app = desktop.xvfb = None
 
+    def test_nested_folder_fixture_is_validated_and_declared(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess,"Popen") as launch:
+            for value in (0,1,"yes",None):
+                with self.assertRaisesRegex(ValueError,"Nested folder fixture"):
+                    desktop.start(nested_folders=value)
+            launch.assert_not_called()
+        schema=next(t for t in harness.TOOLS if t["name"]=="desktop.start")["inputSchema"]["properties"]
+        self.assertEqual(schema["nested_folders"],{"type":"boolean","default":False})
+
     def test_badge_fixture_requires_a_boolean_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

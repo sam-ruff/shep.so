@@ -18,6 +18,20 @@ pub(super) struct Toast {
 
 impl Toast {
     pub fn label(&self) -> String {
+        self.label_with_folder(&self.folder)
+    }
+    pub fn display_label(&self, workspace: &crate::store::Workspace) -> String {
+        let folder = workspace.folder_label(
+            (!self.account.is_empty()).then_some(self.account.as_str()),
+            &self.folder,
+        );
+        if folder == self.folder {
+            self.label()
+        } else {
+            self.label_with_folder(&folder)
+        }
+    }
+    fn label_with_folder(&self, display_folder: &str) -> String {
         let count: usize = self.items.values().sum();
         let noun = if count == 1 { "message" } else { "messages" };
         if self.restored {
@@ -30,7 +44,7 @@ impl Toast {
             let folder = if self.folder.eq_ignore_ascii_case("INBOX") {
                 "Inbox"
             } else {
-                &self.folder
+                display_folder
             };
             format!("Moved {count} {noun} to {folder}")
         }

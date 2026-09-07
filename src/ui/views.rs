@@ -129,7 +129,7 @@ impl App {
                     container(
                         row![
                             icon("check", 18.),
-                            text(toast.label()).size(13),
+                            text(toast.display_label(&self.workspace)).size(13),
                             if toast.undo_tokens().is_empty() {
                                 Element::from(space().width(0))
                             } else {
@@ -229,7 +229,9 @@ impl App {
                     if folder.folder == "INBOX" {
                         "Inbox".into()
                     } else {
-                        folder.folder.clone()
+                        self.workspace
+                            .folder_label(folder.account.as_deref(), &folder.folder)
+                            .into_owned()
                     }
                 }
                 folders => format!("{} folders", folders.len()),
@@ -239,7 +241,9 @@ impl App {
         } else if self.query.folder == "INBOX" {
             "Inbox".into()
         } else {
-            self.query.folder.clone()
+            self.workspace
+                .folder_label(self.query.account.as_deref(), &self.query.folder)
+                .into_owned()
         };
         let header = row![
             heading(title),
@@ -1997,7 +2001,7 @@ impl App {
                     let chosen = choices.iter().find(|c| c.0 == id).cloned();
                     body = body.push(column![text("Destination account").size(12), pick_list(choices, chosen, |c:Choice| Message::Field("move_account", c.0)).text_size(12).padding(11).style(select_input).menu_style(select_menu).width(Length::Fill)].spacing(8));
                 }
-                let folders = crate::fuzzy::ranked(self.field("folder_search"), self.move_folders());
+                let folders = self.ranked_move_folders();
                 body=body.push(input("Find a folder…",self.field("folder_search"),|v|Message::Field("folder_search",v)).id("folder-search").on_submit(Message::MoveFirst));
                 if folders.is_empty() {
                     body=body.push(muted(if self.field("folder_search").is_empty() { "No shared destination folders. Refresh mail to load each account’s folders." } else { "No matching folders." }).size(12));
@@ -2005,7 +2009,7 @@ impl App {
                 for (index, folder) in folders.iter().enumerate() {
                     let target = index == 0;
                     let trailing: Element<'_, Message> = if target { muted("Enter ↵").size(11).into() } else { icon("chevron", 14.) };
-                    body = body.push(button(row![icon("folder",18.), text(if folder.eq_ignore_ascii_case("INBOX") { "Inbox".to_owned() } else { folder.clone() }).size(13), space().width(Length::Fill), trailing].spacing(12).align_y(Alignment::Center)).padding(13).width(Length::Fill).style(if target { selected } else { outline }).on_press(Message::Move(folder.clone())));
+                    body = body.push(button(row![icon("folder",18.), text(self.move_folder_label(folder).into_owned()).size(13), space().width(Length::Fill), trailing].spacing(12).align_y(Alignment::Center)).padding(13).width(Length::Fill).style(if target { selected } else { outline }).on_press(Message::Move(folder.clone())));
                 }
             }
             Dialog::Compose => body = body.spacing(14).push(self.compose_form()),

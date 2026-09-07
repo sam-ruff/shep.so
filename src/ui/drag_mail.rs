@@ -15,6 +15,7 @@ pub struct Target {
 pub enum Reveal {
     Inbox,
     Account(String),
+    Folder(String, String),
 }
 #[derive(Debug, Clone)]
 pub enum Payload {
@@ -193,6 +194,7 @@ impl App {
         }
         match reveal {
             Reveal::Inbox => self.inbox_expanded = true,
+            Reveal::Folder(account, path) => self.set_folder_expanded(&account, &path, true),
             Reveal::Account(id) => {
                 if self.preferences.collapsed_accounts.contains(&id) {
                     self.preferences
@@ -204,6 +206,11 @@ impl App {
         }
     }
     pub(super) fn sidebar_drag_reveal(&self, action: &Message) -> Option<Reveal> {
+        if let Some((account, path)) = self.sidebar_group(action)
+            && !self.folder_expanded(&account, &path)
+        {
+            return Some(Reveal::Folder(account, path));
+        }
         match action {
             Message::AccountFolderUnified if !self.inbox_expanded => Some(Reveal::Inbox),
             Message::ToggleAccountFolders(id)

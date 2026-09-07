@@ -80,6 +80,21 @@ struct Prediction {
     groups: Vec<crate::store::SelectionGroup>,
 }
 impl App {
+    pub(super) fn bulk_action_label(&self, action: &BulkAction, count: Option<usize>) -> String {
+        if let BulkAction::Move { account, folder } = action {
+            let name = self.workspace.folder_label(account.as_deref(), folder);
+            if name != *folder && !folder.eq_ignore_ascii_case("INBOX") {
+                return match count {
+                    Some(count) => format!("Move {} to {name}?", message_count(count)),
+                    None => format!("Move to {name}"),
+                };
+            }
+        }
+        match count {
+            Some(count) => action.review_label(count),
+            None => action.label(),
+        }
+    }
     pub(super) fn bulk_owns_mail(&self, id: &str) -> bool {
         self.page.bulk_pending.contains(id)
             || self.page.bulk_placeholders.contains(id)
@@ -779,7 +794,7 @@ impl App {
         add_count(&mut page.unread, unread_delta);
     }
     pub(super) fn bulk_test_state(&self, data: &mut serde_json::Value) {
-        data["bulk"] = serde_json::json!({"selected_job":self.bulk.selected_job,"resolving":self.bulk.resolving,"jobs_offset":self.bulk.jobs_offset,"items_after":self.bulk.items_after,"preparing":self.bulk.freeze_pending.is_some(),"review_count":self.bulk.review.as_ref().map(|s|s.selected),"available":self.bulk.review.as_ref().map(|s|s.available),"action":self.bulk.action.as_ref().map(|a|a.label()),"staging":self.bulk.staging,"jobs":self.bulk.jobs.iter().map(|j|serde_json::json!({"id":j.id,"total":j.total,"paused":j.paused,"remaining":j.remaining,"running":j.running,"undo_requested":j.undo_requested,"completed":j.completed,"restored":j.restored,"failed":j.failed,"uncertain":j.uncertain,"cancelled":j.cancelled})).collect::<Vec<_>>(),"items":self.bulk.items.iter().map(|i|serde_json::json!({"position":i.position,"subject":i.original.as_ref().map(|m|&m.subject),"status":i.status,"undo":i.undo,"error":i.error})).collect::<Vec<_>>()});
+        data["bulk"] = serde_json::json!({"selected_job":self.bulk.selected_job,"resolving":self.bulk.resolving,"jobs_offset":self.bulk.jobs_offset,"items_after":self.bulk.items_after,"preparing":self.bulk.freeze_pending.is_some(),"review_count":self.bulk.review.as_ref().map(|s|s.selected),"available":self.bulk.review.as_ref().map(|s|s.available),"action":self.bulk.action.as_ref().map(|a|self.bulk_action_label(a,None)),"staging":self.bulk.staging,"jobs":self.bulk.jobs.iter().map(|j|serde_json::json!({"id":j.id,"total":j.total,"paused":j.paused,"remaining":j.remaining,"running":j.running,"undo_requested":j.undo_requested,"completed":j.completed,"restored":j.restored,"failed":j.failed,"uncertain":j.uncertain,"cancelled":j.cancelled})).collect::<Vec<_>>(),"items":self.bulk.items.iter().map(|i|serde_json::json!({"position":i.position,"subject":i.original.as_ref().map(|m|&m.subject),"status":i.status,"undo":i.undo,"error":i.error})).collect::<Vec<_>>()});
         data["bulk"]["history_jobs"] = serde_json::json!(
             self.bulk
                 .history_jobs
@@ -905,7 +920,7 @@ impl App {
             .bulk
             .action
             .as_ref()
-            .map(|a| a.label())
+            .map(|a| self.bulk_action_label(a, None))
             .unwrap_or_default();
         let destructive = matches!(&self.bulk.action,Some(BulkAction::Move{folder,..}) if folder.eq_ignore_ascii_case("Trash"));
         let mut body = column![
@@ -913,7 +928,7 @@ impl App {
                 self.bulk
                     .action
                     .as_ref()
-                    .map(|a| a.review_label(review.available))
+                    .map(|a| self.bulk_action_label(a, Some(review.available)))
                     .unwrap_or_default()
             )
             .size(20)
@@ -982,7 +997,7 @@ impl App {
                 body = body.push(
                     text(format!(
                         "{} · {}",
-                        job.action.label(),
+                        self.bulk_action_label(&job.action, None),
                         message_count(job.total)
                     ))
                     .size(16)
@@ -1104,7 +1119,7 @@ impl App {
                         column![
                             text(format!(
                                 "{} · {}",
-                                job.action.label(),
+                                self.bulk_action_label(&job.action, None),
                                 message_count(job.total)
                             ))
                             .size(14),
