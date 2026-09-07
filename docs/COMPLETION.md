@@ -23,31 +23,62 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
-## R74 — Manual refresh verification in progress (2026-09-07)
+## R74 — Manual refresh installed and pushed (2026-09-07)
 
-The working tree adds F5 as Refresh's secondary default with conflict-safe v2
-migration. Explicit clears, disabled actions and custom primary/secondary keys
-survive saving/restart. Manual clicks and shortcuts animate the existing icon;
-automatic checks remain still. Queued manual work keeps its animation until the
-scheduler finishes all requested work. Hidden mail headers stop the frame timer,
-and frame updates bypass mail/body preparation.
+Source **80f5867bcde7cb003f0d1e1b9b255974a68baf93** is installed for the Linux
+user and pushed to `main`, alongside **2b4c48023863ee254e9422d9a347e91e6f57f641**
+for native test synchronization. R74 is complete and removed from TODO. The full
+product goal and remaining backlog stay active.
+
+Refresh defaults to Mod+R plus F5. Its v2 migration preserves custom keys,
+explicit clears, disabled actions and conflicts, including after restart. Manual
+mouse/keyboard refresh animates the existing top-right icon immediately; automatic
+checks stay still. Coalesced requests keep their phase until the scheduler finishes
+all manual work, including failure. Hidden mail headers stop the frame timer;
+frame updates bypass mail scheduling/body preparation and handler timing samples.
 
 Native pixel checks exposed the software renderer using rotation matrix diagonals
-as both raster dimensions and screen positions. The fix caches the unrotated SVG
-at physical scale and applies the full transform with viewport/damage clipping.
-A direct regression fails before the fix; all 12 rendering regressions now pass,
-including partial redraws without trails and fractional scaling. A first draft
-of the fractional-edge assertion incorrectly rejected a partly covered boundary
+as both raster dimensions and screen positions. The fix caches an unrotated SVG
+at physical scale, applies its complete transform, and clips against its viewport,
+layer and damage region. A direct regression fails before the fix. All 12 drawing
+regressions pass, including fractional scaling and partial redraws without trails.
+The first fractional-edge assertion incorrectly rejected a partly covered boundary
 pixel; it now checks pixel/viewport intersection, retaining the pre-fix failure.
 
-The migration and three animation controller tests pass. Five targeted native
-flows pass: manual failure/retry and navigation, F5 remapping/clearing/restart,
-background plus queued manual work, light/compact dark icons, and 120% scaling.
-Reviewed captures are under ignored `artifacts/e2e/fd965fb20685`, `e6b31317bc06`
-and `b31e96ef7e45`. Logs use the `refresh-animation-*` and `refresh-svg-*` prefixes
-under `artifacts/logs/`. The full 171-flow functional suite and final release/
-installation/push checks are still pending. R74 remains in TODO until shipping;
-this checkpoint is not a claim of full product completion or measured latency.
+**Verification:** formatting, Clippy, both commits' hooks, **492 Rust tests plus
+two drawing-adapter tests**, **46 Python tests**, Windows GNU cross-compilation
+and pinned strict docs build pass. The release passes checksum, extraction and
+bundled installer verification; the installed binary matches the release hash.
+No performance measurements or live-provider/Windows/macOS delivery claims were
+made. Quality/release CI remains disabled; documentation publishing stays enabled.
+
+The full native run passed **170/171** scenarios. Its sole failure was the existing
+recovery scenario's earlier Escape reaching the app after its subsequent Review
+click and dismissing that dialog. The saved trace established the ordering. The
+scenario now waits for native search focus to clear before its independent click,
+and for Refresh to start and finish before restart. That corrected scenario and
+three refresh scenarios pass in the final rerun. All **171** scenarios have passing
+coverage across this full run and corrected rerun on the same binary; this is not
+a claim of a single clean full run. The rapid-input ordering bug remains R63 work.
+
+Native coverage includes F5/default primary/remapping/clearing/restart, actual
+rotating versus background-still icon pixels, queued manual work, failure/retry,
+mail navigation and tab switching while pending, light/compact dark and 120% scale.
+Reviewed WebPs are under ignored `artifacts/e2e/fd965fb20685`, `e6b31317bc06`,
+`b31e96ef7e45` and `c5f3e1d58496`. Logs are under ignored `artifacts/logs/`:
+
+- `refresh-svg-before-fix.log`, `refresh-svg-after-fix.log`, `refresh-animation-native-fixed.log`.
+- `refresh-animation-native-full.log`, `refresh-animation-final-native-rerun.log`.
+- `refresh-animation-commit.log`, `refresh-animation-test-commit.log`, `refresh-animation-python.log`.
+- `refresh-animation-windows-check.log`, `refresh-animation-docs.log`, `refresh-animation-release.log`.
+- `refresh-animation-install.log`, `refresh-animation-push.log`.
+
+Native test binary SHA-256:
+`442566e90c0f4abb131b279fc2769302323f0671513618fed68aa0d5a52e2099`.
+Installed production binary SHA-256:
+`6f907c2897a71a6472694c3523eae34672148284c2172b14d1d6ccb524708f6f`.
+Already-open windows need reopening to use the update. No root log/database
+artifacts remain; unrelated untracked work is preserved.
 
 ## R81/R76 — Reading styles installed and pushed (2026-09-07)
 
@@ -101,8 +132,8 @@ Installed production binary SHA-256:
 `4f61267e133680817782cbc011908f378587cfd11ee2dd28b9bd3fc63cd69e39`.
 Already-open windows need reopening to use this executable. Performance
 measurements remain deferred; quality/release CI stays disabled. Documentation
-publishing remains enabled. The separate R74 F5 migration is only working-tree
-progress and is not included in this reader release.
+publishing remains enabled. The reader checkpoint did not include the subsequent R74 refresh update,
+whose shipping evidence is recorded above.
 
 ## R84 delivered; R73 recovery checkpoint shipped (2026-09-07)
 
