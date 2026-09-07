@@ -1,6 +1,139 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 const profile = "C".repeat(43);
+
+test("a committed local archive keeps its count and Undo when only display refresh fails", async ({
+  page,
+}) => {
+  await seed(page);
+  await page.evaluate(async () => {
+    const path = "/src/storage.ts",
+      { BrowserStore } = await import(path),
+      snapshot = BrowserStore.prototype.snapshot,
+      commit = BrowserStore.prototype.commit;
+    let failed = false;
+    BrowserStore.prototype.commit = async function (changes: any[]) {
+      await commit.call(this, changes);
+      if (
+        !failed &&
+        changes.some(
+          (c) =>
+            c.store === "mail" &&
+            c.key === "m000" &&
+            c.value?.core.folder === "Archive",
+        )
+      ) {
+        failed = true;
+        BrowserStore.prototype.snapshot = async function () {
+          throw Error("Synthetic post-Archive display failure");
+        };
+      }
+    };
+    (window as any).restoreSnapshot = () => {
+      BrowserStore.prototype.snapshot = snapshot;
+    };
+  });
+  // Deliberately open the message first. Read-on-leave completes before MOVE;
+  // the failure injection above applies only after the Archive cache commit.
+  await page.getByRole("button", { name: subject(0), exact: true }).click();
+  await page
+    .getByRole("region", { name: "Message reader" })
+    .getByRole("button", { name: "Archive", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText(
+    "message list could not refresh",
+  );
+  const toast = page.getByRole("status", { name: "Move notification" });
+  await expect(toast).toContainText("Archived 1 message");
+  await expect(
+    toast.getByRole("button", { name: "Undo", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: subject(0), exact: true }),
+  ).toHaveCount(0);
+  await page.screenshot({
+    path: "../artifacts/web/committed-archive-cache-warning.png",
+  });
+  await page.evaluate(() => (window as any).restoreSnapshot());
+  await toast.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(toast).toContainText("Restored 1 message");
+  await expect(
+    page.getByRole("button", { name: subject(0), exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(async (profile) => {
+        const path = "/src/storage.ts",
+          { BrowserStore } = await import(path),
+          store = await BrowserStore.open(profile);
+        const mail = await store.get("mail", "m000");
+        store.close();
+        return mail.core.folder;
+      }, profile),
+    )
+    .toBe("INBOX");
+});
+
+test("an acknowledged row flag survives list refresh failure and Retry cannot repeat it", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 640 });
+  await seed(page);
+  await page.evaluate(async () => {
+    const path = "/src/storage.ts",
+      { BrowserStore } = await import(path);
+    const snapshot = BrowserStore.prototype.snapshot,
+      commit = BrowserStore.prototype.commit;
+    (window as any).mailFlagWrites = 0;
+    BrowserStore.prototype.commit = async function (changes: any[]) {
+      await commit.call(this, changes);
+      if (
+        changes.some(
+          (c) =>
+            c.store === "mail" && c.key === "m000" && c.value?.core.starred,
+        )
+      ) {
+        (window as any).mailFlagWrites++;
+        BrowserStore.prototype.snapshot = async function () {
+          throw Error("Synthetic list read failure after a committed flag");
+        };
+      }
+    };
+    (window as any).restoreSnapshot = () => {
+      BrowserStore.prototype.snapshot = snapshot;
+    };
+  });
+  await page
+    .getByRole("button", { name: `Flag ${subject(0)}`, exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText(
+    "message list could not refresh",
+  );
+  await expect(
+    page.getByRole("button", { name: `Unflag ${subject(0)}`, exact: true }),
+  ).toBeVisible();
+  const saved = await page.evaluate(async (profile) => {
+    const path = "/src/storage.ts",
+      { BrowserStore } = await import(path),
+      store = await BrowserStore.open(profile);
+    const mail = await store.get("mail", "m000");
+    store.close();
+    return mail.core.starred;
+  }, profile);
+  expect(saved).toBe(true);
+  await page.screenshot({
+    path: "../artifacts/web/committed-flag-cache-warning.png",
+  });
+  await page.evaluate(() => (window as any).restoreSnapshot());
+  await page
+    .getByRole("alert")
+    .getByRole("button", { name: "Retry", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: `Unflag ${subject(0)}`, exact: true }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => (window as any).mailFlagWrites)).toBe(1);
+});
 const subject = (i: number) =>
   `Selection letter ${i.toString().padStart(3, "0")}`;
 async function seed(page: Page) {

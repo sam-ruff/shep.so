@@ -1,4 +1,5 @@
 import { PrintLoader } from "./printing_loader";
+import type { BulkIdentity, BulkReceipt } from "./bulk_journal";
 import { SelectionWorkerClient } from "./selection_worker_client";
 import { senderName } from "./mail_query";
 import type { SelectionCommand, SelectionRepository } from "./selection_types";
@@ -124,6 +125,35 @@ export interface RecordMail {
     current: CoreMail | null;
     fingerprint: { bytes: number; sha256: number[]; message_id: null };
   };
+}
+export interface MutationReceipt {
+  receipt: BulkReceipt;
+  cacheApplied: boolean;
+}
+function physical(mail: RecordMail): BulkIdentity {
+  return {
+    id: localId(mail),
+    account: mail.core.account_id,
+    folder: mail.core.folder,
+    remoteId: mail.moved ? "" : mail.core.remote_id,
+    unread: mail.core.unread,
+    starred: mail.core.starred,
+  };
+}
+function guardSource(mail: RecordMail, expected?: BulkIdentity) {
+  const current = physical(mail);
+  if (
+    expected &&
+    ["id", "account", "folder", "remoteId"].some(
+      (key) =>
+        current[key as keyof BulkIdentity] !==
+        expected[key as keyof BulkIdentity],
+    )
+  )
+    throw Error(
+      "This message changed since the group review. Refresh the review before changing it.",
+    );
+  return current;
 }
 interface PreparedWire {
   envelope: { from: string; to: string[] };
@@ -797,136 +827,199 @@ export class GatewayRepository implements Repository, SelectionRepository {
     latest.localId = id;
     latest.moved = false;
     delete latest.receipt;
-    await this.saveMoved(id, latest);
+    await this.exclusive(`cache.${account.id}`, () =>
+      this.saveMoved(id, latest),
+    );
   }
-  async mutate(id: string, fields: Fields) {
+  async mutate(id: string, fields: Fields): Promise<void> {
+    const result = await this.mutateWithReceipt(id, fields);
+    try {
+      await this.reloadMail();
+    } catch {
+      throw new MutationFailure(
+        "The change was saved, but the message list could not refresh. Refresh the folder to display it.",
+        true,
+        result.receipt,
+        result.cacheApplied,
+      );
+    }
+  }
+  /** The durable runner receives server acknowledgment before fallible cache
+   * work. Ordinary controls also retain committed status after display failure.
+   * No list reload is part of the provider commit contract. */
+  async mutateWithReceipt(
+    id: string,
+    fields: Fields,
+    acknowledged?: (result: MutationReceipt) => Promise<void>,
+    expected?: BulkIdentity,
+  ): Promise<MutationReceipt> {
     const m = await resolveMail(this.store, id);
     if (!m)
       throw new Error("This message is no longer cached. Refresh its folder.");
     const account = this.accounts.find((a) => a.id === m.core.account_id);
     if (!account)
       throw new Error("This account was removed. Reopen Preferences.");
-    const local = await this.exclusive(`cache.${account.id}`, async () => {
-      const latest = await resolveMail(this.store, id);
-      if (!latest)
-        throw new Error(
-          "This message is no longer cached. Refresh its folder.",
-        );
-      if (!latest.local && account.protocol !== "Pop3") return false;
-      if (latest.pendingMove || latest.receipt || latest.moved)
-        throw new Error(
-          "This message needs move recovery before another action.",
-        );
-      const folder = fields.folder === "Inbox" ? "INBOX" : fields.folder;
-      Object.assign(latest.core, fields, folder ? { folder } : {});
-      latest.localEdited = true;
-      await this.store.commit([
-        { store: "mail", key: localId(latest), value: latest },
-      ]);
-      return true;
-    });
-    if (local) {
-      await this.reloadMail();
-      return;
-    }
-    await this.exclusive(`account.${account.id}`, async () => {
-      const latest = await resolveMail(this.store, id);
-      if (!latest)
-        throw new Error(
-          "This message is no longer cached. Refresh its folder.",
-        );
-      id = localId(latest);
-      if (latest.pendingMove)
-        throw new Error(
-          "A previous move has no saved acknowledgment. Refresh both folders and choose the current message; it was not moved again.",
-        );
-      if (
-        account.protocol === "Imap" &&
-        fields.folder &&
-        (fields.unread !== undefined || fields.starred !== undefined)
-      )
-        throw new Error("Move and flag changes must be separate actions.");
-      if (
-        account.protocol === "Imap" &&
-        !latest.local &&
-        (latest.receipt || latest.moved)
-      )
-        await this.resolveMoved(id, latest, account);
-      const folder = fields.folder === "Inbox" ? "INBOX" : fields.folder;
-      if (
-        folder === latest.core.folder &&
-        fields.unread === undefined &&
-        fields.starred === undefined
-      )
-        return;
-      if (account.protocol === "Imap" && !latest.local) {
-        const connection = this.connection(account);
-        if (folder) {
-          const raw = await this.store.get<string>("raw", id);
-          if (!raw)
-            throw new Error(
-              "The original message is missing from this cache. Refresh before moving it.",
-            );
-          const proof = await fingerprint(raw);
-          // Commit intent before transmission. A lost HTTP/cache acknowledgment
-          // must survive reopening and never become an automatic repeated MOVE.
-          latest.pendingMove = folder;
-          await this.store.commit([{ store: "mail", key: id, value: latest }]);
-          const result = await this.mutation("/api/mail/move", {
-            connection,
-            mail: latest.core,
-            folder,
-          });
-          const remote =
-            typeof result.remote_id === "string" &&
-            /^[1-9]\d*\.[1-9]\d*$/.test(result.remote_id)
-              ? result.remote_id
-              : null;
-          delete latest.pendingMove;
-          latest.core = {
-            ...latest.core,
-            folder,
-            remote_id: remote ?? latest.core.remote_id,
-          };
-          if (remote) latest.core.id = serverId(latest.core);
-          latest.localId = id;
-          latest.moved = !remote;
-          latest.receipt = {
-            account: account.id,
-            folder,
-            current: remote ? { ...latest.core } : null,
-            fingerprint: proof,
-          };
-        } else
-          await this.mutation("/api/mail/flags", {
-            connection,
-            mail: latest.core,
-            ...fields,
-          });
-      }
-      Object.assign(latest.core, fields, folder ? { folder } : {});
-      try {
-        await this.saveMoved(id, latest);
-      } catch (error) {
-        if (account.protocol === "Imap")
-          throw new MutationFailure(
-            "The server acknowledged this change, but browser storage failed. Refresh before another action.",
-            true,
+    let receipt: BulkReceipt | undefined,
+      cacheApplied = false;
+    try {
+      const local = await this.exclusive(`cache.${account.id}`, async () => {
+        const latest = await resolveMail(this.store, id);
+        if (!latest)
+          throw new Error(
+            "This message is no longer cached. Refresh its folder.",
           );
-        throw error;
-      }
-      if (latest.moved) {
-        try {
+        if (!latest.local && account.protocol !== "Pop3") return false;
+        if (latest.pendingMove || latest.receipt || latest.moved)
+          throw new Error(
+            "This message needs move recovery before another action.",
+          );
+        const before = guardSource(latest, expected);
+        const folder = fields.folder === "Inbox" ? "INBOX" : fields.folder;
+        Object.assign(latest.core, fields, folder ? { folder } : {});
+        latest.localEdited = true;
+        await this.store.commit([
+          { store: "mail", key: localId(latest), value: latest },
+        ]);
+        receipt = { before, after: physical(latest) };
+        cacheApplied = true;
+        // Local cache commit is the acknowledgment for POP3/local Sent actions.
+        await acknowledged?.({ receipt, cacheApplied });
+        return true;
+      });
+      if (local) return { receipt: receipt!, cacheApplied };
+      await this.exclusive(`account.${account.id}`, async () => {
+        const latest = await resolveMail(this.store, id);
+        if (!latest)
+          throw new Error(
+            "This message is no longer cached. Refresh its folder.",
+          );
+        id = localId(latest);
+        if (latest.pendingMove)
+          throw new Error(
+            "A previous move has no saved acknowledgment. Refresh both folders and choose the current message; it was not moved again.",
+          );
+        if (
+          account.protocol === "Imap" &&
+          fields.folder &&
+          (fields.unread !== undefined || fields.starred !== undefined)
+        )
+          throw new Error("Move and flag changes must be separate actions.");
+        if (
+          account.protocol === "Imap" &&
+          !latest.local &&
+          (latest.receipt || latest.moved)
+        )
           await this.resolveMoved(id, latest, account);
-        } catch {
-          throw new MutationFailure(
-            "The message moved, but its destination identity needs recovery. Refresh the destination before another action.",
-            true,
-          );
+        const before = guardSource(latest, expected);
+        const folder = fields.folder === "Inbox" ? "INBOX" : fields.folder;
+        if (
+          folder === latest.core.folder &&
+          fields.unread === undefined &&
+          fields.starred === undefined
+        ) {
+          receipt = { before, after: physical(latest) };
+          cacheApplied = true;
+          await acknowledged?.({ receipt, cacheApplied });
+          return;
         }
-      }
-    });
-    await this.reloadMail();
+        let recovery: BulkReceipt["recovery"];
+        if (account.protocol === "Imap" && !latest.local) {
+          const connection = this.connection(account);
+          if (folder) {
+            const raw = await this.store.get<string>("raw", id);
+            if (!raw)
+              throw new Error(
+                "The original message is missing from this cache. Refresh before moving it.",
+              );
+            const proof = await fingerprint(raw);
+            latest.pendingMove = folder;
+            await this.store.commit([
+              { store: "mail", key: id, value: latest },
+            ]);
+            const result = await this.mutation("/api/mail/move", {
+              connection,
+              mail: latest.core,
+              folder,
+            });
+            const remote =
+              typeof result.remote_id === "string" &&
+              /^[1-9]\d*\.[1-9]\d*$/.test(result.remote_id)
+                ? result.remote_id
+                : null;
+            delete latest.pendingMove;
+            latest.core = {
+              ...latest.core,
+              folder,
+              remote_id: remote ?? latest.core.remote_id,
+            };
+            if (remote) latest.core.id = serverId(latest.core);
+            latest.localId = id;
+            latest.moved = !remote;
+            latest.receipt = {
+              account: account.id,
+              folder,
+              current: remote ? { ...latest.core } : null,
+              fingerprint: proof,
+            };
+            recovery = { bytes: proof.bytes, sha256: proof.sha256 };
+          } else
+            await this.mutation("/api/mail/flags", {
+              connection,
+              mail: latest.core,
+              ...fields,
+            });
+          Object.assign(latest.core, fields, folder ? { folder } : {});
+          receipt = {
+            before,
+            after: physical(latest),
+            ...(recovery ? { recovery } : {}),
+          };
+          await acknowledged?.({
+            receipt: structuredClone(receipt),
+            cacheApplied: false,
+          });
+        } else {
+          Object.assign(latest.core, fields, folder ? { folder } : {});
+          latest.localEdited = true;
+        }
+        await this.exclusive(`cache.${account.id}`, () =>
+          this.saveMoved(id, latest),
+        );
+        cacheApplied = true;
+        // An account may have adopted a local Sent identity while waiting for
+        // its lock. In that case the actual cache write acknowledges the action.
+        if (!receipt) {
+          receipt = { before, after: physical(latest) };
+          await acknowledged?.({
+            receipt: structuredClone(receipt),
+            cacheApplied,
+          });
+        }
+        if (latest.moved) {
+          try {
+            await this.resolveMoved(id, latest, account);
+          } catch {
+            throw new MutationFailure(
+              "The message moved, but its destination identity needs recovery. Refresh the destination before another action.",
+              true,
+              receipt,
+              cacheApplied,
+            );
+          }
+          receipt = { ...receipt, after: physical(latest) };
+        }
+      });
+      return { receipt: receipt!, cacheApplied };
+    } catch (error) {
+      if (receipt && !(error instanceof MutationFailure && error.committed))
+        throw new MutationFailure(
+          "The change was acknowledged, but its local progress could not be saved. Refresh before another action.",
+          true,
+          receipt,
+          cacheApplied,
+        );
+      throw error;
+    }
   }
   private async mutation(path: string, body: unknown) {
     try {

@@ -24,7 +24,7 @@
       "id": "counted-move-feedback",
       "contract": "Six-second counted Archive/Delete/Move/Restored notifications, destination/account grouping, Dismiss and snapshot-scoped grouped Undo. Cancel unsent work; wait for acknowledged identities before reversal; retain partial failures and never repeat acknowledged Undo.",
       "mobile": "move_feedback_test.dart / move_feedback_scenario.dart shared by ui_test.dart and native_mail_test.dart; real native reader/Inbox controls and projected page restoration; Apple and durable move-history review OPEN",
-      "browser": "move-feedback.test.ts / model.test.ts / move-feedback.spec.ts / provider-flows.mjs real Rust HTTPS; durable move-history review OPEN"
+      "browser": "move-feedback.test.ts / model.test.ts / move-feedback.spec.ts / provider-flows.mjs real Rust HTTPS; durable move-history review OPEN Committed Archive/Restored counts survive post-commit display warnings; Undo remains usable when the cache and receipt are confirmed, while incomplete cache/identity recovery remains guarded."
     },
     {
       "id": "rapid-intent",
@@ -168,7 +168,7 @@
       "id": "desktop-bulk-selection",
       "contract": "Explicit focused-list selection across pages, frozen reviewed bulk jobs, per-message results and durable grouped Undo",
       "mobile": "OPEN: K9 selection gestures, selection review, durable bulk controls and native recovery tests",
-      "browser": "Focused checkbox/Ctrl/Shift/Select all controls have Chromium evidence. bulk-journal.spec.ts exercises production frozen export, 100,000-item bounded staging with independent draft saves, complete/partial reopen, physical forward/inverse receipts, queued Undo, definite retry, stale-result rejection, exclusive tabs and abrupt owner loss, bounded history and profile isolation. OPEN: provider runner/current-state and individual-intent coordination, account removal/cleanup, optimistic queries, native equivalent and actual review/History/Undo controls; storage tests do not establish executed group-mail parity."
+      "browser": "Focused checkbox/Ctrl/Shift/Select all controls have Chromium evidence. bulk-journal.spec.ts exercises production frozen export, 100,000-item bounded staging with independent draft saves, complete/partial reopen, physical forward/inverse receipts, queued Undo, definite retry, stale-result rejection, exclusive tabs and abrupt owner loss, bounded history and profile isolation. OPEN: provider runner/current-state and individual-intent coordination, account removal/cleanup, optimistic queries, native equivalent and actual review/History/Undo controls; storage tests do not establish executed group-mail parity. Receipt integration tests also preserve MOVE proofs/physical source guards, acknowledgment before cache failure, pending-cache repair across reopen, read-only inspection, explicit migration recovery and queue ordering. Full executor and lifecycle/intent integration remain OPEN."
     },
     {
       "id": "desktop-reading-defaults",

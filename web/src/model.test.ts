@@ -149,6 +149,52 @@ describe("optimistic provider contract", () => {
 });
 
 describe("server acknowledgments and recovery", () => {
+  it("keeps counted success and usable Undo when only the following display read fails", async () => {
+    class DisplayFailure extends Controlled {
+      calls = 0;
+      override async mutate(id: string, fields: Fields) {
+        await super.mutate(id, fields);
+        if (++this.calls === 1) {
+          const before = {
+            id,
+            account: "work",
+            folder: "INBOX",
+            remoteId: "1.1",
+            unread: true,
+            starred: false,
+          };
+          throw new MutationFailure(
+            "Saved; list refresh failed.",
+            true,
+            {
+              before,
+              after: { ...before, folder: "Archive", remoteId: "2.2" },
+            },
+            true,
+          );
+        }
+      }
+    }
+    const repo = new DisplayFailure(),
+      w = new Workspace(repo, new Settings());
+    try {
+      const moved = w.action("1", "archive");
+      await tick();
+      repo.jobs[0].resolve();
+      await moved;
+      expect(w.moves.label).toBe("Archived 1 message");
+      expect(w.undo).not.toBeNull();
+      w.undo!();
+      await tick();
+      repo.jobs[1].resolve();
+      await tick();
+      expect(repo.cached[0].folder).toBe("Inbox");
+      expect(w.moves.label).toBe("Restored 1 message");
+      expect(repo.calls).toBe(2);
+    } finally {
+      w.dispose();
+    }
+  });
   it("keeps a committed server action visible when the following cache save fails", async () => {
     const repo = new Controlled();
     repo.mutate = async () => {
@@ -161,7 +207,9 @@ describe("server acknowledgments and recovery", () => {
     await w.action("1", "archive");
     expect(w.mail.find((m) => m.id === "1")?.folder).toBe("Archive");
     expect(w.error).toContain("Server committed");
+    expect(w.moves.label).toBe("Archived 1 message");
     expect(w.undo).toBeNull();
+    w.dispose();
   });
   it("offers a refresh rather than repeating an unconfirmed mutation", async () => {
     const repo = new Controlled();
@@ -442,6 +490,7 @@ it("an acknowledged Undo metadata warning permits refresh but never another muta
     repo.jobs[1].resolve();
     await tick();
     expect([...w.undoFailures][0].restoreCommitted).toBe(true);
+    expect(w.moves.label).toBe("Restored 1 message");
     w.retryUndos();
     await tick();
     expect(repo.calls).toBe(2);
