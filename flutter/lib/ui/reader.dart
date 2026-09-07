@@ -337,6 +337,69 @@ class _ReaderState extends State<Reader> {
     child: buildReader(context),
   );
 
+  Widget actionIcon(IconData icon, bool busy) => SizedBox(
+    width: 18,
+    height: 18,
+    child: busy
+        ? const ExcludeSemantics(
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Icon(icon, size: 18),
+  );
+
+  Widget readerActions(
+    BuildContext context,
+    List<Widget> actions,
+  ) => DecoratedBox(
+    decoration: BoxDecoration(
+      border: Border(
+        top: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+          final columns =
+              ((constraints.maxWidth + 8) /
+                      (120 + 56 * (scale - 1).clamp(0, double.infinity)))
+                  .floor()
+                  .clamp(1, actions.length);
+          final width = (constraints.maxWidth - 8 * (columns - 1)) / columns;
+          final style = ButtonStyle(
+            visualDensity: VisualDensity.standard,
+            minimumSize: const WidgetStatePropertyAll(Size(0, 44)),
+            padding: const WidgetStatePropertyAll(
+              EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            ),
+            iconSize: const WidgetStatePropertyAll(18),
+          );
+          return FilledButtonTheme(
+            data: FilledButtonThemeData(
+              style: FilledButtonTheme.of(context).style?.merge(style) ?? style,
+            ),
+            child: OutlinedButtonTheme(
+              data: OutlinedButtonThemeData(
+                style:
+                    OutlinedButtonTheme.of(context).style?.merge(style) ??
+                    style,
+              ),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final action in actions)
+                    SizedBox(width: width, child: action),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    ),
+  );
+
   Widget buildReader(BuildContext context) => ListenableBuilder(
     listenable: workspace,
     builder: (context, _) {
@@ -379,7 +442,89 @@ class _ReaderState extends State<Reader> {
         child: Scaffold(
           bottomNavigationBar: SafeArea(
             top: false,
-            child: MailActionBanner(workspace: workspace),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                MailActionBanner(workspace: workspace),
+                readerActions(context, [
+                  for (final all in [false, true])
+                    FilledButton.tonalIcon(
+                      onPressed: !mail.bodyLoaded
+                          ? null
+                          : () async {
+                              final draft = await workspace.reply(id, all);
+                              if (draft != null && context.mounted) {
+                                unawaited(workspace.finishReading());
+                                await Navigator.push(
+                                  context,
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => Composer(
+                                      workspace: workspace,
+                                      draft: draft,
+                                    ),
+                                  ),
+                                );
+                              }
+                            },
+                      icon: Icon(all ? Icons.reply_all : Icons.reply),
+                      label: Text(all ? 'Reply all' : 'Reply'),
+                    ),
+                  OutlinedButton.icon(
+                    onPressed: workspace.isForwarding(id)
+                        ? null
+                        : () async {
+                            final source = id;
+                            final draft = await workspace.forward(source);
+                            if (draft != null &&
+                                context.mounted &&
+                                widget.id == source &&
+                                (ModalRoute.of(context)?.isCurrent ?? false)) {
+                              unawaited(workspace.finishReading());
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute<void>(
+                                  builder: (_) => Composer(
+                                    workspace: workspace,
+                                    draft: draft,
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                    icon: actionIcon(Icons.forward, workspace.isForwarding(id)),
+                    label: Text(
+                      'Forward',
+                      semanticsLabel: workspace.isForwarding(id)
+                          ? 'Preparing forward…'
+                          : 'Forward',
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: workspace.isPrinting(id)
+                        ? null
+                        : () => workspace.printMessage(
+                            id,
+                            plain: formatted?.plain ?? false,
+                          ),
+                    icon: actionIcon(
+                      Icons.print_outlined,
+                      workspace.isPrinting(id),
+                    ),
+                    label: Text(
+                      'Print',
+                      semanticsLabel: workspace.isPrinting(id)
+                          ? 'Preparing print…'
+                          : 'Print',
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => act(id, MailAction.move),
+                    icon: const Icon(Icons.drive_file_move_outline),
+                    label: const Text('Move'),
+                  ),
+                ]),
+              ],
+            ),
           ),
           appBar: AppBar(
             titleSpacing: 0,
@@ -721,88 +866,6 @@ class _ReaderState extends State<Reader> {
                               ),
                             ),
                           ),
-                        const SizedBox(height: 28),
-                        Wrap(
-                          spacing: 12,
-                          children: [
-                            for (final all in [false, true])
-                              FilledButton.tonalIcon(
-                                onPressed: !mail.bodyLoaded
-                                    ? null
-                                    : () async {
-                                        final draft = await workspace.reply(
-                                          id,
-                                          all,
-                                        );
-                                        if (draft != null && context.mounted) {
-                                          unawaited(workspace.finishReading());
-                                          await Navigator.push(
-                                            context,
-                                            MaterialPageRoute<void>(
-                                              builder: (_) => Composer(
-                                                workspace: workspace,
-                                                draft: draft,
-                                              ),
-                                            ),
-                                          );
-                                        }
-                                      },
-                                icon: Icon(all ? Icons.reply_all : Icons.reply),
-                                label: Text(all ? 'Reply all' : 'Reply'),
-                              ),
-                            OutlinedButton.icon(
-                              onPressed: workspace.isForwarding(id)
-                                  ? null
-                                  : () async {
-                                      final source = id;
-                                      final draft = await workspace.forward(
-                                        source,
-                                      );
-                                      if (draft != null &&
-                                          context.mounted &&
-                                          widget.id == source &&
-                                          (ModalRoute.of(context)?.isCurrent ??
-                                              false)) {
-                                        unawaited(workspace.finishReading());
-                                        await Navigator.push(
-                                          context,
-                                          MaterialPageRoute<void>(
-                                            builder: (_) => Composer(
-                                              workspace: workspace,
-                                              draft: draft,
-                                            ),
-                                          ),
-                                        );
-                                      }
-                                    },
-                              icon: const Icon(Icons.forward),
-                              label: Text(
-                                workspace.isForwarding(id)
-                                    ? 'Preparing forward…'
-                                    : 'Forward',
-                              ),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: workspace.isPrinting(id)
-                                  ? null
-                                  : () => workspace.printMessage(
-                                      id,
-                                      plain: formatted?.plain ?? false,
-                                    ),
-                              icon: const Icon(Icons.print_outlined),
-                              label: Text(
-                                workspace.isPrinting(id)
-                                    ? 'Preparing print…'
-                                    : 'Print',
-                              ),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: () => act(id, MailAction.move),
-                              icon: const Icon(Icons.drive_file_move_outline),
-                              label: const Text('Move'),
-                            ),
-                          ],
-                        ),
                       ],
                     ),
                   ),

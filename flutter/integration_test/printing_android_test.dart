@@ -48,8 +48,14 @@ void main() {
         await request.delete();
       });
       Future<void> print(String action) async {
-        await tester.ensureVisible(find.text('Print'));
-        await tester.pumpAndSettle();
+        expect(find.text('Print').hitTestable(), findsOneWidget);
+        final printBounds = tester.getRect(find.text('Print'));
+        expect(
+          printBounds.bottom,
+          lessThan(
+            tester.view.physicalSize.height / tester.view.devicePixelRatio,
+          ),
+        );
         await request.writeAsString(action, flush: true);
         await tester.tap(find.text('Print'));
         await tester.pump();

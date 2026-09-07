@@ -66,7 +66,24 @@ async function query(value, status) {
   const close = await button("Close Find").boundingBox();
   assert.ok(close);
   await page.mouse.click(close.x / 2, close.y + close.height / 2);
+  // Flutter activates its editing input after the canvas receives the pointer.
+  // Observe that focus before asking the browser to select and replace text.
+  await page.waitForFunction(() => {
+    const input = document.activeElement;
+    return (
+      input instanceof HTMLInputElement &&
+      input.getAttribute("aria-label")?.startsWith("Find in message")
+    );
+  });
   await page.keyboard.press("ControlOrMeta+A");
+  await page.waitForFunction(() => {
+    const input = document.activeElement;
+    return (
+      input instanceof HTMLInputElement &&
+      input.selectionStart === 0 &&
+      input.selectionEnd === input.value.length
+    );
+  });
   await page.keyboard.type(value);
   await waitText(status);
 }
@@ -170,6 +187,42 @@ try {
   await click("Find in message");
   await query("Café", "1 of 3");
   await page.screenshot({ path: path.join(out, "formatted-dark.png") });
+  await click("Close Find");
+  const actionBounds = {};
+  for (const name of ["Reply", "Reply all", "Forward", "Print", "Move"]) {
+    const box = await button(name).boundingBox();
+    assert.ok(
+      box && box.y > 70 && box.y + box.height <= 892 && box.height >= 44,
+      `${name}: ${JSON.stringify(box)}`,
+    );
+    actionBounds[name] = box;
+  }
+  await page.mouse.move(405, 500);
+  await page.mouse.wheel(0, 500);
+  await page.waitForTimeout(100);
+  for (const [name, box] of Object.entries(actionBounds)) {
+    assert.deepEqual(await button(name).boundingBox(), box);
+  }
+  await page.screenshot({ path: path.join(out, "reader-footer-dark.png") });
+  await click("Move");
+  await waitText("Move message");
+  await page.keyboard.press("Escape");
+  await click("Reply");
+  await waitText("New message");
+  // Inactive Flutter web editing proxies do not expose their controller value.
+  // Focus the actual fields before observing their prefilled reply values.
+  for (const [name, value] of [
+    ["Subject", "Re: A little room for good ideas"],
+    ["To", "alex@example.test"],
+  ]) {
+    await page.getByRole("textbox", { name, exact: true }).click();
+    await page.waitForFunction(
+      (expected) =>
+        document.activeElement instanceof HTMLInputElement &&
+        document.activeElement.value === expected,
+      value,
+    );
+  }
   assert.deepEqual(errors, []);
   assert.deepEqual(requests, []);
   await writeFile(
@@ -187,6 +240,7 @@ try {
           "link-copy",
           "opaque-frame-no-network",
           "dark-reader",
+          "fixed-footer-scroll-move-reply",
         ],
         errors,
       },

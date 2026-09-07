@@ -229,17 +229,23 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           padding: const EdgeInsets.fromLTRB(16, 6, 10, 8),
           child: Row(
             children: [
-              for (final filter in ['All', 'Unread', 'Flagged'])
-                Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: FilterChip(
-                    label: Text(filter, style: const TextStyle(fontSize: 12)),
-                    selected: w.filter == filter,
-                    showCheckmark: false,
-                    onSelected: (_) => w.setFilter(filter),
-                  ),
+              Expanded(
+                child: Wrap(
+                  spacing: 6,
+                  children: [
+                    for (final filter in ['All', 'Unread', 'Flagged'])
+                      FilterChip(
+                        label: Text(
+                          filter,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        selected: w.filter == filter,
+                        showCheckmark: false,
+                        onSelected: (_) => w.setFilter(filter),
+                      ),
+                  ],
                 ),
-              const Spacer(),
+              ),
               IconButton(
                 tooltip: w.newestFirst ? 'Oldest first' : 'Newest first',
                 onPressed: w.sort,
