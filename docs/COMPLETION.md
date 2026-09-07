@@ -25,6 +25,12 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 ## Folder mutation backend checkpoint — R30 remains open
 
+Source checkpoint [5eabb52](https://github.com/sam-ruff/shep.so/commit/5eabb521f1f11e4ec180bcdcb73835cb9e52db8c)
+is pushed to main and installed for the Linux user. The installed binary matches
+the release checksum below; existing personal windows were preserved.
+Documentation build and deployment for that exact source head passed in
+[run 34095669134](https://github.com/sam-ruff/shep.so/actions/runs/34095669134).
+
 The provider-independent folder plan and runner now review whole subtrees,
 protect Inbox, reject invalid nesting/collisions and preserve exact names,
 NoInferiors and NonExistent metadata. The IMAP adapter checks the final LIST
