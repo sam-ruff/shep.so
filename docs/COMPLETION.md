@@ -23,33 +23,60 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
-## R81/R76 reading styles — validation in progress (2026-09-07)
+## R81/R76 — Reading styles installed and pushed (2026-09-07)
 
-This work is **not yet installed or pushed**. Plain text has a centered, padded
-column that follows the text-size preference. Simple HTML gets equivalent
-low-priority CSS defaults; MIME preparation classifies typography/color-only
-letters off-thread, preserving tables, explicit dimensions and layout CSS.
-Sender CSS can override defaults. Expanded conversation cards take the active
-email's opaque background and matching control colors without rebuilding their
-widget/scroller structure as a frame arrives.
+Source **1bf6ac9cdd9127c169b74923aab9a63f5f8cf196** is installed for the Linux
+user and pushed to `main`; **cc20ce03799eca61dbbe937e7e8cae28a2c4bd22** updates
+the existing native copy test for the centered text position. R81 and R76 are
+complete and removed from TODO. The full product goal remains active.
 
-486 Rust tests, 46 Python tests and Clippy pass. New renderer checks use actual
-Find/selection geometry at 340/1000/1600 px and 14/22 px fonts. Native flows cover
-plain/HTML selection, Find, centered-padding pixels, full/compact layouts,
-contrasting conversation backgrounds, cached switching and refresh/scroll.
-Two initial setup errors (click above the plain editor; appending to a retained
-Find query) were corrected; both complete scenarios pass in
-`artifacts/logs/reading-column-native-refined.log`. Existing conversation actions
-and single-message surface tests also pass in `reading-column-native-initial.log`.
+Plain text has a padded, centered column that follows the text-size preference.
+Simple HTML gets equivalent low-priority CSS defaults. MIME preparation
+classifies typography/color-only letters off-thread; tables, explicit dimensions
+and layout CSS retain sender geometry. Sender CSS can override defaults.
+Expanded conversation cards take the active email's opaque background and
+matching control colors. A stable themer/container tree preserves the scroller
+and input state as rendered backgrounds arrive or cached messages change.
 
-Reviewed screenshots under ignored `artifacts/e2e/` include `5702d689ea4e`
+**Verification:** 486 Rust tests plus two drawing-adapter tests, 46 Python tests,
+formatting, Clippy, Git hooks, Windows GNU cross-compilation and pinned strict
+documentation build pass. The optimized archive passes checksum, extraction and
+bundled installer verification. The installed binary matches its release hash.
+This does not establish Windows/macOS native execution or live-provider testing.
+
+The full native run passed **168/169** scenarios. Its only failure was an older
+text-copy drag aimed at the previous body position. After updating those mouse
+coordinates, that same copy/paste/full-reader/dark scenario and both new reader
+scenarios pass in `reading-column-native-final-rerun.log`. All 169 scenarios have
+passing coverage across the full run and corrected rerun on the same binary;
+no production code changed after the full run began. Selection, copying and
+read-only shortcut assertions remain intact. No timing budget changed.
+
+Rendered Find/selection geometry proves padding and centering at 340/1000/1600 px
+and 14/22 px fonts. Native flows cover plain/HTML selection, Find, actual column
+pixels, full/compact layouts, contrasting conversation backgrounds, repeated
+cached switching and refresh/scroll. Two initial new-scenario setup errors
+(clicking above the plain editor and appending to a retained Find query) were
+corrected before the full run. The existing conversation-action, HTML image,
+scrolling, resize and background regressions remain covered.
+
+Reviewed WebP evidence under ignored `artifacts/e2e/` includes `5702d689ea4e`
 (plain full width), `53782149d020` (HTML full width), `871baa7be21d`
-(compact plain/HTML), and `4b26fba9eb20` (compact dark conversation).
-The full 169-flow functional suite and optimized archive build are in progress.
-Logs use the `reading-column-` prefix under `artifacts/logs/`.
+(compact letters), `4b26fba9eb20` (compact dark conversation), and `c63c760ec908`
+(corrected copy regression). Logs are under ignored `artifacts/logs/`:
+
+- `reading-column-full-rust.log`, `reading-column-clippy.log`, `reading-column-python.log` and `reading-column-geometry.log`.
+- `reading-column-native-full.log`, `reading-column-native-final-rerun.log` and `reading-column-commit.log`.
+- `reading-column-windows-check.log`, `reading-column-docs.log`, `reading-column-release.log`, `reading-column-install.log` and `reading-column-push.log`.
+
 Native test binary SHA-256:
 `77e5f50ce98c63e8c8279acd689a627a7ee01312f09cda1809b47a8faeab799a`.
-Performance measurements remain deferred; no timing budget changed.
+Installed production binary SHA-256:
+`4f61267e133680817782cbc011908f378587cfd11ee2dd28b9bd3fc63cd69e39`.
+Already-open windows need reopening to use this executable. Performance
+measurements remain deferred; quality/release CI stays disabled. Documentation
+publishing remains enabled. The separate R74 F5 migration is only working-tree
+progress and is not included in this reader release.
 
 ## R84 delivered; R73 recovery checkpoint shipped (2026-09-07)
 
