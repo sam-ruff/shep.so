@@ -86,30 +86,64 @@ async function setup(page: Page, count = 3, seed = true) {
         unknownUid: false,
         holding: false,
       };
-      let moved: any,
-        serial = 0;
+      let serial = 0;
+      const server = new Map<string, any>(),
+        proofs = new Map<string, string>();
       const request: typeof fetch = async (input, init) => {
         const path = String(input),
           body = init?.body ? JSON.parse(String(init.body)) : undefined;
         env.calls.push({ path, body });
         await env.beforeRequest?.(path, body);
         if (path.endsWith("/probe")) return Response.json({ connected: true });
-        if (path.endsWith("/flags")) return Response.json({ committed: true });
+        if (path.endsWith("/flags")) {
+          server.set(body.mail.id, {
+            ...body.mail,
+            unread: body.unread ?? body.mail.unread,
+            starred: body.starred ?? body.mail.starred,
+          });
+          return Response.json({ committed: true });
+        }
         if (path.endsWith("/move")) {
           const remote_id = `91.${++serial}`;
-          moved = {
+          const moved = {
             ...body.mail,
             folder: body.folder,
             remote_id,
             id: `work:${body.folder}:${remote_id}`,
           };
+          // Object-scoped provider state retains each message independently.
+          // Recovery must never return whichever unrelated message moved last.
+          const cached = (await store.all("mail")).find(
+            (m: any) => m.core.id === body.mail.id,
+          );
+          const raw = await store.get("raw", cached.localId ?? cached.core.id);
+          const bytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+          const proof = JSON.stringify({
+            bytes: bytes.length,
+            sha256: [
+              ...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+            ],
+          });
+          server.delete(body.mail.id);
+          server.set(moved.id, moved);
+          proofs.set(proof, moved.id);
           return Response.json({
             committed: true,
             remote_id: env.unknownUid ? null : remote_id,
           });
         }
-        if (path.endsWith("/resolve-move"))
-          return Response.json({ mail: moved });
+        if (path.endsWith("/resolve-move")) {
+          const f = body.receipt.fingerprint;
+          const id =
+            body.receipt.current?.id ??
+            proofs.get(JSON.stringify({ bytes: f.bytes, sha256: f.sha256 }));
+          const mail = server.get(id);
+          if (!mail || mail.folder !== body.receipt.folder)
+            throw Error(
+              "Synthetic provider could not resolve this exact move.",
+            );
+          return Response.json({ mail });
+        }
         throw Error(`Unexpected synthetic request ${path}`);
       };
       env.repo = new GatewayRepository(
@@ -1191,4 +1225,146 @@ test("unproven UID replacement retires old group projections and never dispatche
   expect(r.job.counts).toMatchObject({ failed: 1, done: 0, uncertain: 0 });
   expect(r.item.error).toContain("changed since the group review");
   expect(r.calls.filter((c: any) => c.path.endsWith("/flags"))).toHaveLength(0);
+});
+
+test("an Undo counterfactual matches eventual execution, preserves newer moves and cannot mutate its durable source", async ({
+  page,
+}) => {
+  await setup(page, 3);
+  const r = await page.evaluate(async () => {
+    const e = (window as any).executorFixture;
+    const workerPath = "/src/mailbox_worker_client.ts",
+      { MailboxWorkerClient } = await import(workerPath);
+    const worker = new MailboxWorkerClient(e.profile);
+    const review = await e.prepare("preview", {
+      kind: "move",
+      folder: "Archive",
+      account: null,
+    });
+    await e.executor.decide("preview", review.revision, "approve");
+    await e.executor.run();
+    await e.repo.mutate("m0", { folder: "Trash" });
+    const before = {
+      job: await e.review("preview"),
+      items: await e.items("preview"),
+      cache: await e.store.snapshot([
+        "mail",
+        "mailMetadata",
+        "mailIntents",
+        "cacheState",
+      ]),
+    };
+    const counterfactual = await worker.page({
+      scope: { folder: "Inbox" },
+      offset: 0,
+      observed: ["m0"],
+      undo: "preview",
+    });
+    const ordinary = await worker.page({
+      scope: { folder: "Inbox" },
+      offset: 0,
+    });
+    const after = {
+      job: await e.review("preview"),
+      items: await e.items("preview"),
+      cache: await e.store.snapshot([
+        "mail",
+        "mailMetadata",
+        "mailIntents",
+        "cacheState",
+      ]),
+    };
+    const unchanged = JSON.stringify(before) === JSON.stringify(after);
+    await worker.close();
+    const reopened = new MailboxWorkerClient(e.profile);
+    const persisted = await reopened.page({
+      scope: { folder: "Inbox" },
+      offset: 0,
+    });
+    await e.executor.decide("preview", after.job.revision, "undo");
+    await e.executor.run();
+    const final = await reopened.page({
+      scope: { folder: "Inbox" },
+      offset: 0,
+    });
+    await reopened.close();
+    return {
+      counterfactual,
+      ordinary,
+      persisted,
+      final,
+      unchanged,
+      calls: e.calls,
+    };
+  });
+  expect(r.unchanged).toBe(true);
+  expect(r.counterfactual.total).toBe(2);
+  expect(r.counterfactual.unread).toBe(2);
+  expect(r.counterfactual.rows.map((m: any) => m.id)).toEqual(["m1", "m2"]);
+  expect(r.counterfactual.groupFields.m0.folder).toBe("Trash");
+  expect(r.counterfactual.undo.beforeFields.m1.folder).toBe("Archive");
+  expect(r.counterfactual.undo.committed).toBe(false);
+  expect(r.ordinary.total).toBe(0);
+  expect(r.persisted.total).toBe(0);
+  expect(r.final.rows).toEqual(r.counterfactual.rows);
+  expect(r.final.total).toBe(r.counterfactual.total);
+  expect(r.calls.filter((c: any) => c.path.endsWith("/move"))).toHaveLength(6);
+});
+
+test("Undo of an in-flight successive move uses its dispatch folder instead of the frozen review folder", async ({
+  page,
+}) => {
+  await setup(page, 3);
+  await page.evaluate(async () => {
+    const e = (window as any).executorFixture;
+    const first = await e.prepare("first", {
+      kind: "move",
+      folder: "Archive",
+      account: null,
+    });
+    const second = await e.prepare("second", {
+      kind: "move",
+      folder: "Trash",
+      account: null,
+    });
+    await e.executor.decide("first", first.revision, "approve");
+    await e.executor.run();
+    await e.executor.decide("second", second.revision, "approve");
+    e.hold();
+    e.running = e.executor.run();
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).executorFixture.holding))
+    .toBe(true);
+  const result = await page.evaluate(async () => {
+    const e = (window as any).executorFixture;
+    const path = "/src/mailbox_worker_client.ts",
+      { MailboxWorkerClient } = await import(path);
+    const worker = new MailboxWorkerClient(e.profile);
+    const predicted = await worker.page({
+      scope: { folder: "Archive" },
+      offset: 0,
+      undo: "second",
+    });
+    const current = await e.review("second");
+    await e.executor.decide("second", current.revision, "undo");
+    e.release();
+    await e.running;
+    const final = await worker.page({
+      scope: { folder: "Archive" },
+      offset: 0,
+    });
+    await worker.close();
+    return { predicted, final, items: await e.items("second"), calls: e.calls };
+  });
+  expect(result.predicted.total).toBe(3);
+  expect(result.predicted.rows.every((m: any) => m.folder === "Archive")).toBe(
+    true,
+  );
+  expect(result.final.rows).toEqual(result.predicted.rows);
+  expect(result.items[0].original.folder).toBe("INBOX");
+  expect(result.items[0].receipt.before.folder).toBe("Archive");
+  expect(
+    result.calls.filter((c: any) => c.path.endsWith("/move")),
+  ).toHaveLength(5);
 });

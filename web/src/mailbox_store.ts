@@ -230,8 +230,7 @@ export class MailboxStore {
           const bulk = new BulkProjection(this.sql, this.user);
           this.exec("BEGIN");
           try {
-            const bulkRevision = await bulk.journal();
-            const result = await snapshot(
+            const state = await snapshot(
               this.cache,
               sourceStores,
               async (tx) => {
@@ -271,61 +270,79 @@ export class MailboxStore {
                 started?.();
                 await this.synchronize(tx, state);
                 await bulk.source(tx, state, accounts);
-                bulk.materialize();
-                for (const [id, fields] of Object.entries(
-                  query.scope.projection ?? {},
-                )) {
-                  this.exec(
-                    "INSERT INTO pending VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET folder=COALESCE(excluded.folder,pending.folder),unread=COALESCE(excluded.unread,pending.unread),starred=COALESCE(excluded.starred,pending.starred)",
-                    [
-                      this.canonical(id),
-                      fields.folder === undefined
-                        ? null
-                        : inboxFolder(fields.folder),
-                      fields.unread === undefined ? null : +fields.unread,
-                      fields.starred === undefined ? null : +fields.starred,
-                    ],
-                  );
-                }
-                const where: string[] = [],
-                  bind: Bind = [],
-                  folder = inboxFolder(query.scope.folder);
-                const effective = `WITH effective AS (SELECT m.rowid,m.id,m.account,COALESCE(p.folder,b.folder,m.folder) folder,COALESCE(p.unread,b.unread,m.unread) unread,COALESCE(p.starred,b.starred,m.starred) starred,m.timestamp,m.core,m.search FROM messages m LEFT JOIN pending p ON p.id=m.id LEFT JOIN bulk_current b ON b.id=m.id)`;
+                return state;
+              },
+            );
+            // Release the mail snapshot before derived queries. Receipt writes
+            // precede cache writes, so observe the journal after the source:
+            // an acknowledged cache row can never lack its before receipt.
+            const bulkRevision = await bulk.journal();
+            const result = (() => {
+              bulk.materialize();
+              for (const [id, fields] of Object.entries(
+                query.scope.projection ?? {},
+              )) {
+                this.exec(
+                  "INSERT INTO pending VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET folder=COALESCE(excluded.folder,pending.folder),unread=COALESCE(excluded.unread,pending.unread),starred=COALESCE(excluded.starred,pending.starred)",
+                  [
+                    this.canonical(id),
+                    fields.folder === undefined
+                      ? null
+                      : inboxFolder(fields.folder),
+                    fields.unread === undefined ? null : +fields.unread,
+                    fields.starred === undefined ? null : +fields.starred,
+                  ],
+                );
+              }
+              const where: string[] = [],
+                bind: Bind = [],
+                folder = inboxFolder(query.scope.folder);
+              const effective = `WITH effective AS (SELECT m.rowid,m.id,m.account,COALESCE(p.folder,b.folder,m.folder) folder,COALESCE(p.unread,b.unread,m.unread) unread,COALESCE(p.starred,b.starred,m.starred) starred,m.timestamp,m.core,m.search FROM messages m LEFT JOIN pending p ON p.id=m.id LEFT JOIN bulk_current b ON b.id=m.id)`;
+              where.push(
+                folder === "Sent"
+                  ? "(e.folder=? OR EXISTS(SELECT 1 FROM sent WHERE account=e.account AND folder=e.folder))"
+                  : "e.folder=?",
+              );
+              bind.push(folder);
+              if (query.scope.account) {
+                where.push("e.account=?");
+                bind.push(query.scope.account);
+              }
+              if (query.scope.filter === "Unread") where.push("e.unread=1");
+              if (query.scope.filter === "Flagged") where.push("e.starred=1");
+              const words = (query.scope.query ?? "")
+                .toLowerCase()
+                .trim()
+                .split(/\s+/)
+                .filter(Boolean);
+              const indexed = words.filter(
+                (w) => [...w].length >= 3 && !w.includes("\0"),
+              );
+              if (indexed.length) {
                 where.push(
-                  folder === "Sent"
-                    ? "(e.folder=? OR EXISTS(SELECT 1 FROM sent WHERE account=e.account AND folder=e.folder))"
-                    : "e.folder=?",
+                  "e.rowid IN(SELECT rowid FROM terms WHERE terms MATCH ?)",
                 );
-                bind.push(folder);
-                if (query.scope.account) {
-                  where.push("e.account=?");
-                  bind.push(query.scope.account);
-                }
-                if (query.scope.filter === "Unread") where.push("e.unread=1");
-                if (query.scope.filter === "Flagged") where.push("e.starred=1");
-                const words = (query.scope.query ?? "")
-                  .toLowerCase()
-                  .trim()
-                  .split(/\s+/)
-                  .filter(Boolean);
-                const indexed = words.filter(
-                  (w) => [...w].length >= 3 && !w.includes("\0"),
+                bind.push(
+                  indexed
+                    .map((w) => `"${w.replaceAll('"', '""')}"`)
+                    .join(" AND "),
                 );
-                if (indexed.length) {
-                  where.push(
-                    "e.rowid IN(SELECT rowid FROM terms WHERE terms MATCH ?)",
-                  );
-                  bind.push(
-                    indexed
-                      .map((w) => `"${w.replaceAll('"', '""')}"`)
-                      .join(" AND "),
-                  );
-                }
-                for (const word of words) {
-                  where.push("instr(e.search,?)>0");
-                  bind.push(word);
-                }
-                const from = `FROM effective e JOIN accounts a ON a.id=e.account WHERE ${where.join(" AND ")}`;
+              }
+              for (const word of words) {
+                where.push("instr(e.search,?)>0");
+                bind.push(word);
+              }
+              const from = `FROM effective e JOIN accounts a ON a.id=e.account WHERE ${where.join(" AND ")}`;
+              const observedBefore = query.undo
+                ? (this.sql!.selectValues(
+                    `${effective} SELECT e.id ${from} ORDER BY e.timestamp ${query.scope.oldest ? "ASC" : "DESC"},e.id ASC LIMIT 50 OFFSET ?`,
+                    [...bind, query.offset],
+                  ) as string[])
+                : [];
+              const undo = query.undo
+                ? bulk.previewUndo(query.undo)
+                : undefined;
+              try {
                 const total = this.value(
                   `${effective} SELECT COUNT(*) ${from}`,
                   bind,
@@ -367,7 +384,7 @@ export class MailboxStore {
                   const target = this.canonical(id);
                   if (id !== target) aliases[id] = target;
                 }
-                return {
+                const result: MailboxPage = {
                   epoch: state.epoch,
                   revision: state.revision,
                   bulkRevision,
@@ -398,8 +415,65 @@ export class MailboxStore {
                   aliases,
                   confirmed,
                 };
-              },
-            );
+                if (undo) {
+                  const ids = new Set([
+                    ...observedBefore,
+                    ...rows.map((r) => r.id),
+                    ...(query.observed ?? []).map((id) => this.canonical(id)),
+                  ]);
+                  const textMatches: Record<string, boolean> = {};
+                  result.groupFields = {};
+                  const keys = [...ids],
+                    placeholders = keys.map(() => "?").join(",");
+                  const predicted = keys.length
+                    ? this.sql!.selectObjects(
+                        `${effective} SELECT id,folder,unread,starred,${words.map(() => "instr(search,?)>0").join(" AND ") || "1"} text_matches FROM effective WHERE id IN(${placeholders})`,
+                        [...words, ...keys],
+                      )
+                    : [];
+                  for (const row of predicted) {
+                    const id = row.id as string;
+                    result.groupFields[id] = {
+                      folder:
+                        row.folder === "INBOX"
+                          ? "Inbox"
+                          : (row.folder as string),
+                      unread: !!row.unread,
+                      starred: !!row.starred,
+                    };
+                    textMatches[id] = !!row.text_matches;
+                  }
+                  undo.restore();
+                  const beforeFields: Record<string, import("./model").Fields> =
+                    {};
+                  const previous = keys.length
+                    ? this.sql!.selectObjects(
+                        `${effective} SELECT id,folder,unread,starred FROM effective WHERE id IN(${placeholders})`,
+                        keys,
+                      )
+                    : [];
+                  for (const row of previous)
+                    beforeFields[row.id as string] = {
+                      folder:
+                        row.folder === "INBOX"
+                          ? "Inbox"
+                          : (row.folder as string),
+                      unread: !!row.unread,
+                      starred: !!row.starred,
+                    };
+                  result.undo = {
+                    id: undo.id,
+                    revision: undo.revision,
+                    committed: undo.committed,
+                    textMatches,
+                    beforeFields,
+                  };
+                }
+                return result;
+              } finally {
+                undo?.restore();
+              }
+            })();
             this.exec("COMMIT");
             return result;
           } catch (error) {

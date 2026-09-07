@@ -501,3 +501,153 @@ test("a group captured during an earlier move flags the same full membership at 
     path: "../artifacts/web/bulk-successive-groups.png",
   });
 });
+
+test("group Undo restores rows and counts while its decision and subsequent query are both held", async ({
+  page,
+}) => {
+  await seed(page);
+  await selectAll(page);
+  await page
+    .getByRole("button", { name: "Archive selected messages", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Review group action", exact: true })
+    .getByRole("button", { name: "Archive 125 messages", exact: true })
+    .click();
+  await expect.poll(() => cached(page)).toEqual({ Archive: 125 });
+  await expect(page.locator("main > header")).toContainText(
+    "0 messages · 0 unread",
+  );
+  await page.evaluate(async () => {
+    const path = "/src/bulk_journal.ts",
+      workerPath = "/src/mailbox_worker_client.ts";
+    const { BulkJournal } = await import(path),
+      { MailboxWorkerClient } = await import(workerPath);
+    const decide = BulkJournal.prototype.decideCurrent,
+      query = MailboxWorkerClient.prototype.page;
+    let held = false;
+    BulkJournal.prototype.decideCurrent = async function (...args: any[]) {
+      if (args[1] === "undo") {
+        held = true;
+        await new Promise<void>((resolve) =>
+          Object.assign(window, { releaseUndoDecision: resolve }),
+        );
+      }
+      return decide.apply(this, args);
+    };
+    const queries = new Promise<void>((resolve) =>
+      Object.assign(window, { releaseUndoQueries: resolve }),
+    );
+    MailboxWorkerClient.prototype.page = async function (...args: any[]) {
+      if (held) await queries;
+      return query.apply(this, args);
+    };
+  });
+  const notice = page.getByRole("status", {
+    name: "Group notification",
+    exact: true,
+  });
+  await notice.getByRole("button", { name: "Undo group", exact: true }).click();
+  await expect(notice).toContainText("Undo requested for 125 messages");
+  await expect(page.locator("main > header")).toContainText(
+    "125 messages · 125 unread",
+  );
+  await expect(page.locator(".mail-row")).toHaveCount(50);
+  await expect(
+    page.getByRole("button", { name: subject(0), exact: true }),
+  ).toBeVisible();
+  expect(await cached(page)).toEqual({ Archive: 125 });
+  await page.screenshot({
+    path: "../artifacts/web/bulk-undo-before-storage.png",
+  });
+  await page.evaluate(() => {
+    (window as any).releaseUndoDecision();
+    (window as any).releaseUndoQueries();
+  });
+  await expect.poll(() => cached(page)).toEqual({ INBOX: 125 });
+  await expect(page.locator("main > header")).toContainText(
+    "125 messages · 125 unread",
+  );
+});
+
+test("History Undo paints before saving, retains newer flag intent and reports rejection after History closes", async ({
+  page,
+}) => {
+  await seed(page);
+  await page.getByRole("button", { name: "Select", exact: true }).click();
+  await page.locator(".mail-row").first().getByRole("checkbox").check();
+  await page
+    .getByRole("button", { name: "Archive selected messages", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Review group action", exact: true })
+    .getByRole("button", { name: "Archive 1 message", exact: true })
+    .click();
+  await expect.poll(() => cached(page)).toEqual({ Archive: 1, INBOX: 124 });
+  await page
+    .getByRole("button", { name: "Group history", exact: true })
+    .click();
+  const d = page.getByRole("dialog", { name: "Group history", exact: true });
+  await d.getByRole("button", { name: /^Archive 1 message/ }).click();
+  await expect(d.locator(".group-progress")).toContainText("1 changed");
+  await page.evaluate(async () => {
+    const path = "/src/bulk_journal.ts",
+      { BulkJournal } = await import(path),
+      decide = BulkJournal.prototype.decideCurrent;
+    BulkJournal.prototype.decideCurrent = async function (...args: any[]) {
+      if (args[1] === "undo") {
+        await new Promise<void>((_resolve, reject) =>
+          Object.assign(window, {
+            rejectUndo: () =>
+              reject(Error("Synthetic Undo storage refusal. Retry Undo.")),
+          }),
+        );
+      }
+      return decide.apply(this, args);
+    };
+  });
+  await d.getByRole("button", { name: "Undo group", exact: true }).click();
+  await expect(page.locator("main > header")).toContainText(
+    "125 messages · 125 unread",
+  );
+  await d.getByRole("button", { name: "Close", exact: true }).click();
+  const row = page.locator(".mail-row").filter({
+    has: page.getByRole("button", { name: subject(0), exact: true }),
+  });
+  await row.getByRole("button", { name: subject(0), exact: true }).click();
+  await row
+    .getByRole("button", { name: `Flag ${subject(0)}`, exact: true })
+    .click();
+  await expect(
+    row.getByRole("button", { name: `Unflag ${subject(0)}`, exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => (window as any).rejectUndo());
+  await expect(
+    page.getByText("Synthetic Undo storage refusal. Retry Undo.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.locator("main > header")).toContainText(
+    "124 messages · 124 unread",
+  );
+  await expect(
+    page
+      .getByRole("region", { name: "Message reader" })
+      .getByRole("button", { name: "Unflag", exact: true }),
+  ).toBeEnabled();
+  await expect
+    .poll(() =>
+      page.evaluate(async (profile) => {
+        const path = "/src/storage.ts",
+          { BrowserStore } = await import(path),
+          store = await BrowserStore.open(profile);
+        const mail = await store.get("mail", "m000");
+        store.close();
+        return { folder: mail.core.folder, starred: mail.core.starred };
+      }, profile),
+    )
+    .toEqual({ folder: "Archive", starred: true });
+  await page.screenshot({
+    path: "../artifacts/web/bulk-undo-storage-failure.png",
+  });
+});

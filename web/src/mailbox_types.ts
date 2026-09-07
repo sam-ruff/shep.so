@@ -4,12 +4,22 @@ import type { CoreMail } from "./provider";
 
 export interface MailboxQuery {
   scope: SelectionScope;
+  /** Read-only counterfactual for one reviewed group; never authorizes execution. */
+  undo?: string;
+  previewOnly?: boolean;
   offset: number;
   observed?: string[];
   /** UI generation; not part of the persistent search predicate. */
   generation?: number;
 }
 export interface MailboxPage {
+  undo?: {
+    id: string;
+    revision: number;
+    committed: boolean;
+    textMatches: Record<string, boolean>;
+    beforeFields: Record<string, Fields>;
+  };
   bulkRevision?: string;
   groupFields?: Record<string, Fields>;
   revision: number;
@@ -67,6 +77,8 @@ export function checkedQuery(value: MailboxQuery): MailboxQuery {
     value.offset < 0
   )
     throw Error("Invalid mailbox page. Open the folder again.");
+  if (value.undo !== undefined && !/^[\w-]{1,128}$/.test(value.undo))
+    throw Error("Invalid group preview. Reopen History.");
   const s = value.scope;
   if (
     value.observed &&
@@ -100,6 +112,7 @@ export function checkedQuery(value: MailboxQuery): MailboxQuery {
   }
   return {
     offset: value.offset,
+    undo: value.undo,
     observed: value.observed?.slice(),
     scope: { ...s, projection },
   };

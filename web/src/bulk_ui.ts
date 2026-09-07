@@ -89,6 +89,7 @@ export class GroupUI {
   }
   private notify(job: BulkJob) {
     this.current = job;
+    this.w.watchGroupUndo(job.undo ? undefined : job.id);
     this.visible = true;
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {
@@ -206,6 +207,7 @@ export class GroupUI {
               else this.groups.wake();
             })
             .catch((error) => {
+              this.w.finishGroupUndo(review.job.id, false);
               rollback();
               this.visible = false;
               this.error = message(error);
@@ -243,16 +245,20 @@ export class GroupUI {
   private async undo(job: BulkJob) {
     if (this.applying && !job.forwardIntent) {
       this.undoQueued = true;
+      this.w.beginGroupUndo(job.id);
       this.w.changed();
       return;
     }
     try {
+      this.w.beginGroupUndo(job.id);
       const operation = this.groups.decide(job, "undo");
       this.notify({ ...job, undo: true });
       this.w.groupChanged();
       this.current = await operation;
+      this.w.finishGroupUndo(job.id, true);
       this.error = undefined;
     } catch (error) {
+      this.w.finishGroupUndo(job.id, false);
       this.current = job;
       this.error = message(error);
     }
@@ -327,7 +333,8 @@ export class GroupUI {
       positions: number[] = [],
       generation = 0,
       busy = false,
-      refreshAgain = false;
+      refreshAgain = false,
+      undoPreparing: string | undefined;
     const title = el("h3"),
       summary = el("p", "group-progress"),
       items = el("div", "group-items"),
@@ -339,7 +346,9 @@ export class GroupUI {
       busy = true;
       updateButtons();
       try {
+        if (decision === "undo") this.w.beginGroupUndo(target.id);
         const current = await this.groups.decide(target, decision);
+        if (decision === "undo") this.w.finishGroupUndo(target.id, true);
         if (decision === "undo") this.notify(current);
         if (view?.job.id === target.id) {
           view.job = current;
@@ -347,6 +356,8 @@ export class GroupUI {
         }
         this.error = undefined;
       } catch (error) {
+        if (decision === "undo") this.w.finishGroupUndo(target.id, false);
+        this.error = message(error);
         if (selected === target.id) decisionError.textContent = message(error);
       } finally {
         busy = false;
@@ -392,6 +403,7 @@ export class GroupUI {
       undo.hidden = !job || job.state !== "ready" || job.undo;
       repair.hidden = !job?.pendingCache;
       for (const b of [pause, resume, undo, repair]) b.disabled = busy;
+      undo.disabled = busy || undoPreparing === job?.id;
       earlierItems.disabled = !positions.length;
       laterItems.disabled = (view?.items.length ?? 0) < 50;
     };
@@ -516,6 +528,8 @@ export class GroupUI {
         const describe = replace || !view || view.job.id !== selected;
         const result = await this.groups.view(selected, after, describe);
         if (!d.isConnected || request !== generation) return;
+        const preparing = describe && !result.job.undo;
+        if (preparing) undoPreparing = result.job.id;
         // Subjects/senders are one displayed metadata page, refreshed explicitly
         // or when changing pages, never reread for every provider receipt.
         if (!describe)
@@ -528,6 +542,15 @@ export class GroupUI {
         view = result;
         renderView(replace);
         status.textContent = "";
+        // Progress and other actions must not wait for a continuously changing
+        // counterfactual. Only Undo needs its initial preview before activation.
+        if (preparing) {
+          await this.w.prepareGroupUndo(result.job.id);
+          if (d.isConnected && selected === result.job.id) {
+            undoPreparing = undefined;
+            updateButtons();
+          }
+        }
       } catch (error) {
         if (d.isConnected && request === generation)
           status.textContent = message(error);
@@ -606,6 +629,7 @@ export class GroupUI {
       if (this.historyDialog === d) {
         this.historyDialog = undefined;
         this.historyRefresh = undefined;
+        this.w.watchGroupUndo(this.current?.id);
       }
     });
     void load();
