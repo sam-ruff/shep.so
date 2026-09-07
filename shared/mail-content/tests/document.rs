@@ -8,6 +8,16 @@ fn options() -> Options {
 }
 
 #[test]
+fn legacy_body_background_and_text_are_retained_without_theme_override() {
+    let prepared = document::prepare(b"Content-Type: text/html\r\n\r\n<body bgcolor='white' text='purple'><p>Authored colors</p></body>", &options()).unwrap();
+    let html = prepared.document.unwrap();
+    assert!(html.contains("bgcolor=\"white\""));
+    assert!(html.contains("text=\"purple\""));
+    assert!(html.contains("body:not([bgcolor]):not([background])"));
+    assert!(html.contains("body:not([text])"));
+}
+
+#[test]
 fn formatted_document_preserves_styles_tables_and_one_bounded_inline_blob() {
     let prepared =
         document::prepare(include_bytes!("../../html-reader-fixture.eml"), &options()).unwrap();

@@ -540,3 +540,8 @@ twice. Preserve overlay exclusion and clear the captured position on redraw.
 The native bulk flows intentionally click different rows consecutively, without
 inserting sleeps between clicks; the widget regression submits both clicks in
 one event batch. Do not mask this regression by slowing down native input.
+
+
+## Mobile and browser printing
+
+`shared/mail-content::printing` prepares client documents from complete cached MIME using the shared resource sanitizer. The fixed runtime reconstructs bounded inline WebP blobs and reports readiness only after resources/fonts decode. The browser gateway must include both the reader and print runtime CSP hashes. Its print iframe allows scripts/modals with an opaque origin; only the owned hash may execute. Android's owned WebView denies network/file/content loads and survives until `PrintDocumentAdapter.onFinish`; UIKit uses ephemeral WKWebView and native print controls. Keep platform preparation independent of provider/reader work, capture the original source/mode, and never turn dialog launch/cancellation into a print receipt. Preserve `printing.spec.ts`, the native cached-alias/host contracts and `printing_android_test.dart` with `android_print_fixture.py`; review actual paginated PDFs and native captures. Apple/other-engine execution, remote-image policies, native shortcut and large-mail/lifecycle parity remain explicit TODO gaps. The full Android wrapper includes the saved Print scenario. Browser runners additionally require Xvfb and Poppler.

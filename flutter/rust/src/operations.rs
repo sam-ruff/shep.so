@@ -22,6 +22,7 @@ pub struct Operations {
     search: Arc<Semaphore>,
     rendering: Arc<Semaphore>,
     forwarding: Arc<Semaphore>,
+    printing: Arc<Semaphore>,
     accounts: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     pub(crate) outgoing: crate::outgoing::Runtime,
     pub(crate) sent: crate::sent::Runtime,
@@ -42,6 +43,7 @@ impl Operations {
             search: Arc::new(Semaphore::new(1)),
             rendering: Arc::new(Semaphore::new(2)),
             forwarding: Arc::new(Semaphore::new(2)),
+            printing: Arc::new(Semaphore::new(2)),
             accounts: Mutex::new(HashMap::new()),
             outgoing: crate::outgoing::Runtime::default(),
             sent: crate::sent::Runtime::default(),
@@ -154,6 +156,10 @@ pub enum Request {
     },
     Detail {
         id: String,
+    },
+    Print {
+        id: String,
+        options: shep_mail_core::printing::Options,
     },
     Formatted {
         id: String,
@@ -500,6 +506,19 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             if folder=="Sent" { for message in &mail {folder_membership.entry(message.account_id.clone()).or_default().insert(message.folder.clone());} }
             Ok(json!({"mail":mail,"total":total,"unread":unread,"aliases":aliases,"folder_membership":folder_membership}))
         }).await,
+        Request::Print{id,options} => {
+            let permit=profile.operations.printing.clone().try_acquire_owned().context("Print preparation is busy. Finish a preview and retry.")?;
+            let (account,raw):(String,Vec<u8>)=db.read(move |db| {
+                let summary=stored_mail(db,&id)?;
+                Ok((summary.account_id,db.query_row("SELECT raw FROM mail WHERE id=?1",[&summary.id],|r|r.get(0))?))
+            }).await?;
+            tokio::task::spawn_blocking(move || {
+                let _permit=permit;
+                let mut value=serde_json::to_value(shep_mail_core::printing::prepare(&raw,&options).context("Could not prepare this print. Try plain text or refresh and retry.")?)?;
+                value["account_id"]=account.into();
+                Ok(value)
+            }).await?
+        }
         Request::Formatted{id,options} => {
             // One departing reader and its replacement may prepare concurrently.
             // Admission precedes the cache read, and the blocking task owns its

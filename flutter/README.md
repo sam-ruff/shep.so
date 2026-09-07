@@ -19,3 +19,5 @@ flutter build web --target test/preview_main.dart --no-web-resources-cdn
 ```
 
 See [client testing](../docs/CLIENT_TESTING.md) for Playwright, Appium and Apple simulator commands. Keep quality/release CI disabled.
+
+Print uses the complete cached original and Android’s native printer/PDF picker. The UIKit adapter is implemented; Apple compilation and execution remain open.

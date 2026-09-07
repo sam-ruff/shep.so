@@ -765,6 +765,20 @@ class _ReaderState extends State<Reader> {
                               ),
                             ),
                             OutlinedButton.icon(
+                              onPressed: workspace.isPrinting(id)
+                                  ? null
+                                  : () => workspace.printMessage(
+                                      id,
+                                      plain: formatted?.plain ?? false,
+                                    ),
+                              icon: const Icon(Icons.print_outlined),
+                              label: Text(
+                                workspace.isPrinting(id)
+                                    ? 'Preparing print…'
+                                    : 'Print',
+                              ),
+                            ),
+                            OutlinedButton.icon(
                               onPressed: () => act(id, MailAction.move),
                               icon: const Icon(Icons.drive_file_move_outline),
                               label: const Text('Move'),

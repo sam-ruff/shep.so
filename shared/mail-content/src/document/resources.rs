@@ -8,7 +8,7 @@ use std::{
 use url::Url;
 
 #[derive(Default)]
-pub(super) struct Resources {
+pub(crate) struct Resources {
     pub images: BTreeMap<String, Image>,
     converted: BTreeMap<String, Option<String>>,
     pub remote: BTreeMap<String, RemoteImage>,

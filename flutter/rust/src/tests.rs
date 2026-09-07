@@ -994,3 +994,41 @@ async fn formatted_cache_aliases_work_without_provider_slots_and_do_not_occupy_f
     drop(hold);
     assert_eq!(request(&p, op).await["signature"], prepared["signature"]);
 }
+
+#[tokio::test]
+async fn print_uses_complete_cached_alias_while_reader_and_provider_capacity_are_occupied() {
+    let (_dir, p) = profile().await;
+    seed(&p, 0).await;
+    let text = format!(
+        "{}\nCOMPLETE NATIVE PRINT END",
+        "Cached printable line. ".repeat(2500)
+    );
+    let raw = format!(
+        "Subject: Complete native print\r\nFrom: sender@example.test\r\nBcc: private@example.test\r\n\r\n{text}"
+    );
+    p.database
+        .write(move |db| {
+            operations::insert_mail(
+                db,
+                parse_mail("fixture", "print", "INBOX", raw.into_bytes(), false, false)?,
+                false,
+            )?;
+            db.execute(
+                "INSERT INTO mail_aliases(alias,id) VALUES('prior-print-id','fixture:INBOX:print')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let _network = p.operations.hold_network_capacity().await;
+    let _reader = p.operations.hold_render_capacity().await;
+    let printed = request(&p, json!({"op":"print", "id":"prior-print-id", "options":{"generation":"native-print", "plain":true}})).await;
+    assert_eq!(printed["account_id"], "fixture");
+    assert_eq!(printed["title"], "Complete native print");
+    let document = printed["document"].as_str().unwrap();
+    assert!(document.contains(&text));
+    assert!(!document.contains("private@example.test"));
+    assert!(document.contains("native-print"));
+    assert_eq!(request(&p, json!({"op":"drafts"})).await, json!([]));
+}

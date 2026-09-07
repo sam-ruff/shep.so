@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Shep · Print message</title>
+  </head>
+  <body>
+    <main id="print-app">
+      <header>
+        <h1>Print message</h1>
+        <p role="status" id="print-status">Preparing your message…</p>
+        <button id="print-action" disabled>Print</button
+        ><button id="print-retry" hidden>Retry preparation</button
+        ><button id="print-close">Close preview</button>
+      </header>
+      <div id="print-document"></div>
+    </main>
+    <script type="module" src="/src/printing_page.ts"></script>
+  </body>
+</html>

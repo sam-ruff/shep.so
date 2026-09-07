@@ -344,6 +344,7 @@ async fn headers_forbid_caching_and_framing_without_leaking_callback() {
     assert_eq!(r.headers()["referrer-policy"], "no-referrer");
     let csp = r.headers()["content-security-policy"].to_str().unwrap();
     assert!(csp.contains(&shep_mail_core::document::runtime_csp_source()));
+    assert!(csp.contains(&shep_mail_core::printing::runtime_csp_source()));
     assert!(
         !csp.split("script-src")
             .nth(1)

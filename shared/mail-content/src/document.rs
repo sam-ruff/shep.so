@@ -23,7 +23,7 @@ pub fn runtime_csp_source() -> String {
         STANDARD.encode(Sha256::digest(RUNTIME.as_bytes()))
     )
 }
-const BASE_CSS: &str = "html{margin:0;min-height:100%}body{margin:0;padding:12px;font:15px/1.5 Arial,sans-serif;overflow-wrap:break-word;color:var(--shep-text,#18181b);background:var(--shep-background,#fff)}*{box-sizing:border-box;user-select:text;-webkit-user-select:text}a[data-shep-link]{color:inherit;text-decoration:underline;cursor:pointer}::highlight(shep-matches){background:#ede3fb;color:#18181b}::highlight(shep-active){background:#b896e4;color:#18181b}shep-match{display:inline!important;padding:0!important;margin:0!important;border:0!important;font:inherit!important;color:inherit!important;background:#7754a544!important}shep-match[data-active]{background:#b896e4!important;color:#18181b!important}shep-match:before,shep-match:after{content:none!important}";
+const BASE_CSS: &str = "html{margin:0;min-height:100%}body{margin:0;padding:12px;font:15px/1.5 Arial,sans-serif;overflow-wrap:break-word;}body:not([text]){color:#18181b}body:not([text]):not([bgcolor]):not([background]){color:var(--shep-text,#18181b)}body:not([bgcolor]):not([background]){background:var(--shep-background,#fff)}*{box-sizing:border-box;user-select:text;-webkit-user-select:text}a[data-shep-link]{color:inherit;text-decoration:underline;cursor:pointer}::highlight(shep-matches){background:#ede3fb;color:#18181b}::highlight(shep-active){background:#b896e4;color:#18181b}shep-match{display:inline!important;padding:0!important;margin:0!important;border:0!important;font:inherit!important;color:inherit!important;background:#7754a544!important}shep-match[data-active]{background:#b896e4!important;color:#18181b!important}shep-match:before,shep-match:after{content:none!important}";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Options {
@@ -47,7 +47,7 @@ pub struct RemoteImage {
     pub alt: String,
 }
 #[derive(Debug, Serialize)]
-struct Image {
+pub(crate) struct Image {
     bytes: String,
     width: u32,
     height: u32,
@@ -78,6 +78,7 @@ fn sanitizer() -> ammonia::Builder<'static> {
             "align",
             "valign",
             "bgcolor",
+            "text",
             "background",
             "width",
             "height",
@@ -99,93 +100,11 @@ fn from_body(body: Body, signature: String, options: &Options) -> Result<Prepare
             issues: vec![],
         });
     }
-    let mut resources = resources::Resources::default();
-    let mut content = String::new();
-    let mut links = BTreeMap::new();
-    let clean = sanitizer();
-    for (index, part) in body.html.iter().enumerate() {
-        let source = Html::parse_document(&part.source);
-        let base = source
-            .select(&Selector::parse("base[href]").unwrap())
-            .next()
-            .and_then(|node| resources::web_url(node.value().attr("href")?, None))
-            .and_then(|url| Url::parse(&url).ok());
-        let element = source
-            .select(&Selector::parse("body").unwrap())
-            .next()
-            .unwrap();
-        let attrs = element
-            .value()
-            .attrs()
-            .map(|(name, value)| format!(" {name}=\"{}\"", escape(value)))
-            .collect::<String>();
-        let styles = source
-            .select(&Selector::parse("head style").unwrap())
-            .map(|style| style.html())
-            .collect::<String>();
-        let input = format!("<div{attrs}>{styles}{}</div>", element.inner_html());
-        let sanitized = clean.clean(&input).to_string();
-        let tree = Html::parse_fragment(&sanitized);
-        let wrapper = tree.root_element().child_elements().next().unwrap();
-        if index > 0 {
-            content.push_str("<hr>");
-        }
-        content.push_str("<section");
-        if index == 0 {
-            content.push_str(" data-shep-body=\"true\"");
-        }
-        attributes(
-            wrapper,
-            &mut content,
-            &mut resources,
-            base.as_ref(),
-            part,
-            &body,
-            &mut links,
-        );
-        content.push('>');
-        let mut stack = wrapper
-            .children()
-            .rev()
-            .map(|node| (node.id(), false))
-            .collect::<Vec<_>>();
-        while let Some((id, close)) = stack.pop() {
-            let node = tree.tree.get(id).unwrap();
-            if let Some(element) = ElementRef::wrap(node) {
-                let name = element.value().name();
-                if close {
-                    content.push_str(&format!("</{name}>"));
-                    continue;
-                }
-                if name == "style" {
-                    let css = css::rewrite(&element.text().collect::<String>(), |url| {
-                        resources.image(url, "Email background", base.as_ref(), part, &body)
-                    });
-                    content.push_str(&format!("<style>{css}</style>"));
-                    continue;
-                }
-                content.push('<');
-                content.push_str(name);
-                attributes(
-                    element,
-                    &mut content,
-                    &mut resources,
-                    base.as_ref(),
-                    part,
-                    &body,
-                    &mut links,
-                );
-                content.push('>');
-                if !matches!(name, "area" | "br" | "col" | "hr" | "img" | "wbr") {
-                    stack.push((id, true));
-                    stack.extend(element.children().rev().map(|node| (node.id(), false)));
-                }
-            } else if let Some(text) = node.value().as_text() {
-                content.push_str(&escape(text));
-            }
-        }
-        content.push_str("</section>");
-    }
+    let Content {
+        content,
+        resources,
+        links,
+    } = sanitize(&body);
     let data = serde_json::json!({"generation":options.generation,"dark":options.dark,"quotes":options.quotes,"images":resources.images,"links":links});
     let data = serde_json::to_string(&data)?.replace('<', "\\u003c");
     let runtime = runtime_csp_source();
@@ -284,4 +203,105 @@ fn srcset(value: &str, mut image: impl FnMut(&str) -> Option<String>) -> String 
         }
     }
     candidates.join(", ")
+}
+
+pub(crate) struct Content {
+    pub content: String,
+    pub resources: resources::Resources,
+    pub links: BTreeMap<String, String>,
+}
+
+pub(crate) fn sanitize(body: &Body) -> Content {
+    let mut resources = resources::Resources::default();
+    let mut content = String::new();
+    let mut links = BTreeMap::new();
+    let clean = sanitizer();
+    for (index, part) in body.html.iter().enumerate() {
+        let source = Html::parse_document(&part.source);
+        let base = source
+            .select(&Selector::parse("base[href]").unwrap())
+            .next()
+            .and_then(|node| resources::web_url(node.value().attr("href")?, None))
+            .and_then(|url| Url::parse(&url).ok());
+        let element = source
+            .select(&Selector::parse("body").unwrap())
+            .next()
+            .unwrap();
+        let attrs = element
+            .value()
+            .attrs()
+            .map(|(name, value)| format!(" {name}=\"{}\"", escape(value)))
+            .collect::<String>();
+        let styles = source
+            .select(&Selector::parse("head style").unwrap())
+            .map(|style| style.html())
+            .collect::<String>();
+        let input = format!("<div{attrs}>{styles}{}</div>", element.inner_html());
+        let sanitized = clean.clean(&input).to_string();
+        let tree = Html::parse_fragment(&sanitized);
+        let wrapper = tree.root_element().child_elements().next().unwrap();
+        if index > 0 {
+            content.push_str("<hr>");
+        }
+        content.push_str("<section");
+        if index == 0 {
+            content.push_str(" data-shep-body=\"true\"");
+        }
+        attributes(
+            wrapper,
+            &mut content,
+            &mut resources,
+            base.as_ref(),
+            part,
+            body,
+            &mut links,
+        );
+        content.push('>');
+        let mut stack = wrapper
+            .children()
+            .rev()
+            .map(|node| (node.id(), false))
+            .collect::<Vec<_>>();
+        while let Some((id, close)) = stack.pop() {
+            let node = tree.tree.get(id).unwrap();
+            if let Some(element) = ElementRef::wrap(node) {
+                let name = element.value().name();
+                if close {
+                    content.push_str(&format!("</{name}>"));
+                    continue;
+                }
+                if name == "style" {
+                    let css = css::rewrite(&element.text().collect::<String>(), |url| {
+                        resources.image(url, "Email background", base.as_ref(), part, body)
+                    });
+                    content.push_str(&format!("<style>{css}</style>"));
+                    continue;
+                }
+                content.push('<');
+                content.push_str(name);
+                attributes(
+                    element,
+                    &mut content,
+                    &mut resources,
+                    base.as_ref(),
+                    part,
+                    body,
+                    &mut links,
+                );
+                content.push('>');
+                if !matches!(name, "area" | "br" | "col" | "hr" | "img" | "wbr") {
+                    stack.push((id, true));
+                    stack.extend(element.children().rev().map(|node| (node.id(), false)));
+                }
+            } else if let Some(text) = node.value().as_text() {
+                content.push_str(&escape(text));
+            }
+        }
+        content.push_str("</section>");
+    }
+    Content {
+        content,
+        resources,
+        links,
+    }
 }

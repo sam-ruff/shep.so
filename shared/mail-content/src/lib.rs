@@ -6,6 +6,7 @@ pub mod find;
 pub mod forwarding;
 pub mod mime;
 mod plain;
+pub mod printing;
 pub mod reader;
 pub const MAX_MESSAGE_BYTES: usize = 25 * 1024 * 1024;
 
@@ -41,6 +42,16 @@ mod browser {
         super::forwarding::prepare(raw)
             .map(PreparedForward)
             .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    #[wasm_bindgen]
+    pub fn prepare_print(raw: &[u8], options: &str) -> Result<String, JsError> {
+        let options =
+            serde_json::from_str(options).map_err(|_| JsError::new("Invalid print options"))?;
+        let prepared =
+            super::printing::prepare(raw, &options).map_err(|e| JsError::new(&e.to_string()))?;
+        serde_json::to_string(&prepared)
+            .map_err(|_| JsError::new("Could not prepare this print document"))
     }
 
     #[wasm_bindgen]

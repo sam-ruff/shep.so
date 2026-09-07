@@ -114,6 +114,11 @@ try {
     (await context.request.get(`${origin}/api/session`)).status(),
     401,
   );
+  const printBlocked = await context.request.get(`${origin}/app/print.html`, {
+    maxRedirects: 0,
+  });
+  assert.equal(printBlocked.status(), 303);
+  assert.equal(printBlocked.headers()["location"], "/beta");
   const blocked = await context.request.get(`${origin}/app/assets/${asset}`, {
     maxRedirects: 0,
   });

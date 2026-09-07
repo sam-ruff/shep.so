@@ -5,14 +5,19 @@ import '../data/settings_store.dart';
 import '../data/accounts.dart';
 import '../data/drafts.dart';
 import '../data/outgoing.dart';
+import '../data/printing.dart';
 import 'mail.dart';
 import 'preferences.dart';
 
 class Workspace extends ChangeNotifier {
-  Workspace(this.repository, this.settings)
-    : _mail = List.of(repository.cached),
-      _confirmed = {for (final mail in repository.cached) mail.id: mail},
-      events = List.of(repository.events);
+  Workspace(
+    this.repository,
+    this.settings, {
+    this.printer = const SystemMessagePrinter(),
+  }) : _mail = List.of(repository.cached),
+       _confirmed = {for (final mail in repository.cached) mail.id: mail},
+       events = List.of(repository.events);
+  final MessagePrinter printer;
   final MailRepository repository;
   final SettingsStore settings;
   List<Mail> _mail;
@@ -575,6 +580,42 @@ class Workspace extends ChangeNotifier {
       unawaited(loadPage());
     }
     _changed();
+  }
+
+  final _printing = <String>{};
+  bool isPrinting(String id) => _printing.contains(id);
+  Future<void> printMessage(String id, {required bool plain}) async {
+    if (!_printing.add(id)) return;
+    final startingError = error;
+    _changed();
+    try {
+      final source = repository;
+      if (source is! PrintRepository) {
+        throw const MailOperationFailure(
+          'Printing is unavailable in this preview. Use a connected native client.',
+        );
+      }
+      final generation = newDraftIdentity();
+      final prepared = await (source as PrintRepository).preparePrint(
+        id,
+        generation: generation,
+        plain: plain,
+      );
+      if (_disposed) return;
+      if (_removedAccounts.contains(prepared.accountId)) {
+        throw const MailOperationFailure(
+          'This account was removed. Open a connected message before printing.',
+        );
+      }
+      if (prepared.issues.isNotEmpty) error = prepared.issues.join(' ');
+      await printer.open(prepared, generation: generation);
+      if (!_disposed && error == startingError) error = null;
+    } catch (e) {
+      if (!_disposed) error = '$e';
+    } finally {
+      _printing.remove(id);
+      _changed();
+    }
   }
 
   final _forwardRequests = <String, String>{};
