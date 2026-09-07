@@ -311,3 +311,10 @@ Exact frozen selections now connect to a single owned provider executor with app
 
 
 Compatibility correction: mail schema 7 closes older database writers before the executor relies on atomic cache-applied revisions. The real upgrade scenario preserves prior clocks/statuses/roles, rejects older writes/reopening, and does not invent cache success from acknowledgment-only status. The final 87-scenario browser and 55-stage Rust HTTPS runs pass; combined shipping is recorded in the completion log.
+
+
+### Browser durable executor shipping record
+
+The executor [`3467937`](https://github.com/sam-ruff/shep.so/commit/346793738fda85502a8395c5578f86cc691c875a) and older-writer compatibility fix [`302bac2`](https://github.com/sam-ruff/shep.so/commit/302bac26e742c55883af5cf528c7f4fa8ec72d42) are pushed to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests** for each commit, with two personal-account diagnostics intentionally ignored. Final evidence includes **107 browser unit tests**, **87 Playwright scenarios**, **55 real Rust HTTPS beta/mail stages**, **39 Python tests**, **30 parity contracts**, TypeScript, production bundle inspection, reviewed layout regressions and pinned strict documentation validation.
+
+R77's prompt push is fulfilled for this increment. The executor API is verified but not activated by application controls. Visible group review/History/Undo, optimistic query effects, group account cleanup, explicit ambiguous-result resolution and native equivalents remain active, alongside full client parity, R75/R76 and missing VPS/owner/OAuth configuration. Main and the personal installation were untouched; artifacts remain ignored and owned browser test processes are stopped. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
