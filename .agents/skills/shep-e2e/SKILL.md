@@ -9,6 +9,13 @@ Read `AGENTS.md` for performance budgets, disabled CI, and platform setup. Build
 
 The stdio MCP server is `python3 scripts/mcp_harness.py` from the repository root. Use a 2025-11-25 MCP initialization handshake, `tools/list`, then `tools/call`. An example client is `McpClient` in `scripts/e2e.py`; use it directly from automation when an interactive host cannot register another MCP server.
 
+A tab observation is not proof that its pixels have been presented. The saved
+`test_calendar_navigation_repaints_after_preferences` compares the main content
+before and after native navigation, excluding the sidebar. Appearance/calendar
+captures currently use a two-second visual wait; a shorter wait exposed the old
+Preferences screen after Calendar state changed. First-paint scheduling remains
+R15/R63 work. Do not report that longer capture wait as a rendering or speed fix.
+
 Call `desktop.start` once per independent scenario. It owns an isolated Xvfb display, a 1440×920 native window and an in-memory fixture workspace. It returns the artifact directory. Set `empty_calendars: true` on `desktop.start` to test the no-calendar state. The nondefault test feature supplies fixture messages and observation hooks; normal builds must never expose personal mail to the harness.
 
 Use `desktop.batch` for related actions. Example arguments:

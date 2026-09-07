@@ -245,6 +245,11 @@ impl Store {
                 Action::Move{account,folder} => (account.clone(),Some(folder.clone()),None,None),
                 Action::Flags(flags) => (None,None,flags.unread,flags.starred),
             };
+            for account in tx.prepare("SELECT DISTINCT json_extract(original,'$.account_id') FROM bulk_items WHERE job=? AND original IS NOT NULL")?
+                .query_map([&id], |r| r.get::<_,String>(0))? {
+                folder_actions::idle(&tx, &account?)?;
+            }
+            if let Some(account) = &account { folder_actions::idle(&tx, account)?; }
             tx.execute("INSERT INTO bulk_effects(id,job,position,account,folder,unread,starred)
                 SELECT id,job,position,?,?,?,? FROM bulk_items WHERE job=? AND status='queued'",
                 params![account,folder,unread,starred, id]).context("Some selected messages already have pending changes. Wait for them, or review their group in History.")?;
@@ -332,6 +337,10 @@ impl Store {
     pub async fn request_bulk_undo(&self, id: String) -> anyhow::Result<Job> {
         self.run(move |c| {
             let tx=c.transaction()?;
+            for account in tx.prepare("SELECT json_extract(original,'$.account_id') FROM bulk_items WHERE job=?1 AND original IS NOT NULL UNION SELECT json_extract(receipt,'$.Move.account') FROM bulk_items WHERE job=?1 AND json_extract(receipt,'$.Move.account') IS NOT NULL")?
+                .query_map([&id], |r| r.get::<_,String>(0))? {
+                folder_actions::idle(&tx, &account?)?;
+            }
             tx.execute("UPDATE bulk_jobs SET undo_requested=1,paused=0 WHERE id=?",[&id])?;
             // The in-flight provider retains ownership, but Undo immediately
             // restores the cached source's display until its receipt arrives.

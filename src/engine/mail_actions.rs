@@ -7,6 +7,8 @@ impl Engine {
         id: &str,
         group: Option<&crate::bulk::Item>,
     ) -> anyhow::Result<()> {
+        let mail = self.store.mail_metadata(id.to_owned()).await?;
+        self.store.ensure_folder_idle(mail.account_id).await?;
         if let Some(item) = group {
             self.store
                 .claim_bulk_identity(item.clone(), id.to_owned())
@@ -64,6 +66,7 @@ impl Engine {
         .await
         .context("The accounts are still busy. Try moving again.")?;
         self.authorize_mail_mutation(&mail.id, group).await?;
+        self.store.ensure_folder_idle(destination.clone()).await?;
         let current = self.store.mail_metadata(mail.id.clone()).await?;
         anyhow::ensure!(
             current.account_id == mail.account_id && current.folder == mail.folder,
@@ -328,6 +331,7 @@ impl Engine {
                 tokio::time::timeout(Duration::from_secs(600), self.account_lock(&account.id))
                     .await
                     .context("The account is still busy. Retry Undo.")?;
+            self.store.ensure_folder_idle(account.id.clone()).await?;
             let mut resolved = tokio::time::timeout(Duration::from_secs(120), async {
                 let secret = providers::read_secret(&account.id).await?;
                 providers::mail::recovery::resolve(&account, &secret, receipt).await

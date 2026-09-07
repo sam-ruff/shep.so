@@ -669,3 +669,35 @@ Harness startup waits for the metadata page, not the message body. Use
 `selected_id` and its `mail_rows` entry when remembering an action's source.
 The reader's `selected` subject may still be null; waiting for it would hide the
 requirement that metadata actions remain available while bodies load.
+
+## Folder mutation work in progress
+
+R30 context menus are still unfinished. `folder_actions` now defines reviewed
+subtrees and a serial runner; `store/folder_actions` holds durable steps and cache
+migrations. Connect these to native controls and engine dispatch before claiming
+the feature is delivered. Run realistic mouse, keyboard, partial-failure,
+close/restart and recovery scenarios through MCP with automated equivalents.
+
+IMAP RENAME moves descendants; DELETE does not. Delete reviewed descendants
+deepest first and protect Inbox. Preserve NoInferiors/NonExistent metadata and
+exact wire names. A complete, tagged-OK LIST is required for preflight: async-imap's
+streamed name helper can hide a final NO. Recheck the remaining subtree before
+each destructive step; a new descendant or recreated completed folder requires
+another review. An absent nonselectable container needs only cache cleanup.
+
+Persist Running before a provider command, then Acknowledged before cache work.
+Only tagged rejection is retryable as a rejected command; lost acknowledgments
+remain Uncertain and require explicit review. A later LIST failure cannot repeat
+an acknowledged RENAME. The runner observes database commits to completion and
+can stop between durable receipts. Local POP3 work can resume after interruption
+because its cache update and Done state commit atomically. Native POP3 hierarchy
+setup and engine/close integration remain part of R30.
+
+The owned per-job filesystem lease excludes another executor/process. It does
+not establish cross-process serialization of every ordinary provider write;
+that remains R01/R06. Pending folder changes gate account writes/sync and group
+staging. Account removal reviews include the journal and delete its records after
+confirmation. Cache moves copy MIME inside SQLite, rekey IMAP metadata, preserve
+local POP3 identities, conversation/restored markers, Sent mappings and relevant
+Undo receipts. Deleting a referenced folder retires only affected history items.
+Retain the protocol and `tests/folder_actions.rs` recovery/collision regressions.

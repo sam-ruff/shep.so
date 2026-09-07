@@ -23,6 +23,55 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
+## Folder mutation backend checkpoint — R30 remains open
+
+The provider-independent folder plan and runner now review whole subtrees,
+protect Inbox, reject invalid nesting/collisions and preserve exact names,
+NoInferiors and NonExistent metadata. The IMAP adapter checks the final LIST
+response and distinguishes tagged rejection from a lost write acknowledgment.
+RENAME moves a subtree; deleting one requires individual, deepest-first commands.
+These rules follow [RFC 9051 mailbox operations](https://www.rfc-editor.org/rfc/rfc9051.html#section-6.3.5).
+
+The SQLite journal records each command before execution and its acknowledgment
+before cache migration. Retry skips completed deletes. An interrupted IMAP write
+requires review; an acknowledged rename followed by failed LIST remains cache
+recovery, never another RENAME. An owned filesystem lease excludes another
+executor, including an independent process. Atomic migrations keep MIME inside
+SQLite and preserve flags, conversation identities, restored markers, expansion,
+Sent mappings and relevant group Undo receipts. Folder deletion retires only the
+affected history items. Reviewed account removal includes unfinished folder work.
+
+This is preparatory backend implementation, not availability of folder context
+menus. Native dispatch, destination/deletion review, immediate presentation,
+visible recovery, close integration and POP3 local hierarchy setup remain R30.
+Independent-process coordination of ordinary provider writes remains R01/R06.
+No real account or server folder was changed by these tests.
+
+Verification: 408 Rust tests and 36 Python tests passed with formatting and
+Clippy. The existing 142 native functional scenarios passed in one complete run
+on the initial backend build. After final backend review-count/collision checks,
+the final test executable passed 16 relevant native scenarios, including all
+five folder-tree flows, mail actions/context menus and a new pixel comparison
+for navigation. There are now 143 saved native functional scenarios; this
+checkpoint does not claim a full 143-scenario run. Optimized Linux packaging,
+checksum verification, extraction and the bundled installer passed.
+
+Final native binary SHA-256:
+`3e0884242949b67c12f3f20963309eaf5e46fa6dc3bcf8885d9026c58ad09e15`.
+Release binary SHA-256:
+`5cea9013d05fa718dac877feae3f43f9253e5bd3af03971f198a256848dd8b43`.
+Logs are under ignored `artifacts/logs/folder-actions-*`. Settled light/dark
+calendar captures in `artifacts/e2e/31c88b55c87b/` were reviewed; the refresh
+icons render correctly. Compact folder-tree evidence is in
+`artifacts/e2e/d49bf5893ba4/`.
+
+Visual review also found that Calendar's state can change before its first paint
+after appearance changes. The earlier captures still showed Preferences after
+a 300 ms settling period. A saved native pixel check converges with a two-second
+wait, and the settled calendar captures are correct. Longer test waits do not fix
+that delay: first-paint scheduling and idle-host responsiveness remain explicitly
+tracked as R15/R63. Performance gates remain deferred.
+
 ## Remaining implementation audit
 
 1. Cached queries, body loads and ordered saves have independent workers, verified with provider slots/queue occupied. Startup defers the Google keychain check. Preferences now use versioned acknowledgements; backup completion changes only metadata. Detail revisions reject stale bodies/errors after flag/move changes. Still review closing during a debounced/pending preference save and retrying a full persistence queue.

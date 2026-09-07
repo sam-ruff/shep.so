@@ -26,6 +26,8 @@ async fn fixture() -> (App, Store, tokio::sync::mpsc::Receiver<Command>) {
                     delimiter: Some('/'),
                     selectable,
                     encoding: NameEncoding::Utf8,
+                    no_inferiors: false,
+                    non_existent: false,
                 })
                 .collect(),
             )
@@ -156,6 +158,8 @@ async fn move_feedback_decodes_labels_without_changing_action_or_undo_identity()
                 delimiter: Some('/'),
                 selectable: true,
                 encoding: NameEncoding::ImapUtf7,
+                no_inferiors: false,
+                non_existent: false,
             }],
         )
         .await

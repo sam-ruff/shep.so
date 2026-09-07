@@ -12,6 +12,8 @@ fn folder(name: &str, delimiter: Option<char>, selectable: bool) -> Mailbox {
         delimiter,
         selectable,
         encoding: NameEncoding::Utf8,
+        no_inferiors: false,
+        non_existent: false,
     }
 }
 #[tokio::test]
@@ -151,6 +153,8 @@ async fn unicode_display_and_search_keep_the_exact_destination_identity() {
                 delimiter: Some('/'),
                 selectable: true,
                 encoding: NameEncoding::ImapUtf7,
+                no_inferiors: false,
+                non_existent: false,
             }],
         )
         .await

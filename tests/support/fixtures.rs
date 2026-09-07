@@ -652,6 +652,8 @@ async fn seed_nested_folders(store: &Store) -> anyhow::Result<()> {
                 },
                 selectable,
                 encoding: NameEncoding::ImapUtf7,
+                no_inferiors: false,
+                non_existent: false,
             })
             .collect();
         store.save_folder_catalog(account.into(), catalog).await?;

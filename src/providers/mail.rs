@@ -1,3 +1,4 @@
+pub mod folders;
 mod receipts;
 pub mod recovery;
 pub mod sent;
@@ -185,25 +186,13 @@ async fn sync_imap_session<
         .await?;
     let mut catalog: Vec<_> = names
         .iter()
-        .map(|name| crate::folders::Mailbox {
-            name: name.name().to_owned(),
-            delimiter: name
-                .delimiter()
-                .and_then(|delimiter| delimiter.chars().next()),
-            selectable: !name.attributes().iter().any(|attribute| match attribute {
-                async_imap::types::NameAttribute::NoSelect => true,
-                async_imap::types::NameAttribute::Extension(value) => value
-                    .trim_start_matches('\\')
-                    .eq_ignore_ascii_case("NonExistent"),
-                _ => false,
-            }),
-            encoding: if capabilities.has_str("IMAP4rev2") && !capabilities.has_str("IMAP4rev1")
-                || capabilities.has_str("UTF8=ONLY")
-            {
-                crate::folders::NameEncoding::Utf8
-            } else {
-                crate::folders::NameEncoding::ImapUtf7
-            },
+        .map(|name| {
+            folders::mailbox(
+                name.name(),
+                name.delimiter(),
+                name.attributes(),
+                folders::encoding(&capabilities),
+            )
         })
         .collect();
     catalog.sort_by_key(|folder| !folder.name.eq_ignore_ascii_case("INBOX"));

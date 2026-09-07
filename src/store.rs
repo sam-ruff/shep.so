@@ -1,4 +1,5 @@
 mod bulk;
+mod folder_actions;
 mod mail_actions;
 mod mail_query;
 use crate::model::*;
@@ -14,6 +15,7 @@ use anyhow::Context;
 pub use bulk::BulkLease;
 pub use conversations::{CONVERSATION_PAGE_SIZE, ConversationPage};
 pub use drafts::DraftState;
+pub use folder_actions::FolderLease;
 use rusqlite::{Connection, params};
 pub use selection::{
     MailSelectionId, SelectedMail, SelectionChange, SelectionGroup, SelectionPage,
@@ -127,6 +129,7 @@ impl Store {
         outgoing::schema(&conn)?;
         selection::schema(&conn)?;
         bulk::schema(&conn)?;
+        folder_actions::schema(&conn)?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 2 {
             let tx = conn.transaction()?;
@@ -436,25 +439,33 @@ impl Store {
         changes: crate::mail_actions::Flags,
     ) -> anyhow::Result<()> {
         self.run(move |c| {
-            let changed = c.execute("UPDATE messages SET unread=COALESCE(?, unread),starred=COALESCE(?, starred) WHERE id=? AND account=? AND folder=?",
+            let tx = c.transaction()?;
+            folder_actions::idle(&tx, &mail.account_id)?;
+            let changed = tx.execute("UPDATE messages SET unread=COALESCE(?, unread),starred=COALESCE(?, starred) WHERE id=? AND account=? AND folder=?",
                 params![changes.unread, changes.starred, mail.id, mail.account_id, mail.folder])?;
             anyhow::ensure!(changed == 1, "This message moved or was removed. Refresh the folder and try again.");
+            tx.commit()?;
             Ok(())
         }).await
     }
     pub async fn flags(&self, mail: Mail) -> anyhow::Result<()> {
         self.run(move |c| {
-            c.execute(
+            let tx = c.transaction()?;
+            folder_actions::mail_idle(&tx, &mail.id)?;
+            tx.execute(
                 "UPDATE messages SET unread=?,starred=? WHERE id=?",
                 params![mail.unread, mail.starred, mail.id],
             )?;
+            tx.commit()?;
             Ok(())
         })
         .await
     }
     pub async fn move_local(&self, id: String, folder: String) -> anyhow::Result<()> {
         self.run(move |c| {
-            let changed = c.execute(
+            let tx = c.transaction()?;
+            folder_actions::mail_idle(&tx, &id)?;
+            let changed = tx.execute(
                 "UPDATE messages SET folder=? WHERE id=?",
                 params![folder, id],
             )?;
@@ -462,13 +473,17 @@ impl Store {
                 changed == 1,
                 "This message was removed. Refresh the folder and try again."
             );
+            tx.commit()?;
             Ok(())
         })
         .await
     }
     pub async fn remove(&self, id: String) -> anyhow::Result<()> {
         self.run(move |c| {
-            c.execute("DELETE FROM messages WHERE id=?", [id])?;
+            let tx = c.transaction()?;
+            folder_actions::mail_idle(&tx, &id)?;
+            tx.execute("DELETE FROM messages WHERE id=?", [id])?;
+            tx.commit()?;
             Ok(())
         })
         .await
@@ -496,6 +511,7 @@ impl Store {
             let tx = c.transaction()?;
             let c = &tx;
             connections::allow(c, ConnectionKind::Account, &account.id)?;
+            folder_actions::idle(c, &account.id)?;
             let mut accounts: Vec<Account> = get(c, "accounts")?;
             accounts.retain(|a| a.id != account.id);
             if !account.sent_folder.is_empty() {c.execute("INSERT INTO sent_folders(account,folder) VALUES(?,?) ON CONFLICT(account) DO UPDATE SET folder=excluded.folder",params![account.id,account.sent_folder])?;}
@@ -529,6 +545,7 @@ impl Store {
             let tx = c.transaction()?;
             let c = &tx;
             connections::allow(c, ConnectionKind::Account, &account)?;
+            folder_actions::idle(c, &account)?;
             let mut mapping: std::collections::HashMap<String, Vec<String>> =
                 get(c, "account_folders")?;
             let folders: Vec<String> = catalog
@@ -566,6 +583,7 @@ impl Store {
                 self.run(move |c| {
                     let tx = c.transaction()?;
                     for (id, unread, starred) in flags {
+                        folder_actions::mail_idle(&tx, &id)?;
                         tx.execute(
                             "UPDATE messages SET unread=?,starred=? WHERE id=?",
                             params![unread, starred, id],
@@ -583,6 +601,7 @@ impl Store {
             } => {
                 self.run(move |c| {
                     let tx = c.transaction()?;
+                    folder_actions::idle(&tx, &account)?;
                     let ids: Vec<(String, bool)> = tx
                         .prepare("SELECT id,EXISTS(SELECT 1 FROM restored_messages WHERE restored_messages.id=messages.id) FROM messages WHERE account=? AND folder=? AND id NOT LIKE '%:local-sent-%'")?
                         .query_map(params![account, folder], |r| Ok((r.get(0)?, r.get(1)?)))?
@@ -605,10 +624,13 @@ impl Store {
             }
             MailSyncItem::Folders(account, folders) => self.save_folder_catalog(account, folders).await,
             MailSyncItem::SentFolder(account,folder)=>self.run(move |c| {
+                let tx = c.transaction()?;
+                let c = &tx;
                 connections::allow(c,ConnectionKind::Account,&account)?;
+                folder_actions::idle(c,&account)?;
                 if let Some(folder)=folder { c.execute("INSERT INTO sent_folders(account,folder) VALUES(?,?) ON CONFLICT(account) DO UPDATE SET folder=excluded.folder",params![account,folder])?; }
 
-                Ok(())
+                tx.commit()?; Ok(())
             }).await,
             MailSyncItem::SkippedLarge => Ok(()),
         }
@@ -842,6 +864,7 @@ pub(super) fn calendar_changed(c: &Connection) -> anyhow::Result<()> {
 
 fn upsert_message(c: &Connection, message: &StoredMail) -> anyhow::Result<()> {
     connections::allow(c, ConnectionKind::Account, &message.summary.account_id)?;
+    folder_actions::idle(c, &message.summary.account_id)?;
     let m = &message.summary;
     c.execute("INSERT INTO messages(id,account,folder,sender,subject,body,timestamp,unread,starred,data,raw)
         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
