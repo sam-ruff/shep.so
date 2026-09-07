@@ -4,6 +4,7 @@ pub mod compose;
 pub mod desktop_badge;
 pub mod email_content;
 pub mod engine;
+pub mod folders;
 pub mod fuzzy;
 pub mod html_render;
 pub mod mail_actions;

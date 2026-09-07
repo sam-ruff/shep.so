@@ -8,6 +8,8 @@ Go to **Preferences → Accounts**. Add an IMAP or POP3 account, then enter its 
 
 The unified inbox brings your accounts together. Choose a folder in the sidebar, search by sender or message text, or filter for unread, flagged or attachment-bearing mail.
 
+Folder groups start collapsed. Click a chevron to show subfolders; click a folder name to read its mail. A container that cannot hold mail only expands. Shep remembers which groups you opened. With the sidebar focused, Left/Right moves through the tree and expands or collapses groups; Enter opens the focused folder. Ctrl-click combines folders. Dragging mail over a closed group opens it so you can drop into a subfolder.
+
 Click a message to read it. Moving on to another message, folder or tab marks it read. An explicit **Mark as unread** remains unread until you choose to read it again. Double-click for a full-window reader. Related messages appear as collapsible cards; disable grouping in **Preferences → General** if you prefer individual messages.
 
 HTML mail retains its layout, fonts, tables and inline images. Use **Plain text** for the text alternative. Select and copy text in either view; quoted text follows your reply-history preference. Use `Ctrl+F` or the reader’s search icon to find text in the open message. Enter and Shift+Enter move between matches; **Aa** matches case. Escape closes the find bar.

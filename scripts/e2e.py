@@ -75,6 +75,105 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch({"type":"hover","x":source_x,"y":source_y},{"type":"mouse_down"},
                        {"type":"hover","x":target_x,"y":target_y},check("mail_drag.active",True))
 
+    def test_nested_folder_roots_mouse_selection_and_restart(self):
+        result=self.mcp.call("desktop.start",nested_folders=True,persistent=True)
+        print(f"Nested folder persistence evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(check("expanded_folders",{}),check("sidebar_labels","Projects","contains"),
+                       check("sidebar_labels","Teams","contains"),check("sidebar_labels","Notes/flat.name","contains"),
+                       shot("nested-folder-roots"),click(85,540),check("folder","Projects"),
+                       check("selected","Project overview"),check("expanded_folders",{}),
+                       click(188,540),check("expanded_folders.preview-work","Projects","contains"),
+                       check("sidebar_labels","Design","contains"),check("folder","Projects"),
+                       shot("nested-projects-expanded"),click(176,584),
+                       check("expanded_folders.preview-work","Projects/Design","contains"),
+                       check("sidebar_labels","日本語","contains"),click(110,626),
+                       check("folder","Projects/Design/&ZeVnLIqe-"),check("selected","Japanese folder note"),
+                       shot("nested-japanese-folder-open"),click(176,540),
+                       check("expanded_folders.preview-work",["Projects/Design"]),
+                       check("folder","Projects/Design/&ZeVnLIqe-"),check("preferences_saved",True),
+                       check("saved_expanded_folders.preview-work",["Projects/Design"]),shot("nested-parent-collapsed"),
+                       {"type":"restart"},check("expanded_folders.preview-work",["Projects/Design"]),
+                       click(188,540),check("sidebar_labels","日本語","contains"),
+                       shot("nested-expansion-restored"))
+
+    def test_nested_folder_keyboard_containers_and_literal_delimiters(self):
+        result=self.mcp.call("desktop.start",nested_folders=True)
+        print(f"Nested folder keyboard evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(click(85,584),check("expanded_folders.preview-work","Teams","contains"),
+                       check("folder","INBOX"),check("sidebar_index",7),key("Right"),check("sidebar_index",8),
+                       key("Return"),check("expanded_folders.preview-work","Teams/Remote","contains"),
+                       check("folder","INBOX"),key("Right"),check("sidebar_index",9),key("Return"),
+                       check("folder","Teams/Remote/Meetings"),check("selected","Remote team agenda"),
+                       shot("nested-container-keyboard-open"),key("Left"),check("sidebar_index",8),key("Left"),
+                       check("expanded_folders.preview-work",["Teams"]),key("Left"),check("sidebar_index",7),key("Left"),
+                       check("expanded_folders.preview-work",[]),click(85,727),
+                       check("expanded_folders.preview-personal",["Home"]),key("Right"),check("sidebar_index",11),
+                       key("Return"),check("folder","Home.Plans"),check("selected","Home plans"),
+                       key("Right"),check("sidebar_labels","2026","contains"),key("Right"),key("Return"),
+                       check("folder","Home.Plans.2026"),check("selected","Plans for 2026"),shot("nested-dot-delimiter"),
+                       key("Left"),key("Left"),key("Left"),key("Left"),
+                       check("expanded_folders.preview-personal",[]),click(85,769),
+                       check("folder","Notes/flat.name"),check("selected","A flat folder"),
+                       click(85,626),check("folder","Notes/flat.name"),shot("nested-literal-flat-and-disabled-container"))
+
+    def test_nested_folder_drag_reveals_containers_and_undo(self):
+        result=self.mcp.call("desktop.start",nested_folders=True,mail_actions="slow")
+        print(f"Nested folder drag evidence: {result['artifacts']}",flush=True)
+        self.hold_mail_over(402,347,85,584)
+        self.mcp.batch(check("expanded_folders.preview-work","Teams","contains"),
+                       check("mail_drag.target",None),shot("nested-drag-container-expanded"),
+                       {"type":"hover","x":95,"y":626},
+                       check("expanded_folders.preview-work","Teams/Remote","contains"),
+                       check("mail_drag.target",None),{"type":"hover","x":110,"y":668},
+                       check("mail_drag.target","Teams/Remote/Meetings"),check("mail_drag.valid",True),
+                       shot("nested-drag-leaf-target"),{"type":"mouse_up"},check("total",119),check("mail_pending",1),
+                       check("action_toast.label","Moved 1 message to Teams/Remote/Meetings"),
+                       click(1340,874),check("total",120),{**check("mail_pending",0),"timeout_ms":5000},
+                       check("mail_rows.1.subject","Your weekly workspace digest"),shot("nested-drag-restored"))
+
+    def test_nested_folder_unicode_move_review_and_combined_selection(self):
+        result=self.mcp.call("desktop.start",nested_folders=True)
+        print(f"Nested folder Move evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(click(402,347),key("m"),check("dialog","Move"),check("focused_input","folder-search"),type_text("日本語"),
+                       check("move_enter_destination","Projects/Design/&ZeVnLIqe-"),shot("nested-unicode-move-search"),
+                       key("Return"),check("total",119),check("mail_pending",0),
+                       check("action_toast.label","Moved 1 message to Projects/Design/日本語"),shot("nested-unicode-move-toast"),
+                       click(1340,874),check("total",120),check("mail_pending",0),
+                       click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
+                       click(274,218),click(274,322),check("mail_selection.count",2),check("mail_selection.pending",False),
+                       key("m"),check("dialog","Move"),check("focused_input","folder-search"),type_text("日本語"),
+                       check("move_enter_destination","Projects/Design/&ZeVnLIqe-"),key("Return"),
+                       check("dialog","BulkReview"),check("bulk.action","Move to Projects/Design/日本語"),
+                       shot("nested-unicode-bulk-review"),key("n"),check("dialog",None),check("total",120),
+                       click(85,540),check("folder","Projects"),click(188,540),
+                       check("sidebar_labels","Design","contains"),
+                       {**click(95,584),"modifiers":["ctrl"]},check("total",2),
+                       check("selected_folders",[{"account":"preview-work","folder":"Projects","sent_only":False},
+                                                 {"account":"preview-work","folder":"Projects/Design","sent_only":False}]),
+                       {**click(95,668),"modifiers":["ctrl"]},check("expanded_folders.preview-work","Teams","contains"),
+                       check("total",2),shot("nested-parent-child-combined-inbox"))
+
+    def test_nested_folder_compact_dark_keyboard_reveal_and_saved_size(self):
+        result=self.mcp.call("desktop.start",nested_folders=True,persistent=True)
+        print(f"Compact folder tree evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),click(690,366),check("dark",True),
+                       key("ctrl+1"),check("tab","Mail"),click(188,540),check("sidebar_labels","Design","contains"),
+                       click(176,584),check("sidebar_labels","日本語","contains"),click(110,626),
+                       check("selected","Japanese folder note"),{"type":"resize","width":900,"height":640},
+                       check("window_size",[900,640]),key("Left"),check("sidebar_index",7),
+                       key("Right"),check("sidebar_index",8),key("Return"),check("selected","Japanese folder note"),
+                       shot("nested-compact-dark-keyboard-revealed"),
+                       click(100,529),check("folder","Projects/Design/&ZeVnLIqe-"),
+                       check("saved_window_size",{"width":900.,"height":640.}),check("preferences_saved",True),
+                       {"type":"restart"},check("dark",True),check("window_size",[900,640]),
+                       check("sidebar_labels","日本語","contains"),shot("nested-compact-dark-restarted"))
+        self.mcp.batch({"type":"resize","width":1440,"height":920},key("ctrl+comma"),
+                       check("tab","Preferences"),wait(120),click(1145,623),wait(80),click(1140,509),
+                       check("interface_scale",120),check("preferences_saved",True),key("ctrl+1"),
+                       check("tab","Mail"),wait(120),click(105,648),check("folder","Projects"),
+                       key("Right"),check("sidebar_index",7),key("Right"),check("sidebar_index",8),
+                       key("Return"),check("selected","Japanese folder note"),shot("nested-dark-large-scale"))
+
     def test_drag_single_message_uses_the_source_row_and_immediate_undo(self):
         started=self.mcp.call("desktop.start",mail_actions="slow")
         print(f"Single mail drag evidence: {started['artifacts']}",flush=True)

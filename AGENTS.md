@@ -620,3 +620,39 @@ the fictional personal account for local/cross-account destination checks.
 `mail_drag` is observation-only. Preserve all ten `test_drag_*` native scenarios,
 controller/widget/selection tests and harness ownership checks. The scrolled
 Unicode-folder scenario also checks saved WebP pixels for a stale shadow trail.
+
+## Mailbox trees and folder navigation
+
+Preserve IMAP LIST names, per-name hierarchy delimiters (including NIL),
+selectability and encoding in `folder_catalogs`. Never infer a slash hierarchy
+from a legacy name. A nonselectable or NonExistent entry may be a visible
+container, but must never enter SELECT, Move or drop destinations; cached mail
+cannot make its canonical/trailing-delimiter name selectable again. Keep cached
+originals accessible to recovery instead of deleting them during LIST refresh.
+
+`folders::Tree` builds missing ancestors and decoded display paths on the storage
+worker; Workspace shares trees through Arc. Only metadata crosses UI channels.
+Preserve exact wire names in queries, operations and receipts. Decode modified
+UTF-7 only for an IMAP session using that encoding, including ampersands and
+encoded delimiter characters; UTF-8 names with the same spelling remain literal.
+Display lookup is account-specific. Move search ranks readable labels but returns
+wire names. Review, history and toast labels must use the same display mapping.
+
+Selectable parent labels open mail; their chevrons only expand. Nonselectable
+parents expand without selecting. Groups default collapsed and persist per-account
+expansion; closing a parent retains its descendants' remembered state. Common
+unified-folder shortcuts must not hide real children under the account tree.
+Left/Right navigates hierarchy; Up/Down moves focus without toggling containers.
+Keyboard targets scroll into view using native widget bounds, not guessed row
+heights. Retry only missing new layout rows, and reject superseded targets.
+Mouse wheel position remains alone unless keyboard navigation requests a reveal.
+Drag hover opens a closed folder group after the existing dwell without changing
+the reading selection or turning a container into a drop target.
+
+The MCP `nested_folders=true` fixture includes slash/dot/NIL hierarchies,
+nonselectable/trailing-delimiter containers, selectable parents and modified-UTF-7
+Japanese mailboxes. Preserve its five saved native scenarios: mouse/restart,
+keyboard/delimiters, hover/drop/Undo, Unicode Move/review/Ctrl-selection, and
+compact dark/120% keyboard reveal with saved window size. Backend tests use actual
+loopback IMAP protocol and reopened isolated SQLite files. This is not live
+personal-server evidence. Folder delete/move context menus remain tracked R30 work.

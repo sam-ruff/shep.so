@@ -183,18 +183,37 @@ async fn sync_imap_session<
             sent::choose_folder(&names, &account.sent_folder).ok(),
         ))
         .await?;
-    let mut folders: Vec<String> = names
+    let mut catalog: Vec<_> = names
         .iter()
-        .filter(|n| {
-            !n.attributes()
-                .iter()
-                .any(|a| format!("{a:?}").eq_ignore_ascii_case("NoSelect"))
+        .map(|name| crate::folders::Mailbox {
+            name: name.name().to_owned(),
+            delimiter: name
+                .delimiter()
+                .and_then(|delimiter| delimiter.chars().next()),
+            selectable: !name.attributes().iter().any(|attribute| match attribute {
+                async_imap::types::NameAttribute::NoSelect => true,
+                async_imap::types::NameAttribute::Extension(value) => value
+                    .trim_start_matches('\\')
+                    .eq_ignore_ascii_case("NonExistent"),
+                _ => false,
+            }),
+            encoding: if capabilities.has_str("IMAP4rev2") && !capabilities.has_str("IMAP4rev1")
+                || capabilities.has_str("UTF8=ONLY")
+            {
+                crate::folders::NameEncoding::Utf8
+            } else {
+                crate::folders::NameEncoding::ImapUtf7
+            },
         })
-        .map(|n| n.name().to_owned())
         .collect();
-    folders.sort_by_key(|f| !f.eq_ignore_ascii_case("INBOX"));
+    catalog.sort_by_key(|folder| !folder.name.eq_ignore_ascii_case("INBOX"));
+    let folders: Vec<String> = catalog
+        .iter()
+        .filter(|folder| folder.selectable)
+        .map(|folder| folder.name.clone())
+        .collect();
     output
-        .send(MailSyncItem::Folders(account.id.clone(), folders.clone()))
+        .send(MailSyncItem::Folders(account.id.clone(), catalog))
         .await?;
     tracing::info!(folders = folders.len(), "IMAP folder listing complete");
     for (index, folder) in folders.iter().enumerate() {
@@ -1152,3 +1171,6 @@ mod tests {
         assert!(validate_uid(&mail, None).is_err());
     }
 }
+
+#[cfg(test)]
+mod folder_tests;

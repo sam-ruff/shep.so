@@ -128,6 +128,7 @@ pub enum Message {
     MoveFirst,
     Focus(&'static str, u8),
     FocusChecked(&'static str, bool),
+    RevealSidebar(String, u8),
     ToggleStar,
     ToggleRead,
     Reply,
@@ -223,6 +224,7 @@ pub enum Message {
     MailPaneClicked(widget::pane_grid::Pane),
     ToggleInboxExpanded,
     ToggleAccountFolders(String),
+    ToggleFolderGroup(String, String),
     Modifiers(keyboard::Modifiers),
     AccountFolder(String, String),
     AccountFolderUnified,
@@ -1829,10 +1831,7 @@ impl App {
             Message::SyncCalendar => self.send(Command::SyncCalendar),
             Message::MoveFirst => {
                 if self.dialog == Some(Dialog::Move)
-                    && let Some(folder) =
-                        crate::fuzzy::ranked(self.field("folder_search"), self.move_folders())
-                            .into_iter()
-                            .next()
+                    && let Some(folder) = self.ranked_move_folders().into_iter().next()
                 {
                     return self.handle(Message::Move(folder));
                 }
@@ -2498,6 +2497,7 @@ impl App {
                 }
             }
             Message::Modifiers(modifiers) => self.modifiers = modifiers,
+            Message::RevealSidebar(target, attempt) => return self.reveal_sidebar(target, attempt),
             Message::ToggleAccountFolders(account) => {
                 if self.preferences.collapsed_accounts.contains(&account) {
                     self.preferences
@@ -2507,6 +2507,18 @@ impl App {
                     self.preferences.collapsed_accounts.push(account);
                 }
                 self.save_preferences();
+            }
+            Message::ToggleFolderGroup(account, path) => {
+                self.sidebar_focus = true;
+                self.list_focus = false;
+                let expanded = !self.folder_expanded(&account, &path);
+                self.set_folder_expanded(&account, &path, expanded);
+                if let Some(index) = self.sidebar_items().iter().position(|item| {
+                    self.sidebar_group(&item.action).as_ref()
+                        == Some(&(account.clone(), path.clone()))
+                }) {
+                    self.sidebar_index = index;
+                }
             }
             Message::ToggleInboxExpanded => self.inbox_expanded = !self.inbox_expanded,
             Message::SidebarClick(index, modifiers) => {
@@ -3161,10 +3173,22 @@ impl App {
         }
         if self.tab == Tab::Mail
             && self.sidebar_focus
+            && modifiers.is_empty()
+            && matches!(
+                key,
+                Key::Named(keyboard::key::Named::ArrowLeft | keyboard::key::Named::ArrowRight)
+            )
+        {
+            let action = self.sidebar_tree_key(key == Key::Named(keyboard::key::Named::ArrowRight));
+            return Task::batch([action, self.reveal_sidebar_focus()]);
+        }
+        if self.tab == Tab::Mail
+            && self.sidebar_focus
             && key == Key::Named(keyboard::key::Named::Enter)
             && modifiers.is_empty()
         {
-            return self.handle(Message::SidebarAction(self.sidebar_index));
+            let action = self.handle(Message::SidebarAction(self.sidebar_index));
+            return Task::batch([action, self.reveal_sidebar_focus()]);
         }
         if self.tab == Tab::Mail
             && matches!(
@@ -3183,11 +3207,14 @@ impl App {
                 if self
                     .sidebar_items()
                     .get(self.sidebar_index)
-                    .is_some_and(|s| s.section)
+                    .is_some_and(|s| {
+                        s.section || matches!(s.action, Message::ToggleFolderGroup(..))
+                    })
                 {
-                    return Task::none();
+                    return self.reveal_sidebar_focus();
                 }
-                return self.handle(Message::SidebarAction(self.sidebar_index));
+                let action = self.handle(Message::SidebarAction(self.sidebar_index));
+                return Task::batch([action, self.reveal_sidebar_focus()]);
             }
             return self.handle(Message::PreviousMessage(previous));
         }
@@ -3276,9 +3303,7 @@ impl App {
             );
         }
         data["move_enter_destination"] = serde_json::json!(if self.dialog == Some(Dialog::Move) {
-            crate::fuzzy::ranked(self.field("folder_search"), self.move_folders())
-                .first()
-                .cloned()
+            self.ranked_move_folders().first().cloned()
         } else {
             None
         });
@@ -3401,6 +3426,14 @@ impl App {
             serde_json::json!(self.detail.as_ref().map(|d| d.attachments.len()));
         data["selected_folders"] = serde_json::json!(self.query.folders);
         data["collapsed_accounts"] = serde_json::json!(self.preferences.collapsed_accounts);
+        data["expanded_folders"] = serde_json::json!(self.preferences.expanded_folders);
+        data["saved_expanded_folders"] =
+            serde_json::json!(self.workspace.preferences.expanded_folders);
+        data["sidebar_index"] = serde_json::json!(self.sidebar_index);
+        data["sidebar_rows"] = serde_json::json!(self.sidebar_items().iter().map(|item| {
+            let group=self.sidebar_group(&item.action);
+            serde_json::json!({"label":item.label,"depth":item.depth,"selectable":self.sidebar_folder(&item.action).is_some(),"group":group,"expanded":group.as_ref().is_some_and(|(a,p)|self.folder_expanded(a,p))})
+        }).collect::<Vec<_>>());
         data["sidebar_width"] = serde_json::json!(self.sidebar_width());
         data["saved_sidebar_width"] = serde_json::json!(self.workspace.preferences.sidebar_width);
         data["window_size"] = serde_json::json!([self.size.width, self.size.height]);
@@ -3474,7 +3507,7 @@ impl App {
                 self.action_toasts
                     .current
                     .as_ref()
-                    .map(|t| serde_json::json!({"label": t.label(), "count": t.count(), "undo": !t.undo_tokens().is_empty()}))
+                    .map(|t| serde_json::json!({"label": t.display_label(&self.workspace), "count": t.count(), "undo": !t.undo_tokens().is_empty()}))
             );
         }
         data["undo_failures"] = serde_json::json!(self.mail_actions.undo_failures().len());
@@ -3570,3 +3603,6 @@ fn focus_after_layout(id: &'static str) -> Task<Message> {
         |id| Message::Focus(id, 0),
     )
 }
+
+#[cfg(test)]
+mod folder_tests;

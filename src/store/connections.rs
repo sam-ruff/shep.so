@@ -229,6 +229,8 @@ impl Store {
                     tx.execute("DELETE FROM conversation_tokens WHERE account=?", [&target.id])?;
                     let mut folder_map: std::collections::HashMap<String,Vec<String>> = get(&tx, "account_folders")?;
                     folder_map.remove(&target.id); put(&tx, "account_folders", &folder_map)?;
+                    let mut catalogs: std::collections::HashMap<String,Vec<crate::folders::Mailbox>> = get(&tx, "folder_catalogs")?;
+                    catalogs.remove(&target.id); put(&tx, "folder_catalogs", &catalogs)?;
                     let folders: std::collections::BTreeSet<_> = folder_map.values().flatten().cloned().collect();
                     put(&tx, "folders", &folders)?;
                     let mut drafts: Vec<Draft> = get(&tx, "drafts")?;

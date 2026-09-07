@@ -380,7 +380,7 @@ pub enum MailSyncItem {
         live_ids: std::collections::HashSet<String>,
     },
     SkippedLarge,
-    Folders(String, Vec<String>),
+    Folders(String, Vec<crate::folders::Mailbox>),
     SentFolder(String, Option<String>),
 }
 
@@ -518,6 +518,7 @@ pub struct Preferences {
     pub mail_sort: MailSort,
     pub unified_inbox: bool,
     pub collapsed_accounts: Vec<String>,
+    pub expanded_folders: std::collections::HashMap<String, std::collections::HashSet<String>>,
     pub collapsed_drafts: bool,
     pub cross_account_moves: bool,
     pub reader_font_size: u16,
@@ -559,6 +560,7 @@ impl Default for Preferences {
             mail_sort: MailSort::Newest,
             unified_inbox: true,
             collapsed_accounts: Vec::new(),
+            expanded_folders: Default::default(),
             collapsed_drafts: false,
             cross_account_moves: false,
             reader_font_size: 14,

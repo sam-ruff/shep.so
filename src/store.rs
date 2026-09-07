@@ -36,6 +36,7 @@ pub struct Workspace {
     pub preferences_revision: u64,
     pub folders: Vec<String>,
     pub account_folders: std::collections::HashMap<String, Vec<String>>,
+    pub folder_trees: std::collections::HashMap<String, Arc<crate::folders::Tree>>,
     pub drafts: Vec<Draft>,
     pub drafts_revision: u64,
     pub connections_revision: u64,
@@ -45,6 +46,29 @@ pub struct Workspace {
     pub outgoing_drafts: std::collections::HashSet<String>,
     pub google_archived: std::collections::HashSet<String>,
     pub removed_google_calendars: usize,
+}
+impl Workspace {
+    pub fn folder_label<'a>(
+        &'a self,
+        account: Option<&str>,
+        name: &'a str,
+    ) -> std::borrow::Cow<'a, str> {
+        if name.eq_ignore_ascii_case("INBOX") {
+            return std::borrow::Cow::Borrowed("Inbox");
+        }
+        let node = if let Some(account) = account {
+            self.folder_trees
+                .get(account)
+                .and_then(|tree| tree.node(name))
+        } else {
+            self.accounts.iter().find_map(|account| {
+                self.folder_trees
+                    .get(&account.id)
+                    .and_then(|tree| tree.node(name))
+            })
+        };
+        std::borrow::Cow::Borrowed(node.map_or(name, |node| node.display_path.as_str()))
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -255,16 +279,38 @@ impl Store {
             }
             let mut account_folders: std::collections::HashMap<String, Vec<String>> =
                 get(c, "account_folders")?;
+            let mut catalogs: std::collections::HashMap<String, Vec<crate::folders::Mailbox>> = get(c, "folder_catalogs")?;
+            let catalog_selection: std::collections::HashMap<_, std::collections::HashMap<_,bool>> = catalogs.iter().map(|(account,catalog)| {
+                let mut selection=std::collections::HashMap::new();
+                for folder in catalog {
+                    *selection.entry(folder.name.as_str()).or_default() |= folder.selectable;
+                    *selection.entry(folder.path()).or_default() |= folder.selectable;
+                }
+                (account.as_str(),selection)
+            }).collect();
+            let mut seen: std::collections::HashMap<_,std::collections::HashSet<_>> = account_folders.iter().map(|(account,names)|(account.clone(),names.iter().cloned().collect())).collect();
             for pair in c
                 .prepare("SELECT DISTINCT account,folder FROM messages ORDER BY folder")?
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
             {
                 let (account, folder) = pair?;
-                let folders = account_folders.entry(account).or_default();
-                if !folders.contains(&folder) {
-                    folders.push(folder);
+                if catalog_selection.get(account.as_str()).and_then(|catalog|catalog.get(folder.as_str())) == Some(&false) {
+                    continue;
+                }
+                if seen.entry(account.clone()).or_default().insert(folder.clone()) {
+                    account_folders.entry(account).or_default().push(folder);
                 }
             }
+            for (account, names) in &account_folders {
+                let catalog = catalogs.entry(account.clone()).or_default();
+                let mut known: std::collections::HashSet<_> = catalog.iter().map(|folder|folder.name.clone()).collect();
+                for name in names {
+                    if known.insert(name.clone()) {
+                        catalog.push(crate::folders::Mailbox::flat(name.clone()));
+                    }
+                }
+            }
+            let folder_trees = catalogs.into_iter().map(|(account, catalog)| (account, Arc::new(crate::folders::Tree::new(&catalog)))).collect();
             let drafts = drafts::snapshot(c)?;
             Ok(Workspace {
                 accounts: get(c, "accounts")?,
@@ -272,6 +318,7 @@ impl Store {
                 preferences: get(c, "preferences")?,
                 preferences_revision: get(c, "preferences_revision")?,
                 account_folders,
+                folder_trees,
                 folders,
                 drafts: drafts.drafts,
                 drafts_revision: drafts.revision,
@@ -463,12 +510,32 @@ impl Store {
     }
 
     pub async fn save_folders(&self, account: String, folders: Vec<String>) -> anyhow::Result<()> {
+        self.save_folder_catalog(
+            account,
+            folders
+                .into_iter()
+                .map(crate::folders::Mailbox::flat)
+                .collect(),
+        )
+        .await
+    }
+
+    pub async fn save_folder_catalog(
+        &self,
+        account: String,
+        catalog: Vec<crate::folders::Mailbox>,
+    ) -> anyhow::Result<()> {
         self.run(move |c| {
             let tx = c.transaction()?;
             let c = &tx;
             connections::allow(c, ConnectionKind::Account, &account)?;
             let mut mapping: std::collections::HashMap<String, Vec<String>> =
                 get(c, "account_folders")?;
+            let folders: Vec<String> = catalog
+                .iter()
+                .filter(|folder| folder.selectable)
+                .map(|folder| folder.name.clone())
+                .collect();
             use rusqlite::OptionalExtension;
             let sent: Option<String> = c
                 .query_row(
@@ -480,8 +547,12 @@ impl Store {
             if sent.is_some_and(|folder| !folders.contains(&folder)) {
                 c.execute("DELETE FROM sent_folders WHERE account=?", [&account])?;
             }
-            mapping.insert(account, folders);
+            mapping.insert(account.clone(), folders);
             put(c, "account_folders", &mapping)?;
+            let mut catalogs: std::collections::HashMap<String, Vec<crate::folders::Mailbox>> =
+                get(c, "folder_catalogs")?;
+            catalogs.insert(account, catalog);
+            put(c, "folder_catalogs", &catalogs)?;
             connections::changed(c)?;
             tx.commit()?;
             Ok(())
@@ -532,7 +603,7 @@ impl Store {
                 })
                 .await
             }
-            MailSyncItem::Folders(account, folders) => self.save_folders(account, folders).await,
+            MailSyncItem::Folders(account, folders) => self.save_folder_catalog(account, folders).await,
             MailSyncItem::SentFolder(account,folder)=>self.run(move |c| {
                 connections::allow(c,ConnectionKind::Account,&account)?;
                 if let Some(folder)=folder { c.execute("INSERT INTO sent_folders(account,folder) VALUES(?,?) ON CONFLICT(account) DO UPDATE SET folder=excluded.folder",params![account,folder])?; }

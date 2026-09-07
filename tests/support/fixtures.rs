@@ -259,6 +259,9 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
             )
             .await?;
     }
+    if std::env::args().any(|arg| arg == "--nested-folders") {
+        seed_nested_folders(store).await?;
+    }
     if std::env::args().any(|a| a == "--empty-calendars") {
         return Ok(());
     }
@@ -600,4 +603,82 @@ pub async fn image_delay() {
         .unwrap_or(0)
         .min(5000);
     tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+}
+
+async fn seed_nested_folders(store: &Store) -> anyhow::Result<()> {
+    use crate::folders::{Mailbox, NameEncoding};
+    for (account, delimiter, folders) in [
+        (
+            "preview-work",
+            '/',
+            vec![
+                ("INBOX", true),
+                ("Archive", true),
+                ("Sent", true),
+                ("Trash", true),
+                ("Projects", true),
+                ("Projects/Design", true),
+                ("Projects/Design/&ZeVnLIqe-", true),
+                ("Projects/Travel", true),
+                ("Teams/", false),
+                ("Teams/Remote", false),
+                ("Teams/Remote/Meetings", true),
+                ("Empty container", false),
+            ],
+        ),
+        (
+            "preview-personal",
+            '.',
+            vec![
+                ("INBOX", true),
+                ("Archive", true),
+                ("Sent", true),
+                ("Trash", true),
+                ("Home", false),
+                ("Home.Plans", true),
+                ("Home.Plans.2026", true),
+                ("Notes/flat.name", true),
+            ],
+        ),
+    ] {
+        let catalog = folders
+            .into_iter()
+            .map(|(name, selectable)| Mailbox {
+                name: name.into(),
+                delimiter: if name == "Notes/flat.name" {
+                    None
+                } else {
+                    Some(delimiter)
+                },
+                selectable,
+                encoding: NameEncoding::ImapUtf7,
+            })
+            .collect();
+        store.save_folder_catalog(account.into(), catalog).await?;
+    }
+    for (index, (account, folder, subject)) in [
+        ("preview-work", "Projects", "Project overview"),
+        ("preview-work", "Projects/Design", "Design brief"),
+        (
+            "preview-work",
+            "Projects/Design/&ZeVnLIqe-",
+            "Japanese folder note",
+        ),
+        ("preview-work", "Projects/Travel", "Travel plans"),
+        (
+            "preview-work",
+            "Teams/Remote/Meetings",
+            "Remote team agenda",
+        ),
+        ("preview-personal", "Home.Plans", "Home plans"),
+        ("preview-personal", "Home.Plans.2026", "Plans for 2026"),
+        ("preview-personal", "Notes/flat.name", "A flat folder"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        store.upsert(vec![parse_mail(account,&format!("nested-{index}"),folder,
+            format!("From: Folder fixture <folders@example.test>\r\nSubject: {subject}\r\n\r\nFictional nested folder contents.").into_bytes(),true,false)?]).await?;
+    }
+    Ok(())
 }

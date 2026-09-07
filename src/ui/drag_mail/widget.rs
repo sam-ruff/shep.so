@@ -351,12 +351,21 @@ impl Region {
             if count == 1 { "message" } else { "messages" }
         );
         if let Some((target, error)) = &state.hover {
-            let folder = if target.folder.eq_ignore_ascii_case("INBOX") {
-                "Inbox"
+            let folder = if let Self::Root(_, _, rules) = self {
+                rules.workspace.folder_label(
+                    target
+                        .account
+                        .as_deref()
+                        .or_else(|| session.payload.groups().next().map(|(account, _)| account)),
+                    &target.folder,
+                )
             } else {
-                &target.folder
+                std::borrow::Cow::Borrowed(target.folder.as_str())
             };
-            label.push_str(&format!(" → {}", super::super::views::truncate(folder, 32)));
+            label.push_str(&format!(
+                " → {}",
+                super::super::views::truncate(&folder, 32)
+            ));
             if let Self::Root(_, _, rules) = self
                 && let Some(id) = &target.account
                 && let Some(account) = rules.workspace.accounts.iter().find(|a| &a.id == id)

@@ -318,3 +318,23 @@ outside/no-op cancellation; preference rejection/enabled transfer; hover reveal;
 failure rollback and continued navigation; POP3 restrictions; compact dark and
 scaled controls; sidebar scrolling/Unicode/shadow cleanup; and full cross-page
 selection. These are functional fixtures, not live-provider or latency evidence.
+
+For nested folder trees use `desktop.start(nested_folders=true)`, optionally with
+`persistent=true` or delayed `mail_actions`. Work uses slash-delimited Projects
+and Teams; Personal uses dot-delimited Home plus literal `Notes/flat.name` with
+NIL delimiter. Projects holds mail and has children; Teams/ and Teams/Remote are
+containers. Japanese labels retain an encoded server identity. Observe
+`expanded_folders`, `saved_expanded_folders`, `sidebar_index` and `sidebar_rows`;
+these are read-only, never an action interface. The sidebar group row's chevron
+expands without opening mail. A Ctrl-click on a container must not add it to a
+combined query or turn it into a drop target.
+
+Keep all five `test_nested_folder_*` scenarios in scripts/e2e.py. They exercise
+mouse and Left/Right/Enter, ancestor collapse, native close/restart, nonselectable
+and flat folders, nested hover/drop/Undo, decoded Move search/review/toast labels,
+Ctrl-selected parent/child folders, compact dark/120% layout and keyboard scroll
+reveal. Wait for `focused_input == folder-search` before typing into Move, as in
+other saved flows. Record WebP evidence: state cannot prove a keyboard target is
+visible. The compact flow clicks the actual revealed row, and verifies saved
+window dimensions across normal process restart. Do not infer live IMAP server
+behavior or performance results from this fixture.
