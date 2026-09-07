@@ -58,6 +58,120 @@ fn draw(renderer: &mut Renderer, damage: Rectangle) -> tiny_skia::Pixmap {
     pixels
 }
 
+fn rotating_svg(renderer: &mut Renderer, angle: f32, clip: Rectangle) {
+    use iced::advanced::svg::Renderer as _;
+    let handle = iced::widget::svg::Handle::from_memory(
+        br#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><path fill="white" d="M3 3h14v5H8v9H3Z"/></svg>"#.as_slice(),
+    );
+    renderer.draw_svg(
+        iced::advanced::svg::Svg {
+            handle,
+            color: None,
+            rotation: iced::Radians(angle),
+            opacity: 1.,
+        },
+        rect(130., 20., 20., 20.),
+        clip,
+    );
+}
+
+#[test]
+fn rotated_svg_keeps_its_center_and_honors_viewport_at_fractional_scale() {
+    for scale in [1., 1.25] {
+        for angle in [
+            0.,
+            0.4,
+            std::f32::consts::FRAC_PI_2,
+            std::f32::consts::PI,
+            4.7,
+        ] {
+            let mut renderer = renderer();
+            let clip = rect(128., 18., 24., 20.);
+            rotating_svg(&mut renderer, angle, clip);
+            let mut pixels = tiny_skia::Pixmap::new(200, 80).unwrap();
+            let mut mask = tiny_skia::Mask::new(200, 80).unwrap();
+            renderer.draw(
+                &mut pixels.as_mut(),
+                &mut mask,
+                &Viewport::with_physical_size(Size::new(200, 80), scale),
+                &[rect(0., 0., 200., 80.)],
+                Color::TRANSPARENT,
+            );
+            let visible = clip * scale;
+            let mut ink = 0;
+            for y in 0..80 {
+                for x in 0..200 {
+                    if pixels.pixel(x, y).unwrap().alpha() > 0 {
+                        assert!(
+                            rect(x as f32, y as f32, 1., 1.)
+                                .intersection(&visible)
+                                .is_some(),
+                            "SVG escaped its own viewport at {x},{y}; scale={scale} angle={angle}"
+                        );
+                        ink += 1;
+                    }
+                }
+            }
+            assert!(
+                ink > 50,
+                "Rotated SVG disappeared or lost its scale: {angle}, {scale}"
+            );
+        }
+    }
+}
+
+#[test]
+fn rotating_svg_partial_repaint_matches_full_repaint_without_trails() {
+    use iced::advanced::Renderer as _;
+    let viewport = Viewport::with_physical_size(Size::new(200, 80), 1.);
+    let mut renderer = renderer();
+    let mut pixels = tiny_skia::Pixmap::new(200, 80).unwrap();
+    let mut mask = tiny_skia::Mask::new(200, 80).unwrap();
+    let screen = rect(0., 0., 200., 80.);
+    renderer.reset(screen);
+    rotating_svg(&mut renderer, 0., screen);
+    renderer.draw(
+        &mut pixels.as_mut(),
+        &mut mask,
+        &viewport,
+        &[screen],
+        Color::TRANSPARENT,
+    );
+    let initial = pixels.clone();
+    let mut visibly_rotated = false;
+    for angle in [0.3, 0.7, 1.2, 2., 3., 4., 5., 0.] {
+        let previous = renderer.layers()[0].clone();
+        renderer.reset(screen);
+        rotating_svg(&mut renderer, angle, screen);
+        let damage = iced_tiny_skia::Layer::damage(&previous, &renderer.layers()[0]);
+        renderer.draw(
+            &mut pixels.as_mut(),
+            &mut mask,
+            &viewport,
+            &damage,
+            Color::TRANSPARENT,
+        );
+        let mut full = tiny_skia::Pixmap::new(200, 80).unwrap();
+        renderer.draw(
+            &mut full.as_mut(),
+            &mut mask,
+            &viewport,
+            &[screen],
+            Color::TRANSPARENT,
+        );
+        assert!(
+            pixels.data() == full.data(),
+            "Rotation left stale pixels at angle {angle}"
+        );
+        visibly_rotated |= full.data() != initial.data();
+    }
+    assert!(visibly_rotated, "A static icon is not a rotating icon");
+    assert!(
+        pixels.data() == initial.data(),
+        "Stopping must restore the original icon"
+    );
+}
+
 #[test]
 fn cached_glyphs_respect_local_viewport_and_damage_intersection() {
     for damage in [rect(0., 0., 200., 80.), rect(7., 20., 60., 40.)] {

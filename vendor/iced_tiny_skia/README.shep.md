@@ -32,3 +32,12 @@ The existing clip mask preserves fractional-edge rounding. Direct renderer tests
 compare full/partial repaint pixels and the solid/constant-gradient paths at
 fractional scales. This keeps partial redraws; it never forces continuous full
 window redraws. See docs/PERFORMANCE.md for native input-to-HTML evidence.
+
+`src/vector.rs` keeps an unrotated SVG raster at physical scale, then applies the
+complete position/rotation transform while compositing. Matrix diagonals include
+cosine and cannot determine raster size or screen position. Raster cache keys
+remain independent of animation angle. `src/engine.rs` tests rotated bounds for
+visibility and intersects SVG viewport, layer and damage clips, restoring the
+shared mask afterward. The refresh animation exposed the original misplaced
+icons and trails. Keep the direct fractional-scale/partial-redraw SVG regressions
+and native idle/background/manual animation pixel checks.

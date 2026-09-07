@@ -684,6 +684,64 @@ class NativeFlows(unittest.TestCase):
                        shot("refresh-mail-dark-compact-busy"), key("ctrl+2"), check("tab","Calendar"),
                        wait(150), shot("refresh-calendar-dark-compact"), check("busy",[]))
 
+    def assert_refresh_pixels_change(self, directory, first, second, center, changed):
+        from PIL import Image, ImageChops
+        x,y=center
+        region=(x-12,y-12,x+12,y+12)
+        before=Image.open(Path(directory)/(first+".webp")).convert("RGB").crop(region)
+        after=Image.open(Path(directory)/(second+".webp")).convert("RGB").crop(region)
+        difference=ImageChops.difference(before,after)
+        count=sum(max(pixel)>24 for pixel in difference.getdata())
+        if changed:
+            self.assertGreater(count,15,"Manual refresh must visibly rotate, not only change its state")
+        else:
+            self.assertLessEqual(count,5,"The idle/background refresh icon must remain unchanged")
+
+    def test_refresh_animation_mouse_failure_retry_and_hidden_panels(self):
+        for compact in (False,True):
+            result=self.mcp.call("desktop.start",sync_failure_once=True,
+                                 width=900 if compact else 1440,height=640 if compact else 920)
+            print(f"Refresh animation evidence: {result['artifacts']}",flush=True)
+            if compact:
+                self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),
+                               click(563,366),check("dark",True),key("ctrl+1"),check("tab","Mail"))
+            x,y=(860,36) if compact else (1400,36)
+            self.mcp.batch(check("refresh_animation.running",False),check("refresh_animation.angle",0),
+                           shot("refresh-idle"),click(x,y),check("refresh_animation.running",True),
+                           {"type":"hover","x":x-150,"y":y},shot("refresh-turn-one"),wait(80),
+                           shot("refresh-turn-two"),check("refreshing",True),
+                           check("notice","temporarily unavailable","contains"),check("refreshing",False),
+                           check("refresh_animation.running",False),check("refresh_animation.angle",0),
+                           shot("refresh-stopped-after-failure"))
+            self.assert_refresh_pixels_change(result["artifacts"],"refresh-turn-one","refresh-turn-two",(x,y),True)
+            self.assert_refresh_pixels_change(result["artifacts"],"refresh-idle","refresh-stopped-after-failure",(x,y),False)
+            self.mcp.batch(key("F5"),check("refresh_animation.running",True),
+                           click(300 if compact else 400,350),check("selected","Your weekly workspace digest"),
+                           key("ctrl+2"),check("tab","Calendar"),check("refresh_animation.running",False),
+                           check("refreshing",True),key("ctrl+1"),check("tab","Mail"),
+                           check("refresh_animation.running",True),check("refreshing",False),
+                           check("notice",None),check("refresh_animation.angle",0),shot("refresh-retry-finished"))
+
+    def test_refresh_secondary_remap_clear_and_restart(self):
+        result=self.mcp.call("desktop.start",persistent=True)
+        print(f"Refresh shortcut evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(check("shortcut_secondary.Sync","F5"),key("F5"),check("refreshing",True),
+                       check("refreshing",False),key("ctrl+r"),check("refreshing",True),check("refreshing",False),
+                       key("ctrl+comma"),check("tab","Preferences"),click(645,156),
+                       check("settings_tab","Shortcuts"),wait(80),shot("refresh-shortcuts-default"),
+                       click(1070,710),key("F6"),check("shortcut_secondary.Sync","F6"),
+                       check("preferences_saved",True),key("ctrl+1"),check("tab","Mail"),
+                       key("F5"),wait(100),check("refreshing",False),key("F6"),check("refreshing",True),
+                       check("refreshing",False))
+        self.mcp.batch({"type":"restart"},check("shortcut_secondary.Sync","F6"),
+                       key("F6"),check("refreshing",True),check("refreshing",False),
+                       key("ctrl+comma"),check("tab","Preferences"),click(645,156),
+                       check("settings_tab","Shortcuts"),wait(80),click(1157,710),
+                       check("shortcut_secondary.Sync",""),check("preferences_saved",True),shot("refresh-secondary-disabled"),
+                       {"type":"restart"},check("shortcut_secondary.Sync",""),
+                       key("F5"),key("F6"),wait(100),check("refreshing",False),
+                       click(1400,36),check("refreshing",True),check("refreshing",False))
+
     def test_refresh_icons_and_html_at_larger_interface_scale(self):
         result = self.mcp.call("desktop.start", html_mail=True)
         print(f"Scaled refresh evidence: {result['artifacts']}", flush=True)
@@ -1022,17 +1080,28 @@ class NativeFlows(unittest.TestCase):
                        check("selected", subject), shot("move-transposition-enter-result"))
 
     def test_background_mail_arrives_without_refresh_and_manual_clicks_queue(self):
-        self.mcp.call("desktop.start", background_sync=True)
+        result=self.mcp.call("desktop.start", background_sync=True)
         self.mcp.batch(check("background_sync", True), check("refreshing", False),
+                       check("refresh_animation.running",False),check("refresh_animation.angle",0),
                        check("mail_check_seconds", 15), shot("background-sync-refresh-idle"),
-                       click(1400, 36), click(1400, 36), key("ctrl+r"),
+                       wait(100),shot("background-sync-refresh-still"),check("background_sync",True))
+        self.assert_refresh_pixels_change(result["artifacts"],"background-sync-refresh-idle",
+                                          "background-sync-refresh-still",(1400,36),False)
+        self.mcp.batch(click(1400, 36), click(1400, 36), key("F5"),
                        check("refreshing", True), check("background_sync", True),
+                       check("refresh_animation.running",True),
+                       {"type":"hover","x":1100,"y":36},shot("background-queued-turn-one"),wait(80),
+                       shot("background-queued-turn-two"),
                        check("sync_round", 1), check("total", 121),
                        check("background_sync", False), check("refreshing", True),
+                       check("refresh_animation.running",True),
                        shot("manual-refresh-queued-after-background"),
                        {**check("sync_round", 2), "timeout_ms": 5000}, check("refreshing", False),
+                       check("refresh_animation.running",False),check("refresh_animation.angle",0),
                        check("total", 121), click(420, 247),
                        check("selected", "New mail from the background"), shot("background-arrival-readable"))
+        self.assert_refresh_pixels_change(result["artifacts"],"background-queued-turn-one",
+                                          "background-queued-turn-two",(1400,36),True)
 
     def open_notification_preferences(self, compact=False):
         self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),

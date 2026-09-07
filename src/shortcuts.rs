@@ -126,6 +126,7 @@ impl<'de> Deserialize<'de> for Keymap {
                         keys.0.insert(action, key);
                     }
                 }
+                keys.add_refresh_secondary();
                 Ok(keys)
             }
             Saved::Legacy(mut primary) => {
@@ -154,7 +155,9 @@ impl<'de> Deserialize<'de> for Keymap {
                 } else {
                     BTreeMap::new()
                 };
-                Ok(Self(primary, secondary))
+                let mut keys = Self(primary, secondary);
+                keys.add_refresh_secondary();
+                Ok(keys)
             }
         }
     }
@@ -189,11 +192,28 @@ impl Default for Keymap {
                 ])
                 .map(|(a, k)| (a, k.into()))
                 .collect(),
-            BTreeMap::from([(Action::Archive, "Delete".into())]),
+            BTreeMap::from([
+                (Action::Archive, "Delete".into()),
+                (Action::Sync, "F5".into()),
+            ]),
         )
     }
 }
 impl Keymap {
+    fn add_refresh_secondary(&mut self) {
+        // An absent slot predates this default. An empty saved slot is an
+        // explicit clear, and an entirely disabled action must stay disabled.
+        if !self.1.contains_key(&Action::Sync) {
+            let key = if !self.key(Action::Sync).is_empty() && self.resolve("F5").is_none() {
+                "F5"
+            } else {
+                ""
+            };
+            // Persist a blank decision too, so removing another action's F5
+            // later cannot silently enable refresh. The v2 format is unchanged.
+            self.1.insert(Action::Sync, key.into());
+        }
+    }
     pub fn resolve(&self, chord: &str) -> Option<Action> {
         self.0
             .iter()

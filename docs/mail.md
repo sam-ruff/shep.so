@@ -8,6 +8,8 @@ Go to **Preferences → Accounts**. Add an IMAP or POP3 account, then enter its 
 
 The unified inbox brings your accounts together. Search sender, subject or message text across folders in the selected accounts. Results show their folder; clearing search returns to the folder you were browsing. Filter for unread, flagged or attachment-bearing mail.
 
+Refresh with the top-right icon, `Ctrl+R` or `F5`. The icon spins for manual refreshes; automatic background checks leave it still. Both shortcuts can be changed or disabled in Preferences.
+
 Simple letters use a padded, centered reading column. Formatted messages keep their sender layouts, and the surrounding message card follows the email’s background.
 
 Folder groups start collapsed. Click a chevron to show subfolders; click a folder name to read its mail. A container that cannot hold mail only expands. Shep remembers which groups you opened. With the sidebar focused, Left/Right moves through the tree and expands or collapses groups; Enter opens the focused folder. Ctrl-click combines folders. Dragging mail over a closed group opens it so you can drop into a subfolder.

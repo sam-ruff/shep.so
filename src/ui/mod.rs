@@ -26,6 +26,7 @@ mod read_tracking;
 mod reading;
 #[cfg(test)]
 mod reading_tests;
+mod refresh;
 mod removals;
 mod selectable;
 mod settings_search;
@@ -103,6 +104,7 @@ pub enum Message {
     Backend(Event),
     Bulk(bulk::Message),
     Tick,
+    RefreshFrame(Instant),
     Noop,
     Tab(Tab),
     SettingsTab(SettingsTab),
@@ -349,6 +351,7 @@ pub struct App {
     draft_id: String,
     remapping: Option<(Action, Slot)>,
     busy: HashSet<String>,
+    refresh: refresh::Animation,
     notice: Option<(String, bool, Instant)>,
     sync_notice: Option<Instant>,
     preference_notice: Option<Instant>,
@@ -503,6 +506,7 @@ impl App {
                 draft_id: String::new(),
                 remapping: None,
                 busy: HashSet::new(),
+                refresh: Default::default(),
                 notice: None,
                 sync_notice: None,
                 preference_notice: None,
@@ -579,6 +583,11 @@ impl App {
             Subscription::run(crate::html_render::preparation::subscription)
                 .map(|e| Message::Html(html_reader::Message::Prepared(e))),
             tick,
+            if self.refresh_animating() {
+                iced::time::every(std::time::Duration::from_millis(16)).map(Message::RefreshFrame)
+            } else {
+                Subscription::none()
+            },
             iced::system::theme_changes().map(Message::SystemTheme),
             iced::event::listen_with(|e, status, id| match e {
                 iced::Event::Window(iced::window::Event::CloseRequested) => {
@@ -821,6 +830,16 @@ impl App {
     fn update(&mut self, message: Message) -> Task<Message> {
         if matches!(message, Message::Noop) {
             return Task::none();
+        }
+        if matches!(message, Message::RefreshFrame(_)) {
+            // Animation only changes one SVG. Do not pump mail work, prepare
+            // bodies, or mix frame ticks into interaction-handler measurements.
+            let task = self.handle(message);
+            return if self.test_state.is_some() {
+                Task::batch([task, self.write_test_state()])
+            } else {
+                task
+            };
         }
         let start = Instant::now();
         let task = self.handle(message);
@@ -1315,6 +1334,13 @@ impl App {
                     }
                 }
                 Event::Busy(key, busy) => {
+                    if key == "sync" {
+                        if busy {
+                            self.refresh.start(Instant::now());
+                        } else {
+                            self.refresh.stop();
+                        }
+                    }
                     if busy {
                         self.busy.insert(key);
                     } else {
@@ -1906,6 +1932,12 @@ impl App {
             Message::Sync => {
                 if self.try_command(Command::Sync) {
                     self.busy.insert("sync".into());
+                    self.refresh.start(Instant::now());
+                }
+            }
+            Message::RefreshFrame(now) => {
+                if self.refresh_animating() {
+                    self.refresh.advance(now);
                 }
             }
             Message::SyncCalendar => self.send(Command::SyncCalendar),
@@ -3437,6 +3469,9 @@ impl App {
             data["sync_round"] = serde_json::json!(self.test_sync_round);
         }
         data["refreshing"] = serde_json::json!(self.busy.contains("sync"));
+        data["refresh_animation"] = serde_json::json!({
+            "running": self.refresh_animating(), "angle": self.refresh.angle()
+        });
         data["background_sync"] = serde_json::json!(self.busy.contains("background-sync"));
         data["mail_check_seconds"] = serde_json::json!(self.preferences.mail_check_seconds);
         data["mail_pending"] = serde_json::json!(self.mail_actions.pending());

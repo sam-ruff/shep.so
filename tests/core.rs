@@ -6,6 +6,74 @@ use shep::{
     store::Store,
 };
 
+#[test]
+fn refresh_secondary_default_migrates_once_without_replacing_user_intent() {
+    use shep::shortcuts::Slot;
+    let defaults = Keymap::default();
+    assert_eq!(defaults.key(Action::Sync), "Mod+R");
+    assert_eq!(defaults.binding(Action::Sync, Slot::Secondary), "F5");
+    defaults.validate().unwrap();
+    for (primary, secondary, expected) in [
+        (
+            serde_json::json!({"Sync":"Mod+R"}),
+            serde_json::json!({}),
+            "F5",
+        ),
+        (
+            serde_json::json!({"Sync":"Alt+R"}),
+            serde_json::json!({}),
+            "F5",
+        ),
+        (serde_json::json!({"Sync":""}), serde_json::json!({}), ""),
+        (
+            serde_json::json!({"Sync":"Mod+R"}),
+            serde_json::json!({"Sync":""}),
+            "",
+        ),
+        (
+            serde_json::json!({"Sync":"Mod+R"}),
+            serde_json::json!({"Sync":"F6"}),
+            "F6",
+        ),
+        (
+            serde_json::json!({"Sync":"Mod+R", "Move":"F5"}),
+            serde_json::json!({}),
+            "",
+        ),
+        (
+            serde_json::json!({"Sync":"Mod+R"}),
+            serde_json::json!({"Move":"f5"}),
+            "",
+        ),
+    ] {
+        let mut keys: Keymap = serde_json::from_value(
+            serde_json::json!({"version":2,"primary":primary,"secondary":secondary}),
+        )
+        .unwrap();
+        assert_eq!(keys.binding(Action::Sync, Slot::Secondary), expected);
+        keys.validate().unwrap();
+        keys.remap_slot(Action::Sync, Slot::Secondary, String::new())
+            .unwrap();
+        let saved = serde_json::to_value(&keys).unwrap();
+        assert_eq!(saved["version"], 2);
+        let restored: Keymap = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored.binding(Action::Sync, Slot::Secondary), "");
+    }
+    let mut conflict: Keymap = serde_json::from_value(
+        serde_json::json!({"version":2,"primary":{"Sync":"Mod+R", "Move":"F5"},"secondary":{}}),
+    )
+    .unwrap();
+    conflict.remap(Action::Move, "Alt+M".into()).unwrap();
+    let restored: Keymap = serde_json::from_value(serde_json::to_value(conflict).unwrap()).unwrap();
+    assert_eq!(restored.resolve("F5"), None);
+    let legacy: Keymap = serde_json::from_value(serde_json::json!({"Move":"Alt+M"})).unwrap();
+    assert_eq!(legacy.binding(Action::Sync, Slot::Secondary), "F5");
+    let legacy_disabled: Keymap = serde_json::from_value(serde_json::json!({"Sync":""})).unwrap();
+    assert_eq!(legacy_disabled.binding(Action::Sync, Slot::Secondary), "");
+    let unsupported = serde_json::json!({"version":4,"primary":{},"secondary":{}});
+    assert!(serde_json::from_value::<Keymap>(unsupported).is_err());
+}
+
 fn mail(i: usize) -> StoredMail {
     let raw=format!("From: Ada <ada@example.com>\r\nTo: sam@example.com\r\nSubject: Planning café {i}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nA thoughtful message about architecture {i}.").into_bytes();
     let mut m = parse_mail(

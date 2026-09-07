@@ -635,15 +635,26 @@ impl Engine {
                 );
             }
             #[cfg(feature = "svg")]
-            Image::Vector { svg, bounds, .. } => {
+            Image::Vector {
+                svg,
+                bounds,
+                clip_bounds,
+            } => {
                 let physical_bounds = *bounds * _transformation;
-
-                if !_clip_bounds.intersects(&physical_bounds) {
+                let rotated_bounds = physical_bounds.rotate(svg.rotation);
+                let Some(visible) = (*clip_bounds * _transformation)
+                    .intersection(&_clip_bounds)
+                else {
+                    return;
+                };
+                if !visible.intersects(&rotated_bounds) {
                     return;
                 }
-
-                let clip_mask = (!physical_bounds.is_within(&_clip_bounds))
-                    .then_some(_clip_mask as &_);
+                let needs_mask = !rotated_bounds.is_within(&visible);
+                if needs_mask {
+                    adjust_clip_mask(_clip_mask, visible);
+                }
+                let clip_mask = needs_mask.then_some(_clip_mask as &_);
 
                 let center = physical_bounds.center();
                 let radians = f32::from(svg.rotation);
@@ -663,6 +674,11 @@ impl Engine {
                     transform,
                     clip_mask,
                 );
+                if needs_mask {
+                    // Later primitives share this mask, but not this SVG's
+                    // local viewport. Restore the layer/damage intersection.
+                    adjust_clip_mask(_clip_mask, _clip_bounds);
+                }
             }
             #[cfg(not(feature = "image"))]
             Image::Raster { .. } => {

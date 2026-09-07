@@ -481,3 +481,13 @@ existing Find text before typing a new query; Find deliberately retains it.
 `test_conversation_surfaces_*` samples the card gutter outside the HTML canvas,
 switches between cached messages, refreshes without losing the scroller, and
 captures both app themes and compact sizes. These fixtures never contact servers.
+
+Manual refresh animation uses the existing delayed `sync_failure_once` and
+`background_sync` fixtures. The two `test_refresh_animation_*` /
+`test_refresh_secondary_*` flows and extended queued-background flow compare
+actual icon pixels, verify failure/retry and navigation while pending, and save
+light/compact-dark evidence. Preferences → Shortcuts has Sync near y=710 at
+1440×920 with the list at its top. Remap and clear F5 through the actual secondary
+control, then restart the owned persistent fixture. `refresh_animation` is an
+observation only; a changing angle does not prove correct drawing. Preserve the
+direct SVG center/scale/clip and partial-redraw tests as well as the native checks.

@@ -278,6 +278,8 @@ impl super::App {
     ) -> Element<'a, Message> {
         let control = button(if name == "flag" {
             flag_icon(active, 20.)
+        } else if name == "sync" && matches!(message, Message::Sync) {
+            icon_color(name, 20., false, false, self.refresh.angle())
         } else {
             icon(name, 20.)
         })
@@ -385,15 +387,21 @@ pub fn flagged(theme: &Theme, status: button::Status) -> button::Style {
     style
 }
 pub fn flag_icon<'a>(active: bool, size: f32) -> Element<'a, Message> {
-    icon_color("flag", size, false, active)
+    icon_color("flag", size, false, active, 0.)
 }
 pub fn icon<'a>(name: &str, size: f32) -> Element<'a, Message> {
-    icon_color(name, size, false, false)
+    icon_color(name, size, false, false, 0.)
 }
 pub fn icon_bright<'a>(name: &str, size: f32) -> Element<'a, Message> {
-    icon_color(name, size, true, false)
+    icon_color(name, size, true, false, 0.)
 }
-fn icon_color<'a>(name: &str, size: f32, bright: bool, is_flagged: bool) -> Element<'a, Message> {
+fn icon_color<'a>(
+    name: &str,
+    size: f32,
+    bright: bool,
+    is_flagged: bool,
+    angle: f32,
+) -> Element<'a, Message> {
     static ICONS: OnceLock<HashMap<&'static str, svg::Handle>> = OnceLock::new();
     let icons=ICONS.get_or_init(||[
         ("image",r#"<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="2"/><path d="m21 15-5-5L5 21"/>"#),
@@ -440,6 +448,7 @@ fn icon_color<'a>(name: &str, size: f32, bright: bool, is_flagged: bool) -> Elem
     svg(icons.get(name).unwrap_or(&icons["mail"]).clone())
         .width(size)
         .height(size)
+        .rotation(iced::Rotation::Floating(iced::Radians(angle)))
         .style(move |t, _| svg::Style {
             color: Some(if is_flagged {
                 colors(t).flag
