@@ -1,4 +1,5 @@
 mod mail_actions;
+mod mail_query;
 use crate::model::*;
 mod connections;
 mod conversations;
@@ -7,10 +8,14 @@ mod drafts;
 mod google_lifecycle;
 mod outgoing;
 mod restore;
+mod selection;
 use anyhow::Context;
 pub use conversations::{CONVERSATION_PAGE_SIZE, ConversationPage};
 pub use drafts::DraftState;
 use rusqlite::{Connection, params};
+pub use selection::{
+    MailSelectionId, SelectedMail, SelectionChange, SelectionPage, SelectionSnapshot,
+};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     path::Path,
@@ -93,6 +98,7 @@ impl Store {
         conversations::schema(&conn)?;
         connections::schema(&conn)?;
         outgoing::schema(&conn)?;
+        selection::schema(&conn)?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 2 {
             let tx = conn.transaction()?;
@@ -299,57 +305,12 @@ impl Store {
         self.run(move |c| {
             let transaction = c.transaction()?;
             let c = &transaction;
-            let mut filters = vec!["1=1".to_string()];
-            let mut values: Vec<rusqlite::types::Value> = Vec::new();
-            let sent = "((folder='Sent' AND (id LIKE '%:local-sent-%' OR account NOT IN (SELECT account FROM sent_folders))) OR (account,folder) IN (SELECT account,folder FROM sent_folders))";
-            let prefix = if let Some(folders) = query.folders {
-                values.push(serde_json::to_string(&folders)?.into());
-                // One bound JSON value avoids SQLite parameter/expression-depth
-                // limits. IN subqueries keep indexed account/folder lookups possible.
-                filters.push(format!("((account,folder) IN (SELECT account,folder FROM selected_folders WHERE account IS NOT NULL AND NOT sent_only) OR folder IN (SELECT folder FROM selected_folders WHERE account IS NULL AND NOT sent_only) OR ({sent} AND EXISTS(SELECT 1 FROM selected_folders s WHERE s.sent_only AND (s.account IS NULL OR s.account=messages.account))))"));
-                "WITH selected_folders AS (SELECT json_extract(value,'$.account') AS account,json_extract(value,'$.folder') AS folder,json_extract(value,'$.sent_only') AS sent_only FROM json_each(?)) "
-            } else {
-                if let Some(account) = query.account { filters.push("account=?".into()); values.push(account.into()); }
-                if query.sent_only { filters.push(sent.into()); }
-                else if !query.folder.is_empty() { filters.push("folder=?".into()); values.push(query.folder.into()); }
-                ""
-            };
-            if query.unread_only { filters.push("unread=1".into()); }
-            if query.read_only { filters.push("unread=0".into()); }
-            if query.attachments_only { filters.push("json_extract(data,'$.attachment_count')>0".into()); }
-            if query.starred_only { filters.push("starred=1".into()); }
-            let search = crate::fuzzy::mail_query(c, &query.search)?;
-            if search.is_empty() && !query.search.trim().is_empty() { filters.push("0=1".into()); }
-            let from = if search.is_empty() { "messages" } else {
-                filters.push("mail_search.mail_search MATCH ?".into());
-                values.push(search.clone().into());
-                "messages JOIN mail_search ON mail_search.rowid=messages.rowid"
-            };
-            let condition = filters.join(" AND ");
-            let total: i64 = c.query_row(&format!("{prefix}SELECT COUNT(*) FROM {from} WHERE {condition}"), rusqlite::params_from_iter(&values), |r| r.get(0))?;
-            let unread: i64 = c.query_row(&format!("{prefix}SELECT COUNT(*) FROM {from} WHERE {condition} AND unread=1"), rusqlite::params_from_iter(&values), |r| r.get(0))?;
-            let mut row_from = from.to_owned();
-            let order = match query.sort {
-                MailSort::Relevance if !search.is_empty() => {
-                    // The exact query owns a separate BM25 score: rare typo
-                    // alternatives must not inflate otherwise weak exact hits.
-                    row_from.push_str(" LEFT JOIN mail_search(?, 'bm25(0.3, 2.0, 1.0)') AS exact_matches ON exact_matches.rowid=messages.rowid");
-                    values.insert(usize::from(!prefix.is_empty()), crate::fuzzy::literal_query(&query.search).into());
-                    // Short whole-body equality wins over keyword repetition.
-                    // octet_length reads stored size, so the CASE does not load
-                    // long bodies merely to rank a short search query.
-                    values.push((query.search.trim().len().saturating_add(8) as i64).into());
-                    values.push(query.search.trim().to_owned().into());
-                    "CASE WHEN octet_length(messages.body)<=? THEN CASE WHEN trim(messages.body,char(9)||char(10)||char(13)||' ')=? COLLATE NOCASE THEN 0 ELSE 1 END ELSE 1 END,exact_matches.rowid IS NULL,COALESCE(exact_matches.rank,bm25(mail_search.mail_search,0.3,2.0,1.0)),timestamp DESC,id"
-                }
-                MailSort::Relevance => "timestamp DESC,id",
-                MailSort::Newest => "timestamp DESC,id",
-                MailSort::Oldest => "timestamp ASC,id",
-                MailSort::Sender => "messages.sender COLLATE NOCASE,timestamp DESC,id",
-                MailSort::Subject => "messages.subject COLLATE NOCASE,timestamp DESC,id",
-            };
-            values.push((PAGE_SIZE as i64).into()); values.push((query.offset as i64).into());
-            let mut stmt = c.prepare(&format!("{prefix}SELECT data,unread,starred,folder FROM {row_from} WHERE {condition} ORDER BY {order} LIMIT ? OFFSET ?"))?;
+            let plan = mail_query::Plan::new(c, &query)?;
+            let (total, unread) = plan.counts(c)?;
+            let (sql, mut values) = plan.ordered("data,unread,starred,folder");
+            values.push((PAGE_SIZE as i64).into());
+            values.push((query.offset as i64).into());
+            let mut stmt = c.prepare(&format!("{sql} LIMIT ? OFFSET ?"))?;
             let rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?)))?
                 .map(|r| { let (data,unread,starred,folder)=r?; let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
             let inbox_unread = c.prepare("SELECT account,COUNT(*) FROM messages WHERE folder='INBOX' AND unread=1 GROUP BY account")?
@@ -364,7 +325,7 @@ impl Store {
                 })).optional()?;
                 observed.insert(id, value);
             }
-            Ok(MailPage { rows, total:total as usize, unread:unread as usize, inbox_unread, observed })
+            Ok(MailPage { rows, total, unread, inbox_unread, observed })
         }).await
     }
     pub async fn detail(&self, id: String) -> anyhow::Result<MailDetail> {

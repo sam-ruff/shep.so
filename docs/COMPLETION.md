@@ -618,3 +618,37 @@ candidates and prompt provenance are saved under ignored
 `artifacts/imagegen/launcher-alpha/`. The dark extractions have visible edge
 defects and were rejected. Approved production assets remain unchanged; R64 is
 open for a clean cutout and desktop theme integration.
+
+## 2026-09-07 — Selection storage groundwork for R42
+
+Inbox queries and captured selections now share a single scope/ranking plan.
+Selection membership and its ordered positions live in process-local SQLite
+tables. Capturing a query includes all matching pages without sending all IDs,
+message bodies or MIME to iced. Counts and requested visible membership are small
+results, and selected metadata is read in pages of at most 50 messages.
+
+The store API supports individual selection/deselection, replacement, ranges in
+both directions across page boundaries, additive ranges, all and clear. Revisions
+reject stale changes and page continuations; failed changes roll back atomically.
+A review gets its own immutable membership snapshot, independent of later inbox
+selection or scope changes. New arrivals do not join an existing selection, and
+selected versus available counts make disappeared messages explicit. Metadata
+pages read current flags/folders. Snapshots must be released by their caller and
+do not survive closing or opening another Store connection.
+
+Six integration tests exercise matching membership/order for every sort and
+search mode, combined folders, Sent mappings, unread/read/flag/attachment filters,
+cross-page ranges, stale/failing changes, review isolation, arrivals/deletions,
+current flags and connection/restart isolation. All 322 Rust tests pass (two
+opt-in live diagnostics ignored), as do Clippy with warnings denied and 29 Python
+tests. Five existing native MCP regressions pass for best-match search, flags and
+paging, combined sidebar folders, unread dock counts and cached navigation. These
+native flows exercise the existing inbox after the query refactor; they do not
+demonstrate multi-selection controls. Logs are in `artifacts/logs/selection-*`.
+
+R42 remains open. Next work must connect native controls and optimistic selection
+through bounded channels, clean up abandoned snapshots, and implement reviewed
+bulk execution with immediate feedback, per-message outcomes, grouped Undo and
+durable recovery. Temporary selection snapshots alone are not an operation
+journal. No new multi-selection UI is claimed by this checkpoint. Release and
+shipping verification follows; performance measurements remain deferred.
