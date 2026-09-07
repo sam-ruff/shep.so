@@ -656,3 +656,11 @@ keyboard/delimiters, hover/drop/Undo, Unicode Move/review/Ctrl-selection, and
 compact dark/120% keyboard reveal with saved window size. Backend tests use actual
 loopback IMAP protocol and reopened isolated SQLite files. This is not live
 personal-server evidence. Folder delete/move context menus remain tracked R30 work.
+
+MCP `paste` writes only the owned Xvfb clipboard and sends native Ctrl+V after
+verifying exact bytes. It shares the existing owned clipboard cleanup, preserves
+Unicode/whitespace and refuses operation without a live fixture display. A failed
+clipboard setup must never paste stale content. Use it for Unicode tests; the
+initial Japanese xdotool typing scenario intermittently delivered no text even
+after native input focus was acknowledged. Keep ASCII typing and real keyboard
+shortcut coverage; paste is not direct application-state injection.

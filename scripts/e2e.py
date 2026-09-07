@@ -58,6 +58,7 @@ def double_click(x, y): return {"type": "double_click", "x": x, "y": y}
 def drag(x, y, end_x, end_y): return {"type": "drag", "x": x, "y": y, "end_x": end_x, "end_y": end_y, "duration_ms": 200}
 def key(value): return {"type": "key", "key": value}
 def type_text(value): return {"type": "type", "text": value}
+def paste_text(value): return {"type": "paste", "text": value}
 def wait(ms=150): return {"type": "wait", "ms": ms}
 def check(path, value, op="eq"): return {"type": "wait_for", "path": path, "value": value, "op": op}
 def shot(name): return {"type": "screenshot", "name": name}
@@ -134,14 +135,14 @@ class NativeFlows(unittest.TestCase):
     def test_nested_folder_unicode_move_review_and_combined_selection(self):
         result=self.mcp.call("desktop.start",nested_folders=True)
         print(f"Nested folder Move evidence: {result['artifacts']}",flush=True)
-        self.mcp.batch(click(402,347),key("m"),check("dialog","Move"),check("focused_input","folder-search"),type_text("日本語"),
+        self.mcp.batch(click(402,347),key("m"),check("dialog","Move"),check("focused_input","folder-search"),paste_text("日本語"),
                        check("move_enter_destination","Projects/Design/&ZeVnLIqe-"),shot("nested-unicode-move-search"),
                        key("Return"),check("total",119),check("mail_pending",0),
                        check("action_toast.label","Moved 1 message to Projects/Design/日本語"),shot("nested-unicode-move-toast"),
                        click(1340,874),check("total",120),check("mail_pending",0),
                        click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
                        click(274,218),click(274,322),check("mail_selection.count",2),check("mail_selection.pending",False),
-                       key("m"),check("dialog","Move"),check("focused_input","folder-search"),type_text("日本語"),
+                       key("m"),check("dialog","Move"),check("focused_input","folder-search"),paste_text("日本語"),
                        check("move_enter_destination","Projects/Design/&ZeVnLIqe-"),key("Return"),
                        check("dialog","BulkReview"),check("bulk.action","Move to Projects/Design/日本語"),
                        shot("nested-unicode-bulk-review"),key("n"),check("dialog",None),check("total",120),

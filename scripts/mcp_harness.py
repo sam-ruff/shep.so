@@ -148,6 +148,34 @@ class Desktop:
         return subprocess.run(args, env=self.env, capture_output=True, text=True,
                               check=True, timeout=10).stdout.strip()
 
+    def paste_text(self, text):
+        """Native clipboard paste on the owned display, including Unicode input."""
+        if not isinstance(text, str) or len(text) > 10000:
+            raise ValueError("Paste text must be a string of at most 10,000 characters.")
+        if not self.app or self.app.poll() is not None or not self.xvfb or self.xvfb.poll() is not None:
+            raise RuntimeError("Start an owned fixture before pasting text.")
+        if self.clipboard and self.clipboard.poll() is None:
+            self.clipboard.terminate()
+            self.clipboard.wait(timeout=3)
+        self.clipboard = subprocess.Popen(["xclip", "-selection", "clipboard", "-quiet"],
+            env=self.env, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=self.log)
+        self.clipboard.stdin.write(text.encode())
+        self.clipboard.stdin.close()
+        deadline = time.monotonic() + 3
+        while True:
+            try:
+                # Do not trim: leading/trailing spaces and newlines are input.
+                value = subprocess.run(["xclip", "-selection", "clipboard", "-out"],
+                    env=self.env, capture_output=True, check=True, timeout=1).stdout
+                if value == text.encode():
+                    break
+            except subprocess.SubprocessError:
+                pass
+            if time.monotonic() >= deadline:
+                raise RuntimeError("The isolated clipboard did not accept the text.")
+            time.sleep(.02)
+        self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v")
+
     def start(self, width=1440, height=920, empty_calendars=False, conversation_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False):
         self.stop()
         if type(persistent) is not bool:
@@ -610,6 +638,8 @@ class Desktop:
                     if len(action["text"]) > 10000:
                         raise ValueError("Text is limited to 10,000 characters per action.")
                     self.command("xdotool", "type", "--clearmodifiers", "--delay", "1", "--", action["text"])
+                elif kind == "paste":
+                    self.paste_text(action["text"])
                 elif kind == "key":
                     self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "--", action["key"])
                 elif kind == "choose_file":
@@ -681,7 +711,7 @@ TOOLS = [
     {"name": "desktop.close", "description": "Close only the owned fixture app, keeping its Xvfb display and persistent fixture cache available for restart. Normally sends WM_DELETE_WINDOW; crash=true kills only the owned process for recovery tests.", "inputSchema": {"type": "object", "properties": {"crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.restart", "description": "Restart only the owned persistent fixture app on its existing Xvfb display. Normally sends a native window-close request; crash=true kills that owned process to exercise journal recovery. Retains the fixture SQLite cache and never changes app state directly.", "inputSchema": {"type": "object", "properties": {"crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.batch", "description": "Run 1–100 real mouse/keyboard actions in order, including held left-button mouse_down/mouse_up, short waits, state assertions and WebP screenshots. Stops at first failure and captures evidence. Prefer batches to one call per action.",
-     "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"crash": {"type": "boolean", "default": False}, "type": {"enum": ["restart", "click", "double_click", "mouse_down", "mouse_up", "hover", "resize", "drag", "type", "key", "choose_file", "print_output", "cancel_print", "focus_app", "browser_screenshot", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "count": {"type": "integer"}, "pages": {"type": "integer"}, "x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "button": {"type": "integer", "enum": [1, 2, 3]}, "modifiers": {"type": "array", "items": {"type": "string", "enum": ["ctrl", "shift", "alt", "super"]}}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
+     "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"crash": {"type": "boolean", "default": False}, "type": {"enum": ["restart", "click", "double_click", "mouse_down", "mouse_up", "hover", "resize", "drag", "type", "paste", "key", "choose_file", "print_output", "cancel_print", "focus_app", "browser_screenshot", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "count": {"type": "integer"}, "pages": {"type": "integer"}, "x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "button": {"type": "integer", "enum": [1, 2, 3]}, "modifiers": {"type": "array", "items": {"type": "string", "enum": ["ctrl", "shift", "alt", "super"]}}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
     {"name": "desktop.state", "description": "Read observed UI state, cache counts, shortcuts and handler timings; does not change app state.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "desktop.screenshot", "description": "Capture the actual iced window as WebP. Returns image and artifact path.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}}},
     {"name": "desktop.stop", "description": "Stop only the isolated app and Xvfb processes created by this harness.", "inputSchema": {"type": "object", "properties": {}}},
