@@ -23,6 +23,40 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
+## R85 — Credit-saving handover; R35 state foundation (2026-09-07)
+
+The user stopped feature development and requested a handover, TODO cleanup and
+push. [handover.md](https://github.com/sam-ruff/shep.so/blob/main/handover.md)
+records the installed baseline, current code, remaining work and restart order.
+TODO is condensed without removing unfinished requests; R84 cross-folder search
+remains delivered. The complete product goal is still unfinished.
+
+The current source separates composer metadata/editor state from other forms,
+retains autosaves when another form opens, coalesces edits behind one pending save,
+and waits for the newest revision on close. Late attachment and durable-send
+results preserve the appropriate draft/form. Five new controller regressions and
+a saved native Preferences/graceful-restart scenario cover this foundation.
+The composer still uses a modal; inline presentation and multiple active draft
+sessions remain R35. This checkpoint is not installed as a production release.
+
+Verification: targeted composer Rust tests passed 14/14; Python tests passed
+48/48; the strict Zensical build passed. Three existing native scenarios passed
+(save/reopen, recipients/files and cross-folder search), and the new graceful
+restart scenario passed its corrected rerun. Its first version incorrectly tried
+to open Preferences while the existing modal was still open; the saved scenario
+now closes/saves that modal first. Dark attachment/restart captures were reviewed.
+The full native suite and release build/install were not rerun for this handover.
+An accidentally unfiltered functional run was stopped; it is not full-suite evidence.
+
+The checkpoint commit is `fix(drafts): isolate composer state and record handover`
+(the commit introducing the root handover file). Its normal pre-commit hook
+enforces formatting, all-target/all-feature Clippy, the full Rust suite and the
+drawing-adapter tests. Logs stay in ignored `artifacts/logs/handover-*`.
+No performance measurements or live-provider/platform-runtime checks were run.
+Private local tool settings and ignored artifacts are excluded from the push.
+R85 is completed by this handover push; R86 close-to-tray is tracked only, without
+implementation. Quality and release workflows remain disabled.
+
 ## R30 — Native folder controls installed and pushed (2026-09-07)
 
 Source [3567de2](https://github.com/sam-ruff/shep.so/commit/3567de29847d81d29c8882269c82a6aa7fa986d4)

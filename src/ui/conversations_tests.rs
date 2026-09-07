@@ -44,7 +44,7 @@ async fn opening_a_related_message_keeps_the_inbox_anchor_and_rejects_late_bodie
     }));
     assert_eq!(app.detail.as_ref().unwrap().summary.id, parent.summary.id);
     let _ = app.handle(Message::Reply);
-    assert_eq!(app.field("to"), "parent@example.com");
+    assert_eq!(app.compose_field("to"), "parent@example.com");
 }
 
 #[tokio::test]

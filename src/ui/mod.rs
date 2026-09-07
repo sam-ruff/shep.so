@@ -150,6 +150,7 @@ pub enum Message {
     ChosenAttachments(Draft, Vec<std::path::PathBuf>),
     RemoveDraftAttachment(String),
     ShowRecipients,
+    ComposeField(&'static str, String),
     SaveDraft,
     Send,
     Field(&'static str, String),
@@ -306,7 +307,6 @@ pub struct App {
     test_sync_round: u64,
     list_revision: u64,
     last_list_query: MailQuery,
-    draft_dirty: Option<Instant>,
     composer: composing::Composer,
     conversation: conversations::Conversation,
     inbox_expanded: bool,
@@ -352,8 +352,6 @@ pub struct App {
     removal: removals::Removal,
     outbox: outgoing::Outbox,
     move_recovery: move_recovery::Recovery,
-    editor: text_editor::Content,
-    draft_id: String,
     remapping: Option<(Action, Slot)>,
     busy: HashSet<String>,
     refresh: refresh::Animation,
@@ -459,7 +457,6 @@ impl App {
                 test_sync_round: 0,
                 list_revision: 0,
                 last_list_query: MailQuery::default(),
-                draft_dirty: None,
                 composer: Default::default(),
                 conversation: Default::default(),
                 inbox_expanded: false,
@@ -508,8 +505,6 @@ impl App {
                 removal: Default::default(),
                 outbox: Default::default(),
                 move_recovery: Default::default(),
-                editor: text_editor::Content::new(),
-                draft_id: String::new(),
                 remapping: None,
                 busy: HashSet::new(),
                 refresh: Default::default(),
@@ -780,7 +775,6 @@ impl App {
     fn open(&mut self, dialog: Dialog) {
         self.pending_focus = None;
         self.focused_input = None;
-        self.draft_dirty = None;
         self.dialog = Some(dialog);
         self.fields.clear();
         self.remapping = None;
@@ -797,17 +791,16 @@ impl App {
                 self.fields.insert("smtp_auth", "Automatic".into());
             }
             Dialog::Compose => {
-                self.composer.draft = Draft::default();
-                self.composer.show_recipients = false;
-                self.draft_id = uuid::Uuid::new_v4().to_string();
-                self.editor = text_editor::Content::new();
+                self.composer.current = composing::Session::default();
+                self.composer.current.draft.id = uuid::Uuid::new_v4().to_string();
+                self.composer.current.editor = text_editor::Content::new();
                 if let Some(account) = self
                     .query
                     .account
                     .clone()
                     .or_else(|| self.workspace.accounts.first().map(|a| a.id.clone()))
                 {
-                    self.fields.insert("account", account);
+                    self.composer.current.draft.account_id = account;
                 }
             }
             Dialog::Event => {
@@ -1432,8 +1425,8 @@ impl App {
                 }
                 Event::ReviewOutgoing(id, revision) => {
                     if self.dialog == Some(Dialog::Compose)
-                        && self.draft_id == id
-                        && self.composer.draft.revision == revision
+                        && self.composer.current.draft.id == id
+                        && self.composer.current.draft.revision == revision
                     {
                         self.open_outbox();
                     } else {
@@ -1441,14 +1434,13 @@ impl App {
                     }
                 }
                 Event::SubmissionQueued(id, revision) | Event::Sent(id, revision) => {
-                    if self.draft_id == id
-                        && self.composer.draft.revision == revision
-                        && self.dialog == Some(Dialog::Compose)
+                    if self.composer.current.draft.id == id
+                        && self.composer.current.draft.revision == revision
                     {
-                        self.dialog = None;
-                        self.draft_dirty = None;
-                        self.editor = text_editor::Content::new();
-                        self.fields.clear();
+                        if self.dialog == Some(Dialog::Compose) {
+                            self.dialog = None;
+                        }
+                        self.composer.current = composing::Session::default();
                     }
                 }
                 Event::RemoteImage(url, result) => {
@@ -1639,12 +1631,7 @@ impl App {
                 if self.saved_toast.is_some_and(|t| t.elapsed().as_secs() >= 4) {
                     self.saved_toast = None;
                 }
-                if self.dialog == Some(Dialog::Compose)
-                    && self.draft_dirty.is_some_and(|t| t.elapsed().as_secs() >= 1)
-                    && self.try_command(Command::AutoSaveDraft(self.current_draft()))
-                {
-                    self.draft_dirty = None;
-                }
+                self.autosave_draft();
                 if self
                     .notice
                     .as_ref()
@@ -2033,17 +2020,21 @@ impl App {
             Message::ChooseAttachments => return self.choose_attachments(),
             Message::ChosenAttachments(draft, paths) => self.attach_chosen(draft, paths),
             Message::RemoveDraftAttachment(id) => self.remove_draft_attachment(id),
+            Message::ComposeField(key, value) => self.edit_compose_field(key, value),
             Message::ShowRecipients => {
-                self.composer.show_recipients = !self.composer.show_recipients
+                self.composer.current.show_recipients = !self.composer.current.show_recipients
             }
             Message::SaveDraft => {
                 self.save_and_exit(composing::Exit::Dialog);
             }
             Message::Send => {
-                if !self.compose_locked() && self.composer.io.as_deref() != Some(&self.draft_id) {
+                if !self.compose_locked()
+                    && self.composer.io.as_deref() != Some(&self.composer.current.draft.id)
+                {
                     let draft = self.current_draft();
                     if self.try_command(Command::Send(draft)) {
-                        self.busy.insert(format!("send:{}", self.draft_id));
+                        self.busy
+                            .insert(format!("send:{}", self.composer.current.draft.id));
                     }
                 }
             }
@@ -2062,9 +2053,6 @@ impl App {
                         return Task::none();
                     }
                     self.calendar_setup.invalidate();
-                }
-                if self.compose_locked() {
-                    return Task::none();
                 }
                 if self.dialog == Some(Dialog::Account)
                     && !matches!(key, "setup_step" | "sent_copy" | "sent_folder")
@@ -2087,9 +2075,6 @@ impl App {
                     }
                 }
                 self.fields.insert(key, value);
-                if self.dialog == Some(Dialog::Compose) {
-                    self.draft_edited();
-                }
             }
             Message::Protocol(protocol) => {
                 self.protocol = protocol;
@@ -2351,7 +2336,7 @@ impl App {
                 if action.is_edit() {
                     self.draft_edited();
                 }
-                self.editor.perform(action);
+                self.composer.current.editor.perform(action);
             }
             Message::Month(delta) => {
                 let months = chrono::Months::new(delta.unsigned_abs());
@@ -3387,7 +3372,17 @@ impl App {
         self.test_revision += 1;
         let mut samples: Vec<_> = self.update_samples.iter().copied().collect();
         samples.sort_by(f64::total_cmp);
-        let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|self.mail_actions.effective(&d.summary).starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts.0,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
+        let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|self.mail_actions.effective(&d.summary).starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts.0,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.composer.current.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
+        data["compose_fields"] = serde_json::json!({
+            "account": self.compose_field("account"),
+            "to": self.compose_field("to"),
+            "cc": self.compose_field("cc"),
+            "bcc": self.compose_field("bcc"),
+            "subject": self.compose_field("subject"),
+        });
+        if self.dialog == Some(Dialog::Compose) {
+            data["fields"] = data["compose_fields"].clone();
+        }
         self.bulk_test_state(&mut data);
         data["mail_drag"] = self.mail_drag.observation();
         #[cfg(feature = "test-support")]
@@ -3505,7 +3500,7 @@ impl App {
         data["google_connected"] = serde_json::json!(self.google_connected);
         data["event_access"] = serde_json::json!(self.event_access());
         data["group_conversations"] = serde_json::json!(self.preferences.group_conversations);
-        data["draft_attachments"] = serde_json::json!(self.composer.draft.attachments);
+        data["draft_attachments"] = serde_json::json!(self.composer.current.draft.attachments);
         data["drafts_collapsed"] = serde_json::json!(self.preferences.collapsed_drafts);
         data["saved_drafts_collapsed"] =
             serde_json::json!(self.workspace.preferences.collapsed_drafts);
@@ -3521,16 +3516,17 @@ impl App {
         data["discard_pending"] = serde_json::json!(self.composer.discard_pending);
         data["draft_io"] = serde_json::json!(self.composer.io.is_some());
         data["forward_pending"] = serde_json::json!(self.composer.forward_pending.is_some());
-        data["draft_forward"] = serde_json::json!(self.composer.draft.forward.is_some());
+        data["draft_forward"] = serde_json::json!(self.composer.current.draft.forward.is_some());
         data["draft_forward_html"] = serde_json::json!(
             self.composer
+                .current
                 .draft
                 .forward
                 .as_ref()
                 .is_some_and(|quote| !quote.html_body.is_empty()
-                    && self.editor.text().ends_with(&quote.text))
+                    && self.composer.current.editor.text().ends_with(&quote.text))
         );
-        data["draft_in_reply_to"] = serde_json::json!(self.composer.draft.in_reply_to);
+        data["draft_in_reply_to"] = serde_json::json!(self.composer.current.draft.in_reply_to);
         data["focused_input"] = serde_json::json!(self.focused_input);
         data["auto_backup"] = serde_json::json!(self.preferences.auto_backup);
         data["backup_ready"] = serde_json::json!(self.preferences.backup_ready);

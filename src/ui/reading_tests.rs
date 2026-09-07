@@ -161,8 +161,8 @@ async fn context_reply_waits_for_clicked_body_and_navigation_cancels_it() {
     ));
     let _ = app.handle(Message::MailContextAction(MailAction::Reply));
     assert_eq!(app.dialog, Some(Dialog::Compose));
-    assert_eq!(app.field("to"), "second@example.com");
-    assert_eq!(app.field("subject"), "Re: Message 2");
+    assert_eq!(app.compose_field("to"), "second@example.com");
+    assert_eq!(app.compose_field("subject"), "Re: Message 2");
 }
 
 #[tokio::test]

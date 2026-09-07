@@ -290,8 +290,8 @@ mod tests {
     fn durable_submission_closes_only_its_composer_and_leaves_navigation_available() {
         let (mut app, _) = App::new();
         app.open(Dialog::Compose);
-        let id = app.draft_id.clone();
-        let revision = app.composer.draft.revision;
+        let id = app.composer.current.draft.id.clone();
+        let revision = app.composer.current.draft.revision;
         app.busy.insert(format!("send:{id}"));
         let _ = app.handle(Message::Backend(Event::SubmissionQueued(
             id.clone(),

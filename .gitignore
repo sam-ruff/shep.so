@@ -11,3 +11,6 @@ __pycache__/
 /site/
 /.cache/
 /.venv-docs/
+
+# Per-workstation tool permissions are not project configuration.
+/.claude/

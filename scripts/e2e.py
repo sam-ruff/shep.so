@@ -2382,6 +2382,33 @@ class NativeFlows(unittest.TestCase):
                        check("fields.to", "friend@example.com"), check("fields.subject", "Meet me Monday"),
                        check("editor", "A message written with the mouse and keyboard.", "contains"), shot("reopened-draft"))
 
+    def test_compose_session_preserves_fields_through_preferences_and_graceful_restart(self):
+        started = self.mcp.call("desktop.start", persistent=True)
+        print(f"Composer session restart evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("c"), check("dialog", "Compose"), wait(80),
+                       click(650, 312), type_text("friend@example.test"), click(1003, 312), wait(80),
+                       click(650, 312), type_text("copy@example.test"),
+                       click(650, 361), type_text("private@example.test"),
+                       click(650, 411), type_text("A saved session"),
+                       click(650, 470), type_text("Keep this text through Preferences."),
+                       key("Escape"), check("dialog", None),
+                       key("ctrl+comma"), check("tab", "Preferences"), check("dialog", None),
+                       check("draft_count", 1), check("compose_fields.bcc", "private@example.test"),
+                       click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
+                       click(98, 517), check("dialog", "Compose"),
+                       check("fields.to", "friend@example.test"), check("fields.cc", "copy@example.test"),
+                       check("fields.bcc", "private@example.test"), check("fields.subject", "A saved session"),
+                       check("editor", "Keep this text through Preferences.", "contains"),
+                       shot("composer-session-after-preferences"),
+                       click(650, 470), key("ctrl+End"), type_text(" Saved before close."))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(check("draft_count", 1), click(98, 517), check("dialog", "Compose"),
+                       check("fields.to", "friend@example.test"), check("fields.cc", "copy@example.test"),
+                       check("fields.bcc", "private@example.test"), check("fields.subject", "A saved session"),
+                       check("editor", "Saved before close.", "contains"),
+                       shot("composer-session-after-restart"))
+
     def test_drafts_collapse_context_cancel_and_discard(self):
         self.mcp.batch(key("c"), check("dialog", "Compose"), wait(80),
                        click(650, 362), type_text("First draft to keep"), check("draft_count", 1),
