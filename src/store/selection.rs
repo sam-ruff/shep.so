@@ -256,6 +256,7 @@ impl Store {
                 );
             }
             tx.execute("DELETE FROM temp.mail_selections WHERE id=?", [&key])?;
+            anyhow::ensure!(query.project_moves.is_empty(), "Pending display moves cannot be used as a selection scope. Wait for the move to finish.");
             let mut scope = query.clone();
             scope.offset = 0;
             scope.observe.clear();

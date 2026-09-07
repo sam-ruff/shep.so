@@ -51,19 +51,28 @@ impl Plan {
             filters.push("0=1".into());
         }
         let projected = super::bulk::has_effects(c)?;
+        let source = match (!query.project_moves.is_empty(), projected) {
+            (true, true) => "read_visible_bulk AS messages",
+            (true, false) => "read_visible_mail AS messages",
+            (false, true) => "visible_mail AS messages",
+            (false, false) => "messages",
+        };
         let from = if search.is_empty() {
-            if projected {
-                "visible_mail AS messages"
-            } else {
-                "messages"
-            }
+            source
         } else {
             filters.push("mail_search.mail_search MATCH ?".into());
             values.push(search.clone().into());
-            if projected {
-                "visible_mail AS messages JOIN mail_search ON mail_search.rowid=messages.rowid"
-            } else {
-                "messages JOIN mail_search ON mail_search.rowid=messages.rowid"
+            match (!query.project_moves.is_empty(), projected) {
+                (true, true) => {
+                    "read_visible_bulk AS messages JOIN mail_search ON mail_search.rowid=messages.rowid"
+                }
+                (true, false) => {
+                    "read_visible_mail AS messages JOIN mail_search ON mail_search.rowid=messages.rowid"
+                }
+                (false, true) => {
+                    "visible_mail AS messages JOIN mail_search ON mail_search.rowid=messages.rowid"
+                }
+                (false, false) => "messages JOIN mail_search ON mail_search.rowid=messages.rowid",
             }
         };
         Ok(Self {

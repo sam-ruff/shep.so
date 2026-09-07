@@ -427,3 +427,5 @@ Use `notification_delivery: "fail-once"` (or `"slow"`) on desktop.start to hold
 delivery for 1.8 s while testing native navigation, visible failure and Test
 notification recovery. `test_notifications_*` contains the automated equivalents;
 private-bus Rust tests cover the actual Linux wire adapter separately.
+
+For pending move destinations, keep the three `test_move_shows_destination_before_server_acknowledgment`, `test_move_destination_failure_and_pending_undo_restore_source` and `test_cross_account_destination_is_visible_during_transfer` flows. With `mail_actions="slow"`, open Projects before acknowledgment and assert its row/count while `mail_pending >= 1`; `mail_rows.0.group_pending` includes temporary destination ownership. Check the same subject/body before and after the new server ID, moving back to Inbox, failure rollback and Undo while pending. The cross-account flow enables the preference then uses real drag/drop. Review destination and error screenshots; the fixture cannot establish missing-COPYUID or live Fastmail recovery.

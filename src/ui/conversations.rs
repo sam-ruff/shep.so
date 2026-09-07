@@ -54,7 +54,7 @@ impl App {
             || self
                 .selected
                 .as_ref()
-                .is_some_and(|id| self.mail_actions.restoring(id))
+                .is_some_and(|id| self.mail_actions.restoring(id) || self.page.is_placeholder(id))
         {
             return;
         }

@@ -136,6 +136,15 @@ impl App {
             return Task::none();
         };
         let mail = self.mail_actions.effective(&menu.mail).clone();
+        if self.page.move_placeholders.contains(&mail.id)
+            && !matches!(action, MailAction::CopySender | MailAction::Open)
+        {
+            self.notice(
+                "This message is still moving. You can read it or undo the move while it finishes.",
+                false,
+            );
+            return Task::none();
+        }
         if self.bulk_owns_mail(&mail.id)
             && matches!(
                 action,

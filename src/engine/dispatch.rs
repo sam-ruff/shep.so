@@ -51,6 +51,12 @@ impl CommandSender {
     }
 
     #[cfg(test)]
+    pub(crate) fn foreground_test_channel() -> (Self, mpsc::Receiver<Command>) {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.reads)
+    }
+
+    #[cfg(test)]
     pub(crate) fn persistence_test_channel() -> (Self, mpsc::Receiver<Command>) {
         let (sender, inputs) = Self::channel();
         (sender, inputs.persistence)

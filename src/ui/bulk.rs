@@ -97,7 +97,7 @@ impl App {
     }
     pub(super) fn bulk_owns_mail(&self, id: &str) -> bool {
         self.page.bulk_pending.contains(id)
-            || self.page.bulk_placeholders.contains(id)
+            || self.page.is_placeholder(id)
             || self
                 .bulk
                 .prediction
@@ -711,7 +711,12 @@ impl App {
                 || self.query.read_only && mail.unread
                 || self.query.starred_only && !mail.starred)
     }
-    fn bulk_scope_contains(&self, query: &MailQuery, account: &str, folder: &str) -> bool {
+    pub(super) fn bulk_scope_contains(
+        &self,
+        query: &MailQuery,
+        account: &str,
+        folder: &str,
+    ) -> bool {
         let contains = |selected: &Option<String>, target: &str, sent: bool| {
             selected.as_ref().is_none_or(|a| a == account)
                 && if sent {

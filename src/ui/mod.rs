@@ -664,6 +664,7 @@ impl App {
         self.prefetch_page = None;
         self.prefetch_query = None;
         let mut query = self.query.clone();
+        query.project_moves = self.mail_actions.projected_moves();
         query.observe = self.mail_actions.observed_ids();
         query.observe_bulk = self.bulk_observed_ids();
         self.send(Command::Query(self.generation, query, false));
@@ -703,7 +704,7 @@ impl App {
         Some(detail)
     }
     fn preload(&mut self, id: String) {
-        if self.page.bulk_placeholders.contains(&id) {
+        if self.page.is_placeholder(&id) {
             return;
         }
         if self.detail_cache.iter().any(|d| d.summary.id == id)
@@ -725,14 +726,10 @@ impl App {
             self.conversation.page = Default::default();
         }
         self.selected = Some(id.clone());
-        if self.page.bulk_placeholders.contains(&id) {
+        if self.page.is_placeholder(&id) {
             self.bulk.waiting_reader = Some(id.clone());
             self.conversation = Default::default();
-            self.detail = self
-                .detail_cache
-                .iter()
-                .find(|d| d.summary.id == id)
-                .cloned();
+            self.detail = self.cached_placeholder_detail(&id);
             return;
         }
         self.bulk.waiting_reader = None;
@@ -1150,7 +1147,7 @@ impl App {
                         }
                         self.set_mail_page(page);
                         if let Some(id) = self.bulk.waiting_reader.clone()
-                            && !self.page.bulk_placeholders.contains(&id)
+                            && !self.page.is_placeholder(&id)
                         {
                             self.bulk.waiting_reader = None;
                             if self.selected.as_ref() == Some(&id)
@@ -1183,6 +1180,7 @@ impl App {
                             let mut query = self.query.clone();
                             query.offset += PAGE_SIZE;
                             self.prefetch_query = Some(query.clone());
+                            query.project_moves = self.mail_actions.projected_moves();
                             query.observe = self.mail_actions.observed_ids();
                             query.observe_bulk = self.bulk_observed_ids();
                             self.send(Command::Query(g, query, true));
@@ -1209,7 +1207,13 @@ impl App {
                     match result {
                         Ok(detail) => {
                             if self.reader_id() == Some(&id) {
-                                self.detail = Some(detail.clone());
+                                let mut visible = detail.clone();
+                                if self.page.is_placeholder(&id)
+                                    && let Some(mail) = self.page.rows.iter().find(|m| m.id == id)
+                                {
+                                    Arc::make_mut(&mut visible).summary = mail.clone();
+                                }
+                                self.detail = Some(visible);
                             }
                             if !prefetch || self.detail_cache.len() < 8 {
                                 self.cache_detail(detail);
@@ -1258,13 +1262,18 @@ impl App {
                 Event::Changed => {
                     self.detail_revision += 1;
                     self.prefetch_page = None;
-                    self.detail_cache.clear();
+                    self.detail_cache.retain(|d| {
+                        self.mail_actions.moving(&d.summary.id)
+                            || self.page.is_placeholder(&d.summary.id)
+                    });
                     self.pending_details.clear();
                     self.request_page();
                     self.request_conversation(None);
                     if let Some(id) = self
                         .reader_id()
-                        .filter(|id| !self.mail_actions.restoring(id))
+                        .filter(|id| {
+                            !self.mail_actions.restoring(id) && !self.page.is_placeholder(id)
+                        })
                         .map(str::to_owned)
                     {
                         self.send(Command::Detail {
