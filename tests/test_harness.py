@@ -15,6 +15,32 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_key_sequence_is_bounded_and_sends_distinct_native_arguments(self):
+        desktop=harness.Desktop()
+        desktop.command,desktop.screenshot=Mock(),Mock()
+        with self.assertRaisesRegex(RuntimeError,"desktop.start"):
+            desktop.batch([{"type":"key_sequence","keys":["m","Escape"]}])
+        desktop.app=Mock()
+        desktop.app.poll.return_value=None
+        try:
+            for keys in (None,"m Escape",[],["m"]*33,[None],[""],["m Escape"],["x"*81]):
+                with self.assertRaisesRegex(RuntimeError,"Key sequence requires"):
+                    desktop.batch([{"type":"key_sequence","keys":keys}])
+            desktop.command.assert_not_called()
+            with tempfile.TemporaryDirectory() as directory:
+                desktop.directory=Path(directory)
+                desktop.state=Mock(return_value={})
+                desktop.batch([{"type":"key_sequence","keys":["m","Escape","ctrl+d"]}])
+                desktop.command.assert_called_once_with("xdotool","key","--clearmodifiers","--delay","1","--","m","Escape","ctrl+d")
+                report=json.loads(next(Path(directory).glob("batch-*.json")).read_text())
+                self.assertEqual(report["actions"][0]["type"],"key_sequence")
+        finally:
+            desktop.app=None
+        tool=next(t for t in harness.TOOLS if t["name"]=="desktop.batch")
+        properties=tool["inputSchema"]["properties"]["actions"]["items"]["properties"]
+        self.assertIn("key_sequence",properties["type"]["enum"])
+        self.assertEqual(properties["keys"]["maxItems"],32)
+
     def test_reading_mail_fixture_is_explicit_and_validated_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

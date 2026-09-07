@@ -427,6 +427,25 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
                 shell,
             );
         }
+        if self.preserve_pointer
+            && let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event
+        {
+            let captured = shell.event_status() == iced::event::Status::Captured;
+            let mut focus = native_input::Focus::default();
+            if !captured || key == &Key::Named(keyboard::key::Named::Enter) {
+                self.content.as_widget_mut().operate(
+                    &mut tree.children[0],
+                    layout,
+                    renderer,
+                    &mut focus,
+                );
+            }
+            // Native widget messages preserve key/click order. An async event
+            // subscription can deliver an earlier Escape after a later click.
+            // Captured popup keys never reach this base widget and must not
+            // also activate the application behind that popup.
+            shell.publish(Message::Key(key.clone(), *modifiers, captured, focus));
+        }
     }
     fn mouse_interaction(
         &self,

@@ -17,6 +17,7 @@ mod layout;
 mod mail_actions;
 mod mail_selection;
 mod move_recovery;
+mod native_input;
 mod notifications;
 mod outgoing;
 mod pointer;
@@ -43,7 +44,7 @@ use crate::{
 use chrono::{Datelike, NaiveDate, TimeZone};
 use components::*;
 use iced::{
-    Element, Size, Subscription, Task, Theme, event,
+    Element, Size, Subscription, Task, Theme,
     keyboard::{self, Key},
     widget::{self, text_editor},
 };
@@ -181,8 +182,7 @@ pub enum Message {
     ListBackups,
     Restore(String),
     ConfirmRestore,
-    Key(Key, keyboard::Modifiers, bool),
-    KeyFocusChecked(Key, keyboard::Modifiers, bool),
+    Key(Key, keyboard::Modifiers, bool, native_input::Focus),
     Remap(Action, Slot),
     ClearShortcut(Action, Slot),
     ResetShortcuts,
@@ -589,7 +589,7 @@ impl App {
                 Subscription::none()
             },
             iced::system::theme_changes().map(Message::SystemTheme),
-            iced::event::listen_with(|e, status, id| match e {
+            iced::event::listen_with(|e, _status, id| match e {
                 iced::Event::Window(iced::window::Event::CloseRequested) => {
                     Some(Message::WindowClose(id))
                 }
@@ -599,9 +599,6 @@ impl App {
                 iced::Event::Window(iced::window::Event::Unfocused) => {
                     Some(Message::WindowUnfocused)
                 }
-                iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => Some(
-                    Message::Key(key, modifiers, status == event::Status::Captured),
-                ),
                 iced::Event::Window(
                     iced::window::Event::Opened { .. } | iced::window::Event::Moved(_),
                 ) => Some(Message::HtmlScaleRequest(id)),
@@ -2295,107 +2292,8 @@ impl App {
                     self.notice("The backup destination changed. Close this dialog and refresh copies before restoring.", true);
                 }
             }
-            Message::Key(key, modifiers, captured) => {
-                // Scope Select All at input time as well as after the async
-                // native focus check. A delayed reader key must not select mail
-                // merely because the user clicked the list in the meantime.
-                if self.dialog.is_none()
-                    && self.remapping.is_none()
-                    && chord(&key, modifiers)
-                        .as_deref()
-                        .and_then(|k| self.preferences.shortcuts.resolve(k))
-                        == Some(Action::SelectAll)
-                    && (self.tab != Tab::Mail
-                        || !self.list_focus
-                        || self.sidebar_focus
-                        || self.full_reader)
-                {
-                    return Task::none();
-                }
-                if self.find_message.open
-                    && self.tab == Tab::Mail
-                    && self.dialog.is_none()
-                    && self.remapping.is_none()
-                    && self.context_menu.is_none()
-                    && self.composer.context.is_none()
-                    && key == Key::Named(keyboard::key::Named::Enter)
-                {
-                    let revision = self.find_message.revision;
-                    return widget::operation::is_focused("find-message").map(move |focused| {
-                        Message::Find(find_message::Message::Enter(
-                            revision,
-                            key.clone(),
-                            modifiers,
-                            captured,
-                            focused,
-                        ))
-                    });
-                }
-                let input_guard = !captured
-                    && self.dialog.is_none()
-                    && self.remapping.is_none()
-                    && self.context_menu.is_none()
-                    && self.composer.context.is_none()
-                    && chord(&key, modifiers)
-                        .as_deref()
-                        .and_then(|key| self.preferences.shortcuts.resolve(key))
-                        .is_some_and(|action| {
-                            !matches!(
-                                action,
-                                Action::Search
-                                    | Action::Find
-                                    | Action::Mail
-                                    | Action::Calendar
-                                    | Action::Settings
-                                    | Action::Compose
-                                    | Action::Sync
-                            )
-                        });
-                if input_guard {
-                    if self.tab != Tab::Mail {
-                        return Task::none();
-                    }
-                    if self.full_reader && self.find_message.open {
-                        return widget::operation::is_focused("find-message").map(move |focused| {
-                            Message::Find(find_message::Message::GuardedKey(
-                                key.clone(),
-                                modifiers,
-                                focused,
-                            ))
-                        });
-                    }
-                    if self.full_reader {
-                        // The full-window reader has no search widget. A focus
-                        // operation for a missing widget emits no response.
-                        return self.key(key, modifiers, captured);
-                    }
-                    // iced may leave unhandled modified chords uncaptured in a
-                    // focused text input. Inspect native focus, not the cached
-                    // focus observation used by the UI harness.
-                    return widget::operation::is_focused("search").map(move |focused| {
-                        Message::KeyFocusChecked(key.clone(), modifiers, focused)
-                    });
-                }
-                return self.key(key, modifiers, captured);
-            }
-            Message::KeyFocusChecked(key, modifiers, focused) => {
-                if self.tab == Tab::Mail
-                    && self.dialog.is_none()
-                    && self.remapping.is_none()
-                    && self.context_menu.is_none()
-                    && self.composer.context.is_none()
-                {
-                    if !focused && self.find_message.open {
-                        return widget::operation::is_focused("find-message").map(move |focused| {
-                            Message::Find(find_message::Message::GuardedKey(
-                                key.clone(),
-                                modifiers,
-                                focused,
-                            ))
-                        });
-                    }
-                    return self.key(key, modifiers, focused);
-                }
+            Message::Key(key, modifiers, captured, focus) => {
+                return self.native_key(key, modifiers, captured, focus);
             }
             Message::Remap(action, slot) => {
                 self.remapping = Some((action, slot));

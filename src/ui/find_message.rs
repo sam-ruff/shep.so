@@ -16,12 +16,10 @@ pub enum Message {
     Close,
     Query(String),
     MatchCase,
-    Enter(u64, Key, keyboard::Modifiers, bool, bool),
     Next(bool),
     Run(u64),
     Width(String, usize, f32),
     Reveal(u64, u64, f32, Option<f32>),
-    GuardedKey(Key, keyboard::Modifiers, bool),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -171,26 +169,6 @@ impl App {
                 self.find_message.match_case = !self.find_message.match_case;
                 return widget::operation::focus("find-message");
             }
-            Message::Enter(revision, key, modifiers, captured, focused)
-                if self.find_message.open
-                    && revision == self.find_message.revision
-                    && self.tab == Tab::Mail
-                    && self.dialog.is_none() =>
-            {
-                if focused {
-                    return self.handle_find(Message::Next(modifiers.shift()));
-                }
-                if !self.full_reader {
-                    return widget::operation::is_focused("search").map(move |focused| {
-                        super::Message::Find(Message::GuardedKey(
-                            key.clone(),
-                            modifiers,
-                            focused || captured,
-                        ))
-                    });
-                }
-                return self.key(key, modifiers, captured);
-            }
             Message::Next(previous) => {
                 if let Some(results) = &self.find_message.results
                     && !results.matches.is_empty()
@@ -262,15 +240,6 @@ impl App {
                     Task::none()
                 };
                 return Task::batch([scroll, horizontal]);
-            }
-            Message::GuardedKey(key, modifiers, focused)
-                if self.dialog.is_none()
-                    && self.tab == Tab::Mail
-                    && self.context_menu.is_none()
-                    && self.remapping.is_none()
-                    && self.composer.context.is_none() =>
-            {
-                return self.key(key, modifiers, focused);
             }
             _ => {}
         }
@@ -372,7 +341,7 @@ impl App {
 mod tests {
     use super::*;
     #[test]
-    fn find_enter_uses_event_modifiers_and_rejects_old_focus_checks() {
+    fn find_enter_uses_event_modifiers_and_current_native_focus() {
         let (mut app, _) = App::new();
         app.find_message.open = true;
         app.find_message.revision = 9;
@@ -388,20 +357,21 @@ mod tests {
             ))),
         );
         app.modifiers = keyboard::Modifiers::default();
-        let _ = app.handle_find(Message::Enter(
-            9,
+        let _ = app.handle(crate::ui::Message::Key(
             Key::Named(keyboard::key::Named::Enter),
             keyboard::Modifiers::SHIFT,
             true,
-            true,
+            native_input::Focus {
+                find: true,
+                ..Default::default()
+            },
         ));
         assert_eq!(app.find_message.active, Some(2));
-        let _ = app.handle_find(Message::Enter(
-            8,
+        let _ = app.handle(crate::ui::Message::Key(
             Key::Named(keyboard::key::Named::Enter),
             keyboard::Modifiers::default(),
-            false,
             true,
+            native_input::Focus::default(),
         ));
         assert_eq!(app.find_message.active, Some(2));
         app.focused_input = Some("find-message");
