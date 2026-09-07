@@ -15,6 +15,57 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_clipboard_paste_requires_owned_display_and_preserves_unicode_whitespace(self):
+        desktop = harness.Desktop()
+        desktop.command = Mock()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (None, 1, "x"*10001):
+                with self.assertRaises(ValueError):
+                    desktop.paste_text(value)
+            with self.assertRaisesRegex(RuntimeError, "owned fixture"):
+                desktop.paste_text("日本語")
+            launch.assert_not_called()
+        desktop.app, desktop.xvfb, desktop.clipboard = Mock(), Mock(), Mock()
+        desktop.app.poll.return_value = desktop.xvfb.poll.return_value = desktop.clipboard.poll.return_value = None
+        previous = desktop.clipboard
+        clipboard = Mock()
+        clipboard.poll.return_value = None
+        desktop.env["DISPLAY"] = ":owned"
+        text = " 日本語\n"
+        try:
+            with patch.object(harness.subprocess, "Popen", return_value=clipboard) as launch, patch.object(harness.subprocess, "run", return_value=Mock(stdout=text.encode())) as read:
+                desktop.paste_text(text)
+                previous.terminate.assert_called_once()
+                previous.wait.assert_called_once()
+                self.assertEqual(launch.call_args.kwargs["env"]["DISPLAY"], ":owned")
+                self.assertEqual(read.call_args.kwargs["env"]["DISPLAY"], ":owned")
+                clipboard.stdin.write.assert_called_once_with(text.encode())
+                clipboard.stdin.close.assert_called_once()
+                desktop.command.assert_called_once_with("xdotool","key","--clearmodifiers","--delay","1","ctrl+v")
+            desktop.stop()
+            clipboard.terminate.assert_called_once()
+        finally:
+            desktop.app = desktop.xvfb = desktop.clipboard = None
+        batch = next(tool for tool in harness.TOOLS if tool["name"]=="desktop.batch")
+        self.assertIn("paste", batch["inputSchema"]["properties"]["actions"]["items"]["properties"]["type"]["enum"])
+
+    def test_clipboard_failure_never_pastes_stale_content_and_remains_owned_for_cleanup(self):
+        desktop = harness.Desktop()
+        desktop.app, desktop.xvfb = Mock(), Mock()
+        desktop.app.poll.return_value = desktop.xvfb.poll.return_value = None
+        desktop.command = Mock()
+        clipboard = Mock()
+        clipboard.poll.return_value = None
+        try:
+            with patch.object(harness.subprocess, "Popen", return_value=clipboard), patch.object(harness.subprocess, "run", return_value=Mock(stdout=b"stale")), patch.object(harness.time, "monotonic", side_effect=[0,4]):
+                with self.assertRaisesRegex(RuntimeError, "did not accept"):
+                    desktop.paste_text("日本語")
+            desktop.command.assert_not_called()
+            desktop.stop()
+            clipboard.terminate.assert_called_once()
+        finally:
+            desktop.app = desktop.xvfb = desktop.clipboard = None
+
     def test_held_mouse_requires_an_owned_app_and_cleanup_releases_only_its_display(self):
         desktop = harness.Desktop()
         desktop.command = Mock()

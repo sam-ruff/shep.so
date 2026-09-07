@@ -338,3 +338,10 @@ other saved flows. Record WebP evidence: state cannot prove a keyboard target is
 visible. The compact flow clicks the actual revealed row, and verifies saved
 window dimensions across normal process restart. Do not infer live IMAP server
 behavior or performance results from this fixture.
+
+Use the batchable `paste` action with `text` for Unicode clipboard input. It owns
+an xclip selection only on the fixture display, verifies the exact UTF-8 bytes
+(including spaces/newlines), then sends native Ctrl+V. Cleanup terminates that
+owned clipboard process. Synthetic xdotool typing of Japanese produced an empty
+field intermittently; keep ordinary `type` coverage for ASCII and the saved
+Unicode folder scenario's native paste/search/Enter checks.
