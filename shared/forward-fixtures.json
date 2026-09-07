@@ -1,0 +1,154 @@
+[
+  {
+    "name": "styled-binary-duplicate-file-types",
+    "raw": "From: Sender <sender@example.test>\r\nTo: original@example.test\r\nCc: copied@example.test\r\nBcc: private@example.test\r\nSubject: Café project\r\nMessage-ID: <original@example.test>\r\nReferences: <old@example.test>\r\nContent-Type: multipart/mixed; boundary=o\r\n\r\n--o\r\nContent-Type: multipart/related; boundary=r\r\n\r\n--r\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html><head><style>td{color:purple}</style></head><body bgcolor=white onload=\"run()\"><table><tr><td>Complete café.</td></tr></table><img src=cid:diagram onerror=\"run()\"><script>secretScript()</script><form>hidden form</form><a href=\"javascript:alert(1)\">Safe label</a></body></html>\r\n--r\r\nContent-Type: image/png\r\nContent-ID: <diagram>\r\nContent-Transfer-Encoding: base64\r\n\r\naW5saW5lIGZpeHR1cmU=\r\n--r--\r\n--o\r\nContent-Type: application/x-first\r\nContent-Disposition: attachment; filename=\"../duplicate.bin\"\r\nContent-Transfer-Encoding: base64\r\n\r\nAP8BDQo=\r\n--o\r\nContent-Type: application/x-second\r\nContent-Disposition: attachment; filename=\"../duplicate.bin\"\r\nContent-Transfer-Encoding: base64\r\n\r\nAP8BDQo=\r\n--o--\r\n",
+    "subject": "Fwd: Café project",
+    "contains": [
+      "Complete café.",
+      "<table>",
+      "td{color:purple}",
+      "bgcolor=\"white\"",
+      "cid:shep-e591d722eb2da0545faeeb175d4d163cc4b8cd51a838bab72f454c1d0642d787@inline"
+    ],
+    "absent": [
+      "private@example.test",
+      "secretScript",
+      "<script",
+      "<form",
+      "onload=",
+      "onerror=",
+      "javascript:",
+      "<original@example.test>",
+      "<old@example.test>"
+    ],
+    "files": [
+      {
+        "name": "duplicate.bin",
+        "media_type": "application/x-first",
+        "content_id": null,
+        "size": 5,
+        "hex": "00ff010d0a"
+      },
+      {
+        "name": "duplicate.bin",
+        "media_type": "application/x-second",
+        "content_id": null,
+        "size": 5,
+        "hex": "00ff010d0a"
+      },
+      {
+        "name": "image-3.bin",
+        "media_type": "image/png",
+        "content_id": "shep-e591d722eb2da0545faeeb175d4d163cc4b8cd51a838bab72f454c1d0642d787@inline",
+        "size": 14,
+        "hex": "696e6c696e652066697874757265"
+      }
+    ],
+    "html": true
+  },
+  {
+    "name": "existing-prefix-plain",
+    "raw": "From: friend@example.test\r\nSubject: fW: Already forwarded\r\n\r\nComplete plain source.",
+    "subject": "fW: Already forwarded",
+    "contains": [
+      "Complete plain source."
+    ],
+    "absent": [],
+    "files": [],
+    "html": false
+  },
+  {
+    "name": "independent-mixed-cid-scopes",
+    "raw": "Content-Type: multipart/mixed; boundary=\"mix\"\r\n\r\n--mix\r\nContent-Type: multipart/related; boundary=\"rela\"\r\n\r\n--rela\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>First</p><img src=\"cid:logo\">\r\n--rela\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nZmlyc3Q=\r\n--rela--\r\n\r\n--mix\r\nContent-Type: multipart/related; boundary=\"relb\"\r\n\r\n--relb\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Second</p><img src=\"cid:logo\">\r\n--relb\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nc2Vjb25k\r\n--relb--\r\n\r\n--mix--\r\n",
+    "subject": "Fwd: ",
+    "contains": [
+      "First",
+      "Second",
+      "cid:shep-16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4@inline",
+      "cid:shep-a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e@inline"
+    ],
+    "absent": [
+      "cid:logo"
+    ],
+    "files": [
+      {
+        "name": "image-1.bin",
+        "media_type": "image/webp",
+        "size": 6,
+        "content_id": "shep-16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4@inline",
+        "hex": "7365636f6e64"
+      },
+      {
+        "name": "image-2.bin",
+        "media_type": "image/webp",
+        "size": 5,
+        "content_id": "shep-a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e@inline",
+        "hex": "6669727374"
+      }
+    ],
+    "html": true
+  },
+  {
+    "name": "duplicate-cid-unresolved",
+    "raw": "Content-Type: multipart/related; boundary=\"dups\"\r\n\r\n--dups\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Ambiguous</p><img src=\"cid:logo\">\r\n--dups\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nb25l\r\n--dups\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\ndHdv\r\n--dups--\r\n",
+    "subject": "Fwd: ",
+    "contains": [
+      "Ambiguous"
+    ],
+    "absent": [
+      "cid:logo"
+    ],
+    "files": [],
+    "html": true
+  },
+  {
+    "name": "alternative-keeps-only-selected-resources",
+    "raw": "Content-Type: multipart/alternative; boundary=\"choose\"\r\n\r\n--choose\r\nContent-Type: multipart/related; boundary=\"rela\"\r\n\r\n--rela\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>First</p><img src=\"cid:logo\">\r\n--rela\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nZmlyc3Q=\r\n--rela--\r\n\r\n--choose\r\nContent-Type: multipart/related; boundary=\"relb\"\r\n\r\n--relb\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Second</p><img src=\"cid:logo\">\r\n--relb\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nc2Vjb25k\r\n--relb--\r\n\r\n--choose--\r\n",
+    "subject": "Fwd: ",
+    "contains": [
+      "Second",
+      "cid:shep-16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4@inline"
+    ],
+    "absent": [
+      "First",
+      "shep-a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e@inline"
+    ],
+    "files": [
+      {
+        "name": "image-1.bin",
+        "media_type": "image/webp",
+        "size": 6,
+        "content_id": "shep-16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4@inline",
+        "hex": "7365636f6e64"
+      }
+    ],
+    "html": true
+  },
+  {
+    "name": "inline-type-is-not-taken-from-an-attached-copy",
+    "raw": "Content-Type: multipart/mixed; boundary=o\r\n\r\n--o\r\nContent-Type: application/x-copy\r\nContent-ID: <attached>\r\nContent-Disposition: attachment; filename=copy.bin\r\n\r\ninline fixture\r\n--o\r\nContent-Type: multipart/related; boundary=r\r\n\r\n--r\r\nContent-Type: text/html\r\n\r\n<p>Image type</p><img src=cid:diagram>\r\n--r\r\nContent-Type: image/png\r\nContent-ID: <diagram>\r\n\r\ninline fixture\r\n--r--\r\n--o--\r\n",
+    "subject": "Fwd: ",
+    "contains": [
+      "Image type",
+      "cid:shep-e591d722eb2da0545faeeb175d4d163cc4b8cd51a838bab72f454c1d0642d787@inline"
+    ],
+    "absent": [],
+    "files": [
+      {
+        "name": "copy.bin",
+        "media_type": "application/x-copy",
+        "content_id": null,
+        "size": 14,
+        "hex": "696e6c696e652066697874757265"
+      },
+      {
+        "name": "image-2.bin",
+        "media_type": "image/png",
+        "content_id": "shep-e591d722eb2da0545faeeb175d4d163cc4b8cd51a838bab72f454c1d0642d787@inline",
+        "size": 14,
+        "hex": "696e6c696e652066697874757265"
+      }
+    ],
+    "html": true
+  }
+]

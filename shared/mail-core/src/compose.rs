@@ -6,10 +6,9 @@ use mailparse::MailHeaderMap;
 use std::collections::HashSet;
 
 mod forwarding;
-pub use forwarding::ForwardQuote;
+pub use forwarding::{ForwardQuote, prepare_forward};
 
-pub const MAX_ATTACHMENT_BYTES: usize = 18 * 1024 * 1024;
-pub const MAX_ATTACHMENTS: usize = 32;
+pub use shep_mail_content::forwarding::{MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS};
 
 #[derive(Debug, Clone, Default)]
 pub struct ReplyHeaders {

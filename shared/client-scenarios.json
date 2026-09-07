@@ -149,8 +149,8 @@
     {
       "id": "desktop-forward-print",
       "contract": "Forward complete MIME in a new thread with retained files and optional formatting; print the complete selected source with confined resources",
-      "mobile": "OPEN: Forward retained MIME/draft metadata and native Print controls/device tests",
-      "browser": "OPEN: Forward retained MIME/draft metadata and complete Print controls/browser tests"
+      "mobile": "Shared forward-fixtures.json/native content and core MIME tests cover complete preparation, isolated inline bytes, file metadata and new thread/SMTP identity. OPEN: Flutter atomic draft/file storage, Forward controls/device tests and native Print.",
+      "browser": "Shared forward-fixtures.json/WASM forward_content.test.ts cover complete preparation, byte ownership, MIME selection and controlled errors. OPEN: browser atomic draft/file storage, Forward controls/browser execution and complete Print."
     },
     {
       "id": "desktop-bulk-selection",
