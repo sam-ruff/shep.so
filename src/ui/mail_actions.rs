@@ -143,7 +143,7 @@ impl App {
     }
 
     pub(super) fn toggle_mail_flag(&mut self, mail: Mail, unread: bool) {
-        if self.mail_actions.restoring(&mail.id) {
+        if self.mail_actions.restoring(&mail.id) || self.bulk_owns_mail(&mail.id) {
             return;
         }
         if unread
@@ -205,6 +205,9 @@ impl App {
     }
 
     pub(super) fn transfer_mail(&mut self, mail: Mail, account: String, folder: String) {
+        if self.bulk_owns_mail(&mail.id) {
+            return;
+        }
         let id = mail.id.clone();
         if self.mail_actions.restoring(&id)
             || self.mail_actions.transfers.contains_key(&id)
@@ -314,6 +317,7 @@ impl App {
 
     pub(super) fn move_mail(&mut self, mail: Mail, destination: String) {
         if self.mail_actions.restoring(&mail.id)
+            || self.bulk_owns_mail(&mail.id)
             || mail.folder == destination
             || self.mail_actions.moves.contains_key(&mail.id)
             || self.mail_actions.transfers.contains_key(&mail.id)

@@ -134,14 +134,12 @@ impl State {
                             self.count = (to - from + 1) as usize;
                         }
                         for (index, mail) in page.rows.iter().enumerate() {
-                            let position = self
-                                .snapshot
-                                .as_ref()
-                                .and_then(|s| s.positions.get(&mail.id))
-                                .copied()
-                                .unwrap_or((offset + index) as u64);
+                            let position = (offset + index) as u64;
                             if (from..=to).contains(&position) {
-                                self.visible.insert(mail.id.clone());
+                                let added = self.visible.insert(mail.id.clone());
+                                if *additive && added {
+                                    self.count = self.count.saturating_add(1);
+                                }
                             }
                         }
                     }
@@ -180,17 +178,17 @@ impl App {
         self.pump_selection();
     }
     fn selection_position(&self, id: &str) -> Option<u64> {
-        self.mail_selection
-            .snapshot
-            .as_ref()
-            .and_then(|s| s.positions.get(id))
-            .copied()
+        self.page
+            .rows
+            .iter()
+            .position(|m| m.id == id)
+            .map(|i| (self.query.offset + i) as u64)
             .or_else(|| {
-                self.page
-                    .rows
-                    .iter()
-                    .position(|m| m.id == id)
-                    .map(|i| (self.query.offset + i) as u64)
+                self.mail_selection
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| s.positions.get(id))
+                    .copied()
             })
     }
     fn queue_selection(&mut self, change: SelectionChange) {
@@ -199,13 +197,13 @@ impl App {
             return;
         }
         let range = if let SelectionChange::Range { anchor, target, .. } = &change {
-            let start = self
-                .mail_selection
-                .anchor
-                .as_ref()
-                .filter(|(id, _)| id == anchor)
-                .map(|(_, pos)| *pos)
-                .or_else(|| self.selection_position(anchor));
+            let start = self.selection_position(anchor).or_else(|| {
+                self.mail_selection
+                    .anchor
+                    .as_ref()
+                    .filter(|(id, _)| id == anchor)
+                    .map(|(_, pos)| *pos)
+            });
             start
                 .zip(self.selection_position(target))
                 .map(|(a, b)| (a.min(b), a.max(b)))
@@ -407,6 +405,25 @@ impl App {
                 }
             }
             Err(error) => {
+                if active && matches!(request, Request::Observe(_)) {
+                    self.mail_selection.observed.clear();
+                    self.mail_selection.retry = Some(Instant::now());
+                    self.notice(
+                        format!("Could not refresh the selection. Retrying… {error}"),
+                        true,
+                    );
+                    self.mail_selection.project(&self.page, self.query.offset);
+                    return;
+                }
+                if active && matches!(request, Request::Change(..)) {
+                    // Store changes are atomic. Reject only this gesture, keep
+                    // confirmed membership and process subsequent native input.
+                    self.mail_selection.queue.pop_front();
+                    self.notice(format!("Could not update this selection. {error}"), true);
+                    self.mail_selection.project(&self.page, self.query.offset);
+                    self.pump_selection();
+                    return;
+                }
                 if matches!(request, Request::Release(_)) {
                     self.notice("Could not reset the selection. Retrying…", true);
                 }
@@ -620,7 +637,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn select_all_is_scoped_to_list_focus_and_error_clears_optimistic_membership() {
+    async fn select_all_is_scoped_to_list_focus_and_rejection_keeps_confirmed_membership() {
         let (mut app, store, mut commands) = fixture().await;
         app.list_focus = false;
         let _ = app.select_all_mail();
@@ -629,15 +646,102 @@ mod tests {
         let _ = app.select_all_mail();
         reply(&mut app, &store, &mut commands).await;
         let (serial, _) = app.mail_selection.inflight.clone().unwrap();
-        app.selection_finished(serial, Err("Selection removed".into()));
-        assert!(!app.mail_selection.mode);
+        app.selection_finished(serial, Err("Fixture write rejected".into()));
+        assert!(app.mail_selection.mode);
+        assert_eq!(app.mail_selection.count, 0);
         assert!(app.mail_selection.visible.is_empty());
         assert!(
             app.notice
                 .as_ref()
                 .unwrap()
                 .0
-                .contains("Select the messages again")
+                .contains("Fixture write rejected")
+        );
+    }
+
+    #[tokio::test]
+    async fn selecting_an_arrival_and_rejecting_a_vanished_target_keeps_prior_choices() {
+        let (mut app, store, mut commands) = fixture().await;
+        let first = app.page.rows[0].id.clone();
+        let _ = app.checkbox_mail(first.clone());
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        let arrival = parse_mail(
+            "fixture",
+            "arrival",
+            "INBOX",
+            b"Subject: 000A\r\n\r\nNew mail".to_vec(),
+            true,
+            false,
+        )
+        .unwrap();
+        let new_id = arrival.summary.id.clone();
+        store.upsert(vec![arrival]).await.unwrap();
+        app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
+        let Command::Selection(serial, Request::Observe(_), _) = commands.try_recv().unwrap()
+        else {
+            panic!("The new page must observe existing selection membership");
+        };
+        app.selection_finished(serial, Err("Temporary read failure".into()));
+        assert!(app.mail_selection.mode);
+        assert_eq!(app.mail_selection.count, 1);
+        assert!(
+            commands.try_recv().is_err(),
+            "Retry must not spin on a failed cache read"
+        );
+        app.mail_selection.retry = Some(Instant::now() - std::time::Duration::from_secs(2));
+        app.pump_selection();
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        assert_eq!(
+            app.mail_selection.count, 1,
+            "Passive arrival must not select itself"
+        );
+        let _ = app.checkbox_mail(new_id.clone());
+        assert_eq!(
+            app.mail_selection.count, 2,
+            "Explicit clicks project immediately"
+        );
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        assert_eq!(
+            app.mail_selection.visible,
+            [first.clone(), new_id.clone()].into()
+        );
+        assert!(app.mail_actions.read_candidate.is_none());
+
+        let transient = parse_mail(
+            "fixture",
+            "transient",
+            "INBOX",
+            b"Subject: 000B\r\n\r\nLeaving mail".to_vec(),
+            true,
+            false,
+        )
+        .unwrap();
+        let transient_id = transient.summary.id.clone();
+        store.upsert(vec![transient]).await.unwrap();
+        app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        let _ = app.checkbox_mail(transient_id.clone());
+        store.remove(transient_id).await.unwrap();
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        assert!(app.mail_selection.mode);
+        assert_eq!(app.mail_selection.count, 2);
+        assert_eq!(app.mail_selection.visible, [first, new_id].into());
+        assert!(
+            app.notice
+                .as_ref()
+                .unwrap()
+                .0
+                .contains("previous selection is kept")
         );
     }
 }

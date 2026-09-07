@@ -257,7 +257,7 @@ impl fmt::Display for MailFilter {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailQuery {
     /// Small pending-action identities observed in the same snapshot as counts.
     /// This does not alter the folder/search result scope.

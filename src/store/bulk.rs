@@ -355,6 +355,24 @@ impl Store {
             bump(&tx)?;let result=job(&tx,&id)?;tx.commit()?;Ok(result)
         }).await
     }
+    /// Claim the actual identity discovered during Undo before any provider
+    /// write. Never steal another group's claim or revive a completed phase.
+    pub async fn claim_bulk_identity(&self, item: Item, id: String) -> anyhow::Result<()> {
+        self.run(move |c| {
+            let tx=c.transaction()?;
+            let current: (String,bool)=tx.query_row("SELECT status,undo FROM bulk_items WHERE job=? AND position=?",
+                params![item.job,item.position as i64],|r|Ok((r.get(0)?,r.get(1)?)))?;
+            anyhow::ensure!(current == ("running".into(),item.undo),"This group operation is no longer current");
+            anyhow::ensure!(item.undo || id==item.id,"The forward message identity changed");
+            let inserted=tx.execute("INSERT INTO bulk_effects(id,job,position) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING",
+                params![id,item.job,item.position as i64])?;
+            let owner: (String,i64)=tx.query_row("SELECT job,position FROM bulk_effects WHERE id=?",[&id],|r|Ok((r.get(0)?,r.get(1)?)))?;
+            anyhow::ensure!(owner == (item.job,item.position as i64),"Another group owns this message. Finish or review that change first.");
+            if inserted>0 { bump(&tx)?; }
+            tx.commit()?;
+            Ok(())
+        }).await
+    }
     pub async fn bulk_owner(&self, id: String) -> anyhow::Result<Option<String>> {
         self.run(move |c| {
             Ok(

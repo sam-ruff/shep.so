@@ -2,14 +2,32 @@ use super::*;
 use crate::mail_actions::{MoveReceipt, connection_key};
 
 impl Engine {
+    async fn authorize_mail_mutation(
+        &self,
+        id: &str,
+        group: Option<&crate::bulk::Item>,
+    ) -> anyhow::Result<()> {
+        if let Some(item) = group {
+            self.store
+                .claim_bulk_identity(item.clone(), id.to_owned())
+                .await
+        } else {
+            anyhow::ensure!(
+                self.store.bulk_owner(id.to_owned()).await?.is_none(),
+                "A group action is pending for this message. Finish or review it before making another change."
+            );
+            Ok(())
+        }
+    }
     pub(super) async fn transfer_message(
         &self,
         mail: &Mail,
         destination: String,
         folder: String,
         output: Output,
+        group: Option<&crate::bulk::Item>,
     ) -> anyhow::Result<(Account, MoveReceipt)> {
-        self.transfer_with_policy(mail, destination, folder, output, true)
+        self.transfer_with_policy(mail, destination, folder, output, true, group)
             .await
     }
 
@@ -20,6 +38,7 @@ impl Engine {
         folder: String,
         mut output: Output,
         check_preference: bool,
+        group: Option<&crate::bulk::Item>,
     ) -> anyhow::Result<(Account, MoveReceipt)> {
         let preferences: Preferences = self.store.get("preferences").await?;
         anyhow::ensure!(
@@ -44,6 +63,7 @@ impl Engine {
         })
         .await
         .context("The accounts are still busy. Try moving again.")?;
+        self.authorize_mail_mutation(&mail.id, group).await?;
         let current = self.store.mail_metadata(mail.id.clone()).await?;
         anyhow::ensure!(
             current.account_id == mail.account_id && current.folder == mail.folder,
@@ -143,6 +163,7 @@ impl Engine {
         mail: &Mail,
         folder: &str,
         mut output: Output,
+        group: Option<&crate::bulk::Item>,
     ) -> anyhow::Result<(Option<Account>, MoveReceipt)> {
         let _guard = tokio::time::timeout(
             Duration::from_secs(600),
@@ -150,6 +171,7 @@ impl Engine {
         )
         .await
         .context("The account is still busy. Try moving again.")?;
+        self.authorize_mail_mutation(&mail.id, group).await?;
         let current = self.store.mail_metadata(mail.id.clone()).await?;
         anyhow::ensure!(
             current.account_id == mail.account_id && current.folder == mail.folder,
@@ -226,6 +248,7 @@ impl Engine {
         original: Mail,
         receipt: &MoveReceipt,
         output: Output,
+        group: Option<&crate::bulk::Item>,
     ) -> anyhow::Result<(Option<Account>, MoveReceipt)> {
         #[cfg(feature = "test-support")]
         if self.demo && std::env::args().any(|arg| arg == "--undo-failure-once") {
@@ -252,6 +275,7 @@ impl Engine {
                 .as_ref()
                 .context("The moved message has no local identity.")?;
             let current = self.store.mail_metadata(known.id.clone()).await?;
+            self.authorize_mail_mutation(&current.id, group).await?;
             anyhow::ensure!(
                 current.account_id == receipt.account && current.folder == receipt.folder,
                 "This message moved again. Refresh before undoing."
@@ -316,7 +340,8 @@ impl Engine {
             current
         };
         if current.account_id == original.account_id {
-            self.change_folder(&current, &original.folder, output).await
+            self.change_folder(&current, &original.folder, output, group)
+                .await
         } else {
             // Undo reverses an already authorized transfer even if the optional
             // cross-account move preference was switched off afterward.
@@ -326,6 +351,7 @@ impl Engine {
                 original.folder,
                 output,
                 false,
+                group,
             )
             .await
             .map(|(account, receipt)| (Some(account), receipt))
@@ -343,10 +369,7 @@ impl Engine {
         )
         .await
         .context("The account is still busy. Try the change again.")?;
-        anyhow::ensure!(
-            self.store.bulk_owner(mail.id.clone()).await?.is_none(),
-            "A group action is pending for this message. Finish or review it before making another change."
-        );
+        self.authorize_mail_mutation(&mail.id, None).await?;
         self.write_flags(mail, changes).await
     }
     pub(super) async fn change_bulk_flags(
@@ -354,6 +377,7 @@ impl Engine {
         original: &Mail,
         changes: crate::mail_actions::Flags,
         expected: Option<crate::mail_actions::Flags>,
+        item: &crate::bulk::Item,
     ) -> anyhow::Result<crate::bulk::Receipt> {
         let _guard = tokio::time::timeout(
             Duration::from_secs(600),
@@ -361,6 +385,8 @@ impl Engine {
         )
         .await
         .context("The account is still busy. Try the change again.")?;
+        self.authorize_mail_mutation(&original.id, Some(item))
+            .await?;
         let mail = self.store.mail_metadata(original.id.clone()).await?;
         anyhow::ensure!(
             mail.account_id == original.account_id && mail.folder == original.folder,
@@ -567,13 +593,13 @@ mod tests {
         engine.demo = false;
         let (output, _events) = futures::channel::mpsc::channel(32);
         let (_, receipt) = engine
-            .change_folder(&original, "Trash", output.clone())
+            .change_folder(&original, "Trash", output.clone(), None)
             .await
             .unwrap();
         assert!(receipt.fingerprint.is_none());
         assert_eq!(receipt.current.as_ref().unwrap().id, original.id);
         let (_, restored) = engine
-            .undo_move(original.clone(), &receipt, output)
+            .undo_move(original.clone(), &receipt, output, None)
             .await
             .unwrap();
         let current = restored.current.unwrap();
@@ -595,7 +621,7 @@ mod tests {
         let original = engine.store.query(MailQuery::default()).await.unwrap().rows[0].clone();
         let (output, _events) = futures::channel::mpsc::channel(32);
         let (_, receipt) = engine
-            .change_folder(&original, "Archive", output.clone())
+            .change_folder(&original, "Archive", output.clone(), None)
             .await
             .unwrap();
         let moved = receipt.current.as_ref().unwrap().clone();
@@ -603,7 +629,7 @@ mod tests {
         account.host = "different.example.test".into();
         engine.store.save_account(account).await.unwrap();
         let error = engine
-            .undo_move(original, &receipt, output)
+            .undo_move(original, &receipt, output, None)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("incoming server changed"));

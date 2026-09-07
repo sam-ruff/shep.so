@@ -239,4 +239,19 @@ native restart coverage from an in-memory MCP workspace.
 Keep consecutive checkbox clicks in the bulk scenarios. Their separate motion
 events must target separate rows even when processed together; do not add sleeps
 between clicks to mask cursor-batching defects. The root input wrapper has a
-widget-level regression for that sequence.
+widget-level regression for that sequence, with redraws between motion and
+press. Captured popup motion shares the root tracker; preserve dropdown and
+interface-scale native scenarios when changing input dispatch.
+
+Preserve the two arrival selection flows. `background_sync=true` supplies a
+fictional incoming message through the normal cache refresh. Select an existing
+row before it arrives, assert unchanged selection on arrival, then use checkbox
+or Ctrl-click and a Shift range. Verify the ensuing bulk review count. No direct
+state mutation may substitute for those inputs.
+
+`mail_rows.<index>.group_pending` observes ownership used by row controls. The
+slow group/individual conflict flow flags the second and third fixture rows,
+checks the disabled second-row flag button and rejects a conflicting context-menu
+action, then verifies ordinary flagging works after the group commits. Keep the
+context menu open/keyboard path and screenshot evidence alongside engine/store
+ownership tests.

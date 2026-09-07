@@ -78,6 +78,15 @@ struct Prediction {
     groups: Vec<crate::store::SelectionGroup>,
 }
 impl App {
+    pub(super) fn bulk_owns_mail(&self, id: &str) -> bool {
+        self.page.bulk_pending.contains(id)
+            || self.page.bulk_placeholders.contains(id)
+            || self
+                .bulk
+                .prediction
+                .as_ref()
+                .is_some_and(|p| p.selected.contains(id))
+    }
     pub(super) fn begin_bulk(&mut self, intent: Intent) {
         if self.bulk.stopped {
             if !self.try_command(Command::BulkResume(String::new())) {
