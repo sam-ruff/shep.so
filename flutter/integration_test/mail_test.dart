@@ -23,7 +23,7 @@ void main() {
       const Offset(-350, 0),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Moved to Archive'), findsOneWidget);
+    expect(find.text('Archived 1 message'), findsOneWidget);
     await tester.tap(find.text('Undo'));
     await tester.pumpAndSettle();
     expect(find.text('A little room for good ideas'), findsOneWidget);
@@ -118,7 +118,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('A little room for good ideas'), findsOneWidget);
-    expect(find.text('Moved to Archive'), findsNothing);
+    expect(find.text('Archived 1 message'), findsNothing);
     await tester.drag(
       find.byKey(const ValueKey('mail-1')),
       const Offset(350, 0),

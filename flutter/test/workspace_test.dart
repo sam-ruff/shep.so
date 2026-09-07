@@ -134,7 +134,7 @@ void main() {
       await waitUntil(() => repo.jobs.length == 2);
       await w.loadPage();
       expect(w.unreadCount, originalUnread - 1); // Still projected in Archive.
-      expect(w.notice, 'Moved to Archive');
+      expect(w.moves.label, 'Archived 1 message');
       expect(w.undo, isNotNull);
       repo.jobs[1].completeError(StateError('Move failed'));
       await moved;
@@ -268,6 +268,7 @@ void main() {
     final repo = ControlledRepository();
     final w = Workspace(repo, MemorySettings());
     final first = w.action('1', MailAction.archive);
+    await waitUntil(() => repo.jobs.isNotEmpty);
     w.undo!();
     expect(w.mail('1')!.folder, 'Inbox');
     await tick();
@@ -421,7 +422,7 @@ void readTrackingTests() {
       await tick();
       expect(repo.jobs.length, 2);
       expect(w.mail('1')!.unread, true);
-      expect(w.notice, 'Moved to Archive');
+      expect(w.moves.label, 'Archived 1 message');
       expect(w.undo, same(undo));
       expect(w.error, contains('restored'));
       repo.jobs[1].complete();
@@ -431,7 +432,7 @@ void readTrackingTests() {
     },
   );
   test(
-    'reader disposal is deferred and explicit flag intent wins before that work',
+    'cache release is not reading and unchanged explicit unread cancels the visit',
     () async {
       final repo = ControlledRepository();
       final w = Workspace(repo, MemorySettings());
@@ -440,11 +441,9 @@ void readTrackingTests() {
       w.beginReading('1');
       w.releaseReader('1');
       expect(w.mail('1')!.unread, true);
-      final explicit = w.change('1', {'unread': true});
-      await tick();
-      expect(repo.jobs.length, 1);
-      repo.jobs.single.complete();
-      await explicit;
+      await w.change('1', {'unread': true});
+      await w.finishReading();
+      expect(repo.jobs, isEmpty);
       expect(w.mail('1')!.unread, true);
     },
   );

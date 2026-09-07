@@ -170,6 +170,7 @@ export function mount(
   window.addEventListener("pagehide", (event) => {
     // A page retained by browser history resumes with the same controls/model.
     if (!event.persisted) {
+      w.dispose();
       window.removeEventListener("blur", blurred);
       document.removeEventListener("visibilitychange", hidden);
       find.dispose();
@@ -2039,9 +2040,50 @@ export function mount(
     if (w.notice) {
       const status = el("div", "status");
       status.setAttribute("role", "status");
+      status.setAttribute("aria-label", "Mail status");
       status.append(el("span", "", w.notice));
-      if (w.undo) status.append(button("Undo", w.undo));
+      if (!w.moves.visible && w.undo) status.append(button("Undo", w.undo));
       main.append(status);
+    }
+    if (w.moves.label) {
+      const status = el("div", "status");
+      status.setAttribute("role", "status");
+      status.setAttribute("aria-label", "Move notification");
+      status.append(el("span", "", w.moves.label));
+      if (w.undo) status.append(button("Undo", w.undo));
+      status.append(
+        button(
+          "Dismiss move notification",
+          () => w.moves.dismiss(),
+          "close",
+          true,
+        ),
+      );
+      main.append(status);
+    }
+    if (w.undoFailures.size) {
+      const failure = el("div", "error-banner");
+      failure.setAttribute("role", "alert");
+      failure.append(
+        el(
+          "span",
+          "",
+          `${w.undoFailures.size} ${w.undoFailures.size === 1 ? "move needs" : "moves need"} review.`,
+        ),
+        ...([...w.undoFailures].some((r) => !r.restoreCommitted)
+          ? [button("Retry Undo", () => w.retryUndos())]
+          : []),
+        ...([...w.undoFailures].some((r) => r.restoreCommitted)
+          ? [button("Refresh restored mail", () => void w.refreshRestored())]
+          : []),
+        button(
+          "Dismiss Undo errors",
+          () => w.dismissUndoFailures(),
+          "close",
+          true,
+        ),
+      );
+      main.append(failure);
     }
     root.append(main);
     for (const n of root.querySelectorAll<HTMLElement>("[data-scroll]"))

@@ -1,3 +1,4 @@
+import { MoveFeedback, MoveRecord } from "./move-feedback";
 export interface Mail {
   id: string;
   sender: string;
@@ -233,9 +234,85 @@ export class Workspace extends EventTarget {
   selection = new Set<string>();
   drafts = new Map<string, Draft>();
   private removedAccountIds = new Set<string>();
-  error: string | null = null;
-  notice: string | null = null;
-  undo: (() => void) | null = null;
+  private errorValue: string | null = null;
+  private undoErrorOwner?: MoveRecord;
+  get error() {
+    return this.errorValue;
+  }
+  set error(value: string | null) {
+    this.errorValue = value;
+    this.undoErrorOwner = undefined;
+  }
+  private statusNotice: string | null = null;
+  get notice() {
+    return this.statusNotice;
+  }
+  set notice(value: string | null) {
+    this.statusNotice = value;
+  }
+  readonly moves = new MoveFeedback(() => this.changed());
+  readonly undoFailures = new Set<MoveRecord>();
+  private flagUndo: (() => void) | null = null;
+  private flagUndoRevision = 0;
+  private undoSnapshot?: MoveRecord[];
+  private moveUndo?: () => void;
+  get undo(): (() => void) | null {
+    if (!this.moves.visible) return this.flagUndo;
+    if (!this.moves.canUndo) return null;
+    if (this.undoSnapshot !== this.moves.records) {
+      const snapshot = this.moves.records;
+      this.undoSnapshot = snapshot;
+      this.moveUndo = () => this.undoMoves(snapshot);
+    }
+    return this.moveUndo!;
+  }
+  undoMoves(expected: MoveRecord[]) {
+    for (const record of this.moves.restore(expected))
+      void this.change(
+        record.id,
+        { folder: record.originalFolder },
+        false,
+        true,
+        record,
+      );
+    this.changed();
+  }
+  dismissUndoFailures() {
+    this.undoFailures.clear();
+    this.changed();
+  }
+  retryUndos() {
+    for (const record of [...this.undoFailures].filter(
+      (r) => !r.restoreCommitted,
+    )) {
+      this.undoFailures.delete(record);
+      this.moves.retryRestore(record);
+      void this.change(
+        record.id,
+        { folder: record.originalFolder },
+        false,
+        true,
+        record,
+        true,
+      );
+    }
+    this.changed();
+  }
+  async refreshRestored() {
+    const reviewing = [...this.undoFailures].filter((r) => r.restoreCommitted);
+    await this.refresh();
+    for (const record of reviewing) {
+      const saved = this.repository.cached.find(
+        (m) => m.id === this.canonical(record.id),
+      );
+      if (saved?.folder === record.originalFolder)
+        this.undoFailures.delete(record);
+    }
+    this.changed();
+  }
+  dispose() {
+    this.moves.dispose();
+  }
   retry: (() => void) | null = null;
   syncing = false;
   private refreshAgain = false;
@@ -441,6 +518,9 @@ export class Workspace extends EventTarget {
   accountRemoved(id: string) {
     if (this.removedAccountIds.has(id)) return;
     this.removedAccountIds.add(id);
+    this.moves.removeAccount(id);
+    for (const record of this.undoFailures)
+      if (record.account === id) this.undoFailures.delete(record);
     if (this.readCandidate?.accountId === id) this.readCandidate = null;
     for (const [key, draft] of this.drafts)
       if (draft.accountId === id) this.drafts.delete(key);
@@ -451,7 +531,7 @@ export class Workspace extends EventTarget {
     this.account = null;
     this.folder = "Inbox";
     this.page = 0;
-    this.undo = null;
+    this.flagUndo = null;
     this.revision++;
     this.changed();
   }
@@ -517,7 +597,14 @@ export class Workspace extends EventTarget {
                 : {};
     return this.change(id, fields);
   }
-  async change(id: string, fields: Fields, offerUndo = true, quiet = false) {
+  async change(
+    id: string,
+    fields: Fields,
+    offerUndo = true,
+    quiet = false,
+    restoring?: MoveRecord,
+    force = false,
+  ) {
     id = this.canonical(id);
     if (
       fields.folder &&
@@ -535,6 +622,22 @@ export class Workspace extends EventTarget {
     const current =
       this.message(id) ?? (!offerUndo ? this.confirmed.get(id) : undefined);
     if (!current || !Object.keys(fields).length) return;
+    if (
+      !force &&
+      Object.entries(fields).every(
+        ([key, value]) => current[key as keyof Mail] === value,
+      )
+    )
+      return;
+    const move =
+      fields.folder && offerUndo
+        ? this.moves.add(
+            id,
+            current.accountId || current.account,
+            current.folder,
+            fields.folder,
+          )
+        : undefined;
     const previous = Object.fromEntries(
       Object.keys(fields).map((key) => [key, current[key as keyof Mail]]),
     ) as Fields;
@@ -543,15 +646,19 @@ export class Workspace extends EventTarget {
       this.versions.set(`${id}:${key}`, revision);
     this.paint(id, fields);
     this.selection.delete(id);
-    if (offerUndo)
-      this.undo = () => {
-        this.undo = null;
+    if (move) {
+      this.flagUndo = null;
+      this.statusNotice = null;
+    } else if (offerUndo) {
+      this.flagUndoRevision = revision;
+      this.flagUndo = () => {
+        if (this.flagUndoRevision !== revision) return;
+        this.flagUndo = null;
         void this.change(id, previous, false);
       };
+    }
     if (!quiet) {
-      this.notice = fields.folder
-        ? `Moved to ${fields.folder}`
-        : "Message updated";
+      if (!move) this.statusNotice = "Message updated";
       this.error = null;
       this.retry = null;
     }
@@ -560,21 +667,42 @@ export class Workspace extends EventTarget {
       .map(([, job]) => job);
     const job = Promise.all(previousJobs).then(async () => {
       if (!this.confirmed.has(this.canonical(id))) return;
+      if (move?.cancelled || (restoring && !restoring.committed)) return;
+      if (move) move.started = true;
       try {
         await this.repository.mutate(this.canonical(id), fields);
+        if (move) move.committed = true;
+        if (restoring) {
+          this.undoFailures.delete(restoring);
+          if (this.undoErrorOwner === restoring) {
+            this.error = null;
+            this.retry = null;
+          }
+        }
         if (!this.confirmed.has(this.canonical(id))) return;
         this.acceptAliases(this.repository.cached, revision);
         const key = this.canonical(id);
         this.confirmed.set(key, { ...this.confirmed.get(key)!, ...fields });
       } catch (error) {
         if (!this.confirmed.has(this.canonical(id))) return;
+        if (move && !move.undoRequested) this.moves.failed(move);
+        if (restoring) {
+          this.moves.failed(restoring);
+          this.undoFailures.add(restoring);
+        }
         if (error instanceof MutationFailure && error.committed) {
+          if (restoring) restoring.restoreCommitted = true;
           const key = this.canonical(id);
           this.confirmed.set(key, { ...this.confirmed.get(key)!, ...fields });
+          if (move) {
+            move.committed = true;
+            move.blocked = true;
+          }
           this.error = error.message;
-          if (!quiet) {
+          if (restoring) this.undoErrorOwner = restoring;
+          if (!quiet && !move && this.flagUndoRevision === revision) {
             this.notice = null;
-            this.undo = null;
+            this.flagUndo = null;
           }
           this.retry = () => void this.refresh();
           return;
@@ -591,16 +719,25 @@ export class Workspace extends EventTarget {
             ]),
         ) as Fields;
         this.paint(this.canonical(id), rollback);
-        if (Object.keys(rollback).length) {
+        if (Object.keys(rollback).length || move || restoring) {
           this.error = `Could not confirm the update to ${current.subject}. The affected display was restored. ${error instanceof Error ? error.message : "The affected change was restored. Retry."}`;
-          if (!quiet) {
+          if (restoring) this.undoErrorOwner = restoring;
+          if (!quiet && !move && this.flagUndoRevision === revision) {
             this.notice = null;
-            this.undo = null;
+            this.flagUndo = null;
           }
           this.retry =
             error instanceof MutationFailure
               ? () => void this.refresh()
-              : () => void this.change(id, fields, !quiet, quiet);
+              : () =>
+                  void this.change(
+                    id,
+                    fields,
+                    !quiet,
+                    quiet,
+                    restoring,
+                    !!restoring,
+                  );
         }
       }
     });

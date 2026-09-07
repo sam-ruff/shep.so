@@ -149,3 +149,6 @@ python3 scripts/clients/android_e2e.py --device emulator-5554 --print-only
 ```
 
 It is also included in the full Android wrapper. The fixture is handed over before the cache opens; Flutter drives Shep controls and the saved ADB helper selects Android's printer destination, cancels, retries and saves PDFs through DocumentsUI. The helper validates complete PDF text and pagination, then acknowledges completion before fixture cleanup. Review `artifacts/flutter/native/print/` PDFs and WebP captures. Android/Chromium results do not establish Apple or other browser-engine printing. Preparation/dialog launch is not a print receipt.
+
+
+Counted move feedback uses `move_feedback_scenario.dart` from both host and Android native tests. Real swipes/buttons exercise two moves, partial rejection, pending Undo, failed reversal, Retry Undo, Dismiss and Undo from another open reader while read-on-leave is held. Query-only page projections restore the row and count without waiting for the provider. The pure model tests control the six-second clock and cover destination/account grouping, stale callbacks and acknowledged Undo warnings. `move-feedback.spec.ts` exercises browser controls/expiry; the real Rust HTTPS flows retain physical provider destinations. Keep general refresh/save status independent of the expiring move notification.

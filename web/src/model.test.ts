@@ -108,6 +108,7 @@ describe("optimistic provider contract", () => {
     const repo = new Controlled();
     const w = new Workspace(repo, new Settings());
     const a = w.action("1", "archive");
+    await tick();
     w.undo!();
     expect(w.mail[0].folder).toBe("Inbox");
     await tick();
@@ -297,7 +298,7 @@ describe("read-on-leave", () => {
     await tick();
     expect(repo.jobs).toHaveLength(2);
     expect(w.mail[0].unread).toBe(true);
-    expect(w.notice).toBe("Moved to Archive");
+    expect(w.moves.label).toBe("Archived 1 message");
     expect(w.undo).toBe(undo);
     expect(w.error).toContain("restored");
     repo.jobs[1].resolve();
@@ -330,4 +331,125 @@ describe("read-on-leave", () => {
     expect(repo.jobs).toHaveLength(3);
     expect(w.mail[0].unread).toBe(true);
   });
+});
+
+describe("counted moves and grouped Undo", () => {
+  it("keeps the surviving move after partial failure and retries only failed restoration", async () => {
+    const repo = new Controlled(),
+      w = new Workspace(repo, new Settings());
+    try {
+      const first = w.action("1", "archive"),
+        second = w.action("2", "archive");
+      await tick();
+      expect(w.moves.label).toBe("Archived 2 messages");
+      repo.jobs[0].reject();
+      await first;
+      expect(w.moves.label).toBe("Archived 1 message");
+      w.undo!();
+      expect(w.mail.find((m) => m.id === "2")!.folder).toBe("Inbox");
+      expect(w.moves.label).toBe("Restored 1 message");
+      expect(repo.jobs).toHaveLength(2);
+      repo.jobs[1].resolve();
+      await second;
+      await tick();
+      repo.jobs[2].reject();
+      await tick();
+      expect(w.mail.find((m) => m.id === "2")!.folder).toBe("Archive");
+      expect(w.undoFailures.size).toBe(1);
+      expect(w.moves.label).toBeNull();
+      w.retryUndos();
+      expect(w.mail.find((m) => m.id === "2")!.folder).toBe("Inbox");
+      await tick();
+      repo.jobs[3].resolve();
+      await tick();
+      expect(w.undoFailures.size).toBe(0);
+      expect(w.error).toBeNull();
+      expect(repo.cached.find((m) => m.id === "2")!.folder).toBe("Inbox");
+      expect(w.moves.label).toBe("Restored 1 message");
+    } finally {
+      w.dispose();
+    }
+  });
+  it("Undo cancels a move waiting behind read without sending either direction", async () => {
+    const repo = new Controlled(),
+      w = new Workspace(repo, new Settings());
+    try {
+      w.beginReading("1");
+      const move = w.action("1", "archive");
+      await tick();
+      expect(repo.jobs).toHaveLength(1);
+      w.undo!();
+      expect(w.moves.label).toBe("Restored 1 message");
+      repo.jobs[0].resolve();
+      await move;
+      await tick();
+      expect(repo.jobs).toHaveLength(1);
+      expect(repo.cached[0].folder).toBe("Inbox");
+      expect(repo.cached[0].unread).toBe(false);
+    } finally {
+      w.dispose();
+    }
+  });
+  it("a stale Undo and late failure cannot modify a newer destination notification", async () => {
+    const repo = new Controlled(),
+      w = new Workspace(repo, new Settings());
+    try {
+      const first = w.action("1", "archive");
+      await tick();
+      const oldUndo = w.undo;
+      const second = w.action("2", "trash");
+      await tick();
+      const currentUndo = w.undo;
+      oldUndo!();
+      expect(w.mail[1].folder).toBe("Trash");
+      repo.jobs[0].reject();
+      await first;
+      expect(w.moves.label).toBe("Deleted 1 message");
+      expect(w.undo).toBe(currentUndo);
+      w.moves.dismiss();
+      repo.jobs[1].resolve();
+      await second;
+      expect(w.moves.label).toBeNull();
+      expect(w.undo).toBeNull();
+    } finally {
+      w.dispose();
+    }
+  });
+});
+
+it("an acknowledged Undo metadata warning permits refresh but never another mutation", async () => {
+  class CommittedUndo extends Controlled {
+    calls = 0;
+    override async mutate(id: string, fields: Fields) {
+      const call = ++this.calls;
+      await super.mutate(id, fields);
+      if (call === 2)
+        throw new MutationFailure(
+          "Undo acknowledged; refresh saved metadata.",
+          true,
+        );
+    }
+  }
+  const repo = new CommittedUndo(),
+    w = new Workspace(repo, new Settings());
+  try {
+    const moved = w.action("1", "archive");
+    await tick();
+    repo.jobs[0].resolve();
+    await moved;
+    w.undo!();
+    await tick();
+    repo.jobs[1].resolve();
+    await tick();
+    expect([...w.undoFailures][0].restoreCommitted).toBe(true);
+    w.retryUndos();
+    await tick();
+    expect(repo.calls).toBe(2);
+    await w.refreshRestored();
+    expect(w.undoFailures.size).toBe(0);
+    expect(repo.calls).toBe(2);
+    expect(repo.cached[0].folder).toBe("Inbox");
+  } finally {
+    w.dispose();
+  }
 });

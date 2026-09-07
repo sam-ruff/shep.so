@@ -7,6 +7,7 @@ import '../data/drafts.dart';
 import '../data/outgoing.dart';
 import '../data/printing.dart';
 import 'mail.dart';
+import 'move_feedback.dart';
 import 'preferences.dart';
 
 class Workspace extends ChangeNotifier {
@@ -33,8 +34,86 @@ class Workspace extends ChangeNotifier {
   String? account;
   bool newestFirst = true, syncing = false, savingPreferences = false;
   bool _refreshAgain = false, _disposed = false;
-  String? error, notice;
-  VoidCallback? undo;
+  String? _error, notice;
+  MoveRecord? _undoErrorOwner;
+  String? get error => _error;
+  set error(String? value) {
+    _error = value;
+    _undoErrorOwner = null;
+  }
+
+  late final moves = MoveFeedback(_changed);
+  final Set<MoveRecord> undoFailures = {};
+  VoidCallback? _flagUndo;
+  int? _flagUndoRevision;
+  List<MoveRecord>? _undoSnapshot;
+  VoidCallback? _moveUndo;
+  VoidCallback? get undo {
+    if (!moves.visible) return _flagUndo;
+    if (!moves.canUndo) return null;
+    if (!identical(_undoSnapshot, moves.records)) {
+      final snapshot = moves.records;
+      _undoSnapshot = snapshot;
+      _moveUndo = () => undoMoves(snapshot);
+    }
+    return _moveUndo;
+  }
+
+  String? get actionNotice =>
+      moves.label ?? (_flagUndo != null ? 'Message updated' : null);
+  Iterable<String> get _moveIds =>
+      [...moves.records, ...undoFailures].map((r) => _canonical(r.id));
+  void undoMoves(List<MoveRecord> expected) {
+    for (final record in moves.restore(expected)) {
+      unawaited(
+        change(
+          record.id,
+          {'folder': record.originalFolder},
+          offerUndo: false,
+          quiet: true,
+          restoring: record,
+        ),
+      );
+    }
+    _changed();
+  }
+
+  void dismissUndoFailures() {
+    undoFailures.clear();
+    _changed();
+  }
+
+  void retryUndos() {
+    for (final record
+        in undoFailures.where((r) => !r.restoreCommitted).toList()) {
+      undoFailures.remove(record);
+      moves.retryRestore(record);
+      unawaited(
+        change(
+          record.id,
+          {'folder': record.originalFolder},
+          offerUndo: false,
+          quiet: true,
+          restoring: record,
+          force: true,
+        ),
+      );
+    }
+    _changed();
+  }
+
+  Future<void> refreshRestored() async {
+    final reviewing = undoFailures.where((r) => r.restoreCommitted).toList();
+    await refresh();
+    for (final record in reviewing) {
+      final saved = repository.cached
+          .where((m) => m.id == _canonical(record.id))
+          .firstOrNull;
+      if (saved?.folder == record.originalFolder) undoFailures.remove(record);
+    }
+    _changed();
+  }
+
   String? _undoId;
   VoidCallback? retry;
   int _revision = 0, _settingsRevision = 0, limit = 50;
@@ -292,6 +371,7 @@ class Workspace extends ChangeNotifier {
             id != _undoId &&
             id != _reader?.id &&
             id != _readCandidate?.id &&
+            !_moveIds.contains(id) &&
             !_mail.any((m) => m.id == id) &&
             !_queues.keys.any((key) => _canonical(key) == id),
       );
@@ -302,6 +382,7 @@ class Workspace extends ChangeNotifier {
             target != _undoId &&
             target != _reader?.id &&
             target != _readCandidate?.id &&
+            !_moveIds.contains(target) &&
             !_queues.keys.any((key) => _canonical(key) == target),
       );
       total = page.total;
@@ -366,6 +447,7 @@ class Workspace extends ChangeNotifier {
   }
 
   void _patchMail(String id, Map<String, Object> fields) {
+    final beforeCount = matching.length;
     final current = mail(id) ?? _confirmed[id]?.patch(_projection[id] ?? {});
     if (current != null && accountRepository != null) {
       final changed = current.patch(fields);
@@ -374,15 +456,44 @@ class Workspace extends ChangeNotifier {
       _unread = (_unread + after - before).clamp(0, 1 << 53);
     }
     if (_reader?.id == id) _reader = _reader!.patch(fields);
-    _mail = _mail.map((m) => m.id == id ? m.patch(fields) : m).toList();
+    if (_mail.any((m) => m.id == id)) {
+      _mail = _mail.map((m) => m.id == id ? m.patch(fields) : m).toList();
+    } else if (current != null &&
+        fields.containsKey('folder') &&
+        query.trim().isEmpty) {
+      final changed = current.patch(fields);
+      final inFolder =
+          changed.folder == folder ||
+          (folder == 'Sent' &&
+              _pageFolderScope == folder &&
+              (_pageFolders[changed.accountId]?.contains(changed.folder) ??
+                  false));
+      if (inFolder &&
+          (account == null || changed.account == account) &&
+          (filter != 'Unread' || changed.unread) &&
+          (filter != 'Flagged' || changed.starred)) {
+        _mail = [..._mail, changed.withoutBody()];
+      }
+    }
+    if (accountRepository != null) {
+      _mail.sort((a, b) {
+        final order = newestFirst
+            ? b.date.compareTo(a.date)
+            : a.date.compareTo(b.date);
+        return order == 0 ? a.id.compareTo(b.id) : order;
+      });
+      total = (total + matching.length - beforeCount).clamp(0, 1 << 53);
+    }
   }
 
   Future<void> accountRemoved(String id) async {
     _removedAccounts.add(id);
+    moves.removeAccount(id);
+    undoFailures.removeWhere((r) => r.account == id);
     if (_readCandidate?.accountId == id) _readCandidate = null;
     drafts.removeWhere((_, draft) => draft.accountId == id);
     if (_confirmed[_undoId]?.accountId == id) {
-      undo = null;
+      _flagUndo = null;
       _undoId = null;
     }
     _mail.removeWhere((m) => m.accountId == id);
@@ -561,6 +672,8 @@ class Workspace extends ChangeNotifier {
     Map<String, Object> fields, {
     bool offerUndo = true,
     bool quiet = false,
+    MoveRecord? restoring,
+    bool force = false,
   }) async {
     id = _canonical(id);
     if (fields.containsKey('folder') &&
@@ -574,11 +687,22 @@ class Workspace extends ChangeNotifier {
         _canonical(_readCandidate!.id) == id) {
       _readCandidate = null;
     }
-    final current = mail(id) ?? (!offerUndo ? _confirmed[id] : null);
+    final current =
+        mail(id) ??
+        (!offerUndo ? _confirmed[id]?.patch(_projection[id] ?? {}) : null);
     if (current == null || fields.isEmpty) return;
-    if (mail(id) == null) {
-      _mail = [..._mail, current.withoutBody()];
+    if (!force &&
+        fields.entries.every((e) => current.field(e.key) == e.value)) {
+      return;
     }
+    final move = fields.containsKey('folder') && offerUndo
+        ? moves.add(
+            id,
+            current.accountId.isEmpty ? current.account : current.accountId,
+            current.folder,
+            fields['folder'] as String,
+          )
+        : null;
     final previous = {for (final key in fields.keys) key: current.field(key)};
     final revision = ++_revision;
     for (final key in fields.keys) {
@@ -587,18 +711,22 @@ class Workspace extends ChangeNotifier {
     _patchMail(id, fields);
     _projection.putIfAbsent(id, () => {}).addAll(fields);
     selected.remove(id);
-    if (offerUndo) {
+    if (move != null) {
+      _flagUndo = null;
+      _undoId = null;
+      notice = null;
+    } else if (offerUndo) {
+      _flagUndoRevision = revision;
       _undoId = id;
-      undo = () {
-        undo = null;
+      _flagUndo = () {
+        if (_flagUndoRevision != revision) return;
+        _flagUndo = null;
         unawaited(change(id, previous, offerUndo: false));
         _undoId = null;
       };
     }
     if (!quiet) {
-      notice = fields.containsKey('folder')
-          ? 'Moved to ${fields['folder']}'
-          : 'Message updated';
+      if (move == null) notice = 'Message updated';
       error = null;
       retry = null;
     }
@@ -610,20 +738,44 @@ class Workspace extends ChangeNotifier {
     final job = before.then((_) async {
       var target = _canonical(id);
       if (!_confirmed.containsKey(target)) return;
+      if (move?.cancelled == true ||
+          (restoring != null && !restoring.committed)) {
+        return;
+      }
+      if (move != null) move.started = true;
       try {
         await repository.mutate(target, fields);
+        if (move != null) move.committed = true;
+        if (restoring != null) {
+          undoFailures.remove(restoring);
+          if (identical(_undoErrorOwner, restoring)) {
+            error = null;
+            retry = null;
+          }
+        }
         target = _canonical(id);
         if (!_confirmed.containsKey(target)) return;
         _confirmed[target] = _confirmed[target]!.patch(fields);
       } catch (e) {
         target = _canonical(id);
         if (!_confirmed.containsKey(target)) return;
+        if (move != null && !move.undoRequested) moves.failed(move);
+        if (restoring != null) {
+          moves.failed(restoring);
+          undoFailures.add(restoring);
+        }
         if (e is MailOperationFailure && e.committed) {
+          if (restoring != null) restoring.restoreCommitted = true;
           _confirmed[target] = _confirmed[target]!.patch(fields);
+          if (move != null) {
+            move.committed = true;
+            move.blocked = true;
+          }
           error = e.message;
-          if (!quiet) {
+          if (restoring != null) _undoErrorOwner = restoring;
+          if (!quiet && move == null && _flagUndoRevision == revision) {
             notice = null;
-            undo = null;
+            _flagUndo = null;
             _undoId = null;
           }
           retry = () => unawaited(refresh());
@@ -636,25 +788,34 @@ class Workspace extends ChangeNotifier {
           }
         }
         _patchMail(target, rollback);
-        if (rollback.isNotEmpty) {
+        if (rollback.isNotEmpty || move != null || restoring != null) {
           error =
               'Could not update ${current.subject}. The affected display was restored. ${e is MailOperationFailure ? e.message : 'Retry.'}';
-          if (!quiet) {
+          if (restoring != null) _undoErrorOwner = restoring;
+          if (!quiet && move == null && _flagUndoRevision == revision) {
             notice = null;
-            undo = null;
+            _flagUndo = null;
             _undoId = null;
           }
           retry = () {
             unawaited(
               e is MailOperationFailure
                   ? refresh()
-                  : change(id, fields, offerUndo: !quiet, quiet: quiet),
+                  : change(
+                      id,
+                      fields,
+                      offerUndo: !quiet,
+                      quiet: quiet,
+                      restoring: restoring,
+                      force: restoring != null,
+                    ),
             );
           };
         }
       }
     });
     _queues[id] = job;
+    if (restoring != null && accountRepository != null) unawaited(loadPage());
     _changed();
     await job;
     final target = _canonical(id);
@@ -889,6 +1050,7 @@ class Workspace extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    moves.dispose();
     _searchTimer?.cancel();
     _syncTimer?.cancel();
     super.dispose();

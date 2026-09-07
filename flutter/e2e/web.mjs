@@ -80,7 +80,7 @@ try {
   await page.mouse.move(35, box.y + box.height / 2, { steps: 20 });
   await page.screenshot({ path: path.join(out, "swipe-archive-icon.png") });
   await page.mouse.up();
-  await waitText("Moved to Archive");
+  await waitText("Archived 1 message");
   await clickText("Undo");
   await waitText("A little room for good ideas");
   await clickText("Preferences");

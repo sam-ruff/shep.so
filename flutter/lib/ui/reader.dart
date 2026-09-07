@@ -1,3 +1,4 @@
+import 'mail_action_banner.dart';
 import 'mail_error.dart';
 import 'dart:async';
 import 'package:url_launcher/url_launcher.dart';
@@ -343,6 +344,10 @@ class _ReaderState extends State<Reader> {
       if (mail == null) {
         return Scaffold(
           appBar: AppBar(title: const Text('Message')),
+          bottomNavigationBar: SafeArea(
+            top: false,
+            child: MailActionBanner(workspace: workspace),
+          ),
           body: Column(
             children: [
               MailErrorBanner(workspace: workspace),
@@ -372,6 +377,10 @@ class _ReaderState extends State<Reader> {
             const SingleActivator(LogicalKeyboardKey.escape): closeFind,
         },
         child: Scaffold(
+          bottomNavigationBar: SafeArea(
+            top: false,
+            child: MailActionBanner(workspace: workspace),
+          ),
           appBar: AppBar(
             titleSpacing: 0,
             title: const Text('Message'),

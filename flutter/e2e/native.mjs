@@ -140,8 +140,17 @@ try {
     };
     await Promise.all([gesture, capture()]);
     await driver.releaseActions();
-    await waitText("Moved to Archive");
+    await waitText("Archived 1 message");
+    await (
+      await driver.$(
+        'android=new UiSelector().descriptionContains("Your week, a little clearer")',
+      )
+    ).click();
+    await waitText("Message");
     await tap("Undo");
+    await waitText("Restored 1 message");
+    await driver.saveScreenshot(path.join(out, "reader-move-undo.png"));
+    await driver.back();
     await waitText("A little room for good ideas");
   });
   await step("native preferences and theme", async () => {
