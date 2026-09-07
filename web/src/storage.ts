@@ -51,9 +51,10 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     throw new Error("Invalid browser profile identity.");
   return new Promise((resolve, reject) => {
     let abandoned = false;
+    // Version 9 binds the derived persistent index to this source incarnation.
     // Version 8 fences older tabs that remove accounts without group ownership.
     // Version 7 fenced writes lacking atomic cache-applied intent revisions.
-    const request = indexedDB.open(`shep.mail.v1.${user}`, 8);
+    const request = indexedDB.open(`shep.mail.v1.${user}`, 9);
     request.onupgradeneeded = (event) => {
       for (const store of stores)
         if (!request.result.objectStoreNames.contains(store))
@@ -74,6 +75,17 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
           row.continue();
         };
         tx.objectStore("cacheState").put({ revision: 0, floor: 0 }, "mail");
+      }
+      if (event.oldVersion < 9) {
+        const state = tx.objectStore("cacheState").get("mail");
+        state.onsuccess = () =>
+          tx.objectStore("cacheState").put(
+            {
+              ...(state.result ?? { revision: 0, floor: 0 }),
+              epoch: crypto.randomUUID(),
+            },
+            "mail",
+          );
       }
       const outgoing = tx.objectStore("outgoing");
       if (!outgoing.indexNames.contains("submission"))

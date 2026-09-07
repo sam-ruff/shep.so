@@ -16,6 +16,8 @@ export interface CacheMail {
 export interface CacheState {
   revision: number;
   floor: number;
+  /** A recreated source must never reuse an older persistent query index. */
+  epoch?: string;
 }
 export interface CacheChange {
   revision: number;
@@ -58,7 +60,11 @@ export function recordCacheChanges(
     journal = tx.objectStore("mailChanges");
   const request = states.get("mail");
   request.onsuccess = () => {
-    const state: CacheState = request.result ?? { revision: 0, floor: 0 };
+    const state: CacheState = request.result ?? {
+      revision: 0,
+      floor: 0,
+      epoch: crypto.randomUUID(),
+    };
     if (state.revision > Number.MAX_SAFE_INTEGER - affected.size - 1) {
       tx.abort();
       return;

@@ -11,6 +11,7 @@ export interface Mail {
   subject: string;
   preview: string;
   body: string;
+  bodyLoaded?: boolean;
   date: string;
   account: string;
   folder: string;
