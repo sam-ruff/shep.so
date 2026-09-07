@@ -385,6 +385,12 @@ async fn restart_preserves_receipts_and_never_replays_an_unacknowledged_step() {
         .unwrap();
     let accepted = reopened.accept_bulk_uncertainty(&lease).await.unwrap();
     assert_eq!(accepted.uncertain, 0);
+    let items = reopened.bulk_items("move".into(), None).await.unwrap();
+    assert_eq!(items[1].status, "cancelled");
+    assert_eq!(
+        items[1].error.as_deref(),
+        Some(shep::bulk::ACCEPTED_STATE_NOTE)
+    );
     assert_eq!(
         reopened.bulk_items("move".into(), None).await.unwrap()[0]
             .receipt

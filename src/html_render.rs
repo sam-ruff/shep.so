@@ -1,5 +1,6 @@
 //! HTML layout and rasterization live on an owned worker thread. iced receives
 //! immutable viewport frames and small input results through bounded channels.
+mod commands;
 mod container;
 pub mod preparation;
 mod selection;
@@ -23,7 +24,6 @@ pub struct Source {
     pub hide_quotes: bool,
     pub images: Vec<(String, Arc<[u8]>)>,
 }
-use tokio::sync::mpsc as commands;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Viewport {
@@ -125,6 +125,7 @@ pub enum Event {
 pub fn subscription() -> impl futures::Stream<Item = Event> {
     iced::stream::channel(4, |mut output: mpsc::Sender<Event>| async move {
         let (tx, rx) = commands::channel(16);
+        let _cancel = rx.cancel_on_drop();
         let current = Arc::new(AtomicU64::new(0));
         if output
             .send(Event::Ready(tx, current.clone()))

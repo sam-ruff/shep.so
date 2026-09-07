@@ -15,6 +15,65 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_persistent_fixture_and_crash_mode_require_booleans(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (0, 1, "1", None):
+                with self.assertRaisesRegex(ValueError, "Persistent fixture"):
+                    desktop.start(persistent=value)
+                with self.assertRaisesRegex(ValueError, "Crash restart"):
+                    desktop.close_app(crash=value)
+            with self.assertRaisesRegex(RuntimeError, "owned persistent fixture"):
+                desktop.restart()
+            launch.assert_not_called()
+
+    def test_graceful_close_timeout_keeps_the_owned_process_and_never_relaunches(self):
+        desktop = harness.Desktop()
+        desktop.persistent, desktop.launch_args = True, ["owned-fixture"]
+        desktop.app, desktop.xvfb = Mock(), Mock()
+        desktop.app.poll.return_value = desktop.xvfb.poll.return_value = None
+        desktop.app.wait.side_effect = subprocess.TimeoutExpired("fixture", 10)
+        desktop.env["DISPLAY"], desktop.window = ":owned", "123"
+        desktop.launch_app = Mock()
+        try:
+            with patch.object(harness, "request_window_close") as close:
+                with self.assertRaisesRegex(RuntimeError, "No replacement was launched"):
+                    desktop.restart()
+                close.assert_called_once_with(":owned", "123")
+            desktop.launch_app.assert_not_called()
+            desktop.app.kill.assert_not_called()
+            desktop.app.terminate.assert_not_called()
+        finally:
+            desktop.app = desktop.xvfb = None
+
+    def test_crash_restart_retains_cache_archives_old_observations_and_targets_only_owned_app(self):
+        with tempfile.TemporaryDirectory() as directory:
+            desktop = harness.Desktop()
+            desktop.directory = Path(directory)
+            database = desktop.directory / "fixture.sqlite"
+            database.write_bytes(b"fixture cache")
+            (desktop.directory / "state.json").write_text('{"ready":true}')
+            desktop.persistent, desktop.launch_args = True, ["owned-fixture"]
+            desktop.app, desktop.xvfb = Mock(pid=123,returncode=-9), Mock()
+            desktop.app.poll.return_value = desktop.xvfb.poll.return_value = None
+            def launch():
+                self.assertFalse((desktop.directory / "state.json").exists())
+                self.assertTrue((desktop.directory / "state-before-restart-1.json").exists())
+                self.assertEqual(database.read_bytes(),b"fixture cache")
+                return {"pid":456}
+            desktop.launch_app = Mock(side_effect=launch)
+            try:
+                with patch.object(harness, "request_window_close") as close:
+                    result = desktop.restart(crash=True)
+                    close.assert_not_called()
+                self.assertEqual(result["previous_process"]["pid"],123)
+                self.assertEqual(result["pid"],456)
+                desktop.app.kill.assert_called_once()
+                desktop.xvfb.kill.assert_not_called()
+                desktop.xvfb.terminate.assert_not_called()
+            finally:
+                desktop.app = desktop.xvfb = None
+
     def test_badge_fixture_requires_a_boolean_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

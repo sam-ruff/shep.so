@@ -8,6 +8,7 @@ import sys
 import time
 import unittest
 import math
+import sqlite3
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -69,6 +70,145 @@ class NativeFlows(unittest.TestCase):
         self.addCleanup(self.mcp.close)
         self.artifacts = Path(result["artifacts"])
         print(f"\nEvidence: {result['artifacts']}", flush=True)
+
+    def archive_two_for_recovery(self):
+        self.mcp.batch(click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
+                       click(274,218),click(274,322),check("mail_selection.count",2),
+                       check("mail_selection.pending",False),key("Delete"),check("dialog","BulkReview"),
+                       key("Return"),check("dialog",None),check("bulk.jobs.0.running",1))
+
+    def test_bulk_graceful_close_preserves_current_receipt_and_resumes_queued_mail(self):
+        started=self.mcp.call("desktop.start",persistent=True,mail_actions="slow")
+        print(f"Graceful group restart evidence: {started['artifacts']}",flush=True)
+        self.archive_two_for_recovery()
+        closed=self.mcp.call("desktop.close")
+        self.assertEqual(closed["returncode"],0)
+        # Read-only inspection while the owned app is closed proves its close
+        # handler saved one receipt and left the other queued for the next process.
+        database=Path(started["artifacts"])/"fixture.sqlite"
+        with sqlite3.connect(database.as_uri()+"?mode=ro",uri=True) as cache:
+            self.assertEqual(cache.execute("SELECT status FROM bulk_items ORDER BY position").fetchall(),[("done",),("queued",)])
+            self.assertEqual(cache.execute("SELECT count(*) FROM messages WHERE folder='Archive'").fetchone()[0],1)
+        restarted=self.mcp.call("desktop.restart")
+        self.assertNotEqual(started["pid"],restarted["pid"])
+        self.mcp.batch({**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
+                       check("bulk.jobs.0.completed",2),check("bulk.jobs.0.uncertain",0),check("total",118),
+                       click(1330,36),check("dialog","BulkHistory"),wait(80),click(700,490),
+                       check("bulk.items.1.status","done"),shot("bulk-graceful-restart-receipts"))
+
+    def test_bulk_crash_restart_keeps_unconfirmed_results_for_review(self):
+        started=self.mcp.call("desktop.start",persistent=True,mail_actions="slow")
+        print(f"Crash group restart evidence: {started['artifacts']}",flush=True)
+        self.archive_two_for_recovery()
+        self.mcp.batch({"type":"restart","crash":True},
+                       {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
+                       check("bulk.jobs.0.uncertain",1),check("bulk.jobs.0.completed",1),check("total",119),
+                       click(1330,36),check("dialog","BulkHistory"),wait(80),click(700,490),
+                       check("bulk.items.0.status","uncertain"),check("bulk.items.1.status","done"),
+                       shot("bulk-crash-unconfirmed-review"),click(550,480),check("bulk.resolving",None,"ne"),
+                       shot("bulk-resolution-confirmation"),key("n"),check("bulk.resolving",None),
+                       check("bulk.jobs.0.uncertain",1),wait(80),click(550,480),check("bulk.resolving",None,"ne"),
+                       key("Escape"),check("bulk.resolving",None),check("dialog","BulkHistory"),
+                       wait(80),click(550,480),check("bulk.resolving",None,"ne"),key("y"),
+                       check("bulk.jobs.0.uncertain",0),check("bulk.jobs.0.cancelled",1),check("total",119),
+                       check("bulk.items.0.status","cancelled"),shot("bulk-accepted-current-state"),
+                       {"type":"restart"},check("bulk.jobs.0.cancelled",1),check("bulk.jobs.0.uncertain",0),
+                       click(1330,36),check("dialog","BulkHistory"),wait(80),click(700,490),
+                       check("bulk.items.1.status","done"),wait(80),click(560,440),
+                       {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},check("bulk.jobs.0.restored",1),
+                       check("bulk.jobs.0.cancelled",1),check("total",120),shot("bulk-review-retains-other-undo"))
+
+    def test_bulk_history_retry_undo_after_restart(self):
+        started=self.mcp.call("desktop.start",persistent=True,mail_actions="slow",undo_failure_once=True)
+        print(f"History Undo restart evidence: {started['artifacts']}",flush=True)
+        self.archive_two_for_recovery()
+        self.mcp.batch({**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},check("bulk.jobs.0.completed",2),
+                       click(1330,36),check("dialog","BulkHistory"),wait(80),click(700,490),
+                       check("bulk.items.1.status","done"),wait(80),click(560,440),
+                       {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
+                       check("bulk.jobs.0.failed",1),check("bulk.jobs.0.restored",1),
+                       shot("bulk-history-undo-failure"),{"type":"restart"},
+                       click(1330,36),check("dialog","BulkHistory"),check("bulk.jobs.0.failed",1),
+                       wait(80),click(700,490),check("bulk.items.0.status","failed"),
+                       wait(80),shot("bulk-history-retry-after-restart"),click(560,440),
+                       check("bulk.jobs.0.failed",0),{**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
+                       check("bulk.jobs.0.restored",2),check("total",120),shot("bulk-history-retry-complete"))
+
+    def test_bulk_history_continue_and_job_pages(self):
+        started=self.mcp.call("desktop.start",bulk_history=True)
+        print(f"History pagination evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("bulk.jobs.0.id","paused-fixture"),click(1330,36),check("dialog","BulkHistory"),
+                       check("bulk.history_jobs.0","paused-fixture"),check("bulk.jobs.0.paused",True),
+                       wait(80),shot("bulk-history-many-groups"),click(700,165),
+                       check("bulk.selected_job","paused-fixture"),check("bulk.items.1.status","queued"),
+                       wait(80),shot("bulk-history-paused-group"),click(640,440),
+                       check("bulk.jobs.0.paused",False),check("bulk.jobs.0.remaining",0),
+                       check("bulk.jobs.0.completed",2),shot("bulk-history-continued-group"),click(490,440),
+                       check("bulk.selected_job",None),check("bulk.history_loading",False))
+        self.scroll_history_to_end()
+        self.mcp.batch(shot("bulk-history-before-older"),click(950,840),check("bulk.jobs_offset",20),
+                       check("bulk.history_jobs.0","history-05"),check("bulk.history_loading",False),
+                       shot("bulk-history-older-groups"),click(490,735),check("bulk.jobs_offset",0),
+                       check("bulk.history_jobs.0","paused-fixture"),check("bulk.history_loading",False),
+                       shot("bulk-history-newer-groups"))
+
+    def scroll_history_to_end(self):
+        self.mcp.batch({"type":"hover","x":960,"y":760},
+                       {"type":"scroll","amount":30},{"type":"scroll","amount":30},
+                       {"type":"scroll","amount":30},wait(100))
+
+    def test_bulk_history_message_pages_return_to_the_first_row(self):
+        started=self.mcp.call("desktop.start",bulk_history=True)
+        print(f"History receipt pages evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("bulk.jobs.0.id","paused-fixture"),click(1330,36),check("dialog","BulkHistory"),
+                       check("bulk.history_jobs.1","paged-fixture"),wait(80),click(700,242),
+                       check("bulk.selected_job","paged-fixture"),check("bulk.items.49.position",49),
+                       shot("bulk-receipts-first-page"))
+        self.scroll_history_to_end()
+        self.mcp.batch(click(950,840),check("bulk.items_after",49),check("bulk.items.0.position",50),
+                       check("bulk.items.49.position",99),wait(80),shot("bulk-receipts-second-page"))
+        self.scroll_history_to_end()
+        self.mcp.batch(click(950,840),check("bulk.items_after",99),check("bulk.items.0.position",100),
+                       check("bulk.items.19.position",119),wait(80),shot("bulk-receipts-last-page"))
+        self.scroll_history_to_end()
+        self.mcp.batch(click(510,840),check("bulk.items_after",None),check("bulk.items.0.position",0),
+                       wait(80),shot("bulk-receipts-returned-to-first"))
+
+    def test_bulk_crash_resolution_mouse_in_compact_dark(self):
+        started=self.mcp.call("desktop.start",persistent=True,mail_actions="slow")
+        print(f"Compact group resolution evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),click(690,366),
+                       check("dark",True),check("preferences_saved",True),key("ctrl+1"),check("tab","Mail"),wait(80))
+        self.archive_two_for_recovery()
+        self.mcp.batch({"type":"restart","crash":True},check("dark",True),
+                       {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},check("bulk.jobs.0.uncertain",1),
+                       click(1330,36),check("dialog","BulkHistory"),wait(80),click(700,490),
+                       check("bulk.items.0.status","uncertain"),{"type":"resize","width":900,"height":640},
+                       wait(120),shot("bulk-resolution-dark-compact"),click(280,340),
+                       check("bulk.resolving",None,"ne"),wait(80),shot("bulk-confirmation-dark-compact"),
+                       click(640,417),check("bulk.jobs.0.uncertain",0),check("bulk.jobs.0.cancelled",1),
+                       check("total",119),shot("bulk-resolution-mouse-complete"))
+
+    def test_formatted_reader_and_preferences_survive_graceful_restart(self):
+        started=self.mcp.call("desktop.start",persistent=True,html_mail=True)
+        print(f"Formatted restart evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("html_view_current",True),key("ctrl+comma"),check("tab","Preferences"),
+                       wait(80),click(690,366),check("dark",True),check("preferences_saved",True),
+                       key("ctrl+1"),check("tab","Mail"),check("html_view_current",True),
+                       shot("formatted-before-close"),{"type":"restart"},check("dark",True),
+                       check("selected","Styled sign-in sample"),check("html_view_current",True),
+                       shot("formatted-after-restart"))
+
+    def test_empty_inbox_survives_graceful_restart_and_retains_archived_mail(self):
+        started=self.mcp.call("desktop.start",persistent=True)
+        print(f"Empty Inbox restart evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(click(390,245),key("ctrl+a"),check("mail_selection.count",120),
+                       check("mail_selection.pending",False),key("Delete"),check("dialog","BulkReview"),
+                       check("bulk.review_count",120),key("Return"),check("total",0),
+                       {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},check("bulk.jobs.0.completed",120),
+                       {"type":"restart"},check("page_loaded",True),check("total",0),check("selected",None),
+                       shot("empty-inbox-after-restart"),click(82,399),check("folder","Archive"),check("total",120),
+                       check("mail_rows.0.subject","A little more room to think"),shot("archived-mail-after-restart"))
 
     def toggle_html_quotes(self, hidden):
         # Bounds are in parent content coordinates; reset its scroll before use.

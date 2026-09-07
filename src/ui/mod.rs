@@ -352,6 +352,8 @@ pub struct App {
     started: Instant,
     update_samples: VecDeque<f64>,
     test_state: Option<std::path::PathBuf>,
+    #[cfg(feature = "test-support")]
+    initial_page_loaded: bool,
     test_revision: u64,
 }
 
@@ -503,6 +505,8 @@ impl App {
                 started: Instant::now(),
                 update_samples: VecDeque::new(),
                 test_state,
+                #[cfg(feature = "test-support")]
+                initial_page_loaded: false,
                 test_revision: 0,
             },
             iced::system::theme().map(Message::SystemTheme),
@@ -1095,6 +1099,10 @@ impl App {
                             self.prefetch_page = Some((query, page));
                         }
                     } else {
+                        #[cfg(feature = "test-support")]
+                        {
+                            self.initial_page_loaded = true;
+                        }
                         self.set_mail_page(page);
                         if let Some(id) = self.bulk.waiting_reader.clone()
                             && !self.page.bulk_placeholders.contains(&id)
@@ -1411,17 +1419,21 @@ impl App {
                 _ => {}
             },
             Message::WindowClose(window) => {
+                if self.flush_pane_resize() {
+                    self.save_preferences();
+                }
                 if self.dialog == Some(Dialog::DiscardDraft) && !self.composer.discard_pending {
                     self.cancel_discard_draft();
                 }
-                if self.bulk.staging.is_some()
-                    || !self.bulk.stopped && self.bulk.jobs.iter().any(|j| j.remaining > 0)
-                {
+                if self.bulk.staging.is_some() || self.tx.is_some() && !self.bulk.stopped {
                     self.pending_close = Some(window);
-                    self.notice(
+                    if self.bulk.staging.is_some() || self.bulk.jobs.iter().any(|j| j.remaining > 0)
+                    {
+                        self.notice(
                         "Finishing the current mail change. Queued changes will resume next time.",
                         false,
                     );
+                    }
                 } else if self.mail_actions.pending() > 0 {
                     self.pending_close = Some(window);
                     self.notice("Finishing your mail changes before closing…", false);
@@ -1563,6 +1575,9 @@ impl App {
                 }
             }
             Message::Close => {
+                if self.dialog == Some(Dialog::BulkHistory) {
+                    let _ = self.handle_bulk(bulk::Message::CancelResolution);
+                }
                 if self.dialog == Some(Dialog::BulkReview) {
                     self.cancel_bulk_review();
                     return widget::operation::focus("unfocused");
@@ -2956,6 +2971,23 @@ impl App {
         })
     }
     fn key(&mut self, key: Key, modifiers: keyboard::Modifiers, captured: bool) -> Task<Message> {
+        if self.bulk_confirming() && modifiers.is_empty() {
+            match &key {
+                Key::Named(keyboard::key::Named::Enter) => {
+                    return self.handle_bulk(bulk::Message::ConfirmResolution);
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("y") => {
+                    return self.handle_bulk(bulk::Message::ConfirmResolution);
+                }
+                Key::Named(keyboard::key::Named::Escape) => {
+                    return self.handle_bulk(bulk::Message::CancelResolution);
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("n") => {
+                    return self.handle_bulk(bulk::Message::CancelResolution);
+                }
+                _ => {}
+            }
+        }
         if self.dialog == Some(Dialog::BulkReview) && modifiers.is_empty() {
             match &key {
                 Key::Named(keyboard::key::Named::Enter) => {
@@ -3200,6 +3232,10 @@ impl App {
         samples.sort_by(f64::total_cmp);
         let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|self.mail_actions.effective(&d.summary).starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts.0,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
         self.bulk_test_state(&mut data);
+        #[cfg(feature = "test-support")]
+        {
+            data["page_loaded"] = serde_json::json!(self.initial_page_loaded);
+        }
         data["mail_selection"] = serde_json::json!({
             "mode": self.mail_selection.mode, "count": self.mail_selection.count,
             "pending": self.mail_selection.busy(), "visible": self.mail_selection.visible,

@@ -459,13 +459,28 @@ impl Store {
         self.run(move |c| {
             let tx=c.transaction()?;
             tx.execute("DELETE FROM bulk_effects WHERE job=? AND position IN (SELECT position FROM bulk_items WHERE job=? AND status='uncertain')",params![id,id])?;
-            tx.execute("UPDATE bulk_items SET status='cancelled' WHERE job=? AND status='uncertain'",[&id])?;
+            tx.execute("UPDATE bulk_items SET status='cancelled',error=? WHERE job=? AND status='uncertain'",params![crate::bulk::ACCEPTED_STATE_NOTE,id])?;
             bump(&tx)?;let result=job(&tx,&id)?;tx.commit()?;Ok(result)
         }).await
     }
 }
 
 impl Store {
+    /// Make an explicitly continued group eligible for the worker. Only its
+    /// lease holder may recover an interrupted running item or execute work.
+    pub async fn continue_bulk(&self, id: String) -> anyhow::Result<()> {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            let current = job(&tx, &id)?;
+            if current.paused {
+                tx.execute("UPDATE bulk_jobs SET paused=0 WHERE id=?", [&id])?;
+                bump(&tx)?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
     pub async fn next_pending_bulk(&self, after: String) -> anyhow::Result<Option<String>> {
         self.run(move |c|Ok(c.query_row("SELECT id FROM bulk_jobs WHERE id>? AND paused=0 AND EXISTS(SELECT 1 FROM bulk_items WHERE job=bulk_jobs.id AND status IN ('queued','running')) ORDER BY id LIMIT 1",[after],|r|r.get(0)).optional()?)).await
     }

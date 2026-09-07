@@ -6,6 +6,8 @@ The inspection file is a read-only oracle, enabled only in a test-support build.
 """
 import atexit
 import base64
+import ctypes
+import ctypes.util
 import html
 import json
 import os
@@ -20,6 +22,51 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ROOT / "artifacts" / "e2e"
+
+
+def request_window_close(display_name, window):
+    """ICCCM WM_DELETE_WINDOW, including on hosts with pre-windowquit xdotool."""
+    class Data(ctypes.Union):
+        _fields_ = [("b", ctypes.c_char * 20), ("s", ctypes.c_short * 10), ("l", ctypes.c_long * 5)]
+    class ClientMessage(ctypes.Structure):
+        _fields_ = [("type", ctypes.c_int), ("serial", ctypes.c_ulong), ("send_event", ctypes.c_int),
+                    ("display", ctypes.c_void_p), ("window", ctypes.c_ulong), ("message_type", ctypes.c_ulong),
+                    ("format", ctypes.c_int), ("data", Data)]
+    class Event(ctypes.Union):
+        _fields_ = [("client", ClientMessage), ("pad", ctypes.c_long * 24)]
+    x11 = ctypes.CDLL(ctypes.util.find_library("X11") or "libX11.so.6")
+    x11.XOpenDisplay.argtypes, x11.XOpenDisplay.restype = [ctypes.c_char_p], ctypes.c_void_p
+    x11.XInternAtom.argtypes, x11.XInternAtom.restype = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int], ctypes.c_ulong
+    x11.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_long, ctypes.POINTER(Event)]
+    x11.XSendEvent.restype = ctypes.c_int
+    x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    x11.XSetErrorHandler.argtypes, x11.XSetErrorHandler.restype = [ctypes.c_void_p], ctypes.c_void_p
+    display = x11.XOpenDisplay(display_name.encode())
+    if not display:
+        raise RuntimeError("The owned fixture display is unavailable.")
+    errors = []
+    @ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
+    def on_error(_display, _event):
+        errors.append(True)
+        return 0
+    previous = x11.XSetErrorHandler(on_error)
+    try:
+        event = Event()
+        event.client.type = 33  # ClientMessage
+        event.client.display = display
+        event.client.window = int(window)
+        event.client.message_type = x11.XInternAtom(display, b"WM_PROTOCOLS", False)
+        event.client.format = 32
+        event.client.data.l[0] = x11.XInternAtom(display, b"WM_DELETE_WINDOW", False)
+        if not x11.XSendEvent(display, int(window), False, 0, ctypes.byref(event)):
+            raise RuntimeError("Could not send the native close request.")
+        x11.XSync(display, False)
+        if errors:
+            raise RuntimeError("The owned window no longer accepts close requests.")
+    finally:
+        x11.XCloseDisplay(display)
+        x11.XSetErrorHandler(previous)
 
 
 class Desktop:
@@ -38,6 +85,10 @@ class Desktop:
         self.badge_monitor = None
         self.badge_log = None
         self.badge_events = None
+        self.persistent = False
+        self.launch_args = None
+        self.launch_size = None
+        self.restarts = 0
         atexit.register(self.stop)
 
     def stop(self):
@@ -62,6 +113,8 @@ class Desktop:
                     process.kill()
                     process.wait(timeout=3)
         self.app = self.xvfb = None
+        self.persistent = False
+        self.launch_args = None
         self.clipboard = None
         self.badge_bus = self.badge_monitor = None
         for stream in (self.badge_log, self.badge_events):
@@ -80,8 +133,15 @@ class Desktop:
         return subprocess.run(args, env=self.env, capture_output=True, text=True,
                               check=True, timeout=10).stdout.strip()
 
-    def start(self, width=1440, height=920, empty_calendars=False, conversation_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False):
+    def start(self, width=1440, height=920, empty_calendars=False, conversation_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False):
         self.stop()
+        if type(persistent) is not bool:
+            raise ValueError("Persistent fixture must be a boolean.")
+        if type(bulk_history) is not bool:
+            raise ValueError("Bulk history fixture must be a boolean.")
+        self.persistent = persistent
+        self.restarts = 0
+        self.launch_size = (width, height)
         if type(desktop_badges) is not bool:
             raise ValueError("Desktop badge fixture must be a boolean.")
         if type(html_delay_ms) is not int or not 0 <= html_delay_ms <= 2000:
@@ -133,10 +193,17 @@ class Desktop:
             self.start_badge_bus()
         if print_browser:
             self.start_print_browser(print_browser)
-        self.log = (self.directory / "app.log").open("w")
-        self.app = subprocess.Popen(
-            [str(binary), "--demo", "--test-state", str(self.directory / "state.json"), *(["--empty-calendars"] if empty_calendars else []), *(["--conversation-mail"] if conversation_mail else []), *(["--readonly-calendars"] if readonly_calendars else []), *(["--pending-transfer"] if pending_transfer else []), *(["--outgoing-mail"] if outgoing_mail else []), *(["--long-folders"] if long_folders else []), *(["--discard-failure-once"] if discard_failure_once else []), *(["--undo-failure-once"] if undo_failure_once else []), *(["--search-mail"] if search_mail else []), *(["--html-mail"] if html_mail else []), *(["--background-sync"] if background_sync else []), *(["--sync-failure-once"] if sync_failure_once else []), *(["--mail-actions=" + mail_actions] if mail_actions in ("slow", "fail") else []), *(["--google-permissions=" + google_permissions] if google_permissions else [])],
-            cwd=ROOT, env=self.env, stdout=self.log, stderr=self.log)
+        self.launch_args = [str(binary), "--demo", *(["--persist-demo"] if persistent else []), *(["--bulk-history"] if bulk_history else []), "--test-state", str(self.directory / "state.json"), *(["--empty-calendars"] if empty_calendars else []), *(["--conversation-mail"] if conversation_mail else []), *(["--readonly-calendars"] if readonly_calendars else []), *(["--pending-transfer"] if pending_transfer else []), *(["--outgoing-mail"] if outgoing_mail else []), *(["--long-folders"] if long_folders else []), *(["--discard-failure-once"] if discard_failure_once else []), *(["--undo-failure-once"] if undo_failure_once else []), *(["--search-mail"] if search_mail else []), *(["--html-mail"] if html_mail else []), *(["--background-sync"] if background_sync else []), *(["--sync-failure-once"] if sync_failure_once else []), *(["--mail-actions=" + mail_actions] if mail_actions in ("slow", "fail") else []), *(["--google-permissions=" + google_permissions] if google_permissions else [])]
+        return self.launch_app()
+
+    def launch_app(self):
+        width, height = self.launch_size
+        self.window = None
+        if self.log:
+            self.log.close()
+        name = "app.log" if self.restarts == 0 else f"app-restart-{self.restarts}.log"
+        self.log = (self.directory / name).open("w")
+        self.app = subprocess.Popen(self.launch_args, cwd=ROOT, env=self.env, stdout=self.log, stderr=self.log)
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             if self.app.poll() is not None:
@@ -149,13 +216,50 @@ class Desktop:
                     self.command("xdotool", "windowmove", self.window, "0", "0")
                     self.command("xdotool", "windowfocus", self.window)
                     state = self.state()
-                    if state.get("ready") and state.get("total", 0) > 0:
-                        return {"window": self.window, "size": [width, height], "state": state,
+                    if state.get("ready") and state.get("page_loaded"):
+                        return {"pid": self.app.pid, "window": self.window, "size": [width, height], "state": state,
                                 "artifacts": str(self.directory)}
             except (subprocess.SubprocessError, FileNotFoundError, json.JSONDecodeError):
                 pass
             time.sleep(0.05)
         raise RuntimeError("Shep was not ready within 20 seconds; check the app log and test-support feature.")
+
+    def close_app(self, crash=False):
+        if type(crash) is not bool:
+            raise ValueError("Crash restart must be a boolean.")
+        if not self.app or not self.xvfb or self.xvfb.poll() is not None:
+            raise RuntimeError("Start an owned fixture before closing.")
+        if self.app.poll() is None:
+            if crash:
+                self.app.kill()
+            else:
+                request_window_close(self.env["DISPLAY"], self.window)
+            try:
+                self.app.wait(timeout=10)
+            except subprocess.TimeoutExpired as error:
+                if self.directory:
+                    try:
+                        self.command("xdotool", "getwindowname", self.window)
+                        window_present = True
+                    except subprocess.SubprocessError:
+                        window_present = False
+                    (self.directory / "close-timeout.json").write_text(json.dumps({"pid":self.app.pid,"window_present":window_present}))
+                raise RuntimeError("Shep has not closed; inspect its confirmation or pending work. No replacement was launched.") from error
+        if not crash and self.app.returncode != 0:
+            raise RuntimeError("Shep did not exit successfully after its native close request.")
+        return {"closed": True, "pid": self.app.pid, "returncode": self.app.returncode}
+
+    def restart(self, crash=False):
+        if not self.persistent or not self.launch_args:
+            raise RuntimeError("Start an owned persistent fixture before restarting.")
+        previous = self.close_app(crash)
+        state = self.directory / "state.json"
+        self.restarts += 1
+        if state.exists():
+            state.replace(self.directory / f"state-before-restart-{self.restarts}.json")
+        result = self.launch_app()
+        result["previous_process"] = previous
+        return result
 
     def start_badge_bus(self):
         for tool in ("dbus-daemon", "busctl"):
@@ -457,6 +561,9 @@ class Desktop:
                     if not 900 <= width <= 2560 or not 640 <= height <= 1600:
                         raise ValueError("Test window must be 900–2560 × 640–1600.")
                     self.command("xdotool", "windowsize", self.window, str(width), str(height))
+                    self.launch_size = (width,height)
+                elif kind == "restart":
+                    result = self.restart(crash=action.get("crash",False))
                 elif kind == "hover":
                     self.command("xdotool", "mousemove", "--window", self.window, str(int(action["x"])), str(int(action["y"])))
                 elif kind == "drag":
@@ -547,9 +654,11 @@ class Desktop:
 
 TOOLS = [
     {"name": "desktop.start", "description": "Launch an isolated Shep fixture workspace on Xvfb. Requires cargo build --profile test-ui --features test-support. No real credentials or network writes.",
-     "inputSchema": {"type": "object", "properties": {"desktop_badges": {"type": "boolean", "default": False}, "html_failure_once": {"type": "boolean", "default": False}, "image_delay_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0}, "html_delay_ms": {"type": "integer", "minimum": 0, "maximum": 2000, "default": 0}, "print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail"]}, "search_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
+     "inputSchema": {"type": "object", "properties": {"bulk_history": {"type": "boolean", "default": False}, "persistent": {"type": "boolean", "default": False}, "desktop_badges": {"type": "boolean", "default": False}, "html_failure_once": {"type": "boolean", "default": False}, "image_delay_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0}, "html_delay_ms": {"type": "integer", "minimum": 0, "maximum": 2000, "default": 0}, "print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail"]}, "search_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
+    {"name": "desktop.close", "description": "Close only the owned fixture app, keeping its Xvfb display and persistent fixture cache available for restart. Normally sends WM_DELETE_WINDOW; crash=true kills only the owned process for recovery tests.", "inputSchema": {"type": "object", "properties": {"crash": {"type": "boolean", "default": False}}}},
+    {"name": "desktop.restart", "description": "Restart only the owned persistent fixture app on its existing Xvfb display. Normally sends a native window-close request; crash=true kills that owned process to exercise journal recovery. Retains the fixture SQLite cache and never changes app state directly.", "inputSchema": {"type": "object", "properties": {"crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.batch", "description": "Run 1–100 real mouse/keyboard actions in order, including short waits, state assertions and WebP screenshots. Stops at first failure and captures evidence. Prefer batches to one call per action.",
-     "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"type": {"enum": ["click", "double_click", "hover", "resize", "drag", "type", "key", "choose_file", "print_output", "cancel_print", "focus_app", "browser_screenshot", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "count": {"type": "integer"}, "pages": {"type": "integer"}, "x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "button": {"type": "integer", "enum": [1, 2, 3]}, "modifiers": {"type": "array", "items": {"type": "string", "enum": ["ctrl", "shift", "alt", "super"]}}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
+     "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"crash": {"type": "boolean", "default": False}, "type": {"enum": ["restart", "click", "double_click", "hover", "resize", "drag", "type", "key", "choose_file", "print_output", "cancel_print", "focus_app", "browser_screenshot", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "count": {"type": "integer"}, "pages": {"type": "integer"}, "x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "button": {"type": "integer", "enum": [1, 2, 3]}, "modifiers": {"type": "array", "items": {"type": "string", "enum": ["ctrl", "shift", "alt", "super"]}}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
     {"name": "desktop.state", "description": "Read observed UI state, cache counts, shortcuts and handler timings; does not change app state.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "desktop.screenshot", "description": "Capture the actual iced window as WebP. Returns image and artifact path.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}}},
     {"name": "desktop.stop", "description": "Stop only the isolated app and Xvfb processes created by this harness.", "inputSchema": {"type": "object", "properties": {}}},
@@ -576,7 +685,7 @@ def main():
                 params = request["params"]
                 name = params["name"]
                 arguments = params.get("arguments", {})
-                handlers = {"desktop.start": desktop.start, "desktop.batch": desktop.batch,
+                handlers = {"desktop.start": desktop.start, "desktop.restart": desktop.restart, "desktop.close": desktop.close_app, "desktop.batch": desktop.batch,
                             "desktop.state": desktop.state, "desktop.screenshot": desktop.screenshot,
                             "desktop.stop": desktop.stop}
                 try:

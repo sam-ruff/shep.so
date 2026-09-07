@@ -2024,15 +2024,19 @@ impl App {
         {
             body = body.push(container(text(notice).size(11)).padding(12).style(subtle));
         }
-        container(scrollable(container(body).padding(27)).height(Length::Shrink))
-            .max_height((self.size.height - 65.).max(400.))
-            .width(if dialog == Dialog::Compose {
-                680.
-            } else {
-                570.
-            })
-            .style(card)
-            .into()
+        container(
+            scrollable(container(body).padding(27))
+                .id("dialog-scroll")
+                .height(Length::Shrink),
+        )
+        .max_height((self.size.height - 65.).max(400.))
+        .width(if dialog == Dialog::Compose {
+            680.
+        } else {
+            570.
+        })
+        .style(card)
+        .into()
     }
 }
 impl App {

@@ -255,3 +255,33 @@ checks the disabled second-row flag button and rejects a conflicting context-men
 action, then verifies ordinary flagging works after the group commits. Keep the
 context menu open/keyboard path and screenshot evidence alongside engine/store
 ownership tests.
+
+
+For restart coverage, start with `persistent=true`. The harness owns a marked
+`fixture.sqlite` beside that run's state file; the app seeds it once and never
+opens an unmarked database in demo mode. `desktop.close` sends the native
+WM_DELETE_WINDOW request and waits for that owned process to exit. If it does
+not close, inspect the pending confirmation/work; never kill it implicitly or
+launch a duplicate. `desktop.restart` reuses the owned display and fixture cache,
+archives the previous state observation, and waits for a fresh loaded mail page,
+including an empty Inbox. `crash=true` explicitly kills only the owned app.
+Restart also works as a batch action: `{"type":"restart","crash":true}`.
+The returned process IDs are observations. Never supply personal paths or PIDs.
+
+The graceful group-close scenario inspects the fixture SQLite journal read-only
+while the app is closed, then restarts it; this establishes the saved receipt
+and queued remainder before startup recovery runs. Do not substitute state-file
+writes or fabricated acknowledgments for close/crash input. `bulk_history=true`
+seeds fictional completed groups and a paused group for pagination/Continue;
+all subsequent actions use actual native controls. Saved History scenarios
+exercise Undo retry, unconfirmed-result review and both kinds of pagination.
+
+`bulk.history_jobs` observes IDs on the visible History page; `bulk.jobs` tracks
+recent worker state separately. Use `history_loading`, `jobs_offset`,
+`selected_job`, `items_after` and each item's `position` to verify page changes.
+Scroll the actual History dialog to its footer before Older/Next/First page;
+then inspect a screenshot proving the next page returns to the top. The saved
+127-scenario suite includes compact dark mouse acceptance and formatted-reader
+graceful restart. The empty-Inbox restart scenario archives all 120 fixture
+messages and checks Archive after reopening, covering startup without a selected
+message. Performance remains deferred.

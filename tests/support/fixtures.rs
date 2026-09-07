@@ -1,8 +1,21 @@
 use crate::{model::*, store::Store};
+mod bulk_history;
 #[path = "html_mail.rs"]
 mod html_mail;
+pub mod workspace;
 
 pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
+    if store.get::<bool>("fixture_seeded").await? {
+        return Ok(());
+    }
+    seed_demo_contents(store).await?;
+    if std::env::args().any(|a| a == "--bulk-history") {
+        bulk_history::seed(store).await?;
+    }
+    store.put("fixture_seeded", true).await
+}
+
+async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
     store
         .put(
             "preferences",
