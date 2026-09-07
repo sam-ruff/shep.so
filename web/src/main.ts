@@ -19,6 +19,7 @@ async function start() {
       repository,
       new BrowserSettings(`shep.preferences.v1.${session.user_id}`),
     );
+    workspace.error = repository.warning;
     mount(workspace, {
       email: session.email,
       signOut: () => {

@@ -1,3 +1,4 @@
+import { openMailDatabase } from "./storage";
 import { selectionToken } from "./selection_types";
 import { intentValues, type IntentLease } from "./mail_intents";
 import type { Fields } from "./model";
@@ -50,6 +51,7 @@ export interface BulkItem extends BulkOriginal {
   cache?: number;
   intent?: IntentLease;
   undoIntent?: IntentLease;
+  owners?: string[];
 }
 export interface BulkJob {
   id: string;
@@ -67,6 +69,81 @@ export interface BulkJob {
   runnable?: number;
   forwardIntent?: number;
   undoIntent?: number;
+}
+export interface BulkAccountReview {
+  account: string;
+  revision: string;
+  items: number;
+  jobs: number;
+  unfinished: number;
+}
+interface AccountFence {
+  id: string;
+  token: string;
+  complete: boolean;
+}
+function owners(item: BulkItem, job: BulkJob): string[] {
+  return [
+    ...new Set(
+      [
+        item.account,
+        item.original?.account,
+        item.receipt?.before.account,
+        item.receipt?.after.account,
+        item.inverse?.before.account,
+        item.inverse?.after.account,
+        job.action.kind === "move" ? job.action.account : null,
+      ].filter((v): v is string => !!v),
+    ),
+  ];
+}
+/** Read only a bounded page of removal records. Their mail transaction is the
+ * commit point; group ownership is retained until their cleanup finishes. */
+async function removedAccounts(
+  user: string,
+  visit: (id: string, token: string) => Promise<void>,
+) {
+  const db = await openMailDatabase(user);
+  try {
+    let after: IDBValidKey | undefined;
+    while (true) {
+      const page = await new Promise<
+        { key: IDBValidKey; id: string; token: string }[]
+      >((resolve, reject) => {
+        const tx = db.transaction("removedAccounts", "readonly"),
+          result: { key: IDBValidKey; id: string; token: string }[] = [];
+        const cursor = tx
+          .objectStore("removedAccounts")
+          .openCursor(
+            after === undefined
+              ? undefined
+              : IDBKeyRange.lowerBound(after, true),
+          );
+        cursor.onsuccess = () => {
+          const row = cursor.result;
+          if (!row || result.length === 20) return;
+          result.push({
+            key: row.key,
+            id: row.value.id,
+            token: row.value.token,
+          });
+          cursor.result.continue();
+        };
+        tx.oncomplete = () => resolve(result);
+        tx.onabort = () =>
+          reject(
+            Error(
+              "Could not check removed accounts. Reopen Shep before continuing group work.",
+            ),
+          );
+      });
+      for (const row of page) await visit(text(row.id), text(row.token));
+      if (page.length < 20) break;
+      after = page[page.length - 1].key;
+    }
+  } finally {
+    db.close();
+  }
 }
 export type BulkOutcome =
   | {
@@ -151,7 +228,7 @@ function action(v: BulkAction): BulkAction {
 async function open(user: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let abandoned = false;
-    const r = indexedDB.open(`shep.bulk.v1.${user}`, 3);
+    const r = indexedDB.open(`shep.bulk.v1.${user}`, 4);
     r.onupgradeneeded = (event) => {
       const tx = r.transaction!;
       if (event.oldVersion < 1) {
@@ -170,6 +247,25 @@ async function open(user: string): Promise<IDBDatabase> {
       if (event.oldVersion < 2) {
         jobs.createIndex("queue", ["runnable", "created", "id"]);
         items.createIndex("cache", ["cache", "job", "position"]);
+      }
+      if (event.oldVersion < 4) {
+        r.result.createObjectStore("metadata");
+        r.result.createObjectStore("removals", { keyPath: "id" });
+        items.createIndex("owners", "owners", { multiEntry: true });
+        const rows = items.openCursor();
+        rows.onsuccess = () => {
+          const row = rows.result;
+          if (!row) return;
+          const get = jobs.get(row.value.job);
+          get.onsuccess = () => {
+            if (!get.result) {
+              tx.abort();
+              return;
+            }
+            row.update({ ...row.value, owners: owners(row.value, get.result) });
+            row.continue();
+          };
+        };
       }
       const cursor = jobs.openCursor();
       cursor.onsuccess = () => {
@@ -198,6 +294,31 @@ async function open(user: string): Promise<IDBDatabase> {
   });
 }
 
+/** A new tab must not upgrade/close an older executor's receipt connection
+ * while it owns a provider request. Observe only a schema already installed. */
+async function observe(user: string): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const r = indexedDB.open(`shep.bulk.v1.${user}`);
+    const failed = () =>
+      reject(
+        Error(
+          "Finish group work in the other tab before updating group storage.",
+        ),
+      );
+    r.onupgradeneeded = () => r.transaction!.abort();
+    r.onerror = failed;
+    r.onsuccess = () => {
+      if (r.result.version !== 4) {
+        r.result.close();
+        failed();
+      } else {
+        r.result.onversionchange = () => r.result.close();
+        resolve(r.result);
+      }
+    };
+  });
+}
+
 /** Exclusive ownership spans network work and receipt persistence, so another
  * tab cannot recover an active step. Mail/draft writes use a separate database.
  * Storage APIs alone do not authorize or execute any provider operation. */
@@ -206,6 +327,7 @@ export class BulkJournal {
   private constructor(
     private db: IDBDatabase,
     private owned: boolean,
+    private user: string,
   ) {}
   /** Read current progress without taking execution ownership or recovering a
    * live owner's step. Mutation methods refuse this observational connection. */
@@ -215,7 +337,12 @@ export class BulkJournal {
   ): Promise<T> {
     if (!/^[A-Za-z0-9_-]{43}$/.test(user))
       throw Error("Invalid browser profile identity.");
-    const journal = new BulkJournal(await open(user), false);
+    const db = await navigator.locks.request(
+      `shep.bulk.v1.${user}`,
+      { ifAvailable: true },
+      (lock) => (lock ? open(user) : observe(user)),
+    );
+    const journal = new BulkJournal(db, false, user);
     try {
       return await work(journal);
     } finally {
@@ -237,8 +364,9 @@ export class BulkJournal {
           throw Error(
             "Group work is active in another tab. Return to that tab or retry when it finishes.",
           );
-        const journal = new BulkJournal(await open(user), true);
+        const journal = new BulkJournal(await open(user), true, user);
         try {
+          await journal.reconcileAccounts();
           await journal.recover();
           return await work(journal);
         } finally {
@@ -263,9 +391,13 @@ export class BulkJournal {
         ),
       );
     return new Promise((resolve, reject) => {
-      const tx = this.db.transaction(["jobs", "items"], mode, {
-        durability: "strict",
-      });
+      const tx = this.db.transaction(
+        ["jobs", "items", "metadata", "removals"],
+        mode,
+        {
+          durability: "strict",
+        },
+      );
       let result: T, cause: unknown;
       tx.oncomplete = () => resolve(result);
       tx.onabort = () =>
@@ -305,7 +437,11 @@ export class BulkJournal {
     if (expected !== undefined && job.revision !== expected) throw changed();
     return job;
   }
+  private touch(tx: IDBTransaction) {
+    tx.objectStore("metadata").put(crypto.randomUUID(), "revision");
+  }
   private save(tx: IDBTransaction, job: BulkJob) {
+    this.touch(tx);
     bounds(job.revision + 1);
     job.revision++;
     job.runnable = runnable(job);
@@ -321,6 +457,7 @@ export class BulkJournal {
     job.counts[item.status]--;
     job.counts[status]++;
     item.status = status;
+    item.owners = owners(item, job);
     tx.objectStore("items").put(item);
     this.save(tx, job);
   }
@@ -359,6 +496,138 @@ export class BulkJournal {
     ) {
       /* interrupted staging cannot execute */
     }
+  }
+  /** Startup can observe a live executor without recovering its active step.
+   * Acquire ownership only if a committed removal still needs cleanup. */
+  static async recoverAccounts(user: string) {
+    let needed = false;
+    await removedAccounts(user, async (id, token) => {
+      if (needed) return;
+      needed = await BulkJournal.inspect(user, async (journal) => {
+        const fence = await journal.transaction("readonly", (tx) =>
+          request<AccountFence | undefined>(tx.objectStore("removals").get(id)),
+        );
+        return fence?.token !== token || !fence.complete;
+      });
+    });
+    if (needed) await BulkJournal.own(user, async () => {});
+  }
+  accountReview(account: string): Promise<BulkAccountReview> {
+    text(account);
+    return this.transaction("readonly", async (tx) => {
+      const revision = await request<string | undefined>(
+        tx.objectStore("metadata").get("revision"),
+      );
+      const result: BulkAccountReview = {
+        account,
+        revision: revision ?? "initial",
+        items: 0,
+        jobs: 0,
+        unfinished: 0,
+      };
+      // Index order groups physical entries by job. Hold one job and one item,
+      // never the captured membership or a list of its IDs in the review/UI.
+      let job: BulkJob | undefined;
+      await new Promise<void>((resolve, reject) => {
+        const cursor = tx
+          .objectStore("items")
+          .index("owners")
+          .openCursor(account);
+        cursor.onerror = () => reject(cursor.error);
+        cursor.onsuccess = async () => {
+          try {
+            const row = cursor.result;
+            if (!row) {
+              resolve();
+              return;
+            }
+            const item = row.value as BulkItem;
+            if (job?.id !== item.job) {
+              job = await this.job(tx, item.job);
+              result.jobs++;
+            }
+            result.items++;
+            if (
+              item.cache ||
+              ["running", "undo_running", "uncertain", "failed"].includes(
+                item.status,
+              ) ||
+              (item.status === "pending" && !job.undo) ||
+              (item.status === "done" && job.undo)
+            )
+              result.unfinished++;
+            row.continue();
+          } catch (error) {
+            reject(error);
+          }
+        };
+      });
+      return result;
+    });
+  }
+  async checkAccountReview(expected: BulkAccountReview, discard: boolean) {
+    const current = await this.accountReview(expected.account);
+    if (JSON.stringify(current) !== JSON.stringify(expected))
+      throw Error(
+        "Group work changed while this review was open. Reload removal counts before continuing.",
+      );
+    if (current.unfinished && !discard)
+      throw Error(
+        "Confirm discarding unfinished group changes first. Removal cannot undo a server operation.",
+      );
+  }
+  /** Only committed mail removals can delete journal records. The same Web Lock
+   * excludes staging/execution and closes the two-database crash window. */
+  async reconcileAccounts() {
+    if (!this.owned) throw Error("Group cleanup requires execution ownership.");
+    await removedAccounts(this.user, async (id, token) => {
+      const complete = await this.transaction("readwrite", async (tx) => {
+        const previous = await request<AccountFence | undefined>(
+          tx.objectStore("removals").get(id),
+        );
+        if (previous && previous.token !== token)
+          throw Error("Account removal identity changed. Reopen Shep.");
+        if (previous?.complete) return true;
+        tx.objectStore("removals").put({
+          id,
+          token,
+          complete: false,
+        } satisfies AccountFence);
+        this.touch(tx);
+        return false;
+      });
+      if (complete) return;
+      while (
+        await this.transaction("readwrite", async (tx) => {
+          const rows = await request<BulkItem[]>(
+            tx.objectStore("items").index("owners").getAll(id, 50),
+          );
+          for (const item of rows) {
+            const job = await this.job(tx, item.job);
+            job.counts[item.status]--;
+            job.pendingCache = (job.pendingCache ?? 0) - (item.cache ?? 0);
+            job.staged--;
+            job.total--;
+            tx.objectStore("items").delete([item.job, item.position]);
+            if (!job.staged) {
+              tx.objectStore("jobs").delete(job.id);
+              this.touch(tx);
+            } else this.save(tx, job);
+          }
+          if (rows.length < 50) {
+            tx.objectStore("removals").put({
+              id,
+              token,
+              complete: true,
+            } satisfies AccountFence);
+            this.touch(tx);
+          }
+          return rows.length === 50;
+        })
+      ) {
+        /* bounded, restartable deletion; other accounts retain receipts */
+      }
+    });
   }
   get(id: string) {
     return this.transaction("readonly", (tx) => this.job(tx, id));
@@ -489,6 +758,19 @@ export class BulkJournal {
         const job = await this.job(tx, id);
         if (job.state !== "preparing" || job.staged + chunk.length > job.total)
           throw changed();
+        for (const owner of new Set(
+          chunk.flatMap((row) => [
+            row.account,
+            ...(chosen.kind === "move" && chosen.account
+              ? [chosen.account]
+              : []),
+          ]),
+        )) {
+          if (await request(tx.objectStore("removals").getKey(owner)))
+            throw Error(
+              "This account was removed. Select messages from connected accounts again.",
+            );
+        }
         for (const row of chunk) {
           bounds(row.position);
           if (row.position <= job.lastPosition)
@@ -508,6 +790,14 @@ export class BulkJournal {
             original,
             status,
             phase: "forward",
+            owners: [
+              ...new Set([
+                row.account,
+                ...(chosen.kind === "move" && chosen.account
+                  ? [chosen.account]
+                  : []),
+              ]),
+            ],
           } satisfies BulkItem);
           job.counts[status]++;
           job.staged++;

@@ -35,6 +35,7 @@ export interface Change {
   value?: unknown;
 }
 export interface LocalStore {
+  readonly profileId?: string;
   intents?: IntentStore;
   removeAccount?(review: RemovalReview, discard: boolean): Promise<void>;
   all<T>(store: StoreName): Promise<T[]>;
@@ -50,9 +51,9 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     throw new Error("Invalid browser profile identity.");
   return new Promise((resolve, reject) => {
     let abandoned = false;
-    // Version 7 also fences older tabs whose writes lack atomic cache-applied
-    // intent revisions. Do not let those writers share the new executor cache.
-    const request = indexedDB.open(`shep.mail.v1.${user}`, 7);
+    // Version 8 fences older tabs that remove accounts without group ownership.
+    // Version 7 fenced writes lacking atomic cache-applied intent revisions.
+    const request = indexedDB.open(`shep.mail.v1.${user}`, 8);
     request.onupgradeneeded = (event) => {
       for (const store of stores)
         if (!request.result.objectStoreNames.contains(store))
@@ -128,11 +129,14 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
 
 export class BrowserStore implements LocalStore {
   readonly intents: IntentStore;
-  private constructor(private db: IDBDatabase) {
+  private constructor(
+    private db: IDBDatabase,
+    readonly profileId: string,
+  ) {
     this.intents = new BrowserIntents(db);
   }
   static async open(user: string): Promise<BrowserStore> {
-    return new BrowserStore(await openMailDatabase(user));
+    return new BrowserStore(await openMailDatabase(user), user);
   }
   close() {
     this.db.close();
