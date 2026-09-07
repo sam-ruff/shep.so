@@ -227,7 +227,7 @@ The `unread` observation is the open message's boolean. For group counts use
 belong to the work account; the third is personal. A mixed-account Projects move
 uses checkboxes near x=274,y=218/426. The Move default uses each original account.
 
-Preserve all four `test_bulk_*` flows: review/cancel/archive/Undo, flag/read/unread
+Preserve the saved `test_bulk_*` flows: review/cancel/archive/Undo, flag/read/unread
 and mixed-account Move, failure/History detail pages, and compact dark reviews and
 pending Undo. At 1440x920, History is near x=1330,y=36; its first failed group is
 near x=700,y=490 in the saved scenario. Inspect both per-message errors and the
