@@ -1521,16 +1521,16 @@ class NativeFlows(unittest.TestCase):
 
     def test_email_text_selection_and_copy(self):
         self.mcp.batch(check("reader_text_ready", True),
-                       drag(650, 314, 714, 314), check("reader_selected_text", "Hey Alex", "contains"),
+                       drag(701, 333, 765, 333), check("reader_selected_text", "Hey Alex", "contains"),
                        key("ctrl+c"), shot("selected-email-text"),
                        key("ctrl+k"), check("focused_input", "search"), key("ctrl+v"), check("query", "Hey Alex", "contains"),
                        key("ctrl+a"), key("BackSpace"), check("total", 120), key("Escape"),
                        double_click(420, 243), check("full_reader", True), check("reader_text_ready", True),
-                       click(95, 310), key("ctrl+a"), check("reader_selected_text", "Design lead", "contains"),
+                       click(500, 410), key("ctrl+a"), check("reader_selected_text", "Design lead", "contains"),
                        key("ctrl+c"), shot("full-reader-selectable"), key("m"), check("dialog", "Move"),
                        key("Escape"), check("dialog", None), key("Escape"), check("full_reader", False),
                        key("ctrl+comma"), check("tab", "Preferences"), click(690, 366), check("dark", True),
-                       key("ctrl+1"), check("tab", "Mail"), wait(80), drag(650, 314, 714, 314),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80), drag(701, 333, 765, 333),
                        check("reader_selected_text", "Hey Alex", "contains"), shot("selected-email-text-dark"))
 
     def test_documentation_screenshots(self):
