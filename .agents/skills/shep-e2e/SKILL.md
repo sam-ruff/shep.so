@@ -345,3 +345,8 @@ an xclip selection only on the fixture display, verifies the exact UTF-8 bytes
 owned clipboard process. Synthetic xdotool typing of Japanese produced an empty
 field intermittently; keep ordinary `type` coverage for ASCII and the saved
 Unicode folder scenario's native paste/search/Enter checks.
+
+Remember an action's source with the saved `selected_mail_subject()` helper:
+it resolves `selected_id` against `mail_rows` in one observation. Startup page
+readiness does not mean the reader body and its `selected` subject have loaded.
+Keep action tests independent of that body load.
