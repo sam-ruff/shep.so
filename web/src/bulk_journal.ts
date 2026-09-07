@@ -1,4 +1,6 @@
 import { selectionToken } from "./selection_types";
+import { intentValues, type IntentLease } from "./mail_intents";
+import type { Fields } from "./model";
 
 // Durable metadata only. The runner must revalidate current identities, order
 // individual intent and retain ownership until each provider receipt is saved.
@@ -27,7 +29,9 @@ export type BulkStatus =
   | "restored"
   | "failed"
   | "uncertain"
-  | "missing";
+  | "missing"
+  | "skipped";
+// A superseded/cancelled operation is distinct from provider success.
 export interface BulkReceipt {
   before: BulkIdentity;
   after: BulkIdentity;
@@ -44,6 +48,8 @@ export interface BulkItem extends BulkOriginal {
   inverse?: BulkReceipt;
   error?: string;
   cache?: number;
+  intent?: IntentLease;
+  undoIntent?: IntentLease;
 }
 export interface BulkJob {
   id: string;
@@ -59,10 +65,17 @@ export interface BulkJob {
   counts: Record<BulkStatus, number>;
   pendingCache?: number;
   runnable?: number;
+  forwardIntent?: number;
+  undoIntent?: number;
 }
 export type BulkOutcome =
-  | { kind: "committed"; receipt: BulkReceipt; cacheApplied?: boolean }
-  | { kind: "rejected" | "uncertain"; error: string };
+  | {
+      kind: "committed";
+      receipt: BulkReceipt;
+      cacheApplied?: boolean;
+      applied?: Fields;
+    }
+  | { kind: "rejected" | "uncertain" | "skipped"; error: string };
 const statuses: BulkStatus[] = [
   "pending",
   "running",
@@ -72,6 +85,7 @@ const statuses: BulkStatus[] = [
   "failed",
   "uncertain",
   "missing",
+  "skipped",
 ];
 const request = <T>(r: IDBRequest<T>) =>
   new Promise<T>((resolve, reject) => {
@@ -137,7 +151,7 @@ function action(v: BulkAction): BulkAction {
 async function open(user: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let abandoned = false;
-    const r = indexedDB.open(`shep.bulk.v1.${user}`, 2);
+    const r = indexedDB.open(`shep.bulk.v1.${user}`, 3);
     r.onupgradeneeded = (event) => {
       const tx = r.transaction!;
       if (event.oldVersion < 1) {
@@ -153,13 +167,16 @@ async function open(user: string): Promise<IDBDatabase> {
       }
       const jobs = tx.objectStore("jobs"),
         items = tx.objectStore("items");
-      jobs.createIndex("queue", ["runnable", "created", "id"]);
-      items.createIndex("cache", ["cache", "job", "position"]);
+      if (event.oldVersion < 2) {
+        jobs.createIndex("queue", ["runnable", "created", "id"]);
+        items.createIndex("cache", ["cache", "job", "position"]);
+      }
       const cursor = jobs.openCursor();
       cursor.onsuccess = () => {
         if (!cursor.result) return;
         const job = cursor.result.value as BulkJob;
-        job.pendingCache = 0;
+        job.pendingCache ??= 0;
+        job.counts.skipped ??= 0;
         job.runnable = runnable(job);
         cursor.result.update(job);
         cursor.result.continue();
@@ -346,6 +363,17 @@ export class BulkJournal {
   get(id: string) {
     return this.transaction("readonly", (tx) => this.job(tx, id));
   }
+  getItem(id: string, position: number): Promise<BulkItem> {
+    selectionToken(id);
+    bounds(position);
+    return this.transaction("readonly", async (tx) => {
+      const item = await request<BulkItem | undefined>(
+        tx.objectStore("items").get([id, position]),
+      );
+      if (!item) throw changed();
+      return item;
+    });
+  }
   next(): Promise<BulkJob | null> {
     return this.transaction("readonly", async (tx) => {
       const jobs: BulkJob[] = await request(
@@ -502,16 +530,35 @@ export class BulkJournal {
     id: string,
     expected: number,
     decision: "approve" | "pause" | "resume" | "undo",
+    intentRevision?: number,
   ) {
+    if (intentRevision !== undefined) {
+      bounds(intentRevision);
+      if (!intentRevision) throw changed();
+    }
     return this.transaction("readwrite", async (tx) => {
       const job = await this.job(tx, id, expected);
       if (decision === "approve") {
         if (job.state !== "review") throw changed();
         job.state = "ready";
+        job.forwardIntent = intentRevision;
       } else {
         if (job.state !== "ready") throw changed();
-        if (decision === "undo") job.undo = true;
-        else if (decision === "pause") job.paused = true;
+        if (decision === "undo") {
+          if (
+            job.undo &&
+            intentRevision !== undefined &&
+            intentRevision !== job.undoIntent
+          )
+            throw changed();
+          if (
+            intentRevision !== undefined &&
+            (!job.forwardIntent || intentRevision <= job.forwardIntent)
+          )
+            throw changed();
+          job.undo = true;
+          job.undoIntent ??= intentRevision;
+        } else if (decision === "pause") job.paused = true;
         else if (decision === "resume") job.paused = false;
         else throw Error("Unsupported group decision.");
       }
@@ -571,6 +618,62 @@ export class BulkJournal {
       return item;
     });
   }
+  attachIntent(
+    id: string,
+    position: number,
+    attempt: string,
+    lease: IntentLease,
+  ) {
+    bounds(position);
+    selectionToken(attempt);
+    bounds(lease.revision);
+    return this.transaction("readwrite", async (tx) => {
+      const job = await this.job(tx, id),
+        item = await request<BulkItem | undefined>(
+          tx.objectStore("items").get([id, position]),
+        );
+      if (
+        !item ||
+        item.attempt !== attempt ||
+        !["running", "undo_running"].includes(item.status) ||
+        lease.id !== item.id ||
+        lease.account !== item.account ||
+        lease.revision !==
+          (item.phase === "forward" ? job.forwardIntent : job.undoIntent)
+      )
+        throw changed();
+      const fields = intentValues(lease.fields);
+      if (!Object.keys(fields).length) throw changed();
+      const expected: Fields =
+        item.phase === "forward"
+          ? job.action.kind === "flags"
+            ? job.action
+            : { folder: job.action.folder }
+          : Object.fromEntries(
+              Object.keys(item.intent?.fields ?? {}).map((key) => [
+                key,
+                item.receipt?.before[key as keyof BulkIdentity],
+              ]),
+            );
+      if (
+        Object.entries(fields).some(
+          ([key, value]) =>
+            intentValues(expected)[key as keyof Fields] !== value,
+        )
+      )
+        throw changed();
+      const saved: IntentLease = {
+        id: lease.id,
+        account: lease.account,
+        revision: lease.revision,
+        fields,
+      };
+      if (item.phase === "forward") item.intent = saved;
+      else item.undoIntent = saved;
+      tx.objectStore("items").put(item);
+      return this.save(tx, job);
+    });
+  }
   settle(id: string, position: number, attempt: string, result: BulkOutcome) {
     bounds(position);
     selectionToken(attempt);
@@ -607,6 +710,24 @@ export class BulkJournal {
           );
         if (item.phase === "forward") item.receipt = receipt;
         else item.inverse = receipt;
+        const lease = item.phase === "forward" ? item.intent : item.undoIntent;
+        if (lease) {
+          if (!result.applied)
+            throw Error(
+              "Record the fields acknowledged by this provider step.",
+            );
+          const applied = intentValues(result.applied);
+          if (
+            !Object.keys(applied).length ||
+            Object.entries(applied).some(
+              ([key, value]) =>
+                lease.fields[key as keyof Fields] !== value ||
+                receipt.after[key as keyof BulkIdentity] !== value,
+            )
+          )
+            throw changed();
+          lease.fields = applied;
+        }
         item.cache =
           result.cacheApplied === false ||
           (receipt.recovery && receipt.after.remoteId === "")
@@ -622,13 +743,17 @@ export class BulkJournal {
       } else {
         item.error = text(result.error);
         if (result.kind === "uncertain") job.paused = true;
-        else if (result.kind !== "rejected")
+        else if (result.kind !== "rejected" && result.kind !== "skipped")
           throw Error("Unsupported group outcome.");
         this.transition(
           tx,
           job,
           item,
-          result.kind === "uncertain" ? "uncertain" : "failed",
+          result.kind === "uncertain"
+            ? "uncertain"
+            : result.kind === "skipped"
+              ? "skipped"
+              : "failed",
         );
       }
       return job;

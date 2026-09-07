@@ -15,6 +15,9 @@ export interface MailIntent {
   id: string;
   account: string;
   fields: Partial<Record<IntentField, FieldIntent>>;
+  // Last acknowledged action actually applied to this cache, atomically with
+  // the mail row. Pending newer input does not erase the confirmed baseline.
+  applied?: Partial<Record<IntentField, number>>;
 }
 export interface IntentLease {
   id: string;
@@ -32,6 +35,7 @@ export interface IntentStore {
     undoOf?: number,
   ): Promise<IntentLease>;
   effective(lease: IntentLease, id?: string): Promise<Fields>;
+  uncached(lease: IntentLease): Promise<Fields>;
   finish(
     lease: IntentLease,
     status: Exclude<IntentStatus, "pending">,
@@ -247,6 +251,64 @@ export class BrowserIntents implements IntentStore {
       tx.objectStore("mailIntents").put(current, current.id);
     });
   }
+  uncached(lease: IntentLease) {
+    counter(lease.revision);
+    return this.transaction("readonly", async (tx) => {
+      const current = await this.record(tx, lease.id),
+        fields: Fields = {};
+      if (current.account !== lease.account)
+        throw Error("This message changed account. Refresh its review.");
+      for (const key of intentFields)
+        if (
+          lease.fields[key] !== undefined &&
+          (current.applied?.[key] ?? 0) < lease.revision
+        )
+          Object.assign(fields, { [key]: lease.fields[key] });
+      return fields;
+    });
+  }
+}
+
+/** Only the cache writer calls this, in the transaction that saved the actual
+ * acknowledged mail fields. A later action cannot be hidden by a lost reply. */
+export async function acknowledgeIntentCache(
+  tx: IDBTransaction,
+  lease: IntentLease,
+  changes: Change[],
+) {
+  counter(lease.revision);
+  const alias = await read<MailAlias | undefined>(
+      tx.objectStore("mailAliases").get(lease.id),
+    ),
+    id = alias?.target ?? lease.id;
+  const mail = await read<CacheMail | undefined>(
+    tx.objectStore("mailMetadata").get(id),
+  );
+  if (
+    !mail ||
+    mail.core.account_id !== lease.account ||
+    !changes.some((c) => c.store === "mail" && c.key === id && c.value)
+  )
+    throw Error(
+      "The saved message does not match this action. Refresh its folder.",
+    );
+  const store = tx.objectStore("mailIntents"),
+    current = await read<MailIntent | undefined>(store.get(id));
+  if (!current || current.account !== lease.account)
+    throw Error("The saved action changed account. Refresh its review.");
+  const fields = intentValues(lease.fields);
+  current.applied ??= {};
+  for (const key of intentFields) {
+    if (fields[key] === undefined) continue;
+    if (mail.core[key] !== fields[key])
+      throw Error("The cache did not save this action's acknowledged fields.");
+    if ((current.applied[key] ?? 0) > lease.revision)
+      throw Error(
+        "A newer action already reached this cache. Refresh before recovering the older result.",
+      );
+    current.applied[key] = Math.max(current.applied[key] ?? 0, lease.revision);
+  }
+  store.put(current, id);
 }
 
 /** Merge alias ownership inside the cache transaction. An asynchronously read
@@ -292,6 +354,13 @@ export async function adoptIntentAliases(
           (target.revision === value.revision && value.status === "applied"))
       )
         merged.fields[key] = value;
+      if (previous.applied?.[key] !== undefined) {
+        merged.applied ??= {};
+        merged.applied[key] = Math.max(
+          merged.applied[key] ?? 0,
+          previous.applied[key]!,
+        );
+      }
     }
     intents.put(merged, alias.target);
     intents.delete(alias.alias);

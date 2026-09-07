@@ -27,7 +27,7 @@ import { recoverSent, type SentWork } from "./sent";
 import { envelope, replyDraft, type ReplyEnvelope } from "./reply";
 import type { Session } from "./auth";
 import { MutationFailure } from "./model";
-import type { IntentLease } from "./mail_intents";
+import { intentValues, type IntentLease } from "./mail_intents";
 import type {
   Repository,
   Mail,
@@ -132,7 +132,7 @@ export interface MutationReceipt {
   cacheApplied: boolean;
   applied?: Fields;
 }
-class MutationSuperseded extends MutationFailure {
+export class MutationSuperseded extends MutationFailure {
   constructor() {
     super(
       "A newer choice replaced this change. Refresh the folder to display it.",
@@ -792,7 +792,11 @@ export class GatewayRepository implements Repository, SelectionRepository {
       });
   }
 
-  private async saveMoved(id: string, latest: RecordMail) {
+  private async saveMoved(
+    id: string,
+    latest: RecordMail,
+    intent?: IntentLease,
+  ) {
     const changes: Change[] = [];
     for (const other of await this.store.all<RecordMail>("mail")) {
       if (
@@ -817,7 +821,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
       );
     }
     changes.push({ store: "mail", key: id, value: latest });
-    await this.store.commit(changes);
+    await this.store.commit(changes, intent);
   }
   private async resolveMoved(id: string, latest: RecordMail, account: Account) {
     if (!latest.receipt)
@@ -847,8 +851,148 @@ export class GatewayRepository implements Repository, SelectionRepository {
   async registerMutation(id: string, fields: Fields) {
     return this.store.intents?.register(id, fields);
   }
+  get bulkIntents() {
+    if (!this.store.intents)
+      throw Error("Mail action storage is unavailable. Reopen Shep.");
+    return this.store.intents;
+  }
+  get profileId() {
+    return this.session.user_id;
+  }
   async cancelMutation(lease: IntentLease) {
     await this.store.intents?.finish(lease, "failed");
+  }
+  /** Replay an acknowledged result into the cache, never into IMAP/SMTP. A
+   * field already cached by this or a newer action keeps its current value. */
+  async repairMutation(
+    receipt: BulkReceipt,
+    lease: IntentLease,
+  ): Promise<BulkIdentity> {
+    const intents = this.store.intents;
+    if (!intents)
+      throw Error("Mail action storage is unavailable. Reopen Shep.");
+    const fields = intentValues(lease.fields),
+      before = receipt.before,
+      after = { ...receipt.after };
+    if (
+      before.id !== lease.id ||
+      after.id !== lease.id ||
+      before.account !== lease.account ||
+      after.account !== lease.account ||
+      Object.entries(fields).some(
+        ([key, value]) => after[key as keyof BulkIdentity] !== value,
+      )
+    )
+      throw Error(
+        "The saved receipt does not match this action. Reopen its history.",
+      );
+    const account = this.accounts.find((a) => a.id === lease.account);
+    if (!account) throw Error("This account was removed. Reopen Preferences.");
+    return this.exclusive(`account.${account.id}`, async () => {
+      const initial = await resolveMail(this.store, lease.id);
+      if (
+        !initial ||
+        localId(initial) !== lease.id ||
+        initial.core.account_id !== account.id
+      )
+        throw Error(
+          "The message identity changed. Refresh its recovery review.",
+        );
+      if (
+        !Object.keys(await intents.uncached(lease)).length &&
+        (after.remoteId || !receipt.recovery)
+      ) {
+        await intents.finish(lease, "applied");
+        return after;
+      }
+      if (receipt.recovery) {
+        const raw = await this.store.get<string>("raw", lease.id);
+        if (!raw)
+          throw Error(
+            "The original message is missing. Refresh before recovering this move.",
+          );
+        const actual = await fingerprint(raw);
+        if (
+          actual.bytes !== receipt.recovery.bytes ||
+          actual.sha256.some((n, i) => n !== receipt.recovery!.sha256[i])
+        )
+          throw Error(
+            "The cached content does not match this move. Refresh its recovery review.",
+          );
+        if (!after.remoteId) {
+          if (
+            !initial.moved &&
+            initial.core.folder === after.folder &&
+            /^[1-9]\d*\.[1-9]\d*$/.test(initial.core.remote_id)
+          )
+            after.remoteId = initial.core.remote_id;
+          else {
+            const response = await this.json("/api/mail/resolve-move", {
+              connection: this.connection(account),
+              receipt: {
+                account: account.id,
+                folder: after.folder,
+                current: null,
+                fingerprint: actual,
+              },
+            });
+            const current = coreMail(response.mail, account.id);
+            if (
+              current.folder !== after.folder ||
+              current.id !== serverId(current) ||
+              !/^[1-9]\d*\.[1-9]\d*$/.test(current.remote_id)
+            )
+              throw Error(
+                "The recovered message has an invalid identity. Refresh before another action.",
+              );
+            after.remoteId = current.remote_id;
+          }
+        }
+      }
+      await this.exclusive(`cache.${account.id}`, async () => {
+        const latest = await resolveMail(this.store, lease.id);
+        if (
+          !latest ||
+          localId(latest) !== lease.id ||
+          latest.core.account_id !== account.id
+        )
+          throw Error(
+            "The message identity changed. Refresh its recovery review.",
+          );
+        const needed = await intents.uncached(lease);
+        if (!Object.keys(needed).length) return;
+        if (needed.folder !== undefined) {
+          const current = physical(latest),
+            same = (v: BulkIdentity) =>
+              current.folder === v.folder && current.remoteId === v.remoteId;
+          if (
+            !same(before) &&
+            !same(after) &&
+            !(latest.moved && latest.receipt?.folder === after.folder)
+          )
+            throw Error(
+              "This message moved again. Review its current folder before recovering the saved change.",
+            );
+          latest.core.folder = after.folder;
+          if (account.protocol === "Imap" && !latest.local) {
+            if (!/^[1-9]\d*\.[1-9]\d*$/.test(after.remoteId))
+              throw Error(
+                "Recover the destination identity before saving this move.",
+              );
+            latest.core.remote_id = after.remoteId;
+            latest.core.id = serverId(latest.core);
+          } else latest.localEdited = true;
+          latest.localId = lease.id;
+          delete latest.pendingMove;
+          delete latest.moved;
+          delete latest.receipt;
+        }
+        Object.assign(latest.core, needed);
+        await this.saveMoved(lease.id, latest, { ...lease, fields: needed });
+      });
+      await intents.finish(lease, "applied");
+      return after;
+    });
   }
   async mutate(
     id: string,
@@ -983,13 +1127,14 @@ export class GatewayRepository implements Repository, SelectionRepository {
         const folder = fields.folder === "Inbox" ? "INBOX" : fields.folder;
         Object.assign(latest.core, fields, folder ? { folder } : {});
         latest.localEdited = true;
-        await this.store.commit([
-          { store: "mail", key: localId(latest), value: latest },
-        ]);
+        await this.store.commit(
+          [{ store: "mail", key: localId(latest), value: latest }],
+          lease ? { ...lease, fields } : undefined,
+        );
         receipt = { before, after: physical(latest) };
         cacheApplied = true;
         // Local cache commit is the acknowledgment for POP3/local Sent actions.
-        await acknowledged?.({ receipt, cacheApplied });
+        await acknowledged?.({ receipt, cacheApplied, applied: fields });
         return true;
       });
       if (local) return { receipt: receipt!, cacheApplied, applied: fields };
@@ -1027,7 +1172,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
         ) {
           receipt = { before, after: physical(latest) };
           cacheApplied = true;
-          await acknowledged?.({ receipt, cacheApplied });
+          await acknowledged?.({ receipt, cacheApplied, applied: fields });
           return;
         }
         let recovery: BulkReceipt["recovery"];
@@ -1085,13 +1230,14 @@ export class GatewayRepository implements Repository, SelectionRepository {
           await acknowledged?.({
             receipt: structuredClone(receipt),
             cacheApplied: false,
+            applied: fields,
           });
         } else {
           Object.assign(latest.core, fields, folder ? { folder } : {});
           latest.localEdited = true;
         }
         await this.exclusive(`cache.${account.id}`, () =>
-          this.saveMoved(id, latest),
+          this.saveMoved(id, latest, lease ? { ...lease, fields } : undefined),
         );
         cacheApplied = true;
         // An account may have adopted a local Sent identity while waiting for
@@ -1101,6 +1247,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
           await acknowledged?.({
             receipt: structuredClone(receipt),
             cacheApplied,
+            applied: fields,
           });
         }
         if (latest.moved) {
