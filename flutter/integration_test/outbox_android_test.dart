@@ -384,14 +384,17 @@ void main() {
       await wait(() => workspace.loadingBodies.isEmpty);
       await wait(() => workspace.pending == 0);
       expect(find.byTooltip('Unflag'), findsOneWidget);
-      // The saved unread state was checked before opening. The current mobile
-      // default marks on open; parity with desktop's read-on-leave stays open.
-      expect(find.byTooltip('Mark unread'), findsOneWidget);
-      expect(workspace.mail(localId)!.unread, isFalse);
+      // Deliberate reading retains unread until leaving this reopened reader.
+      expect(find.byTooltip('Mark read'), findsOneWidget);
+      expect(workspace.mail(localId)!.unread, isTrue);
       expect(credentials.reads, credentialReads);
       await capture('native-imap-local-sent-reopened');
       await tester.pageBack();
       await tester.pumpAndSettle();
+      await wait(() => workspace.pending == 0);
+      expect(workspace.mail(localId)!.unread, isFalse);
+      expect((await repository.detail(localId)).unread, isFalse);
+      expect(credentials.reads, credentialReads);
       await tester.tap(find.byTooltip('Open navigation menu'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Inbox'));

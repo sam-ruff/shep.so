@@ -22,7 +22,7 @@ void main() {
       final fixture = File('${support.path}/shep-forward-fixture.sqlite');
       final request = File('${support.path}/shep-forward-request');
       await request.writeAsString('waiting-before-profile-open', flush: true);
-      Future<void> wait(bool Function() ready) async {
+      Future<void> wait(bool Function() ready, {bool settle = true}) async {
         final end = DateTime.now().add(const Duration(seconds: 25));
         while (!ready()) {
           if (DateTime.now().isAfter(end)) {
@@ -30,7 +30,7 @@ void main() {
           }
           await tester.pump(const Duration(milliseconds: 100));
         }
-        await tester.pumpAndSettle();
+        if (settle) await tester.pumpAndSettle();
       }
 
       final end = DateTime.now().add(const Duration(seconds: 25));
@@ -243,7 +243,9 @@ void main() {
       repository.release = Completer<void>();
       repository.started = Completer<void>();
       await clickForward();
-      await wait(() => repository.started!.isCompleted);
+      // The deliberately held operation now has an animated busy icon. Wait
+      // for its transport barrier, then navigate using the actual Back control.
+      await wait(() => repository.started!.isCompleted, settle: false);
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Compose'));

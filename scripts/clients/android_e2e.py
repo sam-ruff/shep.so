@@ -165,6 +165,8 @@ def formatted(device, flutter, env):
                 except subprocess.TimeoutExpired:fixture.kill();fixture.wait()
 
 def appium(device,flutter,env,formatted_reader=False):
+    if formatted_reader:
+        run('android-formatted-fixture-check',[sys.executable,str(ROOT/'scripts/clients/generate_html_fixture.py'),'--check'],env=env)
     # Integration tests replace the APK; rebuild the review entry before Appium.
     run('android-preview-build', [flutter,'build','apk','--debug','--flavor','preview','--target','test/formatted_main.dart' if formatted_reader else 'test/preview_main.dart'], ROOT/'flutter')
     run('android-install', ['adb','-s',device,'install','-r',str(ROOT/'flutter/build/app/outputs/flutter-apk/app-preview-debug.apk')])
@@ -242,7 +244,7 @@ def main(device, flutter='flutter', compose_only=False, outbox_only=False, incom
     appium(device,flutter,env,formatted_reader=True)
     outbox(device,flutter,env)
     captures=ROOT/'artifacts/flutter/native';captures.mkdir(parents=True,exist_ok=True)
-    for name in ['native-find-tail','native-find-quoted','native-credential-activation-failure','native-credential-cleanup-retry','native-account-removal-light','native-account-removal-dark','native-account-removal-cleanup','native-incoming-saved','native-sent-handover','sent-handover-reader','sent-handover-undo','native-draft-reopened','native-account-retry','native-production-startup','paged-swipe-undo','native-reply-attachments','native-outbox-review-light','native-outbox-review-dark','native-outbox-recovered-draft','native-outbox-empty','native-outbox-local-sent', 'native-sent-copy-review', 'native-sent-preferences', 'native-imap-local-sent-offline', 'native-imap-local-sent-reopened', 'native-imap-credential-recovery']:
+    for name in ['native-reader-footer-light','native-reader-footer-dark','native-find-tail','native-find-quoted','native-credential-activation-failure','native-credential-cleanup-retry','native-account-removal-light','native-account-removal-dark','native-account-removal-cleanup','native-incoming-saved','native-sent-handover','sent-handover-reader','sent-handover-undo','native-draft-reopened','native-account-retry','native-production-startup','paged-swipe-undo','native-reply-attachments','native-outbox-review-light','native-outbox-review-dark','native-outbox-recovered-draft','native-outbox-empty','native-outbox-local-sent', 'native-sent-copy-review', 'native-sent-preferences', 'native-imap-local-sent-offline', 'native-imap-local-sent-reopened', 'native-imap-credential-recovery']:
         png=captures/f'{name}.png'
         subprocess.run(['convert',str(png),str(png.with_suffix('.webp'))],check=True)
         png.unlink()

@@ -1,4 +1,5 @@
 import '../test/support/move_feedback_scenario.dart';
+import '../test/support/reader_actions_scenario.dart';
 import '../test/support/sent_handover_scenario.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -37,6 +38,19 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
     await tester.pumpAndSettle();
+  }
+
+  for (final dark in [false, true]) {
+    testWidgets(
+      'native reader footer loading and held touch (${dark ? 'dark' : 'light'})',
+      (tester) async {
+        await readerActionsScenario(
+          tester,
+          dark: dark,
+          capture: (name) => capture(tester, name),
+        );
+      },
+    );
   }
 
   testWidgets('native counted moves, partial Undo recovery and reader expiry', (

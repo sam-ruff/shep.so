@@ -246,6 +246,31 @@ try {
     await query("Café", "1 of 3");
     await driver.saveScreenshot(path.join(out, "formatted-native-dark.png"));
   });
+  await step(
+    "native footer Move and Reply after formatted scrolling",
+    async () => {
+      await tap("Close Find");
+      const screen = await driver.getWindowSize();
+      for (const name of ["Reply", "Reply all", "Forward", "Print", "Move"]) {
+        const node = await driver.$(
+          `android=new UiSelector().description("${name}")`,
+        );
+        assert.ok(await node.isDisplayed(), name);
+        const pos = await node.getLocation(),
+          size = await node.getSize();
+        assert.ok(
+          pos.y > screen.height / 2 && pos.y + size.height <= screen.height,
+          `${name}: ${JSON.stringify({ pos, size })}`,
+        );
+      }
+      await driver.saveScreenshot(path.join(out, "reader-footer-dark.png"));
+      await tap("Move");
+      await waitText("Move message");
+      await driver.back();
+      await tap("Reply");
+      await waitText("Re: A little room for good ideas");
+    },
+  );
   await writeFile(
     path.join(out, "result.json"),
     JSON.stringify({ passed: true, steps }, null, 2),
