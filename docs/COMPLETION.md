@@ -1213,3 +1213,8 @@ The final Android rerun passes all **nine native scenarios**. All **six standard
 
 
 The production APK passes inspection for all three Rust ABIs, Internet permission and fixture exclusion; SHA-256: `4b918a341780b4951c42e961eaa58a6a07cfb1f4d32d253b1ab46ab017965a92`. It is development-signed, not store-ready. Root Rust/shared code is unchanged; required formatting/Clippy/Rust commit hooks and the exact review-branch shipping record follow.
+
+
+### Counted move feedback shipping record
+
+Committed and pushed as [`96275a1`](https://github.com/sam-ruff/shep.so/commit/96275a18e5c623bc6837578bf4227dc16c339a0e) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), with the exact remote SHA verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Pinned strict documentation validation passes. The client host/native/browser/HTTPS checks, nine Android scenarios, six Appium stages, six Flutter browser stages, corrected failures, reviewed captures and production APK/browser inspection are recorded above. R77’s prompt-push request is fulfilled for this increment. The dedicated emulator is stopped and artifacts remain ignored. Main and the personal desktop installation were untouched. Full parity, durable move recovery/history, Apple/OS/close lifecycle, performance, R75/R76 and VPS configuration remain active. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
