@@ -770,3 +770,52 @@ R42 remains open for explicit selection of new arrivals without losing existing
 membership, group/individual mutation coordination and the remaining native
 History/recovery paths. These are tracked explicitly in TODO; passing the current
 fixture suite does not establish live-provider or cross-platform coverage.
+
+
+## 2026-09-07 — Selection arrivals, pointer redraws and group conflict guards
+
+Shipped and installed source commit `2444049ae843573b952604a2c601c088fd27b61d`.
+Explicit checkbox/Ctrl-click selections can now include arriving mail while
+preserving earlier choices. Shift ranges use the current query order, including
+intermediate arrivals. Passive refresh never selects new mail by itself. Frozen
+reviews keep their original membership, and rejected gestures or transient
+observation failures retain confirmed choices. Query order and membership stay
+in SQLite; the UI continues receiving bounded metadata pages.
+
+Individual move/transfer/Undo/read/flag paths check pending group ownership.
+Group Undo claims a resolved identity without stealing another item's claim;
+completed phases cannot reacquire ownership. Pending row flag buttons absorb
+clicks without opening the message, and conflicting context actions explain how
+to review the group. These guards do not establish serialization across independent
+processes or finish every individual/group staging race; broader ordering and
+provider ambiguity remain in TODO.
+
+The final native run exposed a redraw between motion and press erasing the
+previous queued-click fix's pointer position. The root tracker now survives
+redraws and shares captured dropdown/nested-overlay motion, while retaining
+runtime overlay exclusion and resetting after blur/leave/interface-scale changes.
+The deterministic widget regression fails on the old behavior; an additional
+overlay regression covers captured motion and popup closure. Consecutive native
+checkbox clicks remain consecutive, without sleeps masking input defects.
+
+Validation: **353 Rust tests**, **29 Python tests**, formatting and Clippy pass.
+The same final native binary passes all **119 saved functional scenarios**.
+The first runner was externally terminated after 21 completed cases; a detached
+runner passed all 98 remaining cases, including the interrupted case. Evidence:
+`artifacts/logs/selection-pointer-native-a.log` and
+`selection-pointer-native-remaining.log`. No failed scenario was omitted.
+Rust/Clippy/Python logs share the `selection-pointer-` prefix. Git hooks also pass.
+
+Reviewed WebP captures include arrival checkbox/range selections in
+`artifacts/e2e/5de4c05ddac0/` and `7ab94d4a3392/`, and the pending-group conflict in
+`78e612e842df/`. Native Mail/Calendar refresh arrows remain clean in standard,
+compact dark and 120% layouts (`2177522fb60f/`, `b18dcbe0dfe0/`). This verifies the
+native icons; the original browser-chrome crop was not separately reproduced.
+
+Strict Zensical builds and optimized release checksum/extraction/bundled-installer
+checks pass. The Linux user install matches the release binary, SHA-256
+`c9583cc01bb02b2d8220d7ad6a92d9044e915910556fd978653005156e89d281`.
+Existing personal windows were left running. R42 multi-selection is removed from
+TODO; its remaining bulk History/recovery/pagination paths stay open. The full
+product goal remains active, performance measurements remain deferred, and
+quality/release CI remain disabled.
