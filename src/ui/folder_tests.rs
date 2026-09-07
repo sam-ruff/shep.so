@@ -44,6 +44,41 @@ fn index(app: &App, account: &str, path: &str) -> usize {
     app.sidebar_items().iter().position(|item|matches!(&item.action,Message::AccountFolder(a,p)|Message::ToggleFolderGroup(a,p) if a==account && p==path)).unwrap()
 }
 #[tokio::test]
+async fn mail_navigation_clears_previous_folder_focus_and_retargets_sidebar_keys() {
+    for unified in [true, false] {
+        let (mut app, _, _commands) = fixture().await;
+        app.preferences.unified_inbox = unified;
+        let old_index = index(&app, "b", "Projects");
+        let _ = app.handle(Message::SidebarAction(old_index));
+        assert!(app.sidebar_focus);
+        assert_eq!(app.query.folder, "Projects");
+        let _ = app.handle(Message::Tab(Tab::Mail));
+        assert_eq!(app.query.folder, "INBOX");
+        assert_eq!(
+            app.query.account.as_deref(),
+            if unified { None } else { Some("a") }
+        );
+        assert!(!app.sidebar_focus, "Mail must remove the old focus outline");
+        assert!(app.list_focus);
+        assert_ne!(app.sidebar_index, old_index);
+        assert!(app.sidebar_items()[app.sidebar_index].active);
+
+        let _ = app.handle(Message::SidebarAction(old_index));
+        let _ = app.key(
+            Key::Character("i".into()),
+            keyboard::Modifiers::default(),
+            false,
+        );
+        assert_eq!(app.query.folder, "INBOX");
+        assert!(
+            app.sidebar_focus,
+            "the sidebar-only Inbox key keeps keyboard navigation there"
+        );
+        assert!(!app.list_focus);
+        assert!(app.sidebar_items()[app.sidebar_index].active);
+    }
+}
+#[tokio::test]
 async fn native_folder_expansion_is_immediate_scoped_and_preserves_newer_saves() {
     let (mut app, store, mut commands) = fixture().await;
     assert!(

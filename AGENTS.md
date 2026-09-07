@@ -42,16 +42,20 @@ bash scripts/install-hooks.sh              # install repository Git hooks
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
+cargo test -p shep-html-pixbuf             # dependency cache regressions
 python3 -m unittest discover -s tests -p 'test_*.py'
 cargo bench --bench responsiveness
 cargo build --profile test-ui --features test-support
 python3 scripts/e2e.py                      # real native UI flows through MCP
+python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html.json
 bash scripts/check.sh                      # all of the above
 ```
 
 The pre-commit hook runs formatting, Clippy and Rust tests. The commit-msg hook requires Conventional Commits. Do not skip failing hooks or weaken a budget just to get a commit through. `SHEP_SKIP_E2E=1 bash scripts/check.sh` runs the non-GUI checks on machines without Linux/X11; report that omission. CI repeats the checks; Rust compiles/tests run on all three platform runners, native E2E currently runs on Linux.
 
 Defer performance measurements while the PC is saturated with other work; run them at the end on an otherwise idle machine. `python3 scripts/e2e.py --functional-only` runs correctness flows without the latency benchmark. Never weaken thresholds based on a loaded-host result.
+
+The latest user priority is HTML opening latency (R72). They explicitly authorize measuring native selection-to-visible-HTML now and iterating on it until the wait is imperceptible. This supersedes the earlier measurement deferral for HTML opening work. Preserve the distinction between body loaded, HTML prepared/rendered, and actually presented pixels; cover cold, warm and prefetched navigation and document the host conditions without inventing an idle-host claim.
 
 During development run targeted tests after backend changes, the benchmark after storage/scheduling changes, and the MCP E2E suite after UI changes. Run the complete relevant set before pushing. Do not claim live Google, IMAP, POP3, SMTP, CalDAV, Windows or macOS verification based solely on fixture tests.
 
@@ -84,7 +88,7 @@ Read-on-leave and action feedback requirements: selecting an inbox message and t
 - Prefer 40–44 px click targets; visible focus, descriptive labels/tooltips, persistent errors with a clear recovery, no text clipping at 900×640 and 1440×920. Mouse and keyboard should reach the same core actions.
 - User-visible messages should explain the problem and next action. Do not present sample data as live accounts, pretend a sync succeeded after errors, or silently lose unsent drafts.
 
-Run `python3 scripts/performance_gate.py` after backend and native timing reports have been generated. It fails on missing, invalid, undersampled or over-budget evidence.
+Run `python3 scripts/performance_gate.py` after backend, native navigation and HTML pixel timing reports have been generated. It fails on missing, invalid, undersampled or over-budget evidence.
 
 The inbox/reader divider must remain mouse-draggable with saved preferences and minimum widths. Filtering and sorting must invalidate stale page prefetches; flags map to IMAP `\Flagged` and remain local for POP3. Cover drag persistence, mouse flagging/filtering/sorting and page navigation in the MCP suite.
 
@@ -701,3 +705,14 @@ confirmation. Cache moves copy MIME inside SQLite, rekey IMAP metadata, preserve
 local POP3 identities, conversation/restored markers, Sent mappings and relevant
 Undo receipts. Deleting a referenced folder retires only affected history items.
 Retain the protocol and `tests/folder_actions.rs` recovery/collision regressions.
+
+HTML opening measurements use the owned X11 pixel sampler in
+`scripts/native_pixels.py` and the saved MCP equivalent `scripts/html_latency.py`.
+See the repository E2E skill for timing boundaries and fixture limitations. Keep
+20 samples per case and the 100 ms cold-document / 50 ms cached-document p95
+limits in `performance-budgets.json`. `--html-only` checks only this explicitly
+authorized work while other final performance measurements remain deferred.
+Bounded document-local text/glyph caches and visited initial-frame reuse must
+preserve font, content, viewport, image-policy and generation identity. The
+software renderer coalesces overlapping damage and paints only visible solid
+panel interiors; keep full/partial pixel and fractional-scale regressions.

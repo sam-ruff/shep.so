@@ -4,7 +4,7 @@ Performance measurements must run on an otherwise idle machine. During developme
 
 ## Enforced gates
 
-`performance-budgets.json` is the source of truth. `scripts/performance_gate.py` requires both backend and native UI reports, rejects missing/non-finite/negative results, requires at least 20 samples, and checks the 100,000-message backend dataset.
+`performance-budgets.json` is the source of truth. `scripts/performance_gate.py` requires backend, native navigation and HTML pixel reports, rejects missing/non-finite/negative results, requires at least 20 samples, and checks the 100,000-message backend dataset.
 
 | Measurement | p95 ceiling |
 | --- | ---: |
@@ -14,6 +14,8 @@ Performance measurements must run on an otherwise idle machine. During developme
 | Cached body load | 10 ms |
 | UI update handler | 8 ms |
 | Native tab navigation, input through observed state | 150 ms |
+| Unprepared HTML document, native click through displayed pixels | 100 ms |
+| Cached/prefetched HTML, native click through displayed pixels | 50 ms |
 
 The backend benchmark uses a temporary SQLite WAL database with 100,000 messages over four accounts, 60 samples per query and 100 body loads. It also verifies that a full bounded channel returns backpressure immediately. It writes `artifacts/performance/backend.json`.
 
@@ -48,3 +50,46 @@ Linux x86_64, iced tiny-skia on Xvfb at 1440×920. Backend: optimized release, 1
 | Native tab navigation | 145.004 ms | 150 ms |
 
 The initial native runs measured 154.6–156.8 ms with coarser observation. The harness now explicitly uses 1 ms key injection and 5 ms state polling, which removes artificial key waiting and reduces timing quantization. Budgets were not changed. The native result has limited headroom and must be rechecked on the self-hosted runners. It measures input-to-observed-state, not display frame pacing; it does not establish 60 FPS or live network throughput.
+
+## HTML opening — 7 September 2026
+
+The user explicitly authorized this focused measurement before the remaining
+idle-host gates. `scripts/html_latency.py` measures a native XTest click through
+visible HTML pixels on a 1440×920 RGB24 Xvfb window, using the optimized `test-ui`
+build. No builds ran concurrently with the reported comparison; the host was
+not asserted fully idle. Each case has 20 independent observations.
+
+| Opening case | Before p50 / p95 | After p50 / p95 |
+| --- | ---: | ---: |
+| Unprepared 200-paragraph letter | 87.5 / 122.4 ms | 39.9 / 45.8 ms |
+| Return to styled mail | 84.2 / 103.3 ms | 25.1 / 25.7 ms |
+| Prefetched adjacent message | 113.7 / 140.3 ms | 23.5 / 26.3 ms |
+| Reopen the long letter | 95.7 / 104.8 ms | 26.5 / 37.0 ms |
+
+Bounded width/glyph caching removes repeated shaping/rasterization. The reader
+retains visited initial frames as well as adjacent preparations. Coalescing
+overlapping damage and painting only visible solid panel interiors removes
+repeated software painting of the same region. Pixel-equivalence tests protect
+borders, text, shadows and fractional scaling; external-image policy remains
+part of the frame-cache identity.
+
+Reference pixels are prepared in a separate fixture process. Each measurement
+process starts fresh; its initial styled message has already warmed the font
+system. “Unprepared” describes the selected document, not process startup or
+first font discovery. The styled sample has tables, inline WebP, CSS and blocked
+external images. These figures do not establish live download speed, arbitrary
+HTML complexity, other platforms, monitor scanout or sustained frame rate.
+
+The sampler chooses 64 text/edge points across the visible body and waits for
+at least 97% to match at RGB tolerance 8, with a 2 ms polling sleep. It rejects an
+already visible reference. Pointer placement, reference preparation, dwell and
+screenshots are outside the measured interval. The gate recomputes p95 from raw
+observations and rejects invalid, repeated or insufficient samples. Run:
+
+```sh
+python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html.json
+python3 scripts/performance_gate.py --html-only
+```
+
+Full quality also runs these alongside backend/navigation gates. Reports and
+WebP evidence stay under ignored `artifacts/`; no personal inbox is used.

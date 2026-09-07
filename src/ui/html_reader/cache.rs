@@ -14,11 +14,19 @@ pub(in crate::ui) struct Cache {
 }
 impl Cache {
     pub fn insert(&mut self, key: Key, frame: Arc<html_render::Frame>) {
+        let handle = handle(&frame);
+        self.remember(key, frame, handle);
+    }
+    pub fn remember(
+        &mut self,
+        key: Key,
+        frame: Arc<html_render::Frame>,
+        handle: widget::image::Handle,
+    ) {
         if frame.pixels.len() > MAX_BYTES || frame.scroll != 0. || frame.pan != 0. {
             return;
         }
         self.frames.retain(|(old, ..)| old != &key);
-        let handle = handle(&frame);
         self.frames.push_front((key, frame, handle));
         while self.frames.len() > MAX_FRAMES || self.bytes() > MAX_BYTES {
             self.frames.pop_back();
