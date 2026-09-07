@@ -1,6 +1,6 @@
 # Conversation request audit
 
-Audited against the user messages, source, AGENTS.md and completion evidence on 2026-09-06. “Delivered” refers to existing committed behavior, not completion of the entire product. “In progress” includes uncommitted code and does not imply shipping or a full passing test suite. Open items are maintained in [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md); completed evidence stays in [COMPLETION.md](COMPLETION.md).
+Audited against the user messages, source, AGENTS.md and completion evidence on 2026-09-07. “Delivered” refers to existing committed behavior, not completion of the entire product. “In progress” includes uncommitted code and does not imply shipping or a full passing test suite. Open items are maintained in [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md); completed evidence stays in [COMPLETION.md](COMPLETION.md).
 
 | ID | Request and subsequent corrections | Status / evidence |
 | --- | --- | --- |
@@ -203,3 +203,8 @@ All 14 Android integration scenarios and both native Appium paths now have passi
 ### Desktop integration shipping record
 
 Committed and pushed as [`72ca625`](https://github.com/sam-ruff/shep.so/commit/72ca625961bee619747e98110adcd2dfe22eb8c0) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), with the remote SHA verified. Required hooks passed formatting, Clippy and all **372 root/shared tests**; two personal-account diagnostics remain intentionally ignored. The tests, production artifacts, native visual review and corrected Android automation are recorded above. R77’s prompt-push request is fulfilled for this increment. The dedicated emulator is stopped, artifacts remain ignored, and the separate main worktree and personal installation were not changed. Full parity, Apple execution, R75/R76 and VPS deployment remain active. Quality/release definitions remain disabled; re-enable them when trusted runners and release prerequisites are ready.
+
+
+### Shared Forward preparation — R41/R67/R71/R73/R77
+
+Complete cached MIME preparation now lives in the shared native/WASM content crate; root desktop uses the shared draft wrapper. It preserves an independent thread and exact file bytes while keeping outgoing HTML separate from safe display documents. Shared fixtures cover duplicate attachment metadata, independent CID scopes, corrupted resources and current size/count/nesting limits. Client atomic storage and Forward controls remain active gaps; verification and prompt review-branch shipping evidence follow in the completion log. Apple execution, R75/R76, broader parity and VPS configuration remain open.
