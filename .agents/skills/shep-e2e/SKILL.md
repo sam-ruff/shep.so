@@ -429,3 +429,46 @@ notification recovery. `test_notifications_*` contains the automated equivalents
 private-bus Rust tests cover the actual Linux wire adapter separately.
 
 For pending move destinations, keep the three `test_move_shows_destination_before_server_acknowledgment`, `test_move_destination_failure_and_pending_undo_restore_source` and `test_cross_account_destination_is_visible_during_transfer` flows. With `mail_actions="slow"`, open Projects before acknowledgment and assert its row/count while `mail_pending >= 1`; `mail_rows.0.group_pending` includes temporary destination ownership. Check the same subject/body before and after the new server ID, moving back to Inbox, failure rollback and Undo while pending. The cross-account flow enables the preference then uses real drag/drop. Review destination and error screenshots; the fixture cannot establish missing-COPYUID or live Fastmail recovery.
+
+For durable move-cache recovery, launch `desktop.start(move_recovery=true,
+persistent=true)`. Projects contains the fictional **Recovered keepsake**, whose
+MOVE was acknowledged without a destination UID. Open Projects through the
+sidebar, verify the full cached body, restart the owned process and reopen it.
+`mail_rows.0.group_pending` remains true until Refresh supplies the fixture's
+exact destination identity. Refresh must keep the open reader/body and one row,
+change `selected_id`, clear the pending marker and leave `notice` empty. The
+fixture never contacts a provider or keychain; actual wire acknowledgments and
+journal retry rules have separate Rust tests. Preserve
+`test_moved_cache_is_readable_after_restart_and_refresh_rekeys_the_open_reader`
+and review its cold/restarted/located WebPs. A late old-cache read previously
+left an error toast despite the email staying visible; assert notice as well as
+reader state. Keep this distinct from live-provider verification and the still
+unfinished manual recovery/review controls.
+
+
+Manual move recovery uses `desktop.start(move_recovery="committed" | "copied" |
+"unconfirmed" | "fail-once", persistent=true)`. Boolean true retains the original
+committed/Refresh scenario. These fixtures run the production journal recovery
+runner with a private fake connection; no provider or OS credential access occurs.
+Observe `move_recovery` for stage, choice, explicit confirmation, pending count
+and errors. Open Review in the reader or Preferences → Accounts → Review
+unfinished moves. Unconfirmed recovery and keeping a local copy require the
+checkbox; Enter/Y cannot bypass it. Escape/N close the form while active recovery
+continues. Keep the saved review, success/navigation, failed retry, local-copy
+restart, compact dark Preferences and graceful-close scenarios. The close flow
+inspects only its owned fixture database, read-only, after the process exits.
+
+For cross-folder search, the three `test_search_*` scenarios use `long_folders`
+and real message search, moves and bulk controls. Search `Sidebar fixture` from
+Inbox to find four cached custom-folder messages. Verify result folder labels,
+selected-account boundaries, exact bulk membership, moving a result without
+removing a still-matching global result, and returning to Inbox when clearing
+search. A fixture's long folder catalog does not contain Archive in the Move
+chooser: use Projects and assert `move_enter_destination` before Enter. Archive
+has separate native toolbar/shortcut coverage. Review light and compact dark
+WebPs; observation counts alone do not establish layout quality.
+
+When a scenario leaves search with Escape before independently opening another
+control, wait for `focused_input == null` before clicking. Key injection returning
+is not proof that iced processed the key; delayed Escape can otherwise close the
+newly opened dialog. Keep rapid-key cancellation as a separate regression (R63).

@@ -437,6 +437,7 @@ async fn a_failed_inverse_stage_cannot_erase_the_acknowledged_forward_receipt() 
         .unwrap();
     store.request_bulk_undo("first".into()).await.unwrap();
     let receipt = MoveReceipt {
+        recovery: None,
         account: "work".into(),
         folder: "Archive".into(),
         current: Some(current.clone()),

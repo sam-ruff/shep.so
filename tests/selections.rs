@@ -676,3 +676,55 @@ async fn explicit_ranges_follow_current_order_including_intermediate_arrivals() 
     let kept = store.selection_snapshot(id, vec![]).await.unwrap();
     assert_eq!((kept.selected, kept.available, kept.revision), (4, 3, 2));
 }
+
+#[tokio::test]
+async fn across_folder_search_captures_exact_account_membership_and_ranking_over_pages() {
+    let store = Store::memory().unwrap();
+    fixture(&store).await;
+    let mut query = MailQuery {
+        account: Some("work".into()),
+        folder: "INBOX".into(),
+        search: "test".into(),
+        search_all_folders: true,
+        sort: MailSort::Relevance,
+        ..Default::default()
+    };
+    let expected = query_ids(&store, query.clone()).await;
+    assert_eq!(expected.len(), 134);
+    assert!(expected.iter().any(|id| id.contains(":A. Keep:")));
+    assert!(expected.iter().all(|id| id.starts_with("work:")));
+    let id = MailSelectionId::default();
+    let snapshot = store
+        .capture_selection(
+            id,
+            0,
+            query.clone(),
+            true,
+            expected.iter().take(PAGE_SIZE).cloned().collect(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(snapshot.selected, 134);
+    assert_eq!(selected_ids(&store, id, 0).await, expected);
+    query.search.clear();
+    assert_eq!(query_ids(&store, query.clone()).await.len(), 123);
+    // Clearing the live search cannot change the already captured membership.
+    assert_eq!(selected_ids(&store, id, 0).await, expected);
+    query.search = "test".into();
+    query.folders = Some(vec![FolderSelection {
+        account: Some("personal".into()),
+        folder: "INBOX".into(),
+        sent_only: false,
+    }]);
+    let expected = query_ids(&store, query.clone()).await;
+    assert_eq!(expected.len(), 8);
+    let scoped = MailSelectionId::default();
+    let snapshot = store
+        .capture_selection(scoped, 0, query, true, vec![])
+        .await
+        .unwrap();
+    assert_eq!(snapshot.selected, 8);
+    assert_eq!(selected_ids(&store, scoped, 0).await, expected);
+    store.release_selection(id).await.unwrap();
+    store.release_selection(scoped).await.unwrap();
+}

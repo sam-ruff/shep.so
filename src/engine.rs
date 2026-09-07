@@ -7,6 +7,7 @@ mod dispatch;
 mod google_lifecycle;
 mod mail_actions;
 mod mail_sync;
+mod move_recovery;
 mod outgoing;
 mod removals;
 mod restore;
@@ -33,6 +34,13 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    MoveRecoveries(u64, Option<String>),
+    RecoverMailMove(
+        u64,
+        Arc<crate::mail_actions::journal::MoveRecord>,
+        crate::mail_actions::journal::RecoveryAction,
+        bool,
+    ),
     Query(u64, MailQuery, bool),
     Selection(u64, selections::Request, Vec<String>),
     ReviewSelection(u64, crate::store::MailSelectionId, u64, Vec<String>),
@@ -100,6 +108,9 @@ pub enum Command {
 impl Command {
     fn key(&self) -> Option<String> {
         match self {
+            Self::RecoverMailMove(request, record, ..) => {
+                Some(format!("move-recovery:{}:{request}", record.token))
+            }
             Self::TestConnection(_, _, _, target) => Some(format!("test:{target:?}")),
             Self::ResolveOutgoing(id, ..) => Some(format!("outgoing:{id}")),
             Self::RepairOutgoing => Some("outgoing-repair".into()),
@@ -124,6 +135,16 @@ impl Command {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
+    MoveRecoveries(
+        u64,
+        Result<Arc<Vec<crate::mail_actions::journal::MoveRecord>>, String>,
+    ),
+    MailMoveRecovery(
+        u64,
+        String,
+        Result<Arc<crate::mail_actions::journal::MoveRecord>, String>,
+    ),
+    MoveRecovered(Arc<crate::mail_actions::journal::MoveRecord>),
     Ready(CommandSender, Arc<Workspace>, bool),
     Selection(
         u64,
@@ -747,9 +768,38 @@ impl Engine {
                     .into_iter()
                     .filter_map(|result| result.err().map(|error| format!("{error:#}")))
                     .collect();
+                self.recover_completed_moves(output.clone()).await?;
                 self.workspace(&mut output).await?;
                 output.send(Event::Changed).await?;
                 anyhow::ensure!(failures.is_empty(), "{}", failures.join("\n"));
+            }
+            Command::MoveRecoveries(request, after) => {
+                let result = self
+                    .store
+                    .pending_mail_moves(None, after)
+                    .await
+                    .map(Arc::new)
+                    .map_err(|error| format!("{error:#}"));
+                output.send(Event::MoveRecoveries(request, result)).await?;
+            }
+            Command::RecoverMailMove(request, record, action, confirmed) => {
+                let token = record.token.clone();
+                let result = self
+                    .recover_mail_move((*record).clone(), action, confirmed)
+                    .await;
+                let recovered = result.as_ref().ok().cloned();
+                output
+                    .send(Event::MailMoveRecovery(
+                        request,
+                        token,
+                        result.map(Arc::new).map_err(|error| format!("{error:#}")),
+                    ))
+                    .await?;
+                if let Some(record) = recovered {
+                    output.send(Event::MoveRecovered(Arc::new(record))).await?;
+                }
+                self.workspace(&mut output).await?;
+                output.send(Event::Changed).await?;
             }
             Command::Transfer(request, mail, destination, folder) => {
                 let result = self
@@ -765,6 +815,9 @@ impl Engine {
                             .map_err(|e| format!("{e:#}")),
                     ))
                     .await?;
+                if !self.demo {
+                    self.recover_completed_moves(output.clone()).await?;
+                }
                 if !self.demo
                     && let Some(account) = refresh
                     && let Err(error) = self.sync_account(account, output.clone()).await
@@ -790,6 +843,9 @@ impl Engine {
                             .map_err(|e| format!("{e:#}")),
                     ))
                     .await?;
+                if !self.demo {
+                    self.recover_completed_moves(output.clone()).await?;
+                }
                 if let Some(account) = refresh
                     && let Err(error) = self.sync_account(account, output.clone()).await
                 {
@@ -813,6 +869,9 @@ impl Engine {
                             .map_err(|e| format!("{e:#}")),
                     ))
                     .await?;
+                if !self.demo {
+                    self.recover_completed_moves(output.clone()).await?;
+                }
                 if !self.demo
                     && let Some(account) = refresh
                     && let Err(error) = self.sync_account(account, output.clone()).await

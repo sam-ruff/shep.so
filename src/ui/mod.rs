@@ -16,6 +16,7 @@ mod html_reader;
 mod layout;
 mod mail_actions;
 mod mail_selection;
+mod move_recovery;
 mod notifications;
 mod outgoing;
 mod pointer;
@@ -69,6 +70,7 @@ pub enum SettingsTab {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
+    MoveRecovery,
     BulkReview,
     BulkHistory,
     Removal,
@@ -93,6 +95,7 @@ enum MailPane {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    MoveRecovery(move_recovery::Message),
     WindowUnfocused,
     Html(html_reader::Message),
     Find(find_message::Message),
@@ -341,6 +344,7 @@ pub struct App {
     calendar_setup: calendar_setup::CalendarSetup,
     removal: removals::Removal,
     outbox: outgoing::Outbox,
+    move_recovery: move_recovery::Recovery,
     editor: text_editor::Content,
     draft_id: String,
     remapping: Option<(Action, Slot)>,
@@ -494,6 +498,7 @@ impl App {
                 calendar_setup: Default::default(),
                 removal: Default::default(),
                 outbox: Default::default(),
+                move_recovery: Default::default(),
                 editor: text_editor::Content::new(),
                 draft_id: String::new(),
                 remapping: None,
@@ -666,6 +671,12 @@ impl App {
         let mut query = self.query.clone();
         query.project_moves = self.mail_actions.projected_moves();
         query.observe = self.mail_actions.observed_ids();
+        if let Some(id) = &self.selected
+            && self.page.move_recovery.contains_key(id)
+            && !query.observe.contains(id)
+        {
+            query.observe.push(id.clone());
+        }
         query.observe_bulk = self.bulk_observed_ids();
         self.send(Command::Query(self.generation, query, false));
     }
@@ -704,7 +715,7 @@ impl App {
         Some(detail)
     }
     fn preload(&mut self, id: String) {
-        if self.page.is_placeholder(&id) {
+        if self.page.is_transient_placeholder(&id) {
             return;
         }
         if self.detail_cache.iter().any(|d| d.summary.id == id)
@@ -726,7 +737,7 @@ impl App {
             self.conversation.page = Default::default();
         }
         self.selected = Some(id.clone());
-        if self.page.is_placeholder(&id) {
+        if self.page.is_transient_placeholder(&id) {
             self.bulk.waiting_reader = Some(id.clone());
             self.conversation = Default::default();
             self.detail = self.cached_placeholder_detail(&id);
@@ -1147,7 +1158,7 @@ impl App {
                         }
                         self.set_mail_page(page);
                         if let Some(id) = self.bulk.waiting_reader.clone()
-                            && !self.page.is_placeholder(&id)
+                            && !self.page.is_transient_placeholder(&id)
                         {
                             self.bulk.waiting_reader = None;
                             if self.selected.as_ref() == Some(&id)
@@ -1182,6 +1193,12 @@ impl App {
                             self.prefetch_query = Some(query.clone());
                             query.project_moves = self.mail_actions.projected_moves();
                             query.observe = self.mail_actions.observed_ids();
+                            if let Some(id) = &self.selected
+                                && self.page.move_recovery.contains_key(id)
+                                && !query.observe.contains(id)
+                            {
+                                query.observe.push(id.clone());
+                            }
                             query.observe_bulk = self.bulk_observed_ids();
                             self.send(Command::Query(g, query, true));
                         }
@@ -1245,6 +1262,13 @@ impl App {
                     }
                 },
                 Event::MailArrived(arrival) => self.notification_arrived(arrival),
+                Event::MoveRecovered(record) => self.move_recovered(&record),
+                Event::MoveRecoveries(request, result) => {
+                    self.move_recoveries_loaded(request, result)
+                }
+                Event::MailMoveRecovery(request, token, result) => {
+                    return self.move_recovery_finished(request, token, result);
+                }
                 Event::UndoFinished(request, mail, result) => {
                     return self.undo_finished(request, mail, result);
                 }
@@ -1272,7 +1296,8 @@ impl App {
                     if let Some(id) = self
                         .reader_id()
                         .filter(|id| {
-                            !self.mail_actions.restoring(id) && !self.page.is_placeholder(id)
+                            !self.mail_actions.restoring(id)
+                                && !self.page.is_transient_placeholder(id)
                         })
                         .map(str::to_owned)
                     {
@@ -1497,7 +1522,8 @@ impl App {
                         false,
                     );
                     }
-                } else if self.mail_actions.pending() > 0 {
+                } else if self.mail_actions.pending() > 0 || !self.move_recovery.pending.is_empty()
+                {
                     self.pending_close = Some(window);
                     self.notice("Finishing your mail changes before closing…", false);
                 } else if self.removal.removing.is_some()
@@ -1681,6 +1707,7 @@ impl App {
                 } else if self.query.search.trim().is_empty() {
                     self.query.sort = MailSort::Relevance;
                 }
+                self.query.search_all_folders = !query.trim().is_empty();
                 self.query.search = query;
                 self.reconcile_selection_scope();
                 self.query.offset = 0;
@@ -2130,6 +2157,7 @@ impl App {
             }
             Message::ConfirmOutgoing(value) => self.outbox.confirmed = value,
             Message::ResolveOutgoing(action) => self.resolve_outbox(action),
+            Message::MoveRecovery(message) => self.handle_move_recovery(message),
             Message::ReviewRemoval(target) => self.review_removal(target),
             Message::ConfirmRemoval => self.confirm_removal(),
             Message::CancelPendingTransfers(value) => self.removal.cancel_transfers = value,
@@ -3060,6 +3088,20 @@ impl App {
         {
             return Task::none();
         }
+        if self.dialog == Some(Dialog::MoveRecovery) && modifiers.is_empty() {
+            match &key {
+                Key::Named(keyboard::key::Named::Enter) => {
+                    return self.handle(Message::MoveRecovery(move_recovery::Message::Submit));
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("y") => {
+                    return self.handle(Message::MoveRecovery(move_recovery::Message::Submit));
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("n") => {
+                    return self.handle(Message::Close);
+                }
+                _ => {}
+            }
+        }
         if self.bulk_confirming() && modifiers.is_empty() {
             match &key {
                 Key::Named(keyboard::key::Named::Enter) => {
@@ -3421,6 +3463,7 @@ impl App {
         data["loaded_message_id"] =
             serde_json::json!(self.detail.as_ref().map(|detail| &detail.summary.id));
         data["reader_message_id"] = serde_json::json!(self.reader_id());
+        data["move_recovery"] = serde_json::json!({"total":self.workspace.move_pending_total,"selected":self.move_recovery.selected.as_ref().map(|r|&r.token),"stage":self.move_recovery.selected.as_ref().map(|r|r.stage),"action":self.move_recovery.action,"confirmed":self.move_recovery.confirmed,"pending":self.move_recovery.pending.len(),"error":self.move_recovery.error,"rows":*self.move_recovery.rows});
         data["outgoing_pending"] = serde_json::json!(self.workspace.outgoing_pending);
         data["outgoing_rows"] = serde_json::json!(self.outbox.page.rows);
         data["outgoing_confirmed"] = serde_json::json!(self.outbox.confirmed);

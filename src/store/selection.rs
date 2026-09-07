@@ -119,7 +119,7 @@ fn rebase(c: &Connection, source: MailSelectionId, endpoints: &[&str]) -> anyhow
         "INSERT INTO temp.mail_selections(id,revision,frozen) VALUES(?,0,0)",
         [&candidate],
     )?;
-    let (sql, values) = mail_query::Plan::new(c, &query)?.ordered("messages.id AS id");
+    let (sql, values) = mail_query::Plan::selection(c, &query)?.ordered("messages.id AS id");
     let mut bindings = vec![candidate.clone().into()];
     bindings.extend(values);
     bindings.push(key.clone().into());
@@ -170,24 +170,24 @@ fn snapshot(
     )?;
     let (available, unread, starred): (i64, i64, i64) = c.query_row(
         "SELECT COUNT(*),COALESCE(SUM(m.unread),0),COALESCE(SUM(m.starred),0)
-        FROM temp.mail_selection_rows s JOIN messages m ON m.id=s.id WHERE s.selection=? AND s.selected=1",
+        FROM temp.mail_selection_rows s JOIN selectable_mail m ON m.id=s.id WHERE s.selection=? AND s.selected=1",
         [&key], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
     let accounts = c
         .prepare(
             "SELECT m.account,COUNT(*) FROM temp.mail_selection_rows s
-        JOIN messages m ON m.id=s.id WHERE s.selection=? AND s.selected=1 GROUP BY m.account",
+        JOIN selectable_mail m ON m.id=s.id WHERE s.selection=? AND s.selected=1 GROUP BY m.account",
         )?
         .query_map([&key], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
         })?
         .collect::<rusqlite::Result<_>>()?;
-    let groups = c.prepare("SELECT m.account,m.folder,COUNT(*),SUM(m.unread) FROM temp.mail_selection_rows s JOIN messages m ON m.id=s.id WHERE s.selection=? AND s.selected=1 GROUP BY m.account,m.folder")?
+    let groups = c.prepare("SELECT m.account,m.folder,COUNT(*),SUM(m.unread) FROM temp.mail_selection_rows s JOIN selectable_mail m ON m.id=s.id WHERE s.selection=? AND s.selected=1 GROUP BY m.account,m.folder")?
         .query_map([&key],|r|Ok(SelectionGroup { account:r.get(0)?,folder:r.get(1)?,total:r.get::<_,i64>(2)? as usize,unread:r.get::<_,i64>(3)? as usize }))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut observed = HashSet::new();
     let mut statement = c.prepare(
         "SELECT EXISTS(SELECT 1 FROM temp.mail_selection_rows s
-        JOIN messages m ON m.id=s.id WHERE s.selection=? AND s.id=? AND s.selected=1)",
+        JOIN selectable_mail m ON m.id=s.id WHERE s.selection=? AND s.id=? AND s.selected=1)",
     )?;
     for mail in visible {
         if statement.query_row(params![key, mail], |r| r.get::<_, bool>(0))? {
@@ -265,7 +265,7 @@ impl Store {
                 "INSERT INTO temp.mail_selections(id,revision,frozen,query) VALUES(?,?,0,?)",
                 params![key, revision as i64, serde_json::to_string(&scope)?],
             )?;
-            let (sql, values) = mail_query::Plan::new(&tx, &query)?.ordered("messages.id AS id");
+            let (sql, values) = mail_query::Plan::selection(&tx, &query)?.ordered("messages.id AS id");
             // The ordered subquery feeds a window scan, preventing flattening
             // from dropping its order. IDs/ranks stay in SQL; MIME is not read.
             let mut bindings = vec![key.into(), (all as i64).into()];
@@ -385,7 +385,7 @@ impl Store {
             let rows = tx
                 .prepare(
                     "SELECT s.position,m.data,m.unread,m.starred,m.folder
-                FROM temp.mail_selection_rows s JOIN messages m ON m.id=s.id
+                FROM temp.mail_selection_rows s JOIN selectable_mail m ON m.id=s.id
                 WHERE s.selection=? AND s.selected=1 AND s.position>? ORDER BY s.position LIMIT ?",
                 )?
                 .query_map(params![id.to_string(), cursor, PAGE_SIZE as i64], |r| {

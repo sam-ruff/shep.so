@@ -52,8 +52,8 @@ impl Engine {
             "Choose a different destination account."
         );
         anyhow::ensure!(
-            !mail.remote_id.starts_with("local-sent-"),
-            "This copy is stored locally. Save and sync its server Sent copy before moving it to another account."
+            !mail.is_local_copy(),
+            "This copy is stored locally. You can move it between folders in this account or export it."
         );
         // Always lock in the same order to prevent opposing transfers deadlocking.
         let mut ids = [mail.account_id.clone(), destination.clone()];
@@ -79,85 +79,29 @@ impl Engine {
             source.protocol == Protocol::Imap && destination.protocol == Protocol::Imap,
             "Moving between accounts requires two IMAP accounts. POP3 keeps server originals."
         );
-        let fingerprint = self.store.message_fingerprint(mail.id.clone()).await?;
-        let mut remote_id = None;
-        if self.demo {
-            #[cfg(feature = "test-support")]
-            crate::test_support::mail_action_delay().await?;
-            remote_id = Some(format!("preview-moved-{}", uuid::Uuid::new_v4()));
-        } else {
-            let source_secret = providers::read_secret(&source.id).await?;
-            let destination_secret = providers::read_secret(&destination.id).await?;
-            let journal_key = format!("transfer:{}", mail.id);
-            let journal: Option<(String, String, String)> = self.store.get(&journal_key).await?;
-            if let Some((account, target, stage)) = &journal {
-                anyhow::ensure!(
-                    account == &destination.id && target == &folder,
-                    "A transfer is already pending for this message. Resume with the same destination."
-                );
-                anyhow::ensure!(
-                    stage == "copied",
-                    "The previous upload was interrupted. The original is safe. Check the destination in webmail before moving it there manually; Shep will not upload a possible duplicate."
-                );
-            }
-            tokio::time::timeout(
-                Duration::from_secs(35),
-                providers::mail::prepare_transfer(&source, &source_secret, mail),
-            )
-            .await??;
-            if journal.is_none() {
-                self.store
-                    .put(
-                        &journal_key,
-                        Some((
-                            destination.id.clone(),
-                            folder.clone(),
-                            "uploading".to_owned(),
-                        )),
-                    )
-                    .await?;
-                let raw = self.store.raw_message(mail.id.clone()).await?;
-                remote_id = tokio::time::timeout(Duration::from_secs(60), providers::mail::append_transfer(&destination, &destination_secret, mail, &folder, raw)).await
-                            .context("Upload timed out; the source is retained. Check the destination before retrying.")??;
-                self.store
-                    .put(
-                        &journal_key,
-                        Some((destination.id.clone(), folder.clone(), "copied".to_owned())),
-                    )
-                    .await?;
-            }
-            tokio::time::timeout(Duration::from_secs(35), providers::mail::finish_transfer(&source, &source_secret, mail)).await
-                        .context("The destination has a copy; source removal timed out. Retry the same destination to finish without uploading again.")?
-                        .context("The destination has a copy; source removal could not be confirmed. Retry the same destination to finish.")?;
+        if !self.demo {
+            let receipt = self
+                .durable_move(&source, Some(&destination), mail, &folder, &mut output)
+                .await?;
+            return Ok((destination, receipt));
         }
-        let mut receipt =
-            MoveReceipt::server(mail, &destination.id, &folder, remote_id, fingerprint);
+        #[cfg(feature = "test-support")]
+        crate::test_support::mail_action_delay().await?;
+        let fingerprint = self.store.message_fingerprint(mail.id.clone()).await?;
+        let mut receipt = MoveReceipt::server(
+            mail,
+            &destination.id,
+            &folder,
+            Some(format!("preview-moved-{}", uuid::Uuid::new_v4())),
+            fingerprint,
+        );
         receipt.connections = vec![
             (source.id.clone(), connection_key(&source)),
             (destination.id.clone(), connection_key(&destination)),
         ];
-        let journal_key = format!("transfer:{}", mail.id);
-        let cleanup = async {
-            if let Some(current) = &receipt.current {
-                self.store
-                    .relocate_mail(mail.clone(), current.clone())
-                    .await?;
-            } else {
-                self.store.remove(mail.id.clone()).await?;
-            }
-            self.store
-                .put(&journal_key, Option::<(String, String, String)>::None)
-                .await
-        }
-        .await;
-        if cleanup.is_err() {
-            output
-                .send(Event::Error(
-                    "The message was moved, but its cached folders need to refresh. Try Refresh."
-                        .into(),
-                ))
-                .await?;
-        }
+        self.store
+            .relocate_mail(mail.clone(), receipt.current.clone().unwrap())
+            .await?;
         Ok((destination, receipt))
     }
 
@@ -181,6 +125,13 @@ impl Engine {
             "The message moved since it was selected. Refresh its folder."
         );
         let mail = &current;
+        if mail.is_local_copy() {
+            let receipt = MoveReceipt::local(mail, folder);
+            self.store
+                .relocate_mail(mail.clone(), receipt.current.clone().unwrap())
+                .await?;
+            return Ok((None, receipt));
+        }
         #[cfg(feature = "test-support")]
         if self.demo {
             crate::test_support::mail_action_delay().await?;
@@ -204,38 +155,12 @@ impl Engine {
                 .await?;
             return Ok((None, receipt));
         }
-        if !mail.remote_id.starts_with("local-sent-") {
+        if !mail.is_local_copy() {
             let account = self.account(&mail.account_id).await?;
             if account.protocol == Protocol::Imap {
-                let fingerprint = self.store.message_fingerprint(mail.id.clone()).await?;
-                let remote_id = tokio::time::timeout(Duration::from_secs(45), async {
-                    let password = providers::read_secret(&account.id).await?;
-                    providers::mail::provider(account.protocol)
-                        .move_mail(&account, &password, mail, folder)
-                        .await
-                })
-                .await
-                .context("The server did not confirm the move. Refresh before trying again.")??;
-                let mut receipt =
-                    MoveReceipt::server(mail, &mail.account_id, folder, remote_id, fingerprint);
-                receipt
-                    .connections
-                    .push((account.id.clone(), connection_key(&account)));
-                let cleanup = if let Some(current) = &receipt.current {
-                    self.store
-                        .relocate_mail(mail.clone(), current.clone())
-                        .await
-                } else {
-                    self.store.remove(mail.id.clone()).await
-                };
-                if cleanup.is_err() {
-                    output
-                        .send(Event::Error(
-                            "The server moved the message. Its cached folders need to refresh."
-                                .into(),
-                        ))
-                        .await?;
-                }
+                let receipt = self
+                    .durable_move(&account, None, mail, folder, &mut output)
+                    .await?;
                 return Ok((Some(account), receipt));
             }
         }
@@ -244,6 +169,113 @@ impl Engine {
             .relocate_mail(mail.clone(), receipt.current.clone().unwrap())
             .await?;
         Ok((None, receipt))
+    }
+
+    pub(super) async fn recover_completed_moves(&self, mut output: Output) -> anyhow::Result<()> {
+        use crate::mail_actions::{journal::MoveStage, runner};
+        let now = chrono::Utc::now().timestamp();
+        for record in self.store.mail_move_lookups(now).await? {
+            let mut accounts = vec![
+                record.original.account_id.clone(),
+                record.receipt.account.clone(),
+            ];
+            accounts.sort();
+            accounts.dedup();
+            let mut guards = Vec::new();
+            for id in &accounts {
+                guards.push(self.account_lock(id).await);
+            }
+            let Some(saved) = self
+                .store
+                .mail_move_for_source(record.original.id.clone())
+                .await?
+            else {
+                continue;
+            };
+            if saved.token != record.token
+                || saved.stage != MoveStage::Committed
+                || saved.attempted != record.attempted
+            {
+                continue;
+            }
+            let record = self.store.begin_mail_move_lookup(saved, now).await?;
+            let result = async {
+                let source = self.account(&record.original.account_id).await?;
+                let secret = providers::read_secret(&source.id).await?;
+                let destination = if source.id != record.receipt.account {
+                    let account = self.account(&record.receipt.account).await?;
+                    let secret = providers::read_secret(&account.id).await?;
+                    Some((account, secret))
+                } else {
+                    None
+                };
+                let mut connection =
+                    providers::mail::moves::ImapMoveConnection::new(source, secret, destination);
+                runner::recover(&self.store, &mut connection, record.clone()).await
+            }
+            .await;
+            match result {
+                Ok(record) => output.send(Event::MoveRecovered(Arc::new(record))).await?,
+                Err(error) => output
+                    .send(Event::Error(format!(
+                        "The cached message is retained. Move recovery needs attention: {error:#}"
+                    )))
+                    .await?,
+            }
+            output.send(Event::Changed).await?;
+        }
+        Ok(())
+    }
+
+    async fn durable_move(
+        &self,
+        source: &Account,
+        destination: Option<&Account>,
+        mail: &Mail,
+        folder: &str,
+        output: &mut Output,
+    ) -> anyhow::Result<MoveReceipt> {
+        use crate::mail_actions::{journal::MoveRecord, runner};
+        use providers::mail::moves::ImapMoveConnection;
+        let target = destination.unwrap_or(source);
+        let source_secret = providers::read_secret(&source.id).await?;
+        let destination_connection = match destination {
+            Some(account) => Some((account.clone(), providers::read_secret(&account.id).await?)),
+            None => None,
+        };
+        let mut connection =
+            ImapMoveConnection::new(source.clone(), source_secret, destination_connection);
+        let existing = self.store.mail_move_for_source(mail.id.clone()).await?;
+        let record = if let Some(record) = existing {
+            anyhow::ensure!(
+                record.receipt.account == target.id && record.receipt.folder == folder,
+                "A move is pending for this message. Review its original destination before moving elsewhere."
+            );
+            runner::recover(&self.store, &mut connection, record).await?
+        } else {
+            let fingerprint = self.store.message_fingerprint(mail.id.clone()).await?;
+            let mut receipt = MoveReceipt::server(mail, &target.id, folder, None, fingerprint);
+            receipt.connections = vec![(source.id.clone(), connection_key(source))];
+            if let Some(account) = destination {
+                receipt
+                    .connections
+                    .push((account.id.clone(), connection_key(account)));
+            }
+            let record = MoveRecord::new(mail.clone(), receipt);
+            let legacy: Option<(String, String, String)> =
+                self.store.get(&format!("transfer:{}", mail.id)).await?;
+            if legacy.is_some() {
+                let record = self.store.adopt_legacy_mail_move(record).await?;
+                runner::recover(&self.store, &mut connection, record).await?
+            } else {
+                runner::start(&self.store, &mut connection, record).await?
+            }
+        };
+        if let Some(error) = record.error {
+            // A closed view cannot negate an already durable acknowledgment.
+            let _ = output.send(Event::Error(error)).await;
+        }
+        Ok(record.receipt)
     }
 
     pub(super) async fn undo_move(
@@ -340,7 +372,25 @@ impl Engine {
             .context("Finding the moved message timed out. Retry Undo.")??;
             resolved.summary.timestamp = original.timestamp;
             let current = resolved.summary.clone();
-            self.store.upsert(vec![resolved]).await?;
+            if let Some(token) = &receipt.recovery {
+                let record = self.store.mail_move(token.clone()).await?;
+                anyhow::ensure!(
+                    record.original.id == original.id
+                        && record.receipt.connections == receipt.connections,
+                    "This recovery belongs to a different original message."
+                );
+                if record.stage == crate::mail_actions::journal::MoveStage::Committed {
+                    self.store.resolve_mail_move(record, resolved).await?;
+                } else {
+                    anyhow::ensure!(
+                        record.stage == crate::mail_actions::journal::MoveStage::Located,
+                        "Finish recovering the original move before Undo."
+                    );
+                    self.store.upsert(vec![resolved]).await?;
+                }
+            } else {
+                self.store.upsert(vec![resolved]).await?;
+            }
             current
         };
         if current.account_id == original.account_id {
@@ -425,11 +475,18 @@ impl Engine {
         mail: &Mail,
         changes: crate::mail_actions::Flags,
     ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.store
+                .mail_move_for_source(mail.id.clone())
+                .await?
+                .is_none_or(|record| record.finished()),
+            "This message has an unfinished move. Review its recovery before changing flags."
+        );
         #[cfg(feature = "test-support")]
         if self.demo {
             crate::test_support::mail_action_delay().await?;
         }
-        if !self.demo && !mail.remote_id.starts_with("local-sent-") {
+        if !self.demo && !mail.is_local_copy() {
             let account = self.account(&mail.account_id).await?;
             if account.protocol == Protocol::Imap {
                 tokio::time::timeout(Duration::from_secs(45), async {

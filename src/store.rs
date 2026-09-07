@@ -2,6 +2,7 @@ mod bulk;
 mod folder_actions;
 mod mail_actions;
 mod mail_query;
+mod move_journal;
 mod notifications;
 mod read_moves;
 use crate::model::*;
@@ -34,6 +35,7 @@ pub struct Store(Arc<Mutex<Connection>>);
 
 #[derive(Debug, Clone, Default)]
 pub struct Workspace {
+    pub move_pending_total: usize,
     pub accounts: Vec<Account>,
     pub calendars: Vec<CalendarSource>,
     pub preferences: Preferences,
@@ -132,6 +134,7 @@ impl Store {
         outgoing::schema(&conn)?;
         selection::schema(&conn)?;
         bulk::schema(&conn)?;
+        move_journal::schema(&conn)?;
         read_moves::schema(&conn)?;
         folder_actions::schema(&conn)?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -271,7 +274,7 @@ impl Store {
                 "Sent".into(),
                 "Trash".into(),
             ];
-            let mut stmt = c.prepare("SELECT DISTINCT folder FROM messages ORDER BY folder")?;
+            let mut stmt = c.prepare("SELECT DISTINCT folder FROM recovered_mail ORDER BY folder")?;
             for f in stmt.query_map([], |r| r.get::<_, String>(0))? {
                 let f = f?;
                 if !folders.contains(&f) {
@@ -297,7 +300,7 @@ impl Store {
             }).collect();
             let mut seen: std::collections::HashMap<_,std::collections::HashSet<_>> = account_folders.iter().map(|(account,names)|(account.clone(),names.iter().cloned().collect())).collect();
             for pair in c
-                .prepare("SELECT DISTINCT account,folder FROM messages ORDER BY folder")?
+                .prepare("SELECT DISTINCT account,folder FROM recovered_mail ORDER BY folder")?
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
             {
                 let (account, folder) = pair?;
@@ -331,6 +334,7 @@ impl Store {
                 drafts_revision: drafts.revision,
                 connections_revision: get(c, "connections_revision")?,
                 outgoing_pending: outgoing::pending(c)?,
+                move_pending_total: move_journal::pending(c)?,
                 outgoing_revision: get(c, "outgoing_revision")?,
                 google_archived: get(c, "google_archived")?,
                 outgoing_drafts:c.prepare("SELECT draft FROM outgoing WHERE stage IN ('Submitting','Uncertain','Accepted')")?.query_map([],|r|r.get::<_,String>(0))?.collect::<Result<_,_>>()?,
@@ -366,25 +370,40 @@ impl Store {
             read_moves::prepare(c, &query.project_moves)?;
             let plan = mail_query::Plan::new(c, &query)?;
             let (total, unread) = plan.counts(c)?;
-            let columns = if query.project_moves.is_empty() { "data,unread,starred,folder,account,0" } else { "data,unread,starred,folder,account,messages.pending_move" };
+            let columns = if query.project_moves.is_empty() && !move_journal::has_projection(c)? { "data,unread,starred,folder,account,0" } else { "data,unread,starred,folder,account,messages.pending_move" };
             let (sql, mut values) = plan.ordered(columns);
             values.push((PAGE_SIZE as i64).into());
             values.push((query.offset as i64).into());
             let mut stmt = c.prepare(&format!("{sql} LIMIT ? OFFSET ?"))?;
             let mut move_placeholders = std::collections::HashSet::new();
-            let rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,bool>(5)?)))?
+            let mut rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,bool>(5)?)))?
                 .map(|r| { let (data,unread,starred,folder,account,pending)=r?; let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;m.account_id=account;if pending { move_placeholders.insert(m.id.clone()); m.remote_id.clear(); } Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
-            let source = if bulk::has_effects(c)? { "visible_mail" } else { "messages" };
+            let source = read_moves::source(c)?;
             let inbox_unread = c.prepare(&format!("SELECT account,COUNT(*) FROM {source} WHERE folder='INBOX' AND unread=1 GROUP BY account"))?
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))?
                 .collect::<rusqlite::Result<_>>()?;
             let mut observed = std::collections::HashMap::new();
+            let mut relocated = std::collections::HashMap::new();
             let mut statement = c.prepare(&format!("SELECT account,folder,unread FROM {source} WHERE id=?"))?;
             for id in query.observe {
                 use rusqlite::OptionalExtension;
                 let value = statement.query_row([&id], |row| Ok(MailMembership {
                     account: row.get(0)?, folder: row.get(1)?, unread: row.get(2)?,
                 })).optional()?;
+                if value.is_none() && relocated.len()<PAGE_SIZE {
+                    let data:Option<String>=c.query_row("SELECT data FROM mail_moves WHERE source_id=? AND stage IN ('located','kept')",[&id],|r|r.get(0)).optional()?;
+                    if let Some(data)=data {
+                        let record:crate::mail_actions::journal::MoveRecord=serde_json::from_str(&data)?;
+                        if let Some(mail)=record.resolved_mail() {
+                            let data:Option<(String,bool,bool)>=c.query_row("SELECT data,unread,starred FROM messages WHERE id=?",[&mail.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+                            if let Some((data,unread,starred))=data {
+                                let mut mail:Mail=serde_json::from_str(&data)?;
+                                mail.unread=unread;mail.starred=starred;
+                                relocated.insert(id.clone(),mail);
+                            }
+                        }
+                    }
+                }
                 observed.insert(id, value);
             }
             anyhow::ensure!(query.observe_bulk.len() <= CHANNEL_CAPACITY, "Observe at most 32 mail operations at a time");
@@ -395,19 +414,29 @@ impl Store {
                     bulk_observed.insert(id,undo);
                 }
             }
+            let mut move_recovery = std::collections::HashMap::new();
+            for mail in &mut rows {
+                if let Some(record)=move_journal::for_cache(c,&mail.id)? {
+                    mail.remote_id.clear();
+                    move_placeholders.insert(mail.id.clone());
+                    move_recovery.insert(mail.id.clone(),record);
+                }
+            }
             let mut bulk_pending = std::collections::HashSet::new();
             for mail in &rows {
                 let pending: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM bulk_effects WHERE id=?)",[&mail.id],|r|r.get(0))?;
                 if pending { bulk_pending.insert(mail.id.clone()); }
             }
-            Ok(MailPage { move_placeholders, rows, total, unread, inbox_unread, observed, bulk_pending, bulk_observed, bulk_placeholders: Default::default(), bulk_revision: get(c,"bulk_revision")? })
+            Ok(MailPage { move_pending_total:move_journal::pending(c)?, relocated, move_recovery, move_placeholders, rows, total, unread, inbox_unread, observed, bulk_pending, bulk_observed, bulk_placeholders: Default::default(), bulk_revision: get(c,"bulk_revision")? })
         }).await
     }
     pub async fn detail(&self, id: String) -> anyhow::Result<MailDetail> {
         self.run(move |c| {
             let (data, raw, unread, starred, folder): (String, Vec<u8>, bool, bool, String) = c
                 .query_row(
-                    "SELECT data,raw,unread,starred,folder FROM messages WHERE id=?",
+                    "SELECT data,raw,unread,starred,folder FROM messages WHERE id=COALESCE(
+                        (SELECT id FROM messages WHERE id=?1),
+                        (SELECT CASE stage WHEN 'kept' THEN json_extract(data,'$.retained.id') ELSE json_extract(data,'$.receipt.current.id') END FROM mail_moves WHERE source_id=?1 AND stage IN ('located','kept')))",
                     [id],
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                 )?;
@@ -415,6 +444,7 @@ impl Store {
             summary.unread = unread;
             summary.starred = starred;
             summary.folder = folder;
+            move_journal::project_detail(c, &mut summary)?;
             let parsed = mailparse::parse_mail(&raw)?;
             let content = crate::email_content::extract(&parsed);
             let (body, attachments) = (content.text, content.attachments);
@@ -616,7 +646,7 @@ impl Store {
                     let tx = c.transaction()?;
                     folder_actions::idle(&tx, &account)?;
                     let ids: Vec<(String, bool)> = tx
-                        .prepare("SELECT id,EXISTS(SELECT 1 FROM restored_messages WHERE restored_messages.id=messages.id) FROM messages WHERE account=? AND folder=? AND id NOT LIKE '%:local-sent-%'")?
+                        .prepare("SELECT id,EXISTS(SELECT 1 FROM restored_messages WHERE restored_messages.id=messages.id) FROM messages WHERE account=? AND folder=? AND id NOT LIKE '%:local-sent-%' AND id NOT LIKE '%:local-recovered-%' AND NOT EXISTS(SELECT 1 FROM mail_moves WHERE cache_id=messages.id)")?
                         .query_map(params![account, folder], |r| Ok((r.get(0)?, r.get(1)?)))?
                         .collect::<Result<_, _>>()?;
                     for (id, restored) in ids {

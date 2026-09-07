@@ -115,7 +115,9 @@ fn ready(c: &Connection, account: &str) -> anyhow::Result<()> {
     use sha2::Digest;
     let (_, pending) = bulk::account_review(c, account, &mut sha2::Sha256::new())?;
     anyhow::ensure!(
-        pending == 0 && connections::transfers(c, account)?.is_empty(),
+        pending == 0
+            && connections::transfers(c, account)?.is_empty()
+            && move_journal::account_review(c, account, &mut sha2::Sha256::new())? == 0,
         "Finish or review the account's pending mail changes before changing folders."
     );
     anyhow::ensure!(!c.query_row("SELECT EXISTS(SELECT 1 FROM outgoing WHERE account=? AND stage NOT IN ('Complete','Released','Rejected'))", [account], |r| r.get::<_, bool>(0))?,
@@ -592,7 +594,7 @@ fn remap_mail(
     };
     if let Some(destination) = destination {
         mail.folder.clone_from(destination);
-        if imap && !mail.remote_id.starts_with("local-sent-") {
+        if imap && !mail.is_local_copy() {
             mail.id = format!("{account}:{destination}:{}", mail.remote_id);
         }
     }

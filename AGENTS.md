@@ -144,7 +144,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 157 functional flows plus the navigation and HTML pixel performance gates; shipped run evidence belongs in the completion log.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 167 functional flows plus the navigation and HTML pixel performance gates; shipped run evidence belongs in the completion log.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -773,3 +773,51 @@ Sync SEARCH/FETCH helpers in `providers/mail/sync_queries.rs` require matching t
 Linux uses `org.freedesktop.Notifications` with Shep's desktop identity, escaped body markup and explicit sound/suppress-sound hints. Sound-only mode uses `canberra-gtk-play`; Windows uses a per-user Shep AUMID and WinRT toast, with the system mail sound; macOS uses the Shep bundle identity, initialized once, and native notification delivery. Actual Windows/macOS delivery and bundle/install integration remain open platform work. Never silently borrow another application's identity.
 
 The native MCP fixture bypasses all real popup/audio delivery. `desktop.start` accepts `notification_delivery: "slow" | "fail-once"` for isolated delayed/error/retry scenarios. Save every interaction in `scripts/e2e.py`; the notification flows cover defaults, independent outputs/privacy, persistence, arrival/restart deduplication, compact dark layout and navigation during a delayed failure. Real Linux protocol tests start their own private bus and never touch the user's notification service. Keep logs/screenshots in ignored artifacts.
+
+## Mail move recovery — work in progress
+
+The unshipped R73 follow-up uses `mail_actions/journal.rs`, `runner.rs` and
+`store/move_journal.rs`. IMAP preflight finishes before durable preparation;
+Started/Copied/Committed/Located records retain the source MIME and actual
+acknowledgments. Do not repeat an unconfirmed MOVE/APPEND. In particular, tagged
+MOVE NO may have partial effects (RFC 6851 §3.3); only atomic APPEND rejection is
+classified as not applied. Keep matching-tag and disconnect protocol tests.
+
+Provider commands have individual timeouts. Never cancel observing a SQLite
+receipt commit, or let waiting for LOGOUT/closed UI output negate a confirmed
+write. Cross-account recovery verifies the destination's exact raw bytes and
+canonical identity before source cleanup, preserving any original APPENDUID.
+The legacy transfer tuple migrates atomically; an uploading tuple remains
+unconfirmed. Account identity checks use the original incoming connections.
+
+Protected cached originals remain readable through restart and reconciliation.
+Destination queries carry bounded recovery metadata and clear provider UIDs;
+selection capture and older selections must exclude these protected identities
+from available provider targets. Detail reads can follow a completed cache alias
+when rekeying overtakes a pending read. Keep the late-read error-toast regression.
+The runner requires the existing account locks, sorted for two-account work;
+this does not establish independent-process coordination of all mail operations.
+
+Automatic recovery considers at most three committed records per pass and
+rate-limits attempts. Manual recovery/review and confirmed Keep local copy controls
+now have storage/runner/controller and native tests. Kept copies receive local
+identities, never an obsolete provider UID; retiring their old Undo avoids a
+false server reversal. Active recovery must save its receipt before app close,
+and a failure cancels close. Complete adapter/Undo/history integration and final
+shipping are still TODO.
+Do not call this follow-up delivered based on fixture happy-path coverage.
+Native `move_recovery=true` uses only a protected fictional cache and a fixture
+Refresh acknowledgment; see the repository MCP skill and saved automated flow.
+
+
+## Search across folders
+
+Interactive message search sets `MailQuery.search_all_folders` while retaining
+its browsing folder and account selection. `MailQuery::search_scope` is shared
+by the SQLite query plan and optimistic UI membership; selection captures use
+that same plan. Search spans folders in the selected accounts, preserves explicit
+read/flag/attachment filters, and keeps an empty account selection empty. Clearing
+search returns to the browsing scope. Do not restore the old Inbox-only search.
+Folder labels in result rows must remain readable at compact sizes. Preserve the
+storage scope/ranking/paging/selection tests and all three `test_search_*` native
+cross-folder scenarios. Search and move-dialog folder matching are distinct.

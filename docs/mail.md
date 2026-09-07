@@ -6,7 +6,7 @@ Go to **Preferences → Accounts**. Add an IMAP or POP3 account, then enter its 
 
 ## Find and read messages
 
-The unified inbox brings your accounts together. Choose a folder in the sidebar, search by sender or message text, or filter for unread, flagged or attachment-bearing mail.
+The unified inbox brings your accounts together. Search sender, subject or message text across folders in the selected accounts. Results show their folder; clearing search returns to the folder you were browsing. Filter for unread, flagged or attachment-bearing mail.
 
 Folder groups start collapsed. Click a chevron to show subfolders; click a folder name to read its mail. A container that cannot hold mail only expands. Shep remembers which groups you opened. With the sidebar focused, Left/Right moves through the tree and expands or collapses groups; Enter opens the focused folder. Ctrl-click combines folders. Dragging mail over a closed group opens it so you can drop into a subfolder.
 

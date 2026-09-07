@@ -15,6 +15,14 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_move_recovery_fixture_rejects_unrecognized_modes_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (0, 1, None, "live", "host", "unknown", []):
+                with self.assertRaisesRegex(ValueError, "move recovery"):
+                    desktop.start(move_recovery=value)
+            launch.assert_not_called()
+
     def test_notification_delivery_fixture_is_explicit_and_validated_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:
