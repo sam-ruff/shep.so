@@ -194,7 +194,7 @@ pub fn present(
         surface.layer_stack.push_front(renderer.layers().to_vec());
         surface.background_color = background_color;
 
-        let damage = damage::group(
+        let damage = group_damage(
             damage,
             Rectangle::with_size(viewport.logical_size()),
         );
@@ -217,6 +217,35 @@ pub fn present(
 
     on_pre_present();
     buffer.present().map_err(|_| compositor::SurfaceError::Lost)
+}
+
+/// Coalesce damage against all pending regions, including regions emitted
+/// earlier in the list. The upstream distance-sorted single pass can leave a
+/// large reader rectangle interleaved with dozens of its own child rectangles.
+/// Repainting every overlap repeats the same masked quads, text and images.
+pub fn group_damage(damage: Vec<Rectangle>, bounds: Rectangle) -> Vec<Rectangle> {
+    let mut regions = damage::group(damage, bounds);
+    regions.sort_by(|a, b| b.area().total_cmp(&a.area()));
+    let mut output: Vec<Rectangle> = Vec::new();
+    for mut region in regions {
+        let mut index = 0;
+        while index < output.len() {
+            let candidate = output[index];
+            let union = region.union(&candidate);
+            // Use the upstream extra-area budget. Distant updates remain
+            // separate; this is not a full-window repaint fallback.
+            if union.area() - region.area() - candidate.area() <= 20_000.0 {
+                region = union;
+                let _ = output.swap_remove(index);
+                // The enlarged rectangle may now contain an earlier region.
+                index = 0;
+            } else {
+                index += 1;
+            }
+        }
+        output.push(region);
+    }
+    output
 }
 
 pub fn screenshot(

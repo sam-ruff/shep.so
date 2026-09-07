@@ -3,6 +3,8 @@
 //!
 //! Adapted from litehtml 0.2.6; see ../UPSTREAM.md and ../LICENSE.
 
+mod text_cache;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -45,7 +47,8 @@ pub struct PixbufContainer {
     pixmap: tiny_skia::Pixmap,
     // RefCell because `text_width` takes `&self` but cosmic-text needs `&mut`
     font_system: Rc<RefCell<cosmic_text::FontSystem>>,
-    swash_cache: RefCell<cosmic_text::SwashCache>,
+    swash_cache: RefCell<text_cache::Glyphs>,
+    text_widths: Rc<RefCell<text_cache::Widths>>,
     fonts: Rc<RefCell<HashMap<usize, FontData>>>,
     next_font_id: usize,
     clip_stack: Vec<(Position, BorderRadiuses)>,
@@ -103,7 +106,8 @@ impl PixbufContainer {
         Self {
             pixmap,
             font_system,
-            swash_cache: RefCell::new(cosmic_text::SwashCache::new()),
+            swash_cache: RefCell::new(text_cache::Glyphs::new()),
+            text_widths: Rc::new(RefCell::new(text_cache::Widths::default())),
             fonts: Rc::new(RefCell::new(HashMap::new())),
             next_font_id: 1,
             clip_stack: Vec::new(),
@@ -348,7 +352,11 @@ impl PixbufContainer {
         let fonts = Rc::clone(&self.fonts);
         let font_system = Rc::clone(&self.font_system);
         let scale_factor = self.scale_factor;
+        let widths = Rc::clone(&self.text_widths);
         move |text: &str, font: FontHandle| -> f32 {
+            if let Some(width) = widths.borrow().get(font.0, text) {
+                return width / scale_factor;
+            }
             let fonts_ref = fonts.borrow();
             let Some(font_data) = fonts_ref.get(&font.0) else {
                 return text.len() as f32 * 8.0;
@@ -361,7 +369,9 @@ impl PixbufContainer {
             let attrs = attrs_from_font(font_data);
             buffer.set_text(&mut fs, text, &attrs, Shaping::Advanced);
             buffer.shape_until_scroll(&mut fs, false);
-            buffer.layout_runs().map(|run| run.line_w).sum::<f32>() / scale_factor
+            let width = buffer.layout_runs().map(|run| run.line_w).sum::<f32>();
+            widths.borrow_mut().insert(font.0, text, width);
+            width / scale_factor
         }
     }
 }
@@ -554,9 +564,9 @@ impl DocumentContainer for PixbufContainer {
                 if let Some(glyph) = run.glyphs.iter().next() {
                     let physical = glyph.physical((0.0, 0.0), 1.0);
                     let mut sc = self.swash_cache.borrow_mut();
-                    if let Some(img) = sc.get_image_uncached(&mut fs, physical.cache_key) {
+                    sc.with_image(&mut fs, physical.cache_key, |img| {
                         h = img.placement.height as f32;
-                    }
+                    });
                 }
             }
             h
@@ -607,15 +617,21 @@ impl DocumentContainer for PixbufContainer {
     }
 
     fn delete_font(&mut self, font: FontHandle) {
+        self.text_widths.borrow_mut().remove_font(font.0);
         self.fonts.borrow_mut().remove(&font.0);
     }
 
     fn text_width(&self, text: &str, font: FontHandle) -> f32 {
+        if let Some(width) = self.text_widths.borrow().get(font.0, text) {
+            return width / self.scale_factor;
+        }
         let fonts = self.fonts.borrow();
         let Some(font_data) = fonts.get(&font.0) else {
             return text.len() as f32 * 8.0;
         };
-        self.measure_text(text, font_data) / self.scale_factor
+        let width = self.measure_text(text, font_data);
+        self.text_widths.borrow_mut().insert(font.0, text, width);
+        width / self.scale_factor
     }
 
     fn draw_text(
@@ -659,7 +675,7 @@ impl DocumentContainer for PixbufContainer {
             for glyph in run.glyphs.iter() {
                 let physical = glyph.physical((0.0, 0.0), 1.0);
 
-                if let Some(image) = swash.get_image_uncached(&mut fs, physical.cache_key) {
+                swash.with_image(&mut fs, physical.cache_key, |image| {
                     let gx = draw_x + physical.x + image.placement.left;
                     let gy = draw_y + baseline_y + physical.y - image.placement.top;
 
@@ -757,7 +773,7 @@ impl DocumentContainer for PixbufContainer {
                             }
                         }
                     }
-                }
+                });
             }
         }
     }

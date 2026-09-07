@@ -68,6 +68,40 @@ impl Engine {
                 .min(quad.bounds.height / 2.0);
         }
 
+        // A small damage region entirely inside a flat panel needs only its
+        // visible pixels. Rasterizing the whole window-sized rounded path and
+        // masking it afterwards otherwise repeats that work for every region.
+        // Keep edges, shadows and gradients on the general painter below.
+        let inset = fill_border_radius.iter().copied().fold(border_width, f32::max)
+            * transformation.scale_factor() + 1.0;
+        let interior = Rectangle {
+            x: physical_bounds.x + inset,
+            y: physical_bounds.y + inset,
+            width: (physical_bounds.width - 2.0 * inset).max(0.0),
+            height: (physical_bounds.height - 2.0 * inset).max(0.0),
+        };
+        if shadow.color.a == 0.0 && clip_bounds.is_within(&interior)
+            && let Background::Color(color) = background
+            && let Some(visible) = tiny_skia::Rect::from_xywh(
+                clip_bounds.x.floor(), clip_bounds.y.floor(),
+                (clip_bounds.x + clip_bounds.width).ceil() - clip_bounds.x.floor(),
+                (clip_bounds.y + clip_bounds.height).ceil() - clip_bounds.y.floor(),
+            )
+        {
+            pixels.fill_rect(
+                visible,
+                &tiny_skia::Paint {
+                    shader: tiny_skia::Shader::SolidColor(into_color(*color)),
+                    anti_alias: false,
+                    ..Default::default()
+                },
+                tiny_skia::Transform::identity(),
+                // Preserve the existing path mask's fractional-edge rounding.
+                Some(clip_mask),
+            );
+            return;
+        }
+
         let path = rounded_rectangle(quad.bounds, fill_border_radius);
 
         if shadow.color.a > 0.0

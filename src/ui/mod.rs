@@ -361,6 +361,8 @@ pub struct App {
     test_state: Option<std::path::PathBuf>,
     #[cfg(feature = "test-support")]
     initial_page_loaded: bool,
+    #[cfg(feature = "test-support")]
+    idle_navigation: bool,
     test_revision: u64,
 }
 
@@ -515,6 +517,8 @@ impl App {
                 test_state,
                 #[cfg(feature = "test-support")]
                 initial_page_loaded: false,
+                #[cfg(feature = "test-support")]
+                idle_navigation: demo && args.iter().any(|a| a == "--idle-navigation"),
                 test_revision: 0,
             },
             iced::system::theme().map(Message::SystemTheme),
@@ -548,6 +552,13 @@ impl App {
         }
     }
     fn subscription(&self) -> Subscription<Message> {
+        let tick = iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick);
+        #[cfg(feature = "test-support")]
+        let tick = if self.idle_navigation {
+            Subscription::none()
+        } else {
+            tick
+        };
         Subscription::batch([
             Subscription::run_with(self.demo, engine::subscription).map(Message::Backend),
             Subscription::run(crate::desktop_badge::subscription).map(Message::DesktopBadge),
@@ -555,7 +566,7 @@ impl App {
                 .map(|e| Message::Html(html_reader::Message::Backend(e))),
             Subscription::run(crate::html_render::preparation::subscription)
                 .map(|e| Message::Html(html_reader::Message::Prepared(e))),
-            iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick),
+            tick,
             iced::system::theme_changes().map(Message::SystemTheme),
             iced::event::listen_with(|e, status, id| match e {
                 iced::Event::Window(iced::window::Event::CloseRequested) => {
@@ -1548,6 +1559,13 @@ impl App {
                     };
                     self.full_reader = false;
                     self.open_mail_folder("INBOX".into(), false);
+                    self.sidebar_index = self
+                        .sidebar_items()
+                        .iter()
+                        .position(|item| item.active)
+                        .unwrap_or(0);
+                    self.sidebar_focus = false;
+                    self.list_focus = true;
                 }
                 self.tab = tab;
                 self.dialog = None;
@@ -3254,7 +3272,10 @@ impl App {
                 Action::Mail => self.handle(Message::Tab(Tab::Mail)),
                 Action::Inbox => {
                     if self.tab == Tab::Mail && self.sidebar_focus {
-                        self.handle(Message::Tab(Tab::Mail))
+                        let task = self.handle(Message::Tab(Tab::Mail));
+                        self.sidebar_focus = true;
+                        self.list_focus = false;
+                        Task::batch([task, self.reveal_sidebar_focus()])
                     } else {
                         Task::none()
                     }

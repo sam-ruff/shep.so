@@ -22,3 +22,13 @@ Keep `tests/software_rendering.rs`, the native filtered-preferences regression
 and the scrolled mail-drag shadow regression
 when updating iced. Remove this patch only after those tests pass with upstream.
 These correctness tests do not replace the deferred idle-host performance gates.
+
+`src/window/compositor.rs::group_damage` coalesces interleaved overlapping damage
+against all pending regions, preserving the upstream extra-area budget and
+separate distant changes. This avoids repainting a reader and each of its child
+rectangles independently. Solid panels whose flat interior contains the damage
+fill only those pixels; edges, shadows and gradients retain the general painter.
+The existing clip mask preserves fractional-edge rounding. Direct renderer tests
+compare full/partial repaint pixels and the solid/constant-gradient paths at
+fractional scales. This keeps partial redraws; it never forces continuous full
+window redraws. See docs/PERFORMANCE.md for native input-to-HTML evidence.

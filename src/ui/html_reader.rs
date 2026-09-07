@@ -319,7 +319,18 @@ impl App {
                     self.html_reader.selection.clear();
                     self.html_reader.rectangles.clear();
                 }
-                self.html_reader.handle = Some(cache::handle(&frame));
+                let handle = cache::handle(&frame);
+                if frame.scroll == 0. && frame.pan == 0. && frame.reflow.is_none()
+                    && let Some(request) = self.detail.as_ref().and_then(|detail| self.html_preparation(detail, frame.viewport))
+                    // Do not label an intermediate remote-image frame with the
+                    // latest image revision while its decode is still pending.
+                    && (!request.key.allow_images || self.html_reader.resources.is_empty())
+                {
+                    self.html_reader
+                        .cache
+                        .remember(request.key, frame.clone(), handle.clone());
+                }
+                self.html_reader.handle = Some(handle);
                 self.html_reader.pan = frame.pan;
                 if frame.reflow.is_some() && frame.layout_revision > self.html_reader.anchor_seen {
                     self.html_reader.anchor_seen = frame.layout_revision;
@@ -587,6 +598,56 @@ mod tests {
             reflow: None,
         })
     }
+    #[tokio::test]
+    async fn visited_initial_html_is_reused_but_not_an_intermediate_allowed_image_frame() {
+        let mut app = app().await;
+        let size = Viewport {
+            width: 700,
+            height: 400,
+            scale: 1.,
+        };
+        let _ = app.prepare_html();
+        let generation = app.html_reader.generation;
+        let _ = app.handle_html(Message::Input(Input::View(generation, size, 0.)));
+        let current = frame(generation, size, 0.);
+        let _ = app.handle_html(Message::Backend(html_render::Event::Frame(current.clone())));
+        let original_handle = app.html_reader.handle.as_ref().unwrap().id();
+        let detail = app.detail.take().unwrap();
+        let _ = app.prepare_html();
+        app.detail = Some(detail);
+        let _ = app.prepare_html();
+        let new_generation = app.html_reader.generation;
+        assert_ne!(generation, new_generation);
+        let _ = app.handle_html(Message::Input(Input::View(new_generation, size, 0.)));
+        let cached = app.html_reader.frame.as_ref().unwrap();
+        assert_eq!(cached.generation, new_generation);
+        assert!(Arc::ptr_eq(&cached.pixels, &current.pixels));
+        assert_eq!(
+            app.html_reader.handle.as_ref().unwrap().id(),
+            original_handle
+        );
+
+        // Changing policy must not reuse blocked-image pixels as an allowed
+        // image result, nor cache the discovery frame before decoding finishes.
+        app.preferences.image_policy = ImagePolicy::AllowAll;
+        let _ = app.prepare_html();
+        let generation = app.html_reader.generation;
+        let _ = app.handle_html(Message::Input(Input::View(generation, size, 0.)));
+        assert!(app.html_reader.frame.is_none());
+        let _ = app.handle_html(Message::Backend(html_render::Event::Frame(frame(
+            generation, size, 0.,
+        ))));
+        let request = app
+            .html_preparation(app.detail.as_ref().unwrap(), size)
+            .unwrap();
+        assert!(
+            app.html_reader
+                .cache
+                .get(&request.key, generation)
+                .is_none()
+        );
+    }
+
     #[tokio::test]
     async fn html_waits_for_native_geometry_and_keeps_find_behind_load() {
         let mut app = app().await;

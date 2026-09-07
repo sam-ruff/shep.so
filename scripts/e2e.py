@@ -1570,19 +1570,29 @@ class NativeFlows(unittest.TestCase):
                        click(90, 159), check("tab", "Calendar"), wait(2000), shot("calendar-light"))
 
     def test_calendar_navigation_repaints_after_preferences(self):
-        import subprocess
-        from pathlib import Path
-        self.mcp.batch(click(187,867),check("tab","Preferences"),wait(150),
-                       click(690,366),check("dark",True),check("preferences_saved",True),wait(200),shot("before-calendar-mouse"),
-                       click(90,159),check("tab","Calendar"),wait(2000),shot("after-calendar-mouse"),
-                       {"type":"hover","x":1200,"y":880},wait(200),shot("after-calendar-hover"),
-                       {"type":"resize","width":1410,"height":920},wait(200),shot("after-calendar-resize"))
-        directory = Path(self.artifacts)
-        def pixels(name):
-            return subprocess.check_output(["convert",str(directory/f"{name}.webp"),"-crop","900x650+250+210","+repage","-depth","8","rgb:-"])
-        before=pixels("before-calendar-mouse")
-        after=pixels("after-calendar-mouse")
-        self.assertGreater(sum(abs(a-b) for a,b in zip(before,after))/len(before),1.,"Calendar state changed but Preferences remained visible")
+        # Disable the periodic UI tick in one fixture: pixels must update from
+        # navigation itself, without a following mouse move/resize to wake it.
+        # This is a correctness regression, not an idle-host latency benchmark.
+        for idle in (False, True):
+            result = self.mcp.call("desktop.start", idle_navigation=idle)
+            directory = Path(result["artifacts"])
+            print(f"Navigation pixels (timer disabled={idle}): {directory}", flush=True)
+            for dark, x in ((True, 690), (False, 399)):
+                with self.subTest(idle_navigation=idle, dark=dark):
+                    name = "dark" if dark else "light"
+                    self.mcp.batch(click(187, 867), check("tab", "Preferences"), wait(150),
+                                   click(x, 366), check("dark", dark), check("preferences_saved", True),
+                                   wait(200), shot(f"before-calendar-{name}"),
+                                   click(90, 159), check("tab", "Calendar"), wait(150),
+                                   shot(f"after-calendar-{name}"))
+                    def pixels(prefix):
+                        return subprocess.check_output([
+                            "convert", str(directory / f"{prefix}-calendar-{name}.webp"),
+                            "-crop", "900x650+250+210", "+repage", "-depth", "8", "rgb:-"])
+                    before, after = pixels("before"), pixels("after")
+                    self.assertEqual(len(before), len(after))
+                    self.assertGreater(sum(abs(a-b) for a,b in zip(before,after))/len(before), 1.,
+                                       "Calendar state changed but Preferences remained visible")
 
     def test_remapping_persists_and_works(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(645, 156),
@@ -1638,6 +1648,23 @@ class NativeFlows(unittest.TestCase):
                        {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(120),
                        click(920, 600), key("alt+i"), check("shortcuts.Inbox", "Alt+I"), check("preferences_saved", True),
                        key("ctrl+1"), check("tab", "Mail"), click(100, 537), check("folder", "Projects"), key("alt+i"), check("folder", "INBOX"))
+
+    def test_mail_navigation_clears_old_folder_highlight(self):
+        for unified, appearance, dark in ((True, 399, False), (False, 690, True)):
+            self.mcp.call("desktop.start", long_folders=True)
+            self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(150),
+                           click(appearance, 366), check("dark", dark))
+            if not unified:
+                self.mcp.batch(click(286, 737), check("unified", False))
+            self.mcp.batch(check("preferences_saved", True), key("ctrl+1"), check("tab", "Mail"), wait(150),
+                           click(100, 537 if unified else 491), check("folder", "Projects"),
+                           check("sidebar_focus", True), shot(f"folder-focused-{dark}"),
+                           click(85, 115), check("folder", "INBOX"),
+                           check("account", None if unified else "preview-work"),
+                           check("sidebar_focus", False), check("mail_selection.list_focus", True), wait(150),
+                           shot(f"mail-clears-folder-focus-{dark}"),
+                           key("Tab"), check("sidebar_focus", True), key("Return"), check("folder", "INBOX"),
+                           shot(f"inbox-focus-after-mail-{dark}"))
 
     def test_secondary_shortcut_remap_conflict_and_disable(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(645, 156),

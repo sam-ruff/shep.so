@@ -11,10 +11,35 @@ The stdio MCP server is `python3 scripts/mcp_harness.py` from the repository roo
 
 A tab observation is not proof that its pixels have been presented. The saved
 `test_calendar_navigation_repaints_after_preferences` compares the main content
-before and after native navigation, excluding the sidebar. Appearance/calendar
-captures currently use a two-second visual wait; a shorter wait exposed the old
-Preferences screen after Calendar state changed. First-paint scheduling remains
-R15/R63 work. Do not report that longer capture wait as a rendering or speed fix.
+before and after native navigation, excluding the sidebar. It runs in light/dark
+with both the ordinary timer and `idle_navigation=true` (a test-only workspace
+without the app's periodic Tick). The explicit 150 ms settle plus screenshot's
+150 ms presentation allowance must show Calendar without another input. Keep
+this independent of the broader appearance tour's slower screenshots. This is a
+pixel-backed correctness check, not a latency percentile.
+
+For HTML opening speed, the automated equivalent is `scripts/html_latency.py`.
+Run `python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html.json`
+without concurrent builds, then `python3 scripts/performance_gate.py --html-only`.
+The combined quality script also checks this report. The user explicitly
+prioritized these measurements while other final performance tests remain deferred.
+
+`pixel_reference` chooses 64 text/edge points across the visible HTML body from
+the owned X11 window. `measure_pixels` accepts those `points` and an `x,y` click;
+it moves the pointer before timing, injects a real XTest click, then polls X11
+pixels until at least 97% match (RGB tolerance 8). A reference that is already
+visible is rejected. The saved automated script prepares references in a separate
+process, then tests a fresh nonadjacent long letter, return to visited mail,
+adjacent prefetch and repeated long-letter opens. Setup/dwell/screenshot waits
+are outside the measured interval. The script rejects a binary changed mid-run.
+
+These measurements require the harness's little-endian RGB24 Xvfb and libXtst.
+They establish displayed body pixels on that software X server, not monitor
+scanout or live remote-image downloads. Startup has warmed the font system;
+"cold" means that particular document was not prepared in the new process.
+Keep actual WebP visual review and the existing HTML selection, image-policy,
+Find, resize, scrolling, zoom and failure/retry native scenarios alongside timing.
+
 
 Call `desktop.start` once per independent scenario. It owns an isolated Xvfb display, a 1440×920 native window and an in-memory fixture workspace. It returns the artifact directory. Set `empty_calendars: true` on `desktop.start` to test the no-calendar state. The nondefault test feature supplies fixture messages and observation hooks; normal builds must never expose personal mail to the harness.
 
@@ -357,3 +382,9 @@ Remember an action's source with the saved `selected_mail_subject()` helper:
 it resolves `selected_id` against `mail_rows` in one observation. Startup page
 readiness does not mean the reader body and its `selected` subject have loaded.
 Keep action tests independent of that body load.
+
+Preserve `test_mail_navigation_clears_old_folder_highlight`: click a real account
+folder, then Mail. Inbox becomes active and the old folder loses its keyboard
+outline. Observe `sidebar_focus=false` and `mail_selection.list_focus=true`, then
+Tab/Enter must target Inbox. Cover unified light and per-account dark views, and
+keep the separate remappable sidebar Inbox key flow (it retains sidebar focus).

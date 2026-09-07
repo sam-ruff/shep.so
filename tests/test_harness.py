@@ -15,6 +15,25 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_pixel_measurement_validates_current_resized_window_before_input(self):
+        from scripts import native_pixels
+        desktop = harness.Desktop()
+        desktop.app = Mock()
+        desktop.app.poll.return_value = None
+        desktop.window, desktop.launch_size = "123", (1440, 920)
+        desktop.env["DISPLAY"] = ":owned"
+        desktop.command, desktop.screenshot = Mock(), Mock()
+        probe = Mock()
+        probe.dimensions.return_value = (900, 640)
+        points = [[10, 20, 0, 0, 0]]*8
+        with patch.dict(sys.modules, {"native_pixels": native_pixels}), patch.object(native_pixels, "Window", return_value=probe):
+            with self.assertRaisesRegex(RuntimeError, "inside the owned window"):
+                desktop.batch([{"type": "measure_pixels", "x": 1000, "y": 400, "points": points}])
+            desktop.command.assert_not_called()
+            probe.click_until_visible.assert_not_called()
+            probe.close.assert_called_once()
+        desktop.app = None
+
     def test_clipboard_paste_requires_owned_display_and_preserves_unicode_whitespace(self):
         desktop = harness.Desktop()
         desktop.command = Mock()
@@ -155,6 +174,16 @@ class HarnessTests(unittest.TestCase):
             launch.assert_not_called()
         schema=next(t for t in harness.TOOLS if t["name"]=="desktop.start")["inputSchema"]["properties"]
         self.assertEqual(schema["nested_folders"],{"type":"boolean","default":False})
+
+    def test_idle_navigation_fixture_is_validated_and_declared(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (0, 1, "yes", None):
+                with self.assertRaisesRegex(ValueError, "Idle navigation fixture"):
+                    desktop.start(idle_navigation=value)
+            launch.assert_not_called()
+        schema = next(t for t in harness.TOOLS if t["name"] == "desktop.start")["inputSchema"]["properties"]
+        self.assertEqual(schema["idle_navigation"], {"type": "boolean", "default": False})
 
     def test_badge_fixture_requires_a_boolean_before_launch(self):
         desktop = harness.Desktop()

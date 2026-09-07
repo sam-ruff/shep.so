@@ -8,5 +8,11 @@
     "cached_body_p95": 10.0,
     "ui_handler_p95": 8.0,
     "native_navigation_p95": 150.0
+  },
+  "html_budgets_ms": {
+    "cold_nonadjacent": 100.0,
+    "warm_return": 50.0,
+    "prefetched_neighbor": 50.0,
+    "warm_repeat": 50.0
   }
 }
