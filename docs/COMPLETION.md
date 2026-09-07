@@ -23,6 +23,64 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
+## HTML opening speed and Mail focus — installed and pushed
+
+Source [3f24823](https://github.com/sam-ruff/shep.so/commit/3f2482394d1d0aa277b500dd1a7be7165d724035)
+ships R72 and R75. R71 already identified the earlier refresh-icon correction;
+the four newest requests were assigned R72–R75 to preserve that audit identity.
+The moved-mail destination issue and F5/manual animation remain R73/R74 in TODO.
+
+Mail navigation now clears the previous folder's focus outline, focuses the
+message list and retargets subsequent sidebar navigation to Inbox. The remappable
+sidebar Inbox action retains sidebar focus. Both unified/light and per-account/
+dark native cases pass; reviewed evidence includes `e4ffb201c285/` and
+`98a6219a9ab8/` under ignored `artifacts/e2e/`.
+
+HTML layout reuses bounded font-specific text widths and glyph bitmaps; visited
+initial frames join the existing adjacent preparation cache. Image policy,
+content, viewport, font and generation remain part of validity. The software
+renderer combines overlapping damage regions and fills only visible solid panel
+interiors. It keeps partial redraws and the general edge/gradient/shadow painter.
+A fractional-edge discrepancy found by the new direct pixel tests was corrected
+before shipping; full/partial and solid/general painter results now match.
+
+The final native build, SHA-256
+`93e7fd8a4aee65fc6477c15d164fcc118fe3e2e31a02dbf6dcaaf9659440d7f2`,
+passes **all 144 functional native scenarios**, **413 Rust tests**, **2 dependency
+cache tests**, **43 Python tests**, fmt, Clippy and Git hooks. The native suite
+includes HTML selection, Find, policy/late images, resize, scrolling, Retry,
+compact/dark views and action/Undo/restart paths. Navigation from Preferences to
+Calendar passes in both themes with its ordinary timer and with the app Tick
+disabled; the saved comparison needs no subsequent input or two-second wait.
+Reviewed Calendar evidence is `f9a4eb3a5418/after-calendar-dark.webp`; HTML review
+includes `e9da58bf7ba1/reference-styled.webp` and
+`a5adb8f70141/html-current-narrower.webp`. This establishes those paint-correctness
+scenarios, not a separate Calendar latency percentile.
+
+Native XTest input through X11 body pixels, 20 samples per case, improved from
+p95 **122.4 to 45.8 ms** for an unprepared 200-paragraph letter; **103.3 to 25.7 ms**
+for returning to styled mail; **140.3 to 26.3 ms** for a prefetched neighbor; and
+**104.8 to 37.0 ms** for reopening the long letter. All new HTML gates pass.
+Reports: `artifacts/performance/html-opening-baseline.json` and `html.json`.
+The final measurement has evidence `10c50ade9651/` and `ee7c4702b917/` onward.
+[PERFORMANCE.md](PERFORMANCE.md) describes the boundary: font discovery is already
+warm, pointer/reference/dwell setup is outside timing, external downloads and
+physical monitor scanout are not measured. No builds ran during measurement;
+the host was not asserted fully idle. Other final performance gates remain
+explicitly deferred. Thresholds were not weakened.
+
+Logs are under ignored `artifacts/logs/html-final-*`, with `html-release.log`,
+`html-install.log`, `html-commit.log` and `html-push.log`. Strict Zensical and
+release checksum/extraction/bundled-installer checks pass. The installed Linux
+production binary matches the verified package, SHA-256
+`43cc66577793d945088f216d3d8bc9fcd85e06a888c56ebd2500dca3c9f71cfb`.
+Personal data/windows were preserved; already-open windows need reopening to use
+the new executable. No root logs remain. Quality/release CI stay disabled;
+the HTML pixel gate and dependency-cache tests are included in their dormant
+quality definition. This is local/native fixture evidence, not new live-provider
+or Windows/macOS verification. Unfinished folder-controller work was preserved
+separately and excluded from this checkpoint. The full product goal remains active.
+
 ## Folder mutation backend checkpoint — R30 remains open
 
 Source checkpoint [5eabb52](https://github.com/sam-ruff/shep.so/commit/5eabb521f1f11e4ec180bcdcb73835cb9e52db8c)
