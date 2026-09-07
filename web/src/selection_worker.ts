@@ -50,11 +50,19 @@ self.onmessage = ({ data }) => {
       await ready;
       const result = data.close
         ? null
-        : await store!.run(
-            data.command as SelectionCommand,
-            data.observed ?? [],
-            () => self.postMessage({ id, phase: "snapshot" }),
-          );
+        : data.prepareBulk
+          ? await store!.prepareBulk(
+              data.prepareBulk.selection,
+              data.prepareBulk.expected,
+              data.prepareBulk.job,
+              data.prepareBulk.action,
+              () => self.postMessage({ id, phase: "snapshot" }),
+            )
+          : await store!.run(
+              data.command as SelectionCommand,
+              data.observed ?? [],
+              () => self.postMessage({ id, phase: "snapshot" }),
+            );
       self.postMessage({ id, result });
     } catch (error) {
       const message =

@@ -9,6 +9,11 @@ import { roleFolders, type MailAlias, type MailRoles } from "./sent_cache";
 import type { Account, RecordMail } from "./provider";
 import type { CacheMail, CacheState, CacheChange } from "./cache_changes";
 import {
+  BulkJournal,
+  type BulkAction,
+  type BulkOriginal,
+} from "./bulk_journal";
+import {
   selectionScope,
   selectionToken,
   type SelectionScope,
@@ -103,6 +108,7 @@ export class SelectionStore {
   private constructor(
     private cache: IDBDatabase,
     private sql: Database,
+    private user: string,
   ) {
     sql.exec(schema);
   }
@@ -115,7 +121,7 @@ export class SelectionStore {
         locateFile: (name: string) => string;
       }) => Promise<Sqlite3Static>;
       const sqlite = await initialize({ locateFile: () => sqliteWasm });
-      return new SelectionStore(cache, new sqlite.oo1.DB(":memory:"));
+      return new SelectionStore(cache, new sqlite.oo1.DB(":memory:"), user);
     } catch (error) {
       cache.close();
       throw error;
@@ -403,6 +409,135 @@ export class SelectionStore {
     this.exec(
       "DELETE FROM aliases WHERE target NOT IN(SELECT id FROM membership)",
     );
+  }
+  /** Snapshot exact frozen membership and current physical identities before
+   * opening journal write transactions. Only fifty rows cross each transfer;
+   * the mailbox snapshot stays readonly and draft saves remain independent. */
+  async prepareBulk(
+    id: string,
+    expected: number,
+    job: string,
+    action: BulkAction,
+    snapshotStarted: () => void = () => {},
+  ) {
+    selectionToken(id);
+    selectionToken(job);
+    revision(expected);
+    return BulkJournal.own(this.user, async (journal) => {
+      this.exec(
+        "CREATE TEMP TABLE IF NOT EXISTS bulk_export(position INTEGER PRIMARY KEY,id TEXT,account TEXT,original TEXT)",
+      );
+      this.exec("BEGIN");
+      let nextRevision = this.lastRevision;
+      try {
+        await readonly(
+          this.cache,
+          [
+            "mailMetadata",
+            "mailChanges",
+            "cacheState",
+            "accounts",
+            "mailAliases",
+          ],
+          async (tx) => {
+            const state = await read<CacheState>(
+              tx.objectStore("cacheState").get("mail"),
+            );
+            if (
+              !state ||
+              !Number.isSafeInteger(state.revision) ||
+              state.revision < this.lastRevision
+            )
+              throw Error(
+                "The mail cache changed. Select and review messages again.",
+              );
+            await this.synchronize(
+              tx,
+              state,
+              await read<Account[]>(tx.objectStore("accounts").getAll()),
+            );
+            const session = this.session(id);
+            if (!session.frozen || session.revision !== expected)
+              throw Error("Freeze and review the current selection first.");
+            snapshotStarted();
+            this.exec("DELETE FROM bulk_export");
+            let after = -1;
+            for (;;) {
+              const rows = this.rows<{
+                position: number;
+                id: string;
+                account: string;
+              }>(
+                "SELECT s.position,s.id,m.account FROM membership s JOIN meta m ON m.id=s.id WHERE s.token=? AND s.selected=1 AND s.position>? ORDER BY s.position LIMIT 50",
+                [id, after],
+              );
+              if (!rows.length) break;
+              for (const row of rows) {
+                const mail = await read<CacheMail | undefined>(
+                  tx.objectStore("mailMetadata").get(row.id),
+                );
+                const m = mail?.core;
+                const original =
+                  m && !mail?.moved
+                    ? {
+                        id: row.id,
+                        account: m.account_id,
+                        folder: m.folder,
+                        remoteId: m.remote_id,
+                        unread: m.unread,
+                        starred: m.starred,
+                      }
+                    : null;
+                this.exec("INSERT INTO bulk_export VALUES(?,?,?,?)", [
+                  row.position,
+                  row.id,
+                  row.account,
+                  original ? JSON.stringify(original) : null,
+                ]);
+              }
+              after = rows.at(-1)!.position;
+            }
+            nextRevision = state.revision;
+          },
+        );
+        this.exec("COMMIT");
+        this.lastRevision = nextRevision;
+      } catch (error) {
+        this.exec("ROLLBACK");
+        throw error;
+      }
+      try {
+        const store = this;
+        async function* chunks(): AsyncGenerator<BulkOriginal[]> {
+          let after = -1;
+          for (;;) {
+            const rows = store.rows<{
+              position: number;
+              id: string;
+              account: string;
+              original: string | null;
+            }>(
+              "SELECT * FROM bulk_export WHERE position>? ORDER BY position LIMIT 50",
+              [after],
+            );
+            if (!rows.length) return;
+            after = rows.at(-1)!.position;
+            yield rows.map((row) => ({
+              ...row,
+              original: row.original ? JSON.parse(row.original) : null,
+            }));
+          }
+        }
+        return await journal.prepare(
+          job,
+          action,
+          this.value("SELECT COUNT(*) FROM bulk_export"),
+          chunks(),
+        );
+      } finally {
+        this.exec("DELETE FROM bulk_export");
+      }
+    });
   }
   async run(
     command: SelectionCommand,
