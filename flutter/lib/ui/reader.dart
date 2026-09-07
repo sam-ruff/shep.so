@@ -329,7 +329,14 @@ class _ReaderState extends State<Reader> {
   }
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
+  Widget build(BuildContext context) => PopScope(
+    onPopInvokedWithResult: (didPop, result) {
+      if (didPop) unawaited(workspace.finishReading(only: id));
+    },
+    child: buildReader(context),
+  );
+
+  Widget buildReader(BuildContext context) => ListenableBuilder(
     listenable: workspace,
     builder: (context, _) {
       final mail = workspace.mail(id);
@@ -719,6 +726,7 @@ class _ReaderState extends State<Reader> {
                                           all,
                                         );
                                         if (draft != null && context.mounted) {
+                                          unawaited(workspace.finishReading());
                                           await Navigator.push(
                                             context,
                                             MaterialPageRoute<void>(
@@ -746,6 +754,7 @@ class _ReaderState extends State<Reader> {
                                           widget.id == source &&
                                           (ModalRoute.of(context)?.isCurrent ??
                                               false)) {
+                                        unawaited(workspace.finishReading());
                                         await Navigator.push(
                                           context,
                                           MaterialPageRoute<void>(

@@ -34,12 +34,39 @@ class PagedRepository extends PreviewRepository implements AccountRepository {
     required String filter,
     required bool oldest,
     required int offset,
+    Map<String, Map<String, Object>> projection = const {},
   }) async {
-    final rows = cached.where((m) => m.folder == folder).toList();
+    final projected = cached
+        .map((m) => m.patch(projection[m.id] ?? {}))
+        .toList();
+    final terms = query.toLowerCase().trim().split(RegExp(r'\s+'));
+    final rows = projected
+        .where(
+          (m) =>
+              m.folder == folder &&
+              (account == null ||
+                  account == m.account ||
+                  account == m.accountId) &&
+              (filter != 'Unread' || m.unread) &&
+              (filter != 'Flagged' || m.starred) &&
+              terms.every(
+                (q) => '${m.sender} ${m.subject} ${m.body}'
+                    .toLowerCase()
+                    .contains(q),
+              ),
+        )
+        .toList();
+    rows.sort(
+      (a, b) => oldest ? a.date.compareTo(b.date) : b.date.compareTo(a.date),
+    );
     return MailPage(
       rows.skip(offset).take(50).map((m) => m.withoutBody()).toList(),
       rows.length,
-      cached.where((m) => m.folder == 'Inbox' && m.unread).length,
+      projected.where((m) => m.folder == 'Inbox' && m.unread).length,
+      confirmed: {
+        for (final m in cached)
+          if (projection.containsKey(m.id)) m.id: m,
+      },
     );
   }
 

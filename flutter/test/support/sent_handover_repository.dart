@@ -55,17 +55,24 @@ class SentHandoverRepository extends PagedRepository {
     required String filter,
     required bool oldest,
     required int offset,
+    Map<String, Map<String, Object>> projection = const {},
   }) async {
+    final fields =
+        projection[message.id] ??
+        projection[providerId] ??
+        const <String, Object>{};
+    final projected = message.patch(fields);
     final rows =
-        folder == message.folder ||
-            (folder == 'Sent' && message.folder == 'Sent Mail')
-        ? [message.withoutBody()]
+        folder == projected.folder ||
+            (folder == 'Sent' && projected.folder == 'Sent Mail')
+        ? [projected.withoutBody()]
         : <Mail>[];
     return MailPage(
       rows,
       rows.length,
       0,
-      aliases: adopted && rows.isNotEmpty ? {providerId: localId} : {},
+      confirmed: fields.isNotEmpty ? {message.id: message} : {},
+      aliases: adopted ? {providerId: localId} : {},
       folderMembership: folder == 'Sent'
           ? {
               'fixture': {'Sent Mail'},

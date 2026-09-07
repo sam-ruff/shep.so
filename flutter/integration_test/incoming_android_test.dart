@@ -60,6 +60,25 @@ void main() {
 
       await tester.tap(find.text('Incoming files fixture'));
       await tester.pumpAndSettle();
+      const mailId = 'fixture:INBOX:files';
+      // Opening cached mail alone leaves it unread, including in SQLite.
+      expect(workspace.mail(mailId)!.unread, true);
+      expect((await repository.detail(mailId)).unread, true);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await wait(() => workspace.pending == 0);
+      expect((await repository.detail(mailId)).unread, false);
+      await tester.tap(find.text('Incoming files fixture'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Mark unread'));
+      await tester.pumpAndSettle();
+      await wait(() => workspace.pending == 0);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await wait(() => workspace.pending == 0);
+      expect((await repository.detail(mailId)).unread, true);
+      await tester.tap(find.text('Incoming files fixture'));
+      await tester.pumpAndSettle();
       final save = find.text('Save binary.bin (5 bytes)');
       await wait(() => save.evaluate().isNotEmpty);
       expect(find.textContaining('inline-logo.webp'), findsNothing);

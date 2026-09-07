@@ -83,17 +83,21 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     }
   }
 
-  void compose([Draft? draft]) => Navigator.push(
-    context,
-    MaterialPageRoute<void>(
-      builder: (_) => Composer(
-        workspace: w,
-        draft:
-            draft ??
-            Draft(id: DateTime.now().microsecondsSinceEpoch.toString()),
+  void compose([Draft? draft]) {
+    unawaited(w.finishReading());
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => Composer(
+          workspace: w,
+          draft:
+              draft ??
+              Draft(id: DateTime.now().microsecondsSinceEpoch.toString()),
+        ),
       ),
-    ),
-  );
+    );
+  }
+
   Widget folders() => SafeArea(
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -335,13 +339,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                         act: (action) => act(mail.id, action),
                         open: () {
                           unawaited(w.loadBody(mail.id));
-                          if (mail.unread) {
-                            unawaited(
-                              w.change(mail.id, {
-                                'unread': false,
-                              }, offerUndo: false),
-                            );
-                          }
+                          w.beginReading(mail.id);
                           Navigator.push(
                             context,
                             MaterialPageRoute<void>(
@@ -470,7 +468,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             : null,
         bottomNavigationBar: NavigationBar(
           selectedIndex: tab,
-          onDestinationSelected: (value) => setState(() => tab = value),
+          onDestinationSelected: (value) {
+            unawaited(w.finishReading());
+            setState(() => tab = value);
+          },
           destinations: const [
             NavigationDestination(
               icon: Icon(Icons.mail_outline),

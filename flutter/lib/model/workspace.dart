@@ -24,6 +24,7 @@ class Workspace extends ChangeNotifier {
   final Map<String, Mail> _confirmed;
   final Map<String, int> _versions = {};
   final Map<String, Future<void>> _queues = {};
+  final Map<String, Map<String, Object>> _projection = {};
   final Map<String, Draft> drafts = {};
   final Set<String> _removedAccounts = {};
   List<CalendarEntry> events;
@@ -44,7 +45,7 @@ class Workspace extends ChangeNotifier {
   final Set<String> loadingBodies = {};
   final Map<String, Mail> _bodies = {};
   final Map<String, String> bodyErrors = {};
-  bool _foreground = true, _pageDeferred = false;
+  bool _foreground = true;
   int get resultCount => accountRepository == null ? matching.length : total;
   List<String> get folders => {
     'Inbox',
@@ -58,6 +59,7 @@ class Workspace extends ChangeNotifier {
     ),
   }.toList();
   void setForeground(bool active) {
+    if (!active) unawaited(finishReading());
     _foreground = active;
   }
 
@@ -116,6 +118,33 @@ class Workspace extends ChangeNotifier {
   Map<String, Set<String>> _pageFolders = {};
   final Map<String, String> _aliases = {};
   String _canonical(String id) => _aliases[id] ?? id;
+  Mail? _readCandidate;
+
+  /// Cache retention is separate from deliberate reading: refresh and previews
+  /// must never acknowledge mail that the user has not selected.
+  void beginReading(String id) {
+    id = _canonical(id);
+    final current = mail(id);
+    if (current == null) return;
+    if (_readCandidate == null || _canonical(_readCandidate!.id) != id) {
+      unawaited(finishReading());
+      if (current.unread) _readCandidate = current;
+    }
+  }
+
+  Future<void> finishReading({String? only}) async {
+    final candidate = _readCandidate;
+    if (candidate == null ||
+        (only != null && _canonical(candidate.id) != _canonical(only))) {
+      return;
+    }
+    _readCandidate = null;
+    final id = _canonical(candidate.id);
+    if (!_disposed && (mail(id) ?? _confirmed[id])?.unread == true) {
+      await change(id, {'unread': false}, offerUndo: false, quiet: true);
+    }
+  }
+
   Mail? _reader;
   void retainReader(String id) {
     _reader = mail(id);
@@ -137,17 +166,36 @@ class Workspace extends ChangeNotifier {
 
   void _acceptAliases(Map<String, String> aliases) {
     _aliases.addAll(aliases);
+    for (final entry in _aliases.entries.toList()) {
+      _aliases[entry.key] = _canonical(entry.value);
+    }
+    if (_readCandidate case final Mail current) {
+      _readCandidate = current.patch({'id': _canonical(current.id)});
+    }
     if (_reader case final Mail current) {
       _reader = current.patch({'id': _canonical(current.id)});
     }
     for (final entry in aliases.entries) {
+      final projection = _projection.remove(entry.key);
+      if (projection != null) {
+        final next = _projection.putIfAbsent(entry.value, () => {});
+        for (final field in projection.keys) {
+          if ((_versions['${entry.key}:$field'] ?? 0) >
+              (_versions['${entry.value}:$field'] ?? 0)) {
+            next[field] = projection[field]!;
+          }
+        }
+      }
       final previous = _bodies.remove(entry.key);
       if (previous != null) _bodies.putIfAbsent(entry.value, () => previous);
       final error = bodyErrors.remove(entry.key);
       if (error != null) bodyErrors.putIfAbsent(entry.value, () => error);
       final confirmed = _confirmed.remove(entry.key);
       if (confirmed != null) {
-        _confirmed.putIfAbsent(entry.value, () => confirmed);
+        _confirmed.putIfAbsent(
+          entry.value,
+          () => confirmed.patch({'id': entry.value}),
+        );
       }
       if (selected.remove(entry.key)) selected.add(entry.value);
       if (_undoId == entry.key) _undoId = entry.value;
@@ -202,10 +250,6 @@ class Workspace extends ChangeNotifier {
     final native = accountRepository;
     if (native == null || folder == 'Drafts') return;
     final pageRevision = ++_pageRevision, actionRevision = _revision;
-    if (pending > 0) {
-      _pageDeferred = true;
-      return;
-    }
     try {
       final page = await native.page(
         folder: folder,
@@ -213,12 +257,15 @@ class Workspace extends ChangeNotifier {
         query: query,
         filter: filter,
         oldest: !newestFirst,
-        offset: append ? _mail.length : 0,
+        offset: append ? matching.length : 0,
+        projection: {
+          for (final entry in _projection.entries)
+            entry.key: Map.of(entry.value),
+        },
       );
       if (pageRevision != _pageRevision) return;
-      if (actionRevision != _revision || pending > 0) {
-        _pageDeferred = pending > 0;
-        if (pending == 0) unawaited(loadPage(append: append));
+      if (actionRevision != _revision) {
+        unawaited(loadPage(append: append));
         return;
       }
       _acceptAliases(page.aliases);
@@ -244,21 +291,25 @@ class Workspace extends ChangeNotifier {
         (id, _) =>
             id != _undoId &&
             id != _reader?.id &&
+            id != _readCandidate?.id &&
             !_mail.any((m) => m.id == id) &&
-            !_queues.containsKey(id),
+            !_queues.keys.any((key) => _canonical(key) == id),
       );
       _aliases.removeWhere(
         (_, target) =>
             !_mail.any((m) => m.id == target) &&
             !_bodies.containsKey(target) &&
             target != _undoId &&
-            target != _reader?.id,
+            target != _reader?.id &&
+            target != _readCandidate?.id &&
+            !_queues.keys.any((key) => _canonical(key) == target),
       );
       total = page.total;
       _unread = page.unread;
       for (final m in page.mail) {
-        _confirmed[m.id] = m;
+        _confirmed[m.id] = page.confirmed[m.id] ?? m;
       }
+      _confirmed.addAll(page.confirmed);
       _changed();
     } catch (e) {
       if (pageRevision == _pageRevision) {
@@ -315,21 +366,20 @@ class Workspace extends ChangeNotifier {
   }
 
   void _patchMail(String id, Map<String, Object> fields) {
+    final current = mail(id) ?? _confirmed[id]?.patch(_projection[id] ?? {});
+    if (current != null && accountRepository != null) {
+      final changed = current.patch(fields);
+      final before = current.folder == 'Inbox' && current.unread ? 1 : 0;
+      final after = changed.folder == 'Inbox' && changed.unread ? 1 : 0;
+      _unread = (_unread + after - before).clamp(0, 1 << 53);
+    }
     if (_reader?.id == id) _reader = _reader!.patch(fields);
-    _mail = _mail.map((m) {
-      if (m.id != id) return m;
-      final changed = m.patch(fields);
-      if (accountRepository != null) {
-        final before = m.folder == 'Inbox' && m.unread ? 1 : 0;
-        final after = changed.folder == 'Inbox' && changed.unread ? 1 : 0;
-        _unread = (_unread + after - before).clamp(0, 1 << 53);
-      }
-      return changed;
-    }).toList();
+    _mail = _mail.map((m) => m.id == id ? m.patch(fields) : m).toList();
   }
 
   Future<void> accountRemoved(String id) async {
     _removedAccounts.add(id);
+    if (_readCandidate?.accountId == id) _readCandidate = null;
     drafts.removeWhere((_, draft) => draft.accountId == id);
     if (_confirmed[_undoId]?.accountId == id) {
       undo = null;
@@ -337,6 +387,7 @@ class Workspace extends ChangeNotifier {
     }
     _mail.removeWhere((m) => m.accountId == id);
     _bodies.removeWhere((_, m) => m.accountId == id);
+    _projection.removeWhere((key, _) => _confirmed[key]?.accountId == id);
     _confirmed.removeWhere((_, m) => m.accountId == id);
     if (_reader?.accountId == id) _reader = null;
     account = null;
@@ -377,6 +428,7 @@ class Workspace extends ChangeNotifier {
   }
 
   void search(String value) {
+    unawaited(finishReading());
     _searchTimer?.cancel();
     _searchTimer = Timer(const Duration(milliseconds: 100), () {
       query = value;
@@ -388,6 +440,7 @@ class Workspace extends ChangeNotifier {
   }
 
   void navigate(String value, {String? inAccount}) {
+    unawaited(finishReading());
     folder = value;
     account = inAccount;
     limit = 50;
@@ -397,6 +450,7 @@ class Workspace extends ChangeNotifier {
   }
 
   void setFilter(String value) {
+    unawaited(finishReading());
     filter = value;
     limit = 50;
     selected.clear();
@@ -405,6 +459,7 @@ class Workspace extends ChangeNotifier {
   }
 
   void sort() {
+    unawaited(finishReading());
     newestFirst = !newestFirst;
     limit = 50;
     unawaited(loadPage());
@@ -412,6 +467,7 @@ class Workspace extends ChangeNotifier {
   }
 
   void more() {
+    unawaited(finishReading());
     limit += 50;
     unawaited(loadPage(append: true));
     _changed();
@@ -504,13 +560,24 @@ class Workspace extends ChangeNotifier {
     String id,
     Map<String, Object> fields, {
     bool offerUndo = true,
+    bool quiet = false,
   }) async {
     id = _canonical(id);
+    if (fields.containsKey('folder') &&
+        _readCandidate != null &&
+        _canonical(_readCandidate!.id) == id) {
+      unawaited(finishReading(only: id));
+    }
+    if (!quiet &&
+        fields.containsKey('unread') &&
+        _readCandidate != null &&
+        _canonical(_readCandidate!.id) == id) {
+      _readCandidate = null;
+    }
     final current = mail(id) ?? (!offerUndo ? _confirmed[id] : null);
     if (current == null || fields.isEmpty) return;
     if (mail(id) == null) {
       _mail = [..._mail, current.withoutBody()];
-      _pageDeferred = accountRepository != null;
     }
     final previous = {for (final key in fields.keys) key: current.field(key)};
     final revision = ++_revision;
@@ -518,6 +585,7 @@ class Workspace extends ChangeNotifier {
       _versions['$id:$key'] = revision;
     }
     _patchMail(id, fields);
+    _projection.putIfAbsent(id, () => {}).addAll(fields);
     selected.remove(id);
     if (offerUndo) {
       _undoId = id;
@@ -527,45 +595,60 @@ class Workspace extends ChangeNotifier {
         _undoId = null;
       };
     }
-    notice = fields.containsKey('folder')
-        ? 'Moved to ${fields['folder']}'
-        : 'Message updated';
-    error = null;
-    retry = null;
-    final before = _queues[id] ?? Future.value();
+    if (!quiet) {
+      notice = fields.containsKey('folder')
+          ? 'Moved to ${fields['folder']}'
+          : 'Message updated';
+      error = null;
+      retry = null;
+    }
+    final before = Future.wait(
+      _queues.entries
+          .where((entry) => _canonical(entry.key) == id)
+          .map((entry) => entry.value),
+    );
     final job = before.then((_) async {
-      if (!_confirmed.containsKey(id)) return;
+      var target = _canonical(id);
+      if (!_confirmed.containsKey(target)) return;
       try {
-        await repository.mutate(id, fields);
-        if (!_confirmed.containsKey(_canonical(id))) return;
-        _confirmed[id] = _confirmed[id]!.patch(fields);
+        await repository.mutate(target, fields);
+        target = _canonical(id);
+        if (!_confirmed.containsKey(target)) return;
+        _confirmed[target] = _confirmed[target]!.patch(fields);
       } catch (e) {
-        if (!_confirmed.containsKey(id)) return;
+        target = _canonical(id);
+        if (!_confirmed.containsKey(target)) return;
         if (e is MailOperationFailure && e.committed) {
-          _confirmed[id] = _confirmed[id]!.patch(fields);
+          _confirmed[target] = _confirmed[target]!.patch(fields);
           error = e.message;
-          notice = null;
-          undo = null;
-          _undoId = null;
+          if (!quiet) {
+            notice = null;
+            undo = null;
+            _undoId = null;
+          }
           retry = () => unawaited(refresh());
           return;
         }
         final rollback = <String, Object>{};
         for (final key in fields.keys) {
-          if (_versions['$id:$key'] == revision) {
-            rollback[key] = _confirmed[id]!.field(key);
+          if (_versions['$target:$key'] == revision) {
+            rollback[key] = _confirmed[target]!.field(key);
           }
         }
-        _patchMail(id, rollback);
+        _patchMail(target, rollback);
         if (rollback.isNotEmpty) {
           error =
               'Could not update ${current.subject}. The affected display was restored. ${e is MailOperationFailure ? e.message : 'Retry.'}';
-          notice = null;
-          undo = null;
-          _undoId = null;
+          if (!quiet) {
+            notice = null;
+            undo = null;
+            _undoId = null;
+          }
           retry = () {
             unawaited(
-              e is MailOperationFailure ? refresh() : change(id, fields),
+              e is MailOperationFailure
+                  ? refresh()
+                  : change(id, fields, offerUndo: !quiet, quiet: quiet),
             );
           };
         }
@@ -574,9 +657,15 @@ class Workspace extends ChangeNotifier {
     _queues[id] = job;
     _changed();
     await job;
+    final target = _canonical(id);
+    final projection = _projection[target];
+    for (final field in fields.keys) {
+      if (_versions['$target:$field'] == revision) projection?.remove(field);
+    }
+    if (projection?.isEmpty == true) _projection.remove(target);
+    ++_revision; // A page captured before this acknowledgment must be retried.
     if (identical(_queues[id], job)) _queues.remove(id);
-    if (pending == 0 && _pageDeferred) {
-      _pageDeferred = false;
+    if (accountRepository != null) {
       unawaited(loadPage());
     }
     _changed();
@@ -667,6 +756,7 @@ class Workspace extends ChangeNotifier {
   }
 
   Future<Draft?> reply(String id, bool all) async {
+    unawaited(finishReading());
     try {
       final original = mail(id);
       if (original == null) return null;

@@ -1150,3 +1150,21 @@ dialog > .field,
   background: var(--tint);
   border-color: var(--accent);
 }
+
+.draft-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  overflow: auto;
+}
+.draft-list > .button {
+  flex: 0 0 auto;
+  min-height: 44px;
+  justify-content: flex-start;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.draft-list > .button span {
+  min-width: 0;
+}

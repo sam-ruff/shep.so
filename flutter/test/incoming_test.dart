@@ -43,6 +43,7 @@ class IncomingRepository extends PagedRepository
     required String filter,
     required bool oldest,
     required int offset,
+    Map<String, Map<String, Object>> projection = const {},
   }) async =>
       MailPage(omitted ? [] : [value.withoutBody()], omitted ? 0 : 1, 0);
   @override

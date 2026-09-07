@@ -38,6 +38,68 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets(
+    'Back finishes reading while cached navigation remains available during failure',
+    (tester) async {
+      final repository = PagedRepository();
+      final workspace = Workspace(repository, MemorySettings());
+      addTearDown(workspace.dispose);
+      await workspace.initialize();
+      workspace.setForeground(false);
+      await tester.pumpWidget(ShepApp(key: UniqueKey(), workspace: workspace));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('A little room for good ideas'));
+      await tester.pumpAndSettle();
+      expect(repository.jobs, isEmpty);
+      expect(find.byTooltip('Mark read'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await wait(tester, () => repository.jobs.length == 1);
+      await tester.tap(find.byTooltip('Open navigation menu'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Archive').last);
+      await tester.pumpAndSettle();
+      expect(workspace.folder, 'Archive');
+      expect(
+        workspace.resultCount,
+        repository.cached.where((m) => m.folder == 'Archive').length,
+      );
+      expect(workspace.pending, 1);
+      await tester.tap(find.byTooltip('Open navigation menu'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Inbox').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Your week, a little clearer'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Mark read'), findsOneWidget);
+      repository.jobs.single.completeError(StateError('Read rejected'));
+      await wait(tester, () => workspace.pending == 0);
+      expect(
+        find.textContaining('The affected display was restored'),
+        findsOneWidget,
+      );
+      expect(find.text('Your week, a little clearer'), findsOneWidget);
+      expect(workspace.mail('1')!.unread, true);
+      await capture(tester, 'native-read-leave-failure');
+      await tester.tap(find.byTooltip('Mark read'));
+      await tester.pumpAndSettle();
+      await wait(tester, () => repository.jobs.length == 2);
+      repository.jobs[1].complete();
+      await wait(tester, () => workspace.pending == 0);
+      await tester.tap(find.byTooltip('Mark unread'));
+      await tester.pumpAndSettle();
+      await wait(tester, () => repository.jobs.length == 3);
+      repository.jobs[2].complete();
+      await wait(tester, () => workspace.pending == 0);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(repository.jobs.length, 3);
+      expect(repository.cached.firstWhere((m) => m.id == '2').unread, true);
+      await capture(tester, 'native-read-explicit-unread');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('Sent handover preserves reader identity, late body and Undo', (
     tester,
   ) async {

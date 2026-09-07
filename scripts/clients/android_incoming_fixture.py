@@ -22,7 +22,7 @@ def prepare(path):
         account=dict(id='fixture',name='Incoming fixture',email='owner@example.test',protocol='Pop3',host='mail.example.test',port=995,username='fixture',smtp_host='mail.example.test',smtp_port=465)
         db.execute('INSERT INTO accounts VALUES(?,?)',('fixture',json.dumps(account)))
         db.execute('INSERT INTO folders VALUES(?,?)',('fixture','["INBOX","Archive"]'))
-        db.execute('INSERT INTO mail(id,account_id,remote_id,folder,sender,recipient,subject,preview,timestamp,unread,starred,attachment_count,body,raw) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',('fixture:INBOX:files','fixture','files','INBOX','Files <files@example.test>','owner@example.test','Incoming files fixture','Cached incoming files.',1788692400,0,0,3,body,raw.encode()))
+        db.execute('INSERT INTO mail(id,account_id,remote_id,folder,sender,recipient,subject,preview,timestamp,unread,starred,attachment_count,body,raw) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',('fixture:INBOX:files','fixture','files','INBOX','Files <files@example.test>','owner@example.test','Incoming files fixture','Cached incoming files.',1788692400,1,0,3,body,raw.encode()))
         draft=dict(id='removal-draft',account_id='fixture',to='recipient@example.test',cc='',bcc='',subject='Account removal draft',body='Synthetic draft retained until removal.',revision=1)
         db.execute('INSERT INTO drafts VALUES(?,?,?)',(draft['id'],1,json.dumps(draft)))
 

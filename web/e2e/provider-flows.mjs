@@ -173,6 +173,56 @@ export async function providerFlows(page, context, origin, output, session) {
         { exact: true },
       ),
   ).toBeVisible();
+  const cachedUnread = () =>
+    page.evaluate(async (user) => {
+      const db = await new Promise((resolve, reject) => {
+        const opening = indexedDB.open(`shep.mail.v1.${user}`);
+        opening.onsuccess = () => resolve(opening.result);
+        opening.onerror = () => reject(opening.error);
+      });
+      try {
+        return await new Promise((resolve, reject) => {
+          const tx = db.transaction("mail");
+          const rows = tx.objectStore("mail").getAll();
+          tx.oncomplete = () =>
+            resolve(
+              rows.result.find(
+                (m) => m.core.subject === "The beta transport fixture",
+              )?.core.unread,
+            );
+          tx.onerror = () => reject(tx.error);
+        });
+      } finally {
+        db.close();
+      }
+    }, session.user_id);
+  await expect(row).toHaveClass(/unread/);
+  assert.equal(await cachedUnread(), true);
+  await Promise.all([
+    page.waitForResponse(
+      (r) =>
+        r.url().endsWith("/api/mail/flags") &&
+        r.request().postDataJSON().unread === false &&
+        r.status() === 200,
+    ),
+    page.getByRole("button", { name: "Preferences", exact: true }).click(),
+  ]);
+  await expect.poll(cachedUnread).toBe(false);
+  await page.getByRole("button", { name: "Mail", exact: true }).click();
+  await row
+    .getByRole("button", { name: "The beta transport fixture", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Mark unread", exact: true }).click();
+  await expect.poll(cachedUnread).toBe(true);
+  await page.getByRole("button", { name: "Preferences", exact: true }).click();
+  assert.equal(await cachedUnread(), true);
+  await page.getByRole("button", { name: "Mail", exact: true }).click();
+  await row
+    .getByRole("button", { name: "The beta transport fixture", exact: true })
+    .click();
+  await page.screenshot({
+    path: path.join(output, "read-on-leave-real-https.png"),
+  });
   await Promise.all([
     page.waitForResponse(
       (r) =>
@@ -1184,6 +1234,7 @@ export async function providerFlows(page, context, origin, output, session) {
     "print-preview-real-https-beta-gate-csp-and-worker",
     "offline-exact-binary-duplicate-and-encoded-attachments",
     "incoming-files-light-dark-compact-axe",
+    "read-on-leave-provider-ack-and-explicit-unread",
     "flag-ack-reload",
     "imap-queued-undo",
     "imap-undo-after-refresh",

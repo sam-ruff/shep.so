@@ -15,6 +15,12 @@
       "browser": "model.test.ts / workspace.spec.ts"
     },
     {
+      "id": "read-on-leave",
+      "contract": "Only deliberate visits arm read; leave queues a quiet ordered read; explicit unread wins; cached paging/counts and a new reader remain available through failure.",
+      "mobile": "workspace_test.dart / native_mail_test.dart / incoming_android_test.dart; native paging snapshot tests",
+      "browser": "model.test.ts / read-tracking.spec.ts / provider-flows.mjs"
+    },
+    {
       "id": "rapid-intent",
       "contract": "older failure cannot overwrite newer flags/read or undo",
       "mobile": "workspace_test.dart",

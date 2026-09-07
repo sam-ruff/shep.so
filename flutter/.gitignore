@@ -47,3 +47,5 @@ app.*.map.json
 # Gradle project reports and native build outputs
 /android/build/
 /rust/target/
+
+/android/.kotlin/
