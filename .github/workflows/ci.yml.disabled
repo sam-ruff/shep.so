@@ -115,6 +115,7 @@ jobs:
           npm --prefix flutter/e2e exec -- playwright install chromium
           python3 scripts/clients/android_e2e.py --device emulator-5554
           python3 scripts/clients/flutter_web_e2e.py
+          python3 scripts/clients/flutter_web_e2e.py --formatted
           cd flutter
           flutter build apk --debug --flavor production
           cd ..

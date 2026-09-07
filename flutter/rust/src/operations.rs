@@ -20,6 +20,7 @@ pub struct Operations {
     admitted: Arc<Semaphore>,
     slots: Arc<Semaphore>,
     search: Arc<Semaphore>,
+    rendering: Arc<Semaphore>,
     accounts: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     pub(crate) outgoing: crate::outgoing::Runtime,
     pub(crate) sent: crate::sent::Runtime,
@@ -29,11 +30,16 @@ pub struct Operations {
     pub(crate) mutation_waiting: tokio::sync::Notify,
 }
 impl Operations {
+    #[cfg(test)]
+    pub(crate) async fn hold_render_capacity(&self) -> tokio::sync::OwnedSemaphorePermit {
+        self.rendering.clone().acquire_many_owned(2).await.unwrap()
+    }
     pub fn new() -> Self {
         Self {
             admitted: Arc::new(Semaphore::new(40)),
             slots: Arc::new(Semaphore::new(8)),
             search: Arc::new(Semaphore::new(1)),
+            rendering: Arc::new(Semaphore::new(2)),
             accounts: Mutex::new(HashMap::new()),
             outgoing: crate::outgoing::Runtime::default(),
             sent: crate::sent::Runtime::default(),
@@ -146,6 +152,10 @@ pub enum Request {
     },
     Detail {
         id: String,
+    },
+    Formatted {
+        id: String,
+        options: shep_mail_core::document::Options,
     },
     Attachment {
         id: String,
@@ -484,6 +494,20 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             if folder=="Sent" { for message in &mail {folder_membership.entry(message.account_id.clone()).or_default().insert(message.folder.clone());} }
             Ok(json!({"mail":mail,"total":total,"unread":unread,"aliases":aliases,"folder_membership":folder_membership}))
         }).await,
+        Request::Formatted{id,options} => {
+            // One departing reader and its replacement may prepare concurrently.
+            // Admission precedes the cache read, and the blocking task owns its
+            // permit through cancellation. Provider and Find slots stay separate.
+            let permit=profile.operations.rendering.clone().try_acquire_owned().context("The formatted reader is busy. Use plain text or retry shortly.")?;
+            let raw:Vec<u8>=db.read(move |db| {
+                let summary=stored_mail(db,&id)?;
+                Ok(db.query_row("SELECT raw FROM mail WHERE id=?1",[&summary.id],|r|r.get(0))?)
+            }).await?;
+            tokio::task::spawn_blocking(move || {
+                let _permit=permit;
+                Ok(serde_json::to_value(shep_mail_core::document::prepare(&raw,&options).context("Could not format this cached message. Use plain text or retry.")?)?)
+            }).await?
+        }
         Request::Detail{id} => {
             let (summary,text,raw)=db.read(move |db| {
                 let summary=stored_mail(db,&id)?;

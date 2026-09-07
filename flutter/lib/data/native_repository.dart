@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'attachments.dart';
 import 'message_search.dart';
+import 'formatted_message.dart';
 import 'package:flutter/foundation.dart';
 import '../src/rust/api.dart';
 import '../src/rust/frb_generated.dart';
@@ -23,7 +24,8 @@ class NativeRepository
         SentPreferencesRepository,
         AttachmentRepository,
         AccountRemovalRepository,
-        TextSearchRepository {
+        TextSearchRepository,
+        FormattedMessageRepository {
   NativeRepository(this.profile, this.credentials);
   final MobileProfile profile;
   final CredentialStore credentials;
@@ -59,6 +61,21 @@ class NativeRepository
     }
     return response['data'];
   }
+
+  @override
+  Future<PreparedMessage> formattedMessage(
+    String id, {
+    required String generation,
+    required bool dark,
+    required bool quotes,
+  }) async => PreparedMessage.fromJson(
+    await call({
+          'op': 'formatted',
+          'id': id,
+          'options': {'generation': generation, 'dark': dark, 'quotes': quotes},
+        })
+        as Map<String, dynamic>,
+  );
 
   @override
   Future<List<SearchHit>> findText(
