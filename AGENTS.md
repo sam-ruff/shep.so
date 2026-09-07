@@ -144,7 +144,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 144 functional flows plus the navigation and HTML pixel performance gates; shipped run evidence belongs in the completion log.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 150 functional flows plus the navigation and HTML pixel performance gates; shipped run evidence belongs in the completion log.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -353,7 +353,7 @@ Owned visible-text geometry supports selection/copy without raw DOM pointers, ex
 
 No email JavaScript, CSS imports, filesystem or automatic network loader is installed in the renderer. CID/data images decode off-thread to WebP; remote resources use the existing per-message/sender/domain/Contacts policy and public-address/redirect validation. Preserve natural dimensions when converting small images. External HTTP(S) links open through a background system-browser task; mailto opens a draft and cannot inject hidden headers or attachments.
 
-`vendor/shep-html-pixbuf` is the MIT-licensed upstream 0.2.6 drawing adapter with corrected image sizing/position/repetition/device scale. The layout engine stays pinned to upstream litehtml. Keep its license/provenance in release archives. Worker pixel tests prove scaled image contents and repeated backgrounds; native screenshots prove clipping and controls remain visible. Static email HTML is supported; this is not a JavaScript browser or full support for every advanced browser CSS feature.
+`vendor/shep-html-pixbuf` is the MIT-licensed upstream 0.2.6 drawing adapter with corrected image sizing/position/repetition/device scale. The layout engine is version-pinned with a focused table-layout patch in `vendor/litehtml-sys`; its original BSD-3-Clause litehtml, Apache-2.0 Gumbo and MIT wrapper licenses stay in release archives. Keep its license/provenance in release archives. Worker pixel tests prove scaled image contents and repeated backgrounds; native screenshots prove clipping and controls remain visible. Static email HTML is supported; this is not a JavaScript browser or full support for every advanced browser CSS feature.
 
 
 ## Find within the open message
@@ -429,12 +429,24 @@ indicators belong inside the body allocation rather than a temporary extra row.
 The interactive HTML worker retains its own font discovery across documents;
 never share iced's font lock. A separate speculative worker has a replaceable
 mailbox of at most two neighboring cached messages. Its first-frame cache holds
-at most four frames / 32 MiB, keyed by body signature, message identity, geometry,
-font, quote policy, image permission and cached-image revision. It performs no
+at most eight frames / 32 MiB (including retained image bytes), keyed by body
+signature, message identity, geometry, font, quote policy and image permission.
+Frames acknowledge their actual decoded image inputs; a download invalidates only
+frames using that URL, never unrelated mail. Retain valid partial/failed-image
+layouts too, but never label pixels with an image that has not been applied.
+Visited frames seed their exact images on reopening even after shared cache
+eviction. The shared WebP byte cache is bounded to 128 entries / 16 MiB. It performs no
 network requests and cannot use the interactive renderer's capacity. Seed only
 permitted cached WebP bytes, decoded lazily when that document references them.
 Keep document font handles, glyphs and decoded resources isolated. Same-size
-repaints clear/reuse the viewport allocation.
+repaints clear/reuse the viewport allocation. Touch body-cache recency when a
+message is opened. Completed remote WebP bytes must not be decoded/re-encoded
+before the renderer decodes them.
+
+Root document background colors are observed on the renderer worker. The
+reader surround uses that color and readable native controls, retaining the same
+widget tree while frames arrive. Ordinary conversation refreshes must not
+reschedule its initial scroll position; explicit new-page navigation still may.
 
 The saved native preparation flow checks cache use, rapid selection, End/Home,
 pane drag and compact resize through actual input; observe html_view_current,
@@ -716,3 +728,33 @@ Bounded document-local text/glyph caches and visited initial-frame reuse must
 preserve font, content, viewport, image-policy and generation identity. The
 software renderer coalesces overlapping damage and paints only visible solid
 panel interiors; keep full/partial pixel and fractional-scale regressions.
+
+
+Deeply nested HTML tables must not redo the same subtree layout exponentially.
+`vendor/litehtml-sys` retains one table layout per complete containing-block
+constraint within the current normal-flow document render. Compare typed width,
+height, min/max, context index and sizing mode; a parent-adjusted box width is
+not proof of an identical layout. Caption displacement applies to the cells exactly once; do not accumulate a
+second offset on their row parents. Disable reuse in positioned layout and never
+reuse across render calls, resize or image updates. Preserve paired uncached/
+cached pixel, selection, span/caption/float/position and reflow tests, plus the
+exact inline-offset and caption-height expectations shared by both modes. The
+`shep-test-support` dependency feature exposes only thread-scoped test controls;
+normal and native test-support application builds do not enable it. Never edit
+the Cargo registry source. The cold/visited deep-table MCP pixel gates use a
+fictional 16-level template with 1,182 utility CSS rules; simplified letters alone
+failed to reproduce the user's 1–2 second delay. Read-only personal diagnostics
+remain explicitly ignored and cannot add mail content to public fixtures or logs.
+
+While selection mode is active, row clicks toggle that one message and preserve
+all other choices, including other pages. Shift ranges add to that selection.
+Only Clear/Done/Escape or a scope change clears the group deliberately. Native
+checkbox/row/modifier inputs must not count as reading. Preserve the additive
+row/range/cross-page bulk-review test and the separate double-click reader flow.
+
+Editor viewport bounds do not include partial glyph extents. The software
+renderer must always intersect editor text with its local viewport and damage
+mask, even if the editor box lies wholly inside that damaged area. Preserve the
+partially visible final-line renderer test and long-reply native typing captures.
+
+Inline fragment elements retain only their relative offset; `line_box.cpp` resets it before each application. This prevents wrapped fragments and repeated table measurements from accumulating a superscript/span offset. Keep the exact 5px/2px selection-geometry and repeated-layout regressions.

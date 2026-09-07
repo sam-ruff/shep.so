@@ -149,10 +149,11 @@ impl PixbufContainer {
     /// Load an image from raw bytes, decoded with the `image` crate.
     ///
     /// The decoded pixels are stored internally and referenced by `url` during
-    /// subsequent draw calls.
-    pub fn load_image_data(&mut self, url: &str, data: &[u8]) {
+    /// subsequent draw calls. Returns whether these exact bytes replaced the
+    /// image; a failed replacement leaves any previously decoded image intact.
+    pub fn load_image_data(&mut self, url: &str, data: &[u8]) -> bool {
         let Ok(img) = image::load_from_memory(data) else {
-            return;
+            return false;
         };
         let rgba = img.to_rgba8();
         let (w, h) = (rgba.width(), rgba.height());
@@ -166,11 +167,13 @@ impl PixbufContainer {
             chunk[2] = ((chunk[2] as u32 * a + 127) / 255) as u8;
         }
 
-        if let Some(pm) = tiny_skia::Pixmap::from_vec(
-            premul,
-            tiny_skia::IntSize::from_wh(w, h).expect("invalid image size"),
-        ) {
+        if let Some(pm) = tiny_skia::IntSize::from_wh(w, h)
+            .and_then(|size| tiny_skia::Pixmap::from_vec(premul, size))
+        {
             self.images.insert(url.to_string(), pm);
+            true
+        } else {
+            false
         }
     }
 

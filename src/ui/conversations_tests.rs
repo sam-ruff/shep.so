@@ -73,3 +73,39 @@ async fn stale_conversations_cannot_replace_current_selection_or_reenable_groupi
     assert!(!app.conversation_visible());
     assert_eq!(app.reader_id(), Some(anchor.summary.id.as_str()));
 }
+
+#[tokio::test]
+async fn refreshing_the_same_conversation_does_not_schedule_a_scroll_reset() {
+    let store = crate::store::Store::memory().unwrap();
+    let anchor = mail(&store, "anchor").await;
+    let parent = mail(&store, "parent").await;
+    let (mut app, _) = App::new();
+    app.selected = Some(anchor.summary.id.clone());
+    app.detail = Some(anchor.clone());
+    app.conversation.generation = 2;
+    let page = Arc::new(ConversationPage {
+        anchor: anchor.summary.id.clone(),
+        rows: vec![parent.summary.clone(), anchor.summary.clone()],
+        total: 2,
+        offset: 0,
+    });
+    assert!(
+        app.conversation_result(2, anchor.summary.id.clone(), Ok(page.clone()))
+            .units()
+            > 0
+    );
+    app.conversation.generation = 3;
+    assert_eq!(
+        app.conversation_result(3, anchor.summary.id.clone(), Ok(page.clone()))
+            .units(),
+        0
+    );
+    let mut updated = (*page).clone();
+    updated.rows[0].starred = true;
+    assert_eq!(
+        app.conversation_result(3, anchor.summary.id.clone(), Ok(Arc::new(updated)))
+            .units(),
+        0
+    );
+    assert!(app.conversation.page.rows[0].starred);
+}

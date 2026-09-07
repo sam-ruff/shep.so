@@ -151,6 +151,9 @@ impl State {
                                 }
                             }
                         }
+                        // Off-page overlap lives in SQLite. Until its reply,
+                        // the selected total is at least the whole new range.
+                        self.count = self.count.max((to - from + 1) as usize);
                     }
                 }
             }
@@ -279,7 +282,24 @@ impl App {
         id: String,
         modifiers: keyboard::Modifiers,
     ) -> Task<Message> {
-        let toggle = modifiers.control() || modifiers.command();
+        if self.mail_selection.mode
+            && !modifiers.control()
+            && !modifiers.command()
+            && !modifiers.shift()
+        {
+            let double = self
+                .last_click
+                .as_ref()
+                .is_some_and(|(last, time)| last == &id && time.elapsed().as_millis() < 400);
+            if double {
+                self.last_click = None;
+                return self.handle(Message::OpenMessage(id));
+            }
+            let task = self.checkbox_mail(id.clone());
+            self.last_click = Some((id, Instant::now()));
+            return task;
+        }
+        let toggle = self.mail_selection.mode || modifiers.control() || modifiers.command();
         let range = modifiers.shift();
         self.focused_input = None;
         self.pending_focus = None;
@@ -310,16 +330,6 @@ impl App {
                 return self.checkbox_mail(id);
             }
             return widget::operation::focus("unfocused");
-        }
-        if self.mail_selection.mode {
-            self.mail_selection.anchor = self
-                .selection_position(&id)
-                .map(|position| (id.clone(), position));
-            self.queue_selection(SelectionChange::Set {
-                id: id.clone(),
-                selected: true,
-                clear_others: true,
-            });
         }
         self.handle(Message::Select(id))
     }
@@ -506,6 +516,42 @@ mod tests {
         .map_err(|e| e.to_string());
         app.selection_finished(serial, result);
     }
+    #[tokio::test]
+    async fn selection_mode_rows_toggle_and_ranges_preserve_other_pages_before_ack() {
+        let (mut app, store, mut commands) = fixture().await;
+        let first = app.page.rows[0].id.clone();
+        let third = app.page.rows[2].id.clone();
+        let _ = app.toggle_selection_mode();
+        let _ = app.click_select_mail(first.clone(), keyboard::Modifiers::empty());
+        let _ = app.click_select_mail(third.clone(), keyboard::Modifiers::empty());
+        assert_eq!(app.mail_selection.count, 2);
+        let _ = app.click_select_mail(first, keyboard::Modifiers::empty());
+        assert_eq!(app.mail_selection.count, 1);
+        assert!(app.mail_selection.visible.contains(&third));
+        assert!(app.mail_actions.read_candidate.is_none());
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        app.query.offset = 50;
+        app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
+        reply(&mut app, &store, &mut commands).await;
+        let _ = app.click_select_mail(app.page.rows[0].id.clone(), keyboard::Modifiers::empty());
+        let _ = app.click_select_mail(app.page.rows[2].id.clone(), keyboard::Modifiers::SHIFT);
+        assert_eq!(app.mail_selection.count, 4);
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        assert_eq!(app.mail_selection.count, 4);
+        assert!(app.selected.is_none());
+        assert!(app.mail_actions.read_candidate.is_none());
+        let snapshot = store
+            .selection_snapshot(app.mail_selection.token.unwrap(), vec![third.clone()])
+            .await
+            .unwrap();
+        assert_eq!(snapshot.selected, 4);
+        assert!(snapshot.visible.contains(&third));
+    }
+
     #[tokio::test]
     async fn passive_selection_observation_does_not_disable_dragging_confirmed_choices() {
         let (mut app, store, mut commands) = fixture().await;

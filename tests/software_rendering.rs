@@ -411,3 +411,35 @@ fn panel_interior_fast_path_matches_general_painter_at_fractional_scale_and_clip
         }
     }
 }
+
+#[test]
+fn editor_glyphs_cannot_escape_the_viewport_when_its_bounds_fit_the_damage() {
+    use iced::advanced::text::Editor as _;
+    for height in [17., 29., 41., 59.] {
+        let mut renderer = renderer();
+        let mut editor = iced_tiny_skia::graphics::text::Editor::with_text(
+            "First line\nSecond line\nThird line\nFourth line\nFifth line",
+        );
+        editor.update(
+            Size::new(180., height),
+            Font::with_name("Noto Sans"),
+            Pixels(20.),
+            text::LineHeight::Absolute(Pixels(30.)),
+            text::Wrapping::Word,
+            &mut text::highlighter::PlainText,
+        );
+        let clip = rect(0., 0., 180., height);
+        renderer.fill_editor(&editor, Point::ORIGIN, Color::WHITE, clip);
+        let pixels = draw(&mut renderer, rect(0., 0., 200., 80.));
+        assert!(pixels.pixels().iter().any(|p| p.alpha() > 0));
+        for y in height.ceil() as u32..80 {
+            for x in 0..200 {
+                assert_eq!(
+                    pixels.pixel(x, y).unwrap().alpha(),
+                    0,
+                    "Editor ink below viewport at {x},{y} (height {height})"
+                );
+            }
+        }
+    }
+}

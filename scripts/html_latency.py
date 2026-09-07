@@ -74,6 +74,28 @@ if __name__ == "__main__":
     if not 1 <= args.samples <= 100:
         parser.error("samples must be 1–100")
     report = measure(args.samples)
+    from html_image_latency import measure as measure_images
+    illustrated = measure_images(args.samples)
+    if report["binary_sha256"] != illustrated["binary_sha256"]:
+        raise RuntimeError("The binary changed between HTML measurement groups.")
+    report["readings"].extend(illustrated["readings"])
+    report["evidence"].append(illustrated["artifacts"])
+    for case in ("warm_images_return", "warm_images_repeat"):
+        values = sorted(r["input_to_pixels_ms"] for r in illustrated["readings"] if r["case"] == case)
+        report["summary"][case] = {"count": len(values), "p50_ms": statistics.median(values),
+                                  "p95_ms": values[math.ceil(len(values)*.95)-1], "max_ms": max(values)}
+    report["method"] += " Includes repeated reopening of two nested-table messages with twelve permitted fixture images each; both final pixels and renderer image acknowledgments are checked."
+    from html_nested_latency import measure as measure_nested
+    nested = measure_nested(args.samples)
+    if report["binary_sha256"] != nested["binary_sha256"]:
+        raise RuntimeError("The binary changed between HTML measurement groups.")
+    report["readings"].extend(nested["readings"])
+    report["evidence"].extend(nested["evidence"])
+    for case in ("cold_nested_table", "warm_nested_table"):
+        values = sorted(r["input_to_pixels_ms"] for r in nested["readings"] if r["case"] == case)
+        report["summary"][case] = {"count": len(values), "p50_ms": statistics.median(values),
+                                  "p95_ms": values[math.ceil(len(values)*.95)-1], "max_ms": max(values)}
+    report["method"] += " Includes a fictional 16-level nested table with 1,182 utility CSS rules, cold and revisited."
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2)+"\n")
     print(json.dumps(report["summary"], indent=2))

@@ -3,7 +3,7 @@ Source: https://github.com/franzos/litehtml-rs
 
 Shep owns this small drawing adapter because the upstream image painter crops
 natural-size images and ignores CSS sizing, positioning, repetition and device
-scale. The HTML/CSS engine remains the pinned upstream crate. Changes here honor
+scale. The HTML/CSS engine uses the pinned wrapper and the documented table-layout patch in `../litehtml-sys/README.shep.md`. Changes here honor
 the computed image origin/clip boxes and scale the image pattern; document
 convenience renderers are omitted. Production worker tests in `src/html_render/tests.rs`
 cover this adapter through actual HTML, including scaled and inline images.
@@ -21,3 +21,7 @@ entries / 8 MiB. Oversized entries still render through the original path and
 are released immediately. These are cache bounds, not message-content limits.
 `cargo test -p shep-html-pixbuf` checks identity, eviction and unchanged glyph
 pixels/metrics, and runs explicitly in hooks and quality CI.
+
+Image loading returns an explicit decode result. A rejected replacement cannot
+be acknowledged as the bytes displayed for an already loaded URL. The production
+Surface regression checks retained input identity after malformed replacement.

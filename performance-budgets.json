@@ -13,6 +13,10 @@
     "cold_nonadjacent": 100.0,
     "warm_return": 50.0,
     "prefetched_neighbor": 50.0,
-    "warm_repeat": 50.0
+    "warm_repeat": 50.0,
+    "warm_images_return": 50,
+    "warm_images_repeat": 50,
+    "cold_nested_table": 100.0,
+    "warm_nested_table": 50.0
   }
 }

@@ -93,3 +93,49 @@ python3 scripts/performance_gate.py --html-only
 
 Full quality also runs these alongside backend/navigation gates. Reports and
 WebP evidence stay under ignored `artifacts/`; no personal inbox is used.
+
+
+## Complex and revisited HTML follow-up — 7 September 2026
+
+The earlier four fixtures did not reproduce the reported 1–2 second pause.
+Read-only profiling of two authorized cached messages isolated repeated nested
+table layout: initial worker renders took 1,538–2,107 ms. The same messages now
+render in 47–63 ms across the diagnostic comparisons. These are diagnostic
+worker times, not a latency percentile or live desktop-input measurement.
+Personal content and hashes remain private, outside the published evidence.
+The later paired run disables only table reuse: both corrected rendering modes
+produce identical viewport pixels and heights for both messages. One message
+differs from pristine upstream pixels because of the independently tested
+superscript-offset correction; it is not claimed unchanged from that baseline.
+
+The pinned litehtml patch reuses identical table-subtree measurements within one
+normal-flow render, comparing the complete containing-block constraint. It also
+corrects accumulating inline and caption offsets. Reuse never crosses a render,
+resize, image update or positioned-layout phase. Paired pixel/selection tests
+cover constraints, captions, spanning cells, floats, positioning, media changes
+and image reflow; exact geometry checks separately establish the offset fixes.
+
+The native gate now includes an unprepared fictional sixteen-level table with
+1,182 utility CSS rules, plus repeated navigation between two messages with
+twelve allowed fixture images each. The visited-frame cache retains eight frames
+within 32 MiB, including their image inputs. Image arrival invalidates only
+frames that use that URL; unrelated downloads cannot evict a settled preview.
+
+| Native click through displayed body pixels | p50 | p95 | Gate |
+| --- | ---: | ---: | ---: |
+| Unprepared long letter | 37.9 ms | 49.7 ms | 100 ms |
+| Return to styled mail | 28.3 ms | 32.2 ms | 50 ms |
+| Prefetched adjacent message | 26.0 ms | 26.9 ms | 50 ms |
+| Reopen the long letter | 29.1 ms | 36.9 ms | 50 ms |
+| Return to first image-heavy message | 19.3 ms | 21.0 ms | 50 ms |
+| Return to second image-heavy message | 19.5 ms | 22.8 ms | 50 ms |
+| Unprepared deep-table message | 36.0 ms | 38.2 ms | 100 ms |
+| Reopen the deep-table message | 21.2 ms | 22.6 ms | 50 ms |
+
+All eight gates pass with 20 observations each on optimized Linux/Xvfb, binary
+`c6ee6d73113f54d36548ec0d50ce8b428ab7c03e8d73d29e08585c7eb188febc`.
+No build ran during these measurements; the host was not asserted fully idle.
+The method and boundaries described above still apply. Reports and fictional
+WebP captures remain under ignored `artifacts/`; these results do not establish
+all possible HTML complexity, remote download speed, monitor scanout or another
+operating system's performance. Other final performance gates remain deferred.

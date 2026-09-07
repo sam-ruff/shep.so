@@ -524,3 +524,158 @@ async fn fixed_width_tables_pan_without_allocating_full_document_rasters() {
     drop(tx);
     thread.join().unwrap();
 }
+
+#[tokio::test]
+async fn frames_acknowledge_applied_images_and_document_background() {
+    let (tx, mut rx, thread) = start();
+    let bytes: Arc<[u8]> = Arc::from(include_bytes!("../../assets/logo-light.webp").as_slice());
+    let url = "https://example.test/parcel.webp";
+    let source = "<body style='background:#f5eddc'><table width='200' align='center' bgcolor='white'><tr><td>Parcel update<img src='https://example.test/parcel.webp' width='64' height='64'></td></tr></table></body>";
+    tx.send(Input::Load {
+        generation: 61,
+        body: body(source),
+        viewport: viewport(),
+        font_size: 14,
+        hide_quotes: false,
+        images: vec![],
+    })
+    .await
+    .unwrap();
+    let Event::Frame(initial) = next(&mut rx).await else {
+        panic!()
+    };
+    assert_eq!(initial.background, Some([245, 237, 220, 255]));
+    assert!(initial.loaded_images.is_empty());
+    assert_eq!(initial.images, [url]);
+    tx.send(Input::Image(61, url.into(), bytes.clone()))
+        .await
+        .unwrap();
+    let Event::Frame(loaded) = next(&mut rx).await else {
+        panic!()
+    };
+    assert_eq!(loaded.images, [url]);
+    assert_eq!(loaded.loaded_images.len(), 1);
+    assert!(Arc::ptr_eq(&loaded.loaded_images[0].1, &bytes));
+    assert_ne!(initial.pixels, loaded.pixels);
+    tx.send(Input::Load {
+        generation: 62,
+        body: body(source),
+        viewport: viewport(),
+        font_size: 14,
+        hide_quotes: false,
+        images: loaded.loaded_images.clone(),
+    })
+    .await
+    .unwrap();
+    let Event::Frame(reopened) = next(&mut rx).await else {
+        panic!()
+    };
+    assert_eq!(loaded.pixels, reopened.pixels);
+    assert_eq!(loaded.background, reopened.background);
+    // An unrelated image never becomes an input of this document.
+    tx.send(Input::Load {
+        generation: 63,
+        body: body("<p>Ordinary mail</p>"),
+        viewport: viewport(),
+        font_size: 14,
+        hide_quotes: false,
+        images: loaded.loaded_images.clone(),
+    })
+    .await
+    .unwrap();
+    let Event::Frame(ordinary) = next(&mut rx).await else {
+        panic!()
+    };
+    assert_eq!(ordinary.background, Some([255; 4]));
+    assert!(ordinary.loaded_images.is_empty());
+    drop(tx);
+    thread.join().unwrap();
+}
+
+#[test]
+fn failed_image_replacement_cannot_acknowledge_bytes_that_were_not_displayed() {
+    let surface = container::Surface::new(300, 200, 1., fonts());
+    let url = "https://example.test/image.webp";
+    let original: Arc<[u8]> = Arc::from(include_bytes!("../../assets/logo-light.webp").as_slice());
+    assert!(surface.load_remote_image(url, original.clone()));
+    assert!(!surface.load_remote_image(url, Arc::from(b"invalid image".as_slice())));
+    let loaded = surface.loaded_images();
+    assert_eq!(loaded.len(), 1);
+    assert!(Arc::ptr_eq(&loaded[0].1, &original));
+}
+
+/// Local-only diagnostic: no provider/keychain calls, writes, subjects, addresses,
+/// URLs or message text in output. Never use this path in the MCP harness.
+#[test]
+#[ignore = "Requires SHEP_PROFILE_CACHE pointing to an explicitly authorized local cache; reads only"]
+fn profile_cached_html_read_only() {
+    // Compare the same real document with/without table reuse. Both modes keep
+    // the independently tested inline/caption corrections; no production switch.
+    let reuse = std::env::var_os("SHEP_PROFILE_UNCACHED").is_none();
+    let _mode = litehtml_sys::table_layout_test::Mode::new(reuse);
+    let path = std::env::var("SHEP_PROFILE_CACHE").expect("Set the authorized cache path");
+    let cache =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+    let raw: Vec<Vec<u8>> = cache
+        .prepare("SELECT raw FROM messages WHERE folder='INBOX' ORDER BY timestamp DESC LIMIT 12")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let font_started = std::time::Instant::now();
+    let fonts = fonts();
+    println!(
+        "font_discovery_ms={:.3}",
+        font_started.elapsed().as_secs_f64() * 1000.
+    );
+    for (index, bytes) in raw.into_iter().enumerate() {
+        let started = std::time::Instant::now();
+        let parsed = mailparse::parse_mail(&bytes).unwrap();
+        let content = crate::email_content::extract(&parsed);
+        let mime_ms = started.elapsed().as_secs_f64() * 1000.;
+        let Some(body) = content.html.map(Arc::new) else {
+            continue;
+        };
+        for round in 0..2 {
+            let (tx, mut input) = commands::channel(1);
+            let (mut output, mut frames) = mpsc::channel(1);
+            tx.try_send(Input::Clear).unwrap();
+            let started = std::time::Instant::now();
+            document(
+                0,
+                Source {
+                    body: body.clone(),
+                    font_size: 14,
+                    hide_quotes: true,
+                    images: vec![],
+                },
+                Viewport {
+                    width: 740,
+                    height: 700,
+                    scale: 1.,
+                },
+                fonts.clone(),
+                None,
+                &mut input,
+                &mut output,
+            )
+            .unwrap();
+            let render_ms = started.elapsed().as_secs_f64() * 1000.;
+            drop(output);
+            let Some(Event::Frame(frame)) = futures::executor::block_on(frames.next()) else {
+                panic!()
+            };
+            println!(
+                "{}",
+                serde_json::json!({"index":index,"round":round,"reuse":reuse,"mime_bytes":bytes.len(),"html_bytes":body.source.len(),"inline_bytes":body.inline.values().map(|b| b.len()).sum::<usize>(),"mime_ms":mime_ms,"render_ms":render_ms,"height":frame.content_height,"input_sha256":format!("{:x}",<sha2::Sha256 as sha2::Digest>::digest(&bytes)),"pixels_sha256":format!("{:x}",<sha2::Sha256 as sha2::Digest>::digest(&frame.pixels))})
+            );
+        }
+    }
+}
+
+use crate::complex_html_fixture as complex_fixture;
+
+#[path = "table_tests.rs"]
+mod table_tests;

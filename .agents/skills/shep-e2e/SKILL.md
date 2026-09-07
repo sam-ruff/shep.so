@@ -41,6 +41,23 @@ Keep actual WebP visual review and the existing HTML selection, image-policy,
 Find, resize, scrolling, zoom and failure/retry native scenarios alongside timing.
 
 
+The HTML timing script now also runs `scripts/html_image_latency.py` against two
+fictional nested-table parcel messages in Sent, each with twelve external fixture
+images. It grants image permission through the native buttons and measures both
+repeated directions, retaining the 50 ms p95 budget. `html_rendered_images` counts
+worker-acknowledged inputs in the displayed frame; `html_loaded_images` is only
+supplied-input bookkeeping and cannot prove the pictures are displayed.
+
+Keep the saved slow-renderer repeated-open, document-background, conversation
+scroll-refresh and sender-copy/selection-icon flows. The repeated-open flow gives
+the worker an artificial 1.2 s delay and requires a cache hit with all twelve
+image inputs already displayed. It then exercises native selection and Find.
+Background checks sample the gutter outside the HTML canvas in light/dark and
+review native text contrast. Sender copy checks paste each copied value into the
+native search field. `conversation_scroll` observes the actual scroller; refresh
+must retain it on the same conversation page. These are isolated fictional data.
+
+
 Call `desktop.start` once per independent scenario. It owns an isolated Xvfb display, a 1440×920 native window and an in-memory fixture workspace. It returns the artifact directory. Set `empty_calendars: true` on `desktop.start` to test the no-calendar state. The nondefault test feature supplies fixture messages and observation hooks; normal builds must never expose personal mail to the harness.
 
 Use `desktop.batch` for related actions. Example arguments:
@@ -388,3 +405,15 @@ folder, then Mail. Inbox becomes active and the old folder loses its keyboard
 outline. Observe `sidebar_focus=false` and `mail_selection.list_focus=true`, then
 Tab/Enter must target Inbox. Cover unified light and per-account dark views, and
 keep the separate remappable sidebar Inbox key flow (it retains sidebar focus).
+
+
+Keep the deep-table HTML timings in `scripts/html_nested_latency.py`, called by
+`html_latency.py`. Its Sent fixture is nonadjacent to the initial parcel message,
+with sixteen nested tables and 1,182 fictional utility CSS rules. Check both cold
+and revisited actual pixels; budgets stay 100/50 ms p95 with twenty samples.
+Do not substitute the simple long letter for this shape of HTML.
+
+Selection mode row clicks toggle only that row, and Shift ranges add to existing
+choices. The saved `test_selection_mode_row_clicks_toggle_without_clearing_other_pages`
+uses ordinary mouse clicks across two pages and checks the actual bulk review.
+Keep the separate checkbox, arrival, modifier, text-focus and double-click tests.

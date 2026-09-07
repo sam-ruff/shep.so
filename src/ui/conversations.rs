@@ -16,6 +16,7 @@ pub(super) struct Conversation {
     pub focus: Option<String>,
     pub collapsed: bool,
     pub error: Option<String>,
+    pub scroll: f32,
 }
 
 impl App {
@@ -71,11 +72,7 @@ impl App {
         self.conversation.focus = Some(id.clone());
         self.conversation.collapsed = false;
         self.expanded_replies.clear();
-        self.detail = self
-            .detail_cache
-            .iter()
-            .find(|d| d.summary.id == id)
-            .cloned();
+        self.detail = self.cached_detail(&id);
         if self.detail.is_none() {
             self.send(Command::Detail {
                 revision: self.detail_revision,
@@ -131,6 +128,9 @@ impl App {
                 );
             }
             Ok(page) => {
+                let previous_reader = self.reader_id().map(str::to_owned);
+                let changed_page =
+                    !self.conversation_visible() || self.conversation.page.offset != page.offset;
                 self.conversation.page = page;
                 if !self
                     .conversation
@@ -156,7 +156,11 @@ impl App {
                         }
                     }
                 }
-                if self.conversation_visible() {
+                // Periodic sync/read/flag refreshes update the same thread.
+                // They must not reposition a person already reading further down.
+                if self.conversation_visible()
+                    && (changed_page || previous_reader.as_deref() != self.reader_id())
+                {
                     return Task::perform(
                         async move {
                             tokio::time::sleep(std::time::Duration::from_millis(32)).await;
@@ -341,6 +345,7 @@ impl App {
             container(heading).padding([14, 20]),
             scrollable(container(cards).padding([0, 20]))
                 .id("conversation-reader")
+                .on_scroll(|viewport| Message::ConversationViewport(viewport.absolute_offset().y))
                 .height(Length::Fill),
             container(self.reader_navigation()).padding([8, 20])
         ]

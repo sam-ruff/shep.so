@@ -11,7 +11,6 @@ pub struct Key {
     pub font_size: u16,
     pub hide_quotes: bool,
     pub allow_images: bool,
-    pub image_revision: u64,
     pub viewport: Viewport,
 }
 #[derive(Debug, Clone)]
@@ -104,7 +103,6 @@ mod tests {
                 font_size: 14,
                 hide_quotes: true,
                 allow_images: true,
-                image_revision: 1,
                 viewport,
             },
             source: Source {

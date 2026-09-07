@@ -5,6 +5,39 @@ use iced::{
 };
 
 impl App {
+    pub(super) fn reader_surface<'a>(
+        &self,
+        detail: &MailDetail,
+        content: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        let background = self
+            .formatted(detail)
+            .then(|| self.html_reader.frame.as_ref().and_then(|f| f.background))
+            .flatten()
+            .filter(|rgba| rgba[3] == 255)
+            .map(|[r, g, b, _]| iced::Color::from_rgb8(r, g, b));
+        let theme = background.map(|color| {
+            if color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722 < 0.45 {
+                Theme::Dark
+            } else {
+                Theme::Light
+            }
+        });
+        // Keep an identical widget tree before/after rendering so discovering a
+        // background never recreates the scroller or loses native input focus.
+        widget::themer(
+            theme,
+            container(content)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(move |theme| widget::container::Style {
+                    background: background.map(Into::into),
+                    text_color: Some(colors(theme).text),
+                    ..Default::default()
+                }),
+        )
+        .into()
+    }
     pub(super) fn reader_width(&self) -> f32 {
         let width = self.size.width / (self.preferences.interface_scale as f32 / 100.);
         if self.full_reader {
@@ -164,11 +197,19 @@ impl App {
         column![
             text(&detail.summary.sender).size(15).font(BOLD),
             text("Email address").size(12),
-            text(address.clone()).size(14),
-            action("Copy email address", Message::CopyAddress(address)),
+            row![
+                text(address.clone()).size(14).width(Length::Fill),
+                self.icon_action("copy", "Copy email address", Message::CopyAddress(address))
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
             text("Domain").size(12),
-            text(domain.clone()).size(14),
-            action("Copy domain", Message::CopyAddress(domain)),
+            row![
+                text(domain.clone()).size(14).width(Length::Fill),
+                self.icon_action("copy", "Copy domain", Message::CopyAddress(domain))
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
         ]
         .spacing(12)
         .into()
