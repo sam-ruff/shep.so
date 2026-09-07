@@ -2,6 +2,7 @@ import type { Account, Outgoing, RecordMail } from "./provider";
 import type { Draft } from "./model";
 import type { Change, StoreName } from "./storage";
 import { localId, type MailAlias } from "./sent_cache";
+import type { MailIntent } from "./mail_intents";
 export interface RemovalReview {
   id: string;
   token: string;
@@ -12,6 +13,7 @@ export interface RemovalReview {
   outgoing: number;
   unresolved: number;
   moves: number;
+  changes: number;
   fingerprint: string;
   draftIds: string[];
 }
@@ -25,8 +27,9 @@ export const reviewStores = [
   "mailAliases",
   "mailRoles",
   "removedAccounts",
+  "mailIntents",
 ] as const;
-const ordered = (items: any[], key: (v: any) => string) =>
+const ordered = <T>(items: T[], key: (v: T) => string) =>
   [...items].sort((a, b) => key(a).localeCompare(key(b)));
 export function removalPreview(s: RemovalSnapshot, id: string): RemovalReview {
   const account = (s.accounts as Account[]).find((a) => a.id === id);
@@ -56,6 +59,16 @@ export function removalPreview(s: RemovalSnapshot, id: string): RemovalReview {
     (s.draftFiles ?? []).filter((f) => draftIds.includes(f.draftId)),
     (f) => f.info.id,
   );
+  const intents = ordered(
+    ((s.mailIntents ?? []) as MailIntent[]).filter((i) => i.account === id),
+    (i) => i.id,
+  );
+  const pending = new Set(
+    mail.filter((m) => m.moved || m.pendingMove).map(localId),
+  );
+  for (const intent of intents)
+    if (Object.values(intent.fields).some((f) => f?.status === "pending"))
+      pending.add(intent.id);
   return {
     id,
     token: crypto.randomUUID(),
@@ -73,6 +86,7 @@ export function removalPreview(s: RemovalSnapshot, id: string): RemovalReview {
           (!o.recovery || o.recovery.action === "marked")),
     ).length,
     moves: mail.filter((m) => m.moved || m.pendingMove).length,
+    changes: pending.size,
     draftIds,
     fingerprint: JSON.stringify([
       account,
@@ -80,6 +94,7 @@ export function removalPreview(s: RemovalSnapshot, id: string): RemovalReview {
       drafts,
       files.map((f) => [f.draftId, f.info, f.order]),
       outgoing.map((o) => [o.id, o.draft, o.state, o.recovery, o.sent]),
+      intents,
     ]),
   };
 }
@@ -99,15 +114,21 @@ export function removalChanges(
     throw new Error(
       "Local data changed while this review was open. Reload the counts before removing this account.",
     );
-  if (!discard && (current.unresolved || current.moves))
+  if (!discard && (current.unresolved || current.changes))
     throw new Error(
-      "Confirm discarding unfinished delivery and move records first. Removal cannot undo a server operation.",
+      "Confirm discarding unfinished delivery and mail-change records first. Removal cannot undo a server operation.",
     );
   const mailIds = new Set(
     (s.mail as RecordMail[])
       .filter((m) => m.core.account_id === expected.id)
       .map(localId),
   );
+  // Missing cached rows can still own an unresolved action or late raw-body
+  // read. Retain those identities in the tombstone without keeping content.
+  for (const intent of (s.mailIntents ?? []) as MailIntent[])
+    if (intent.account === expected.id) mailIds.add(intent.id);
+  for (const alias of (s.mailAliases ?? []) as MailAlias[])
+    if (mailIds.has(alias.target)) mailIds.add(alias.alias);
   return [
     ...[...mailIds].flatMap((key) => [
       { store: "mail" as const, key },
@@ -124,6 +145,9 @@ export function removalChanges(
       .filter((f) => current.draftIds.includes(f.draftId))
       .map((f) => ({ store: "draftFiles" as const, key: f.info.id })),
     { store: "mailRoles", key: expected.id },
+    ...((s.mailIntents ?? []) as MailIntent[])
+      .filter((i) => i.account === expected.id)
+      .map((i) => ({ store: "mailIntents" as const, key: i.id })),
     { store: "accounts", key: expected.id },
     {
       store: "removedAccounts",
@@ -155,7 +179,7 @@ export function checkRemovedWrites(changes: Change[], removed: any[]) {
             ? v.accountId
             : c.store === "outgoing"
               ? (v.account?.id ?? v.draft?.accountId)
-              : c.store === "mailRoles"
+              : c.store === "mailRoles" || c.store === "mailIntents"
                 ? v.account
                 : undefined;
     if (

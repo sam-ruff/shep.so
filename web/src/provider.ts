@@ -27,6 +27,7 @@ import { recoverSent, type SentWork } from "./sent";
 import { envelope, replyDraft, type ReplyEnvelope } from "./reply";
 import type { Session } from "./auth";
 import { MutationFailure } from "./model";
+import type { IntentLease } from "./mail_intents";
 import type {
   Repository,
   Mail,
@@ -129,7 +130,19 @@ export interface RecordMail {
 export interface MutationReceipt {
   receipt: BulkReceipt;
   cacheApplied: boolean;
+  applied?: Fields;
 }
+class MutationSuperseded extends MutationFailure {
+  constructor() {
+    super(
+      "A newer choice replaced this change. Refresh the folder to display it.",
+    );
+  }
+}
+const displayFields = (fields: Fields): Fields => ({
+  ...fields,
+  ...(fields.folder === "INBOX" ? { folder: "Inbox" } : {}),
+});
 function physical(mail: RecordMail): BulkIdentity {
   return {
     id: localId(mail),
@@ -831,8 +844,38 @@ export class GatewayRepository implements Repository, SelectionRepository {
       this.saveMoved(id, latest),
     );
   }
-  async mutate(id: string, fields: Fields): Promise<void> {
-    const result = await this.mutateWithReceipt(id, fields);
+  async registerMutation(id: string, fields: Fields) {
+    return this.store.intents?.register(id, fields);
+  }
+  async cancelMutation(lease: IntentLease) {
+    await this.store.intents?.finish(lease, "failed");
+  }
+  async mutate(
+    id: string,
+    fields: Fields,
+    lease?: IntentLease,
+  ): Promise<Fields> {
+    lease ??= await this.registerMutation(id, fields);
+    let result: MutationReceipt;
+    try {
+      result = await this.mutateWithReceipt(
+        id,
+        fields,
+        undefined,
+        undefined,
+        lease,
+      );
+    } catch (error) {
+      if (error instanceof MutationFailure && error.applied)
+        error.applied = displayFields(error.applied);
+      if (!(error instanceof MutationSuperseded)) throw error;
+      try {
+        await this.reloadMail();
+      } catch {
+        throw error;
+      }
+      return {};
+    }
     try {
       await this.reloadMail();
     } catch {
@@ -841,8 +884,11 @@ export class GatewayRepository implements Repository, SelectionRepository {
         true,
         result.receipt,
         result.cacheApplied,
+        displayFields(result.applied ?? fields),
       );
     }
+    // Mail presentation calls the canonical IMAP INBOX folder "Inbox".
+    return displayFields(result.applied ?? fields);
   }
   /** The durable runner receives server acknowledgment before fallible cache
    * work. Ordinary controls also retain committed status after display failure.
@@ -852,7 +898,66 @@ export class GatewayRepository implements Repository, SelectionRepository {
     fields: Fields,
     acknowledged?: (result: MutationReceipt) => Promise<void>,
     expected?: BulkIdentity,
+    lease?: IntentLease,
   ): Promise<MutationReceipt> {
+    let result: MutationReceipt;
+    try {
+      result = await this.performMutation(
+        id,
+        fields,
+        acknowledged,
+        expected,
+        lease,
+      );
+    } catch (error) {
+      if (lease) {
+        // An uncertain wire result remains pending for explicit recovery. A
+        // known receipt dominates a later cache/display/intent-save failure.
+        const status =
+          error instanceof MutationFailure
+            ? error.committed
+              ? "applied"
+              : undefined
+            : "failed";
+        if (status) {
+          try {
+            await this.store.intents?.finish(lease, status);
+          } catch {
+            /* Retain the original recovery instruction. */
+          }
+        }
+      }
+      throw error;
+    }
+    if (lease) {
+      try {
+        await this.store.intents?.finish(lease, "applied");
+      } catch {
+        throw new MutationFailure(
+          "The change was saved, but its local action record could not finish. Refresh before another action.",
+          true,
+          result.receipt,
+          result.cacheApplied,
+          result.applied,
+        );
+      }
+    }
+    return result;
+  }
+  private async performMutation(
+    id: string,
+    fields: Fields,
+    acknowledged?: (result: MutationReceipt) => Promise<void>,
+    expected?: BulkIdentity,
+    lease?: IntentLease,
+  ): Promise<MutationReceipt> {
+    const effective = async () => {
+      if (!lease) return;
+      if (!this.store.intents)
+        throw Error("Mail action storage is unavailable. Reopen Shep.");
+      fields = await this.store.intents.effective(lease, id);
+      if (!Object.keys(fields).length) throw new MutationSuperseded();
+    };
     const m = await resolveMail(this.store, id);
     if (!m)
       throw new Error("This message is no longer cached. Refresh its folder.");
@@ -869,6 +974,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
             "This message is no longer cached. Refresh its folder.",
           );
         if (!latest.local && account.protocol !== "Pop3") return false;
+        await effective();
         if (latest.pendingMove || latest.receipt || latest.moved)
           throw new Error(
             "This message needs move recovery before another action.",
@@ -886,7 +992,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
         await acknowledged?.({ receipt, cacheApplied });
         return true;
       });
-      if (local) return { receipt: receipt!, cacheApplied };
+      if (local) return { receipt: receipt!, cacheApplied, applied: fields };
       await this.exclusive(`account.${account.id}`, async () => {
         const latest = await resolveMail(this.store, id);
         if (!latest)
@@ -894,22 +1000,24 @@ export class GatewayRepository implements Repository, SelectionRepository {
             "This message is no longer cached. Refresh its folder.",
           );
         id = localId(latest);
+        await effective();
         if (latest.pendingMove)
           throw new Error(
             "A previous move has no saved acknowledgment. Refresh both folders and choose the current message; it was not moved again.",
           );
         if (
           account.protocol === "Imap" &&
-          fields.folder &&
-          (fields.unread !== undefined || fields.starred !== undefined)
-        )
-          throw new Error("Move and flag changes must be separate actions.");
-        if (
-          account.protocol === "Imap" &&
           !latest.local &&
           (latest.receipt || latest.moved)
         )
           await this.resolveMoved(id, latest, account);
+        await effective();
+        if (
+          account.protocol === "Imap" &&
+          fields.folder &&
+          (fields.unread !== undefined || fields.starred !== undefined)
+        )
+          throw new Error("Move and flag changes must be separate actions.");
         const before = guardSource(latest, expected);
         const folder = fields.folder === "Inbox" ? "INBOX" : fields.folder;
         if (
@@ -1009,7 +1117,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
           receipt = { ...receipt, after: physical(latest) };
         }
       });
-      return { receipt: receipt!, cacheApplied };
+      return { receipt: receipt!, cacheApplied, applied: fields };
     } catch (error) {
       if (receipt && !(error instanceof MutationFailure && error.committed))
         throw new MutationFailure(
@@ -1017,7 +1125,10 @@ export class GatewayRepository implements Repository, SelectionRepository {
           true,
           receipt,
           cacheApplied,
+          fields,
         );
+      if (error instanceof MutationFailure && error.committed)
+        error.applied = fields;
       throw error;
     }
   }

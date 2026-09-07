@@ -3,6 +3,7 @@ import { mailMatches } from "./mail_query";
 import { MailSelection } from "./mail_selection";
 import type { SelectionRepository, SelectionScope } from "./selection_types";
 import type { BulkReceipt } from "./bulk_journal";
+import type { IntentLease } from "./mail_intents";
 export interface Mail {
   id: string;
   sender: string;
@@ -63,6 +64,7 @@ export class MutationFailure extends Error {
     public committed = false,
     public receipt?: BulkReceipt,
     public cacheApplied = false,
+    public applied?: Fields,
   ) {
     super(message);
   }
@@ -80,7 +82,16 @@ export interface Repository {
   selection?: SelectionRepository["selection"];
   closeSelections?(): Promise<void>;
   refresh(folder?: string, account?: string | null): Promise<Mail[]>;
-  mutate(id: string, fields: Fields): Promise<void>;
+  registerMutation?(
+    id: string,
+    fields: Fields,
+  ): Promise<IntentLease | undefined>;
+  cancelMutation?(lease: IntentLease): Promise<void>;
+  mutate(
+    id: string,
+    fields: Fields,
+    lease?: IntentLease,
+  ): Promise<Fields | void>;
   saveDraft(draft: Draft): Promise<void>;
   send(draft: Draft): Promise<void>;
   saveEvent(event: CalendarEntry): Promise<void>;
@@ -713,16 +724,66 @@ export class Workspace extends EventTarget {
       this.error = null;
       this.retry = null;
     }
+    // Reserve in input order, before waiting for older provider work. Consume a
+    // rejected reservation immediately; report it through the ordered action.
+    const reservation = Promise.resolve(
+      this.repository.registerMutation?.(id, fields),
+    ).then(
+      (lease) => ({ lease }),
+      (error) => ({ error }),
+    );
+    const accept = (applied: Fields) => {
+      this.acceptAliases(this.repository.cached, revision);
+      const key = this.canonical(id),
+        saved = this.repository.cached.find((m) => m.id === key);
+      const superseded = Object.fromEntries(
+        Object.keys(fields)
+          .filter((field) => !(field in applied) && saved)
+          .map((field) => [field, saved![field as keyof Mail]]),
+      ) as Fields;
+      this.confirmed.set(key, {
+        ...this.confirmed.get(key)!,
+        ...superseded,
+        ...applied,
+      });
+      this.paint(
+        key,
+        Object.fromEntries(
+          Object.entries(superseded).filter(
+            ([field]) => this.versions.get(`${key}:${field}`) === revision,
+          ),
+        ) as Fields,
+      );
+      if (fields.folder && applied.folder === undefined) {
+        if (move) this.moves.failed(move);
+        if (restoring) this.moves.failed(restoring);
+      }
+      if (!Object.keys(applied).length && this.flagUndoRevision === revision) {
+        this.flagUndo = null;
+        this.statusNotice = null;
+      }
+    };
     const previousJobs = [...this.queues]
       .filter(([key]) => this.canonical(key) === id)
       .map(([, job]) => job);
     const job = Promise.all(previousJobs).then(async () => {
-      if (!this.confirmed.has(this.canonical(id))) return;
-      if (move?.cancelled || (restoring && !restoring.committed)) return;
-      if (move) move.started = true;
       try {
-        await this.repository.mutate(this.canonical(id), fields);
-        if (move) move.committed = true;
+        const registered = await reservation;
+        if (!this.confirmed.has(this.canonical(id))) return;
+        if ("error" in registered) throw registered.error;
+        if (move?.cancelled || (restoring && !restoring.committed)) {
+          if (registered.lease)
+            await this.repository.cancelMutation?.(registered.lease);
+          return;
+        }
+        if (move) move.started = true;
+        const applied =
+          (await this.repository.mutate(
+            this.canonical(id),
+            fields,
+            registered.lease,
+          )) ?? fields;
+        if (move) move.committed = applied.folder !== undefined;
         if (restoring) {
           this.undoFailures.delete(restoring);
           if (this.undoErrorOwner === restoring) {
@@ -731,9 +792,7 @@ export class Workspace extends EventTarget {
           }
         }
         if (!this.confirmed.has(this.canonical(id))) return;
-        this.acceptAliases(this.repository.cached, revision);
-        const key = this.canonical(id);
-        this.confirmed.set(key, { ...this.confirmed.get(key)!, ...fields });
+        accept(applied);
       } catch (error) {
         if (!this.confirmed.has(this.canonical(id))) return;
         const acknowledged =
@@ -746,8 +805,7 @@ export class Workspace extends EventTarget {
         }
         if (error instanceof MutationFailure && error.committed) {
           if (restoring) restoring.restoreCommitted = true;
-          const key = this.canonical(id);
-          this.confirmed.set(key, { ...this.confirmed.get(key)!, ...fields });
+          accept(error.applied ?? fields);
           if (move) {
             move.committed = true;
             move.blocked =

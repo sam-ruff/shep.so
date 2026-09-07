@@ -1,5 +1,10 @@
 import { cacheStores, mailMetadata, recordCacheChanges } from "./cache_changes";
 import {
+  BrowserIntents,
+  adoptIntentAliases,
+  type IntentStore,
+} from "./mail_intents";
+import {
   checkRemovedWrites,
   removalChanges,
   reviewStores,
@@ -17,6 +22,8 @@ export const stores = [
   "mailAliases",
   "mailRoles",
   "removedAccounts",
+  "mailIntents",
+  "intentState",
   ...cacheStores,
 ] as const;
 export type StoreName = (typeof stores)[number];
@@ -26,6 +33,7 @@ export interface Change {
   value?: unknown;
 }
 export interface LocalStore {
+  intents?: IntentStore;
   removeAccount?(review: RemovalReview, discard: boolean): Promise<void>;
   all<T>(store: StoreName): Promise<T[]>;
   get<T>(store: StoreName, key: string): Promise<T | undefined>;
@@ -40,7 +48,7 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     throw new Error("Invalid browser profile identity.");
   return new Promise((resolve, reject) => {
     let abandoned = false;
-    const request = indexedDB.open(`shep.mail.v1.${user}`, 5);
+    const request = indexedDB.open(`shep.mail.v1.${user}`, 6);
     request.onupgradeneeded = (event) => {
       for (const store of stores)
         if (!request.result.objectStoreNames.contains(store))
@@ -115,7 +123,10 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
 }
 
 export class BrowserStore implements LocalStore {
-  private constructor(private db: IDBDatabase) {}
+  readonly intents: IntentStore;
+  private constructor(private db: IDBDatabase) {
+    this.intents = new BrowserIntents(db);
+  }
   static async open(user: string): Promise<BrowserStore> {
     return new BrowserStore(await openMailDatabase(user));
   }
@@ -221,6 +232,9 @@ export class BrowserStore implements LocalStore {
             )
               ? cacheStores
               : []),
+            ...(changes.some((c) => c.store === "mailAliases")
+              ? ["mailIntents"]
+              : []),
             "removedAccounts" as const,
           ]),
         ],
@@ -239,9 +253,11 @@ export class BrowserStore implements LocalStore {
       const originalAbort = tx.onabort;
       tx.onabort = (event) =>
         cause ? reject(cause) : originalAbort?.call(tx, event);
-      removed.onsuccess = () => {
+      removed.onsuccess = async () => {
         try {
           checkRemovedWrites(changes, removed.result);
+          if (changes.some((c) => c.store === "mailAliases"))
+            await adoptIntentAliases(tx, changes);
           for (const c of changes) {
             if (c.value === undefined) tx.objectStore(c.store).delete(c.key);
             else tx.objectStore(c.store).put(c.value, c.key);
