@@ -941,3 +941,77 @@ R45 is removed from TODO after this checkpoint was installed and pushed. The ful
 goal remains active; folder trees/context menus, other TODO features, live-provider
 and platform validation remain outstanding. Performance measurements stay deferred.
 Quality/release workflows remain disabled; documentation CI remains enabled.
+
+## R30 — Native mailbox trees (2026-09-07)
+
+Installed and pushed source **6d520e9b26d2c1dc257255ef607761575c992521**,
+with harness corrections **ec080b9** and **f1a6a63**. Folder context-menu
+mutations remain a separate open R30 item; this checkpoint delivers the tree.
+
+IMAP LIST metadata now retains each mailbox's delimiter, exact name,
+selectability and session encoding. Cached trees preserve selectable parents,
+nonselectable/trailing-delimiter containers and missing intermediate ancestors.
+NIL-delimited names remain flat even when they contain slashes or dots. Cached
+messages cannot make an explicitly nonselectable parent a destination again.
+Original cached mail is retained. Legacy names remain flat until real LIST
+metadata arrives. Tree construction and modified-UTF-7 decoding happen on the
+storage worker; Workspace shares cached trees and labels through Arc.
+
+Groups start collapsed and remember expansion per account. Clicking a selectable
+parent opens its mail; its chevron expands without selecting. Containers only
+expand. Closing an ancestor retains its descendants' expansion for later and
+normal process restart. Unified shortcuts do not hide actual Inbox children.
+Left/Right/Enter navigates the hierarchy, while Up/Down passes containers without
+toggling them. Native layout operations reveal keyboard targets below the compact
+viewport, rejecting superseded targets and retrying only missing new-layout rows.
+Hovering during a message drag opens nested groups without changing the reader.
+Nonselectable containers never become drop targets.
+
+Japanese and other modified-UTF-7 names display decoded in the sidebar, title,
+Move search, highlighted Enter choice, drag label, bulk review/history and toasts.
+Queries, provider commands and Undo receipts retain exact wire names. Display
+lookup remains account-specific; an identically spelled UTF-8 name stays literal.
+
+**387 Rust tests**, **36 Python tests**, fmt, Clippy and Git hooks pass. The new
+coverage includes delimiter/encoding domain cases, actual loopback IMAP LIST and
+SELECT, reopened SQLite catalogs/preferences, stale-save ordering, keyboard
+scroll bounds and action/Undo identity. Five saved native scenarios cover
+mouse/restart, keyboard/dot/NIL containers, nested drag/Undo, Unicode Move/review
+and Ctrl-selection, and compact dark/120% navigation with saved dimensions.
+
+Both complete desktop runs executed all **142 functional scenarios** on test
+binary SHA-256
+`a0537d67f9dd8c6884d21bff1c47ddf9dfe10783f62207e40fbbf2582440cc7c`.
+Each reported 141 passes and one different test failure; neither is represented
+as a clean 142-case run. The first Japanese xdotool input intermittently delivered
+no text after native focus acknowledgment. The batchable owned-display clipboard
+paste path fixes that test; the targeted case and all five nested cases in the
+second full run pass. The second run's Undo restored the message correctly, but
+its final assertion used a null subject captured before the initial body load.
+The three affected tests now resolve selected_id against the metadata page, and
+all three pass in `folder-tree-metadata-action-native.log`. No scenario or
+asserted behavior was removed. No additional full run was performed after that
+last test-only correction. All 142 paths have passing coverage across these runs
+and the corrected targeted reruns.
+
+Logs remain under ignored `artifacts/logs/`: `folder-tree-final-rust.log`,
+`folder-tree-final-python.log`, `folder-tree-final-clippy.log`,
+`folder-tree-final-native-full.log`, `folder-tree-verified-native-full.log`,
+`folder-tree-native-unicode-paste.log` and `folder-tree-metadata-action-native.log`.
+Reviewed WebP evidence includes compact keyboard reveal (`69165f22266f/`),
+dot-delimited folders (`915d5accece5/`), restart expansion (`92eda9ec6f96/`),
+Unicode review (`b7cd9dfe3cfd/`) and large-scale dark controls (`319396c41206/`),
+under `artifacts/e2e/`. Native refresh controls remain clean, including the
+compact Calendar capture `631506faedc0/refresh-calendar-dark-compact.webp`.
+The original browser-chrome crop was not separately reproduced.
+
+Strict Zensical, optimized release checksum/extraction and bundled-installer
+checks pass. The installed Linux binary matches the packaged release, SHA-256
+`534ccfdabc4c1ab46615bdda7dee932175021f190f52745123156fbde5529e61`.
+Personal windows and data were preserved. The tree TODO was removed only after
+installation and the main push. Folder mutations and the other product work
+remain in TODO; the full goal is active. These isolated tests do not establish
+live personal-provider or Windows/macOS execution. Performance measurements
+remain deferred, and quality/release workflows remain disabled.
+Documentation CI run **34091152799** completed build and deploy successfully for
+source/testing head **f1a6a63e18992e13f9655a61f47226b8da8944c3**.
