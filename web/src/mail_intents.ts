@@ -24,6 +24,7 @@ export interface MailIntent {
   applied?: Partial<Record<IntentField, number>>;
 }
 export interface IntentLease {
+  alias?: { id: string; lineage: string };
   id: string;
   account: string;
   revision: number;
@@ -211,7 +212,25 @@ export class BrowserIntents implements IntentStore {
       recordCacheChanges(tx, [
         { store: "mailIntents", key: record.id, value: record },
       ]);
+      const alias =
+        id !== record.id
+          ? await read<MailAlias | undefined>(
+              tx.objectStore("mailAliases").get(id),
+            )
+          : undefined;
+      const metadata = alias
+        ? await read<CacheMail | undefined>(
+            tx.objectStore("mailMetadata").get(record.id),
+          )
+        : undefined;
+      const proof =
+        alias?.lineage &&
+        alias.target === record.id &&
+        alias.targetLineage === metadata?.lineage
+          ? { id, lineage: alias.lineage }
+          : undefined;
       return {
+        ...(proof ? { alias: proof } : {}),
         id: record.id,
         account: record.account,
         revision,

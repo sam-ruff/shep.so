@@ -335,16 +335,19 @@ export class GroupUI {
     decisionError.setAttribute("role", "alert");
     const act = async (decision: GroupDecision) => {
       if (!view || busy) return;
+      const target = view.job;
       busy = true;
       updateButtons();
       try {
-        const current = await this.groups.decide(view.job, decision);
+        const current = await this.groups.decide(target, decision);
         if (decision === "undo") this.notify(current);
-        view.job = current;
-        decisionError.textContent = "";
+        if (view?.job.id === target.id) {
+          view.job = current;
+          decisionError.textContent = "";
+        }
         this.error = undefined;
       } catch (error) {
-        decisionError.textContent = message(error);
+        if (selected === target.id) decisionError.textContent = message(error);
       } finally {
         busy = false;
         updateButtons();
@@ -558,6 +561,14 @@ export class GroupUI {
             `${groupActionName(job.action)} ${count(job.total)} · ${new Date(job.created).toLocaleString()}`,
             () => {
               selected = job.id;
+              view = undefined;
+              title.textContent = "";
+              summary.textContent = "";
+              decisionError.textContent = "";
+              rowControls.clear();
+              items.replaceChildren();
+              updateButtons();
+              status.textContent = "Loading group details…";
               after = -1;
               positions = [];
               void loadView(true);

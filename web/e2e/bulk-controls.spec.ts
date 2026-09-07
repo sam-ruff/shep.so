@@ -2,6 +2,34 @@ import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { seed, profile, subject } from "./mailbox-fixture";
 
+test.afterEach(async ({ page }, info) => {
+  if (info.status === info.expectedStatus) return;
+  const observed = await page
+    .evaluate(async (profile) => {
+      const journalPath = "/src/bulk_journal.ts",
+        storagePath = "/src/storage.ts";
+      const { BulkJournal } = await import(journalPath),
+        { BrowserStore } = await import(storagePath);
+      const store = await BrowserStore.open(profile);
+      try {
+        return await BulkJournal.inspect(profile, async (j: any) => ({
+          history: await j.history(),
+          gaps: await j.pendingCache(),
+          mail: await store.get("mail", "m000"),
+          metadata: await store.get("mailMetadata", "m000"),
+          text: document.body.innerText,
+        }));
+      } finally {
+        store.close();
+      }
+    }, profile)
+    .catch((error) => ({ error: String(error) }));
+  await info.attach("synthetic-group-observation", {
+    body: JSON.stringify(observed, null, 2),
+    contentType: "application/json",
+  });
+});
+
 async function selectAll(page: Page) {
   await page.getByRole("button", { name: "Select", exact: true }).click();
   await page
@@ -367,4 +395,109 @@ test("startup exposes an abandoned provider step for review and never automatica
   await d.getByRole("button", { name: "Resume group", exact: true }).click();
   await expect(d.locator(".group-progress")).toContainText("1 changed");
   expect(await cached(page)).toEqual({ INBOX: 124, Archive: 1 });
+});
+
+test("a group captured during an earlier move flags the same full membership at its acknowledged destination", async ({
+  page,
+}) => {
+  await seed(page);
+  await page.evaluate(async () => {
+    const path = "/src/provider.ts",
+      { GatewayRepository } = await import(path),
+      mutate = GatewayRepository.prototype.mutateWithReceipt;
+    const calls: string[] = [];
+    Object.assign(window, { groupCalls: calls });
+    let hold = true;
+    GatewayRepository.prototype.mutateWithReceipt = async function (
+      ...args: any[]
+    ) {
+      calls.push(`${args[0]}:${args[1].folder ?? "flags"}`);
+      if (hold) {
+        hold = false;
+        await new Promise<void>((resolve) =>
+          Object.assign(window, { releaseGroup: resolve }),
+        );
+      }
+      return mutate.apply(this, args);
+    };
+  });
+  await selectAll(page);
+  await page
+    .getByRole("button", { name: "Archive selected messages", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Review group action", exact: true })
+    .getByRole("button", { name: "Archive 125 messages", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).groupCalls.length))
+    .toBe(1);
+  await page
+    .getByRole("navigation", { name: "Workspace", exact: true })
+    .getByRole("button", { name: "Archive", exact: true })
+    .click();
+  await expect(page.locator("main > header")).toContainText("125 messages");
+  await selectAll(page);
+  await page
+    .getByRole("button", { name: "Flag selected messages", exact: true })
+    .click();
+  const review = page.getByRole("dialog", {
+    name: "Review group action",
+    exact: true,
+  });
+  await expect(review).toContainText("Preparing");
+  await page.evaluate(() => (window as any).releaseGroup());
+  await review
+    .getByRole("button", { name: "Flag 125 messages", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Group history", exact: true })
+    .click();
+  const d = page.getByRole("dialog", { name: "Group history", exact: true });
+  // Observe each queued job through the same five-second per-job assertion.
+  await d.getByRole("button", { name: /^Archive 125 messages/ }).click();
+  await expect(d.locator(".group-progress")).toContainText("125 changed");
+  await page.evaluate(async () => {
+    const path = "/src/bulk_client.ts",
+      { BrowserGroups } = await import(path),
+      view = BrowserGroups.prototype.view;
+    let first = true;
+    BrowserGroups.prototype.view = async function (...args: any[]) {
+      if (first) {
+        first = false;
+        await new Promise<void>((resolve) =>
+          Object.assign(window, { releaseHistory: resolve }),
+        );
+      }
+      return view.apply(this, args);
+    };
+  });
+  await d.getByRole("button", { name: /^Flag 125 messages/ }).click();
+  await expect(d.locator(".group-detail")).toBeHidden();
+  await expect
+    .poll(() => page.evaluate(() => typeof (window as any).releaseHistory))
+    .toBe("function");
+  await page.evaluate(() => (window as any).releaseHistory());
+  await expect(
+    d.getByRole("heading", { name: "Flag · 125 messages", exact: true }),
+  ).toBeVisible();
+  await expect(d.locator(".group-progress")).toContainText("125 changed");
+  await expect(d.locator(".group-progress")).toContainText("0 failed");
+  const final = await page.evaluate(async (profile) => {
+    const path = "/src/storage.ts",
+      { BrowserStore } = await import(path),
+      store = await BrowserStore.open(profile);
+    const rows = await store.all("mail");
+    store.close();
+    return {
+      count: rows.length,
+      correct: rows.filter(
+        (m: any) => m.core.folder === "Archive" && m.core.starred,
+      ).length,
+    };
+  }, profile);
+  expect(final).toEqual({ count: 125, correct: 125 });
+  await page.screenshot({
+    path: "../artifacts/web/bulk-successive-groups.png",
+  });
 });

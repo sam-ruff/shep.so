@@ -1,3 +1,5 @@
+import { samePhysical, metadataIdentity } from "./mail_lineage";
+import type { CacheMail } from "./cache_changes";
 import { BrowserGroups } from "./bulk_client";
 import { MailboxWorkerClient } from "./mailbox_worker_client";
 import type {
@@ -154,7 +156,7 @@ const displayFields = (fields: Fields): Fields => ({
   ...fields,
   ...(fields.folder === "INBOX" ? { folder: "Inbox" } : {}),
 });
-function physical(mail: RecordMail): BulkIdentity {
+function physical(mail: RecordMail, origin?: BulkIdentity): BulkIdentity {
   return {
     id: localId(mail),
     account: mail.core.account_id,
@@ -162,22 +164,46 @@ function physical(mail: RecordMail): BulkIdentity {
     remoteId: mail.moved ? "" : mail.core.remote_id,
     unread: mail.core.unread,
     starred: mail.core.starred,
+    ...(origin?.lineage
+      ? { lineage: origin.lineage, anchor: origin.anchor ?? origin.id }
+      : {}),
   };
 }
-function guardSource(mail: RecordMail, expected?: BulkIdentity) {
+async function guardSource(
+  store: LocalStore,
+  mail: RecordMail,
+  expected?: BulkIdentity,
+) {
   const current = physical(mail);
-  if (
-    expected &&
-    ["id", "account", "folder", "remoteId"].some(
-      (key) =>
-        current[key as keyof BulkIdentity] !==
-        expected[key as keyof BulkIdentity],
-    )
-  )
+  if (!expected) return current;
+  let matches = samePhysical(expected, current);
+  if (expected.lineage) {
+    const metadata = await store.get<CacheMail>("mailMetadata", current.id);
+    matches = false;
+    if (
+      metadata &&
+      samePhysical(metadataIdentity(metadata), current) &&
+      current.account === expected.account
+    ) {
+      matches = metadata.lineage === expected.lineage;
+      if (!matches) {
+        const alias = await store.get<MailAlias>(
+          "mailAliases",
+          expected.anchor ?? expected.id,
+        );
+        matches =
+          !!alias &&
+          alias.target === current.id &&
+          alias.lineage === expected.lineage &&
+          alias.targetLineage === metadata.lineage;
+      }
+    }
+  }
+  if (!matches)
     throw Error(
       "This message changed since the group review. Refresh the review before changing it.",
     );
-  return current;
+  return physical(mail, expected);
 }
 interface PreparedWire {
   envelope: { from: string; to: string[] };
@@ -1003,6 +1029,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
     id: string,
     latest: RecordMail,
     intent?: IntentLease,
+    before?: BulkIdentity,
   ) {
     const changes: Change[] = [];
     for await (const other of this.mailEntries({
@@ -1030,7 +1057,14 @@ export class GatewayRepository implements Repository, SelectionRepository {
         { store: "raw", key: other.key },
       );
     }
-    changes.push({ store: "mail", key: id, value: latest });
+    changes.push({
+      store: "mail",
+      key: id,
+      value: latest,
+      ...(before
+        ? { identity: { before, after: physical(latest, before) } }
+        : {}),
+    });
     await this.store.commit(changes, intent);
   }
   private async resolveMoved(id: string, latest: RecordMail, account: Account) {
@@ -1050,12 +1084,13 @@ export class GatewayRepository implements Repository, SelectionRepository {
       throw new Error(
         "The recovered message has an invalid identity. Refresh before another action.",
       );
+    const before = physical(latest);
     latest.core = resolved;
     latest.localId = id;
     latest.moved = false;
     delete latest.receipt;
     await this.exclusive(`cache.${account.id}`, () =>
-      this.saveMoved(id, latest),
+      this.saveMoved(id, latest, undefined, before),
     );
   }
   async registerMutation(id: string, fields: Fields) {
@@ -1085,8 +1120,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
       before = receipt.before,
       after = { ...receipt.after };
     if (
-      before.id !== lease.id ||
-      after.id !== lease.id ||
+      before.id !== after.id ||
       before.account !== lease.account ||
       after.account !== lease.account ||
       Object.entries(fields).some(
@@ -1100,14 +1134,20 @@ export class GatewayRepository implements Repository, SelectionRepository {
     if (!account) throw Error("This account was removed. Reopen Preferences.");
     return this.exclusive(`account.${account.id}`, async () => {
       const initial = await resolveMail(this.store, lease.id);
-      if (
-        !initial ||
-        localId(initial) !== lease.id ||
-        initial.core.account_id !== account.id
-      )
+      if (!initial || initial.core.account_id !== account.id)
         throw Error(
           "The message identity changed. Refresh its recovery review.",
         );
+      const source = await resolveMail(this.store, before.id);
+      if (!source || localId(source) !== localId(initial))
+        throw Error(
+          "The saved receipt belongs to another message. Refresh its recovery review.",
+        );
+      await guardSource(
+        this.store,
+        initial,
+        before.lineage ? before : undefined,
+      );
       if (
         !Object.keys(await intents.uncached(lease)).length &&
         (after.remoteId || !receipt.recovery)
@@ -1116,7 +1156,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
         return after;
       }
       if (receipt.recovery) {
-        const raw = await this.store.get<string>("raw", lease.id);
+        const raw = await this.store.get<string>("raw", localId(initial));
         if (!raw)
           throw Error(
             "The original message is missing. Refresh before recovering this move.",
@@ -1163,12 +1203,18 @@ export class GatewayRepository implements Repository, SelectionRepository {
         const latest = await resolveMail(this.store, lease.id);
         if (
           !latest ||
-          localId(latest) !== lease.id ||
+          localId(latest) !== localId(initial) ||
           latest.core.account_id !== account.id
         )
           throw Error(
             "The message identity changed. Refresh its recovery review.",
           );
+        await guardSource(
+          this.store,
+          latest,
+          before.lineage ? before : undefined,
+        );
+        const cachedBefore = physical(latest);
         const needed = await intents.uncached(lease);
         if (!Object.keys(needed).length) return;
         if (needed.folder !== undefined) {
@@ -1192,13 +1238,18 @@ export class GatewayRepository implements Repository, SelectionRepository {
             latest.core.remote_id = after.remoteId;
             latest.core.id = serverId(latest.core);
           } else latest.localEdited = true;
-          latest.localId = lease.id;
+          latest.localId = localId(initial);
           delete latest.pendingMove;
           delete latest.moved;
           delete latest.receipt;
         }
         Object.assign(latest.core, needed);
-        await this.saveMoved(lease.id, latest, { ...lease, fields: needed });
+        await this.saveMoved(
+          localId(latest),
+          latest,
+          { ...lease, fields: needed },
+          cachedBefore,
+        );
       });
       await intents.finish(lease, "applied");
       return after;
@@ -1333,15 +1384,22 @@ export class GatewayRepository implements Repository, SelectionRepository {
           throw new Error(
             "This message needs move recovery before another action.",
           );
-        const before = guardSource(latest, expected);
+        const before = await guardSource(this.store, latest, expected);
         const folder = fields.folder === "Inbox" ? "INBOX" : fields.folder;
         Object.assign(latest.core, fields, folder ? { folder } : {});
         latest.localEdited = true;
         await this.store.commit(
-          [{ store: "mail", key: localId(latest), value: latest }],
+          [
+            {
+              store: "mail",
+              key: localId(latest),
+              value: latest,
+              identity: { before, after: physical(latest, before) },
+            },
+          ],
           lease ? { ...lease, fields } : undefined,
         );
-        receipt = { before, after: physical(latest) };
+        receipt = { before, after: physical(latest, before) };
         cacheApplied = true;
         // Local cache commit is the acknowledgment for POP3/local Sent actions.
         await acknowledged?.({ receipt, cacheApplied, applied: fields });
@@ -1373,14 +1431,14 @@ export class GatewayRepository implements Repository, SelectionRepository {
           (fields.unread !== undefined || fields.starred !== undefined)
         )
           throw new Error("Move and flag changes must be separate actions.");
-        const before = guardSource(latest, expected);
+        const before = await guardSource(this.store, latest, expected);
         const folder = fields.folder === "Inbox" ? "INBOX" : fields.folder;
         if (
           folder === latest.core.folder &&
           fields.unread === undefined &&
           fields.starred === undefined
         ) {
-          receipt = { before, after: physical(latest) };
+          receipt = { before, after: physical(latest, before) };
           cacheApplied = true;
           await acknowledged?.({ receipt, cacheApplied, applied: fields });
           return;
@@ -1434,7 +1492,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
           Object.assign(latest.core, fields, folder ? { folder } : {});
           receipt = {
             before,
-            after: physical(latest),
+            after: physical(latest, before),
             ...(recovery ? { recovery } : {}),
           };
           await acknowledged?.({
@@ -1447,13 +1505,18 @@ export class GatewayRepository implements Repository, SelectionRepository {
           latest.localEdited = true;
         }
         await this.exclusive(`cache.${account.id}`, () =>
-          this.saveMoved(id, latest, lease ? { ...lease, fields } : undefined),
+          this.saveMoved(
+            id,
+            latest,
+            lease ? { ...lease, fields } : undefined,
+            before,
+          ),
         );
         cacheApplied = true;
         // An account may have adopted a local Sent identity while waiting for
         // its lock. In that case the actual cache write acknowledges the action.
         if (!receipt) {
-          receipt = { before, after: physical(latest) };
+          receipt = { before, after: physical(latest, before) };
           await acknowledged?.({
             receipt: structuredClone(receipt),
             cacheApplied,
@@ -1471,7 +1534,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
               cacheApplied,
             );
           }
-          receipt = { ...receipt, after: physical(latest) };
+          receipt = { ...receipt, after: physical(latest, before) };
         }
       });
       return { receipt: receipt!, cacheApplied, applied: fields };

@@ -28,6 +28,7 @@ const sourceStores = [
   "cacheState",
   "mailChanges",
   "mailIntents",
+  "mailMetadata",
 ];
 const triggers = `CREATE TRIGGER IF NOT EXISTS messages_insert AFTER INSERT ON messages BEGIN
   INSERT INTO terms(rowid,search) VALUES(new.rowid,new.search);

@@ -1,7 +1,7 @@
 import type { Database } from "@sqlite.org/sqlite-wasm";
 import { BulkJournal, type BulkItem, type BulkJob } from "./bulk_journal";
 import { read, walk } from "./mailbox_cache";
-import type { CacheChange, CacheState } from "./cache_changes";
+import type { CacheChange, CacheState, CacheMail } from "./cache_changes";
 import type { MailIntent } from "./mail_intents";
 import type { MailAlias } from "./sent_cache";
 
@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS bulk_index_items(job TEXT NOT NULL,position INTEGER N
 CREATE INDEX IF NOT EXISTS bulk_index_identity ON bulk_index_items(id);
 CREATE TABLE IF NOT EXISTS bulk_source_state(singleton INTEGER PRIMARY KEY,epoch TEXT NOT NULL,revision INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS bulk_source_intents(id TEXT PRIMARY KEY,data TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS bulk_source_aliases(alias TEXT PRIMARY KEY,target TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS bulk_source_aliases(alias TEXT PRIMARY KEY,target TEXT NOT NULL,lineage TEXT,target_lineage TEXT);
+CREATE TABLE IF NOT EXISTS bulk_source_lineages(id TEXT PRIMARY KEY,lineage TEXT);
 CREATE TEMP TABLE IF NOT EXISTS bulk_source_accounts(id TEXT PRIMARY KEY);
 CREATE TEMP TABLE IF NOT EXISTS bulk_current(id TEXT PRIMARY KEY,folder TEXT,unread INTEGER,starred INTEGER);
 `;
@@ -25,6 +26,15 @@ export class BulkProjection {
     private user: string,
   ) {
     sql.exec(schema);
+    if (
+      !sql.selectValue(
+        "SELECT 1 FROM pragma_table_info('bulk_source_aliases') WHERE name='lineage'",
+      )
+    ) {
+      sql.exec(
+        "ALTER TABLE bulk_source_aliases ADD COLUMN lineage TEXT; ALTER TABLE bulk_source_aliases ADD COLUMN target_lineage TEXT; DELETE FROM bulk_source_state;",
+      );
+    }
   }
   private exec(sql: string, bind: (string | number | null)[] = []) {
     this.sql.exec({ sql, bind: bind.length ? bind : undefined });
@@ -109,6 +119,17 @@ export class BulkProjection {
       );
     else this.exec("DELETE FROM bulk_source_intents WHERE id=?", [id]);
   }
+  private async lineage(tx: IDBTransaction, id: string) {
+    const value = await read<CacheMail | undefined>(
+      tx.objectStore("mailMetadata").get(id),
+    );
+    if (value)
+      this.exec(
+        "INSERT INTO bulk_source_lineages VALUES(?,?) ON CONFLICT(id) DO UPDATE SET lineage=excluded.lineage",
+        [id, value.lineage ?? null],
+      );
+    else this.exec("DELETE FROM bulk_source_lineages WHERE id=?", [id]);
+  }
   async source(
     tx: IDBTransaction,
     state: CacheState & { epoch: string },
@@ -144,27 +165,39 @@ export class BulkProjection {
       if (incremental)
         for (const id of new Set(changes.map((c) => c.id!))) {
           await this.intent(tx, id);
+          await this.lineage(tx, id);
           const alias = await read<MailAlias | undefined>(
             tx.objectStore("mailAliases").get(id),
           );
           if (alias) {
             this.exec(
-              "INSERT INTO bulk_source_aliases VALUES(?,?) ON CONFLICT(alias) DO UPDATE SET target=excluded.target",
-              [id, alias.target],
+              "INSERT INTO bulk_source_aliases VALUES(?,?,?,?) ON CONFLICT(alias) DO UPDATE SET target=excluded.target,lineage=excluded.lineage,target_lineage=excluded.target_lineage",
+              [
+                id,
+                alias.target,
+                alias.lineage ?? null,
+                alias.targetLineage ?? null,
+              ],
             );
             await this.intent(tx, alias.target);
+            await this.lineage(tx, alias.target);
           } else
             this.exec("DELETE FROM bulk_source_aliases WHERE alias=?", [id]);
         }
     }
     if (!incremental) {
       this.exec(
-        "DELETE FROM bulk_source_intents; DELETE FROM bulk_source_aliases;",
+        "DELETE FROM bulk_source_intents; DELETE FROM bulk_source_aliases; DELETE FROM bulk_source_lineages;",
       );
       const intent = this.sql.prepare(
           "INSERT INTO bulk_source_intents VALUES(?,?)",
         ),
-        alias = this.sql.prepare("INSERT INTO bulk_source_aliases VALUES(?,?)");
+        alias = this.sql.prepare(
+          "INSERT INTO bulk_source_aliases VALUES(?,?,?,?)",
+        ),
+        lineage = this.sql.prepare(
+          "INSERT INTO bulk_source_lineages VALUES(?,?)",
+        );
       try {
         await walk(tx.objectStore("mailIntents").openCursor(), (row) => {
           intent
@@ -172,11 +205,26 @@ export class BulkProjection {
             .stepReset();
         });
         await walk(tx.objectStore("mailAliases").openCursor(), (row) => {
+          const value = row.value as MailAlias;
           alias
-            .bind([String(row.primaryKey), (row.value as MailAlias).target])
+            .bind([
+              String(row.primaryKey),
+              value.target,
+              value.lineage ?? null,
+              value.targetLineage ?? null,
+            ])
+            .stepReset();
+        });
+        await walk(tx.objectStore("mailMetadata").openCursor(), (row) => {
+          lineage
+            .bind([
+              String(row.primaryKey),
+              (row.value as CacheMail).lineage ?? null,
+            ])
             .stepReset();
         });
       } finally {
+        lineage.finalize();
         intent.finalize();
         alias.finalize();
       }
@@ -206,7 +254,9 @@ bulk_candidates AS (
  FROM bulk_index_items i JOIN bulk_index_jobs j ON j.id=i.job
  LEFT JOIN bulk_source_aliases a ON a.alias=i.id
  LEFT JOIN bulk_source_intents s ON s.id=COALESCE(a.target,i.id)
+ LEFT JOIN bulk_source_lineages l ON l.id=COALESCE(a.target,i.id)
  WHERE json_extract(j.data,'$.state')='ready'
+ AND (json_extract(i.data,'$.original.lineage') IS NULL OR l.lineage=json_extract(i.data,'$.original.lineage') OR (a.lineage=json_extract(i.data,'$.original.lineage') AND a.target_lineage=l.lineage))
  AND json_extract(j.data,'$.cacheEpoch')=(SELECT epoch FROM bulk_source_state WHERE singleton=1)
  AND NOT EXISTS(SELECT 1 FROM json_each(json_extract(i.data,'$.owners')) o WHERE NOT EXISTS(SELECT 1 FROM bulk_source_accounts a WHERE a.id=o.value))
 ),

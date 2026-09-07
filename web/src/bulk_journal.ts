@@ -1,3 +1,4 @@
+import { sameReviewedSource } from "./mail_lineage";
 import { openMailDatabase } from "./storage";
 import { selectionToken } from "./selection_types";
 import { intentValues, type IntentLease } from "./mail_intents";
@@ -9,6 +10,8 @@ export type BulkAction =
   | { kind: "move"; folder: string; account: string | null }
   | { kind: "flags"; unread?: boolean; starred?: boolean };
 export interface BulkIdentity {
+  lineage?: string;
+  anchor?: string;
   id: string;
   account: string;
   folder: string;
@@ -193,6 +196,12 @@ function identity(v: BulkIdentity): BulkIdentity {
     throw Error("Invalid message flags in group review.");
   return {
     id: text(v.id),
+    ...(v.lineage
+      ? {
+          lineage: text(v.lineage),
+          ...(v.anchor ? { anchor: text(v.anchor) } : {}),
+        }
+      : {}),
     account: text(v.account),
     folder: text(v.folder),
     remoteId: v.remoteId === "" ? "" : text(v.remoteId),
@@ -231,7 +240,7 @@ function action(v: BulkAction): BulkAction {
 async function open(user: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let abandoned = false;
-    const r = indexedDB.open(`shep.bulk.v1.${user}`, 5);
+    const r = indexedDB.open(`shep.bulk.v1.${user}`, 6);
     r.onupgradeneeded = (event) => {
       const tx = r.transaction!;
       if (event.oldVersion < 1) {
@@ -319,7 +328,7 @@ async function observe(user: string): Promise<IDBDatabase> {
     r.onupgradeneeded = () => r.transaction!.abort();
     r.onerror = failed;
     r.onsuccess = () => {
-      if (r.result.version !== 5) {
+      if (r.result.version !== 6) {
         r.result.close();
         failed();
       } else {
@@ -1094,7 +1103,10 @@ export class BulkJournal {
         !item ||
         item.attempt !== attempt ||
         !["running", "undo_running"].includes(item.status) ||
-        lease.id !== item.id ||
+        (lease.id !== item.id &&
+          (!item.original?.lineage ||
+            lease.alias?.id !== item.id ||
+            lease.alias.lineage !== item.original.lineage)) ||
         lease.account !== item.account ||
         lease.revision !==
           (item.phase === "forward" ? job.forwardIntent : job.undoIntent)
@@ -1121,6 +1133,14 @@ export class BulkJournal {
       )
         throw changed();
       const saved: IntentLease = {
+        ...(lease.alias
+          ? {
+              alias: {
+                id: text(lease.alias.id),
+                lineage: text(lease.alias.lineage),
+              },
+            }
+          : {}),
         id: lease.id,
         account: lease.account,
         revision: lease.revision,
@@ -1157,13 +1177,7 @@ export class BulkJournal {
         };
         const source =
           item.phase === "forward" ? item.original : item.receipt?.after;
-        if (
-          !source ||
-          receipt.before.id !== source.id ||
-          receipt.before.account !== source.account ||
-          receipt.before.folder !== source.folder ||
-          receipt.before.remoteId !== source.remoteId
-        )
+        if (!source || !sameReviewedSource(source, receipt.before))
           throw Error(
             "The receipt does not match this group's physical source message.",
           );

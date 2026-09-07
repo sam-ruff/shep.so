@@ -495,6 +495,7 @@ export class SelectionStore {
                   m && !mail?.moved
                     ? {
                         id: row.id,
+                        ...(mail?.lineage ? { lineage: mail.lineage } : {}),
                         account: m.account_id,
                         folder: m.folder,
                         remoteId: m.remote_id,

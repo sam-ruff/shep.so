@@ -7,6 +7,7 @@ export const cacheStores = [
   "cacheState",
 ] as const;
 export interface CacheMail {
+  lineage?: string;
   id: string;
   core: CoreMail;
   moved: boolean;
@@ -31,6 +32,7 @@ export function mailMetadata(value: unknown): CacheMail | undefined {
   if (typeof id !== "string") return;
   return {
     id,
+    lineage: crypto.randomUUID(),
     core: mail.core,
     moved: !!mail.moved,
     newest: [-mail.core.timestamp, id],
@@ -43,12 +45,15 @@ export function recordCacheChanges(
   tx: IDBTransaction,
   changes: Change[],
   removedAccount = false,
+  prepared?: Map<string, CacheMail | undefined>,
 ) {
   const affected = new Set<string>();
   const metadata = tx.objectStore("mailMetadata");
   for (const change of changes) {
     if (change.store === "mail") {
-      const value = mailMetadata(change.value);
+      const value = prepared?.has(change.key)
+        ? prepared.get(change.key)
+        : mailMetadata(change.value);
       if (value) metadata.put(value, change.key);
       else metadata.delete(change.key);
     }
