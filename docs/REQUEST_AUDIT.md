@@ -208,3 +208,8 @@ Committed and pushed as [`72ca625`](https://github.com/sam-ruff/shep.so/commit/7
 ### Shared Forward preparation — R41/R67/R71/R73/R77
 
 Complete cached MIME preparation now lives in the shared native/WASM content crate; root desktop uses the shared draft wrapper. It preserves an independent thread and exact file bytes while keeping outgoing HTML separate from safe display documents. Shared fixtures cover duplicate attachment metadata, independent CID scopes, corrupted resources and current size/count/nesting limits. Client atomic storage and Forward controls remain active gaps; verification and prompt review-branch shipping evidence follow in the completion log. Apple execution, R75/R76, broader parity and VPS configuration remain open.
+
+
+### Shared Forward preparation shipping record
+
+Committed and pushed as [`64d4936`](https://github.com/sam-ruff/shep.so/commit/64d493605a14f6a7c44e627be1d5423cc3f01772) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **377 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. The complete 116-flow native run, shared native/WASM fixtures, browser/HTTPS regressions, native bridge/gateway tests, reviewed screenshots and production package checks are recorded in the completion log. Artifacts stay ignored and the temporary target symlink is removed. R77's prompt push is fulfilled for this increment. Full parity, Flutter/browser Forward controls and durable metadata, Apple/live verification, R75/R76 and VPS deployment remain open. Quality/release workflows remain disabled; re-enable them when trusted runners and release prerequisites are ready.

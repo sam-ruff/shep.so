@@ -1116,3 +1116,8 @@ The complete desktop functional run passes **116/116** in one run (409.421 secon
 
 
 The optimized Linux archive passed SHA-256 verification, extraction and the bundled installer in temporary directories. Binary SHA-256: `93fca421da12c47c97efd699b1ee30bfae31eb229167c007287d1bca6fbda821`; archive: `e4eb45879046c0522aed8bc0eabf97d4e8b494a5511589d0d8ec62196094986c`. New fixture markers are absent. No personal desktop installation was replaced. Pinned strict documentation validation and the required commit hooks precede review-branch shipping.
+
+
+### Shared Forward preparation shipping record
+
+Committed and pushed as [`64d4936`](https://github.com/sam-ruff/shep.so/commit/64d493605a14f6a7c44e627be1d5423cc3f01772) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **377 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. The complete 116-flow native run, shared native/WASM fixtures, browser/HTTPS regressions, native bridge/gateway tests, reviewed screenshots and production package checks are recorded in the completion log. Artifacts stay ignored and the temporary target symlink is removed. R77's prompt push is fulfilled for this increment. Full parity, Flutter/browser Forward controls and durable metadata, Apple/live verification, R75/R76 and VPS deployment remain open. Quality/release workflows remain disabled; re-enable them when trusted runners and release prerequisites are ready.
