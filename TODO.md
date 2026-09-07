@@ -4,6 +4,8 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Current UI and interaction work
 
+- [ ] **R15/R63 — Navigation paint readiness:** native mouse navigation from Preferences to Calendar after changing appearance can leave the previous screen visible after the tab state changes. A 300 ms capture delay was insufficient; the saved pixel-backed scenario converges with a two-second visual wait. Investigate first-paint scheduling, validate both themes and include this path in the final idle-host responsiveness checks. Do not describe longer test waits as a rendering fix.
+
 - [ ] **R70 — Dock/taskbar new-mail badges:** show an unread Inbox count on the Shep launcher/dock/taskbar, including the GNOME-style badge in the user's screenshot where the desktop supports it. Reconcile new arrivals, read/unread, optimistic moves/deletes/Undo, account scope and restart without stale counts; allow disabling badges in Preferences. Use native platform integration with isolated automated tests and document actual desktop/platform support.
   Linux Unity/Dash-to-Dock protocol adapter and searchable preference are implemented with a coalescing background worker and real private-bus tests. Global count projection observes pending messages outside the current page. All 108 native scenarios, 313 Rust tests and 29 Python tests pass; release packaging is verified. Installed and shipped in 90776fa; evidence is recorded in the completion log. Keep R70 open for Windows/macOS adapters and execution, actual desktop rendering review, and remaining ambiguous-provider/restart reconciliation alongside R50/R60.
 
@@ -15,6 +17,7 @@ Active requests from this chat. Add new requests here immediately, including cor
 ## Folders and composition
 
 - [ ] **R30 — Folder context menus:** delete folders and move them inside another folder; review destructive scope, keep account/server/cache state consistent, and test failure/retry behavior.
+  Backend work in progress: reviewed subtree plans, checked IMAP LIST/RENAME/DELETE, durable per-step acknowledgment/recovery, atomic cache/history migration and account-removal integration have protocol/store tests. Still connect the native menu, destination/deletion review, optimistic presentation, visible recovery and close controls; complete POP3 local hierarchy setup, native failure/retry/restart scenarios and shipping before removing this item.
 - [ ] **R35 — Inline composer:** new messages/replies open in the preview pane; autosave while typing and support switching among multiple drafts and received mail without losing content, recipients or attachments.
 
 ## Account/settings sync and backups

@@ -34,6 +34,8 @@ impl Store {
         self.run(move |c| {
             let tx = c.transaction()?;
             connections::allow(&tx, ConnectionKind::Account, &destination.account_id)?;
+            folder_actions::idle(&tx, &source.account_id)?;
+            folder_actions::idle(&tx, &destination.account_id)?;
             let present: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM messages WHERE id=? AND account=? AND folder=?)", params![source.id, source.account_id, source.folder], |r| r.get(0))?;
             anyhow::ensure!(present, "The cached source changed. Refresh its folders.");
             if source.id == destination.id {

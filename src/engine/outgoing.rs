@@ -10,6 +10,9 @@ impl Engine {
     }
     pub(super) async fn send_draft(&self, draft: Draft, output: &mut Output) -> anyhow::Result<()> {
         let _guard = self.account_lock(&draft.account_id).await;
+        self.store
+            .ensure_folder_idle(draft.account_id.clone())
+            .await?;
         if let Some(previous) = self.store.outgoing_for_draft(draft.id.clone()).await?
             && !matches!(
                 previous.delivery,
@@ -216,6 +219,9 @@ impl Engine {
     ) -> anyhow::Result<()> {
         let initial = self.store.outgoing_info(attempt.clone()).await?;
         let _guard = self.account_lock(&initial.account_id).await;
+        self.store
+            .ensure_folder_idle(initial.account_id.clone())
+            .await?;
         let info = self.store.outgoing_info(attempt.clone()).await?;
         match action {
             RecoveryAction::ReturnDraft => {
@@ -325,6 +331,9 @@ impl Engine {
             for info in page.rows {
                 if info.delivery == DeliveryState::Accepted {
                     let _guard = self.account_lock(&info.account_id).await;
+                    self.store
+                        .ensure_folder_idle(info.account_id.clone())
+                        .await?;
                     if self
                         .store
                         .outgoing_info(info.attempt.clone())

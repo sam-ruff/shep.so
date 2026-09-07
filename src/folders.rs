@@ -79,6 +79,10 @@ pub struct Mailbox {
     pub selectable: bool,
     #[serde(default)]
     pub encoding: NameEncoding,
+    #[serde(default)]
+    pub no_inferiors: bool,
+    #[serde(default)]
+    pub non_existent: bool,
 }
 impl Mailbox {
     pub fn flat(name: String) -> Self {
@@ -87,6 +91,8 @@ impl Mailbox {
             delimiter: None,
             selectable: true,
             encoding: NameEncoding::Utf8,
+            no_inferiors: false,
+            non_existent: false,
         }
     }
     pub(crate) fn path(&self) -> &str {
@@ -170,6 +176,8 @@ impl Tree {
                             delimiter: mailbox.delimiter,
                             selectable: false,
                             encoding: mailbox.encoding,
+                            no_inferiors: false,
+                            non_existent: true,
                         },
                         listed: false,
                         label,
@@ -228,6 +236,8 @@ mod tests {
             delimiter,
             selectable,
             encoding: NameEncoding::Utf8,
+            no_inferiors: false,
+            non_existent: false,
         }
     }
     #[test]
@@ -301,6 +311,8 @@ mod tests {
             delimiter: Some('/'),
             selectable: true,
             encoding: NameEncoding::ImapUtf7,
+            no_inferiors: false,
+            non_existent: false,
         };
         let tree = Tree::new(std::slice::from_ref(&mailbox));
         assert_eq!(tree.node(&mailbox.name).unwrap().label, "日本語");

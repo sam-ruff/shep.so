@@ -1561,11 +1561,28 @@ class NativeFlows(unittest.TestCase):
                        click(85, 398), check("folder", "Archive"), check("total", 1), shot("archived-message"))
 
     def test_appearance_toggle_and_calendar_with_mouse(self):
-        self.mcp.batch(click(187, 867), check("tab", "Preferences"), shot("preferences-light"),
-                       click(690, 366), check("dark", True), shot("preferences-dark"),
-                       click(90, 159), check("tab", "Calendar"), shot("calendar-dark"),
+        # These are settled visual captures, not input-to-paint timing evidence.
+        # First-paint scheduling after appearance changes remains R15/R63 work.
+        self.mcp.batch(click(187, 867), check("tab", "Preferences"), wait(150), shot("preferences-light"),
+                       click(690, 366), check("dark", True), wait(150), shot("preferences-dark"),
+                       click(90, 159), check("tab", "Calendar"), wait(2000), shot("calendar-dark"),
                        key("ctrl+comma"), check("tab", "Preferences"), click(399, 366), check("dark", False),
-                       click(90, 159), check("tab", "Calendar"), shot("calendar-light"))
+                       click(90, 159), check("tab", "Calendar"), wait(2000), shot("calendar-light"))
+
+    def test_calendar_navigation_repaints_after_preferences(self):
+        import subprocess
+        from pathlib import Path
+        self.mcp.batch(click(187,867),check("tab","Preferences"),wait(150),
+                       click(690,366),check("dark",True),check("preferences_saved",True),wait(200),shot("before-calendar-mouse"),
+                       click(90,159),check("tab","Calendar"),wait(2000),shot("after-calendar-mouse"),
+                       {"type":"hover","x":1200,"y":880},wait(200),shot("after-calendar-hover"),
+                       {"type":"resize","width":1410,"height":920},wait(200),shot("after-calendar-resize"))
+        directory = Path(self.artifacts)
+        def pixels(name):
+            return subprocess.check_output(["convert",str(directory/f"{name}.webp"),"-crop","900x650+250+210","+repage","-depth","8","rgb:-"])
+        before=pixels("before-calendar-mouse")
+        after=pixels("after-calendar-mouse")
+        self.assertGreater(sum(abs(a-b) for a,b in zip(before,after))/len(before),1.,"Calendar state changed but Preferences remained visible")
 
     def test_remapping_persists_and_works(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(645, 156),

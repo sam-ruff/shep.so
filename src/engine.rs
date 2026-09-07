@@ -658,6 +658,7 @@ impl Engine {
                 account.validate()?;
                 let _lifecycle = self.connection_lifecycle_lock.lock().await;
                 let _guard = self.account_lock(&account.id).await;
+                self.store.ensure_folder_idle(account.id.clone()).await?;
                 self.store
                     .check_connection(crate::store::ConnectionRef {
                         kind: crate::store::ConnectionKind::Account,
@@ -1195,6 +1196,7 @@ impl Engine {
     }
     async fn sync_account(&self, account: Account, mut output: Output) -> anyhow::Result<()> {
         let _guard = self.account_lock(&account.id).await;
+        self.store.ensure_folder_idle(account.id.clone()).await?;
         let account = self.account(&account.id).await?;
         let password = providers::read_secret(&account.id).await?;
         let known = self.store.known(account.id.clone()).await?;

@@ -111,6 +111,7 @@ impl Store {
         self.run(move |c| {
             let tx=c.transaction()?;
             connections::allow(&tx,ConnectionKind::Account,&draft.account_id)?;
+            folder_actions::idle(&tx,&draft.account_id)?;
             anyhow::ensure!(!drafts::sent(&tx,&draft)?,"This draft version was already sent.");
             let latest=drafts::snapshot(&tx)?.drafts.into_iter().find(|d|d.id==draft.id).context("Save this draft before sending.")?;
             anyhow::ensure!(serde_json::to_string(&latest)?==serde_json::to_string(&draft)? && latest.attachments==draft.attachments,"The draft changed before sending. Review its latest text and attachments.");
