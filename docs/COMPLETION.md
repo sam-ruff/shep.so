@@ -23,6 +23,32 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
+## R74 — Manual refresh verification in progress (2026-09-07)
+
+The working tree adds F5 as Refresh's secondary default with conflict-safe v2
+migration. Explicit clears, disabled actions and custom primary/secondary keys
+survive saving/restart. Manual clicks and shortcuts animate the existing icon;
+automatic checks remain still. Queued manual work keeps its animation until the
+scheduler finishes all requested work. Hidden mail headers stop the frame timer,
+and frame updates bypass mail/body preparation.
+
+Native pixel checks exposed the software renderer using rotation matrix diagonals
+as both raster dimensions and screen positions. The fix caches the unrotated SVG
+at physical scale and applies the full transform with viewport/damage clipping.
+A direct regression fails before the fix; all 12 rendering regressions now pass,
+including partial redraws without trails and fractional scaling. A first draft
+of the fractional-edge assertion incorrectly rejected a partly covered boundary
+pixel; it now checks pixel/viewport intersection, retaining the pre-fix failure.
+
+The migration and three animation controller tests pass. Five targeted native
+flows pass: manual failure/retry and navigation, F5 remapping/clearing/restart,
+background plus queued manual work, light/compact dark icons, and 120% scaling.
+Reviewed captures are under ignored `artifacts/e2e/fd965fb20685`, `e6b31317bc06`
+and `b31e96ef7e45`. Logs use the `refresh-animation-*` and `refresh-svg-*` prefixes
+under `artifacts/logs/`. The full 171-flow functional suite and final release/
+installation/push checks are still pending. R74 remains in TODO until shipping;
+this checkpoint is not a claim of full product completion or measured latency.
+
 ## R81/R76 — Reading styles installed and pushed (2026-09-07)
 
 Source **1bf6ac9cdd9127c169b74923aab9a63f5f8cf196** is installed for the Linux

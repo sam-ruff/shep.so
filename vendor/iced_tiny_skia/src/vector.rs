@@ -44,19 +44,29 @@ impl Pipeline {
             handle,
             color,
             Size::new(
-                (bounds.width * transform.sx) as u32,
-                (bounds.height * transform.sy) as u32,
+                (bounds.width * transform.sx.hypot(transform.ky)).round() as u32,
+                (bounds.height * transform.kx.hypot(transform.sy)).round() as u32,
             ),
         ) {
+            // Cache the unrotated raster at its physical scale. Matrix diagonal
+            // entries include cosine and can be zero/negative during rotation;
+            // they are neither an image size nor its screen position.
+            let transform = transform
+                .pre_translate(bounds.x, bounds.y)
+                .pre_scale(
+                    bounds.width / image.width() as f32,
+                    bounds.height / image.height() as f32,
+                );
             pixels.draw_pixmap(
-                (bounds.x * transform.sx) as i32,
-                (bounds.y * transform.sy) as i32,
+                0,
+                0,
                 image,
                 &tiny_skia::PixmapPaint {
                     opacity,
+                    quality: tiny_skia::FilterQuality::Bilinear,
                     ..tiny_skia::PixmapPaint::default()
                 },
-                Transform::default(),
+                transform,
                 clip_mask,
             );
         }

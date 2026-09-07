@@ -144,7 +144,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 167 functional flows plus the navigation and HTML pixel performance gates; shipped run evidence belongs in the completion log.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 171 functional flows plus the navigation and HTML pixel performance gates; shipped run evidence belongs in the completion log.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -838,3 +838,27 @@ choose light/dark control colors for that surface. Their themer/container tree
 stays identical while rendering discovers a background, so theme updates cannot
 reset the scroller or native text selection. Preserve contrasting-message,
 cached-switching and refresh/scroll tests, as well as the standalone reader tests.
+
+
+## Manual refresh animation
+
+Refresh defaults to Mod+R with F5 as its secondary binding. The v2 keymap migration
+adds F5 only for an absent secondary slot with a nonempty primary and no conflict.
+An explicit clear stays clear. Record an empty migration decision when F5 is
+already owned or Sync is disabled, so freeing F5 later does not silently bind it.
+
+`ui/refresh.rs` owns manual animation phase. Accepted input starts feedback before
+the worker acknowledgment; repeated/coalesced requests retain phase. Only the
+scheduler's manual Busy(false) ends it, including failures. Background Busy and
+MailSyncFinished cannot cancel a queued manual refresh. Run the 16 ms animation
+subscription only while the mail header is visible. Frame updates change the SVG
+only, bypassing mail scheduling/body preparation and interaction timing samples.
+Use floating rotation to preserve the click target and layout.
+
+The patched SVG pipeline caches an unrotated raster by physical size, applies the
+complete translation/rotation transform when painting, and honors its local
+viewport plus damage/layer clips. Matrix diagonals are not rotation-independent
+scale values. Preserve the direct center/fractional-scale/partial-paint tests and
+native light/dark/compact/120% refresh captures. Native tests compare actual icon
+pixels, remap/clear/restart F5, queue manual work during background checks, and
+navigate through failure/retry. These are functional tests, not latency evidence.
