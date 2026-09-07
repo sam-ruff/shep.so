@@ -482,6 +482,71 @@ mod tests {
             "Undo retains the group's acknowledged read change"
         );
     }
+
+    #[tokio::test]
+    async fn continue_makes_a_paused_group_eligible_without_replaying_completed_receipts() {
+        let engine = fixture(2).await;
+        start(&engine, "paused", MailQuery::default(), movement("Archive")).await;
+        let item = engine
+            .store
+            .claim_bulk_item("paused".into())
+            .await
+            .unwrap()
+            .unwrap();
+        engine
+            .store
+            .finish_bulk_item(item, Ok(Receipt::Unchanged))
+            .await
+            .unwrap();
+        engine
+            .store
+            .run(|c| {
+                c.execute("UPDATE bulk_jobs SET paused=1 WHERE id='paused'", [])?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(
+            engine
+                .store
+                .next_pending_bulk(String::new())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        engine.bulk_control.stopping.store(true, SeqCst);
+        let (output, mut input) = futures::channel::mpsc::channel(2);
+        engine
+            .execute(Command::BulkResume("paused".into()), output)
+            .await
+            .unwrap();
+        assert!(matches!(input.next().await,Some(Event::BulkResumed(id)) if id=="paused"));
+        assert_eq!(
+            engine
+                .store
+                .next_pending_bulk(String::new())
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("paused")
+        );
+        assert!(!engine.bulk_control.stopping.load(SeqCst));
+        let job = execute(&engine, "paused").await;
+        assert_eq!(job.completed, 2);
+        assert_eq!(
+            engine
+                .store
+                .query(MailQuery {
+                    folder: "Archive".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .total,
+            1,
+            "The already completed receipt must not be replayed"
+        );
+    }
     #[tokio::test]
     async fn read_flag_and_undo_keep_newer_unrelated_intent_and_report_partial_failures() {
         let engine = fixture(4).await;

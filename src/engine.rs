@@ -236,6 +236,9 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
         let (tx, input) = CommandSender::channel();
         let store = tokio::task::spawn_blocking(move || {
             if demo {
+                #[cfg(feature = "test-support")]
+                return crate::test_support::workspace::from_arguments();
+                #[cfg(not(feature = "test-support"))]
                 Store::memory()
             } else {
                 let path = directories::ProjectDirs::from("so", "shep", "Shep")
@@ -473,6 +476,9 @@ impl Engine {
                 output.send(Event::BulkStarted(id, result)).await?;
             }
             Command::BulkResume(id) => {
+                if !id.is_empty() {
+                    self.store.continue_bulk(id.clone()).await?;
+                }
                 self.bulk_control
                     .stopping
                     .store(false, std::sync::atomic::Ordering::SeqCst);

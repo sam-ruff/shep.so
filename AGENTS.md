@@ -549,3 +549,39 @@ Disabled nested flag buttons must still absorb their mouse press; wrap them in
 `opaque` so the inbox row does not open or start read-on-leave tracking instead.
 The saved pending-group native flow verifies the reader stays on its original
 message when that disabled control is clicked.
+
+
+The MCP harness supports explicitly persistent fixture workspaces via
+`desktop.start(persistent=true)`. `tests/support/workspace.rs` marks new fixture
+SQLite files with an application ID and rejects unmarked existing databases
+before migrations. Demo seeding runs once, preserving native test changes across
+processes. Production builds exclude this opener and all fixture seeds.
+`desktop.close` sends WM_DELETE_WINDOW on the owned Xvfb display (including
+hosts whose xdotool predates windowquit), waits for normal exit, and refuses a
+replacement after timeout. `desktop.restart` retains the fixture cache/display;
+its explicit `crash=true` option kills only the owned app. Restart is batchable.
+Keep the graceful-close/crash native tests and harness ownership/timeout tests.
+See [xdotool's close/quit distinction](https://github.com/jordansissel/xdotool/blob/main/xdotool.pod).
+
+Continue must clear a group's persisted pause before waking the coalesced worker.
+It must not replay completed receipts or bypass the worker's execution lease.
+History fixture seeds are setup data, never an action interface; pagination,
+Continue, Undo/retry and uncertainty acceptance use real native input.
+
+History keeps its visible 20-job page separate from active progress tracking.
+Worker updates replace matching displayed entries in place; they must not jump
+an older page or forget running work. Pagination resets the modal scroll. Close
+asks an initialized engine to stop even when the visible History page has no
+running jobs, while flushing pending pane sizes before waiting.
+
+HTML and neighbor-preparation subscriptions own cancellation guards that wake
+blocking renderer receives when iced tears down, including while UI state still
+retains its senders. Do not rely on those senders dropping before Tokio shutdown.
+Preserve renderer cancellation unit tests and the actual formatted-reader native
+close/restart regression; a window disappearing does not prove process exit.
+
+Unconfirmed group results require explicit review. Acceptance retires only those
+steps without replaying provider work or inventing receipts, replaces the stale
+recovery instruction with an accepted-state note, and preserves Undo for the
+other acknowledged messages. Test mouse acceptance, Y/Enter and N/Escape, and
+reopening History without a stale confirmation.

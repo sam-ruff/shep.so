@@ -10,6 +10,33 @@ async fn next(rx: &mut mpsc::Receiver<Event>) -> Event {
 }
 
 #[tokio::test]
+async fn cancelling_a_loaded_document_stops_the_renderer_with_its_sender_retained() {
+    let (tx, input) = commands::channel(16);
+    let cancel = input.cancel_on_drop();
+    let (output, mut events) = mpsc::channel(4);
+    let worker =
+        tokio::task::spawn_blocking(move || worker(input, output, Arc::new(AtomicU64::new(0))));
+    tx.send(Input::Load {
+        generation: 1,
+        body: body("<p>Close this formatted message</p>"),
+        viewport: viewport(),
+        font_size: 14,
+        hide_quotes: true,
+        images: vec![],
+    })
+    .await
+    .unwrap();
+    assert!(matches!(next(&mut events).await, Event::Frame(_)));
+    drop(cancel);
+    drop(events);
+    tokio::time::timeout(std::time::Duration::from_secs(2), worker)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(tx.is_closed());
+}
+
+#[tokio::test]
 async fn find_uses_visible_text_across_styles_and_rebuilds_after_wrapping() {
     let (tx, mut rx, thread) = start();
     tx.send(Input::Load { generation: 90, body: body("<p>CAFÉ <b>project</b> plan and café project plan.</p><blockquote>Invisible project plan</blockquote><p style='display:none'>Hidden project plan</p><p>Literal [a.*] Σ σ ς</p>"), viewport: viewport(), font_size: 14, hide_quotes: true, images: Vec::new() }).await.unwrap();
