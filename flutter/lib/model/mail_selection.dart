@@ -46,7 +46,7 @@ class MailSelection {
       final change = gesture.change;
       if (gesture.all) {
         result = currentCount();
-        chosen.addAll(_watched.keys.map(_canonical));
+        chosen.addAll({..._watched.keys, ..._gestureIds}.map(_canonical));
       } else if (change['kind'] == 'clear') {
         result = 0;
         chosen.clear();
@@ -95,6 +95,12 @@ class MailSelection {
         if (change['additive'] != true) value = false;
         final position = _positions[id];
         if (position != null && position >= start && position <= end) {
+          value = true;
+        }
+      } else if (change['kind'] == 'range') {
+        if (change['additive'] != true) value = false;
+        if (id == _canonical(change['target'] as String) ||
+            id == _canonical(change['anchor'] as String)) {
           value = true;
         }
       }

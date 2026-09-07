@@ -1,5 +1,7 @@
 import { MoveFeedback, MoveRecord } from "./move-feedback";
 import { mailMatches } from "./mail_query";
+import { MailSelection } from "./mail_selection";
+import type { SelectionRepository, SelectionScope } from "./selection_types";
 export interface Mail {
   id: string;
   sender: string;
@@ -71,6 +73,9 @@ export interface Repository {
   aliases?: Map<string, string>;
   folderRoles?: Map<string, Set<string>>;
   removedAccounts?: Set<string>;
+  accountIds?: Map<string, string>;
+  selection?: SelectionRepository["selection"];
+  closeSelections?(): Promise<void>;
   refresh(folder?: string, account?: string | null): Promise<Mail[]>;
   mutate(id: string, fields: Fields): Promise<void>;
   saveDraft(draft: Draft): Promise<void>;
@@ -93,7 +98,8 @@ export interface Preferences {
     | "print"
     | "search"
     | "reader"
-    | "find",
+    | "find"
+    | "selectAll",
     string
   >;
 }
@@ -114,6 +120,7 @@ export const defaults: Preferences = {
     search: "Control+k",
     reader: "Enter",
     find: "Control+f",
+    selectAll: "Control+a",
   },
 };
 export interface SettingsStore {
@@ -232,7 +239,7 @@ export class Workspace extends EventTarget {
       (this.retainedReader?.id === this.selectedId ? this.retainedReader : null)
     );
   }
-  selection = new Set<string>();
+  readonly selection: MailSelection;
   drafts = new Map<string, Draft>();
   private removedAccountIds = new Set<string>();
   private errorValue: string | null = null;
@@ -313,6 +320,8 @@ export class Workspace extends EventTarget {
   }
   dispose() {
     this.moves.dispose();
+    this.selection.dispose();
+    void this.repository.closeSelections?.().catch(() => {});
   }
   retry: (() => void) | null = null;
   syncing = false;
@@ -405,15 +414,27 @@ export class Workspace extends EventTarget {
         ...this.retainedReader,
         id: this.canonical(this.retainedReader.id),
       };
-    this.selection = new Set(
-      [...this.selection].map((id) => this.canonical(id)),
-    );
   }
   constructor(
     public repository: Repository,
     private settings: SettingsStore,
   ) {
     super();
+    this.selection = new MailSelection(
+      {
+        selection: (command, observed) =>
+          repository.selection
+            ? repository.selection(command, observed)
+            : Promise.reject(
+                Error(
+                  "Selection storage is unavailable. Reopen Shep and retry.",
+                ),
+              ),
+      },
+      () => this.selectionScope(),
+      () => this.matching.length,
+      () => this.changed(),
+    );
     this.mail = structuredClone(repository.cached);
     this.aliases = new Map(repository.aliases ?? []);
     this.events = structuredClone(repository.events);
@@ -430,6 +451,28 @@ export class Workspace extends EventTarget {
   }
   get pending() {
     return this.queues.size;
+  }
+  private selectionScope(): SelectionScope {
+    const projection: Record<string, Fields> = {};
+    for (const id of this.queues.keys()) {
+      const m = this.message(this.canonical(id));
+      if (m)
+        projection[m.id] = {
+          folder: m.folder,
+          unread: m.unread,
+          starred: m.starred,
+        };
+    }
+    return {
+      folder: this.folder,
+      account: this.account
+        ? (this.repository.accountIds?.get(this.account) ?? this.account)
+        : null,
+      query: this.query,
+      filter: this.filter,
+      oldest: !this.newestFirst,
+      projection,
+    };
   }
   get unread() {
     return this.mail.filter((m) => m.folder === "Inbox" && m.unread).length;
@@ -462,6 +505,7 @@ export class Workspace extends EventTarget {
     return this.matching.slice(this.page * 50, (this.page + 1) * 50);
   }
   changed() {
+    this.selection.reconcileScope();
     this.dispatchEvent(new Event("change"));
   }
   navigate(folder: string, account: string | null = null) {
@@ -469,7 +513,7 @@ export class Workspace extends EventTarget {
     this.folder = folder;
     this.account = account;
     this.page = 0;
-    this.selection.clear();
+    this.selection.done(false);
     this.selected = null;
     this.changed();
   }
@@ -477,7 +521,7 @@ export class Workspace extends EventTarget {
     void this.finishReading();
     this.query = value;
     this.page = 0;
-    this.selection.clear();
+    this.selection.done(false);
     this.changed();
   }
   savePreferences(value: Preferences) {
@@ -509,6 +553,7 @@ export class Workspace extends EventTarget {
         known.add(saved.id);
         this.revision++;
       }
+    this.selection.refresh();
   }
   rememberDraft(draft: Draft) {
     if (draft.accountId && this.removedAccountIds.has(draft.accountId))
@@ -535,6 +580,7 @@ export class Workspace extends EventTarget {
     this.page = 0;
     this.flagUndo = null;
     this.revision++;
+    this.selection.refresh();
     this.changed();
   }
   async refresh() {
@@ -579,6 +625,7 @@ export class Workspace extends EventTarget {
       }
     } while (this.refreshAgain);
     this.syncing = false;
+    this.selection.refresh();
     this.changed();
   }
   action(id: string, action: Action, destination?: string) {
@@ -647,7 +694,6 @@ export class Workspace extends EventTarget {
     for (const key of Object.keys(fields))
       this.versions.set(`${id}:${key}`, revision);
     this.paint(id, fields);
-    this.selection.delete(id);
     if (move) {
       this.flagUndo = null;
       this.statusNotice = null;
@@ -747,6 +793,7 @@ export class Workspace extends EventTarget {
     this.changed();
     await job;
     if (this.queues.get(id) === job) this.queues.delete(id);
+    this.selection.refresh();
     this.changed();
   }
 }

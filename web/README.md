@@ -15,4 +15,4 @@ Formatted messages use shared Rust/WASM preparation in a cancellable worker, ret
 
 Print opens an independent preview from the complete cached message, with full quoted history, headers, attachment names and inline images. Choose a printer or Save as PDF; Print is remappable in Preferences. Chromium output is verified; other engines remain in the platform audit.
 
-Selection storage uses the pinned SQLite WASM package in a private worker and readonly cache snapshots. The captured-selection controller and visible bulk controls remain in progress. Dependency provenance is included in `public/SQLITE-LICENSE.txt`.
+Select messages with checkboxes, Ctrl/Shift-click or a remappable Select all shortcut in the focused list. Selection stays across pages; Clear unchecks and Done exits. Captured membership uses SQLite in a private worker with readonly cache snapshots. Durable group actions remain in progress. Dependency provenance is in `public/SQLITE-LICENSE.txt`.

@@ -1168,3 +1168,71 @@ dialog > .field,
 .draft-list > .button span {
   min-width: 0;
 }
+
+.selection-search {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.selection-search .search-field {
+  flex: 1;
+  min-width: 0;
+}
+.selection-search > .button {
+  align-self: stretch;
+}
+.selection-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--tint);
+  border-bottom: 1px solid var(--border);
+}
+.selection-count {
+  flex-basis: 100%;
+  font-size: 12px;
+}
+.selection-toolbar .button {
+  font-size: 12px;
+}
+.selection-error {
+  padding: 12px;
+  color: var(--error);
+  font-size: 12px;
+}
+.selection-error .button {
+  margin-top: 8px;
+}
+.selection-checkbox {
+  flex: 0 0 44px;
+  height: 44px;
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.selection-checkbox input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.mail-row.bulk-selected {
+  background: var(--tint);
+}
+.selection-summary {
+  padding: 30px;
+  overflow: auto;
+}
+.selection-summary h2 {
+  margin-top: 0;
+}
+.selection-groups {
+  padding-left: 20px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}

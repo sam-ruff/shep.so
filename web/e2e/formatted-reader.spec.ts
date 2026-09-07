@@ -153,6 +153,18 @@ test("formatted layout, inline image, real Copy, cross-span Find and quoted hist
     page.getByText("1 remote image blocked.", { exact: true }),
   ).toBeVisible();
   await expect(frame(page).locator("blockquote")).toHaveCount(0);
+  await heading.click();
+  await page.keyboard.press("Control+a");
+  await expect
+    .poll(() =>
+      frame(page)
+        .locator("body")
+        .evaluate(() => window.getSelection()?.toString()),
+    )
+    .toContain("Verification needed");
+  await expect(
+    page.getByRole("button", { name: "Done", exact: true }),
+  ).toHaveCount(0);
   await heading.click({ clickCount: 3 });
   await page.keyboard.press("Control+c");
   await page.keyboard.press("Control+f");

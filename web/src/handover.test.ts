@@ -1,3 +1,5 @@
+import { PreviewSelection } from "./preview_selection";
+import type { SelectionCommand } from "./selection_types";
 import { describe, it, expect } from "vitest";
 import {
   GatewayRepository,
@@ -377,6 +379,15 @@ describe("native-equivalent browser Sent handover", () => {
 });
 
 class HandoverRepository implements Repository {
+  private selections = new PreviewSelection(
+    () => this.cached,
+    () => this.folderRoles,
+  );
+  selection(command: SelectionCommand, observed: string[] = []) {
+    this.selections.aliases = this.aliases;
+    return this.selections.selection(command, observed);
+  }
+
   preview = true;
   events = [];
   cached: Mail[] = [
@@ -442,13 +453,18 @@ describe("reader and intent through identity adoption", () => {
       });
     w.navigate("Sent");
     w.selected = remoteId;
-    w.selection.add(remoteId);
+    w.selection.setObserved([remoteId]);
+    w.selection.toggle(remoteId);
+    await tick();
+    expect(w.selection.count).toBe(1);
     const refresh = w.refresh();
     const first = w.action(remoteId, "star");
     await tick();
     repo.resolve();
     await refresh;
     expect(w.selected).toBe(localId);
+    await tick();
+    expect(w.selection.selected(localId)).toBe(true);
     expect(w.readerMessage?.body).toBe("After handover");
     expect(w.readerMessage?.starred).toBe(true);
     const second = w.action(localId, "star");

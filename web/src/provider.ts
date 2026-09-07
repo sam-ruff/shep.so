@@ -249,6 +249,11 @@ export class GatewayRepository implements Repository, SelectionRepository {
   private selectionWorker?: SelectionWorkerClient;
   // Account scope uses the stable account ID, as does the native repository.
   selection(command: SelectionCommand, observed: string[] = []) {
+    if (this.selectionWorker?.stopped) {
+      this.selectionWorker = undefined;
+      // A dead worker's private SQLite database and captures no longer exist.
+      if (command.kind === "release") return Promise.resolve(null);
+    }
     return (this.selectionWorker ??= new SelectionWorkerClient(
       this.session.user_id,
     )).selection(command, observed);
@@ -257,6 +262,9 @@ export class GatewayRepository implements Repository, SelectionRepository {
     const worker = this.selectionWorker;
     this.selectionWorker = undefined;
     await worker?.close();
+  }
+  get accountIds() {
+    return new Map(this.accounts.map((a) => [a.email, a.id]));
   }
   createPrinter() {
     return new PrintLoader(this.session.user_id);
