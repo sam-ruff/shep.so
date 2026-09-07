@@ -102,7 +102,7 @@ The full product goal is still active. Keep [docs/COMPLETION.md](docs/COMPLETION
 
 The software renderer is patched through `vendor/iced_tiny_skia` (released iced 0.14.0, MIT). Cached dropdown text must intersect its own viewport with the damaged layer, and raw text must reset a shared clip mask after preceding text. Shadows must honor damage/layer clipping and include their full bounds in invalidation, including when only the shadow intersects the changed area. Otherwise moving or scrolled controls leave stray pixels that only a full repaint clears. Keep `tests/software_rendering.rs`, the filtered-preferences and scrolled mail-drag native regressions when updating iced; remove the patch only after these pass upstream. The release archive includes the vendor license and patch provenance. Do not edit the Cargo registry cache or replace partial redraws with continuous full-window redraws to hide defects.
 
-Multi-selection storage lives in `store/selection.rs`; native controls in `ui/mail_selection.rs` use their own bounded FIFO channel in `engine/selections.rs`. Native group actions use frozen reviews and the durable journal described below. Keep shipping and remaining verification status in the completion log. `store/mail_query.rs` owns the common scope/ranking plan for inbox pages and captured membership. Keep selected IDs/ranks in SQLite and return at most one metadata page to iced. The controller keeps one request in flight and at most 32 pending gestures, projects visible selection immediately, and releases an abandoned snapshot before capturing a new scope. Scope changes clear selection immediately; page changes preserve it. New arrivals do not silently join a selection, but another explicit Select All captures them. Clear unchecks messages; Done/Escape exits selection mode. Checkbox/modifier gestures must not mark mail as read. Select All is remappable and scoped to native list focus at both key input and asynchronous focus-check completion. Preserve normal text Ctrl+A, sidebar focus and double-click reading.
+Multi-selection storage lives in `store/selection.rs`; native controls in `ui/mail_selection.rs` use their own bounded FIFO channel in `engine/selections.rs`. Native group actions use frozen reviews and the durable journal described below. Keep shipping and remaining verification status in the completion log. `store/mail_query.rs` owns the common scope/ranking plan for inbox pages and captured membership. Keep selected IDs/ranks in SQLite and return at most one metadata page to iced. The controller keeps one request in flight and at most 32 pending gestures, projects visible selection immediately, and releases an abandoned snapshot before capturing a new scope. Scope changes clear selection immediately; page changes preserve it. New arrivals do not silently join a selection, but another explicit Select All captures them. Clear unchecks messages; Done/Escape exits selection mode. Checkbox/modifier gestures must not mark mail as read. Select All is remappable and scoped to the native field focus captured with its key and the controller pane scope when dispatching that key. Preserve normal text Ctrl+A, sidebar focus and double-click reading.
 
 `capture_selection` ignores page offset, `change_selection` checks the expected revision atomically, and `freeze_selection` copies exact selected membership for a review. Missing mail remains explicit in selected versus available counts. Snapshot metadata pages read current flags/folders; immutable membership does not freeze message content. Temporary selection tables disappear on connection close; the bulk journal copies reviewed membership into durable jobs before execution. Preserve `tests/selections.rs`, controller ordering/cleanup tests, provider-saturation coverage and the saved `test_mail_selection_*` native scenarios when changing query scopes, ranking, pagination or selection lifecycle. Preserve the group toolbar, confirmation, failure and Undo native scenarios when changing this path.
 
@@ -144,7 +144,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 171 functional flows plus the navigation and HTML pixel performance gates; shipped run evidence belongs in the completion log.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 174 functional flows plus the navigation and HTML pixel performance gates; shipped run evidence belongs in the completion log.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -333,7 +333,7 @@ Archive/move finishes an armed read first and waits for its flag acknowledgment 
 
 Archive/delete/move toast regressions: create feedback in the same update as the optimistic row change, even while waiting behind a read/flag save. Count archive and delete across accounts in the unified inbox; custom folders group by destination account/folder. Failures remove only their correlated count and retain the error. Successful completion must not recreate an expired/dismissed toast or replace a newer action. The current display lifetime is six seconds, refreshed by each action. Cross-account moves have typed completions and wait for source flags; keep that ordering when adding Undo and persistent action recovery.
 
-A focused iced text input may leave an unhandled modified key uncaptured (for example Ctrl+D). Before dispatching mail-target shortcuts, query native search focus with a widget operation; do not infer editing focus from `event::Status` or the harness focus observation alone. Test both mouse/shortcut search focus and remapped destructive keys, then verify the action still works outside search. Ignore delayed focus-check replies after changing tabs/dialogs. Inline composition must extend this guard to its editable controls when implemented.
+A focused iced text input may leave an unhandled modified key uncaptured (for example Ctrl+D). While processing the native key event, inspect search/Find focus with a widget operation before dispatching mail-target shortcuts; do not infer editing focus from capture status or the harness focus observation alone. Test both mouse/shortcut search focus and remapped destructive keys, then verify the action still works outside search. Do not restore asynchronous key focus-check replies; they can revive cancelled intent or observe a later clicked field. Inline composition must extend this guard to its editable controls when implemented.
 
 
 ## Undo for optimistic mail moves
@@ -862,3 +862,27 @@ scale values. Preserve the direct center/fractional-scale/partial-paint tests an
 native light/dark/compact/120% refresh captures. Native tests compare actual icon
 pixels, remap/clear/restart F5, queue manual work during background checks, and
 navigate through failure/retry. These are functional tests, not latency evidence.
+
+
+## Native keyboard ordering
+
+The root `ContextArea` publishes keyboard presses after its native child handles
+that event, into the same message stream as mouse controls. Do not route presses
+through the asynchronous event subscription: an earlier Escape can otherwise
+arrive after a later Review click and close its new dialog. Nested areas do not
+publish duplicate keys. Captured popup events belong to their native overlay.
+
+`ui/native_input.rs::Focus` observes actual search/Find focus in that widget event;
+its immutable snapshot protects uncaptured modified chords such as Ctrl+D even
+if a later mouse event changes focus. The controller retains pane/action scope
+and ordinary captured-key handling. Find Enter uses this focus and the key's own
+modifiers directly. Remove rather than revive old KeyFocusChecked/GuardedKey
+round trips. This does not replace the layout-aware focus tasks that open fields.
+
+The MCP batch action `key_sequence` accepts 1–32 separate key chords, each at most
+80 characters without whitespace, and sends them with the existing native 1 ms
+xdotool delay. It changes no observation state. Keep its ownership/validation
+Python test and the three `test_native_*` ordering/isolation scenarios. The rapid
+Move/Escape reproduction fails on the previous installed executable. These flows
+intentionally omit waits between earlier keys and already-visible later controls;
+independent scenarios may still await focus/layout to isolate their own behavior.

@@ -491,3 +491,15 @@ light/compact-dark evidence. Preferences → Shortcuts has Sync near y=710 at
 control, then restart the owned persistent fixture. `refresh_animation` is an
 observation only; a changing angle does not prove correct drawing. Preserve the
 direct SVG center/scale/clip and partial-redraw tests as well as the native checks.
+
+
+For rapid native input ordering, `key_sequence` takes `keys`, an array of 1–32
+individual chords (maximum 80 characters each; no whitespace), and sends one
+xdotool key sequence with the usual 1 ms delay. It is a functional input action,
+not a timing measurement. Keep the saved `test_native_keys_move_escape_*`,
+`test_native_escape_precedes_*` and `test_native_text_field_chords_*` equivalents.
+They cover repeated Move/Escape and navigation/flags, Escape immediately followed
+by an already-visible recovery Review click, and Ctrl+D in search/Find immediately
+followed by another message click. These deliberately do not wait for the earlier
+key to finish before the next input. Preserve screenshots and the ordinary
+Find/remapping/selection/context-menu flows alongside them.

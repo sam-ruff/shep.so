@@ -57,6 +57,7 @@ def click(x, y): return {"type": "click", "x": x, "y": y}
 def double_click(x, y): return {"type": "double_click", "x": x, "y": y}
 def drag(x, y, end_x, end_y): return {"type": "drag", "x": x, "y": y, "end_x": end_x, "end_y": end_y, "duration_ms": 200}
 def key(value): return {"type": "key", "key": value}
+def keys(*values): return {"type": "key_sequence", "keys": list(values)}
 def type_text(value): return {"type": "type", "text": value}
 def paste_text(value): return {"type": "paste", "text": value}
 def wait(ms=150): return {"type": "wait", "ms": ms}
@@ -83,6 +84,41 @@ class NativeFlows(unittest.TestCase):
         mail = next((mail for mail in state["mail_rows"] if mail["id"] == state["selected_id"]), None)
         self.assertIsNotNone(mail, "The selected action target must exist in the metadata page")
         return mail["subject"]
+
+    def test_native_keys_move_escape_and_repeated_navigation_stay_ordered(self):
+        self.mcp.batch(check("reader_text_ready",True),keys(*(["m","Escape"]*8)),
+                       wait(100),check("dialog",None),key("m"),check("dialog","Move"),
+                       key("Escape"),check("dialog",None),keys("Down","Down","Down"),
+                       check("selected","Spaces for slower living"),keys("s","s","s"),
+                       check("mail_rows.3.starred",True),check("mail_pending",0),
+                       keys("m","Escape","ctrl+2"),check("tab","Calendar"),check("dialog",None),
+                       key("ctrl+1"),check("tab","Mail"),keys("m","Escape","m"),
+                       check("dialog","Move"),wait(100),check("dialog","Move"),
+                       shot("native-key-order-last-move"),key("Escape"),check("dialog",None))
+
+    def test_native_escape_precedes_later_recovery_click_without_intermediate_wait(self):
+        result=self.mcp.call("desktop.start",move_recovery="unconfirmed")
+        print(f"Native key/click ordering evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("keepsake"),
+                       check("selected","Recovered keepsake"),check("total",1),check("reader_text_ready",True))
+        for _ in range(6):
+            # Deliberately no focus/state wait between the earlier key and click.
+            self.mcp.batch(key("Escape"),click(1340,192),check("dialog","MoveRecovery"),
+                           wait(80),check("dialog","MoveRecovery"),key("Escape"),check("dialog",None),
+                           key("ctrl+k"),check("focused_input","search"))
+        self.mcp.batch(key("Escape"),click(1340,192),check("dialog","MoveRecovery"),
+                       shot("native-escape-before-review"))
+
+    def test_native_text_field_chords_cannot_mutate_a_later_clicked_message(self):
+        self.mcp.batch(check("reader_text_ready",True))
+        for shortcut,field in (("ctrl+k","search"),("ctrl+f","find-message")):
+            for y,subject in ((350,"Your weekly workspace digest"),(245,"A little more room to think"))*2:
+                # Alternate rows so repeated clicks cannot become a double-click
+                # that replaces the inbox with the full-window reader.
+                self.mcp.batch(key(shortcut),check("focused_input",field),
+                               key("ctrl+d"),click(400,y),check("selected",subject),
+                               wait(80),check("full_reader",False),check("total",120),check("mail_pending",0))
+        self.mcp.batch(shot("native-search-find-delete-isolation"),key("Escape"),check("find_open",False))
 
     def test_nested_folder_roots_mouse_selection_and_restart(self):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True)

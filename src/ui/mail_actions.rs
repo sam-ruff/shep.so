@@ -939,13 +939,17 @@ mod tests {
         assert!(app.page.rows[0].unread);
     }
     #[tokio::test]
-    async fn native_focus_result_blocks_unhandled_destructive_chords_in_search() {
+    async fn native_focus_blocks_unhandled_destructive_chords_in_search() {
         let (mut app, mut commands, _) = fixture().await;
         for focused in [true, false] {
-            let _ = app.handle(Message::KeyFocusChecked(
+            let _ = app.handle(Message::Key(
                 Key::Character("d".into()),
                 keyboard::Modifiers::CTRL,
-                focused,
+                false,
+                native_input::Focus {
+                    search: focused,
+                    ..Default::default()
+                },
             ));
             if focused {
                 assert!(commands.try_recv().is_err());
@@ -966,6 +970,7 @@ mod tests {
             Key::Named(keyboard::key::Named::Escape),
             keyboard::Modifiers::empty(),
             false,
+            native_input::Focus::default(),
         ));
         assert!(!app.full_reader);
         app.full_reader = true;
@@ -973,6 +978,7 @@ mod tests {
             Key::Character("d".into()),
             keyboard::Modifiers::CTRL,
             false,
+            native_input::Focus::default(),
         ));
         assert!(matches!(commands.try_recv(), Ok(Command::Move(_, _, _))));
         app.tab = Tab::Preferences;
@@ -980,6 +986,7 @@ mod tests {
             Key::Character("d".into()),
             keyboard::Modifiers::CTRL,
             false,
+            native_input::Focus::default(),
         ));
         assert!(
             commands.try_recv().is_err(),

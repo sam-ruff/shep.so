@@ -23,6 +23,31 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
+## R63 — Native keyboard ordering verification in progress (2026-09-07)
+
+The working tree moves key presses from the asynchronous event subscription to
+the root native widget's message stream. Keys retain their order relative to
+later mouse controls. Native widget operations snapshot search/Find focus during
+that event; mail actions cannot use the focus of a later click. The old async
+key focus-check messages are removed. Find Enter retains event modifiers and
+ordinary text selection, pane scope and remapping remain protected.
+
+The new MCP `key_sequence` action batches bounded native key chords. Its saved
+rapid Move/Escape scenario fails on the prior installed binary by leaving Move
+open. With the new input path, it and 11 other targeted native flows pass: repeated
+navigation/flags, Escape then recovery Review without an intermediate wait,
+search/Find Ctrl+D followed by another click, Find, remapping, selection and
+context menus. Three direct native-widget tests cover ordered key/click output,
+focus at each event and Find Enter/Shift. An initial test incorrectly expected
+an Enter without an on-submit callback to be captured by iced; the assertion
+now reflects the actual widget contract and still requires the correct focus.
+Clippy and targeted Rust/Python tests pass.
+
+Full native/regression, release installation and push are pending. R63's broader
+functionality-path coverage audit remains open. Evidence uses `native-input-*`
+logs under ignored `artifacts/logs/`, including the before/after native runs.
+No performance measurement or personal-provider operation was performed.
+
 ## R74 — Manual refresh installed and pushed (2026-09-07)
 
 Source **80f5867bcde7cb003f0d1e1b9b255974a68baf93** is installed for the Linux
