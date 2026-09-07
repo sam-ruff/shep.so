@@ -316,7 +316,7 @@ function removeAccount(
     node("p", account.email),
     node(
       "p",
-      "Remove this account and its cached mail, drafts, attached files and delivery records from this browser. Mail on the server is unchanged. Local-only mail and unsent drafts cannot be recovered here after removal.",
+      "Remove this account and its cached mail, drafts, attached files, delivery records and related group history from this browser. Mail on the server is unchanged. Local-only mail and unsent drafts cannot be recovered here after removal.",
     ),
   );
   const counts = node("p");
@@ -352,7 +352,8 @@ function removeAccount(
     remove.disabled =
       busy ||
       !review ||
-      (!!(review.unresolved || review.changes) && !check.checked);
+      (!!(review.unresolved || review.changes || review.groups?.unfinished) &&
+        !check.checked);
     reload.disabled = busy;
     cancel.disabled = busy;
     check.disabled = busy;
@@ -374,11 +375,21 @@ function removeAccount(
         count(review.drafts, "draft"),
         count(review.files, "draft file"),
         count(review.outgoing, "delivery record"),
+        ...(review.groups?.items
+          ? [
+              count(review.groups.items, "group entry", "group entries"),
+              count(review.groups.jobs, "related group"),
+            ]
+          : []),
       ].join(" · ");
-      label.hidden = !(review.unresolved || review.changes);
+      label.hidden = !(
+        review.unresolved ||
+        review.changes ||
+        review.groups?.unfinished
+      );
       status.textContent = label.hidden
         ? ""
-        : `${count(review.unresolved, "unfinished delivery", "unfinished deliveries")} · ${count(review.changes, "unfinished mail change")}`;
+        : `${count(review.unresolved, "unfinished delivery", "unfinished deliveries")} · ${count(review.changes, "unfinished mail change")}${review.groups?.unfinished ? ` · ${count(review.groups.unfinished, "unfinished group change")}` : ""}`;
     } catch (e) {
       status.textContent =
         e instanceof Error ? e.message : "Could not load the review. Retry.";

@@ -165,7 +165,7 @@ async function setup(page: Page, count = 3, seed = true) {
   );
 }
 
-test("mail version seven closes older writers and preserves their clock without inventing cache acknowledgments", async ({
+test("mail version eight closes older writers and preserves their clock without inventing cache acknowledgments", async ({
   page,
 }) => {
   await page.route("**/upgrade-fixture", (r) =>
@@ -180,7 +180,7 @@ test("mail version seven closes older writers and preserves their clock without 
       { BrowserStore, stores } = await import(path),
       name = `shep.mail.v1.${profile}`;
     const old = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open(name, 6);
+      const r = indexedDB.open(name, 7);
       r.onupgradeneeded = () => {
         for (const name of stores) r.result.createObjectStore(name);
         r.transaction!.objectStore("mailMetadata").createIndex(
@@ -230,7 +230,7 @@ test("mail version seven closes older writers and preserves their clock without 
       oldWriteRefused = true;
     }
     const oldOpenRefused = await new Promise<boolean>((resolve) => {
-      const r = indexedDB.open(name, 6);
+      const r = indexedDB.open(name, 7);
       r.onerror = () => resolve(r.error?.name === "VersionError");
       r.onsuccess = () => {
         r.result.close();

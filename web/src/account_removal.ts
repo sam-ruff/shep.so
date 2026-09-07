@@ -2,6 +2,7 @@ import type { Account, Outgoing, RecordMail } from "./provider";
 import type { Draft } from "./model";
 import type { Change, StoreName } from "./storage";
 import { localId, type MailAlias } from "./sent_cache";
+import type { BulkAccountReview } from "./bulk_journal";
 import type { MailIntent } from "./mail_intents";
 export interface RemovalReview {
   id: string;
@@ -16,6 +17,7 @@ export interface RemovalReview {
   changes: number;
   fingerprint: string;
   draftIds: string[];
+  groups?: BulkAccountReview;
 }
 export type RemovalSnapshot = Partial<Record<StoreName, any[]>>;
 export const reviewStores = [

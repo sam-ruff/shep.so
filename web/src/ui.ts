@@ -2046,7 +2046,7 @@ export function mount(
           w.notice = removed
             ? "Account removed from this browser"
             : "Account preferences saved";
-          w.error = null;
+          w.error = removed ? gateway.warning : null;
           w.changed();
         }),
       );

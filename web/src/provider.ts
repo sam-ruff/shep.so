@@ -1,5 +1,9 @@
 import { PrintLoader } from "./printing_loader";
-import type { BulkIdentity, BulkReceipt } from "./bulk_journal";
+import {
+  BulkJournal,
+  type BulkIdentity,
+  type BulkReceipt,
+} from "./bulk_journal";
 import { SelectionWorkerClient } from "./selection_worker_client";
 import { senderName } from "./mail_query";
 import type { SelectionCommand, SelectionRepository } from "./selection_types";
@@ -333,6 +337,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
   aliases = new Map<string, string>();
   folderRoles = new Map<string, Set<string>>();
   warning: string | null = null;
+  private removalWarning: string | null = null;
   private secrets = new Map<string, { incoming: string; smtp: string }>();
   private records = new Map<string, RecordMail>();
   private sentAcknowledgments = new Map<string, SentWork>();
@@ -342,7 +347,12 @@ export class GatewayRepository implements Repository, SelectionRepository {
     private request: Fetcher = (input, init) => fetch(input, init),
     private lock: Lock = browserLock,
     private prepareForward?: (id: string) => Promise<ForwardPrepared>,
-  ) {}
+  ) {
+    if (store.profileId && store.profileId !== session.user_id)
+      throw Error(
+        "This mail cache belongs to another browser profile. Reopen Shep.",
+      );
+  }
   private exclusive<T>(scope: string, fn: () => Promise<T>, wait = true) {
     return this.lock(`shep.${this.session.user_id}.${scope}`, fn, wait);
   }
@@ -354,6 +364,17 @@ export class GatewayRepository implements Repository, SelectionRepository {
     for (const draft of this.drafts)
       draft.attachments = (await this.files(draft.id)).map((f) => f.info);
     await this.reloadMail();
+    if (this.store.profileId) {
+      try {
+        await BulkJournal.recoverAccounts(this.profileId);
+        if (this.warning === this.removalWarning) this.warning = null;
+        this.removalWarning = null;
+      } catch (error) {
+        this.warning = this.removalWarning =
+          "Account removal history cleanup could not finish. " +
+          (error instanceof Error ? error.message : "Reopen Shep to retry.");
+      }
+    }
   }
   private async reloadMail() {
     const snapshot = await this.store.snapshot([
@@ -503,7 +524,12 @@ export class GatewayRepository implements Repository, SelectionRepository {
     });
   }
   async removalPreview(id: string) {
-    return removalPreview(await this.store.snapshot(reviewStores), id);
+    const review = removalPreview(await this.store.snapshot(reviewStores), id);
+    if (this.store.profileId)
+      review.groups = await BulkJournal.inspect(this.profileId, (journal) =>
+        journal.accountReview(id),
+      );
+    return review;
   }
   async removeAccount(review: RemovalReview, discard: boolean) {
     if (!this.store.removeAccount)
@@ -529,7 +555,43 @@ export class GatewayRepository implements Repository, SelectionRepository {
               ),
             false,
           );
-    await lockDrafts(0);
+    this.warning = null;
+    if (this.store.profileId) {
+      await BulkJournal.own(this.profileId, async (journal) => {
+        const removed = await this.store.get<{ token: string }>(
+          "removedAccounts",
+          review.id,
+        );
+        if (removed?.token !== review.token) {
+          if (!review.groups || review.groups.account !== review.id)
+            throw Error(
+              "Reload removal counts to include group changes before continuing.",
+            );
+          await journal.checkAccountReview(review.groups, discard);
+        }
+        try {
+          await lockDrafts(0);
+        } catch (error) {
+          // An adapter can lose the reply after the mail transaction commits.
+          // Its durable token is authoritative; never resurrect that account.
+          if (
+            (
+              await this.store.get<{ token: string }>(
+                "removedAccounts",
+                review.id,
+              )
+            )?.token !== review.token
+          )
+            throw error;
+        }
+        try {
+          await journal.reconcileAccounts();
+        } catch {
+          this.warning = this.removalWarning =
+            "Account removed. Group history cleanup is pending. Reopen Shep to retry; queued group changes cannot run until cleanup finishes.";
+        }
+      });
+    } else await lockDrafts(0);
     this.secrets.delete(review.id);
     this.accounts = this.accounts.filter((a) => a.id !== review.id);
     this.cached = this.cached.filter((m) => m.accountId !== review.id);
@@ -553,14 +615,18 @@ export class GatewayRepository implements Repository, SelectionRepository {
     return { account, password };
   }
   async refresh(folder = "Inbox", selected?: string | null): Promise<Mail[]> {
-    this.warning = null;
+    this.warning = this.removalWarning;
     const removed = await this.store.all<{ id: string }>("removedAccounts");
     this.removedAccounts = new Set(removed.map((r) => r.id));
     if (this.accounts.some((a) => this.removedAccounts.has(a.id))) {
       for (const id of this.removedAccounts) this.secrets.delete(id);
       await this.load();
-      this.warning =
-        "An account was removed in another tab. Its local mail and drafts were removed.";
+      this.warning = [
+        "An account was removed in another tab. Its local mail and drafts were removed.",
+        this.removalWarning,
+      ]
+        .filter(Boolean)
+        .join(" ");
       return this.cached;
     }
     const failures: string[] = [];

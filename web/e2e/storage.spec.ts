@@ -102,7 +102,7 @@ test("IndexedDB upgrade preserves mail and seeds Sent roles; failed writes roll 
       version,
     };
   });
-  expect(evidence.version).toBe(7);
+  expect(evidence.version).toBe(8);
   expect(evidence.migrated.mail).toEqual([
     { id: "original", subject: "Storage fixture" },
   ]);
@@ -204,7 +204,10 @@ test("account removal rechecks its transaction and refuses late tab writes witho
     );
     let occupied = false;
     try {
-      await guarded.removeAccount(current, false);
+      await guarded.removeAccount(
+        await guarded.removalPreview(account.id),
+        false,
+      );
     } catch (e) {
       occupied = String(e).includes("operation in progress");
     }
