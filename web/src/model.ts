@@ -2,6 +2,7 @@ import { MoveFeedback, MoveRecord } from "./move-feedback";
 import { mailMatches } from "./mail_query";
 import { MailSelection } from "./mail_selection";
 import type { SelectionRepository, SelectionScope } from "./selection_types";
+import type { BulkReceipt } from "./bulk_journal";
 export interface Mail {
   id: string;
   sender: string;
@@ -60,6 +61,8 @@ export class MutationFailure extends Error {
   constructor(
     message: string,
     public committed = false,
+    public receipt?: BulkReceipt,
+    public cacheApplied = false,
   ) {
     super(message);
   }
@@ -733,9 +736,12 @@ export class Workspace extends EventTarget {
         this.confirmed.set(key, { ...this.confirmed.get(key)!, ...fields });
       } catch (error) {
         if (!this.confirmed.has(this.canonical(id))) return;
-        if (move && !move.undoRequested) this.moves.failed(move);
+        const acknowledged =
+          error instanceof MutationFailure && error.committed;
+        if (move && !move.undoRequested && !acknowledged)
+          this.moves.failed(move);
         if (restoring) {
-          this.moves.failed(restoring);
+          if (!acknowledged) this.moves.failed(restoring);
           this.undoFailures.add(restoring);
         }
         if (error instanceof MutationFailure && error.committed) {
@@ -744,11 +750,19 @@ export class Workspace extends EventTarget {
           this.confirmed.set(key, { ...this.confirmed.get(key)!, ...fields });
           if (move) {
             move.committed = true;
-            move.blocked = true;
+            move.blocked =
+              !error.cacheApplied ||
+              !error.receipt ||
+              !!(error.receipt.recovery && !error.receipt.after.remoteId);
           }
           this.error = error.message;
           if (restoring) this.undoErrorOwner = restoring;
-          if (!quiet && !move && this.flagUndoRevision === revision) {
+          if (
+            !error.cacheApplied &&
+            !quiet &&
+            !move &&
+            this.flagUndoRevision === revision
+          ) {
             this.notice = null;
             this.flagUndo = null;
           }

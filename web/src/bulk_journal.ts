@@ -31,6 +31,9 @@ export type BulkStatus =
 export interface BulkReceipt {
   before: BulkIdentity;
   after: BulkIdentity;
+  // MOVE may acknowledge without a destination UID. Preserve its exact-content
+  // proof, never an obsolete source UID pretending to be the destination.
+  recovery?: { bytes: number; sha256: number[] };
 }
 export interface BulkItem extends BulkOriginal {
   job: string;
@@ -40,6 +43,7 @@ export interface BulkItem extends BulkOriginal {
   receipt?: BulkReceipt;
   inverse?: BulkReceipt;
   error?: string;
+  cache?: number;
 }
 export interface BulkJob {
   id: string;
@@ -53,9 +57,11 @@ export interface BulkJob {
   paused: boolean;
   undo: boolean;
   counts: Record<BulkStatus, number>;
+  pendingCache?: number;
+  runnable?: number;
 }
 export type BulkOutcome =
-  | { kind: "committed"; receipt: BulkReceipt }
+  | { kind: "committed"; receipt: BulkReceipt; cacheApplied?: boolean }
   | { kind: "rejected" | "uncertain"; error: string };
 const statuses: BulkStatus[] = [
   "pending",
@@ -100,6 +106,16 @@ function identity(v: BulkIdentity): BulkIdentity {
     starred: v.starred,
   };
 }
+function proof(v: NonNullable<BulkReceipt["recovery"]>) {
+  bounds(v.bytes);
+  if (
+    !Array.isArray(v.sha256) ||
+    v.sha256.length !== 32 ||
+    v.sha256.some((n) => !Number.isInteger(n) || n < 0 || n > 255)
+  )
+    throw Error("Invalid move recovery proof.");
+  return { bytes: v.bytes, sha256: [...v.sha256] };
+}
 function action(v: BulkAction): BulkAction {
   if (v.kind === "move")
     return {
@@ -121,17 +137,33 @@ function action(v: BulkAction): BulkAction {
 async function open(user: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let abandoned = false;
-    const r = indexedDB.open(`shep.bulk.v1.${user}`, 1);
-    r.onupgradeneeded = () => {
-      const jobs = r.result.createObjectStore("jobs", { keyPath: "id" });
-      jobs.createIndex("created", ["created", "id"]);
-      jobs.createIndex("state", "state");
-      const items = r.result.createObjectStore("items", {
-        keyPath: ["job", "position"],
-      });
-      items.createIndex("status", ["job", "status", "position"]);
-      items.createIndex("recovery", "status");
-      items.createIndex("identity", ["job", "id"], { unique: true });
+    const r = indexedDB.open(`shep.bulk.v1.${user}`, 2);
+    r.onupgradeneeded = (event) => {
+      const tx = r.transaction!;
+      if (event.oldVersion < 1) {
+        const jobs = r.result.createObjectStore("jobs", { keyPath: "id" });
+        jobs.createIndex("created", ["created", "id"]);
+        jobs.createIndex("state", "state");
+        const items = r.result.createObjectStore("items", {
+          keyPath: ["job", "position"],
+        });
+        items.createIndex("status", ["job", "status", "position"]);
+        items.createIndex("recovery", "status");
+        items.createIndex("identity", ["job", "id"], { unique: true });
+      }
+      const jobs = tx.objectStore("jobs"),
+        items = tx.objectStore("items");
+      jobs.createIndex("queue", ["runnable", "created", "id"]);
+      items.createIndex("cache", ["cache", "job", "position"]);
+      const cursor = jobs.openCursor();
+      cursor.onsuccess = () => {
+        if (!cursor.result) return;
+        const job = cursor.result.value as BulkJob;
+        job.pendingCache = 0;
+        job.runnable = runnable(job);
+        cursor.result.update(job);
+        cursor.result.continue();
+      };
     };
     r.onblocked = () => {
       abandoned = true;
@@ -154,7 +186,26 @@ async function open(user: string): Promise<IDBDatabase> {
  * Storage APIs alone do not authorize or execute any provider operation. */
 export class BulkJournal {
   private active = true;
-  private constructor(private db: IDBDatabase) {}
+  private constructor(
+    private db: IDBDatabase,
+    private owned: boolean,
+  ) {}
+  /** Read current progress without taking execution ownership or recovering a
+   * live owner's step. Mutation methods refuse this observational connection. */
+  static async inspect<T>(
+    user: string,
+    work: (journal: BulkJournal) => Promise<T>,
+  ): Promise<T> {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(user))
+      throw Error("Invalid browser profile identity.");
+    const journal = new BulkJournal(await open(user), false);
+    try {
+      return await work(journal);
+    } finally {
+      journal.active = false;
+      journal.db.close();
+    }
+  }
   static async own<T>(
     user: string,
     work: (journal: BulkJournal) => Promise<T>,
@@ -169,7 +220,7 @@ export class BulkJournal {
           throw Error(
             "Group work is active in another tab. Return to that tab or retry when it finishes.",
           );
-        const journal = new BulkJournal(await open(user));
+        const journal = new BulkJournal(await open(user), true);
         try {
           await journal.recover();
           return await work(journal);
@@ -187,6 +238,12 @@ export class BulkJournal {
     if (!this.active)
       return Promise.reject(
         Error("Group ownership expired. Reopen its review."),
+      );
+    if (mode === "readwrite" && !this.owned)
+      return Promise.reject(
+        Error(
+          "This view only observes group progress. Use the active owner to change it.",
+        ),
       );
     return new Promise((resolve, reject) => {
       const tx = this.db.transaction(["jobs", "items"], mode, {
@@ -234,6 +291,7 @@ export class BulkJournal {
   private save(tx: IDBTransaction, job: BulkJob) {
     bounds(job.revision + 1);
     job.revision++;
+    job.runnable = runnable(job);
     tx.objectStore("jobs").put(job);
     return job;
   }
@@ -287,6 +345,39 @@ export class BulkJournal {
   }
   get(id: string) {
     return this.transaction("readonly", (tx) => this.job(tx, id));
+  }
+  next(): Promise<BulkJob | null> {
+    return this.transaction("readonly", async (tx) => {
+      const jobs: BulkJob[] = await request(
+        tx
+          .objectStore("jobs")
+          .index("queue")
+          .getAll(
+            IDBKeyRange.bound(
+              [1, 0, ""],
+              [1, Number.MAX_SAFE_INTEGER, "\uffff"],
+            ),
+            1,
+          ),
+      );
+      return jobs[0] ?? null;
+    });
+  }
+  pendingCache(): Promise<BulkItem[]> {
+    return this.transaction("readonly", (tx) =>
+      request(
+        tx
+          .objectStore("items")
+          .index("cache")
+          .getAll(
+            IDBKeyRange.bound(
+              [1, "", 0],
+              [1, "\uffff", Number.MAX_SAFE_INTEGER],
+            ),
+            50,
+          ),
+      ),
+    );
   }
   history(before?: [number, string]): Promise<BulkJob[]> {
     if (before) {
@@ -444,6 +535,20 @@ export class BulkJournal {
         (await request(running.getKey("undo_running"))) !== undefined
       )
         return null;
+      if (
+        (await request(
+          tx
+            .objectStore("items")
+            .index("cache")
+            .getKey(
+              IDBKeyRange.bound(
+                [1, "", 0],
+                [1, "\uffff", Number.MAX_SAFE_INTEGER],
+              ),
+            ),
+        )) !== undefined
+      )
+        return null;
       const status = job.undo ? "done" : "pending";
       const rows: BulkItem[] = await request(
         tx
@@ -484,6 +589,9 @@ export class BulkJournal {
         const receipt = {
           before: identity(result.receipt.before),
           after: identity(result.receipt.after),
+          ...(result.receipt.recovery
+            ? { recovery: proof(result.receipt.recovery) }
+            : {}),
         };
         const source =
           item.phase === "forward" ? item.original : item.receipt?.after;
@@ -499,6 +607,12 @@ export class BulkJournal {
           );
         if (item.phase === "forward") item.receipt = receipt;
         else item.inverse = receipt;
+        item.cache =
+          result.cacheApplied === false ||
+          (receipt.recovery && receipt.after.remoteId === "")
+            ? 1
+            : 0;
+        job.pendingCache = (job.pendingCache ?? 0) + item.cache;
         this.transition(
           tx,
           job,
@@ -544,4 +658,58 @@ export class BulkJournal {
       return job;
     });
   }
+  cacheSaved(
+    id: string,
+    position: number,
+    attempt: string,
+    resolved?: BulkIdentity,
+  ) {
+    bounds(position);
+    selectionToken(attempt);
+    return this.transaction("readwrite", async (tx) => {
+      const job = await this.job(tx, id);
+      const item: BulkItem | undefined = await request(
+        tx.objectStore("items").get([id, position]),
+      );
+      if (
+        !item ||
+        item.attempt !== attempt ||
+        !["done", "restored"].includes(item.status)
+      )
+        throw changed();
+      const receipt = item.phase === "undo" ? item.inverse : item.receipt;
+      if (!receipt) throw changed();
+      if (resolved) {
+        const current = identity(resolved),
+          before = receipt.after;
+        if (
+          current.id !== before.id ||
+          current.account !== before.account ||
+          current.folder !== before.folder ||
+          (before.remoteId !== "" && current.remoteId !== before.remoteId)
+        )
+          throw changed();
+        // Only enrich a formerly absent destination identity. Flags describe the
+        // acknowledged operation and must not inherit a later cache/UI refresh.
+        receipt.after.remoteId = current.remoteId;
+      }
+      if (receipt.recovery && receipt.after.remoteId === "")
+        throw Error(
+          "Refresh the destination to recover this move's identity before continuing.",
+        );
+      if (item.cache) {
+        item.cache = 0;
+        job.pendingCache = (job.pendingCache ?? 0) - 1;
+      }
+      tx.objectStore("items").put(item);
+      return this.save(tx, job);
+    });
+  }
+}
+function runnable(job: BulkJob) {
+  return +(
+    job.state === "ready" &&
+    !job.paused &&
+    (job.undo ? job.counts.done : job.counts.pending) > 0
+  );
 }

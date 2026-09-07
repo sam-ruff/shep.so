@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { GatewayRepository, type Account, type CoreMail } from "./provider";
 import type { LocalStore, StoreName, Change } from "./storage";
 import type { Draft } from "./model";
+import { MutationFailure } from "./model";
 class Memory implements LocalStore {
   data = new Map<string, unknown>();
   fail = false;
@@ -38,6 +39,132 @@ class Memory implements LocalStore {
     }
   }
 }
+
+describe("acknowledged mutation receipts", () => {
+  it("keeps remote and local commits acknowledged when only list refresh fails", async () => {
+    for (const protocol of ["Imap", "Pop3"] as const) {
+      for (const fields of [{ unread: false }, { folder: "Archive" }]) {
+        const s = setup();
+        await s.repo.connect({ ...account, protocol }, "p", "p");
+        await s.repo.refresh();
+        s.db.snapshot = async () => {
+          throw Error("Synthetic display read failure");
+        };
+        const error = await s.repo.mutate(summary.id, fields).catch((e) => e);
+        expect(error).toBeInstanceOf(MutationFailure);
+        expect(error).toMatchObject({
+          committed: true,
+          cacheApplied: true,
+          receipt: { before: { folder: "INBOX", remoteId: "42.7" } },
+        });
+        const saved = await s.db.get<any>("mail", summary.id);
+        expect(saved.core).toMatchObject(fields);
+        expect(error.receipt.after.folder).toBe(saved.core.folder);
+        expect(error.message).toContain("message list could not refresh");
+        expect(
+          s.requests.filter((r) => /\/move$|\/flags$/.test(r.path)),
+        ).toHaveLength(protocol === "Imap" ? 1 : 0);
+      }
+    }
+  });
+  it("delivers the physical receipt before a fallible cache update and preserves it on failure", async () => {
+    const s = setup();
+    await s.repo.connect(account, "p", "p");
+    await s.repo.refresh();
+    let acknowledged: any;
+    const failure = await s.repo
+      .mutateWithReceipt(summary.id, { folder: "Archive" }, async (result) => {
+        acknowledged = structuredClone(result);
+        expect((await s.db.get<any>("mail", summary.id)).core.folder).toBe(
+          "INBOX",
+        );
+        expect((await s.db.get<any>("mail", summary.id)).pendingMove).toBe(
+          "Archive",
+        );
+        s.db.fail = true;
+      })
+      .catch((e) => e);
+    expect(failure).toMatchObject({
+      committed: true,
+      cacheApplied: false,
+      receipt: acknowledged.receipt,
+    });
+    expect(acknowledged).toMatchObject({
+      cacheApplied: false,
+      receipt: {
+        before: { id: summary.id, remoteId: "42.7" },
+        after: { id: summary.id, folder: "Archive", remoteId: "91.8" },
+      },
+    });
+    expect(acknowledged.receipt.recovery.sha256).toHaveLength(32);
+    const reopened = s.reopen();
+    await reopened.load();
+    await reopened.connect(account, "p", "p");
+    await expect(
+      reopened.mutate(summary.id, { folder: "Archive" }),
+    ).rejects.toThrow("not moved again");
+    expect(s.requests.filter((r) => r.path.endsWith("/move"))).toHaveLength(1);
+  });
+  it("retains unknown-destination proof and returns the recovered identity without repeating MOVE", async () => {
+    const s = setup();
+    await s.repo.connect(account, "p", "p");
+    await s.repo.refresh();
+    s.moveRemote(null);
+    const receipts: any[] = [];
+    const result = await s.repo.mutateWithReceipt(
+      summary.id,
+      { folder: "Archive" },
+      async (receipt) => {
+        receipts.push(receipt);
+      },
+    );
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].receipt.after).toMatchObject({
+      folder: "Archive",
+      remoteId: "",
+    });
+    expect(receipts[0].receipt.recovery).toMatchObject({ bytes: 9 });
+    expect(result).toMatchObject({
+      cacheApplied: true,
+      receipt: { after: { folder: "Archive", remoteId: "91.8" } },
+    });
+    expect(s.requests.filter((r) => r.path.endsWith("/move"))).toHaveLength(1);
+  });
+  it("rejects changed physical sources before flags or MOVE and keeps receipt-save failures acknowledged", async () => {
+    const s = setup();
+    await s.repo.connect(account, "p", "p");
+    await s.repo.refresh();
+    const original = {
+      id: summary.id,
+      account: account.id,
+      folder: "INBOX",
+      remoteId: "obsolete",
+      unread: true,
+      starred: false,
+    };
+    await expect(
+      s.repo.mutateWithReceipt(
+        summary.id,
+        { unread: false },
+        undefined,
+        original,
+      ),
+    ).rejects.toThrow("changed since the group review");
+    expect(s.requests.some((r) => r.path.endsWith("/flags"))).toBe(false);
+    const failure = await s.repo
+      .mutateWithReceipt(summary.id, { unread: false }, async () => {
+        throw new MutationFailure("Synthetic receipt writer failure");
+      })
+      .catch((e) => e);
+    expect(failure).toMatchObject({
+      committed: true,
+      cacheApplied: false,
+      receipt: { after: { unread: false } },
+    });
+    expect((await s.db.get<any>("mail", summary.id)).core.unread).toBe(true);
+    expect(s.requests.filter((r) => r.path.endsWith("/flags"))).toHaveLength(1);
+  });
+});
 const account: Account = {
   id: "fixture",
   name: "Fixture",

@@ -1,5 +1,225 @@
 import { test, expect } from "@playwright/test";
 
+test("version-one progress upgrades without repeating its abandoned running step", async ({
+  page,
+}) => {
+  await page.goto("/preview.html");
+  const result = await page.evaluate(async () => {
+    const user = "V".repeat(43);
+    await new Promise<void>((resolve, reject) => {
+      const r = indexedDB.open(`shep.bulk.v1.${user}`, 1);
+      r.onupgradeneeded = () => {
+        const jobs = r.result.createObjectStore("jobs", { keyPath: "id" });
+        jobs.createIndex("created", ["created", "id"]);
+        jobs.createIndex("state", "state");
+        const items = r.result.createObjectStore("items", {
+          keyPath: ["job", "position"],
+        });
+        items.createIndex("status", ["job", "status", "position"]);
+        items.createIndex("recovery", "status");
+        items.createIndex("identity", ["job", "id"], { unique: true });
+        jobs.put({
+          id: "old",
+          action: { kind: "flags", unread: false },
+          state: "ready",
+          created: 123,
+          revision: 4,
+          total: 2,
+          staged: 2,
+          lastPosition: 1,
+          paused: false,
+          undo: false,
+          counts: {
+            pending: 1,
+            running: 1,
+            done: 0,
+            undo_running: 0,
+            restored: 0,
+            failed: 0,
+            uncertain: 0,
+            missing: 0,
+          },
+        });
+        for (let position = 0; position < 2; position++) {
+          const id = `m${position}`,
+            original = {
+              id,
+              account: "work",
+              folder: "INBOX",
+              remoteId: `1.${position + 1}`,
+              unread: true,
+              starred: false,
+            };
+          items.put({
+            job: "old",
+            position,
+            id,
+            account: "work",
+            original,
+            status: position ? "pending" : "running",
+            phase: "forward",
+            ...(position ? {} : { attempt: "old-attempt" }),
+          });
+        }
+      };
+      r.onsuccess = () => {
+        r.result.close();
+        resolve();
+      };
+      r.onerror = () => reject(r.error);
+    });
+    const path = "/src/bulk_journal.ts",
+      { BulkJournal } = await import(path);
+    const observed = await BulkJournal.inspect(user, async (j: any) =>
+      j.get("old"),
+    );
+    return BulkJournal.own(user, async (j: any) => {
+      const recovered = await j.get("old"),
+        paused = await j.next();
+      await j.decide("old", recovered.revision, "resume");
+      const next = await j.next(),
+        claim = await j.claim("old");
+      return { observed, recovered, paused, next, claim };
+    });
+  });
+  expect(result.observed).toMatchObject({
+    revision: 4,
+    counts: { running: 1 },
+    pendingCache: 0,
+  });
+  expect(result.recovered).toMatchObject({
+    paused: true,
+    counts: { uncertain: 1, running: 0, pending: 1 },
+  });
+  expect(result.paused).toBeNull();
+  expect(result.next.id).toBe("old");
+  expect(result.claim).toMatchObject({
+    position: 1,
+    id: "m1",
+    status: "running",
+  });
+});
+
+test("a saved receipt blocks more provider work until its cache and destination identity reconcile", async ({
+  page,
+}) => {
+  await page.goto("/preview.html");
+  const result = await page.evaluate(async () => {
+    const path = "/src/bulk_journal.ts",
+      { BulkJournal } = await import(path),
+      user = "T".repeat(43);
+    const before = {
+      id: "m",
+      account: "work",
+      folder: "INBOX",
+      remoteId: "1.1",
+      unread: true,
+      starred: false,
+    };
+    let attempt = "";
+    const first = await BulkJournal.own(user, async (j: any) => {
+      async function* rows() {
+        yield [{ position: 0, id: "m", account: "work", original: before }];
+      }
+      const review = await j.prepare(
+        "group",
+        { kind: "move", folder: "Archive", account: null },
+        1,
+        rows(),
+      );
+      await j.decide("group", review.revision, "approve");
+      const claimed = await j.claim("group");
+      attempt = claimed.attempt;
+      const receipt = {
+        before,
+        after: { ...before, folder: "Archive", remoteId: "" },
+        recovery: { bytes: 9, sha256: Array(32).fill(11) },
+      };
+      const done = await j.settle("group", 0, attempt, {
+        kind: "committed",
+        receipt,
+        cacheApplied: false,
+      });
+      await j.decide("group", done.revision, "undo");
+      const observed = await BulkJournal.inspect(user, async (r: any) => {
+        let writeRefused = false;
+        try {
+          await r.decide("group", (await r.get("group")).revision, "pause");
+        } catch {
+          writeRefused = true;
+        }
+        return { job: await r.get("group"), writeRefused };
+      });
+      let unknownRefused = false;
+      try {
+        await j.cacheSaved("group", 0, attempt);
+      } catch {
+        unknownRefused = true;
+      }
+      return {
+        observed,
+        unknownRefused,
+        claim: await j.claim("group"),
+        pending: await j.pendingCache(),
+      };
+    });
+    const reopened = await BulkJournal.own(user, async (j: any) => {
+      const pending = await j.pendingCache();
+      let stale = false,
+        wrongDestination = false;
+      try {
+        await j.cacheSaved("group", 0, "wrong-attempt", {
+          ...before,
+          folder: "Archive",
+          remoteId: "9.2",
+        });
+      } catch {
+        stale = true;
+      }
+      try {
+        await j.cacheSaved("group", 0, attempt, {
+          ...before,
+          folder: "Other",
+          remoteId: "9.2",
+        });
+      } catch {
+        wrongDestination = true;
+      }
+      await j.cacheSaved("group", 0, attempt, {
+        ...before,
+        folder: "Archive",
+        remoteId: "9.2",
+        starred: true,
+      });
+      const undo = await j.claim("group");
+      return {
+        pending,
+        stale,
+        wrongDestination,
+        undo,
+        job: await j.get("group"),
+      };
+    });
+    return { first, reopened };
+  });
+  expect(result.first.observed).toMatchObject({
+    writeRefused: true,
+    job: { pendingCache: 1, counts: { done: 1, uncertain: 0 } },
+  });
+  expect(result.first.unknownRefused).toBe(true);
+  expect(result.first.claim).toBeNull();
+  expect(result.reopened.pending).toHaveLength(1);
+  expect(result.reopened.stale && result.reopened.wrongDestination).toBe(true);
+  expect(result.reopened.undo).toMatchObject({
+    phase: "undo",
+    receipt: {
+      after: { folder: "Archive", remoteId: "9.2", starred: false },
+      recovery: { bytes: 9 },
+    },
+  });
+  expect(result.reopened.job.pendingCache).toBe(0);
+});
+
 test("a 100000-message frozen export keeps draft saves independent and transfer pages bounded", async ({
   page,
 }) => {
