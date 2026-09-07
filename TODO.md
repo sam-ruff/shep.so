@@ -14,8 +14,6 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Folders and composition
 
-- [ ] **R30 — Folder trees:** nested folders form collapsible groups, collapsed by default, honoring each IMAP hierarchy delimiter and nonselectable parents.
-  Implemented and under final verification: complete LIST metadata, cached trees, collapsed defaults, expansion persistence, mouse/keyboard navigation, keyboard scroll reveal, and drag-hover expansion. Modified UTF-7 names display decoded throughout Move/search/review/toasts while retaining exact wire identities. Keep this entry until the full checks, visual review and shipping step pass.
 - [ ] **R30 — Folder context menus:** delete folders and move them inside another folder; review destructive scope, keep account/server/cache state consistent, and test failure/retry behavior.
 - [ ] **R35 — Inline composer:** new messages/replies open in the preview pane; autosave while typing and support switching among multiple drafts and received mail without losing content, recipients or attachments.
 
