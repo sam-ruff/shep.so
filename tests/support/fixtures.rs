@@ -12,6 +12,20 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
     if std::env::args().any(|a| a == "--bulk-history") {
         bulk_history::seed(store).await?;
     }
+    // These seeded accounts model a completed initial import. Only subsequent
+    // fixture sync arrivals exercise notification delivery policy.
+    for account in store.get::<Vec<Account>>("accounts").await? {
+        let epoch = match account.protocol {
+            Protocol::Imap => "imap:1",
+            Protocol::Pop3 => "pop3",
+        };
+        store
+            .begin_notification_sync(account.id.clone(), epoch.into())
+            .await?;
+        store
+            .finish_notification_sync(account.id, epoch.into())
+            .await?;
+    }
     store.put("fixture_seeded", true).await
 }
 
@@ -559,7 +573,9 @@ pub async fn forward_delay(store: &Store) -> anyhow::Result<()> {
 }
 
 /// A new arrival proves that an automatic cycle reaches the ordinary cache/UI.
-pub async fn sync_mail(store: &Store) -> anyhow::Result<u64> {
+pub async fn sync_mail(
+    store: &Store,
+) -> anyhow::Result<(u64, Option<crate::notifications::Arrival>)> {
     let background = std::env::args().any(|arg| arg == "--background-sync");
     let fail_once = std::env::args().any(|arg| arg == "--sync-failure-once");
     let round = store.get::<u64>("preview-sync-round").await? + 1;
@@ -574,11 +590,13 @@ pub async fn sync_mail(store: &Store) -> anyhow::Result<u64> {
         !fail_once || round != 1,
         "Fixture mail server is temporarily unavailable. Try Refresh again."
     );
-    if background {
-        store.upsert(vec![parse_mail("preview-work", "1.9000", "INBOX",
-            b"From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: New mail from the background\r\n\r\nThis fictional message arrived through the automatic refresh.".to_vec(), true, false)?]).await?;
-    }
-    Ok(round)
+    let arrival = if background {
+        store.sync_message(parse_mail("preview-work", "1.9000", "INBOX",
+            b"From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: New mail from the background\r\n\r\nThis fictional message arrived through the automatic refresh.".to_vec(), true, false)?).await?
+    } else {
+        None
+    };
+    Ok((round, arrival))
 }
 
 /// Controlled print delay/retry uses only isolated fixture storage.
@@ -681,6 +699,22 @@ async fn seed_nested_folders(store: &Store) -> anyhow::Result<()> {
     {
         store.upsert(vec![parse_mail(account,&format!("nested-{index}"),folder,
             format!("From: Folder fixture <folders@example.test>\r\nSubject: {subject}\r\n\r\nFictional nested folder contents.").into_bytes(),true,false)?]).await?;
+    }
+    Ok(())
+}
+
+/// Desktop failure/latency fixtures never contact a desktop service or audio device.
+pub async fn notification_delivery(attempt: u64) -> anyhow::Result<()> {
+    let mode = std::env::args().find_map(|arg| {
+        arg.strip_prefix("--notification-delivery=")
+            .map(str::to_owned)
+    });
+    if let Some(mode) = mode {
+        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+        anyhow::ensure!(
+            mode != "fail-once" || attempt != 1,
+            "Fixture notification service unavailable. Check desktop permissions, then try Test notification again."
+        );
     }
     Ok(())
 }

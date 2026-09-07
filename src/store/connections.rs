@@ -228,6 +228,7 @@ impl Store {
                     bulk::remove_account(&tx,&target.id)?;
                     tx.execute("DELETE FROM folder_jobs WHERE account=?", [&target.id])?;
                     tx.execute("DELETE FROM messages WHERE account=?", [&target.id])?;
+                    super::notifications::remove_account(&tx, &target.id)?;
                     tx.execute("DELETE FROM conversation_tokens WHERE account=?", [&target.id])?;
                     let mut folder_map: std::collections::HashMap<String,Vec<String>> = get(&tx, "account_folders")?;
                     folder_map.remove(&target.id); put(&tx, "account_folders", &folder_map)?;

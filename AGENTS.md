@@ -758,3 +758,16 @@ mask, even if the editor box lies wholly inside that damaged area. Preserve the
 partially visible final-line renderer test and long-reply native typing captures.
 
 Inline fragment elements retain only their relative offset; `line_box.cpp` resets it before each application. This prevents wrapped fragments and repeated table measurements from accumulating a superscript/span offset. Keep the exact 5px/2px selection-geometry and repeated-layout regressions.
+
+
+## New-mail notifications
+
+`Preferences.notifications` independently controls popups, sound and sender/subject details; all default on. Native delivery runs on a separate coalescing watch worker, never on iced or the sync worker. A fixed 150 ms burst window groups arrivals; one delivery runs at a time, with bounded observation output. Turning both outputs off consumes arrivals without replaying them when re-enabled. Test requests must finish even if muted before delivery. Desktop rejection stays visible with a recovery instruction; an acknowledgment is not proof that the OS displayed pixels or played sound under Do Not Disturb.
+
+Arrival identity and initial-import readiness are persisted in `store/notifications.rs`. Initial Inbox import and IMAP UIDVALIDITY changes stay quiet until that Inbox completes; later unread Inbox arrivals notify at most once per account/content identity. Imports/restores/moved copies remember identity without alerting. A crash between cache commit and desktop delivery can lose that alert, but restarting must not replay old alerts. Read toggles and unread badge changes are not arrival sources. Remove the notification ledger when removing an account.
+
+Sync SEARCH/FETCH helpers in `providers/mail/sync_queries.rs` require matching tagged OK, including after partial data. The upstream async-imap collection helpers discard completion status; do not restore those helpers in this path. A failed command must not produce reconciliation or mark a baseline complete. Preserve loopback failure, partial-data, disconnect and logout cases. Other collection helpers remain part of the provider audit.
+
+Linux uses `org.freedesktop.Notifications` with Shep's desktop identity, escaped body markup and explicit sound/suppress-sound hints. Sound-only mode uses `canberra-gtk-play`; Windows uses a per-user Shep AUMID and WinRT toast, with the system mail sound; macOS uses the Shep bundle identity, initialized once, and native notification delivery. Actual Windows/macOS delivery and bundle/install integration remain open platform work. Never silently borrow another application's identity.
+
+The native MCP fixture bypasses all real popup/audio delivery. `desktop.start` accepts `notification_delivery: "slow" | "fail-once"` for isolated delayed/error/retry scenarios. Save every interaction in `scripts/e2e.py`; the notification flows cover defaults, independent outputs/privacy, persistence, arrival/restart deduplication, compact dark layout and navigation during a delayed failure. Real Linux protocol tests start their own private bus and never touch the user's notification service. Keep logs/screenshots in ignored artifacts.

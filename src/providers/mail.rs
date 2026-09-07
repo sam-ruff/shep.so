@@ -1,7 +1,11 @@
 pub mod folders;
+#[cfg(test)]
+#[path = "mail/notification_tests.rs"]
+mod notification_tests;
 mod receipts;
 pub mod recovery;
 pub mod sent;
+mod sync_queries;
 use super::MailProvider;
 use crate::model::*;
 use anyhow::Context;
@@ -214,8 +218,19 @@ async fn sync_imap_session<
         let validity = mailbox
             .uid_validity
             .context("The server did not provide UIDVALIDITY")?;
+        if folder.eq_ignore_ascii_case("INBOX") {
+            output
+                .send(MailSyncItem::InboxSyncStarted {
+                    account: account.id.clone(),
+                    epoch: format!("imap:{validity}"),
+                })
+                .await?;
+        }
         // Fetch bounded metadata batches first. Oversized bodies are never requested.
-        let mut uids: Vec<_> = session.uid_search("ALL").await?.into_iter().collect();
+        let mut uids: Vec<_> = sync_queries::search(&mut session)
+            .await?
+            .into_iter()
+            .collect();
         uids.sort_unstable_by(|a, b| b.cmp(a));
         tracing::info!(
             folder_index = index,
@@ -232,11 +247,8 @@ async fn sync_imap_session<
                 .map(u32::to_string)
                 .collect::<Vec<_>>()
                 .join(",");
-            let metadata: Vec<_> = session
-                .uid_fetch(set, "(UID FLAGS RFC822.SIZE)")
-                .await?
-                .try_collect()
-                .await?;
+            let metadata =
+                sync_queries::fetch(&mut session, &set, "(UID FLAGS RFC822.SIZE)").await?;
             let mut pending = Vec::new();
             let mut flags = Vec::new();
             for fetch in &metadata {
@@ -246,11 +258,7 @@ async fn sync_imap_session<
                 let remote = format!("{validity}.{uid}");
                 let id = format!("{}:{folder}:{remote}", account.id);
                 if known.contains(&id) {
-                    flags.push((
-                        id,
-                        !fetch.flags().any(|f| f == async_imap::types::Flag::Seen),
-                        fetch.flags().any(|f| f == async_imap::types::Flag::Flagged),
-                    ));
+                    flags.push((id, fetch.unread, fetch.starred));
                 } else if fetch.size.unwrap_or(u32::MAX) as usize > MAX_MESSAGE_BYTES {
                     output.send(MailSyncItem::SkippedLarge).await?;
                 } else {
@@ -279,24 +287,21 @@ async fn sync_imap_session<
                     .map(|(uid, _, _)| uid.to_string())
                     .collect::<Vec<_>>()
                     .join(",");
-                let bodies: Vec<_> = session
-                    .uid_fetch(set, "(UID FLAGS BODY.PEEK[])")
-                    .await?
-                    .try_collect()
-                    .await?;
+                let bodies =
+                    sync_queries::fetch(&mut session, &set, "(UID FLAGS BODY.PEEK[])").await?;
                 for fetch in &bodies {
                     let Some((_, remote, _)) =
                         batch.iter().find(|(uid, _, _)| Some(*uid) == fetch.uid)
                     else {
                         continue;
                     };
-                    if let Some(raw) = fetch.body() {
+                    if let Some(raw) = fetch.body.as_deref() {
                         anyhow::ensure!(
                             raw.len() <= MAX_MESSAGE_BYTES,
                             "The server returned a message exceeding 25 MiB."
                         );
-                        let unread = !fetch.flags().any(|f| f == async_imap::types::Flag::Seen);
-                        let starred = fetch.flags().any(|f| f == async_imap::types::Flag::Flagged);
+                        let unread = fetch.unread;
+                        let starred = fetch.starred;
                         let (id, folder, remote, raw) = (
                             account.id.clone(),
                             folder.clone(),
@@ -322,6 +327,14 @@ async fn sync_imap_session<
                 live_ids,
             })
             .await?;
+        if folder.eq_ignore_ascii_case("INBOX") {
+            output
+                .send(MailSyncItem::InboxSyncFinished {
+                    account: account.id.clone(),
+                    epoch: format!("imap:{validity}"),
+                })
+                .await?;
+        }
     }
     session.logout().await?;
     Ok(folders)
@@ -475,6 +488,67 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> PopConnection<S> {
     }
 }
 
+async fn sync_pop_session<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    mut conn: PopConnection<S>,
+    account: &Account,
+    known: &HashSet<String>,
+    output: Sender<MailSyncItem>,
+) -> anyhow::Result<Vec<String>> {
+    conn.command("UIDL")
+        .await
+        .context("A POP3 server with stable UIDL identifiers is required")?;
+    let listing = String::from_utf8(conn.multiline(8 * 1024 * 1024).await?)?;
+    output
+        .send(MailSyncItem::InboxSyncStarted {
+            account: account.id.clone(),
+            epoch: "pop3".into(),
+        })
+        .await?;
+    for line in listing.lines() {
+        let (number, uid) = line
+            .split_once(' ')
+            .context("Invalid POP3 message listing")?;
+        let number = number.parse::<u32>()?;
+        let uid = uid.trim().to_string();
+        anyhow::ensure!(
+            number > 0 && !uid.is_empty() && !uid.chars().any(char::is_whitespace),
+            "Invalid POP3 message identity"
+        );
+        if known.contains(&format!("{}:INBOX:{uid}", account.id)) {
+            continue;
+        }
+        let size = conn.command(&format!("LIST {number}")).await?;
+        let size = size
+            .split_whitespace()
+            .nth(2)
+            .and_then(|s| s.parse::<usize>().ok())
+            .context("Invalid POP3 message size")?;
+        if size > MAX_MESSAGE_BYTES {
+            output.send(MailSyncItem::SkippedLarge).await?;
+            continue;
+        }
+        conn.command(&format!("RETR {number}")).await?;
+        let raw = conn.multiline(MAX_MESSAGE_BYTES).await?;
+        let id = account.id.clone();
+        let parsed =
+            tokio::task::spawn_blocking(move || parse_mail(&id, &uid, "INBOX", raw, true, false))
+                .await??;
+        output
+            .send(MailSyncItem::Message(parsed))
+            .await
+            .context("Sync was cancelled")?;
+    }
+    // Always leave originals on the POP3 server. Folders and flags are local.
+    output
+        .send(MailSyncItem::InboxSyncFinished {
+            account: account.id.clone(),
+            epoch: "pop3".into(),
+        })
+        .await?;
+    conn.command("QUIT").await?;
+    Ok(vec!["INBOX".into()])
+}
+
 #[async_trait]
 impl MailProvider for Pop3 {
     async fn sync(
@@ -484,46 +558,9 @@ impl MailProvider for Pop3 {
         known: &HashSet<String>,
         output: Sender<MailSyncItem>,
     ) -> anyhow::Result<Vec<String>> {
-        let mut conn = pop(account, password).await?;
-        conn.command("UIDL")
-            .await
-            .context("A POP3 server with stable UIDL identifiers is required")?;
-        let listing = String::from_utf8(conn.multiline(8 * 1024 * 1024).await?)?;
-        for line in listing.lines() {
-            let Some((number, uid)) = line.split_once(' ') else {
-                continue;
-            };
-            let number = number.parse::<u32>()?;
-            let uid = uid.trim().to_string();
-            if known.contains(&format!("{}:INBOX:{uid}", account.id)) {
-                continue;
-            }
-            let size = conn.command(&format!("LIST {number}")).await?;
-            let size = size
-                .split_whitespace()
-                .nth(2)
-                .and_then(|s| s.parse::<usize>().ok())
-                .context("Invalid POP3 message size")?;
-            if size > MAX_MESSAGE_BYTES {
-                output.send(MailSyncItem::SkippedLarge).await?;
-                continue;
-            }
-            conn.command(&format!("RETR {number}")).await?;
-            let raw = conn.multiline(MAX_MESSAGE_BYTES).await?;
-            let id = account.id.clone();
-            let parsed = tokio::task::spawn_blocking(move || {
-                parse_mail(&id, &uid, "INBOX", raw, true, false)
-            })
-            .await??;
-            output
-                .send(MailSyncItem::Message(parsed))
-                .await
-                .context("Sync was cancelled")?;
-        }
-        // Always leave originals on the POP3 server. Folders and flags are local.
-        conn.command("QUIT").await?;
-        Ok(vec!["INBOX".into()])
+        sync_pop_session(pop(account, password).await?, account, known, output).await
     }
+
     async fn move_mail(
         &self,
         _: &Account,

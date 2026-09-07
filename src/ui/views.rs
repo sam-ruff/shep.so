@@ -1466,6 +1466,7 @@ impl App {
                 .spacing(19)
                 .into()
             ),
+            self.notification_settings(),
             self.settings_card(
                 "Tooltips",
                 "",
@@ -2051,7 +2052,7 @@ impl App {
     }
 }
 impl App {
-    fn settings_card<'a>(
+    pub(super) fn settings_card<'a>(
         &self,
         title: &'a str,
         description: &'a str,

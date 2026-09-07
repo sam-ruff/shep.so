@@ -966,6 +966,76 @@ class NativeFlows(unittest.TestCase):
                        check("total", 121), click(420, 247),
                        check("selected", "New mail from the background"), shot("background-arrival-readable"))
 
+    def open_notification_preferences(self, compact=False):
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),
+                       click(650 if compact else 1150,88),type_text("notifications"),
+                       check("settings_matches",["Notifications"]),click(450,289),
+                       check("settings_group","Notifications"),shot("notification-preferences"))
+
+    def test_notifications_preferences_privacy_independent_sound_and_restart(self):
+        result=self.mcp.call("desktop.start",persistent=True)
+        print(f"Notification preferences evidence: {result['artifacts']}",flush=True)
+        enabled={"popups":True,"sound":True,"show_details":True}
+        self.mcp.batch(check("notifications.settings",enabled),check("notifications.requested",0))
+        self.open_notification_preferences()
+        self.mcp.batch(click(350,499),check("notifications.sent",1),check("notifications.testing",False),
+                       check("notifications.last.popups",True),check("notifications.last.sound",True),
+                       check("notifications.last.body","Your notification settings are working."),
+                       click(288,452),check("notifications.settings.show_details",False),
+                       click(350,499),check("notifications.sent",2),
+                       check("notifications.last.title","New email"),
+                       check("notifications.last.body","You have a new message in your Inbox."),
+                       click(288,374),check("notifications.settings.popups",False),
+                       click(350,499),check("notifications.sent",3),
+                       check("notifications.last.popups",False),check("notifications.last.sound",True),
+                       click(288,413),check("notifications.settings.sound",False),
+                       click(350,499),check("notifications.requested",3),check("notifications.testing",False),
+                       check("preferences_saved",True),shot("notifications-muted"),
+                       {"type":"restart"},check("notifications.settings",{"popups":False,"sound":False,"show_details":False}))
+        self.open_notification_preferences()
+        self.mcp.batch(click(288,374),check("notifications.settings.popups",True),
+                       click(350,499),check("notifications.sent",1),check("notifications.last.sound",False),
+                       check("preferences_saved",True),shot("notifications-popup-only"))
+
+    def test_notifications_new_arrivals_once_through_sync_read_flag_and_restart(self):
+        result=self.mcp.call("desktop.start",persistent=True,background_sync=True)
+        print(f"Notification arrival evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(check("background_sync",True),check("notifications.requested",0),
+                       check("total",121),check("notifications.sent",1),
+                       check("notifications.last.body","New mail from the background"),
+                       click(1400,36),{**check("sync_round",2),"timeout_ms":5000},
+                       check("refreshing",False),check("notifications.sent",1),
+                       click(420,247),check("selected","New mail from the background"),
+                       key("s"),check("mail_pending",0),key("u"),check("mail_pending",0),
+                       check("notifications.sent",1),shot("notification-arrival-once"),
+                       {"type":"restart"},{**check("sync_round",3),"timeout_ms":5000},
+                       check("background_sync",False),check("total",121),check("notifications.requested",0),
+                       check("notifications.sent",0),shot("notification-restart-no-repeat"))
+
+    def test_notifications_slow_failure_keeps_navigation_available_and_retries(self):
+        result=self.mcp.call("desktop.start",notification_delivery="fail-once")
+        print(f"Notification recovery evidence: {result['artifacts']}",flush=True)
+        self.open_notification_preferences()
+        self.mcp.batch(click(350,499),check("notifications.testing",True),
+                       key("ctrl+2"),check("tab","Calendar"),check("notifications.testing",True),
+                       key("ctrl+1"),check("tab","Mail"),click(420,350),
+                       check("selected","Your weekly workspace digest"),
+                       check("notifications.error","Fixture notification service unavailable","contains"),
+                       check("notifications.testing",False),check("notifications.sent",0),
+                       key("ctrl+comma"),check("tab","Preferences"),shot("notification-service-error"),
+                       click(350,499),check("notifications.testing",True),
+                       check("notifications.sent",1),check("notifications.error",None),
+                       check("notifications.testing",False),shot("notification-service-recovered"))
+
+    def test_notifications_compact_dark_settings_and_test(self):
+        result=self.mcp.call("desktop.start",width=900,height=640)
+        print(f"Compact notifications evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),click(563,366),check("dark",True))
+        self.open_notification_preferences(compact=True)
+        self.mcp.batch(click(350,499),check("notifications.sent",1),
+                       check("notifications.testing",False),check("notifications.error",None),
+                       shot("notifications-compact-dark"))
+
     def test_desktop_badge_tracks_read_changes_after_switching_folders(self):
         self.mcp.call("desktop.start", desktop_badges=True, mail_actions="slow")
         self.mcp.batch(check("unread", True), check("desktop_badge.visible", True))
@@ -1753,8 +1823,8 @@ class NativeFlows(unittest.TestCase):
                        check("settings_tab", "Shortcuts"), shot("two-shortcut-slots"),
                        click(1100, 350), key("Delete"), check("notice", "assigned more than once", "contains"),
                        key("alt+m"), check("shortcut_secondary.Move", "Alt+M"), check("preferences_saved", True),
-                       key("ctrl+1"), check("tab", "Mail"), key("alt+m"), check("dialog", "Move"), key("Escape"),
-                       key("m"), check("dialog", "Move"), key("Escape"),
+                       key("ctrl+1"), check("tab", "Mail"), key("alt+m"), check("dialog", "Move"), check("focused_input", "folder-search"), key("Escape"), check("dialog", None),
+                       key("m"), check("dialog", "Move"), check("focused_input", "folder-search"), key("Escape"), check("dialog", None),
                        key("ctrl+comma"), check("tab", "Preferences"), click(645, 156),
                        click(1157, 353), check("shortcut_secondary.Move", ""), check("preferences_saved", True),
                        shot("secondary-shortcut-disabled"))

@@ -16,6 +16,7 @@ mod html_reader;
 mod layout;
 mod mail_actions;
 mod mail_selection;
+mod notifications;
 mod outgoing;
 mod pointer;
 mod preference_sync;
@@ -232,6 +233,7 @@ pub enum Message {
     PrefTooltips(bool),
     PrefUnreadBadge(bool),
     DesktopBadge(crate::desktop_badge::Event),
+    Notification(notifications::Message),
     PrefShortcutTooltips(bool),
     SettingsSearch(String),
     FindSetting(SettingsTab, &'static str),
@@ -269,6 +271,7 @@ pub struct App {
     action_toasts: action_toasts::ActionToasts,
     printing: printing::State,
     desktop_badge: Option<tokio::sync::watch::Sender<u64>>,
+    notifications: notifications::State,
     context_menu: Option<context_menu::Menu>,
     pending_mail_action: Option<(String, context_menu::MailAction)>,
     mail_actions: mail_actions::Actions,
@@ -418,6 +421,7 @@ impl App {
                 action_toasts: Default::default(),
                 printing: Default::default(),
                 desktop_badge: None,
+                notifications: Default::default(),
                 context_menu: None,
                 pending_mail_action: None,
                 mail_actions: Default::default(),
@@ -563,6 +567,8 @@ impl App {
         Subscription::batch([
             Subscription::run_with(self.demo, engine::subscription).map(Message::Backend),
             Subscription::run(crate::desktop_badge::subscription).map(Message::DesktopBadge),
+            Subscription::run_with(self.demo, crate::notifications::subscription)
+                .map(|event| Message::Notification(notifications::Message::Backend(event))),
             Subscription::run(crate::html_render::subscription)
                 .map(|e| Message::Html(html_reader::Message::Backend(e))),
             Subscription::run(crate::html_render::preparation::subscription)
@@ -812,6 +818,7 @@ impl App {
         let task = self.handle(message);
         self.pump_bulk();
         self.update_desktop_badge();
+        self.update_notification_settings();
         let task = Task::batch([
             task,
             self.prepare_reader_selection(),
@@ -861,6 +868,7 @@ impl App {
             return Task::none();
         }
         match message {
+            Message::Notification(message) => self.handle_notification(message),
             Message::DesktopBadge(crate::desktop_badge::Event::Ready(sender)) => {
                 self.desktop_badge = Some(sender);
             }
@@ -1232,6 +1240,7 @@ impl App {
                         self.sync_notice = self.notice.as_ref().map(|notice| notice.2);
                     }
                 },
+                Event::MailArrived(arrival) => self.notification_arrived(arrival),
                 Event::UndoFinished(request, mail, result) => {
                     return self.undo_finished(request, mail, result);
                 }
@@ -3358,6 +3367,10 @@ impl App {
         );
         data["inbox_unread"] = serde_json::json!(self.page.inbox_unread);
         data["unread_badge"] = serde_json::json!(self.preferences.unread_badge);
+        #[cfg(feature = "test-support")]
+        {
+            data["notifications"] = self.notification_observation();
+        }
         data["saved_unread_badge"] = serde_json::json!(self.workspace.preferences.unread_badge);
         data["count_observed_ids"] = serde_json::json!(
             self.mail_actions

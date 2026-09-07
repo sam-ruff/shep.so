@@ -2,6 +2,7 @@ mod bulk;
 mod folder_actions;
 mod mail_actions;
 mod mail_query;
+mod notifications;
 use crate::model::*;
 mod connections;
 mod conversations;
@@ -125,6 +126,7 @@ impl Store {
             CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, source TEXT NOT NULL, start INTEGER NOT NULL, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS event_start ON events(start);")?;
         conversations::schema(&conn)?;
+        notifications::schema(&conn)?;
         connections::schema(&conn)?;
         outgoing::schema(&conn)?;
         selection::schema(&conn)?;
@@ -578,6 +580,12 @@ impl Store {
     }
     pub async fn apply_sync(&self, item: MailSyncItem) -> anyhow::Result<()> {
         match item {
+            MailSyncItem::InboxSyncStarted { account, epoch } => {
+                self.begin_notification_sync(account, epoch).await
+            }
+            MailSyncItem::InboxSyncFinished { account, epoch } => {
+                self.finish_notification_sync(account, epoch).await
+            }
             MailSyncItem::Message(mail) => self.upsert(vec![mail]).await,
             MailSyncItem::Flags(flags) => {
                 self.run(move |c| {
@@ -872,5 +880,6 @@ fn upsert_message(c: &Connection, message: &StoredMail) -> anyhow::Result<()> {
         params![m.id,m.account_id,m.folder,m.sender,m.subject,message.text,m.timestamp,m.unread,m.starred,serde_json::to_string(m)?,message.raw])?;
     conversations::index_message(c, &m.id)?;
     outgoing::reconcile(c, m)?;
+    notifications::remember(c, message)?;
     Ok(())
 }
