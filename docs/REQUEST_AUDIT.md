@@ -178,3 +178,8 @@ Browser HTML rendering shipped for review as [`a9b07e2`](https://github.com/sam-
 ### Flutter confined reader — R23/R38/R44/R67/R69/R71/R73/R77
 
 Flutter now prepares the shared document in bounded native Rust work and keeps a system WebView alive through reader updates. Saved Android integration, native Appium and Flutter browser scenarios cover layout/resources, Find, quote/plain choices, selection, links and recovery; actual execution and shipping evidence are recorded in the completion log. iOS targets 14.0 for WebP, with Apple execution still open. Remote-image policy, large-document/performance parity, current-main integration, R75/R76 and VPS configuration remain active. R77 continues to authorize a prompt review-branch push; no main merge or deployment is included.
+
+
+### Flutter reader shipping checkpoint
+
+The Flutter formatted-reader increment shipped for review as [`6e8475f`](https://github.com/sam-ruff/shep.so/commit/6e8475f4470534fd4d16836c8a9efefa8915f1f6) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the remote SHA was verified. Required formatting/Clippy hooks and all **229 root/shared tests** pass, with two personal-account diagnostics intentionally ignored. The platform/browser/protocol evidence, production artifact inspection and remaining limits are recorded above. Pinned strict documentation validation passes. R77's prompt push is fulfilled for this increment; full parity, Apple execution, R75/R76 and VPS deployment remain active. The owned emulator is stopped, artifacts remain ignored, and main was not merged or modified by this work. Quality/release definitions remain disabled; re-enable them when trusted runners and release prerequisites are ready.
