@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import fixture from "../../shared/preview.json";
+import type { IntentLease } from "./mail_intents";
 import {
   Workspace,
   MutationFailure,
@@ -29,7 +30,7 @@ class Controlled implements Repository {
   async refresh() {
     return structuredClone(this.cached);
   }
-  async mutate(id: string, fields: Fields) {
+  async mutate(id: string, fields: Fields): Promise<void | Fields> {
     await new Promise<void>((resolve, reject) =>
       this.jobs.push({ resolve, reject: () => reject(Error("rejected")) }),
     );
@@ -44,6 +45,80 @@ class Controlled implements Repository {
   async saveEvent(_e: CalendarEntry) {}
 }
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+it("reserves queued inputs before older work finishes and consumes early reservation failure", async () => {
+  class Reserved extends Controlled {
+    reservations: Fields[] = [];
+    async registerMutation(id: string, fields: Fields): Promise<IntentLease> {
+      this.reservations.push(fields);
+      if (this.reservations.length === 2)
+        throw Error("Synthetic intent storage failure");
+      return {
+        id,
+        account: "work",
+        revision: this.reservations.length,
+        fields,
+      };
+    }
+  }
+  const repo = new Reserved(),
+    w = new Workspace(repo, new Settings());
+  const first = w.action("1", "star"),
+    second = w.action("1", "star");
+  expect(repo.reservations).toEqual([{ starred: true }, { starred: false }]);
+  await tick();
+  expect(repo.jobs).toHaveLength(1);
+  expect(w.mail[0].starred).toBe(false);
+  repo.jobs[0].resolve();
+  await Promise.all([first, second]);
+  expect(repo.jobs).toHaveLength(1);
+  expect(w.mail[0].starred).toBe(true);
+  expect(w.error).toContain("intent storage failure");
+  w.dispose();
+});
+it("superseded archive does not report a provider commit or retain its Undo", async () => {
+  class Superseded extends Controlled {
+    override async mutate(): Promise<Fields> {
+      return {};
+    }
+  }
+  const repo = new Superseded(),
+    w = new Workspace(repo, new Settings());
+  const action = w.action("1", "archive");
+  expect(w.moves.label).toBe("Archived 1 message");
+  await action;
+  expect(w.mail[0].folder).toBe("Inbox");
+  expect(w.moves.visible).toBe(false);
+  expect(w.error).toBeNull();
+  w.dispose();
+});
+it("an unsent move and its Undo retire reservations without dispatch", async () => {
+  class Reserved extends Controlled {
+    revisions = 0;
+    cancelled: IntentLease[] = [];
+    async registerMutation(id: string, fields: Fields): Promise<IntentLease> {
+      return { id, account: "work", fields, revision: ++this.revisions };
+    }
+    async cancelMutation(lease: IntentLease) {
+      this.cancelled.push(lease);
+    }
+  }
+  const repo = new Reserved(),
+    w = new Workspace(repo, new Settings());
+  const flag = w.action("1", "star");
+  await tick();
+  const move = w.action("1", "archive");
+  w.undo?.();
+  repo.jobs[0].resolve();
+  await Promise.all([flag, move]);
+  await tick();
+  expect(repo.jobs).toHaveLength(1);
+  expect(repo.cancelled.map((l) => l.fields.folder)).toEqual([
+    "Archive",
+    "Inbox",
+  ]);
+  expect(w.mail[0].folder).toBe("Inbox");
+  w.dispose();
+});
 describe("optimistic provider contract", () => {
   it("removes archive immediately and projects into destination", async () => {
     const repo = new Controlled();

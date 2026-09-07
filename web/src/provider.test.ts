@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { GatewayRepository, type Account, type CoreMail } from "./provider";
 import type { LocalStore, StoreName, Change } from "./storage";
-import type { Draft } from "./model";
+import type { Draft, Fields } from "./model";
+import type { IntentStore, IntentLease } from "./mail_intents";
 import { MutationFailure } from "./model";
 class Memory implements LocalStore {
+  intents?: IntentStore;
   data = new Map<string, unknown>();
   fail = false;
   async all<T>(store: StoreName) {
@@ -39,6 +41,88 @@ class Memory implements LocalStore {
     }
   }
 }
+
+// Transaction/alias ordering is exercised in real Chromium. This adapter
+// controls ownership at the wire boundary without replacing the provider path.
+function controlledIntent(effective: Fields) {
+  const lease: IntentLease = {
+    id: summary.id,
+    account: account.id,
+    revision: 1,
+    fields: { ...effective },
+  };
+  const outcomes: string[] = [];
+  const intents: IntentStore = {
+    reserve: async () => 1,
+    register: async (_id, fields) => ({ ...lease, fields }),
+    claim: async () => lease,
+    effective: async () => effective,
+    finish: async (_lease, status) => {
+      outcomes.push(status);
+    },
+  };
+  return { lease, intents, outcomes };
+}
+it("checks durable field ownership before dispatch and reports only accepted fields", async () => {
+  const s = setup();
+  await s.repo.connect(account, "p", "p");
+  await s.repo.refresh();
+  const intent = controlledIntent({ unread: false });
+  s.db.intents = intent.intents;
+  const applied = await s.repo.mutate(summary.id, {
+    starred: true,
+    unread: false,
+  });
+  expect(applied).toEqual({ unread: false });
+  const writes = s.requests.filter((r) => r.path.endsWith("/flags"));
+  expect(writes).toHaveLength(1);
+  expect(writes[0].body.starred).toBeUndefined();
+  expect(writes[0].body.unread).toBe(false);
+  expect(intent.outcomes).toEqual(["applied"]);
+  intent.intents.effective = async () => ({});
+  expect(await s.repo.mutate(summary.id, { starred: true })).toEqual({});
+  expect(s.requests.filter((r) => r.path.endsWith("/flags"))).toHaveLength(1);
+});
+it("acknowledgment survives intent finalization failure and returns a safe cached receipt", async () => {
+  const s = setup();
+  await s.repo.connect(account, "p", "p");
+  await s.repo.refresh();
+  const intent = controlledIntent({ starred: true });
+  s.db.intents = intent.intents;
+  intent.intents.finish = async () => {
+    throw Error("Synthetic intent finalization failure");
+  };
+  await expect(
+    s.repo.mutate(summary.id, { starred: true }),
+  ).rejects.toMatchObject({
+    committed: true,
+    cacheApplied: true,
+    applied: { starred: true },
+    receipt: { after: { starred: true } },
+  });
+  expect((await s.db.get<any>("mail", summary.id)).core.starred).toBe(true);
+  expect(s.requests.filter((r) => r.path.endsWith("/flags"))).toHaveLength(1);
+});
+it("unknown wire outcomes retain pending ownership while nondispatched failures retire it", async () => {
+  const s = setup();
+  await s.repo.connect(account, "p", "p");
+  await s.repo.refresh();
+  const intent = controlledIntent({ folder: "Archive" });
+  s.db.intents = intent.intents;
+  s.db.fail = true;
+  await expect(
+    s.repo.mutate(summary.id, { folder: "Archive" }),
+  ).rejects.toThrow("disk full");
+  expect(intent.outcomes).toEqual(["failed"]);
+  expect(s.requests.filter((r) => r.path.endsWith("/move"))).toHaveLength(0);
+  intent.outcomes.length = 0;
+  s.moveFailure("lost");
+  await expect(
+    s.repo.mutate(summary.id, { folder: "Archive" }),
+  ).rejects.toMatchObject({ committed: false });
+  expect(intent.outcomes).toEqual([]);
+  expect(s.requests.filter((r) => r.path.endsWith("/move"))).toHaveLength(1);
+});
 
 describe("acknowledged mutation receipts", () => {
   it("keeps remote and local commits acknowledged when only list refresh fails", async () => {

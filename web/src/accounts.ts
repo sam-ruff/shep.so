@@ -326,13 +326,13 @@ function removeAccount(
   check.type = "checkbox";
   check.setAttribute(
     "aria-label",
-    "Discard unfinished delivery and move records",
+    "Discard unfinished delivery and mail-change records",
   );
   label.append(
     check,
     node(
       "span",
-      "Discard unfinished delivery and move records. Removal cannot cancel or undo an operation that reached the server. Check Sent and the source/destination folders first.",
+      "Discard unfinished delivery and mail-change records. Removal cannot cancel or undo an operation that reached the server. Check Sent and the affected mail folders first.",
     ),
   );
   const status = node("p");
@@ -352,7 +352,7 @@ function removeAccount(
     remove.disabled =
       busy ||
       !review ||
-      (!!(review.unresolved || review.moves) && !check.checked);
+      (!!(review.unresolved || review.changes) && !check.checked);
     reload.disabled = busy;
     cancel.disabled = busy;
     check.disabled = busy;
@@ -367,11 +367,18 @@ function removeAccount(
     state();
     try {
       review = await repo.removalPreview(account.id);
-      counts.textContent = `${review.messages} cached messages · ${review.drafts} drafts · ${review.files} draft files · ${review.outgoing} delivery records`;
-      label.hidden = !(review.unresolved || review.moves);
+      const count = (n: number, noun: string, plural = `${noun}s`) =>
+        `${n} ${n === 1 ? noun : plural}`;
+      counts.textContent = [
+        count(review.messages, "cached message"),
+        count(review.drafts, "draft"),
+        count(review.files, "draft file"),
+        count(review.outgoing, "delivery record"),
+      ].join(" · ");
+      label.hidden = !(review.unresolved || review.changes);
       status.textContent = label.hidden
         ? ""
-        : `${review.unresolved} unfinished deliveries · ${review.moves} unfinished moves`;
+        : `${count(review.unresolved, "unfinished delivery", "unfinished deliveries")} · ${count(review.changes, "unfinished mail change")}`;
     } catch (e) {
       status.textContent =
         e instanceof Error ? e.message : "Could not load the review. Retry.";
