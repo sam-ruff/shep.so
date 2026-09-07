@@ -37,7 +37,7 @@ Every desktop feature/default/provider change must update this matrix and the co
 
 ## Desktop integration checkpoint
 
-The review worktree is integrating committed desktop `10d8569`: 15-second checks and independent Refresh, relevance search, draft navigation, read-on-leave, counted action toasts/Undo, native HTML/Find, Forward/Print, image reflow anchors, interface scaling, Linux badges and selection/bulk jobs. Independent uncommitted main-worktree edits are excluded. Verification of this merged branch is recorded separately from imported main evidence in the completion log.
+The review worktree integrates committed desktop `10d8569`: 15-second checks and independent Refresh, relevance search, draft navigation, read-on-leave, counted action toasts/Undo, native HTML/Find, Forward/Print, image reflow anchors, interface scaling, Linux badges and selection/bulk jobs. Independent uncommitted main-worktree edits are excluded. The merge ships for review in `72ca625`; verification of this merged branch is recorded separately from imported main evidence in the completion log.
 
 Shared mail types and routed provider transports remain authoritative. Native HTML uses the shared MIME selector with rewritten per-section CID identities; desktop-specific render payloads stay outside the transport crate. Forward formatting metadata and MIME assembly are shared, including the client stable Message-ID entry point. Mobile/browser Forward/Print, selection/bulk, read-on-leave/toast defaults, remote-image policy/anchors and OS badges/background lifecycle remain explicit open gaps. Desktop request IDs that collide with client R67–R71 use `desktop-main:` in the audit.
 
