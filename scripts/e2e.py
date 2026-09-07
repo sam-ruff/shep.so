@@ -1939,6 +1939,7 @@ class NativeFlows(unittest.TestCase):
         result=self.mcp.call("desktop.start",move_recovery="unconfirmed",persistent=True)
         print(f"Move recovery local evidence: {result['artifacts']}",flush=True)
         self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("keepsake"),check("total",1),key("Escape"),
+                       check("focused_input",None),
                        check("selected","Recovered keepsake"),check("reader_text_ready",True),
                        click(1340,192),check("dialog","MoveRecovery"),wait(100),click(720,485),
                        check("move_recovery.action","KeepLocal"),check("move_recovery.confirmed",False),
@@ -1948,7 +1949,7 @@ class NativeFlows(unittest.TestCase):
                        check("selected_id","local-recovered-","contains"),check("reader_text_ready",True),
                        check("mail_rows.0.group_pending",False),shot("move-recovery-local-copy"),
                        click(568,218),check("mail_rows.0.starred",True),check("mail_pending",0),
-                       click(1400,36),check("refreshing",False),check("selected_id","local-recovered-","contains"),
+                       click(1400,36),check("refreshing",True),check("refreshing",False),check("selected_id","local-recovered-","contains"),
                        {"type":"restart"},key("ctrl+k"),check("focused_input","search"),type_text("keepsake"),check("total",1),key("Escape"),
                        check("selected_id","local-recovered-","contains"),check("reader_text_ready",True),
                        check("mail_rows.0.starred",True),shot("move-recovery-local-after-restart"))
