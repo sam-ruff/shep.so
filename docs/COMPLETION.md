@@ -23,67 +23,73 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
-## R73 recovery controls and R84 cross-folder search — validation in progress (2026-09-07)
+## R84 delivered; R73 recovery checkpoint shipped (2026-09-07)
 
-This working-tree checkpoint is **not yet installed or pushed**. The full product
-backlog remains active; the initial R73 foundation evidence below is historical.
+Source commit **a81d767d0d687338755ec1b76b807cb97e5b6635** is installed for the
+Linux user and pushed to `main`. The full product backlog remains active.
+
+Interactive search now spans cached folders within the selected account scope,
+including combined folder views. Results display their folder. Clearing search
+restores the browsing folder and usual sort. SQLite queries, frozen selections
+and optimistic move membership share the scope rule. Read/flag/attachment
+filters remain explicit. Search retains a moved result that still matches, and
+long preview text clips within its space without overlapping folder labels.
+R84 is complete and removed from TODO.
 
 Recovery is available from the cached reader and Preferences → Accounts. Retry
-checks a confirmed destination, while unconfirmed moves require explicit review
-before using an existing, byte-verified copy. Keeping a local original requires
-confirmation and never changes server copies. Local recovery assigns a new local
-identity, preserves content/flags through restart and sync, and retires the old
-server Undo action. Removing a destination account retains another account's
-original with the same local-identity protection. Closing waits for an active
-recovery receipt; failure cancels that pending close.
+checks a confirmed destination; unconfirmed moves require explicit review before
+using an existing, byte-verified copy. Keeping a local original requires
+confirmation and never changes server copies. Its new local identity preserves
+content/flags through restart and sync and retires the old server Undo action.
+Removing a destination account retains another account's original with this
+same identity protection. Closing waits for an active recovery receipt; failure
+cancels that pending close.
 
-Interactive search now spans folders within the selected account scope, including
-combined folder views. Results display their folder. Clearing search restores the
-browsing folder and usual sort. SQLite queries, frozen selection membership and
-optimistic move membership share the scope rule. Read/flag/attachment filters
-remain explicit. Global search retains a moved result that still matches.
+**Verification:** all **167 native functional scenarios**, **484 Rust tests**
+plus **two drawing-adapter tests**, **45 Python tests**, formatting, Clippy and
+Git hooks pass. The Windows GNU cross-target check and pinned strict docs build
+pass. The optimized production archive passes checksum, extraction and bundled
+installer verification; the installed executable matches the release hash.
+Already-open windows need reopening to use the new executable.
 
-Verification so far: **484 Rust tests**, **45 Python tests**, Clippy, formatting,
-and the pinned strict docs build pass. The optimized production archive passes
-checksum, extraction and bundled-installer verification. Relevant logs are
-`all-folder-search-full-rust.log`, `all-folder-search-clippy.log`,
-`recovery-and-search-python.log`, `recovery-and-search-docs.log`, and
-`recovery-and-search-release.log` under ignored `artifacts/logs/`.
+Final evidence under ignored `artifacts/logs/`:
 
-Seven recovery native scenarios and three cross-folder search scenarios have
-passing targeted runs. Recovery evidence covers explicit confirmation, delayed
-success/failure/retry with navigation, retained copies and flags after restart,
-Preferences discovery, compact dark layout and graceful close with a read-only
-inspection of its committed fixture receipt. Reviewed screenshots include
-`66bd98906785`, `b9b00e6f29ae`, `50d3bdc7497e`, `47e37f2b3611`, and
-`9e8979f97c08` under ignored `artifacts/e2e/`. Fixtures never contact personal
+- `recovery-and-search-final-native-full.log`: 167 scenarios, all passed.
+- `recovery-and-search-commit.log`: formatting, Clippy, Rust/adapter tests and commit hooks.
+- `recovery-and-search-final-python.log`, `recovery-and-search-final-windows-check.log` and `recovery-and-search-final-docs.log`.
+- `recovery-and-search-final-release.log`, `recovery-and-search-install.log` and `recovery-and-search-push.log`.
+
+The first native run passed 163/167: three assertions expected the old
+folder-only search count; one recovery click was followed by delayed Escape.
+Corrected scenarios pass individually and in the clean full rerun. The recovery
+scenario waits for native search focus to clear before its independent click;
+rapid input cancellation remains tracked under R63. No timing budget was changed.
+
+Seven recovery scenarios cover explicit confirmation, delayed success and
+failure/retry with navigation, local flags/copies after restart, Preferences,
+compact dark layout and graceful close with read-only receipt inspection.
+Three new search scenarios cover non-Inbox results, opening/moving, exact bulk
+membership, clearing search and account scope. Reviewed WebP evidence includes
+`66bd98906785`, `b9b00e6f29ae`, `50d3bdc7497e`, `45e02c844b68`, and
+`2b9ce6702a98` under ignored `artifacts/e2e/`. Fixtures never contact personal
 providers or OS credentials. No new performance measurements were run.
 
-The first full run passed 163 of 167 scenarios. Two conversation assertions and
-a move/folder assertion expected the old folder-only search count. The recovery
-review scenario also exposed delayed Escape arriving after its independent
-mouse click; it now waits for native search focus to clear before that click,
-with rapid-input cancellation still tracked under R63. All four corrected
-scenarios pass across `all-folder-search-conversation-rerun.log` and
-`recovery-and-search-final-targeted.log`. Visual review also caught preview text
-overlapping folder labels; previews now clip within their allocated space.
-Light/compact-dark captures `45e02c844b68` and `2b9ce6702a98` have been reviewed.
-
-A clean 167-flow functional rerun is in progress in
-`recovery-and-search-final-native-full.log`. Current native binary SHA-256:
+Native test binary SHA-256:
 `a9d68d7925147b37d7004a251a852a4c11e6d17ed229c7d031c7a57e2644b5ff`.
-Windows GNU cross-target compilation also passes; this does not establish
-Windows GUI or real-provider behavior.
+Installed production binary SHA-256:
+`badcb12f3ca055135741aa0675ebe5a7dca2022d0daa8b8d3e76e8e41e9e9fd9`.
 
-Remaining R73 work includes actual adapter wire/journal integration, broader
+R73 remains open for actual adapter wire/journal integration, broader
 Undo/group/folder-history lifecycle checks, repeated-move aliases and the live
-A. Keep report. R84 awaits completed regression and shipping checks. R83 database
+A. Keep report. Cross-compilation is not Windows GUI verification. R83 database
 export/import remains tracked separately and is not implemented by this work.
+Quality/release workflows remain disabled; documentation publishing stays enabled.
 
 ## R73 — Durable recovery work in progress (2026-09-07)
 
-This follow-up is **not installed or pushed**. The shipped checkpoint below is
-still the installed version; R73 and the full product goal remain active.
+These foundation-stage notes preceded the combined a81d767 checkpoint above.
+See that checkpoint for current shipping evidence; R73 and the full product goal
+remain active.
 
 The working tree connects IMAP moves/transfers to a durable journal before the
 first provider write. It protects original MIME through sync/restart, retains
