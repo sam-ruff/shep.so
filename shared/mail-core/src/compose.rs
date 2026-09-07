@@ -344,9 +344,9 @@ pub fn reply_from_raw(
     accounts: &[Account],
     all: bool,
 ) -> anyhow::Result<Draft> {
-    let parsed = mailparse::parse_mail(raw)?;
+    let parsed = crate::mime::parse(raw)?;
     let reply = ReplyHeaders::parse(&parsed);
-    let (body, _) = content(&parsed);
+    let (body, _) = content(&parsed)?;
     let detail = MailDetail {
         summary,
         body: body.clone(),

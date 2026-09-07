@@ -704,7 +704,7 @@ async fn attachments_survive_source_deletion_text_autosave_reopen_and_exact_mime
                 parsed.headers.get_first_value("In-Reply-To").as_deref(),
                 Some("<original@example.test>")
             );
-            let (body, files) = content(&parsed);
+            let (body, files) = content(&parsed)?;
             assert!(body.contains("Updated text"));
             assert_eq!(files.len(), 1);
             assert_eq!(files[0].bytes, [0, 255, 1, 13, 10]);
@@ -880,6 +880,40 @@ async fn corrupt_attachment_does_not_hide_cached_body_or_allow_an_empty_save() {
     let saved:Value=serde_json::from_str(&p.request(json!({"op":"attachment","id":"fixture:INBOX:corrupt","file":fixtures[0]["files"][0]["id"]}).to_string()).await.unwrap()).unwrap();
     assert!(saved["error"].is_string());
     assert!(saved.get("data").is_none());
+}
+
+#[tokio::test]
+async fn selected_representations_reach_cached_native_detail_without_provider_slots() {
+    let (_dir, p) = profile().await;
+    seed(&p, 0).await;
+    let cases: Vec<Value> =
+        serde_json::from_str(include_str!("../../../shared/reader-fixtures.json")).unwrap();
+    for (index, case) in cases.iter().enumerate() {
+        let raw = case["raw"].as_str().unwrap().as_bytes().to_vec();
+        p.database
+            .write(move |db| {
+                operations::insert_mail(
+                    db,
+                    parse_mail("fixture", &index.to_string(), "INBOX", raw, false, false)?,
+                    false,
+                )
+            })
+            .await
+            .unwrap();
+    }
+    let _occupied = p.operations.hold_network_capacity().await;
+    for (index, case) in cases.iter().enumerate() {
+        let detail = request(
+            &p,
+            json!({"op":"detail","id":format!("fixture:INBOX:{index}")}),
+        )
+        .await;
+        assert_eq!(detail["body"], case["body"]["text"], "{}", case["name"]);
+        assert_eq!(
+            detail["files"].as_array().unwrap().len(),
+            case["files"].as_array().unwrap().len()
+        );
+    }
 }
 
 #[tokio::test]

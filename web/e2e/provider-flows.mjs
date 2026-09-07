@@ -69,6 +69,9 @@ export async function providerFlows(page, context, origin, output, session) {
   await expect(
     fileReader.getByRole("button", { name: "Save résumé.txt" }),
   ).toBeVisible();
+  await expect(fileReader).not.toContainText("OBSOLETE-MIME-ALTERNATIVE");
+  await expect(fileReader.getByRole("button", { name: /^Save / })).toHaveCount(3);
+  await expect(fileReader).not.toContainText("inline-logo.webp");
   await context.setOffline(true);
   try {
     await messageFindFlow(page);

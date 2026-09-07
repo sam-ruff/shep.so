@@ -39,7 +39,7 @@ Mobile (`flutter/`), a separate browser client (`web/`), the promo site (`websit
 Fastmail login and Inbox sync have been verified. Live Google, other providers and Windows/macOS still need verification.
 
 - Mail uses text rendering; external images load only when your privacy settings allow them.
-- Downloads: **25 MiB per message**. Backups: **256 MiB of original mail**.
+- Downloads: **25 MiB per message**; MIME nesting beyond 128 multipart levels is refused. Backups: **256 MiB of original mail**.
 - Gmail needs an app password; Google sign-in does not provide Gmail OAuth.
 - Calendar sync: **90 days back, 365 days ahead**. Edit recurring CalDAV series in your server's calendar UI.
 - The local mail cache is not encrypted at rest.

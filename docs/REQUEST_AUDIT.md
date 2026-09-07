@@ -155,3 +155,8 @@ The Find increment now has 50 native Rust, 41 Flutter host, 65 browser, 34 backe
 
 
 Client Find is committed and pushed as [`50eab04`](https://github.com/sam-ruff/shep.so/commit/50eab047b3b9986b29c94b1810076e5c819b3f8a) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), with the remote SHA verified. Required formatting/Clippy hooks and **217 root/shared tests** pass; two opt-in personal-account diagnostics remain intentionally ignored. Pinned strict documentation validation passes. R77's prompt review-branch push is fulfilled for this increment. Full parity, Apple execution and VPS deployment remain active, and R75/R76 remain in TODO. Main and the disabled quality/release workflows were not changed by this work.
+
+
+### Reader MIME prerequisite — R23/R38/R44/R67/R69/R71/R73/R74/R77
+
+Shared selection now preserves alternatives, related roots and independent/ambiguous CID scopes, while cache text, replies and attachment classification agree across native Rust and browser WASM. Iterative MIME preflight and HTML text traversal protect the worker stack. Fourteen shared fixtures, native bridge/provider tests and actual Android/HTTPS browser controls provide the evidence recorded in the completion log. Formatted HTML, resource confinement, remote-image policy, full Find/selection and Apple parity remain active; raw HTML output is explicitly untrusted. Two iced functional runs each passed 57/58 with different intermittent input misses; isolated reruns pass, the first drag now settles its frame and rapid-input diagnosis remains in TODO. R75/R76 remain TODOs. R77 continues to authorize prompt pushes to the combined review branch, with no main merge or workflow enablement.

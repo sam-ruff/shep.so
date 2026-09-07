@@ -786,7 +786,11 @@ class NativeFlows(unittest.TestCase):
         self.assertLess(state["update_p95_ms"], 8)
 
     def test_resize_divider_with_mouse_and_persist(self):
-        self.mcp.batch(drag(616, 500, 785, 500), check("reader_split", .44, "gte"),
+        # Ready observes the backend state before the first laid-out frame. Let
+        # that frame settle before pressing on the narrow divider, as on return
+        # from Calendar below. This is not a responsiveness measurement.
+        self.mcp.batch(check("ready", True), wait(150),
+                       drag(616, 500, 785, 500), check("reader_split", .44, "gte"),
                        check("saved_reader_split", .44, "gte"), shot("resized-inbox"),
                        key("ctrl+2"), check("tab", "Calendar"), key("ctrl+1"), check("tab", "Mail"),
                        check("reader_split", .44, "gte"),

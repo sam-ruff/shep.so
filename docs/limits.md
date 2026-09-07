@@ -15,3 +15,5 @@ Shep is still in development. Fastmail authentication and Inbox sync have been v
 POP3 keeps folders and flags locally and leaves server originals intact. IMAP moves need server support. Full HTML layout, invitations, IMAP IDLE and general offline action queues are not yet available.
 
 For implementation details, see the [agent reference](agents/limits.md) and [completion audit](COMPLETION.md).
+
+Incoming MIME nesting beyond 128 multipart levels is refused before recursive parsing. This worker-safety check is separate from the open large-message streaming requirement. Client formatted HTML rendering remains pending; shared raw HTML representations are not safe page content.

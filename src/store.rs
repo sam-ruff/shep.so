@@ -345,8 +345,8 @@ impl Store {
             summary.unread = unread;
             summary.starred = starred;
             summary.folder = folder;
-            let parsed = mailparse::parse_mail(&raw)?;
-            let (body, attachments) = crate::model::content(&parsed);
+            let parsed = shep_mail_core::mime::parse(&raw)?;
+            let (body, attachments) = crate::model::content(&parsed)?;
             let body_truncated = body.chars().count() > 32000;
             let body: String = body.chars().take(32000).collect();
             let (latest_body, replies) = crate::replies::split(&body);
