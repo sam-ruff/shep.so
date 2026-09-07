@@ -23,9 +23,10 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
-## R73 — Pending destination checkpoint — verification in progress (2026-09-07)
+## R73 — Pending destination checkpoint — installed and pushed (2026-09-07)
 
-The saved slow-provider native reproduction failed before this change: Projects
+Source [acb33c0](https://github.com/sam-ruff/shep.so/commit/acb33c0d20f547f626c2aa934190858b30cf446e)
+is installed and pushed. The saved slow-provider native reproduction failed before this change: Projects
 only contained the moved message after the provider acknowledgment. Per-read
 SQLite projection now includes pending moves in the destination's full-text
 search, sorting, filtering and paging. It leaves persisted source data intact.
@@ -41,8 +42,18 @@ dragging; light destination/failure screenshots were reviewed. Native evidence:
 `e854518c111b`, `1a78176994a9`, `e693b0450662`, `14728d75d5b1`, `1a9059fdd1e2`.
 All 454 Rust tests, two drawing-adapter tests and 44 Python tests, Clippy and
 formatting pass. Optimized production build, archive checksum/extraction and
-bundled installer checks pass. Full native and shipping checks are pending. Logs use the `move-projection-` prefix
-under ignored `artifacts/logs/`. Timing measurements remain deferred.
+bundled installer checks pass. The full native run passes **157/157 functional
+scenarios** in 585.869 seconds (`move-projection-native-full.log`), using binary
+SHA-256 `7446f68841cf674ba44998444521d29f1e03b26d36b21ebc046b90fd4463487b`.
+Windows GNU cross-target compilation passes; this is not Windows runtime evidence.
+Git hooks pass. The installed production binary matches the verified release,
+SHA-256 `c6ff9c86421c5800d1132ff63a708104b86f25b9ea626a5e578470e84df37d66`.
+Installation was atomic; existing personal windows were left running on their
+previous executable and need reopening. Logs use the `move-projection-` prefix
+under ignored `artifacts/logs/`, including `commit`, `push`, `install`,
+`release-verified`, `windows-check`, `all-rust`, `python` and `docs-final`.
+Documentation publishing for the source commit succeeded in run `34125535804`.
+Timing measurements remain deferred. Quality/release workflows remain disabled.
 
 R73 stays open: acknowledged moves without COPYUID and cross-account retry
 journals can still lose the destination identity. Durable preservation and
