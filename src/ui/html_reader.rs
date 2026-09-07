@@ -235,7 +235,9 @@ impl App {
                 self.html_reader.cache.tx = Some(tx);
             }
             Message::Prepared(html_render::preparation::Event::Prepared(key, frame)) => {
-                if let Some(frame) = frame {
+                if let Some(frame) = frame
+                    && self.html_frame_cacheable(&key, &frame)
+                {
                     self.html_reader.cache.insert(key, frame);
                 }
             }
@@ -320,11 +322,14 @@ impl App {
                     self.html_reader.rectangles.clear();
                 }
                 let handle = cache::handle(&frame);
-                if frame.scroll == 0. && frame.pan == 0. && frame.reflow.is_none()
-                    && let Some(request) = self.detail.as_ref().and_then(|detail| self.html_preparation(detail, frame.viewport))
-                    // Do not label an intermediate remote-image frame with the
-                    // latest image revision while its decode is still pending.
-                    && (!request.key.allow_images || self.html_reader.resources.is_empty())
+                if frame.scroll == 0.
+                    && frame.pan == 0.
+                    && frame.reflow.is_none()
+                    && let Some(request) = self
+                        .detail
+                        .as_ref()
+                        .and_then(|detail| self.html_preparation(detail, frame.viewport))
+                    && self.html_frame_cacheable(&request.key, &frame)
                 {
                     self.html_reader
                         .cache
@@ -595,11 +600,13 @@ mod tests {
             scroll,
             pan: 0.,
             images: vec!["https://example.test/image.webp".into()],
+            loaded_images: vec![],
+            background: None,
             reflow: None,
         })
     }
     #[tokio::test]
-    async fn visited_initial_html_is_reused_but_not_an_intermediate_allowed_image_frame() {
+    async fn visited_html_is_reused_without_mislabeling_a_pending_image_decode() {
         let mut app = app().await;
         let size = Viewport {
             width: 700,
@@ -634,6 +641,9 @@ mod tests {
         let generation = app.html_reader.generation;
         let _ = app.handle_html(Message::Input(Input::View(generation, size, 0.)));
         assert!(app.html_reader.frame.is_none());
+        // Download completed, but the worker has not applied it to this frame.
+        app.remote_bytes
+            .push_back(("https://example.test/image.webp".into(), Arc::from([1; 4])));
         let _ = app.handle_html(Message::Backend(html_render::Event::Frame(frame(
             generation, size, 0.,
         ))));
@@ -646,6 +656,82 @@ mod tests {
                 .get(&request.key, generation)
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn opening_cached_mail_refreshes_its_recency_before_more_prefetches() {
+        let mut app = app().await;
+        let original = app.detail.as_ref().unwrap().clone();
+        for index in 0..8 {
+            let mut detail = (*original).clone();
+            detail.summary.id = index.to_string();
+            app.cache_detail(Arc::new(detail));
+        }
+        assert_eq!(app.cached_detail("0").unwrap().summary.id, "0");
+        let mut next = (*original).clone();
+        next.summary.id = "next".into();
+        app.cache_detail(Arc::new(next));
+        assert!(app.cached_detail("0").is_some());
+        assert!(app.cached_detail("1").is_none());
+        assert_eq!(app.detail_cache.len(), 8);
+    }
+
+    #[tokio::test]
+    async fn visited_image_pixels_keep_exact_inputs_across_other_downloads_and_eviction() {
+        let mut app = app().await;
+        let size = Viewport {
+            width: 700,
+            height: 400,
+            scale: 1.,
+        };
+        let url = "https://example.test/image.webp".to_owned();
+        let bytes: Arc<[u8]> = Arc::from([1; 4]);
+        app.preferences.image_policy = ImagePolicy::AllowAll;
+        app.remote_bytes.push_back((url.clone(), bytes.clone()));
+        let _ = app.prepare_html();
+        let id = app.html_reader.generation;
+        let _ = app.handle_html(Message::Input(Input::View(id, size, 0.)));
+        let mut rendered = frame(id, size, 0.);
+        Arc::make_mut(&mut rendered).loaded_images = vec![(url.clone(), bytes.clone())];
+        let _ = app.handle_html(Message::Backend(html_render::Event::Frame(
+            rendered.clone(),
+        )));
+        let original_handle = app.html_reader.handle.as_ref().unwrap().id();
+        app.html_reader
+            .cache
+            .image_arrived("https://example.test/another-mail.webp");
+        app.remote_bytes.clear(); // A visited frame retains the inputs it displays.
+        let detail = app.detail.take().unwrap();
+        let _ = app.prepare_html();
+        app.detail = Some(detail);
+        let _ = app.prepare_html();
+        let request = app
+            .html_preparation(app.detail.as_ref().unwrap(), size)
+            .unwrap();
+        assert_eq!(request.source.images.len(), 1);
+        assert!(Arc::ptr_eq(&request.source.images[0].1, &bytes));
+        let _ = app.handle_html(Message::Input(Input::View(
+            app.html_reader.generation,
+            size,
+            0.,
+        )));
+        assert!(Arc::ptr_eq(
+            &app.html_reader.frame.as_ref().unwrap().pixels,
+            &rendered.pixels
+        ));
+        assert_eq!(
+            app.html_reader.handle.as_ref().unwrap().id(),
+            original_handle
+        );
+        // A newly downloaded version invalidates only this image's users. Late
+        // preparation/frames with the old bytes cannot reinsert stale pixels.
+        app.html_reader.cache.image_arrived(&url);
+        app.remote_bytes.push_back((url, Arc::from([2; 4])));
+        assert!(!app.html_frame_cacheable(&request.key, &rendered));
+        let _ = app.handle_html(Message::Prepared(
+            html_render::preparation::Event::Prepared(request.key.clone(), Some(rendered)),
+        ));
+        assert!(app.html_reader.cache.get(&request.key, 9).is_none());
     }
 
     #[tokio::test]
@@ -751,7 +837,9 @@ mod tests {
         assert!(blocked.source.images.is_empty());
         assert!(app.html_reader.cache.get(&blocked.key, 3).is_none());
         app.preferences.image_policy = ImagePolicy::AllowAll;
-        app.html_reader.cache.image_revision += 1;
+        app.html_reader
+            .cache
+            .image_arrived("https://example.test/image.webp");
         let changed = app
             .html_preparation(app.detail.as_ref().unwrap(), size)
             .unwrap();

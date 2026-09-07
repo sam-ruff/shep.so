@@ -251,6 +251,7 @@ pub enum Message {
     ConversationFlag(String),
     ConversationPage(bool),
     ConversationScroll(u64),
+    ConversationViewport(f32),
     RetryConversation,
     PrefImages(ImagePolicy),
     AllowImages(u8),
@@ -685,6 +686,15 @@ impl App {
         {
             self.detail_cache.pop_back();
         }
+    }
+    fn cached_detail(&mut self, id: &str) -> Option<Arc<MailDetail>> {
+        let index = self
+            .detail_cache
+            .iter()
+            .position(|detail| detail.summary.id == id)?;
+        let detail = self.detail_cache.remove(index)?;
+        self.detail_cache.push_front(detail.clone());
+        Some(detail)
     }
     fn preload(&mut self, id: String) {
         if self.page.bulk_placeholders.contains(&id) {
@@ -1358,11 +1368,18 @@ impl App {
                     self.requested_images.remove(&url);
                     match result {
                         Ok(bytes) => {
-                            self.html_reader.cache.image_revision += 1;
+                            self.html_reader.cache.image_arrived(&url);
                             self.remote_bytes.retain(|(u, _)| u != &url);
                             self.remote_bytes
                                 .push_back((url.clone(), Arc::from(bytes.clone())));
-                            while self.remote_bytes.len() > 8 {
+                            while self.remote_bytes.len() > 128
+                                || self
+                                    .remote_bytes
+                                    .iter()
+                                    .map(|(_, bytes)| bytes.len())
+                                    .sum::<usize>()
+                                    > 16 * 1024 * 1024
+                            {
                                 self.remote_bytes.pop_front();
                             }
                             self.remote_handles.retain(|(u, _)| u != &url);
@@ -2661,6 +2678,7 @@ impl App {
                 };
                 self.request_conversation(Some(offset));
             }
+            Message::ConversationViewport(y) => self.conversation.scroll = y,
             Message::ConversationScroll(generation) => return self.conversation_scroll(generation),
             Message::RetryConversation => {
                 self.request_conversation(Some(self.conversation.page.offset))
@@ -3490,6 +3508,19 @@ impl App {
                 .supplied
                 .intersection(&self.html_reader.resources)
                 .count()
+        );
+        data["html_rendered_images"] = serde_json::json!(
+            self.html_reader
+                .frame
+                .as_ref()
+                .map_or(0, |frame| frame.loaded_images.len())
+        );
+        data["conversation_scroll"] = serde_json::json!(self.conversation.scroll);
+        data["html_background"] = serde_json::json!(
+            self.html_reader
+                .frame
+                .as_ref()
+                .and_then(|frame| frame.background)
         );
         data["html_resources"] = serde_json::json!(self.html_reader.resources.len());
         data["html_error"] = serde_json::json!(self.html_reader.error);

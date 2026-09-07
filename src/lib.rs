@@ -23,3 +23,7 @@ pub mod ui;
 #[cfg(feature = "test-support")]
 #[path = "../tests/support/fixtures.rs"]
 pub mod test_support;
+
+#[cfg(any(test, feature = "test-support"))]
+#[path = "../tests/support/complex_html.rs"]
+pub(crate) mod complex_html_fixture;

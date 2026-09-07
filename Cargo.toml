@@ -64,11 +64,13 @@ fs2 = "0.4.3"
 zbus = { version = "5.19", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
+litehtml-sys = { version = "=0.2.5", features = ["shep-test-support"] }
 tokio = { version = "1", features = ["test-util"] }
 iced_tiny_skia = "=0.14.0"
 tiny-skia = "0.11"
 
 [patch.crates-io]
+litehtml-sys = { path = "vendor/litehtml-sys" }
 iced_tiny_skia = { path = "vendor/iced_tiny_skia" }
 
 [[bench]]

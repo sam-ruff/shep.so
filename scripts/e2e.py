@@ -462,6 +462,65 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(click(int(x+65), int(y+height+34)),
                        check("html_quotes_hidden", hidden), check("html_view_current", True))
 
+    def test_recent_image_heavy_mail_keeps_final_pixels_during_slow_renderer_reopen(self):
+        result = self.mcp.call("desktop.start", html_mail=True, html_delay_ms=1200)
+        print(f"Visited HTML evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(85,355), check("selected","Dispatch update"), check("html_view_current",True),
+                       click(1115,376), check("images_allowed",True), check("html_rendered_images",12),
+                       check("html_view_current",True), wait(100), shot("visited-dispatch"),
+                       click(400,349), check("selected","Delivery update"), check("html_view_current",True))
+        if not self.mcp.call("desktop.state")["images_allowed"]:
+            self.mcp.batch(click(1115,376),check("images_allowed",True))
+        self.mcp.batch(check("html_rendered_images",12),check("html_view_current",True),wait(100),shot("visited-delivery"))
+        for index in range(4):
+            before = self.mcp.call("desktop.state")["html_cache_hits"]
+            self.mcp.batch(click(400,245 if index % 2 == 0 else 349),
+                           {**check("html_cache_hits",before+1,"gte"),"timeout_ms":700},
+                           {"type":"assert","path":"html_rendered_images","op":"eq","value":12},
+                           check("html_view_current",True),shot(f"visited-images-reopen-{index}"))
+        self.mcp.batch(check("html_cache_bytes",33554432,"lte"),click(850,500),key("ctrl+a"),
+                       check("html_selected_text","Fictional workshop supplies","contains"),
+                       key("ctrl+f"),check("focused_input","find-message"),type_text("Quantity"),check("find_count",12))
+
+    def test_html_background_matches_document_surround_in_both_themes(self):
+        from PIL import Image
+        for dark in (False, True):
+            result = self.mcp.call("desktop.start", html_mail=True)
+            if dark:
+                self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(690,366),check("dark",True),key("ctrl+1"))
+            self.mcp.batch(click(85,355),check("selected","Dispatch update"),check("html_view_current",True),
+                           check("html_background",[255,255,255,255]),wait(100),shot(f"html-white-surround-{dark}"))
+            state = self.mcp.call("desktop.state")
+            x,y,w,h = state["html_body_visible"]
+            capture = Image.open(Path(result["artifacts"])/f"html-white-surround-{dark}.webp").convert("RGB")
+            pixel = capture.getpixel((int(x-20),int(y+30)))
+            self.assertTrue(all(v >= 247 for v in pixel),pixel)
+            self.mcp.batch(click(85,282),check("folder","INBOX"),check("html_view_current",True),
+                           check("html_background",[16,16,16,255]),wait(100),shot(f"html-dark-document-{dark}"))
+
+    def test_conversation_refresh_preserves_scrolled_position(self):
+        self.mcp.call("desktop.start",conversation_mail=True)
+        self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("Long project review"),
+                       check("total",1),key("Escape"),check("conversation_total",25),wait(100),
+                       click(1288,194),check("conversation_offset",0),wait(100),
+                       {"type":"hover","x":1050,"y":600},{"type":"scroll","amount":12},
+                       check("conversation_scroll",400,"gte"),shot("thread-before-refresh"))
+        before = self.mcp.call("desktop.state")["conversation_scroll"]
+        self.mcp.batch(key("ctrl+r"),check("busy","sync","contains"),check("busy",[],"eq"),
+                       check("conversation_scroll",before),wait(100),shot("thread-after-refresh"))
+
+    def test_sender_copy_icons_and_list_selection_icon(self):
+        self.mcp.call("desktop.start",html_mail=True)
+        self.mcp.batch(check("html_view_current",True),click(574,155),check("mail_selection.mode",True),
+                       shot("square-select-active"),click(574,155),check("mail_selection.mode",False),
+                       click(740,243),check("dialog","Sender"),shot("sender-copy-icons"),
+                       click(958,490),key("Escape"),check("dialog",None),key("ctrl+k"),
+                       check("focused_input","search"),key("ctrl+v"),check("query","support@example.test"),
+                       key("ctrl+a"),key("BackSpace"),check("total",124),key("Escape"),
+                       check("html_view_current",True),click(740,243),check("dialog","Sender"),
+                       click(958,570),key("Escape"),key("ctrl+k"),check("focused_input","search"),
+                       key("ctrl+v"),check("query","example.test"),shot("sender-domain-copied"))
+
     def test_html_loading_keeps_body_origin_stable_with_css_images_and_horizontal_controls(self):
         result = self.mcp.call("desktop.start", html_mail=True, html_delay_ms=1200)
         print(f"HTML layout evidence: {result['artifacts']}", flush=True)
@@ -1460,17 +1519,40 @@ class NativeFlows(unittest.TestCase):
                        click(568,322),check("mail_rows.1.starred",False),check("mail_pending",1),
                        check("mail_pending",0),shot("bulk-row-controls-restored"))
 
+    def test_selection_mode_row_clicks_toggle_without_clearing_other_pages(self):
+        self.mcp.batch(check("selected", "A little more room to think"),
+                       click(574,155), check("mail_selection.mode",True),
+                       check("mail_selection.drawn",True),
+                       click(400,245), click(400,453),
+                       check("mail_selection.count",2), check("mail_selection.pending",False),
+                       click(400,245), check("mail_selection.count",1),
+                       click(400,349), check("mail_selection.count",2),
+                       {"type":"click","x":400,"y":245,"modifiers":["shift"]},
+                       check("mail_selection.count",3), check("mail_selection.pending",False),
+                       check("selected", "A little more room to think"),
+                       shot("selection-additive-row-range"),
+                       click(586,884), check("offset",50), check("mail_selection.pending",False),
+                       click(400,245), check("mail_selection.count",4),
+                       click(400,453), check("mail_selection.count",5),
+                       click(400,245), check("mail_selection.count",4),
+                       check("mail_selection.pending",False),
+                       key("BackSpace"), check("dialog","BulkReview"),
+                       check("bulk.review_count",4), shot("selection-additive-cross-page-review"),
+                       key("Escape"), check("dialog",None),
+                       key("Escape"), check("mail_selection.mode",False),
+                       click(400,349), check("mail_selection.mode",False))
+
     def test_mail_selection_mouse_ranges_and_focus(self):
         self.mcp.batch(click(400, 255), check("selected", "A little more room to think"),
                        {"type":"click", "x":400, "y":360, "modifiers":["ctrl"]},
                        check("mail_selection.count", 2), check("mail_selection.pending", False),
                        {"type":"click", "x":400, "y":568, "modifiers":["shift"]},
-                       check("mail_selection.count", 3), check("mail_selection.pending", False),
+                       check("mail_selection.count", 4), check("mail_selection.pending", False),
                        shot("selection-range"),
                        {"type":"click", "x":400, "y":450, "modifiers":["ctrl"]},
-                       check("mail_selection.count", 2),
+                       check("mail_selection.count", 3),
                        {"type":"click", "x":400, "y":450, "modifiers":["ctrl"]},
-                       check("mail_selection.count", 3), check("full_reader", False),
+                       check("mail_selection.count", 4), check("full_reader", False),
                        double_click(400, 250), check("full_reader", True),
                        key("Escape"), check("full_reader", False), key("ctrl+a"),
                        check("mail_selection.count", 120), check("mail_selection.pending", False),
@@ -1803,6 +1885,32 @@ class NativeFlows(unittest.TestCase):
                        check("fields.to", "Daniel Park <team@example.com>"), check("fields.cc", ""),
                        key("Escape"), check("dialog", None), key("shift+r"), check("dialog", "Compose"),
                        check("fields.cc", "copy@example.com"), shot("reply-all-keyboard"))
+
+    def test_composer_typing_does_not_leave_glyphs_below_editor(self):
+        from PIL import Image, ImageChops
+        for dark in (False, True):
+            result = self.mcp.call("desktop.start",width=900,height=640)
+            if dark:
+                self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(563,366),check("dark",True),key("ctrl+1"))
+            self.mcp.batch(key("r"),check("dialog","Compose"),click(450,370),key("ctrl+a"),
+                           {"type":"paste","text":"Hello,\n\nHere is my reply.\n\n" + "\n".join(f"> Quoted message line {i:02}: keep the editor edge clean." for i in range(40))},
+                           key("ctrl+Home"),type_text("My reply"),key("Return"),type_text("Thank you"),key("Return"),
+                           key("Return"),key("Return"),wait(100),shot(f"composer-typed-edge-{dark}"),
+                           {"type":"resize","width":901,"height":640},check("window_size",[901.,640.]),
+                           {"type":"resize","width":900,"height":640},check("window_size",[900.,640.]),
+                           wait(100),shot(f"composer-repainted-edge-{dark}"))
+            directory = Path(result["artifacts"])
+            before = Image.open(directory/f"composer-typed-edge-{dark}.webp").convert("RGB")
+            after = Image.open(directory/f"composer-repainted-edge-{dark}.webp").convert("RGB")
+            # Bottom editor padding and the gap above the compose action bar.
+            region = (150,490,740,526)
+            difference = ImageChops.difference(before.crop(region),after.crop(region))
+            changed = sum(max(p)>32 for p in difference.getdata())
+            self.assertLess(changed,60,f"Editor left {changed} stale pixels under its text viewport")
+            padding = before.crop((152,504,680,511))
+            background = before.getpixel((700,506))
+            escaped = sum(max(abs(p[i]-background[i]) for i in range(3))>40 for p in padding.getdata())
+            self.assertLess(escaped,8,f"{escaped} glyph pixels escaped into the editor's bottom padding")
 
     def test_compact_composer_layout(self):
         self.mcp.call("desktop.start", width=900, height=640)

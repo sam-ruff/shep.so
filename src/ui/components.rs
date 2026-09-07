@@ -431,6 +431,7 @@ fn icon_color<'a>(name: &str, size: f32, bright: bool, is_flagged: bool) -> Elem
         ("sun",r#"<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1 1M18 18l1 1M5 19l1-1M18 6l1-1"/>"#),
         ("moon",r#"<path d="M21 13A9 9 0 0 1 11 3 9 9 0 1 0 21 13Z"/>"#),
         ("keyboard",r#"<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h1m3 0h1m3 0h1m3 0h1M6 12h1m3 0h1m3 0h1m3 0h1M7 16h10"/>"#),
+        ("select-square",r#"<rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 3 3 5-6"/>"#),
         ("copy",r#"<rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3"/>"#),
         ("download",r#"<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>"#),
         ("up",r#"<path d="m6 15 6-6 6 6"/>"#),

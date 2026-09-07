@@ -23,6 +23,80 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
+## Complex HTML and reader interaction follow-up — verification checkpoint
+
+R72 was reopened after the earlier synthetic result failed to explain the user's
+1–2 second pause. Read-only diagnostics reproduced it in the original cached
+mail: deeply nested tables repeatedly measured identical subtrees. Two messages
+that took 1,538–2,107 ms now render in 47–63 ms. A later paired comparison turns
+only table reuse off/on and proves identical viewport pixels and heights for
+both corrected documents. One message differs from pristine upstream pixels
+because of the tested superscript-offset correction. No personal content,
+addresses or hashes were added to public fixtures, screenshots or documentation;
+temporary diagnostic copies were removed.
+
+The vendored litehtml patch reuses complete containing-block constraints within
+one normal-flow render, without crossing resize/image/media changes or positioned
+layout. Inline fragments apply relative offsets once; caption displacement no
+longer accumulates on row parents. Seven renderer regressions compare pixels,
+selection, spans, captions, floats, positioning and reflow, plus exact 5px/2px
+inline offsets and caption heights (including the border-height edge case).
+The deep fixture verifies a reduction from more than 10,000 table layouts to
+fewer than 200, independent of host timing. Licenses and patch provenance are
+bundled in the release archive.
+
+Visited frames retain their actually decoded image inputs within eight frames /
+32 MiB; the shared WebP cache is bounded independently. Image invalidation is
+URL-specific, and a failed replacement cannot acknowledge undisplayed bytes.
+Actual visits also refresh the body LRU. The native pixel benchmark now has
+eight cases with twenty observations each; all pass unchanged 100 ms cold / 50 ms
+cached gates. The deep template measures 38.2 ms p95 cold and 22.6 ms revisited;
+the image-heavy pair measures 21.0/22.8 ms. See [PERFORMANCE.md](PERFORMANCE.md)
+for all results and measurement boundaries.
+
+R78 preserves the conversation scroll offset during ordinary sync/read/flag
+refreshes. R79 replaces list selection and sender-copy text buttons with native
+icons, retaining generous targets and configurable icon tooltips; clipboard
+regressions paste the copied address/domain into the actual native search field.
+R80 makes selection-mode row clicks toggle one message and Shift ranges additive
+across pages, preserving checkbox/modifier and double-click reading behavior.
+
+R76 now matches the single-message reading surround to the document's opaque
+background with readable controls and an unchanged widget tree; conversation-card
+surround review remains open. R77 fixes editor glyph clipping at a partially
+visible bottom line; its direct renderer test fails before the patch and passes
+afterward. Native long-reply typing is visually clean in light/dark compact views.
+Inline replies and the follow-up integration review remain R35/R77 in TODO.
+
+Final source passes **427 Rust tests**, **2 drawing-adapter tests**, **2 FFI tests**,
+**43 Python tests**, fmt and strict Clippy. An earlier revision passed all **150
+functional native scenarios**; after the final C++/image correction, all **36
+relevant native regressions** pass, including selection, Find, printing, image
+policy/reflow, conversations, resizing and restart. This is not presented as a
+second full 150-scenario run. The eight pixel gates used native binary SHA-256
+`c6ee6d73113f54d36548ec0d50ce8b428ab7c03e8d73d29e08585c7eb188febc`.
+
+Logs remain in ignored `artifacts/logs/`: `html-selection-native-full.log`,
+`html-offset-native-regressions.log`, `html-offset-final-rust.log`,
+`html-offset-final-clippy.log`, `html-verified-python.log`, and
+`html-verified-pixel-latency.log`. Reviewed fictional WebP captures under
+`artifacts/e2e/` include the deep template (`08f6cae1a117/`), image-complete revisits
+(`44931a15d365/`), compact editor edge (`8d8a47ad6be7/`), dark-theme white surround
+(`ee2f53fe4414/`), sender-copy icons (`86f9e366222f/`), cross-page selection review
+(`1d3af182aeae/`) and retained thread scroll (`cf86a567ea05/`).
+
+Strict Zensical and release checksum/extraction/bundled-installer verification
+pass. The optimized Linux binary is installed atomically, SHA-256
+`551f9ef3afae31f29b5b039c0ca7cee89ac4293fd01dd71e727aee35a13615d7`. Personal windows remain running on their earlier
+executable until reopened. The source commit and push are recorded below once
+shipping completes. Release/install logs: `html-offset-release.log` and
+`html-offset-install.log`.
+R81 default reading styles and R82 configurable native notifications are recorded
+in TODO/audit. Other performance measurements stay deferred. Quality/release
+workflows remain disabled; documentation CI remains enabled. These tests do not
+establish live provider mutation, physical monitor scanout or Windows/macOS
+execution. The full product goal remains active.
+
 ## HTML opening speed and Mail focus — installed and pushed
 
 Source [3f24823](https://github.com/sam-ruff/shep.so/commit/3f2482394d1d0aa277b500dd1a7be7165d724035)

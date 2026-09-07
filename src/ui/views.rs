@@ -380,21 +380,16 @@ impl App {
             input("Search conversations…", &self.query.search, Message::Query)
                 .id("search")
                 .width(Length::Fill),
-            button(
-                text(if self.mail_selection.mode {
-                    "Done"
+            self.toggle_icon_action(
+                "select-square",
+                if self.mail_selection.mode {
+                    "Finish selecting messages"
                 } else {
-                    "Select"
-                })
-                .size(11)
-            )
-            .padding([12, 9])
-            .style(if self.mail_selection.mode {
-                primary
-            } else {
-                outline
-            })
-            .on_press(Message::ToggleSelection),
+                    "Select messages"
+                },
+                self.mail_selection.mode,
+                Message::ToggleSelection,
+            ),
         ]
         .spacing(6)
         .align_y(Alignment::Center);
@@ -670,9 +665,15 @@ impl App {
             container(self.reader_toolbar(detail)).padding([10, 18]),
             line(),
             self.find_bar(),
-            scrollable(container(self.reader_body(detail, true)).padding(self.reader_padding()))
+            self.reader_surface(
+                detail,
+                scrollable(
+                    container(self.reader_body(detail, true)).padding(self.reader_padding())
+                )
                 .id("message-reader")
-                .height(Length::Fill),
+                .height(Length::Fill)
+                .into()
+            ),
             container(footer).padding([10, 20])
         ]
         .width(Length::Fill)

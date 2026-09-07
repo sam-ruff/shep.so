@@ -96,6 +96,9 @@ pub struct Frame {
     pub pan: f32,
     pub scroll: f32,
     pub images: Vec<String>,
+    /// Validated remote resources actually decoded into these pixels.
+    pub loaded_images: Vec<(String, Arc<[u8]>)>,
+    pub background: Option<[u8; 4]>,
     pub reflow: Option<Reflow>,
 }
 impl Frame {
@@ -251,6 +254,8 @@ fn document(
     output: &mut mpsc::Sender<Event>,
 ) -> anyhow::Result<Option<Input>> {
     viewport.validate()?;
+    #[cfg(test)]
+    let mut profiling = std::time::Instant::now();
     let Source {
         body,
         font_size,
@@ -277,11 +282,19 @@ fn document(
     // These are already validated, cached WebP bytes; never fetch resources here.
     surface.seed_images(images);
     let measure = surface.0.borrow().text_measure_fn();
+    #[cfg(test)]
+    profile_stage("prepare", &mut profiling);
     let mut document = Document::from_html(&source, &mut container, None, quotes)
         .map_err(|_| anyhow::anyhow!("HTML parsing failed."))?;
+    #[cfg(test)]
+    profile_stage("parse", &mut profiling);
     let _ = document.render(viewport.width as f32);
+    #[cfg(test)]
+    profile_stage("layout", &mut profiling);
     let mut selection = Selection::default();
     selection.layout(&document);
+    #[cfg(test)]
+    profile_stage("selection", &mut profiling);
     let mut dragging = false;
     let mut drag_origin = (0., 0.);
     let mut scroll = 0.;
@@ -322,6 +335,7 @@ fn document(
                     viewport.height,
                     viewport.scale,
                 );
+                surface.begin_draw();
                 document.draw(
                     DrawContext::default(),
                     -pan,
@@ -345,8 +359,11 @@ fn document(
                 Arc::from(pixels)
             };
             let frame = {
-                let used_seeded_images = surface.used_seeded_images();
+                let used_seeded_images = surface.requested_images();
+                let loaded_images = surface.loaded_images();
+                let background = surface.background();
                 let mut surface = surface.0.borrow_mut();
+                surface.take_pending_images();
                 Frame {
                     generation,
                     layout_revision,
@@ -358,15 +375,14 @@ fn document(
                     content_width: document.width(),
                     pan,
                     scroll,
-                    images: surface
-                        .take_pending_images()
-                        .into_iter()
-                        .map(|(url, _)| url)
-                        .chain(used_seeded_images)
-                        .collect(),
+                    images: used_seeded_images,
+                    loaded_images,
+                    background,
                     reflow,
                 }
             };
+            #[cfg(test)]
+            profile_stage("paint", &mut profiling);
             if !emit(output, Event::Frame(Arc::new(frame))) {
                 return Ok(None);
             }
@@ -525,9 +541,9 @@ fn document(
                 }
             }
             Input::Image(id, url, bytes) if id == generation => {
-                if let Ok(webp) = crate::remote_images::convert_to_webp(&bytes) {
-                    surface.0.borrow_mut().load_image_data(&url, &webp);
-
+                // LoadImages has already validated and converted these bytes.
+                // Avoid a second full decode/encode before the renderer decode.
+                if surface.load_remote_image(&url, bytes) {
                     // Decode arrivals as usual, but coalesce subsequent layouts
                     // until the native scroller acknowledges the first anchor.
                     images_changed = true;
@@ -551,3 +567,14 @@ fn document(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+fn profile_stage(stage: &str, started: &mut std::time::Instant) {
+    if std::env::var_os("SHEP_PROFILE_CACHE").is_some() {
+        println!(
+            "stage={stage} ms={:.3}",
+            started.elapsed().as_secs_f64() * 1000.
+        );
+        *started = std::time::Instant::now();
+    }
+}
