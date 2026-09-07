@@ -30,51 +30,58 @@ pub fn filename(value: &str) -> String {
 }
 
 fn decoded(raw: &[u8], mut accept: impl FnMut(AttachmentInfo, Vec<u8>)) -> Result<()> {
-    anyhow::ensure!(
-        raw.len() <= crate::MAX_MESSAGE_BYTES,
-        "This message exceeds the current 25 MiB limit."
-    );
-    let parsed = mailparse::parse_mail(raw)
-        .context("Could not read this cached message. Refresh it and retry.")?;
-    let mut stack = vec![(&parsed, 0)];
-    let mut index = 0;
+    let parsed = crate::mime::parse(raw)?;
+    decoded_parts(&parsed, &mut accept)
+}
+
+pub fn decoded_parts(
+    parsed: &mailparse::ParsedMail<'_>,
+    mut accept: impl FnMut(AttachmentInfo, Vec<u8>),
+) -> Result<()> {
+    crate::mime::validate_tree(parsed)?;
     let mut decoded = 0usize;
-    while let Some((part, depth)) = stack.pop() {
-        anyhow::ensure!(
-            depth <= 128,
-            "This message has too many nested MIME parts to save safely."
-        );
+    for (index, part) in parts(parsed).enumerate() {
         let disposition = part.get_content_disposition();
         let name = disposition
             .params
             .get("filename")
             .or_else(|| part.ctype.params.get("name"));
-        let is_file =
-            disposition.disposition == mailparse::DispositionType::Attachment || name.is_some();
-        if is_file {
-            let bytes = part.get_body_raw().map_err(|_| {
-                anyhow::anyhow!("Could not decode an attachment. Refresh this message and retry.")
-            })?;
-            decoded = decoded
-                .checked_add(bytes.len())
-                .context("The decoded attachments are too large.")?;
-            anyhow::ensure!(
-                decoded <= crate::MAX_MESSAGE_BYTES,
-                "The decoded attachments exceed the current 25 MiB limit."
-            );
-            let info = AttachmentInfo {
-                id: format!("{index}.{:x}", Sha256::digest(&bytes)),
-                name: filename(name.map(String::as_str).unwrap_or("attachment.bin")),
-                media_type: part.ctype.mimetype.clone(),
-                size: bytes.len(),
-            };
-            accept(info, bytes);
-            index += 1;
-        } else {
-            stack.extend(part.subparts.iter().rev().map(|p| (p, depth + 1)));
-        }
+        let bytes = part.get_body_raw().map_err(|_| {
+            anyhow::anyhow!("Could not decode an attachment. Refresh this message and retry.")
+        })?;
+        decoded = decoded
+            .checked_add(bytes.len())
+            .context("The decoded attachments are too large.")?;
+        anyhow::ensure!(
+            decoded <= crate::MAX_MESSAGE_BYTES,
+            "The decoded attachments exceed the current 25 MiB limit."
+        );
+        let info = AttachmentInfo {
+            id: format!("{index}.{:x}", Sha256::digest(&bytes)),
+            name: filename(name.map(String::as_str).unwrap_or("attachment.bin")),
+            media_type: part.ctype.mimetype.clone(),
+            size: bytes.len(),
+        };
+        accept(info, bytes);
     }
     Ok(())
+}
+
+/// Metadata-only traversal; explicit downloads separately validate every body.
+/// Callers must pass a tree produced by `mime::parse` for untrusted raw input.
+pub fn parts<'a, 'raw>(
+    root: &'a mailparse::ParsedMail<'raw>,
+) -> impl Iterator<Item = &'a mailparse::ParsedMail<'raw>> {
+    let mut stack = vec![root];
+    std::iter::from_fn(move || {
+        while let Some(part) = stack.pop() {
+            if crate::reader::is_attachment(part) {
+                return Some(part);
+            }
+            stack.extend(part.subparts.iter().rev());
+        }
+        None
+    })
 }
 
 pub fn catalog(raw: &[u8]) -> Result<Vec<AttachmentInfo>> {

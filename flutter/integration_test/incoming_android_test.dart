@@ -62,6 +62,15 @@ void main() {
       await tester.pumpAndSettle();
       final save = find.text('Save binary.bin (5 bytes)');
       await wait(() => save.evaluate().isNotEmpty);
+      expect(find.textContaining('inline-logo.webp'), findsNothing);
+      for (final text in tester.widgetList<EditableText>(
+        find.byType(EditableText),
+      )) {
+        expect(
+          text.controller.text,
+          isNot(contains('OBSOLETE-MIME-ALTERNATIVE')),
+        );
+      }
       await tester.ensureVisible(save);
       await tester.tap(save);
       await tester.pump();

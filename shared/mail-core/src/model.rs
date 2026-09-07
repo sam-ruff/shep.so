@@ -306,7 +306,7 @@ pub fn parse_mail(
     starred: bool,
 ) -> anyhow::Result<StoredMail> {
     use mailparse::MailHeaderMap;
-    let parsed = mailparse::parse_mail(&raw)?;
+    let parsed = crate::mime::parse(&raw)?;
     let subject = parsed
         .headers
         .get_first_value("Subject")
@@ -318,7 +318,8 @@ pub fn parse_mail(
         .get_first_value("Date")
         .and_then(|d| mailparse::dateparse(&d).ok())
         .unwrap_or_else(|| Utc::now().timestamp());
-    let (text, attachments) = content(&parsed);
+    let text = crate::reader::text(&parsed)?;
+    let attachment_count = crate::attachments::parts(&parsed).count();
     let preview = text
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -338,94 +339,29 @@ pub fn parse_mail(
         timestamp,
         unread,
         starred,
-        attachment_count: attachments.len(),
+        attachment_count,
     };
     Ok(StoredMail { summary, raw, text })
 }
 
-pub fn content(parsed: &mailparse::ParsedMail<'_>) -> (String, Vec<Attachment>) {
-    let mut plain = Vec::new();
-    let mut html = Vec::new();
-    let mut attachments = Vec::new();
-    fn walk(
-        p: &mailparse::ParsedMail<'_>,
-        plain: &mut Vec<String>,
-        html: &mut Vec<String>,
-        attachments: &mut Vec<Attachment>,
-    ) {
-        let disp = p.get_content_disposition();
-        if disp.disposition == mailparse::DispositionType::Attachment
-            || disp.params.contains_key("filename")
-            || p.ctype.params.contains_key("name")
-        {
-            attachments.push(Attachment {
-                name: disp
+pub fn content(parsed: &mailparse::ParsedMail<'_>) -> anyhow::Result<(String, Vec<Attachment>)> {
+    let body = crate::reader::text(parsed)?;
+    // Keep the root reader's existing byte API until its committed HTML/file
+    // lifecycle is integrated. Client downloads use the strict content catalog;
+    // they must never turn a malformed transfer into a successful empty save.
+    let files = crate::attachments::parts(parsed)
+        .map(|part| {
+            let disposition = part.get_content_disposition();
+            Attachment {
+                name: disposition
                     .params
                     .get("filename")
-                    .or_else(|| p.ctype.params.get("name"))
+                    .or_else(|| part.ctype.params.get("name"))
                     .cloned()
                     .unwrap_or_else(|| "attachment.bin".into()),
-                bytes: p.get_body_raw().unwrap_or_default(),
-            });
-        } else if p.subparts.is_empty() {
-            if p.ctype.mimetype == "text/plain" {
-                plain.push(p.get_body().unwrap_or_default());
-            } else if p.ctype.mimetype == "text/html" {
-                html.push(p.get_body().unwrap_or_default());
+                bytes: part.get_body_raw().unwrap_or_default(),
             }
-        } else {
-            for part in &p.subparts {
-                walk(part, plain, html, attachments);
-            }
-        }
-    }
-    walk(parsed, &mut plain, &mut html, &mut attachments);
-    let text = if plain.is_empty() {
-        html.into_iter()
-            .map(|h| html_to_text(&h))
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        plain.join("\n")
-    };
-    (text, attachments)
-}
-
-fn html_to_text(html: &str) -> String {
-    fn walk(element: scraper::ElementRef<'_>, output: &mut String, quoted: bool) {
-        let name = element.value().name();
-        if matches!(name, "style" | "script" | "head" | "title" | "noscript") {
-            return;
-        }
-        let block = matches!(
-            name,
-            "p" | "div" | "br" | "tr" | "li" | "blockquote" | "h1" | "h2" | "h3"
-        );
-        if block && !output.ends_with('\n') {
-            output.push('\n');
-        }
-        let quoted = quoted || name == "blockquote";
-        for node in element.children() {
-            if let Some(child) = scraper::ElementRef::wrap(node) {
-                walk(child, output, quoted);
-            } else if let Some(text) = node.value().as_text() {
-                let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-                if !normalized.is_empty() {
-                    if output.ends_with('\n') && quoted {
-                        output.push_str("> ");
-                    } else if !output.ends_with(['\n', ' ']) && !output.is_empty() {
-                        output.push(' ');
-                    }
-                    output.push_str(&normalized);
-                }
-            }
-        }
-        if block && !output.ends_with('\n') {
-            output.push('\n');
-        }
-    }
-    let document = scraper::Html::parse_document(html);
-    let mut output = String::new();
-    walk(document.root_element(), &mut output, false);
-    output.trim().into()
+        })
+        .collect();
+    Ok((body, files))
 }

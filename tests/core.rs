@@ -127,7 +127,7 @@ fn mime_decoding_keeps_attachments_and_never_fetches_remote_content() {
     assert_eq!(parsed.summary.subject, "Café");
     assert_eq!(parsed.summary.attachment_count, 1);
     let parsed = mailparse::parse_mail(&raw).unwrap();
-    let (body, attachments) = content(&parsed);
+    let (body, attachments) = content(&parsed).unwrap();
     assert!(body.contains("Hello there"));
     assert_eq!(attachments[0].bytes, b"hello");
 }

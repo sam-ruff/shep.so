@@ -49,6 +49,18 @@ async function waitText(text) {
     text,
   );
 }
+async function enterFind(value) {
+  // Flutter can expose an inactive, full-viewport semantics input after the
+  // case button takes focus. Target the painted field beside Close Find, then
+  // send real keyboard input instead of mutating that proxy's DOM value.
+  const close = await page
+    .getByRole("button", { name: "Close Find", exact: true })
+    .boundingBox();
+  assert.ok(close);
+  await page.mouse.click(close.x / 2, close.y + close.height / 2);
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.type(value);
+}
 try {
   await page.goto(process.env.SHEP_FLUTTER_URL ?? "http://127.0.0.1:5181");
   await page.waitForSelector("flt-semantics-placeholder", {
@@ -84,12 +96,11 @@ try {
     .getByRole("group", { name: /A little room for good ideas/ })
     .click();
   await clickText("Find in message");
-  const findInput = page.getByRole("textbox", { name: "Find in message" });
-  await findInput.fill("first");
+  await enterFind("first");
   await waitText("1 of 1");
   await page.screenshot({ path: path.join(out, "find-dark.png") });
   await clickText("Match case");
-  await findInput.fill("FIRST");
+  await enterFind("FIRST");
   await waitText("No matches");
   await clickText("Close Find");
   await clickText("Back");
