@@ -51,10 +51,11 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     throw new Error("Invalid browser profile identity.");
   return new Promise((resolve, reject) => {
     let abandoned = false;
+    // Version 10 indexes account/physical identities without a JS body migration.
     // Version 9 binds the derived persistent index to this source incarnation.
     // Version 8 fences older tabs that remove accounts without group ownership.
     // Version 7 fenced writes lacking atomic cache-applied intent revisions.
-    const request = indexedDB.open(`shep.mail.v1.${user}`, 9);
+    const request = indexedDB.open(`shep.mail.v1.${user}`, 10);
     request.onupgradeneeded = (event) => {
       for (const store of stores)
         if (!request.result.objectStoreNames.contains(store))
@@ -62,6 +63,12 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
       // Seed acknowledged folder roles from the earlier outgoing journal in
       // the same upgrade transaction; failure leaves version 2 intact.
       const tx = request.transaction!;
+      if (event.oldVersion < 10) {
+        const mail = tx.objectStore("mail");
+        mail.createIndex("account", "core.account_id");
+        mail.createIndex("accountFolder", ["core.account_id", "core.folder"]);
+        mail.createIndex("serverIdentity", ["core.account_id", "core.id"]);
+      }
       if (event.oldVersion < 5) {
         const metadata = tx.objectStore("mailMetadata");
         metadata.createIndex("newest", "newest");

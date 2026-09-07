@@ -6,6 +6,7 @@ import sqliteInit, {
 } from "@sqlite.org/sqlite-wasm";
 import sqliteWasm from "@sqlite.org/sqlite-wasm/sqlite3.wasm?url";
 import { openMailDatabase } from "./storage";
+import { read, walk, snapshot, sourceState, display } from "./mailbox_cache";
 import { inboxFolder, senderName } from "./mail_query";
 import { roleFolders, type MailAlias, type MailRoles } from "./sent_cache";
 import type { Account, CoreMail, RecordMail } from "./provider";
@@ -15,7 +16,6 @@ import {
   checkedQuery,
   type MailboxQuery,
   type MailboxPage,
-  type MailboxDetail,
 } from "./mailbox_types";
 
 type Bind = (string | number | null)[];
@@ -55,98 +55,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS terms USING fts5(search, content='messages', 
 CREATE TEMP TABLE accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL);
 CREATE TEMP TABLE sent(account TEXT NOT NULL,folder TEXT NOT NULL,PRIMARY KEY(account,folder));
 CREATE TEMP TABLE pending(id TEXT PRIMARY KEY,folder TEXT,unread INTEGER,starred INTEGER);`;
-
-function read<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-function walk(
-  request: IDBRequest<IDBCursorWithValue | null>,
-  visit: (cursor: IDBCursorWithValue) => void,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => {
-      const cursor = request.result;
-      if (!cursor) return resolve();
-      try {
-        visit(cursor);
-        cursor.continue();
-      } catch (error) {
-        reject(error);
-      }
-    };
-  });
-}
-function snapshot<T>(
-  cache: IDBDatabase,
-  names: string[],
-  operation: (tx: IDBTransaction) => Promise<T>,
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const tx = cache.transaction(names, "readonly");
-    let result: T, cause: unknown;
-    tx.oncomplete = () => resolve(result);
-    tx.onabort = () =>
-      reject(cause ?? Error("Could not read cached mail. Retry Refresh."));
-    // Await only IndexedDB requests inside the snapshot; synchronous SQLite
-    // operations stay in this worker and cannot deactivate the source view.
-    void operation(tx).then(
-      (value) => {
-        result = value;
-      },
-      (error) => {
-        cause = error;
-        try {
-          tx.abort();
-        } catch {
-          reject(error);
-        }
-      },
-    );
-  });
-}
-function sourceState(
-  value: CacheState | undefined,
-): CacheState & { epoch: string } {
-  if (
-    !value ||
-    typeof value.epoch !== "string" ||
-    !value.epoch ||
-    !Number.isSafeInteger(value.revision) ||
-    value.revision < 0 ||
-    !Number.isSafeInteger(value.floor) ||
-    value.floor < 0 ||
-    value.floor > value.revision
-  )
-    throw Error(
-      "The cached mailbox revision is unavailable. Reopen Shep to retry.",
-    );
-  return value as CacheState & { epoch: string };
-}
-function display(core: CoreMail, id: string, email: string): Mail {
-  return {
-    id,
-    accountId: core.account_id,
-    account: email,
-    sender: senderName(core.sender),
-    address: core.sender.match(/<([^<>]+)>/)?.[1] ?? core.sender,
-    subject: core.subject,
-    preview: core.preview,
-    body: "",
-    bodyLoaded: false,
-    folder: inboxFolder(core.folder) === "INBOX" ? "Inbox" : core.folder,
-    date: new Date(core.timestamp * 1000).toISOString(),
-    unread: core.unread,
-    starred: core.starred,
-    attachments: Array.from(
-      { length: Math.min(core.attachment_count, 100) },
-      (_, i) => `Attachment ${i + 1}`,
-    ),
-  };
-}
 
 /** Derived, per-profile search storage. IndexedDB remains authoritative. Every
  * request owns a Web Lock from VFS installation/acquisition through DB close
@@ -418,11 +326,21 @@ export class MailboxStore {
                 const unread = this.value(
                   `${effective} SELECT COUNT(*) FROM effective WHERE folder='INBOX' AND unread=1`,
                 );
+                const confirmed: Record<string, import("./model").Fields> =
+                  Object.create(null);
                 const rows = this.sql!.selectObjects(
                   `${effective} SELECT e.id,e.core,e.folder,e.unread,e.starred,a.email ${from} ORDER BY e.timestamp ${query.scope.oldest ? "ASC" : "DESC"},e.id ASC LIMIT 50 OFFSET ?`,
                   [...bind, query.offset],
                 ).map((row) => {
                   const core = JSON.parse(row.core as string) as CoreMail;
+                  confirmed[row.id as string] = {
+                    folder:
+                      inboxFolder(core.folder) === "INBOX"
+                        ? "Inbox"
+                        : core.folder,
+                    unread: core.unread,
+                    starred: core.starred,
+                  };
                   return display(
                     {
                       ...core,
@@ -449,6 +367,7 @@ export class MailboxStore {
                   unread,
                   rows,
                   aliases,
+                  confirmed,
                 };
               },
             );
@@ -465,46 +384,6 @@ export class MailboxStore {
           this.sql = undefined;
           this.pool?.pauseVfs();
         }
-      },
-    );
-  }
-  async detail(id: string): Promise<MailboxDetail> {
-    if (this.closed) throw Error("Mailbox storage is closed. Reopen Shep.");
-    if (typeof id !== "string" || !id) throw Error("Choose a message to read.");
-    return snapshot(
-      this.cache,
-      ["mail", "mailAliases", "accounts", "cacheState"],
-      async (tx) => {
-        const alias = await read<MailAlias | undefined>(
-          tx.objectStore("mailAliases").get(id),
-        );
-        const target = alias?.target ?? id;
-        const mail = await read<RecordMail | undefined>(
-          tx.objectStore("mail").get(target),
-        );
-        if (
-          !mail ||
-          mail.moved ||
-          !(await read(tx.objectStore("accounts").get(mail.core.account_id)))
-        )
-          throw Error(
-            "This message is no longer cached. Refresh its account and choose it again.",
-          );
-        if (typeof mail.text !== "string")
-          throw Error(
-            "The cached message body is damaged. Refresh its account and retry.",
-          );
-        const state = sourceState(
-          await read<CacheState | undefined>(
-            tx.objectStore("cacheState").get("mail"),
-          ),
-        );
-        return {
-          id: target,
-          body: mail.text,
-          revision: state.revision,
-          epoch: state.epoch,
-        };
       },
     );
   }

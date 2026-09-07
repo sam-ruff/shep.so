@@ -1,3 +1,9 @@
+import { MailPaging, MailBodies } from "./mail_paging";
+import type {
+  MailboxRepository,
+  MailboxPage,
+  MailboxDetail,
+} from "./mailbox_types";
 import { MoveFeedback, MoveRecord } from "./move-feedback";
 import { mailMatches } from "./mail_query";
 import { MailSelection } from "./mail_selection";
@@ -82,6 +88,7 @@ export interface Repository {
   accountIds?: Map<string, string>;
   selection?: SelectionRepository["selection"];
   closeSelections?(): Promise<void>;
+  mailbox?: MailboxRepository;
   refresh(folder?: string, account?: string | null): Promise<Mail[]>;
   registerMutation?(
     id: string,
@@ -212,6 +219,332 @@ export class Workspace extends EventTarget {
   query = "";
   newestFirst = true;
   page = 0;
+  private paging?: MailPaging;
+  private pageTotal = 0;
+  private pageUnread = 0;
+  private pageEpoch = "";
+  private cacheRevision = -1;
+  private disposed = false;
+  private bodies = new MailBodies();
+  private bodyGeneration = 0;
+  private bodyRequests = new Map<number, string>();
+  private prefetching = false;
+  private bodyNeedsRefresh = false;
+  private prefetched = new Set<string>();
+  bodyLoading = false;
+  bodyError: string | null = null;
+  private painted = new Map<string, Mail>();
+  private pendingFields = new Map<
+    number,
+    { id: string; fields: Fields; acknowledged?: boolean }
+  >();
+  private commandCount = 0;
+  private flagUndoId?: string;
+  get paged() {
+    return !!this.paging;
+  }
+  get pageLoading() {
+    return !!this.paging?.loading;
+  }
+  get pageError() {
+    return this.paging?.error ?? null;
+  }
+  get total() {
+    return this.paging
+      ? this.paging.ready
+        ? this.pageTotal
+        : 0
+      : this.matching.length;
+  }
+  private metadataOnly(mail: Mail): Mail {
+    return this.paging
+      ? { ...mail, body: "", bodyLoaded: false }
+      : structuredClone(mail);
+  }
+  private pageQuery() {
+    const observed = [
+      ...new Set(
+        [this.selected, ...this.queues.keys()].filter(
+          (id): id is string => !!id,
+        ),
+      ),
+    ].slice(0, 50);
+    return {
+      scope: this.selectionScope(),
+      offset: this.page * 50,
+      observed,
+      generation: this.revision,
+    };
+  }
+  async retryPage() {
+    const loading = this.paging?.reload();
+    this.changed();
+    await loading;
+    this.changed();
+  }
+  private acceptPage(page: MailboxPage) {
+    const incarnationChanged =
+      !!this.pageEpoch && this.pageEpoch !== page.epoch;
+    const cacheChanged =
+      this.cacheRevision !== page.revision || this.pageEpoch !== page.epoch;
+    this.pageEpoch = page.epoch;
+    this.cacheRevision = page.revision;
+    if (cacheChanged) {
+      this.bodies.clear();
+      this.prefetched.clear();
+      this.bodyGeneration++;
+      this.bodyNeedsRefresh = true;
+    }
+    if (incarnationChanged) {
+      this.moves.dispose();
+      this.moves.records = [];
+      this.undoFailures.clear();
+      this.flagUndo = null;
+      this.statusNotice = null;
+      if (this.pendingFields.size)
+        this.error =
+          "The device cache was replaced while changes were pending. Refresh the affected accounts and review their folders before repeating an action.";
+      this.selected = null;
+      this.readCandidate = null;
+      this.aliases.clear();
+      this.painted.clear();
+      this.confirmed.clear();
+      this.versions.clear();
+      const projected = this.pendingFields.size > 0;
+      this.pendingFields.clear();
+      if (projected) {
+        this.mail = [];
+        this.pageTotal = this.pageUnread = 0;
+        void this.paging!.reload();
+        return;
+      }
+    }
+    const previousReader = this.readerMessage;
+    this.acceptAliases(page.rows, this.revision);
+    this.painted = new Map(
+      [...this.painted].map(([id, mail]) => [
+        this.canonical(id),
+        { ...mail, id: this.canonical(id) },
+      ]),
+    );
+    this.mail = page.rows;
+    const visibleIds = new Set(page.rows.map((m) => m.id));
+    this.prefetched = new Set(
+      [...this.prefetched].filter((id) => visibleIds.has(id)),
+    );
+    const projection = this.selectionScope().projection ?? {};
+    for (const row of page.rows)
+      if (this.painted.has(row.id))
+        this.painted.set(
+          row.id,
+          this.metadataOnly({ ...row, ...projection[row.id] }),
+        );
+    for (const mail of page.rows)
+      this.confirmed.set(
+        mail.id,
+        this.metadataOnly({ ...mail, ...page.confirmed[mail.id] }),
+      );
+    if (
+      this.selected &&
+      previousReader &&
+      this.canonical(previousReader.id) === this.selected
+    ) {
+      this.retainedReader = {
+        ...(page.rows.find((m) => m.id === this.selected) ?? previousReader),
+        id: this.selected,
+        body: previousReader.body,
+        bodyLoaded: previousReader.bodyLoaded,
+      };
+    }
+    this.pageTotal = page.total;
+    this.pageUnread = page.unread;
+    if (this.page > 0 && this.page * 50 >= page.total)
+      this.page = Math.max(0, Math.ceil(page.total / 50) - 1);
+    this.pruneMailState();
+    this.selection.refresh();
+    if (cacheChanged && this.selected)
+      void this.refreshReaderMetadata(this.selected, this.bodyGeneration);
+    this.ensureBody();
+  }
+  private pruneMailState() {
+    if (!this.paging) return;
+    const keep = new Set(
+      [
+        ...this.mail.map((m) => m.id),
+        this.selected,
+        ...this.queues.keys(),
+        ...[...this.pendingFields.values()].map((r) => r.id),
+        ...this.moves.records.slice(-50).map((r) => r.id),
+        ...(this.flagUndo && this.flagUndoId ? [this.flagUndoId] : []),
+      ]
+        .filter((id): id is string => !!id)
+        .map((id) => this.canonical(id)),
+    );
+    for (const id of this.confirmed.keys())
+      if (!keep.has(id)) this.confirmed.delete(id);
+    for (const key of this.versions.keys())
+      if (!keep.has(key.slice(0, key.lastIndexOf(":"))))
+        this.versions.delete(key);
+    for (const [id, target] of this.aliases)
+      if (!keep.has(target) && !keep.has(id)) this.aliases.delete(id);
+    for (const id of this.painted.keys())
+      if (
+        !this.isPending(id) &&
+        ![...this.pendingFields.values()].some(
+          (r) => this.canonical(r.id) === id,
+        )
+      )
+        this.painted.delete(id);
+  }
+  private async refreshReaderMetadata(id: string, generation: number) {
+    const localRevision = this.revision;
+    try {
+      const result = await this.repository.mailbox!.metadata(id);
+      if (
+        this.disposed ||
+        this.selected !== id ||
+        generation !== this.bodyGeneration ||
+        localRevision !== this.revision ||
+        result.revision < this.cacheRevision ||
+        result.epoch !== this.pageEpoch ||
+        !result.mail
+      )
+        return;
+      if (id !== result.id) {
+        this.aliases.set(id, result.id);
+        this.selectedId = result.id;
+      }
+      const fields = this.selectionScope().projection?.[result.id] ?? {};
+      this.confirmed.set(result.id, this.metadataOnly(result.mail));
+      this.retainedReader = {
+        ...result.mail,
+        ...fields,
+        body: this.retainedReader?.body ?? "",
+        bodyLoaded: this.retainedReader?.bodyLoaded,
+      };
+      this.changed();
+    } catch {
+      /* The page/body paths expose recovery; speculative metadata cannot erase them. */
+    }
+  }
+  retryBody() {
+    this.bodyGeneration++;
+    if (this.retainedReader) this.retainedReader.bodyLoaded = false;
+    this.bodyError = null;
+    this.ensureBody();
+    this.changed();
+  }
+  private ensureBody() {
+    if (!this.paging || this.disposed || !this.selected || !this.retainedReader)
+      return;
+    if (this.retainedReader.bodyLoaded && !this.bodyNeedsRefresh) {
+      this.bodyLoading = false;
+      this.prefetchBody();
+      return;
+    }
+    const id = this.selected,
+      generation = this.bodyGeneration;
+    if (this.bodyError || this.bodyRequests.has(generation)) return;
+    this.bodyLoading = true;
+    if (this.bodyRequests.size >= 2) return;
+    this.bodyRequests.set(generation, id);
+    void this.repository
+      .mailbox!.detail(id)
+      .then((result) => {
+        if (
+          this.disposed ||
+          generation !== this.bodyGeneration ||
+          this.selected !== id ||
+          !this.retainedReader
+        )
+          return;
+        if (
+          result.epoch !== this.pageEpoch ||
+          result.revision < this.cacheRevision
+        )
+          throw Error(
+            "The mailbox changed while this body loaded. Retry the message.",
+          );
+        if (id !== result.id) {
+          this.aliases.set(id, result.id);
+          this.selectedId = result.id;
+        }
+        this.bodies.put(result.id, result.body);
+        this.bodyNeedsRefresh = false;
+        this.retainedReader = {
+          ...this.retainedReader,
+          id: result.id,
+          body: result.body,
+          bodyLoaded: true,
+        };
+        this.bodyError = null;
+      })
+      .catch((error) => {
+        if (
+          !this.disposed &&
+          generation === this.bodyGeneration &&
+          this.selected === id
+        )
+          this.bodyError =
+            error instanceof Error
+              ? error.message
+              : "Could not load the cached message. Retry.";
+      })
+      .finally(() => {
+        this.bodyRequests.delete(generation);
+        if (this.disposed) return;
+        if (generation === this.bodyGeneration) this.bodyLoading = false;
+        this.ensureBody();
+        this.changed();
+      });
+  }
+  private prefetchBody() {
+    if (
+      this.prefetching ||
+      !this.repository.mailbox?.prefetch ||
+      !this.selected ||
+      this.disposed
+    )
+      return;
+    const index = this.mail.findIndex((m) => m.id === this.selected);
+    if (index < 0) return;
+    const mail = [this.mail[index + 1], this.mail[index - 1]].find(
+      (m) =>
+        m && this.bodies.get(m.id) === undefined && !this.prefetched.has(m.id),
+    );
+    if (!mail) return;
+    const epoch = this.pageEpoch,
+      revision = this.cacheRevision;
+    this.prefetching = true;
+    this.prefetched.add(mail.id);
+    void this.repository.mailbox
+      .prefetch(mail.id)
+      .then((result) => {
+        if (
+          !this.disposed &&
+          epoch === this.pageEpoch &&
+          revision === this.cacheRevision &&
+          result.epoch === epoch &&
+          result.revision >= revision
+        )
+          this.bodies.put(result.id, result.body);
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.prefetching = false;
+        this.prefetchBody();
+      });
+  }
+  private matchesMetadata(mail: Mail) {
+    return !!(
+      (!this.account || mail.account === this.account) &&
+      mailMatches(
+        mail,
+        { folder: this.folder, filter: this.filter, query: "" },
+        this.repository.folderRoles?.get(mail.accountId ?? mail.account),
+      )
+    );
+  }
   private readCandidate: Mail | null = null;
   beginReading(id: string) {
     id = this.canonical(id);
@@ -219,7 +552,7 @@ export class Workspace extends EventTarget {
     if (!mail) return;
     if (!this.readCandidate || this.canonical(this.readCandidate.id) !== id) {
       void this.finishReading();
-      if (mail.unread) this.readCandidate = structuredClone(mail);
+      if (mail.unread) this.readCandidate = this.metadataOnly(mail);
     }
     this.selected = id;
     this.changed();
@@ -239,20 +572,50 @@ export class Workspace extends EventTarget {
     return this.selectedId;
   }
   set selected(id: string | null) {
-    this.selectedId = id === null ? null : this.canonical(id);
-    this.retainedReader =
-      id === null
-        ? null
-        : structuredClone(
-            this.mail.find((m) => m.id === this.selectedId) ??
-              this.retainedReader,
-          );
+    const target = id === null ? null : this.canonical(id);
+    const changed = target !== this.selectedId;
+    this.selectedId = target;
+    const source = target
+      ? (this.mail.find((m) => m.id === target) ??
+        this.painted.get(target) ??
+        (this.retainedReader?.id === target ? this.retainedReader : null))
+      : null;
+    if (!this.paging)
+      this.retainedReader = source ? structuredClone(source) : null;
+    else {
+      const cached = target ? this.bodies.get(target) : undefined;
+      const retained =
+        this.retainedReader?.id === target && this.retainedReader.bodyLoaded
+          ? this.retainedReader.body
+          : undefined;
+      const body = cached ?? retained;
+      this.retainedReader = source
+        ? { ...source, body: body ?? "", bodyLoaded: body !== undefined }
+        : null;
+      if (changed) {
+        this.bodyNeedsRefresh = body === undefined;
+        this.bodyGeneration++;
+        this.bodyError = null;
+        this.bodyLoading = false;
+      }
+      this.ensureBody();
+    }
   }
   get readerMessage(): Mail | null {
-    return (
+    const row =
       this.mail.find((m) => m.id === this.selectedId) ??
-      (this.retainedReader?.id === this.selectedId ? this.retainedReader : null)
-    );
+      (this.retainedReader?.id === this.selectedId
+        ? this.retainedReader
+        : null);
+    if (!row || !this.paging) return row;
+    const body =
+      this.retainedReader?.id === row.id ? this.retainedReader : null;
+    return {
+      ...row,
+      ...this.selectionScope().projection?.[row.id],
+      body: body?.body ?? "",
+      bodyLoaded: body?.bodyLoaded ?? false,
+    };
   }
   readonly selection: MailSelection;
   drafts = new Map<string, Draft>();
@@ -334,6 +697,10 @@ export class Workspace extends EventTarget {
     this.changed();
   }
   dispose() {
+    this.disposed = true;
+    this.paging?.close();
+    this.bodies.clear();
+    void this.repository.mailbox?.close().catch(() => {});
     this.moves.dispose();
     this.selection.dispose();
     void this.repository.closeSelections?.().catch(() => {});
@@ -354,6 +721,7 @@ export class Workspace extends EventTarget {
   }
   private message(id: string) {
     return (
+      this.painted.get(this.canonical(id)) ??
       this.mail.find((m) => m.id === this.canonical(id)) ??
       (this.readerMessage?.id === this.canonical(id)
         ? this.readerMessage
@@ -361,6 +729,25 @@ export class Workspace extends EventTarget {
     );
   }
   private paint(id: string, fields: Fields) {
+    const before = this.message(id) ?? this.confirmed.get(id);
+    if (before && this.paging) {
+      const after = { ...before, ...fields };
+      this.painted.set(id, this.metadataOnly(after));
+      this.pageUnread +=
+        +(after.folder === "Inbox" && after.unread) -
+        +(before.folder === "Inbox" && before.unread);
+      if (this.paging.ready) {
+        // A metadata action cannot change sender/subject/body text. A row
+        // already in this page remains a text match until the query changes.
+        const textMatches =
+          !this.query ||
+          this.mail.some((m) => m.id === id) ||
+          mailMatches(before, { folder: before.folder, query: this.query });
+        if (textMatches)
+          this.pageTotal +=
+            +this.matchesMetadata(after) - +this.matchesMetadata(before);
+      }
+    }
     this.mail = this.mail.map((m) => (m.id === id ? { ...m, ...fields } : m));
     if (this.retainedReader?.id === id)
       this.retainedReader = { ...this.retainedReader, ...fields };
@@ -447,36 +834,53 @@ export class Workspace extends EventTarget {
               ),
       },
       () => this.selectionScope(),
-      () => this.matching.length,
+      () => this.total,
       () => this.changed(),
     );
+    if (repository.mailbox)
+      this.paging = new MailPaging(
+        repository.mailbox,
+        () => this.pageQuery(),
+        (page) => this.acceptPage(page),
+        () => this.changed(),
+      );
     this.mail = structuredClone(repository.cached);
     this.aliases = new Map(repository.aliases ?? []);
     this.events = structuredClone(repository.events);
     this.drafts = new Map(
       (repository.drafts ?? []).map((d) => [d.id, structuredClone(d)]),
     );
-    this.mail.forEach((m) => this.confirmed.set(m.id, structuredClone(m)));
+    this.mail.forEach((m) => this.confirmed.set(m.id, this.metadataOnly(m)));
     try {
       this.preferences = settings.read();
     } catch {
       this.error =
         "Could not load preferences. Saved data was kept; reopen the app to retry.";
     }
+    queueMicrotask(() => this.changed());
   }
   get pending() {
     return this.queues.size;
   }
   private selectionScope(): SelectionScope {
     const projection: Record<string, Fields> = {};
-    for (const id of this.queues.keys()) {
-      const m = this.message(this.canonical(id));
-      if (m)
-        projection[m.id] = {
-          folder: m.folder,
-          unread: m.unread,
-          starred: m.starred,
-        };
+    if (this.paging) {
+      for (const [revision, record] of this.pendingFields) {
+        const id = this.canonical(record.id);
+        for (const [field, value] of Object.entries(record.fields))
+          if (this.versions.get(`${id}:${field}`) === revision)
+            (projection[id] ??= {})[field as keyof Fields] = value as never;
+      }
+    } else {
+      for (const id of this.queues.keys()) {
+        const m = this.message(this.canonical(id));
+        if (m)
+          projection[m.id] = {
+            folder: m.folder,
+            unread: m.unread,
+            starred: m.starred,
+          };
+      }
     }
     return {
       folder: this.folder,
@@ -490,9 +894,14 @@ export class Workspace extends EventTarget {
     };
   }
   get unread() {
+    if (this.paging) return Math.max(0, this.pageUnread);
     return this.mail.filter((m) => m.folder === "Inbox" && m.unread).length;
   }
   get matching() {
+    if (this.paging)
+      return this.paging.ready
+        ? this.mail.filter((m) => this.matchesMetadata(m))
+        : [];
     const scope = {
       folder: this.folder,
       query: this.query,
@@ -517,9 +926,14 @@ export class Workspace extends EventTarget {
       );
   }
   get visible() {
-    return this.matching.slice(this.page * 50, (this.page + 1) * 50);
+    return this.paging
+      ? this.matching
+      : this.matching.slice(this.page * 50, (this.page + 1) * 50);
   }
   changed() {
+    if (this.disposed) return;
+    this.paging?.sync();
+    this.pruneMailState();
     this.selection.reconcileScope();
     this.dispatchEvent(new Event("change"));
   }
@@ -553,6 +967,10 @@ export class Workspace extends EventTarget {
     this.changed();
   }
   addCachedMail(messages: Mail[]) {
+    if (this.paging) {
+      void this.retryPage();
+      return;
+    }
     this.acceptAliases(messages, this.revision);
     // A newly saved Sent copy must not overwrite other pending mail actions or
     // disappear behind a refresh started before the submission completed.
@@ -580,6 +998,9 @@ export class Workspace extends EventTarget {
   accountRemoved(id: string) {
     if (this.removedAccountIds.has(id)) return;
     this.removedAccountIds.add(id);
+    this.bodies.clear();
+    this.prefetched.clear();
+    this.bodyGeneration++;
     this.moves.removeAccount(id);
     for (const record of this.undoFailures)
       if (record.account === id) this.undoFailures.delete(record);
@@ -588,8 +1009,21 @@ export class Workspace extends EventTarget {
       if (draft.accountId === id) this.drafts.delete(key);
     if (this.readerMessage?.accountId === id) this.selected = null;
     this.mail = this.mail.filter((m) => m.accountId !== id);
-    for (const [key, m] of this.confirmed)
-      if (m.accountId === id) this.confirmed.delete(key);
+    const removed = new Set<string>();
+    for (const collection of [this.confirmed, this.painted])
+      for (const [key, m] of collection)
+        if (m.accountId === id) {
+          removed.add(key);
+          collection.delete(key);
+        }
+    for (const [revision, pending] of this.pendingFields)
+      if (removed.has(this.canonical(pending.id)))
+        this.pendingFields.delete(revision);
+    for (const key of this.versions.keys())
+      if (removed.has(key.slice(0, key.lastIndexOf(":"))))
+        this.versions.delete(key);
+    for (const [alias, target] of this.aliases)
+      if (removed.has(alias) || removed.has(target)) this.aliases.delete(alias);
     this.account = null;
     this.folder = "Inbox";
     this.page = 0;
@@ -618,13 +1052,21 @@ export class Workspace extends EventTarget {
           if (unchanged) rev = this.revision;
         }
         this.acceptAliases(result, rev);
-        if (rev === this.revision && !this.pending) {
+        if (!this.paging && rev === this.revision && !this.pending) {
           if (this.readerMessage)
             this.retainedReader = structuredClone(this.readerMessage);
           this.mail = result;
           result.forEach((m) => this.confirmed.set(m.id, structuredClone(m)));
         }
-        this.error = this.repository.warning ?? null;
+        if (this.paging) {
+          await this.reconcileAcknowledged();
+          await this.paging.reload();
+        }
+        this.error =
+          this.repository.warning ??
+          ([...this.pendingFields.values()].some((r) => r.acknowledged)
+            ? "Saved changes still need cache recovery. Refresh the affected account before repeating the action."
+            : null);
         this.retry = this.error ? () => void this.refresh() : null;
         this.notice = this.error
           ? null
@@ -642,6 +1084,24 @@ export class Workspace extends EventTarget {
     this.syncing = false;
     this.selection.refresh();
     this.changed();
+  }
+  private async reconcileAcknowledged() {
+    if (!this.repository.mailbox) return;
+    for (const [revision, pending] of this.pendingFields) {
+      if (!pending.acknowledged) continue;
+      const current = await this.repository.mailbox.metadata(
+        this.canonical(pending.id),
+      );
+      if (
+        current.mail &&
+        Object.entries(pending.fields).every(
+          ([field, value]) =>
+            this.versions.get(`${current.id}:${field}`) !== revision ||
+            current.mail![field as keyof Mail] === value,
+        )
+      )
+        this.pendingFields.delete(revision);
+    }
   }
   action(id: string, action: Action, destination?: string) {
     id = this.canonical(id);
@@ -683,8 +1143,39 @@ export class Workspace extends EventTarget {
       this.canonical(this.readCandidate.id) === id
     )
       this.readCandidate = null;
-    const current =
+    let current =
       this.message(id) ?? (!offerUndo ? this.confirmed.get(id) : undefined);
+    if (!current && !offerUndo && this.repository.mailbox) {
+      try {
+        const result = await this.repository.mailbox.metadata(id);
+        if (this.disposed) return;
+        if (
+          result.epoch !== this.pageEpoch ||
+          !result.mail ||
+          this.removedAccountIds.has(result.mail.accountId ?? "")
+        )
+          throw Error(
+            "This message is no longer available to restore. Refresh its account and review the destination folder.",
+          );
+        if (id !== result.id) {
+          this.aliases.set(id, result.id);
+          id = result.id;
+        }
+        current = result.mail;
+        this.confirmed.set(id, this.metadataOnly(current));
+      } catch (error) {
+        this.error =
+          error instanceof Error
+            ? error.message
+            : "Could not restore this message. Retry Refresh.";
+        if (restoring) {
+          this.moves.failed(restoring);
+          this.undoFailures.add(restoring);
+        }
+        this.changed();
+        return;
+      }
+    }
     if (!current || !Object.keys(fields).length) return;
     if (
       !force &&
@@ -693,6 +1184,19 @@ export class Workspace extends EventTarget {
       )
     )
       return;
+    if (
+      this.paging &&
+      !restoring &&
+      this.commandCount +
+        [...this.pendingFields.values()].filter((r) => r.acknowledged).length >=
+        32 &&
+      (offerUndo || quiet)
+    ) {
+      this.error =
+        "Mail actions are catching up. Keep browsing and retry this change shortly.";
+      this.changed();
+      return;
+    }
     const move =
       fields.folder && offerUndo
         ? this.moves.add(
@@ -706,6 +1210,22 @@ export class Workspace extends EventTarget {
       Object.keys(fields).map((key) => [key, current[key as keyof Mail]]),
     ) as Fields;
     const revision = ++this.revision;
+    const actionEpoch = this.pageEpoch;
+    const currentSource = () =>
+      !this.disposed &&
+      (!this.paging || actionEpoch === this.pageEpoch) &&
+      this.confirmed.has(this.canonical(id));
+    this.commandCount++;
+    if (this.paging) {
+      for (const [older, record] of this.pendingFields) {
+        if (!record.acknowledged || this.canonical(record.id) !== id) continue;
+        for (const field of Object.keys(fields))
+          delete record.fields[field as keyof Fields];
+        if (!Object.keys(record.fields).length)
+          this.pendingFields.delete(older);
+      }
+      this.pendingFields.set(revision, { id, fields: { ...fields } });
+    }
     for (const key of Object.keys(fields))
       this.versions.set(`${id}:${key}`, revision);
     this.paint(id, fields);
@@ -714,6 +1234,7 @@ export class Workspace extends EventTarget {
       this.statusNotice = null;
     } else if (offerUndo) {
       this.flagUndoRevision = revision;
+      this.flagUndoId = id;
       this.flagUndo = () => {
         if (this.flagUndoRevision !== revision) return;
         this.flagUndo = null;
@@ -727,9 +1248,17 @@ export class Workspace extends EventTarget {
     }
     // Reserve in input order, before waiting for older provider work. Consume a
     // rejected reservation immediately; report it through the ordered action.
-    const reservation = Promise.resolve(
-      this.repository.registerMutation?.(id, fields),
-    ).then(
+    // Call synchronously to preserve reservation/input ordering, but turn a
+    // synchronous adapter failure into the same rollback as a rejected write.
+    let reserved:
+      | ReturnType<NonNullable<Repository["registerMutation"]>>
+      | undefined;
+    try {
+      reserved = this.repository.registerMutation?.(id, fields);
+    } catch (error) {
+      reserved = Promise.reject(error);
+    }
+    const reservation = Promise.resolve(reserved).then(
       (lease) => ({ lease }),
       (error) => ({ error }),
     );
@@ -770,7 +1299,7 @@ export class Workspace extends EventTarget {
     const job = Promise.all(previousJobs).then(async () => {
       try {
         const registered = await reservation;
-        if (!this.confirmed.has(this.canonical(id))) return;
+        if (!currentSource()) return;
         if ("error" in registered) throw registered.error;
         if (move?.cancelled || (restoring && !restoring.committed)) {
           if (registered.lease)
@@ -784,6 +1313,7 @@ export class Workspace extends EventTarget {
             fields,
             registered.lease,
           )) ?? fields;
+        if (!currentSource()) return;
         if (move) move.committed = applied.folder !== undefined;
         if (restoring) {
           this.undoFailures.delete(restoring);
@@ -792,10 +1322,10 @@ export class Workspace extends EventTarget {
             this.retry = null;
           }
         }
-        if (!this.confirmed.has(this.canonical(id))) return;
+        if (!currentSource()) return;
         accept(applied);
       } catch (error) {
-        if (!this.confirmed.has(this.canonical(id))) return;
+        if (!currentSource()) return;
         const acknowledged =
           error instanceof MutationFailure && error.committed;
         if (move && !move.undoRequested && !acknowledged)
@@ -805,6 +1335,13 @@ export class Workspace extends EventTarget {
           this.undoFailures.add(restoring);
         }
         if (error instanceof MutationFailure && error.committed) {
+          if (this.paging && !error.cacheApplied) {
+            const pending = this.pendingFields.get(revision);
+            if (pending) {
+              pending.acknowledged = true;
+              pending.fields = error.applied ?? fields;
+            }
+          }
           if (restoring) restoring.restoreCommitted = true;
           accept(error.applied ?? fields);
           if (move) {
@@ -828,6 +1365,10 @@ export class Workspace extends EventTarget {
           this.retry = () => void this.refresh();
           return;
         }
+        // Retire the failed projection before any already-running page can
+        // publish it over the immediate rollback in the next microtask.
+        this.pendingFields.delete(revision);
+        this.paging?.sync();
         const rollback = Object.fromEntries(
           Object.keys(fields)
             .filter(
@@ -865,6 +1406,9 @@ export class Workspace extends EventTarget {
     this.queues.set(id, job);
     this.changed();
     await job;
+    this.commandCount--;
+    if (!this.pendingFields.get(revision)?.acknowledged)
+      this.pendingFields.delete(revision);
     if (this.queues.get(id) === job) this.queues.delete(id);
     this.selection.refresh();
     this.changed();
