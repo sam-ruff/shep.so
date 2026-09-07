@@ -1705,6 +1705,56 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+a"), type_text("no-match-938481"), check("total", 0),
                        key("ctrl+a"), key("BackSpace"), check("total", 120), key("Escape"))
 
+    def test_move_shows_destination_before_server_acknowledgment(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        subject = self.selected_mail_subject()
+        source_id = self.mcp.call("desktop.state")["selected_id"]
+        self.mcp.batch(key("m"), check("focused_input", "folder-search"), type_text("Projects"),
+                       key("Return"), check("dialog", None), check("total", 119),
+                       click(85, 536), check("folder", "Projects"), check("total", 1),
+                       {"type": "assert", "path": "mail_pending", "value": 1, "op": "gte"},
+                       check("mail_rows.0.subject", subject), check("selected", subject),
+                       check("mail_rows.0.group_pending", True), shot("move-visible-while-pending"),
+                       check("mail_pending", 0), check("total", 1), check("mail_rows.0.subject", subject),
+                       check("mail_rows.0.group_pending", False), check("selected_id", source_id, "ne"),
+                       shot("move-visible-after-acknowledgment"),
+                       key("m"), check("focused_input", "folder-search"), type_text("Inbox"), key("Return"),
+                       check("dialog", None), check("total", 0), click(85, 115), check("folder", "INBOX"),
+                       check("total", 120), check("mail_pending", 0), check("total", 120))
+
+    def test_move_destination_failure_and_pending_undo_restore_source(self):
+        for outcome in ("fail", "undo"):
+            result = self.mcp.call("desktop.start", mail_actions="fail" if outcome == "fail" else "slow")
+            print(f"Destination {outcome}: {result['artifacts']}", flush=True)
+            self.mcp.batch(key("m"), check("focused_input", "folder-search"), type_text("Projects"),
+                           key("Return"), check("dialog", None), check("total", 119),
+                           click(85, 536), check("folder", "Projects"), check("total", 1),
+                           {"type":"assert", "path":"mail_pending", "value":1, "op":"gte"},
+                           check("mail_rows.0.group_pending", True))
+            if outcome == "undo":
+                self.mcp.batch(click(1340, 874), check("total", 0),
+                               check("action_toast.label", "Restored 1 message"),
+                               shot("pending-destination-undone"),
+                               {**check("mail_pending", 0), "timeout_ms":5000})
+            else:
+                self.mcp.batch(check("mail_pending", 0), check("total", 0),
+                               check("notice", "restored", "contains"), shot("destination-failure"))
+            self.mcp.batch(check("total", 0), click(85, 115), check("folder", "INBOX"), check("total", 120))
+
+    def test_cross_account_destination_is_visible_during_transfer(self):
+        result = self.mcp.call("desktop.start", mail_actions="slow")
+        print(f"Cross-account destination: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(286, 773),
+                       check("cross_account_moves", True), key("ctrl+1"), check("tab", "Mail"), wait(80))
+        self.hold_mail_over(402, 245, 95, 636)
+        self.mcp.batch(check("mail_drag.valid", True), {"type":"mouse_up"}, check("total", 119),
+                       click(95, 636), check("folder", "Projects"), check("total", 1),
+                       {"type":"assert", "path":"mail_pending", "value":1, "op":"gte"},
+                       check("mail_rows.0.account_id", "preview-personal"),
+                       check("mail_rows.0.group_pending", True), shot("cross-account-pending-destination"),
+                       check("mail_pending", 0), check("total", 1), check("mail_rows.0.group_pending", False),
+                       check("mail_rows.0.account_id", "preview-personal"), shot("cross-account-confirmed-destination"))
+
     def test_move_mouse_and_keyboard_and_typing_protection(self):
         self.mcp.batch(key("m"), check("dialog", "Move"), shot("move-dialog"), key("Escape"), check("dialog", None),
                        key("ctrl+k"), check("focused_input", "search"), type_text("m"), check("query", "m"), check("dialog", None), key("ctrl+a"), key("BackSpace"), check("query", ""),

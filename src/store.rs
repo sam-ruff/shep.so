@@ -3,6 +3,7 @@ mod folder_actions;
 mod mail_actions;
 mod mail_query;
 mod notifications;
+mod read_moves;
 use crate::model::*;
 mod connections;
 mod conversations;
@@ -131,6 +132,7 @@ impl Store {
         outgoing::schema(&conn)?;
         selection::schema(&conn)?;
         bulk::schema(&conn)?;
+        read_moves::schema(&conn)?;
         folder_actions::schema(&conn)?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 2 {
@@ -361,14 +363,17 @@ impl Store {
         self.run(move |c| {
             let transaction = c.transaction()?;
             let c = &transaction;
+            read_moves::prepare(c, &query.project_moves)?;
             let plan = mail_query::Plan::new(c, &query)?;
             let (total, unread) = plan.counts(c)?;
-            let (sql, mut values) = plan.ordered("data,unread,starred,folder,account");
+            let columns = if query.project_moves.is_empty() { "data,unread,starred,folder,account,0" } else { "data,unread,starred,folder,account,messages.pending_move" };
+            let (sql, mut values) = plan.ordered(columns);
             values.push((PAGE_SIZE as i64).into());
             values.push((query.offset as i64).into());
             let mut stmt = c.prepare(&format!("{sql} LIMIT ? OFFSET ?"))?;
-            let rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?)))?
-                .map(|r| { let (data,unread,starred,folder,account)=r?; let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;m.account_id=account;Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
+            let mut move_placeholders = std::collections::HashSet::new();
+            let rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,bool>(5)?)))?
+                .map(|r| { let (data,unread,starred,folder,account,pending)=r?; let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;m.account_id=account;if pending { move_placeholders.insert(m.id.clone()); m.remote_id.clear(); } Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
             let source = if bulk::has_effects(c)? { "visible_mail" } else { "messages" };
             let inbox_unread = c.prepare(&format!("SELECT account,COUNT(*) FROM {source} WHERE folder='INBOX' AND unread=1 GROUP BY account"))?
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))?
@@ -395,7 +400,7 @@ impl Store {
                 let pending: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM bulk_effects WHERE id=?)",[&mail.id],|r|r.get(0))?;
                 if pending { bulk_pending.insert(mail.id.clone()); }
             }
-            Ok(MailPage { rows, total, unread, inbox_unread, observed, bulk_pending, bulk_observed, bulk_placeholders: Default::default(), bulk_revision: get(c,"bulk_revision")? })
+            Ok(MailPage { move_placeholders, rows, total, unread, inbox_unread, observed, bulk_pending, bulk_observed, bulk_placeholders: Default::default(), bulk_revision: get(c,"bulk_revision")? })
         }).await
     }
     pub async fn detail(&self, id: String) -> anyhow::Result<MailDetail> {

@@ -1,6 +1,7 @@
 use super::*;
 use crate::mail_actions::{Flags, MoveReceipt};
 mod counts;
+mod projection;
 mod undo;
 
 #[derive(Default)]
@@ -94,21 +95,32 @@ impl App {
         }
         let mut page = (*self.mail_actions.base_page).clone();
         page.rows.retain_mut(|mail| {
-            if self.mail_actions.moves.contains_key(&mail.id)
-                || self.mail_actions.transfers.contains_key(&mail.id)
-            {
-                page.total = page.total.saturating_sub(1);
-                if mail.unread {
-                    page.unread = page.unread.saturating_sub(1);
-                    if mail.folder.eq_ignore_ascii_case("INBOX") {
-                        let count = page
-                            .inbox_unread
-                            .entry(mail.account_id.clone())
-                            .or_default();
-                        *count = count.saturating_sub(1);
+            if let Some((_, account, folder)) = self.mail_actions.move_target(&mail.id) {
+                // A page may already contain the projected destination, or the
+                // real local destination after its write and before its receipt.
+                let restoring = self.mail_actions.restoring(&mail.id);
+                let keep = !restoring && self.bulk_scope_contains(&self.query, account, folder);
+                if keep {
+                    if mail.account_id != account || mail.folder != folder {
+                        mail.account_id = account.into();
+                        mail.folder = folder.into();
+                        mail.remote_id.clear();
+                        page.move_placeholders.insert(mail.id.clone());
                     }
+                } else {
+                    page.total = page.total.saturating_sub(1);
+                    if mail.unread {
+                        page.unread = page.unread.saturating_sub(1);
+                        if mail.folder.eq_ignore_ascii_case("INBOX") {
+                            let count = page
+                                .inbox_unread
+                                .entry(mail.account_id.clone())
+                                .or_default();
+                            *count = count.saturating_sub(1);
+                        }
+                    }
+                    return false;
                 }
-                return false;
             }
             let effective = self.mail_actions.effective(mail);
             if mail.unread != effective.unread {
@@ -421,16 +433,12 @@ impl App {
                 }
                 let mut base = (*self.mail_actions.base_page).clone();
                 counts::confirm_move(&mut base, &entry.mail, receipt.current.as_ref());
-                if let Some(index) = base.rows.iter().position(|m| m.id == mail.id) {
-                    let removed = base.rows.remove(index);
-                    base.total = base.total.saturating_sub(1);
-                    if removed.unread {
-                        base.unread = base.unread.saturating_sub(1);
-                    }
-                }
                 self.mail_actions.base_page = Arc::new(base);
+                self.reconcile_move_row(&entry.mail, receipt.current.as_ref(), false);
+                self.mail_actions.flags.remove(&mail.id);
             }
             Err(error) => {
+                self.reconcile_move_row(&entry.mail, None, true);
                 let undo_requested = self
                     .mail_actions
                     .undo

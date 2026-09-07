@@ -259,6 +259,10 @@ impl fmt::Display for MailFilter {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailQuery {
+    /// UI-only folder projection for cached reads, never provider identities or
+    /// a captured selection scope. Missing on older serialized queries.
+    #[serde(default)]
+    pub project_moves: Vec<MailMoveProjection>,
     /// Small pending-action identities observed in the same snapshot as counts.
     /// This does not alter the folder/search result scope.
     pub observe: Vec<String>,
@@ -277,6 +281,17 @@ pub struct MailQuery {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailMoveProjection {
+    pub id: String,
+    pub source_account: String,
+    pub source_folder: String,
+    pub account: String,
+    pub folder: String,
+    pub unread: bool,
+    pub starred: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FolderSelection {
     pub account: Option<String>,
     pub folder: String,
@@ -285,6 +300,7 @@ pub struct FolderSelection {
 
 #[derive(Debug, Clone, Default)]
 pub struct MailPage {
+    pub move_placeholders: std::collections::HashSet<String>,
     pub bulk_observed: std::collections::HashMap<String, bool>,
     pub bulk_placeholders: std::collections::HashSet<String>,
     pub bulk_revision: u64,
@@ -294,6 +310,12 @@ pub struct MailPage {
     pub unread: usize,
     pub inbox_unread: std::collections::BTreeMap<String, usize>,
     pub observed: std::collections::HashMap<String, Option<MailMembership>>,
+}
+
+impl MailPage {
+    pub fn is_placeholder(&self, id: &str) -> bool {
+        self.bulk_placeholders.contains(id) || self.move_placeholders.contains(id)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

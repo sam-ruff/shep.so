@@ -23,6 +23,33 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
+## R73 — Pending destination checkpoint — verification in progress (2026-09-07)
+
+The saved slow-provider native reproduction failed before this change: Projects
+only contained the moved message after the provider acknowledgment. Per-read
+SQLite projection now includes pending moves in the destination's full-text
+search, sorting, filtering and paging. It leaves persisted source data intact.
+The reader can reuse a cached body, blocks provider actions on a temporary ID,
+and adopts the acknowledged destination identity without clearing that body.
+Unified Inbox membership remains stable when moving between accounts' Inboxes.
+Failure and Undo remove the projected destination; Undo can also cancel a move
+waiting behind a flag save without cancelling the flag.
+
+Six controller and four storage regressions pass. Three saved native scenarios
+pass for pending reading/return to Inbox, failure/pending Undo and cross-account
+dragging; light destination/failure screenshots were reviewed. Native evidence:
+`e854518c111b`, `1a78176994a9`, `e693b0450662`, `14728d75d5b1`, `1a9059fdd1e2`.
+All 454 Rust tests, two drawing-adapter tests and 44 Python tests, Clippy and
+formatting pass. Optimized production build, archive checksum/extraction and
+bundled installer checks pass. Full native and shipping checks are pending. Logs use the `move-projection-` prefix
+under ignored `artifacts/logs/`. Timing measurements remain deferred.
+
+R73 stays open: acknowledged moves without COPYUID and cross-account retry
+journals can still lose the destination identity. Durable preservation and
+resolution of those acknowledged copies need their own protocol/cache/restart
+checks. This checkpoint does not claim those cases or the personal-account
+report are resolved.
+
 ## R82 — New-mail notification checkpoint — installed and pushed (2026-09-07)
 
 Source [ded5aca](https://github.com/sam-ruff/shep.so/commit/ded5aca104b5fa129f5b9c8d89199f3a826e9f96)
@@ -84,7 +111,10 @@ verification pass. The installed Linux binary matches the release, SHA-256
 Installation was atomic and existing personal windows were preserved; reopen
 those windows to use this build. Shipping logs: `notifications-commit.log`,
 `notifications-release-verified.log`, `notifications-install.log` and
-`notifications-push.log`. R82 remains
+`notifications-push.log`. Source and docs publishing succeeded in GitHub runs
+`34121452515` and `34121562739`. A read-only desktop capability query reports
+sound support (`notifications-desktop-capabilities.log`); this is not evidence
+of a displayed popup or audible alert. R82 remains
 open for actual Windows/macOS delivery, Mac app-bundle integration and desktop
 sound/popup review. Other performance measurements remain deferred. Quality and
 release workflows stay disabled; documentation CI remains enabled. The full
