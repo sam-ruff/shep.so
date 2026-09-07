@@ -12,11 +12,6 @@ Active requests from this chat. Add new requests here immediately, including cor
 - [ ] **R50/R60 — Immediate feedback:** archive/move, flags, read/unread and other reversible actions show their expected result immediately, before network/SQLite completion. Archiving removes the mail from the current list immediately; restore it with an actionable error on failure. This is the app-wide optimistic interaction principle, recorded in AGENTS.md. Commit 742b21e ships immediate flags/read and same-account moves, coalescing, stale results and rollback with unit/protocol/native verification. Commit d3a530a additionally keeps metadata actions available while bodies load and rejects stale-body targets. Commit 9c907d2 adds immediate cross-account source feedback, typed completion/rollback and ordering behind source read/flag changes. Remaining: reconcile optimistic membership/counts when switching filtered folders, ambiguous cross-account outcomes, other reversible controls, and durable restart recovery for pending actions.
 - [ ] **R47 — A. Keep → Inbox:** investigate the reported failed move, verify the actual provider path and destination refresh. Commit 590ab10 ships Inbox labeling, send-queue feedback and a spaced-folder protocol test preserving acknowledgment after logout failure; the personal-account root cause is not yet confirmed.
 
-## Mail reading, search and bulk actions
-
-- [ ] **R45 — Drag mail to folders:** drag one mail or a selected group onto sidebar folders; highlight valid destinations, respect cross-account preference/provider support, and use the bulk-move confirmation.
-  Implementation and native verification are in progress: metadata-based single/group dragging, destination feedback, cancellation, account restrictions and hover expansion. Ten targeted native paths pass. A compact screenshot exposed shadow trails in the software renderer; repair damage/clipping and preserve a pixel regression before final verification and shipping.
-
 ## Folders and composition
 
 - [ ] **R30 — Folder trees:** nested folders form collapsible groups, collapsed by default, honoring each IMAP hierarchy delimiter and nonselectable parents.
