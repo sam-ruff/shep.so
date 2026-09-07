@@ -1,3 +1,7 @@
+import 'package:flutter/services.dart';
+import 'dart:convert';
+import 'dart:io';
+import 'support/message_find_scenario.dart';
 import 'support/sent_handover_scenario.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +12,48 @@ import 'support/preview_repository.dart';
 import 'workspace_test.dart' show MemorySettings;
 
 void main() {
+  testWidgets(
+    'Find controls, visible quote scope, wrapped matches and native selection',
+    (tester) async {
+      tester.view.physicalSize = const Size(412, 892);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = call.arguments['text'] as String?;
+          }
+          if (call.method == 'Clipboard.getData') return {'text': copied};
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      final body =
+          (jsonDecode(File('../shared/find-preview.json').readAsStringSync())
+                  as Map)['body']
+              as String;
+      final w = Workspace(
+        PreviewRepository(delay: Duration.zero, firstBody: body),
+        MemorySettings(),
+      );
+      await tester.pumpWidget(ShepApp(workspace: w));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('A little room for good ideas'));
+      await tester.pumpAndSettle();
+      await messageFindScenario(tester);
+      await tester.pumpWidget(const SizedBox());
+      w.dispose();
+    },
+  );
+
   Future<Workspace> start(WidgetTester t, {bool fail = false}) async {
     t.view.physicalSize = const Size(412, 892);
     t.view.devicePixelRatio = 1;

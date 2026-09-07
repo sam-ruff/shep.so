@@ -42,6 +42,16 @@ class AndroidPicker:
         (OUTPUT / 'last-window.xml').write_bytes(xml)
         return ET.fromstring(xml).findall('.//node')
 
+    def wait_for_system_ui(self, nodes):
+        if not any(n.attrib.get('text') == "System UI isn't responding" for n in nodes):
+            return False
+        wait = next((n for n in nodes if n.attrib.get('text') == 'Wait'), None)
+        if wait is None:
+            return False
+        self.tap(wait)
+        print('Waited for the dedicated emulator System UI to recover', flush=True)
+        return True
+
     def tap(self, node, long=False):
         bounds = [int(v) for v in re.findall(r'\d+', node.attrib['bounds'])]
         x, y = (bounds[0] + bounds[2]) // 2, (bounds[1] + bounds[3]) // 2
@@ -100,6 +110,8 @@ class AndroidPicker:
                     continue
                 phase = 'select'
             nodes = self.window()
+            if self.wait_for_system_ui(nodes):
+                continue
             if not any(n.attrib.get('package', '').endswith('documentsui') for n in nodes):
                 time.sleep(.2)
                 continue
@@ -147,6 +159,9 @@ if __name__ == '__main__':
     except BaseException:
         # Return control to the isolated Flutter test after a native-picker
         # failure, so its deadline/assertions can report instead of hanging.
-        if any(n.attrib.get('package', '').endswith('documentsui') for n in picker.window()):
+        nodes=picker.window()
+        if picker.wait_for_system_ui(nodes):
+            nodes=picker.window()
+        if any(n.attrib.get('package', '').endswith('documentsui') for n in nodes):
             picker.adb('shell', 'input', 'keyevent', '4')
         raise

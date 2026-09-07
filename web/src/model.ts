@@ -74,7 +74,7 @@ export interface Preferences {
   sidebarWidth: number;
   listWidth: number;
   shortcuts: Record<
-    "archive" | "trash" | "move" | "reply" | "search" | "reader",
+    "archive" | "trash" | "move" | "reply" | "search" | "reader" | "find",
     string
   >;
 }
@@ -92,6 +92,7 @@ export const defaults: Preferences = {
     reply: "r",
     search: "Control+k",
     reader: "Enter",
+    find: "Control+f",
   },
 };
 export interface SettingsStore {
@@ -125,7 +126,11 @@ export class BrowserSettings implements SettingsStore {
       shortcuts: Object.fromEntries(
         Object.entries(defaults.shortcuts).map(([key, value]) => [
           key,
-          typeof p.shortcuts?.[key] === "string" ? p.shortcuts[key] : value,
+          typeof p.shortcuts?.[key] === "string"
+            ? p.shortcuts[key]
+            : Object.values(p.shortcuts ?? {}).includes(value)
+              ? ""
+              : value,
         ]),
       ) as Preferences["shortcuts"],
     };

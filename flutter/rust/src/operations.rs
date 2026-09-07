@@ -19,6 +19,7 @@ use tokio::sync::{Mutex, Semaphore, mpsc};
 pub struct Operations {
     admitted: Arc<Semaphore>,
     slots: Arc<Semaphore>,
+    search: Arc<Semaphore>,
     accounts: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     pub(crate) outgoing: crate::outgoing::Runtime,
     pub(crate) sent: crate::sent::Runtime,
@@ -32,6 +33,7 @@ impl Operations {
         Self {
             admitted: Arc::new(Semaphore::new(40)),
             slots: Arc::new(Semaphore::new(8)),
+            search: Arc::new(Semaphore::new(1)),
             accounts: Mutex::new(HashMap::new()),
             outgoing: crate::outgoing::Runtime::default(),
             sent: crate::sent::Runtime::default(),
@@ -84,6 +86,11 @@ impl Operations {
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
     Accounts,
+    FindText {
+        blocks: Vec<String>,
+        query: String,
+        match_case: bool,
+    },
     PrepareAccount {
         account: Account,
         expected: Option<Account>,
@@ -393,6 +400,13 @@ async fn value<T: serde::Serialize>(result: Result<T>) -> Result<Value> {
 pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
     let db = &profile.database;
     match request {
+        Request::FindText{blocks,query,match_case} => {
+            let permit=profile.operations.search.clone().try_acquire_owned().context("Find is busy. Retry the search shortly.")?;
+            tokio::task::spawn_blocking(move||{
+                let _permit=permit;
+                Ok(json!(shep_mail_core::find::find(&blocks,&query,match_case).context("Could not search this message. Retry Find.")?))
+            }).await?
+        }
         Request::CheckAccount{id} => {db.read(move|db|crate::accounts::available(db,&id)).await?;Ok(json!({"available":true}))}
         Request::AccountRemovalPreview{id} => db.read(move|db|Ok(serde_json::to_value(crate::accounts::preview(db,&id)?)?)).await,
         Request::RemoveAccount{review,discard_unresolved} => {

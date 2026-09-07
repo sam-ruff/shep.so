@@ -254,8 +254,9 @@ void main() {
         () => find
             .byWidgetPredicate(
               (widget) =>
-                  widget is SelectableText &&
-                  widget.data?.trim() == 'Original native mark body.',
+                  widget is EditableText &&
+                  widget.readOnly &&
+                  widget.controller.text.trim() == 'Original native mark body.',
             )
             .evaluate()
             .isNotEmpty,

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'attachments.dart';
+import 'message_search.dart';
 import 'package:flutter/foundation.dart';
 import '../src/rust/api.dart';
 import '../src/rust/frb_generated.dart';
@@ -21,7 +22,8 @@ class NativeRepository
         OutgoingRepository,
         SentPreferencesRepository,
         AttachmentRepository,
-        AccountRemovalRepository {
+        AccountRemovalRepository,
+        TextSearchRepository {
   NativeRepository(this.profile, this.credentials);
   final MobileProfile profile;
   final CredentialStore credentials;
@@ -57,6 +59,22 @@ class NativeRepository
     }
     return response['data'];
   }
+
+  @override
+  Future<List<SearchHit>> findText(
+    List<String> blocks,
+    String query,
+    bool matchCase,
+  ) async =>
+      (await call({
+                'op': 'find_text',
+                'blocks': blocks,
+                'query': query,
+                'match_case': matchCase,
+              })
+              as List)
+          .map((h) => SearchHit.fromJson(h))
+          .toList();
 
   @override
   Future<void> initialize() async {

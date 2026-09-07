@@ -1041,9 +1041,57 @@ dialog > .field,
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.attachment-size { font-size: 12px; opacity: .8; }
+.attachment-size {
+  font-size: 12px;
+  opacity: 0.8;
+}
 
-.account-removal .account-body { display: flex; flex-direction: column; gap: 14px; margin: 16px 0 20px; }
-.account-removal .account-body > p { margin: 0; line-height: 1.55; }
-.account-removal .account-body > button { align-self: flex-start; }
-.account-removal .dialog-actions .danger { border-color: var(--destructive, #dc2626); }
+.account-removal .account-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 16px 0 20px;
+}
+.account-removal .account-body > p {
+  margin: 0;
+  line-height: 1.55;
+}
+.account-removal .account-body > button {
+  align-self: flex-start;
+}
+.account-removal .dialog-actions .danger {
+  border-color: var(--destructive, #dc2626);
+}
+
+.message-find {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.message-find .field {
+  margin: 0;
+}
+.message-find-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+.find-status {
+  flex: 1;
+  min-width: 0;
+}
+.find-hit {
+  background: var(--tint);
+  color: var(--text);
+  border-radius: 2px;
+}
+.find-hit.active {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.message-find button[aria-pressed="true"] {
+  background: var(--tint);
+  border-color: var(--accent);
+}

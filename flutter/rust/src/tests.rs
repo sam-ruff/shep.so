@@ -881,3 +881,15 @@ async fn corrupt_attachment_does_not_hide_cached_body_or_allow_an_empty_save() {
     assert!(saved["error"].is_string());
     assert!(saved.get("data").is_none());
 }
+
+#[tokio::test]
+async fn find_visible_text_works_with_all_provider_capacity_occupied() {
+    let (_dir, p) = profile().await;
+    let _occupied = p.operations.hold_network_capacity().await;
+    let cases: Value =
+        serde_json::from_str(include_str!("../../../shared/find-cases.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let result=request(&p,json!({"op":"find_text","blocks":case["blocks"],"query":case["query"],"match_case":case["match_case"]})).await;
+        assert_eq!(result, case["hits"]);
+    }
+}

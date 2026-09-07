@@ -1,3 +1,4 @@
+import '../test/support/message_find_scenario.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -86,6 +87,15 @@ void main() {
       await binding.convertFlutterSurfaceToImage();
       await tester.pumpAndSettle();
       await binding.takeScreenshot('native-incoming-saved');
+      // Returning from DocumentsUI resumes foreground polling. Keep its locked
+      // fixture credentials in place while searching; unrelated polls may read
+      // them. The actual FFI host test separately asserts Find makes zero reads.
+      await messageFindScenario(
+        tester,
+        screenshot: (name) async {
+          await binding.takeScreenshot(name);
+        },
+      );
       await tester.pageBack();
       await tester.pumpAndSettle();
       await tester.tap(find.text('Preferences').last);
