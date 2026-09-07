@@ -15,7 +15,9 @@ Active requests from this chat. Add new requests here immediately, including cor
 ## Mail reading, search and bulk actions
 
 - [ ] **R42 — Multi-selection:** Ctrl+A for all emails in the focused list, Ctrl-click toggles, Shift-click ranges, and a Select button beside conversation search for checkbox selection. Preserve scope across pages and distinguish list focus from text selection.
+  Cache selection snapshots now capture exact ordered query membership in temporary SQLite tables, with bounded metadata pages, cross-page ranges and immutable confirmation membership. Six integration tests pass; this is storage groundwork. Wire the native controls, optimistic selection/counts, bounded channel lifecycle and selection cleanup before treating the feature as delivered.
 - [ ] **R42 — Bulk actions:** preview toolbar and keybinds act on selected messages. Review multi-message actions with Y/N/Enter/Escape support, accurate scope/count and clear partial-failure handling.
+  Use the frozen selection membership for execution so later selection changes/new arrivals cannot change the reviewed action. Implement bounded background processing, immediate visible feedback, per-message results, grouped Undo and recovery; do not load every selected Mail/MIME into the UI or enqueue more commands than its bounded queues can accept.
 - [ ] **R45 — Drag mail to folders:** drag one mail or a selected group onto sidebar folders; highlight valid destinations, respect cross-account preference/provider support, and use the bulk-move confirmation.
 
 ## Folders and composition
