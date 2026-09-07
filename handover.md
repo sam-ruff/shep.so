@@ -7,7 +7,7 @@ The user requested this handover, TODO cleanup and a push because credits are ne
 - Work in the `shep-clients` worktree on `feat/mobile-web-clients`. All combined Flutter, browser, Rust backend and delegated promo work is on that review branch.
 - Read `AGENTS.md`, `TODO.md`, `docs/CLIENT_PARITY.md`, `shared/client-scenarios.json` and the latest entries in `docs/COMPLETION.md`. `docs/REQUEST_AUDIT.md` preserves request traceability.
 - The root `shep.so` main worktree has independent, actively edited desktop work. Do not commit it, overwrite it, merge clients into main or replace the personal installation. The `shep-website` worktree still has the agent's original uncommitted files; its website source/assets were already copied and committed on the combined branch. Its older README is superseded; do not recopy it.
-- Previous verified remote checkpoint: `a4f6c73`; the current Undo/handover checkpoint is recorded in the completion log and branch history. Pushes to the review branch are authorized. Use the configured owner identity and Conventional Commits; never skip hooks.
+- Undo/handover checkpoint: `d4da04c`, pushed and verified on the remote review branch (previous checkpoint `a4f6c73`). Final shipping documentation follows in branch history. Pushes to the review branch are authorized. Use the configured owner identity and Conventional Commits; never skip hooks.
 
 ## Product decisions that must survive
 
@@ -33,7 +33,7 @@ Preserve existing mail schema 12/journal schema 6 lineage, canonical-alias proof
 
 - 123 browser unit tests pass; all 28 targeted bulk control/executor scenarios pass.
 - Full Chromium run: **128/129 pass**. An existing Find-remapping scenario retained Control+f after Control+g/reload. Its unchanged test file then passed **9/9 across three repetitions**. This is not a clean full-suite pass; shortcut capture across asynchronous redraws remains R63.
-- 39 Python tests, 30 parity contracts, TypeScript, changed-file formatting and strict pinned documentation checks pass. Production build passes. Final Rust HTTPS and required-hook results are recorded in the completion log.
+- 39 Python tests, 30 parity contracts, TypeScript, changed-file formatting and strict pinned documentation checks pass. Production build passes. Final production Rust HTTPS passes all 56 fixture stages. Mandatory hooks pass formatting, Clippy and 381 root/shared Rust tests, with two personal-account diagnostics intentionally ignored.
 - Reviewed synthetic light/dark/compact WebP captures are under ignored `artifacts/browser-undo-visuals/`. Logs: `artifacts/logs/browser-undo-push-*`. Failed evidence: `artifacts/browser-undo-failures/`, especially `full-first/` and `push-targeted/`. Do not discard or relabel those failures.
 - Earlier checkpoint evidence includes actual Android/Appium/Flutter-browser controls and 56 production Rust HTTPS fixture stages. This browser-only increment does not rerun unchanged Android/desktop UI suites or establish Apple/live-provider/performance parity.
 
