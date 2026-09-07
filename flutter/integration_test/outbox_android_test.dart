@@ -296,7 +296,18 @@ void main() {
       const handoverId = 'imap-fixture:Sent:local-sent-outbox-copy-handover';
       expect(workspace.mail(handoverId)!.folder, 'Sent Mail');
       expect(workspace.mail('imap-fixture:Sent Mail:91.4')!.id, handoverId);
-      expect(find.text('Original native copy-handover body.'), findsOneWidget);
+      await wait(
+        () => find
+            .byWidgetPredicate(
+              (widget) =>
+                  widget is EditableText &&
+                  widget.readOnly &&
+                  widget.controller.text.trim() ==
+                      'Original native copy-handover body.',
+            )
+            .evaluate()
+            .isNotEmpty,
+      );
       await capture('native-sent-handover');
       await tester.pageBack();
       await tester.pumpAndSettle();

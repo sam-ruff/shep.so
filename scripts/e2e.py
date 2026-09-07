@@ -70,8 +70,571 @@ class NativeFlows(unittest.TestCase):
         self.artifacts = Path(result["artifacts"])
         print(f"\nEvidence: {result['artifacts']}", flush=True)
 
+    def toggle_html_quotes(self, hidden):
+        # Bounds are in parent content coordinates; reset its scroll before use.
+        self.mcp.batch({"type":"hover","x":1050,"y":500}, {"type":"scroll","amount":-30},
+                       check("html_view_current", True), wait(80))
+        x, y, _, height = self.mcp.call("desktop.state")["html_body_bounds"]
+        self.mcp.batch(click(int(x+65), int(y+height+34)),
+                       check("html_quotes_hidden", hidden), check("html_view_current", True))
+
+    def test_html_loading_keeps_body_origin_stable_with_css_images_and_horizontal_controls(self):
+        result = self.mcp.call("desktop.start", html_mail=True, html_delay_ms=1200)
+        print(f"HTML layout evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("html_view_current", True), click(85,398),
+                       check("selected", "CSS background report"), check("html_body_bounds", None, "ne"),
+                       check("html_ready", False), check("images_allowed", False), shot("html-css-loading"))
+        loading = self.mcp.call("desktop.state")
+        self.mcp.batch(check("html_view_current",True), check("html_width",1000,"gte"),
+                       wait(120), shot("html-css-ready"))
+        ready = self.mcp.call("desktop.state")
+        self.assertEqual(loading["html_body_bounds"][1], ready["html_body_bounds"][1], "Rendering must not insert controls above the body")
+        x, y, width, height = ready["html_body_visible"]
+        self.mcp.batch(drag(int(x+100), int(y+height-8), int(x+width-4), int(y+height-8)),
+                       check("html_pan",100,"gte"), check("html_view_current",True), wait(100), shot("html-css-panned"),
+                       click(int(x+140),int(y+35)), key("Left"), check("html_view_current",True),
+                       key("ctrl+f"), check("focused_input","find-message"), type_text("Last report column"),
+                       check("find_count",1), check("html_view_current",True))
+        pan = self.mcp.call("desktop.state")["html_pan"]
+        self.mcp.batch(key("Left"), key("Right"), wait(80), check("html_pan",pan), shot("html-css-find"),
+                       key("Escape"), check("find_open",False))
+
+    def test_html_image_arrival_keeps_the_reading_position(self):
+        result = self.mcp.call("desktop.start", html_mail=True, image_delay_ms=2000)
+        print(f"Image reflow evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(85,440), check("selected","Delayed illustrated report"),
+                       check("html_view_current",True), click(1115,376), check("images_allowed",True),
+                       check("html_view_current",True), check("html_loaded_images",0),
+                       click(850,450), key("Next"), key("Next"), check("html_scroll",500,"gte"),
+                       check("html_view_current",True), shot("html-before-image-arrival"))
+        before = self.mcp.call("desktop.state")
+        self.mcp.batch(check("html_loaded_images",2), check("html_height",before["html_height"]+400,"gte"),
+                       check("html_view_current",True), wait(120), shot("html-after-image-arrival"))
+        after = self.mcp.call("desktop.state")
+        self.assertAlmostEqual(after["html_scroll"]-before["html_scroll"],
+                               after["html_height"]-before["html_height"], delta=2.,
+                               msg="Images above the viewport must not displace the paragraph being read")
+
+    def test_html_compact_preview_preserves_readable_body_and_all_attachment_controls(self):
+        result = self.mcp.call("desktop.start", width=900, height=640)
+        print(f"Compact HTML evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab","Preferences"), wait(100), click(563,366), check("dark",True),
+                       key("ctrl+1"), check("tab","Mail"), key("ctrl+k"), check("focused_input","search"),
+                       type_text("prototype"), check("total",1), key("Escape"), check("html_view_current",True),
+                       check("attachment_count",4), wait(120), shot("html-compact-reading-space"))
+        state = self.mcp.call("desktop.state")
+        self.assertGreaterEqual(state["html_body_visible"][3], min(120.,state["html_body_bounds"][3]))
+        self.mcp.batch(key("f"), check("dialog","Compose"), check("draft_attachments.3.name",None,"ne"),
+                       key("Escape"), check("dialog",None))
+
+    def test_html_image_arrival_keeps_compact_dark_find_and_reading_position(self):
+        result = self.mcp.call("desktop.start", width=900, height=640, html_mail=True, image_delay_ms=3000)
+        print(f"Compact image reflow evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab","Preferences"), wait(100), click(563,366), check("dark",True),
+                       key("ctrl+1"), check("tab","Mail"), click(85,440), check("selected","Delayed illustrated report"),
+                       check("html_view_current",True), click(807,296), wait(80), click(800,328), check("images_allowed",True),
+                       check("html_view_current",True), key("ctrl+f"), check("focused_input","find-message"),
+                       type_text("Reading paragraph 30"), check("find_count",1), check("html_scroll",500,"gte"),
+                       check("html_view_current",True), check("html_loaded_images",0), shot("html-dark-before-image-arrival"))
+        before = self.mcp.call("desktop.state")
+        self.mcp.batch(check("html_loaded_images",2), check("html_height",before["html_height"]+400,"gte"),
+                       check("html_view_current",True), check("find_count",1), wait(120), shot("html-dark-after-image-arrival"))
+        after = self.mcp.call("desktop.state")
+        self.assertAlmostEqual(after["html_scroll"]-before["html_scroll"],400.,delta=2.)
+        self.mcp.batch(key("Escape"), check("find_open",False), click(700,450), key("Home"),
+                       check("html_scroll",0), check("html_view_current",True), shot("html-images-at-start"))
+
+    def test_html_late_images_do_not_scroll_a_different_message(self):
+        result = self.mcp.call("desktop.start", html_mail=True, image_delay_ms=2000)
+        print(f"Late image navigation evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(85,440), check("selected","Delayed illustrated report"), check("html_view_current",True),
+                       click(1115,376), check("images_allowed",True), check("remote_image_pending",2),
+                       click(850,450), key("Next"), check("html_scroll",100,"gte"),
+                       click(85,278), check("selected","Styled sign-in sample"), check("html_view_current",True),
+                       check("remote_image_pending",0), check("remote_image_cached",2,"gte"),
+                       check("html_scroll",0), check("images_allowed",False), check("html_view_current",True),
+                       wait(120), shot("html-navigation-after-late-images"))
+
+    def test_html_render_failure_has_a_working_native_retry(self):
+        result = self.mcp.call("desktop.start", html_mail=True, html_failure_once=True)
+        print(f"HTML recovery evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("html_error",None,"ne"), wait(100), shot("html-render-failure"),
+                       click(733,468), check("html_error",None), check("html_view_current",True),
+                       check("selected","Styled sign-in sample"), wait(100), shot("html-render-retried"),
+                       click(772,320), check("html_formatted",False), check("reader_text_ready",True),
+                       click(685,320), check("html_view_current",True), check("html_error",None))
+
+    def test_refresh_icons_in_mail_calendar_and_compact_dark(self):
+        self.mcp.batch(check("reader_text_ready", True), wait(150), shot("refresh-mail-light"),
+                       click(1400,36), check("refreshing",True), {"type":"hover","x":1100,"y":35},
+                       shot("refresh-mail-light-busy"), key("ctrl+2"), check("tab","Calendar"),
+                       wait(120), shot("refresh-calendar-light"), check("busy",[]),
+                       key("ctrl+comma"), check("tab","Preferences"), wait(80),
+                       click(690,366), check("dark",True), key("ctrl+1"), check("tab","Mail"),
+                       {"type":"resize","width":900,"height":640}, wait(150), shot("refresh-mail-dark-compact"),
+                       click(852,34), check("refreshing",True), {"type":"hover","x":750,"y":35},
+                       shot("refresh-mail-dark-compact-busy"), key("ctrl+2"), check("tab","Calendar"),
+                       wait(150), shot("refresh-calendar-dark-compact"), check("busy",[]))
+
+    def test_refresh_icons_and_html_at_larger_interface_scale(self):
+        result = self.mcp.call("desktop.start", html_mail=True)
+        print(f"Scaled refresh evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("html_view_current",True), key("ctrl+comma"), check("tab","Preferences"),
+                       wait(120), click(1145,623), wait(80), shot("interface-scale-menu"),
+                       click(1140,509), check("interface_scale",120), check("preferences_saved",True),
+                       key("ctrl+1"), check("tab","Mail"), check("html_view_current",True),
+                       wait(150), shot("refresh-html-scaled"), click(1392,43), check("refreshing",True),
+                       {"type":"hover","x":1000,"y":43}, shot("refresh-scaled-busy"),
+                       key("ctrl+2"), check("tab","Calendar"), wait(120), shot("refresh-calendar-scaled"))
+
+    def test_html_prepared_neighbors_rapid_navigation_and_resize(self):
+        result = self.mcp.call("desktop.start", html_mail=True)
+        print(f"HTML preparation evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("html_view_current",True))
+        state = self.mcp.call("desktop.state")
+        second = state["mail_rows"][1]["id"]
+        self.mcp.batch(check("html_cache_ids",second,"contains"),
+                       click(400,351), check("selected","Mislabeled XHTML request"),
+                       check("html_cache_hits",state["html_cache_hits"] + 1,"gte"),
+                       check("html_view_current",True), wait(120), shot("html-prepared-neighbor"),
+                       click(400,452), check("selected","Escaped HTML request"),
+                       click(400,558), check("selected","Long formatted letter"),
+                       click(400,245), check("selected","Styled sign-in sample"),
+                       click(400,558),
+                       check("selected","Long formatted letter"), check("html_view_current",True),
+                       check("html_height",6000,"gte"), wait(100),
+                       click(850,440), key("ctrl+a"), check("html_selected_text","Last visible paragraph.","contains"),
+                       key("End"), check("html_scroll",5000,"gte"), check("html_view_current",True),
+                       wait(120), shot("html-current-bottom"), key("Home"), check("html_scroll",0),
+                       drag(616,500,750,500), check("reader_split",.4,"gte"), check("html_view_current",True),
+                       wait(120), shot("html-current-narrower"),
+                       {"type":"resize","width":900,"height":640}, check("window_size",[900,640]),
+                       check("html_view_current",True), wait(120), shot("html-current-compact"),
+                       check("html_error",None), check("html_cache_bytes",33554432,"lte"))
+
+    def test_print_formatted_plain_and_long_messages_to_real_browser_pdfs(self):
+        result = self.mcp.call("desktop.start", html_mail=True, print_browser="pdf")
+        print(f"Print evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("html_ready", True), wait(150), shot("print-reader-control"),
+                       click(879,830), check("print_revision", 1),
+                       {"type":"print_output", "text":"Styled sign-in sample", "name":"print-styled"},
+                       check("print_pending",False), click(772,320), check("html_formatted",False),
+                       key("ctrl+p"), check("print_revision",2),
+                       {"type":"print_output", "count":2, "text":"This is the plain text alternative.", "name":"print-plain"},
+                       click(400,558), check("selected","Long formatted letter"), check("html_ready",True),
+                       key("ctrl+p"), check("print_revision",3),
+                       {"type":"print_output", "count":3, "text":"Last visible paragraph.", "pages":3, "name":"print-long"},
+                       check("print_pending",False), shot("print-returned-to-mail"))
+
+    def test_print_pending_navigation_and_failure_retry_keep_the_original_target(self):
+        result = self.mcp.call("desktop.start", html_mail=True, print_browser="pdf", mail_actions="fail")
+        print(f"Print evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("html_ready",True), key("ctrl+p"), check("print_pending",True),
+                       click(400,351), check("selected","Mislabeled XHTML request"),
+                       check("print_pending",False), check("notice","Try Print again","contains"),
+                       check("html_ready",True), key("ctrl+p"), check("print_pending",True),
+                       click(400,558), check("selected","Long formatted letter"),
+                       {"type":"print_output", "text":"Mislabeled XHTML request", "name":"print-original-target"},
+                       check("print_pending",False), check("selected","Long formatted letter"), check("notice","restored","contains"))
+
+    def test_print_shortcuts_remap_disable_and_text_input_isolation(self):
+        self.mcp.call("desktop.start", print_browser="fail")
+        self.mcp.batch(key("ctrl+k"), check("focused_input","search"), key("ctrl+p"), wait(80),
+                       check("print_revision",0), key("Escape"), key("ctrl+p"), check("print_revision",1),
+                       check("print_pending",False), check("notice","isolated print browser","contains"),
+                       click(1400,895), check("notice",None), key("ctrl+comma"), check("tab","Preferences"),
+                       click(645,156), check("settings_tab","Shortcuts"), {"type":"hover","x":1110,"y":690},
+                       {"type":"scroll","amount":30}, wait(100), click(905,780), key("F6"),
+                       check("shortcuts.Print","F6"), click(1070,780), key("alt+p"), check("shortcut_secondary.Print","Alt+P"),
+                       check("preferences_saved",True), shot("print-shortcuts"),
+                       key("ctrl+1"), check("tab","Mail"), key("ctrl+p"), wait(80), check("print_revision",1),
+                       key("F6"), check("print_revision",2), check("print_pending",False),
+                       click(1400,895), check("notice",None), key("alt+p"), check("print_revision",3), check("print_pending",False),
+                       click(1400,895), check("notice",None), key("ctrl+comma"), check("tab","Preferences"),
+                       {"type":"hover","x":1110,"y":690}, {"type":"scroll","amount":30}, wait(100),
+                       click(988,780), check("shortcuts.Print",""), click(1157,780), check("shortcut_secondary.Print",""),
+                       key("ctrl+1"), check("tab","Mail"), key("F6"), key("alt+p"), wait(80), check("print_revision",3))
+
+    def test_print_cancel_and_compact_dark_attachment_layout(self):
+        result = self.mcp.call("desktop.start", print_browser="dialog")
+        print(f"Print evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab","Preferences"), wait(80), click(690,366), check("dark",True),
+                       key("ctrl+1"), check("tab","Mail"), key("ctrl+k"), check("focused_input","search"),
+                       type_text("prototype"), check("total",1), key("Escape"), check("html_ready",True),
+                       {"type":"resize","width":900,"height":640}, wait(250), shot("print-compact-dark-controls"),
+                       key("ctrl+p"), check("print_revision",1), check("print_pending",False), wait(1000),
+                       {"type":"browser_screenshot","name":"print-native-dialog"}, {"type":"cancel_print"},
+                       check("total",1), check("dialog",None), shot("print-cancel-return"),
+                       key("ctrl+p"), check("print_revision",2), check("print_pending",False), wait(700),
+                       {"type":"cancel_print"}, check("notice",None), check("total",1))
+        self.assertEqual(list((Path(result["artifacts"])/"printed").glob("*.pdf")), [])
+
+    def test_forward_mouse_preserves_attachments_and_reopens_as_an_independent_draft(self):
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prototype"),
+                       check("total", 1), key("Escape"), check("html_ready", True), wait(100),
+                       shot("forward-reader-actions"), click(835,784), check("dialog", "Compose"),
+                       check("draft_forward", True), check("draft_forward_html", True), check("fields.subject", "Fwd: Re: A few thoughts on the prototype"),
+                       check("fields.to", ""), check("fields.cc", ""), check("fields.bcc", ""),
+                       check("draft_in_reply_to", None), check("draft_attachments.3.name", "review-checklist.txt"),
+                       check("editor", "Can you send the updated prototype?", "contains"),
+                       check("focused_input", "to"), type_text("reviewer@example.test"), wait(250),
+                       shot("forward-composer-files"), key("Escape"), check("dialog", None), check("draft_count", 1),
+                       click(98,517), check("dialog", "Compose"), check("fields.to", "reviewer@example.test"),
+                       check("draft_forward", True), check("draft_forward_html", True), check("draft_attachments.3.name", "review-checklist.txt"),
+                       shot("forward-reopened"))
+
+    def test_forward_preparation_keeps_navigation_available_and_does_not_replace_newer_edits(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch(key("f"), check("forward_pending", True), check("dialog", None),
+                       key("f"), click(400,350), check("selected", "Your weekly workspace digest"),
+                       key("c"), check("dialog", "Compose"), wait(100),
+                       click(650,362), type_text("A different draft"),
+                       {**check("forward_pending", False), "timeout_ms":5000},
+                       check("dialog", "Compose"), check("fields.subject", "A different draft"),
+                       check("draft_forward", False), check("notice", "Forward saved in Drafts.", "contains"),
+                       check("draft_count", 2), shot("forward-pending-preserves-editor"),
+                       key("Escape"), check("dialog", None), check("draft_count", 2))
+
+    def test_forward_failure_retry_and_compact_dark_layout(self):
+        self.mcp.call("desktop.start", mail_actions="fail")
+        self.mcp.batch(key("f"), check("forward_pending", True),
+                       {**check("forward_pending", False), "timeout_ms":5000}, check("dialog", None),
+                       check("draft_count", 0), check("notice", "Try Forward again", "contains"),
+                       key("f"), check("forward_pending", True),
+                       {**check("dialog", "Compose"), "timeout_ms":5000}, check("draft_count", 1),
+                       check("fields.subject", "Fwd: A little more room to think"), key("Escape"), check("dialog", None),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(690,366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"), {"type":"resize", "width":900, "height":640}, wait(150),
+                       click(98,517), check("dialog", "Compose"), check("draft_forward", True),
+                       check("fields.to", ""), shot("forward-dark-compact"))
+
+    def test_forward_targets_the_expanded_message_in_a_conversation(self):
+        self.mcp.call("desktop.start", conversation_mail=True)
+        self.mcp.batch(check("conversation_total",3), check("loaded_message_id","preview-work:INBOX:launch-2"),
+                       wait(100), click(800,344), check("loaded_message_id","preview-work:Sent:launch-1"),
+                       check("selected_id","preview-work:INBOX:launch-2"), check("attachment_count",1),
+                       key("f"), check("dialog","Compose"), check("fields.subject","Launch schedule","contains"),
+                       check("draft_attachments.0.size",1,"gte"), check("fields.to",""), check("draft_in_reply_to",None),
+                       shot("forward-conversation-target"))
+
+    def test_forward_shortcuts_remap_disable_and_text_input_isolation(self):
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("f"), check("dialog", None),
+                       key("ctrl+a"), key("BackSpace"), check("total",120), key("Escape"),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(645,156), check("settings_tab", "Shortcuts"),
+                       {"type":"hover","x":1110,"y":690}, {"type":"scroll","amount":30}, wait(100),
+                       click(905,720), key("F4"), check("shortcuts.Forward", "F4"),
+                       click(1070,720), key("alt+f"), check("shortcut_secondary.Forward", "Alt+F"), check("preferences_saved",True),
+                       key("ctrl+1"), check("tab", "Mail"), key("ctrl+k"), check("focused_input","search"),
+                       key("F4"), key("alt+f"), check("dialog",None), check("query", "f"),
+                       key("ctrl+a"), key("BackSpace"),
+                       check("query",""), check("selected","A little more room to think"), key("Escape"), wait(80),
+                       key("F4"), check("dialog","Compose"),
+                       key("Escape"), check("dialog",None), key("alt+f"), check("dialog","Compose"),
+                       key("Escape"), check("dialog",None), check("notice", "Draft saved.", "contains"),
+                       click(1400,895), check("notice",None), key("ctrl+comma"), check("tab","Preferences"),
+                       click(645,156), check("settings_tab","Shortcuts"), {"type":"hover","x":1110,"y":690},
+                       {"type":"scroll","amount":30}, wait(100), click(988,720), check("shortcuts.Forward",""),
+                       click(1157,720), check("shortcut_secondary.Forward",""), check("preferences_saved",True),
+                       key("ctrl+1"), check("tab","Mail"), key("F4"), key("alt+f"), key("f"), check("dialog",None),
+                       check("draft_count",2))
+
+    def test_find_formatted_message_navigation_and_keyboard_isolation(self):
+        self.mcp.call("desktop.start", html_mail=True)
+        self.mcp.batch(click(400,558), check("selected", "Long formatted letter"), check("html_ready", True),
+                       key("ctrl+f"), check("find_open", True), check("focused_input", "find-message"),
+                       type_text("Paragraph"), check("find_count", 201), check("find_pending", False),
+                       check("find_active", 0), shot("find-html-first"),
+                       click(1261,158), check("find_match_case", True), check("find_count", 200),
+                       click(1261,158), check("find_match_case", False), check("find_count", 201),
+                       click(1344,158), check("find_active", 1), click(1300,158), check("find_active", 0),
+                       key("Return"), check("find_active", 1), key("shift+Return"), check("find_active", 0),
+                       key("shift+Return"), check("find_active", 200), check("html_scroll", 5000, "gte"),
+                       shot("find-html-last"), key("ctrl+d"), check("total", 124),
+                       key("Escape"), check("find_open", False), check("full_reader", False),
+                       double_click(400,555), check("full_reader", True), key("ctrl+f"),
+                       check("find_open", True), check("find_count", 201), key("Escape"),
+                       check("find_open", False), check("full_reader", True), key("Escape"), check("full_reader", False))
+
+    def test_find_plain_message_and_switching_messages_discards_old_results(self):
+        self.mcp.call("desktop.start", html_mail=True)
+        self.mcp.batch(click(400,558), check("selected", "Long formatted letter"), check("html_ready", True),
+                       click(770,320), check("html_formatted", False), check("reader_text_ready", True),
+                       key("ctrl+f"), check("focused_input", "find-message"), type_text("Paragraph"),
+                       check("find_count", 201), check("find_pending", False), check("find_error", None),
+                       shot("find-plain-first"), key("shift+Return"), check("find_active", 200),
+                       shot("find-plain-last"), click(400,450), check("selected", "Escaped HTML request"), check("focused_input", None),
+                       check("find_count", 0), check("find_pending", False), key("ctrl+f"),
+                       check("focused_input", "find-message"), key("ctrl+a"), type_text("Readable content"),
+                       check("find_count", 1), check("find_pending", False), shot("find-new-message"),
+                       key("ctrl+a"), type_text("[not.*present]"), check("find_count", 0),
+                       check("find_pending", False), check("find_error", None), shot("find-no-results"),
+                       key("Escape"), check("find_open", False))
+
+    def test_find_wide_message_reveals_match_in_dark_compact_reader(self):
+        self.mcp.call("desktop.start", html_mail=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(690,366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"), click(100,536), check("folder", "Projects"),
+                       check("selected", "Wide HTML report"), check("html_ready", True),
+                       click(828,100), check("find_open", True), check("focused_input", "find-message"),
+                       type_text("Right report column"), check("find_count", 1), shot("find-wide-dark"),
+                       {"type":"resize","width":900,"height":640}, check("window_size", [900,640]),
+                       check("html_pan", 100, "gte"), check("find_count", 1), {"type":"hover","x":230,"y":40}, wait(100), shot("find-wide-dark-compact"),
+                       double_click(380,245), check("full_reader", True), check("find_count", 1),
+                       shot("find-wide-dark-full"), key("Escape"), check("find_open", False),
+                       check("full_reader", True), key("Escape"), check("full_reader", False))
+
+    def test_find_remap_secondary_binding_disable_and_mouse_close(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(645,156), check("settings_tab", "Shortcuts"),
+                       {"type":"hover","x":1200,"y":700}, {"type":"scroll","amount":30}, wait(150), shot("find-shortcut-settings"),
+                       click(905,660), key("F3"), check("shortcuts.Find", "F3"), check("preferences_saved", True),
+                       click(1070,660), key("ctrl+f"), check("shortcut_secondary.Find", "Mod+F"), check("preferences_saved", True),
+                       key("ctrl+1"), check("tab", "Mail"), key("F3"), check("find_open", True), check("focused_input", "find-message"),
+                       type_text("conversation"), check("find_query", "conversation"), check("find_pending", False),
+                       shot("find-remapped-open"), click(1388,158), check("find_open", False),
+                       key("ctrl+f"), check("find_open", True), key("Escape"), check("find_open", False),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       {"type":"hover","x":1200,"y":700}, {"type":"scroll","amount":30}, wait(100),
+                       click(988,660), check("shortcuts.Find", ""), click(1157,660), check("shortcut_secondary.Find", ""),
+                       check("preferences_saved", True), key("ctrl+1"), check("tab", "Mail"),
+                       key("F3"), wait(80), check("find_open", False), key("ctrl+f"), wait(80), check("find_open", False))
+
+    def test_find_respects_html_and_plain_quoted_history(self):
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prototype"), check("total", 1),
+                       key("Escape"), check("html_ready", True), check("html_quotes_hidden", True),
+                       key("ctrl+f"), check("focused_input", "find-message"), type_text("updated"),
+                       check("find_pending", False), check("find_count", 0), key("Escape"), check("find_open", False))
+        self.toggle_html_quotes(False)
+        self.mcp.batch(key("ctrl+f"), check("focused_input", "find-message"),
+                       check("find_count", 1), shot("find-html-quote"), key("Escape"), check("find_open", False))
+        self.toggle_html_quotes(True)
+        self.mcp.batch(key("ctrl+f"), check("find_open", True), check("focused_input", "find-message"), check("find_pending", False),
+                       check("find_count", 0), key("Escape"), check("find_open", False), wait(80),
+                       {"type":"hover","x":1050,"y":500}, {"type":"scroll","amount":-30}, wait(100), click(770,320), check("html_formatted", False), check("reader_text_ready", True),
+                       key("ctrl+f"), check("find_open", True), check("focused_input", "find-message"), check("find_pending", False), check("find_count", 0), key("Escape"), check("find_open", False), wait(80),
+                       click(740,419), check("expanded_replies", [0]), key("ctrl+f"), check("find_count", 1),
+                       shot("find-plain-quote"), key("Escape"), check("find_open", False))
+
+    def test_html_styled_message_plain_alternative_and_raw_xhtml(self):
+        self.mcp.call("desktop.start", html_mail=True)
+        self.mcp.batch(check("selected", "Styled sign-in sample"), check("html_ready", True),
+                       check("html_error", None), check("html_formatted", True),
+                       check("images_allowed", False), wait(200), shot("html-styled-blocked"),
+                       click(772, 320), check("html_formatted", False), check("reader_text_ready", True),
+                       shot("html-plain-alternative"), click(685, 320), check("html_ready", True),
+                       click(400, 351), check("selected", "Mislabeled XHTML request"), check("html_ready", True),
+                       wait(100), shot("html-mislabeled-xhtml"), click(800, 402), key("ctrl+a"),
+                       check("html_selected_text", "SAMPLE-ONLY", "contains"), key("ctrl+c"),
+                       key("ctrl+k"), check("focused_input", "search"), key("ctrl+v"),
+                       check("query", "SAMPLE-ONLY", "contains"), key("ctrl+a"), key("BackSpace"),
+                       check("total", 124), key("Escape"), click(400, 452),
+                       check("selected", "Escaped HTML request"), check("html_ready", True), wait(100),
+                       shot("html-escaped-tags"))
+
+    def test_html_selection_scrolling_and_pending_mail_actions(self):
+        self.mcp.call("desktop.start", html_mail=True, mail_actions="slow")
+        self.mcp.batch(check("html_ready", True), click(400, 558), check("selected", "Long formatted letter"),
+                       check("html_ready", True), check("html_height", 6000, "gte"),
+                       wait(100), {"type": "hover", "x": 1100, "y": 600}, {"type": "scroll", "amount": 12},
+                       check("html_scroll", 1, "gte"), wait(100), shot("html-long-scrolled"),
+                       click(850, 480), key("ctrl+a"), check("html_selected_text", "Last visible paragraph.", "contains"),
+                       shot("html-long-selected"), click(784, 100), check("starred", True),
+                       check("mail_pending", 1, "gte"), check("html_ready", True),
+                       click(652, 100), check("action_toast.label", "Archived 1 message"), check("mail_pending", 1, "gte"),
+                       shot("html-archive-immediate-toast"))
+
+    def test_html_dark_full_reader_and_compact_layout(self):
+        self.mcp.call("desktop.start", html_mail=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
+                       check("html_ready", True), wait(120), shot("html-dark-preview"),
+                       double_click(400, 245), check("full_reader", True), check("html_ready", True),
+                       wait(150), shot("html-dark-full-reader"),
+                       {"type": "hover", "x": 1100, "y": 600}, {"type": "scroll", "amount": 12}, wait(100),
+                       shot("html-dark-full-bottom"), click(150, 598), check("html_link", "https://example.test/help"),
+                       {"type": "resize", "width": 900, "height": 640}, check("window_size", [900,640]),
+                       check("html_error", None), wait(150), shot("html-dark-compact-full"),
+                       key("Escape"), check("full_reader", False), wait(150), shot("html-dark-compact-preview"),
+                       click(807,296), wait(100), shot("html-compact-image-menu"),
+                       click(800,328), check("images_allowed", True), check("html_loaded_images", 1),
+                       wait(100), shot("html-compact-images-allowed"),
+                       {"type": "hover", "x": 750, "y": 460}, {"type": "scroll", "amount": 8},
+                       check("html_scroll", 1, "gte"), wait(100), shot("html-dark-compact-body"))
+
+    def test_html_wide_table_can_scroll_horizontally_and_select_its_right_column(self):
+        self.mcp.call("desktop.start", html_mail=True)
+        self.mcp.batch(click(100, 536), check("folder", "Projects"), check("selected", "Wide HTML report"),
+                       check("html_view_current", True), check("html_width", 1000, "gte"), wait(100), shot("html-wide-table"))
+        x, y, width, height = self.mcp.call("desktop.state")["html_body_visible"]
+        self.mcp.batch(drag(int(x+150),int(y+height-8),int(x+width-4),int(y+height-8)),
+                       check("html_pan", 100, "gte"), check("html_view_current",True), wait(100), shot("html-wide-table-right"),
+                       drag(904,int(y+32),1061,int(y+32)), check("html_selected_text", "Right report column"),
+                       key("ctrl+a"), check("html_selected_text", "Right report column", "contains"),
+                       shot("html-wide-table-selection"))
+
+    def test_html_keyboard_scroll_is_scoped_to_the_focused_reader(self):
+        self.mcp.call("desktop.start", html_mail=True)
+        self.mcp.batch(click(400,558), check("selected", "Long formatted letter"), check("html_ready", True),
+                       wait(100), click(850,440), key("Next"), check("html_scroll", 1, "gte"),
+                       key("Down"), check("selected", "Long formatted letter"), key("End"),
+                       check("html_scroll", 5000, "gte"), wait(100), shot("html-keyboard-bottom"),
+                       key("Home"), check("html_scroll", 0), check("selected", "Long formatted letter"),
+                       click(400,555), key("Up"), check("selected", "Escaped HTML request"),
+                       check("html_ready", True), wait(100), shot("html-inbox-arrows-after-reader-focus"))
+
+    def test_search_best_match_beats_newer_mail_and_sort_can_be_overridden(self):
+        self.mcp.call("desktop.start", search_mail=True)
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("test"),
+                       check("sort", "Relevance"), check("selected", "Quick note"),
+                       check("mail_rows.0.subject", "Quick note"), shot("search-exact-body-first"),
+                       click(531, 100), wait(100), shot("search-sort-menu"), click(531, 155),
+                       check("sort", "Newest"), check("selected", "Testing checklist"), check("focused_input", None),
+                       key("ctrl+k"), check("focused_input", "search"), wait(80), key("ctrl+a"), type_text("testing"), check("query", "testing"), check("sort", "Newest"),
+                       key("ctrl+a"), key("BackSpace"), check("query", ""), check("sort", "Newest"),
+                       type_text("test"), check("sort", "Relevance"), check("selected", "Quick note"),
+                       key("Escape"), key("ctrl+r"), check("refreshing", True),
+                       check("refreshing", False), check("selected", "Quick note"), shot("search-relevance-after-sync"))
+
+    def test_move_library_matches_accents_and_fast_typo_enter(self):
+        self.mcp.call("desktop.start", search_mail=True)
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("test"),
+                       check("selected", "Quick note"), key("Escape"), key("m"),
+                       check("focused_input", "folder-search"), type_text("cafe"),
+                       check("move_enter_destination", "Café"), shot("move-accent-match-highlight"),
+                       key("Return"), check("dialog", None), check("mail_pending", 0),
+                       click(100, 617), check("folder", "Café"), check("total", 1), check("selected", "Quick note"),
+                       click(85, 115), check("folder", "INBOX"), check("query", ""),
+                       check("total", 123), check("selected", None, "ne"))
+        subject = self.mcp.call("desktop.state")["selected"]
+        self.mcp.batch(key("m"), check("dialog", "Move"), check("focused_input", "folder-search"), type_text("archvie"), key("Return"),
+                       check("dialog", None), check("mail_pending", 0),
+                       click(85, 398), check("folder", "Archive"), check("total", 1),
+                       check("selected", subject), shot("move-transposition-enter-result"))
+
+    def test_background_mail_arrives_without_refresh_and_manual_clicks_queue(self):
+        self.mcp.call("desktop.start", background_sync=True)
+        self.mcp.batch(check("background_sync", True), check("refreshing", False),
+                       check("mail_check_seconds", 15), shot("background-sync-refresh-idle"),
+                       click(1400, 36), click(1400, 36), key("ctrl+r"),
+                       check("refreshing", True), check("background_sync", True),
+                       check("sync_round", 1), check("total", 121),
+                       check("background_sync", False), check("refreshing", True),
+                       shot("manual-refresh-queued-after-background"),
+                       {**check("sync_round", 2), "timeout_ms": 5000}, check("refreshing", False),
+                       check("total", 121), click(420, 247),
+                       check("selected", "New mail from the background"), shot("background-arrival-readable"))
+
+    def test_desktop_badge_tracks_read_changes_after_switching_folders(self):
+        self.mcp.call("desktop.start", desktop_badges=True, mail_actions="slow")
+        self.mcp.batch(check("unread", True), check("desktop_badge.visible", True))
+        initial = self.mcp.call("desktop.state")
+        count = initial["desktop_badge"]["count"]
+        self.mcp.batch(click(740,100), check("mail_pending",1), check("desktop_badge.count",count-1),
+                       click(85,398), check("folder","Archive"),
+                       check("count_observed_ids",initial["selected_id"],"contains"),check("mail_pending",1),
+                       check("desktop_badge.count",count-1),
+                       {**check("mail_pending",0), "timeout_ms":5000}, check("desktop_badge.count",count-1),
+                       shot("badge-read-after-folder-navigation"))
+        history = self.mcp.call("desktop.state")["desktop_badge"]["history"]
+        self.assertTrue(all(n == count-1 for n in history[history.index(count-1):]), history)
+
+    def test_desktop_badge_preference_clears_and_restores_the_native_count(self):
+        self.mcp.call("desktop.start", desktop_badges=True)
+        self.mcp.batch(check("desktop_badge.visible",True))
+        count = self.mcp.call("desktop.state")["desktop_badge"]["count"]
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),click(1150,88),type_text("badge"),
+                       check("settings_matches",["Mail & performance"]),click(500,289),
+                       check("settings_group","Mail & performance"), shot("badge-preference"),
+                       click(340,431),check("desktop_badge.count",0),check("desktop_badge.visible",False),
+                       check("preferences_saved",True),key("ctrl+1"),key("ctrl+comma"),
+                       click(1150,88),type_text("badge"),click(500,289),wait(),click(340,431),
+                       check("desktop_badge.count",count),check("desktop_badge.visible",True),
+                       click(300,239),check("settings_group",None),click(286,737),check("unified",False),
+                       key("ctrl+1"),check("account","preview-work"),check("desktop_badge.count",count),
+                       shot("badge-count-spans-account-inboxes"))
+        self.mcp.call("desktop.start",desktop_badges=True,width=900,height=640)
+        self.mcp.batch(check("desktop_badge.visible",True),key("ctrl+comma"),check("tab","Preferences"),
+                       click(563,366),check("dark",True),click(650,88),type_text("badge"),
+                       check("settings_search","badge"),check("settings_matches",["Mail & performance"]),wait(80),
+                       click(450,289),check("settings_group","Mail & performance"),
+                       shot("badge-preference-compact-dark"),click(310,431),
+                       check("desktop_badge.visible",False),check("saved_unread_badge",False))
+
+    def test_filtered_preferences_do_not_leave_pixels_outside_scroll_view(self):
+        result = self.mcp.call("desktop.start", width=900, height=640)
+        directory = Path(result["artifacts"])
+        print(f"Preferences clipping evidence: {directory}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(563,366), check("dark", True), shot("preferences-before-filter"),
+                       click(650,88), type_text("badge"), check("settings_search", "badge"),
+                       check("settings_matches", ["Mail & performance"]), wait(80),
+                       click(450,289), check("settings_group", "Mail & performance"),
+                       shot("preferences-filtered"),
+                       {"type":"resize", "width":901, "height":640}, check("window_size", [901,640]),
+                       {"type":"resize", "width":900, "height":640}, check("window_size", [900,640]),
+                       shot("preferences-filtered-repainted"))
+        for name in ("preferences-filtered", "preferences-filtered-repainted"):
+            # This is the empty bottom margin, below the scroll viewport. The old
+            # scale picker's cached text escaped its clip and survived filtering.
+            pixels = subprocess.check_output(["convert", str(directory / f"{name}.webp"),
+                                              "-crop", "80x17+780+614", "-depth", "8", "rgb:-"])
+            self.assertLessEqual(max(pixels)-min(pixels), 16, f"Stray control pixels in {name}")
+
+    def test_desktop_badge_archive_delete_move_and_undo(self):
+        for action in ("archive", "delete", "move"):
+            with self.subTest(action=action):
+                self.mcp.call("desktop.start", desktop_badges=True, mail_actions="slow")
+                self.mcp.batch(check("unread",True),check("desktop_badge.visible",True))
+                count = self.mcp.call("desktop.state")["desktop_badge"]["count"]
+                if action == "archive":
+                    self.mcp.batch(click(652,100))
+                elif action == "delete":
+                    self.mcp.batch(key("ctrl+d"))
+                else:
+                    self.mcp.batch(key("m"),check("focused_input","folder-search"),type_text("Projects"),key("Return"),check("dialog",None))
+                self.mcp.batch(check("mail_pending",1),check("desktop_badge.count",count-1),
+                               click(85,398),check("folder","Archive"),
+                               {**check("mail_pending",0),"timeout_ms":5000},check("desktop_badge.count",count-1),
+                               click(1340,874),check("mail_pending",1),check("desktop_badge.count",count),
+                               {**check("mail_pending",0),"timeout_ms":5000},check("desktop_badge.count",count),
+                               shot("badge-"+action+"-undo"))
+
+    def test_desktop_badge_background_arrival_and_failed_action(self):
+        self.mcp.call("desktop.start",desktop_badges=True,background_sync=True)
+        self.mcp.batch(check("desktop_badge.visible",True),check("background_sync",True))
+        count = self.mcp.call("desktop.state")["desktop_badge"]["count"]
+        self.mcp.batch(check("total",121),check("desktop_badge.count",count+1),shot("badge-new-arrival"))
+        self.mcp.call("desktop.start",desktop_badges=True,mail_actions="fail")
+        self.mcp.batch(check("desktop_badge.visible",True),check("unread",True))
+        count = self.mcp.call("desktop.state")["desktop_badge"]["count"]
+        self.mcp.batch(click(652,100),check("mail_pending",1),check("desktop_badge.count",count-1),
+                       {**check("mail_pending",0),"timeout_ms":5000},check("notice","restored","contains"),
+                       check("desktop_badge.count",count),shot("badge-failed-archive"))
+
+    def test_background_sync_failure_allows_manual_retry(self):
+        self.mcp.call("desktop.start", background_sync=True, sync_failure_once=True)
+        self.mcp.batch(check("background_sync", True), check("refreshing", False),
+                       check("notice", "temporarily unavailable", "contains"),
+                       check("background_sync", False), check("total", 120), shot("background-sync-error"),
+                       click(1400, 36), check("refreshing", True),
+                       check("sync_round", 2), check("total", 121), check("refreshing", False),
+                       check("notice", None),
+                       click(420, 247), check("selected", "New mail from the background"),
+                       shot("background-sync-retry-arrival"))
+
+    def test_mail_check_interval_uses_seconds_and_validates_before_saving(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(1150, 88), type_text("background"), check("settings_matches", ["Mail & performance"]),
+                       click(500, 289), check("settings_group", "Mail & performance"), shot("mail-check-seconds-setting"),
+                       click(1110, 364), key("ctrl+a"), type_text("0"), click(1350, 88),
+                       check("notice", "5–3600 seconds", "contains"), check("mail_check_seconds", 15),
+                       click(1110, 364), key("ctrl+a"), type_text("5"), click(1350, 88),
+                       check("mail_check_seconds", 5), check("preferences_saved", True), check("notice", None),
+                       shot("mail-check-seconds-saved"), key("ctrl+1"), key("ctrl+comma"),
+                       check("fields.mail_check_seconds", "5"))
+
     def test_read_unread_and_flags_show_immediately_during_slow_save(self):
         self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch(check("unread",None,"ne"), check("starred",None,"ne"))
         state = self.mcp.call("desktop.state")
         initial, starred = state["unread"], state["starred"]
         self.mcp.batch(click(740, 100), check("unread", not initial), check("mail_pending", 1),
@@ -85,6 +648,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_failed_read_and_flag_restore_state_without_blocking_navigation(self):
         self.mcp.call("desktop.start", mail_actions="fail")
+        self.mcp.batch(check("unread",None,"ne"), check("starred",None,"ne"))
         state = self.mcp.call("desktop.state")
         initial, starred = state["unread"], state["starred"]
         self.mcp.batch(click(740, 100), check("unread", not initial), check("mail_pending", 1),
@@ -118,6 +682,163 @@ class NativeFlows(unittest.TestCase):
                        check("folder", "Archive"), check("total", 0),
                        click(84, 278), check("folder", "INBOX"), check("total", 120))
 
+    def test_action_toasts_count_immediately_and_dismiss_before_saving(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch(click(652,100), check("total",119), check("mail_pending",1),
+                       check("action_toast.label","Archived 1 message"),
+                       key("Delete"), check("total",118), check("mail_pending",2),
+                       check("action_toast.label","Archived 2 messages"), shot("counted-archive-pending"),
+                       click(1390,874), check("action_toast",None),
+                       {**check("mail_pending",0),"timeout_ms":5000}, check("action_toast",None),
+                       key("ctrl+d"), check("total",117), check("mail_pending",1),
+                       check("action_toast.label","Deleted 1 message"),
+                       key("ctrl+d"), check("total",116), check("mail_pending",2),
+                       check("action_toast.label","Deleted 2 messages"), shot("counted-delete-pending"),
+                       {**check("mail_pending",0),"timeout_ms":5000}, check("total",116))
+
+    def test_move_toast_counts_and_failing_actions_remove_their_feedback(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        for count in (1,2):
+            self.mcp.batch(key("m"), check("dialog","Move"), check("focused_input","folder-search"),
+                           type_text("Projects"), key("Return"), check("dialog",None),
+                           check("action_toast.label",f"Moved {count} message{'s' if count>1 else ''} to Projects"),
+                           check("total",120-count))
+        self.mcp.batch(check("mail_pending",2), shot("counted-move-pending"),
+                       {**check("mail_pending",0),"timeout_ms":5000})
+        self.mcp.call("desktop.start",mail_actions="fail")
+        self.mcp.batch(key("BackSpace"), check("action_toast.label","Archived 1 message"),
+                       key("ctrl+d"), check("action_toast.label","Deleted 1 message"),
+                       check("total",118), check("mail_pending",2), shot("latest-action-before-failure"),
+                       {**check("mail_pending",0),"timeout_ms":5000}, check("total",120),
+                       check("action_toast",None), check("notice","restored","contains"), shot("action-toast-failure"))
+
+    def test_compact_dark_action_toast_and_cross_account_slow_failure(self):
+        self.mcp.call("desktop.start",mail_actions="fail")
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),
+                       click(690,366),check("dark",True),
+                       click(286,773),check("cross_account_moves",True),
+                       key("ctrl+1"),check("tab","Mail"),wait(80),
+                       key("m"),check("dialog","Move"),wait(80),
+                       click(710,327),wait(80),click(710,403),check("fields.move_account","preview-personal"),
+                       click(670,385),type_text("Archive"),key("Return"),check("dialog",None),
+                       check("total",119),check("mail_pending",1),check("action_toast.label","Archived 1 message"),
+                       shot("cross-account-toast-pending"),
+                       {**check("mail_pending",0),"timeout_ms":5000},check("total",120),check("action_toast",None),
+                       check("notice","Fixture server rejected","contains"),
+                       click(1390,900),
+                       {"type":"resize","width":900,"height":640},wait(150),
+                       key("ctrl+d"),check("total",119),check("action_toast.label","Deleted 1 message"),
+                       shot("dark-compact-toast"),
+                       {**check("mail_pending",0),"timeout_ms":5000},check("action_toast",None))
+
+    def test_grouped_archive_undo_is_immediate_while_both_moves_are_pending(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        initial = self.mcp.call("desktop.state")["mail_rows"]
+        self.mcp.batch(click(652, 100), key("Delete"), check("total", 118),
+                       check("action_toast.label", "Archived 2 messages"), check("action_toast.undo", True),
+                       click(1340, 874), check("action_toast.label", "Restored 2 messages"),
+                       check("action_toast.undo", False), check("total", 120),
+                       check("mail_pending", 1, "gte"), shot("undo-group-before-provider-ack"),
+                       key("ctrl+2"), check("tab", "Calendar"),
+                       {**check("mail_pending", 1, "lte"), "timeout_ms": 5000},
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       key("ctrl+1"), check("tab", "Mail"), check("total", 120), wait(150),
+                       shot("undo-group-restored-inbox"))
+        restored = self.mcp.call("desktop.state")["mail_rows"]
+        self.assertEqual([m["subject"] for m in restored[:2]], [m["subject"] for m in initial[:2]])
+        self.mcp.batch(click(85, 398), check("folder", "Archive"), check("total", 0))
+
+    def test_delete_undo_failure_has_persistent_retry_and_restores_after_retry(self):
+        self.mcp.call("desktop.start", mail_actions="slow", undo_failure_once=True)
+        subject = self.mcp.call("desktop.state")["selected"]
+        self.mcp.batch(key("ctrl+d"), check("action_toast.label", "Deleted 1 message"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000}, check("total", 119),
+                       click(1340, 874), check("total", 120), check("action_toast.label", "Restored 1 message"),
+                       check("mail_pending", 1), shot("undo-delete-pending"),
+                       {**check("undo_failures", 1), "timeout_ms": 5000}, check("total", 119),
+                       check("mail_pending", 0), check("notice", "Fixture server rejected Undo", "contains"),
+                       shot("undo-failed-retry-control"), click(1308, 874),
+                       check("undo_failures", 0), check("total", 120), check("mail_pending", 1),
+                       {**check("mail_pending", 0), "timeout_ms": 5000}, check("total", 120),
+                       check("notice", None), shot("undo-delete-retried"))
+        self.assertIn(subject, [m["subject"] for m in self.mcp.call("desktop.state")["mail_rows"]])
+        self.mcp.batch(click(85, 438), check("folder", "Trash"), check("total", 0))
+
+    def test_move_undo_from_destination_and_compact_dark_feedback(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        subject = self.mcp.call("desktop.state")["selected"]
+        self.mcp.batch(key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
+                       type_text("Projects"), key("Return"), check("dialog", None),
+                       check("action_toast.label", "Moved 1 message to Projects"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       click(95, 537), check("folder", "Projects"), check("total", 1),
+                       click(1340, 874), check("total", 0), check("mail_pending", 1),
+                       check("action_toast.label", "Restored 1 message"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000}, check("total", 0), check("notice", None),
+                       click(85, 115), check("folder", "INBOX"), check("total", 120),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(690, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80),
+                       {"type": "resize", "width": 900, "height": 640}, wait(150),
+                       key("ctrl+d"), check("action_toast.label", "Deleted 1 message"),
+                       shot("undo-dark-compact-control"), click(800, 594),
+                       check("action_toast.label", "Restored 1 message"), check("total", 120),
+                       shot("undo-dark-compact-restoring"),
+                       {**check("mail_pending", 0), "timeout_ms": 7000}, check("total", 120))
+        self.assertIn(subject, [m["subject"] for m in self.mcp.call("desktop.state")["mail_rows"]])
+
+    def test_cross_account_undo_returns_to_original_account_while_settings_remain_usable(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(286, 773), check("cross_account_moves", True),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80),
+                       key("m"), check("dialog", "Move"), wait(80),
+                       click(710, 327), wait(80), click(710, 403), check("fields.move_account", "preview-personal"),
+                       click(670, 385), type_text("Archive"), key("Return"), check("dialog", None),
+                       check("total", 119), check("action_toast.label", "Archived 1 message"),
+                       click(1340, 874), check("total", 120), check("mail_pending", 1),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(286, 773), check("cross_account_moves", False),
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       key("ctrl+1"), check("tab", "Mail"), check("total", 120),
+                       check("mail_rows.0.account_id", "preview-work"), check("notice", None), shot("undo-cross-account-restored"),
+                       click(85, 398), check("folder", "Archive"), check("total", 0))
+
+    def test_read_on_leave_updates_immediately_and_preserves_explicit_unread(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), key("ctrl+1"), check("tab", "Mail"), wait(80),
+                       check("mail_rows.0.unread", True), check("mail_pending", 0),
+                       click(420,246), check("selected", "A little more room to think"), check("unread", True), check("read_candidate", "A little more room to think"),
+                       click(420,345), check("selected", "Your weekly workspace digest"),
+                       check("mail_rows.0.unread", False), check("mail_rows.1.unread", True),
+                       check("mail_pending", 1), shot("read-on-leave-before-save"),
+                       {**check("mail_pending", 0), "timeout_ms":5000},
+                       click(420,246), check("selected", "A little more room to think"),
+                       {**check("mail_pending", 0), "timeout_ms":5000},
+                       click(740,100), check("unread", True), check("mail_pending",1),
+                       click(420,345), check("selected", "Your weekly workspace digest"),
+                       {**check("mail_pending", 0), "timeout_ms":5000}, check("mail_rows.0.unread",True),
+                       key("ctrl+r"), check("refreshing", True), check("refreshing", False),
+                       check("mail_rows.0.unread",True), shot("explicit-unread-survives-leaving"))
+
+    def test_read_on_leave_failure_preserves_folder_and_unread(self):
+        self.mcp.call("desktop.start", mail_actions="fail")
+        self.mcp.batch(click(420,246), check("selected", "A little more room to think"),
+                       click(84,398), check("folder", "Archive"), check("mail_pending",1),
+                       {**check("mail_pending",0),"timeout_ms":5000},
+                       check("notice","Could not update this message","contains"), check("folder","Archive"),
+                       shot("read-on-leave-failure"), click(84,278), check("folder","INBOX"),
+                       check("mail_rows.0.unread",True), check("mail_pending",0))
+
+    def test_read_on_leave_with_arrows_in_unread_filter_keeps_next_selection(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch(click(350,100), wait(100), click(350,155), check("filter","Unread"), check("total",4),
+                       click(420,246), check("selected","A little more room to think"), key("Down"),
+                       check("selected","Your weekly workspace digest"), check("total",3),
+                       check("mail_rows.0.subject","Your weekly workspace digest"), check("mail_pending",1),
+                       key("Down"), check("selected","Coffee next Thursday?"), check("total",2),
+                       {**check("mail_pending",0),"timeout_ms":5000},
+                       check("selected","Coffee next Thursday?"), check("total",2), shot("read-on-leave-unread-navigation"))
+
     def test_context_read_and_inbox_flag_use_the_clicked_message_during_slow_save(self):
         self.mcp.call("desktop.start", mail_actions="slow")
         self.mcp.batch({"type": "click", "x": 403, "y": 450, "button": 3},
@@ -144,7 +865,10 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+1"), key("m"), check("dialog", "Move"), key("Escape"))
 
     def test_sidebar_resize_window_size_and_contacts_toast(self):
-        self.mcp.batch(drag(222, 500, 310, 500), check("sidebar_width", 305, "gte"),
+        # Ready precedes the initial body/layout presentation. Begin the native
+        # drag after that presentation, as in the other panel-resize flows.
+        self.mcp.batch(check("reader_text_ready", True), wait(150),
+                       drag(222, 500, 310, 500), check("sidebar_width", 305, "gte"),
                        check("preferences_saved", True), check("saved_sidebar_width", 305, "gte"),
                        shot("resized-sidebar-light"),
                        {"type": "resize", "width": 1200, "height": 800}, check("window_size", [1200.0, 800.0]),
@@ -245,6 +969,148 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+1"), check("tab", "Mail"), wait(80), key("ctrl+k"), check("focused_input", "search"), type_text("prototype"), check("total", 1), key("Escape"), check("dialog", None),
                        check("reply_count", 1), check("attachment_count", 4), shot("reply-layout"))
 
+    def test_bulk_archive_review_cancellation_immediate_undo_and_delete_review(self):
+        result = self.mcp.call("desktop.start", mail_actions="slow")
+        print(f"Bulk review and Undo evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(584,164), check("mail_selection.mode",True),
+                       key("ctrl+a"), check("mail_selection.count",120),
+                       check("mail_selection.pending",False),
+                       key("BackSpace"), check("dialog","BulkReview"),
+                       check("bulk.review_count",120), check("bulk.action","Archive"),
+                       shot("bulk-archive-review"), key("n"), check("dialog",None),
+                       check("total",120), check("mail_selection.count",120),
+                       key("ctrl+d"), check("dialog","BulkReview"),
+                       check("bulk.action","Move to Trash"), shot("bulk-delete-review"),
+                       key("Escape"), check("dialog",None), check("total",120),
+                       key("BackSpace"), check("dialog","BulkReview"),
+                       check("bulk.review_count",120), key("y"), check("dialog",None),
+                       check("total",0), check("action_toast.count",120),
+                       shot("bulk-archive-immediate"), check("bulk.jobs.0.running",1), click(1340,874),
+                       check("action_toast.label","Restored 120 messages"), check("total",120),
+                       shot("bulk-undo-immediate"), {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
+                       check("bulk.jobs.0.failed",0), check("bulk.jobs.0.uncertain",0),
+                       check("total",120), shot("bulk-undo-complete"))
+
+    def test_bulk_flags_read_and_move_use_the_selected_messages(self):
+        self.mcp.batch(click(584,164), check("mail_selection.mode",True), check("mail_selection.drawn",True), click(274,218), click(274,322),
+                       check("mail_selection.count",2), check("mail_selection.pending",False),
+                       key("s"), check("dialog","BulkReview"), check("bulk.action","Flag"),
+                       check("bulk.review_count",2), key("Return"), check("dialog",None),
+                       check("bulk.jobs.0.remaining",0), check("mail_rows.0.starred",True),
+                       check("mail_rows.1.starred",True), shot("bulk-flagged"),
+                       click(584,164), check("mail_selection.mode",True), check("mail_selection.drawn",True), click(274,218), click(274,322),
+                       check("mail_selection.pending",False), click(732,100),
+                       check("dialog","BulkReview"), check("bulk.action","Mark as read"),
+                       key("Return"), check("dialog",None), check("bulk.jobs.0.remaining",0),
+                       check("mail_rows.0.unread",False), check("mail_rows.1.unread",False),
+                       check("inbox_unread.preview-work",1), check("inbox_unread.preview-personal",1), shot("bulk-read"),
+                       click(584,164), check("mail_selection.mode",True), check("mail_selection.drawn",True), click(274,218), click(274,322),
+                       check("mail_selection.pending",False), click(732,100),
+                       check("dialog","BulkReview"), check("bulk.action","Mark as unread"),
+                       key("Return"), check("dialog",None), check("bulk.jobs.0.remaining",0),
+                       check("inbox_unread.preview-work",3), click(584,164), check("mail_selection.mode",True), check("mail_selection.drawn",True), click(274,218), click(274,426),
+                       check("mail_selection.count",2), check("mail_selection.pending",False), key("m"), check("dialog","Move"),
+                       check("focused_input","folder-search"), type_text("Projects"),
+                       key("Return"), check("dialog","BulkReview"), check("bulk.review_count",2),
+                       shot("bulk-move-review"), key("Return"), check("dialog",None),
+                       check("total",118), check("action_toast.label","Moved 2 messages to Projects"),
+                       check("bulk.jobs.0.remaining",0), click(80,535), check("folder","Projects"),
+                       check("total",1), shot("bulk-move-destination"), click(1340,874),
+                       check("action_toast.label","Restored 2 messages"),
+                       check("bulk.jobs.0.remaining",0), check("total",0),
+                       click(80,278), check("folder","INBOX"), check("total",120))
+
+    def test_bulk_failures_restore_rows_and_keep_reviewable_results(self):
+        result=self.mcp.call("desktop.start",mail_actions="fail")
+        print(f"Bulk failure evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(584,164), check("mail_selection.mode",True), check("mail_selection.drawn",True),
+                       click(274,218), click(274,322),
+                       check("mail_selection.pending",False), key("ctrl+d"),
+                       check("dialog","BulkReview"), check("bulk.review_count",2),
+                       key("Return"), check("dialog",None), check("total",118),
+                       check("action_toast.count",2), check("bulk.jobs.0.running",1),
+                       shot("bulk-delete-pending"), {**check("bulk.jobs.0.failed",2),"timeout_ms":5000},
+                       check("bulk.jobs.0.remaining",0), check("total",120),
+                       check("notice","2 messages could not be confirmed","contains"),
+                       shot("bulk-delete-failed"), click(1330,36), check("dialog","BulkHistory"),
+                       wait(100), shot("bulk-failure-history"), click(700,490),
+                       check("bulk.items.0.status","failed"), check("bulk.items.1.status","failed"),
+                       wait(100), shot("bulk-failure-items"), {"type":"resize","width":900,"height":640},
+                       wait(150), shot("bulk-failure-items-compact"))
+
+    def test_bulk_reviews_and_pending_undo_in_compact_dark(self):
+        result=self.mcp.call("desktop.start",mail_actions="slow")
+        print(f"Compact bulk evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),
+                       click(690,366),check("dark",True),key("ctrl+1"),check("tab","Mail"),wait(100),
+                       click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
+                       click(274,218),click(274,322),check("mail_selection.count",2),
+                       check("mail_selection.pending",False),
+                       {"type":"resize","width":900,"height":640},wait(150),
+                       key("ctrl+d"),check("dialog","BulkReview"),check("bulk.review_count",2),
+                       shot("bulk-dark-delete-review"),key("n"),check("dialog",None),check("total",120),
+                       key("Delete"),check("dialog","BulkReview"),check("bulk.action","Archive"),
+                       key("Return"),check("dialog",None),check("total",118),
+                       check("action_toast.count",2),check("bulk.jobs.0.running",1),
+                       shot("bulk-dark-archive-pending"),click(800,594),
+                       check("action_toast.label","Restored 2 messages"),check("total",120),
+                       shot("bulk-dark-undo-immediate"),
+                       {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
+                       check("bulk.jobs.0.failed",0),check("total",120),shot("bulk-dark-undo-complete"))
+
+    def test_mail_selection_mouse_ranges_and_focus(self):
+        self.mcp.batch(click(400, 255), check("selected", "A little more room to think"),
+                       {"type":"click", "x":400, "y":360, "modifiers":["ctrl"]},
+                       check("mail_selection.count", 2), check("mail_selection.pending", False),
+                       {"type":"click", "x":400, "y":568, "modifiers":["shift"]},
+                       check("mail_selection.count", 3), check("mail_selection.pending", False),
+                       shot("selection-range"),
+                       {"type":"click", "x":400, "y":450, "modifiers":["ctrl"]},
+                       check("mail_selection.count", 2),
+                       {"type":"click", "x":400, "y":450, "modifiers":["ctrl"]},
+                       check("mail_selection.count", 3), check("full_reader", False),
+                       double_click(400, 250), check("full_reader", True),
+                       key("Escape"), check("full_reader", False), key("ctrl+a"),
+                       check("mail_selection.count", 120), check("mail_selection.pending", False),
+                       key("Escape"), check("mail_selection.mode", False),
+                       key("ctrl+k"), check("focused_input", "search"), type_text("Coffee next Thursday"),
+                       check("total", 1), key("ctrl+a"), type_text("prototype"), check("total", 1),
+                       check("mail_selection.mode", False), shot("selection-text-focus"))
+
+    def test_mail_selection_checkboxes_pages_scope_and_compact(self):
+        self.mcp.batch(click(584, 164), check("mail_selection.mode", True), check("mail_selection.drawn", True),
+                       click(274, 218), check("mail_selection.count", 1),
+                       click(274, 322), check("mail_selection.count", 2),
+                       check("mail_selection.pending", False),
+                       click(260, 218), check("mail_selection.count", 1),
+                       click(274, 218), check("mail_selection.count", 2),
+                       check("selected", "A little more room to think"), shot("selection-checkboxes"),
+                       key("ctrl+a"), check("mail_selection.count", 120),
+                       check("mail_selection.pending", False), click(586, 884), check("offset", 50),
+                       check("mail_selection.pending", False), shot("selection-next-page"),
+                       {"type":"resize", "width":900, "height":640}, wait(150),
+                       shot("selection-compact"), click(80, 398), check("folder", "Archive"),
+                       check("mail_selection.mode", False))
+
+    def test_mail_selection_remap_reader_isolation_and_dark(self):
+        self.mcp.batch(click(950, 325), check("mail_selection.list_focus", False), key("ctrl+a"), wait(80), check("mail_selection.mode", False),
+                       click(400, 250), key("Tab"), check("sidebar_focus", True),
+                       key("ctrl+a"), wait(80), check("mail_selection.mode", False),
+                       key("Tab"), check("sidebar_focus", False), key("ctrl+a"),
+                       check("mail_selection.count", 120), check("mail_selection.pending", False),
+                       click(571, 104), check("mail_selection.count", 0),
+                       check("mail_selection.mode", True), key("Escape"), check("mail_selection.mode", False),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(690, 366), check("dark", True), click(645, 156), check("settings_tab", "Shortcuts"),
+                       {"type":"hover", "x":1200, "y":700}, {"type":"scroll", "amount":30}, wait(150),
+                       click(920, 480), key("alt+a"), check("shortcuts.SelectAll", "Alt+A"),
+                       check("preferences_saved", True), shot("selection-shortcut-remapped"),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80), click(400, 250),
+                       key("ctrl+a"), check("mail_selection.mode", False), key("alt+a"),
+                       check("mail_selection.count", 120), check("mail_selection.pending", False),
+                       shot("selection-dark"), {"type":"resize", "width":900, "height":640},
+                       wait(150), shot("selection-compact-dark"))
+
     def test_read_search_preload_and_mouse_navigation(self):
         self.mcp.batch(check("selected", "A little more room to think"), check("cache_entries", 3, "gte"),
                        check("page_prefetched", True), shot("mail-light"),
@@ -291,6 +1157,19 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+1"), check("tab", "Mail"), click(85, 358), check("folder", "Archive"),
                        click(85, 115), check("folder", "INBOX"), check("account", "preview-work"), shot("account-inbox-unread-count"))
 
+    def test_search_mouse_focus_blocks_default_and_remapped_delete_chords(self):
+        self.mcp.batch(click(415,154), type_text("invoice"), check("total",1), key("ctrl+d"),
+                       key("ctrl+a"), key("BackSpace"), check("total",120), check("action_toast",None),
+                       key("Escape"), key("ctrl+comma"), check("tab","Preferences"), wait(80),
+                       click(645,156), check("settings_tab","Shortcuts"),
+                       {"type":"hover","x":1200,"y":700},{"type":"scroll","amount":30},wait(150),
+                       click(920,540),key("alt+d"),check("shortcuts.Delete","Alt+D"),check("preferences_saved",True),
+                       key("ctrl+1"),check("tab","Mail"),wait(80),
+                       click(415,154),type_text("invoice"),check("total",1),key("alt+d"),
+                       key("ctrl+a"),key("BackSpace"),check("total",120),check("action_toast",None),
+                       key("Escape"),key("alt+d"),check("total",119),check("action_toast.label","Deleted 1 message"),
+                       shot("remapped-delete-respects-search-focus"))
+
     def test_sidebar_inbox_shortcut_and_highlighted_return_move(self):
         self.mcp.call("desktop.start", long_folders=True)
         self.mcp.batch(click(100, 537), check("folder", "Projects"), check("sidebar_focus", True),
@@ -302,12 +1181,12 @@ class NativeFlows(unittest.TestCase):
                        click(85, 115), check("folder", "INBOX"), check("total", 121),
                        key("ctrl+comma"), check("tab", "Preferences"), click(645, 156), check("settings_tab", "Shortcuts"),
                        {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(150), shot("sidebar-inbox-key-settings"),
-                       click(988, 738), check("shortcuts.Inbox", ""), check("preferences_saved", True),
+                       click(988, 600), check("shortcuts.Inbox", ""), check("shortcuts.Delete", "Mod+D"), check("preferences_saved", True),
                        key("ctrl+1"), check("tab", "Mail"), click(100, 537), check("folder", "Projects"),
                        key("i"), wait(80), check("folder", "Projects"),
                        key("ctrl+comma"), check("tab", "Preferences"),
                        {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(120),
-                       click(920, 738), key("alt+i"), check("shortcuts.Inbox", "Alt+I"), check("preferences_saved", True),
+                       click(920, 600), key("alt+i"), check("shortcuts.Inbox", "Alt+I"), check("preferences_saved", True),
                        key("ctrl+1"), check("tab", "Mail"), click(100, 537), check("folder", "Projects"), key("alt+i"), check("folder", "INBOX"))
 
     def test_secondary_shortcut_remap_conflict_and_disable(self):
@@ -330,7 +1209,7 @@ class NativeFlows(unittest.TestCase):
                        click(690, 366), check("dark", True),
                        click(286, 737), check("unified", False),
                        click(286, 773), check("cross_account_moves", True),
-                       key("ctrl+1"), check("tab", "Mail"), wait(80),
+                       key("ctrl+1"), check("tab", "Mail"), wait(150), shot("preferences-return-before-resize"),
                        drag(616, 500, 785, 500), check("reader_split", .44, "gte"),
                        key("ctrl+comma"), check("tab", "Preferences"), click(399, 366), check("dark", False),
                        check("preferences_saved", True), check("saved_appearance", "Light"),
@@ -346,9 +1225,56 @@ class NativeFlows(unittest.TestCase):
                        click(650, 362), type_text("Meet me Monday"), check("dialog", "Compose"),
                        click(650, 485), type_text("A message written with the mouse and keyboard."),
                        click(990, 720), check("draft_count", 1), check("dialog", None), shot("saved-draft"),
-                       click(98, 478), check("dialog", "Compose"),
+                       click(98, 517), check("dialog", "Compose"),
                        check("fields.to", "friend@example.com"), check("fields.subject", "Meet me Monday"),
                        check("editor", "A message written with the mouse and keyboard.", "contains"), shot("reopened-draft"))
+
+    def test_drafts_collapse_context_cancel_and_discard(self):
+        self.mcp.batch(key("c"), check("dialog", "Compose"), wait(80),
+                       click(650, 362), type_text("First draft to keep"), check("draft_count", 1),
+                       key("Escape"), check("dialog", None),
+                       key("c"), check("dialog", "Compose"), wait(80),
+                       click(650, 362), type_text("Second draft to discard"), check("draft_count", 2),
+                       key("Escape"), check("dialog", None), wait(80), shot("drafts-expanded"),
+                       click(98, 478), check("drafts_collapsed", True), check("saved_drafts_collapsed", True),
+                       shot("drafts-collapsed"), key("ctrl+2"), check("tab", "Calendar"),
+                       key("ctrl+1"), check("tab", "Mail"), check("drafts_collapsed", True),
+                       click(98, 478), check("drafts_collapsed", False), check("saved_drafts_collapsed", False),
+                       click(1400, 36), check("busy", "sync", "contains"), {"type":"click", "x":100,"y":553,"button":3},
+                       check("draft_context", None, "ne"), check("busy", []),
+                       check("draft_context", None, "ne"), shot("draft-context-after-refresh"),
+                       key("Down"), key("Return"), check("dialog", "DiscardDraft"), shot("discard-review-light"),
+                       key("n"), check("dialog", None), check("draft_count", 2),
+                       {"type":"click", "x":100,"y":553,"button":3}, check("draft_context", None,"ne"),
+                       click(190, 610), check("dialog", "DiscardDraft"), key("Return"),
+                       check("dialog", None), check("draft_count", 1),
+                       check("draft_rows.0.1", "First draft to keep"), shot("draft-discarded"),
+                       click(98, 517), check("dialog", "Compose"), check("fields.subject", "First draft to keep"))
+
+    def test_draft_bin_cancel_failure_retry_and_compact_dark_review(self):
+        result = self.mcp.call("desktop.start", discard_failure_once=True)
+        fixture = Path(result["artifacts"]) / "discard attachment.txt"
+        fixture.write_text("Cached bytes to remove with the draft")
+        self.mcp.batch(key("c"), check("dialog", "Compose"), wait(80),
+                       click(650,362), type_text("Draft with an attachment"),
+                       click(650,485), type_text("Do not lose this on a failed discard."),
+                       click(583,720), {"type":"choose_file","path":str(fixture)},
+                       check("draft_attachments.0.name", fixture.name), check("draft_io",False), wait(150),
+                       click(916,741), check("dialog","DiscardDraft"), shot("discard-attachment-review"),
+                       key("Escape"), check("dialog","Compose"),
+                       check("editor","Do not lose this on a failed discard.","contains"),
+                       click(916,741), check("dialog","DiscardDraft"), key("y"),
+                       check("notice","Preview storage failure","contains"), check("discard_pending",False),
+                       check("draft_count",1), shot("discard-failure-keeps-draft"), key("Escape"),
+                       check("dialog","Compose"), check("draft_attachments.0.name",fixture.name), wait(80),
+                       click(916,716), check("dialog","DiscardDraft"), key("Return"),
+                       check("draft_count",0), check("dialog",None), check("draft_attachments",[]))
+        self.mcp.call("desktop.start", width=900,height=640)
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"), click(563,366),check("dark",True),
+                       key("ctrl+1"),check("tab","Mail"), key("c"),check("dialog","Compose"),wait(80),
+                       click(450,257),type_text("Compact draft"),check("draft_count",1),
+                       click(646,527),check("dialog","DiscardDraft"),shot("discard-review-dark-compact"),
+                       key("Escape"),check("dialog","Compose"),check("fields.subject","Compact draft"))
 
     def test_compose_autosaves_and_move_accepts_typed_folder(self):
         self.mcp.batch(key("c"), check("dialog", "Compose"),
@@ -378,21 +1304,21 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(click(575, 726), check("draft_io", False), check("draft_attachments.0.name", second.name),
                        check("draft_attachments.1.name", third.name), wait(150), click(990, 790), check("dialog", None))
         fixture.unlink(); second.unlink(); third.unlink()
-        self.mcp.batch(click(98, 478), check("dialog", "Compose"), check("fields.cc", "copy@example.com"),
+        self.mcp.batch(click(98, 517), check("dialog", "Compose"), check("fields.cc", "copy@example.com"),
                        check("fields.bcc", "hidden@example.com"), check("draft_attachments.0.name", second.name),
                        check("editor", "Please read the attached notes.", "contains"), shot("reopened-attachments"),
                        click(465, 790), check("notice", "Sending is disabled in preview", "contains"),
                        check("dialog", "Compose"), check("draft_attachments.1.name", third.name), shot("send-failure-keeps-draft"),
                        key("Escape"), check("dialog", None), key("ctrl+comma"), check("tab", "Preferences"),
                        click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
-                       click(98, 478), check("dialog", "Compose"), shot("composer-dark-attachments"),
+                       click(98, 517), check("dialog", "Compose"), shot("composer-dark-attachments"),
                        click(583, 790), {"type": "choose_file"}, check("draft_io", False),
                        check("draft_attachments.1.name", third.name), key("Escape"), check("dialog", None))
 
 
     def test_reply_all_mouse_and_remappable_shortcut(self):
         self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prototype"),
-                       check("total", 1), key("Escape"), wait(80), click(766, 830), check("dialog", "Compose"),
+                       check("total", 1), key("Escape"), check("html_ready", True), wait(100), click(766, 784), check("dialog", "Compose"),
                        check("fields.to", "Daniel Park <team@example.com>, colleague@example.com"),
                        check("fields.cc", "copy@example.com"), check("fields.bcc", ""),
                        check("draft_in_reply_to", "<prototype@example.com>"), shot("reply-all-mouse"),
@@ -467,7 +1393,7 @@ class NativeFlows(unittest.TestCase):
                        check("outgoing_pending", 1), wait(150), shot("outbox-copy-retry-error"),
                        click(799, 584), check("outgoing_pending", 0), check("outgoing_rows", []),
                        shot("outbox-empty-light"), key("Escape"), check("dialog", None),
-                       click(100, 478), check("dialog", "Compose"),
+                       click(100, 517), check("dialog", "Compose"),
                        check("fields.subject", "Delivery needs review"),
                        check("editor", "A saved message for the outgoing recovery flow.", "contains"),
                        check("draft_count", 1), shot("reviewed-delivery-returned-draft"))
@@ -500,6 +1426,7 @@ class NativeFlows(unittest.TestCase):
                            key("ctrl+2"), check("tab", "Calendar"), click(1260, 348), check("dialog", "Event"),
                            check("event_access.update", mode == "calendar"), shot("google-event-" + mode),
                            key("Escape"), check("dialog", None), key("ctrl+comma"),
+                           check("tab", "Preferences"), wait(80),
                            click(559, 156), check("settings_tab", "Backups"), shot("google-backup-" + mode),
                            key("ctrl+1"), check("tab", "Mail"), key("Down"),
                            check("selected", "Your weekly workspace digest"))
@@ -699,14 +1626,19 @@ class NativeFlows(unittest.TestCase):
                        check("dialog", "Event"), check("calendar_connected", False), shot("empty-calendar-event"))
 
     def test_reply_history_sender_attachments_and_image_exceptions(self):
-        for index, x in enumerate([701, 800, 910]):
+        for index, x in enumerate([1115, 1218, 1324]):
             if index: self.mcp.call("desktop.start")
             self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prottoype"), check("total", 1), key("Escape"),
                            check("reply_count", 1), check("attachment_count", 4), check("images_allowed", False),
-                           click(740, 475), check("expanded_replies", 0, "contains"), shot("expanded-reply"),
-                           click(740, 475), check("expanded_replies", []),
-                           click(740, 223), check("dialog", "Sender"), shot("sender-details"), key("Escape"), check("dialog", None),
-                           click(x, 360), check("images_allowed", True), shot(f"image-exception-{index}"))
+                           check("html_ready", True), wait(100), shot("prototype-html-layout"))
+            self.toggle_html_quotes(False)
+            self.mcp.batch(wait(100), shot("expanded-html-reply"))
+            self.toggle_html_quotes(True)
+            self.mcp.batch(click(740, 243), check("dialog", "Sender"), shot("sender-details"), key("Escape"), check("dialog", None),
+                           click(x, 376), check("images_allowed", True), wait(100), shot(f"image-exception-{index}"))
+        self.mcp.batch(click(770,320), check("html_formatted", False), check("reader_text_ready", True),
+                       wait(100), shot("plain-quoted-history"), click(740,419), check("expanded_replies", 0, "contains"),
+                       wait(100), shot("plain-quoted-history-expanded"))
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(730, 156), check("settings_tab", "Privacy"), shot("privacy-preferences"))
 
     def test_reading_preferences_and_cross_account_move(self):

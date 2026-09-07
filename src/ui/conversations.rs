@@ -19,6 +19,27 @@ pub(super) struct Conversation {
 }
 
 impl App {
+    pub(super) fn action_mail(&self) -> Option<&Mail> {
+        let id = self.reader_id()?;
+        if self.mail_actions.restoring(id) || self.page.bulk_pending.contains(id) {
+            return None;
+        }
+        let mail = self
+            .detail
+            .as_ref()
+            .filter(|detail| detail.summary.id == id)
+            .map(|detail| &detail.summary)
+            .or_else(|| {
+                self.conversation
+                    .page
+                    .rows
+                    .iter()
+                    .find(|mail| mail.id == id)
+            })
+            .or_else(|| self.page.rows.iter().find(|mail| mail.id == id))?;
+        Some(self.mail_actions.effective(mail))
+    }
+
     pub(super) fn reader_id(&self) -> Option<&str> {
         self.selected.as_ref()?;
         self.conversation
@@ -28,7 +49,12 @@ impl App {
     }
     pub(super) fn request_conversation(&mut self, offset: Option<usize>) {
         self.conversation.generation += 1;
-        if !self.preferences.group_conversations {
+        if !self.preferences.group_conversations
+            || self
+                .selected
+                .as_ref()
+                .is_some_and(|id| self.mail_actions.restoring(id))
+        {
             return;
         }
         if let Some(anchor) = self.selected.clone() {
@@ -89,6 +115,7 @@ impl App {
     ) -> Task<Message> {
         if generation != self.conversation.generation
             || self.selected.as_deref() != Some(&anchor)
+            || self.mail_actions.restoring(&anchor)
             || !self.preferences.group_conversations
         {
             return Task::none();
@@ -310,6 +337,7 @@ impl App {
         column![
             container(toolbar).padding([10, 18]),
             line(),
+            self.find_bar(),
             container(heading).padding([14, 20]),
             scrollable(container(cards).padding([0, 20]))
                 .id("conversation-reader")

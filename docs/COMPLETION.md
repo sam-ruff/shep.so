@@ -455,3 +455,642 @@ Reviewed synthetic WebP captures under `artifacts/flutter/native/picker/`, `arti
 ### Flutter reader shipping checkpoint
 
 The Flutter formatted-reader increment shipped for review as [`6e8475f`](https://github.com/sam-ruff/shep.so/commit/6e8475f4470534fd4d16836c8a9efefa8915f1f6) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the remote SHA was verified. Required formatting/Clippy hooks and all **229 root/shared tests** pass, with two personal-account diagnostics intentionally ignored. The platform/browser/protocol evidence, production artifact inspection and remaining limits are recorded above. Pinned strict documentation validation passes. R77's prompt push is fulfilled for this increment; full parity, Apple execution, R75/R76 and VPS deployment remain active. The owned emulator is stopped, artifacts remain ignored, and main was not merged or modified by this work. Quality/release definitions remain disabled; re-enable them when trusted runners and release prerequisites are ready.
+
+## Imported desktop main history through 10d8569
+
+The following records describe the independent desktop main worktree at their cited commits. They do not establish verification of this merged client branch. Desktop request IDs R67–R71 here belong to the `desktop-main:` namespace.
+
+## Frequent background mail and independent refresh
+
+Mail checks now start after the cached workspace opens and repeat every 15 seconds by default. Existing saved minute-based preferences gain the new default automatically; General preferences accepts 5–3600 seconds and stores it across restarts. Calendar scheduling retains its separate cadence. Each completed account check flushes cached changes without waiting for a slower account.
+
+A dedicated capacity-one command channel coalesces repeated Refresh clicks. The scheduler runs one cycle at a time and retains a follow-up requested during automatic or manual work. Automatic checks leave the manual refresh icon idle, while clicking it gives immediate feedback. Shared provider slots preserve bounded background work and independent cached reads/saves. Interval changes take effect after saving, and timeout or failure leaves the worker available for retry.
+
+Typed sync completion clears a recovered sync error without dismissing unrelated errors. Corrected settings clear their prior validation/save error on the successful explicit save, alongside the existing Changes saved toast. Native fixtures deliver a fictional new message and exercise failure/retry without contacting a personal account.
+
+Validation: 213 Rust tests pass (two opt-in live diagnostics ignored), 17 Python tests pass, and the full 61-flow native functional run passes. Virtual-time tests cover immediate/repeated checks, interval changes, coalesced manual requests, error and timeout recovery; queue saturation and SQLite reopen tests cover isolation and persistence. WebP review covers automatic arrival, queued refresh, server-error recovery and valid/invalid interval saves. Logs are under `artifacts/logs/mail-sync-*`. Formatting, Clippy and the strict documentation build pass. Performance measurements remain deferred. Release installation and the shipped commit are recorded below after publication.
+
+The optimized production release passes archive checksum, extraction and bundled-installer verification. It is installed for the Linux user; the installed executable and release binary both have SHA-256 `1f903cd013c9324e2edd19d2281f37afbad4e0f54958ee0a72ec427d9c9ba37c`. Existing personal windows were left running and need reopening to load the update.
+
+Shipped as `d4ecb215c5ba7ce9bb078c68d6a9f0e383609f4c` on main. R65 is complete and removed from TODO; the other full-product requirements remain active. The Documentation workflow is tracked in [run 34029689068](https://github.com/sam-ruff/shep.so/actions/runs/34029689068). Quality and release CI remain disabled.
+
+
+## Relevance search and Move matching
+
+New inbox searches use **Best match**, while the sort menu can override ordering for that search. Clearing search or returning through Mail restores the saved browsing sort. SQL ranks before paging, preserves account/folder/filter scope and uses timestamp/ID ties. Exact-term ranking is separate from typo-expanded ranking; sender matches carry less weight than subject/body matches. A short whole-body equality bonus makes the requested `test` body rank above keyword repetition, including ordinary surrounding line endings. Its metadata size guard avoids reading long message text for that bonus; longer messages remain searchable through the index.
+
+RapidFuzz 0.5 replaces the handwritten edit matrix and supplies edit, subsequence and ratio matching. Vocabulary candidates are retrieved through indexed edits and a bounded shared-prefix neighborhood. Folder ranking handles exact names/leaves, prefixes, accents, transpositions and abbreviations; Enter resolves the current query. Latin normalization preserves Japanese marks and Hangul syllables. Nonempty input without indexable tokens returns an empty result, and query punctuation cannot become SQL/FTS syntax.
+
+The native Move scenario exposed a loading race. Move/read/flag now resolve the current reader identity from matching detail, conversation or inbox metadata and work while its body is pending. A stale body from another message cannot become the action target. Closing Move clears focus observation. The unrelated POP3 caption was removed from the Move chooser. The saved native flows inspect Best match/date switching and refresh, then move into Café and Archive and verify the destination contents.
+
+The ranked-query benchmark now selects Relevance; it has not been run because performance measurements remain deferred until the final idle-host pass. See [RapidFuzz](https://docs.rs/rapidfuzz/latest/rapidfuzz/), [FTS5 ranking](https://www.sqlite.org/fts5.html#the_bm25_function) and [SQLite octet_length](https://www.sqlite.org/lang_corefunc.html#octet_length) for the underlying APIs. Test and shipping evidence follows after validation.
+
+Validation: formatting and Clippy pass, 221 Rust tests pass (two opt-in live diagnostics ignored), 17 Python tests pass, and all 63 native functional flows pass in one complete run. Tests cover the exact `test` body, repetition, line endings/case, typo/prefix ranking, stable pages/reopen, scopes, Unicode, stale results and actions while bodies load. Reviewed WebP evidence shows Best match, date override, highlighted Café and the correct Archive destination. Logs are under `artifacts/logs/search-*`. The strict documentation build passes. Release checksum/extraction/bundled-installer verification passes; the installed Linux executable matches the optimized production binary at SHA-256 `7c663f0dfde36967316334325987e05d0b2d8c2ec015a56547ec49a3809080d7`. Existing personal windows were left running and need reopening for this update. Shipping is recorded after publication below.
+
+Shipped as `d3a530a` on main. The fuzzy-matching/relevance entry is complete and removed from TODO. R44 still tracks finding text within the reader, and R50/R60 retain their other optimistic-action requirements. The full-product goal remains active.
+
+## Collapsible drafts and permanent discard
+
+Drafts appear in a counted sidebar group with a saved collapse preference. Each draft has a native context menu for opening or discarding; a background mail refresh preserves its target and menu. The editor also has a bin, and the discard confirmation is red in both themes. Both discard controls open the same subject/attachment review, with mouse cancellation and Escape/N, or Enter/Y to confirm. Failed storage keeps the original editor and cached attachments available for retry; pending deletion prevents further edits and window closure.
+
+Deletion runs through the independent persistence queue. One SQLite transaction rejects unresolved outgoing delivery, permanently retires the draft ID, removes text and cached attachment blobs, and returns a versioned snapshot. Retirement survives reopening storage, newer delayed save/file revisions, and old send cleanup. Beginning a delivery checks the same tombstone transactionally. Existing Outbox review remains the route for resolving an interrupted delivery before its draft can be discarded. Known rejections can be discarded directly, with their cached MIME/envelope record and Outbox entry removed in the same transaction.
+
+Rust tests cover storage reopen, attachment deletion, late saves/imports, rollback/retry, send/discard exclusion and stale UI acknowledgments. The occupied-provider test also discards a real stored draft while network workers remain blocked. Native scenarios use actual right-click, group toggles, file picker, bin and keyboard review. The one-failure preview fixture contains no personal data or server access. Validation and shipping results are recorded below after completion. Inline composition and switching among active drafts remain tracked separately by R35.
+
+Validation: formatting and Clippy pass; 229 Rust tests pass (two opt-in live diagnostics ignored), and 17 Python tests pass. The 65-flow native run passed 64 flows and exposed a file-picker harness race: GTK received an empty fixture path before clipboard ownership was ready. The harness now waits for native focus and verifies the isolated clipboard serves the complete path before pasting. Its Python regression includes a stale initial clipboard value. The previously failing attachment flow, discard/retry/compact flow and search-sort flow then all passed. All 65 functional scenarios are verified across that full run and targeted rerun; this is not a claim of a single entirely green run after the harness correction.
+
+An earlier full run also exposed a stale search-focus observation after choosing a sort. Sort/filter changes now clear the old observation and cancel pending retries; a UI ordering test verifies late acknowledgments cannot revive it, and the saved native scenario waits for a fresh focus result. No performance measurements were run. Reviewed WebP captures show the red discard button in light/dark/900×640, the attachment/error review, collapsed/expanded drafts and a menu surviving mail refresh. Logs are under `artifacts/logs/drafts-*`.
+
+The strict documentation build passes. Optimized production release checksum, extraction and bundled-installer checks pass. The Linux user installation matches the release binary at SHA-256 `3d234115369e536c8dbf9618ef50da685062053ac6f2d2dccb5cd325f243cc48`. Personal windows were left running and need reopening for this build. Shipping is recorded below after publication. R35, R38 and the newly requested R67/R68 remain open in TODO.
+
+Shipped as `5aab267bb84392756b1fe8f3658155649015ed85` on main. R36 is complete and removed from TODO, including the requested red confirmation button. The full-product goal remains active. R67 read-on-leave, R68 immediate counted toasts/Undo and R38 faithful HTML are not included in this delivery.
+
+## Read on leaving and immediate action toasts
+
+Deliberately selecting an inbox message arms a read acknowledgment when the user leaves it. Clicking another message, navigating folders/tabs, composing, closing the reader/window and leaving the application update its unread indicator immediately through the existing background flag queue. Startup selection, hover, prefetch and background refresh do not mark unseen mail read. Explicit Mark unread cancels automatic acknowledgment for that visit. Read completion preserves later flag changes, failed saves restore unread state without changing the current selection, and keyboard navigation through the Unread filter keeps the next row selected when the previous row disappears.
+
+Folder and cross-account moves wait behind the selected message's pending read/flag changes and receive the confirmed flags, including after a rejected read. Cross-account transfers now have typed completion IDs, hide the source immediately, retain their pending overlay through refresh, and restore on failure. The existing destination-upload journal and source-before-delete rules remain. A confirmed source move is not reclassified as rejected if subsequent cache cleanup fails. Durable action recovery and projection into newly selected destination/filter scopes remain in TODO.
+
+Archive/delete/move toasts are created during the optimistic UI update, including while source flags are still saving. Repeated actions increment the count and restart the six-second lifetime. Archive/delete continue across accounts in a unified inbox; other folders are scoped to their exact destination account/folder. Each failed action removes only its own count. An older result cannot replace a newer toast, and acknowledgments do not recreate dismissed/expired feedback or hide an existing error. Save-preferences and mail-action toasts stack independently. Undo remains open under R68; no Undo control is claimed delivered here.
+
+Rust coverage includes source flag/transfer ordering, queue exhaustion, explicit-unread intent, failed saves, typed transfer dispatch/cache results, counted feedback and injected-clock lifetime checks. Saved native scenarios cover immediate repeated actions, dismiss-before-save, failure, read navigation and cross-account transfer with isolated slow/failing backends. They also review light/dark/900×640 WebP evidence. A native regression exposed archive/delete counts resetting at a unified-inbox account boundary; the counter now aggregates those standard actions across accounts. The account-removal harness now retries a transient null review object instead of raising ValueError while walking its pending count; its Python test reproduces that transition. Validation and shipping results follow after completion.
+
+The broad native run also exposed Ctrl+D reaching the mail shortcut handler when iced left that chord uncaptured in the focused search field. Mail-target shortcuts now check the native search input focus before dispatch, including remapped modified chords; typed focus responses are ignored after changing tabs or opening another interaction. A new saved mouse-focus scenario tests default/remapped Delete in search and then outside it. Removing the old completion notice increased the visible shortcut-list height, so the Inbox-clear scenario now clicks its actual row and asserts Delete remains unchanged.
+
+Validation: formatting and Clippy pass; 242 Rust tests pass (two opt-in live diagnostics ignored) and 17 Python tests pass. The final broad native run passed 68 of 72 functional flows and exposed the focus check swallowing keys when the full-window reader had no search widget. The guard now applies only to the inbox layout. All four affected reader/selection/context flows, the default/remapped search-isolation flows and the counted-toast flow pass in the saved targeted rerun. All 72 scenarios are verified across that broad run and corrected rerun; this does not claim a single entirely green suite run after the final correction. Evidence is under `artifacts/logs/action-toasts-*`; reviewed WebP captures include counted archive/delete/move, failure, read-on-leave and compact dark toasts. Performance measurements remain deferred. The strict documentation build passes. Optimized packaging, installation and publication evidence follow below.
+
+The optimized production package passes SHA-256, extraction and bundled-installer checks. The Linux user installation matches that release binary at SHA-256 `8d56b26f1da56cefd3c67983d3a4bfc1eecb4617fa79bd4d2b6a30aedc0cf4a7`. Personal application windows remain open and need reopening for this build. Publication is recorded below after pushing. R68 Undo and R38 faithful HTML remain open.
+
+Shipped as `9c907d2c8d974033ff0455ac5d7ef7b2e5a6474a` on main. R67 and the newly discovered search-focus isolation regression are complete and removed from TODO. R68 now retains Undo; its immediate counted feedback is delivered. The full-product goal remains active.
+
+[Documentation run 34037090661](https://github.com/sam-ruff/shep.so/actions/runs/34037090661) passes for the shipped code. Quality and release workflow definitions remain disabled as requested.
+
+
+## Undo for immediate action toasts
+
+Archive, delete and move feedback offers Undo for the visible counted group. Clicking it immediately restores the original rows and shows a counted Restored toast. A move waiting for a flag write can be cancelled locally; a move already accepted by the backend is reversed after its receipt arrives. Navigation remains available, and source placeholders cannot issue actions against obsolete server identities. Undo from a destination folder clears its retired reader target. A rejected reversal keeps Retry Undo/Dismiss available after normal toast expiry; retry preserves the acknowledged receipt.
+
+MOVE/APPEND parse their tagged completion and COPYUID/APPENDUID explicitly. Missing mappings after success use exact destination lookup for Undo: account connection checks, UIDVALIDITY, size/Message-ID candidates and full-byte SHA-256 verification. Duplicate matching copies produce an actionable error rather than guessing. Cache relocation updates the identity transactionally, preserving raw content, search and flags. POP3 reverses locally. Cross-account Undo retains the upload journal and may reverse an already authorized transfer after its preference is disabled. Protocol fixtures and isolated cache tests cover acknowledgment, rejection, lost replies, ambiguity and fresh identities; these are not live Fastmail verification.
+
+The first native pass verified pending grouped archive Undo and move Undo in light/dark/900×640. Visual review exposed a stale destination-reader request, now corrected; the retry scenario's click position was corrected to the actual native control. Final validation, packaging and publication evidence follow below. Session-only Undo does not complete R50/R60 durable recovery or all filtered-folder projection work.
+
+
+Validation: formatting and all-target/all-feature Clippy pass; all 258 Rust tests pass (two opt-in live diagnostics ignored), and all 17 Python tests pass. The final complete native run passes all 76 functional scenarios in one run, including four saved Undo flows. Reviewed WebP evidence covers immediate grouped restoration, delete rejection/retry, cross-account reversal after disabling the preference, destination-reader cleanup and light/dark/900×640 controls. The strict documentation build passes. No performance measurements were run. Logs are under `artifacts/logs/undo-*`; packaging, user installation and publication results follow below.
+
+
+The optimized production package passes checksum, extraction and bundled-installer checks. The per-user Linux installation matches the release binary at SHA-256 `993c786f1080608bc747b5ee7378f9ce3db060c371dcd9c3c42402fa19f438a1`. Personal windows remain running and need reopening. Publication is recorded below after pushing; the full-product goal remains active.
+
+
+Shipped as `551f86c4f428668e633c2be70ea2df1d08d0016f` on main. R68 is complete and removed from TODO. The full-product goal remains active; R38 faithful HTML, R50/R60 durable optimistic recovery and all other listed work remain open. Quality and release workflows remain disabled as requested.
+
+[Documentation run 34040557571](https://github.com/sam-ruff/shep.so/actions/runs/34040557571) passes for the shipped code.
+
+
+## 2026-09-06 — Formatted HTML reader and preserved immediate feedback
+
+R38 now selects the correct MIME representation and renders static HTML layout, typography, tables, backgrounds, links and inline images. Complete mislabeled or escaped XHTML no longer exposes raw tags. A Formatted/Plain text switch preserves the alternative representation; explicit HTML attachments remain attachments and Content-ID images stay scoped to their related part. Fictional fixtures reproduce the supplied styles without copying private authorization codes.
+
+A dedicated litehtml worker owns parsing, fonts, layout, image decoding and viewport rasterization. The iced canvas scrolls with the reader, clips short messages away from reply controls, and offers horizontal scrolling for wide tables. New messages start at the top. Visible-text geometry supports native drag selection, Select all and clipboard copy, excluding collapsed quoted text. Quote controls retain the existing collapsed/expanded/latest-only preference. Metadata-only flag updates preserve the open document. HTML source/inline bytes count toward the existing prefetch cache budget.
+
+External images retain the existing default block/Contacts/Allow all policy and per-message/sender/domain exceptions. A compact image menu saves vertical space. CID/data resources convert to WebP in the worker, and small images preserve their natural dimensions. The renderer has no JavaScript, CSS-import, filesystem or automatic network loader. A small licensed upstream drawing adapter is included with corrected image sizing, positioning, repetition and display scale. HTTP(S) links use background system-browser dispatch; mailto creates an unsent draft. Advanced browser CSS/animations are not fully supported, and the separate R23 download/snapshot/plain-preview streaming work remains open.
+
+Validation: formatting and Clippy with warnings denied pass; 270 Rust tests pass, with two opt-in live diagnostics ignored. All 17 Python tests pass. The complete 80-scenario native functional run passes; the existing quote scenario was then extended with plain-mode collapse/expand assertions and also passes. Native evidence includes styled/XHTML/plain reading, actual clipboard paste, long and wide documents, right-column drag selection, link activation, image exceptions, light/dark/full/900×640 layouts, and archive feedback while a flag save remains pending. The existing counted-toast, grouped Undo, read/unread and context-menu regressions pass. Pixel tests verify table backgrounds, image sizing/repetition at normal/doubled scale and viewport-sized frames. Singular message-count labels are corrected.
+
+Performance measurements remain deferred. Logs and reviewed WebP evidence stay under ignored `artifacts/logs/html-*` and `artifacts/e2e/`; no root logs or private mail fixtures were added. The repository MCP skill and agent instructions document the new flows and CMake/C++ build prerequisite. Quality/release workflows remain disabled; the strict documentation build passes.
+
+The optimized production package passes checksum, extraction and bundled-installer checks, including the adapter license/provenance. Installation for the Linux user matches the release binary at SHA-256 `eee40e452ef60cbb2ea118955d363be715d3d945998dfb4417983e08da97c947`. Existing personal windows were left running and need reopening. Publication is recorded below after pushing.
+
+
+The core HTML reader shipped as `1968e37b3d2792a9eaa87dab0a2e77ea1939e632`. [Documentation run 34045888746](https://github.com/sam-ruff/shep.so/actions/runs/34045888746) passes. Final keyboard review found that uncaptured arrows in the HTML body could navigate the inbox; the follow-up captures scrolling keys only while the body is focused and restores inbox navigation after clicking outside.
+
+The expanded 81-scenario run passed 80 flows and exposed a native file-picker harness race. The path field was populated before GTK finished validating it, so the first Return did not always accept the dialog. The harness now verifies the exact entered path through GTK clipboard ownership and uses bounded, picker-targeted confirmation retries within the existing close timeout. Deterministic Python tests cover ignored input, missing acceptance and delayed filename validation; the saved real multi-attachment flow passes after the correction. The corrected complete run passes all 81 native functional scenarios in one run.
+
+
+The follow-up shipped as `32120b40400b1fd6c9e1986f94d97a82fe481f8d` on main. Formatting, all-target/all-feature Clippy and all 270 Rust tests pass (two opt-in live diagnostics ignored); all 20 Python tests pass. The optimized production package passes checksum, extraction and bundled-installer checks. Its Linux user installation matches SHA-256 `2b1fef6de0f264f61062867fb54261f26e5fa2d5e1b7811930c430e8b7db46c7`. Existing personal windows remain open and need reopening. The strict documentation build passes; [the follow-up documentation run](https://github.com/sam-ruff/shep.so/actions/runs/34047461991) tracks publication.
+
+Reviewed follow-up evidence includes the long-reader End/Home and inbox-focus transition captures in `artifacts/e2e/a711a8c83e2f/` and wrapped attachments in `artifacts/e2e/642e66b89f15/`. Final logs are `artifacts/logs/html-verified-native-tests.log`, `html-final-python-tests.log`, `html-navigation-commit.log`, `html-final-release.log` and `html-final-install.log`. R38 is complete and removed from TODO. The latest responsive-toast request remains delivered and reverified with controlled slow/failing actions, counting and Undo. R44 find, R23 large-message streaming and the rest of the full-product backlog remain open. Performance measurements remain deferred; quality and release workflows remain disabled.
+
+
+## 2026-09-06 — Find within formatted and plain messages
+
+R44 adds a remappable Mod+F action and a reader toolbar control. The find bar counts and highlights literal matches, distinguishes the active match, supports case matching and wraps next/previous through Enter/Shift+Enter or mouse buttons. Escape closes Find before leaving a full-window reader. Search follows the current message and its visible quote state while preserving the inbox query, native text selection and image privacy controls.
+
+Matching and geometry run on the reader worker. HTML uses actual visible text runs, excluding collapsed/hidden content; plain text uses an independent font system so background shaping cannot take iced's UI font lock. Whitespace normalization retains source offsets, Unicode case folding handles non-ASCII text, and regex punctuation is literal. Result revisions, coalescing and cancellation reject obsolete work. Indexed highlight geometry visits visible rows, and reveal scrolls both the parent reader and wide HTML documents when needed. Compact toolbar spacing preserves Export.
+
+The first native iterations exposed a global-Shift race on Enter, stale focus observations on close/navigation and tests clicking controls before the find bar finished changing the layout. Event modifiers/revisions now drive Enter, known focus transitions clear observations, and saved tests wait for the current native field and visible controls. Five saved Find scenarios pass, with reviewed light/dark/900×640/full-reader screenshots. Complete regression, optimized installation and publication evidence follows after final checks. Performance measurements remain deferred; R44 stays in TODO until shipping is verified.
+
+
+Validation: formatting and all-target/all-feature Clippy with warnings denied pass. All 277 Rust tests pass, with two opt-in live diagnostics ignored; all 20 Python tests pass. The complete native run passes all 86 functional scenarios in one run, including the five new Find paths and existing immediate-action, Undo, read/unread, context, draft, calendar and shortcut regressions. The strict documentation build passes. Reviewed captures include `artifacts/e2e/508d31adf4fb/find-html-first.webp`, `67444689804a/find-plain-first.webp`, `9ad371cc859d/find-plain-quote.webp` and the wide compact/full-reader evidence. The final compact capture additionally moves the pointer away from Export so its tooltip does not cover the find controls.
+
+Optimized packaging passes checksum, extraction and bundled-installer verification. The Linux user installation matches release SHA-256 `8a3ca8c00386b21ba5ce7ebdea68c22fa4df2059f400eb5778d94df586e701b8`. Personal windows remain running and need reopening. Logs are under `artifacts/logs/find-*`; no root logs or private mail fixtures were added. Quality and release workflows remain disabled; performance measurements remain deferred. Publication evidence follows below.
+
+
+Shipped as `c266035ad5a3d76c7bd535e8934cab281b4a5063` on main. [Documentation run 34050082487](https://github.com/sam-ruff/shep.so/actions/runs/34050082487) passes. The final wide-table capture rerun also passes, with all compact controls reviewed at `artifacts/e2e/dc9b4f87a783/find-wide-dark-compact.webp`. R44 is complete and removed from TODO; its previous inbox relevance work remains covered. The full-product goal stays active, including forward/print, bulk actions, folder and composer work, settings sync/backups, cache encryption/large mail, installers, palette/icon work and final provider/platform/performance verification.
+
+
+## Forward messages with retained content and attachments
+
+The preview footer has a Forward arrow and a remappable F shortcut, including the optional secondary slot and disable behavior. A forward uses the expanded physical message in a conversation. It starts an independent draft on the original account, with a new identity, Fwd subject, blank To/Cc/Bcc and no inherited reply-thread headers. Focus goes to the recipient field. Preparation runs through the persistence worker and shows Preparing immediately; repeated requests coalesce. Navigation and other editors remain available. A late result stays in Drafts, a failed preparation leaves no partial draft, and retry clears only its own error.
+
+Forward construction reads complete cached MIME instead of the shortened reader. It retains public quoted headers, full original text, selected HTML/styles/body attributes, CID resources and ordinary attachment bytes/media types. It does not fetch remote images or copy Bcc/transport headers. Text and independent attachment blobs commit together; inline metadata cascades with file deletion. HTML and files survive save/reopen. A note above the unchanged quote preserves HTML; editing the quoted original sends the edited plain text and retains inline-image bytes as ordinary attachments. This behavior is documented. Existing sending/attachment ceilings remain R23; this increment does not claim arbitrary-size download/storage support.
+
+Validation: all 284 Rust tests pass, with two opt-in live diagnostics ignored. Coverage includes new-thread/recipient privacy, complete text beyond the reader ceiling, MIME/HTML/CID/binary roundtrips, native editor text roundtrip, reopening, atomic rollback/retry, stale results and forwarding with all network jobs/queues occupied. Clippy with warnings denied and formatting pass; all 20 Python tests and the strict documentation build pass. One complete run of all 91 native functional scenarios passes, including five new forwarding flows and the existing read/unread, context-menu, Find, attachment/reply, immediate toast and Undo regressions. No personal mail was sent or mutated. Performance measurements remain deferred.
+
+Reviewed evidence includes the four wrapped files and reopened composer at `artifacts/e2e/44c4970e0ebf/`, the older Sent message at `artifacts/e2e/0d087fffaaea/forward-conversation-target.webp`, and the dark 900×640 composer at `artifacts/e2e/5fd130da30b0/forward-dark-compact.webp`. The final composer capture at `artifacts/e2e/fe6483569ecf/forward-composer-files.webp` is also reviewed; its saved native rerun passes after waiting for presentation to settle. Logs are under `artifacts/logs/forward-*`. Optimized installation and publication evidence follow after those steps finish. R41 Print, the inline composer and the other full-product TODO entries remain open.
+
+
+The optimized production package passes checksum, extraction and bundled-installer verification. The Linux user installation matches the release binary at SHA-256 `a270f17cc51c2bb15cd5051389b7c5aca0c8e93df967f1507b588d5a7db10128`. Personal windows remain running and need reopening for this build. Publication is recorded below after pushing; the full-product goal remains active.
+
+
+Shipped as `9062dcf656ec22df438c4eabbcdebfa376be7739` on main. R41 Forward is complete and removed from TODO. R41 Print and all other remaining requests stay open; the full-product goal remains active. Quality/release workflows remain disabled as requested, and performance measurements remain deferred.
+
+
+## Print messages through the browser printer/PDF dialog
+
+The reader footer now has a printer icon and remappable Mod+P (Command+P on macOS), including both shortcut slots and disable behavior. Preparation snapshots the expanded message and the current Formatted/Plain choice. It reads complete cached MIME, including quoted history, public headers, attachment names and scoped CID images. Previously loaded remote images are included only when the current message policy permits them; no new external image requests occur. Rendering and image conversion run off-thread on a dedicated bounded queue, independent of provider and cached-read capacity. Repeated pending requests coalesce, navigation stays available and a delayed preparation retains its original target. Failure permits retry and preserves unrelated errors.
+
+A temporary memory-only HTTP document opens in the default browser for printer or PDF selection. It uses a random loopback port/token, Host/method/path validation, bounded clients/headers/timeouts, no-store/no-referrer headers and restrictive CSP. The message itself is an inert sandboxed srcdoc with scripts/forms/navigation blocked; its trusted parent prints the child window so long messages paginate. Headers are inserted after the real srcdoc loads, and encoded CID references resolve to embedded WebP. The server stops after serving, dropping the preview or five-minute expiry. No extra plaintext mail file is written by Shep. Browser launch is not reported as proof of a completed print job.
+
+Validation so far: 289 Rust tests pass, with two opt-in live diagnostics ignored, plus formatting, all-target/all-feature Clippy with warnings denied and 24 Python tests. Rust coverage includes complete text beyond the reader ceiling, template-like header text, inert HTML/resources, token/Host/method rejection, one-use/no-store behavior, cancellation/capacity release and printing while every provider slot/queue is occupied. Four saved native Print scenarios pass through the real MCP input path and an isolated X11 Chrome profile: actual styled/plain/multi-page PDFs, preparation failure/retry while navigating, primary/secondary remapping/disable/input isolation, and real dialog cancellation with compact dark controls and wrapped attachments. The full native regression run and publication are recorded below when complete.
+
+Reviewed artifacts include `artifacts/e2e/1edd1a6e6d3f/print-styled.webp`, `print-plain.webp`, `print-long.webp`, and `artifacts/e2e/18b6191749b8/print-native-dialog.webp`. The printed headers, inline logo, final paragraph and attachment names are verified. The compact reader remains cramped above wrapped attachments; that and the newly reported HTML layout movement/artifacts/readiness are explicitly tracked as R69. New dock/taskbar unread-count badges are tracked as R70. Existing download/cache limits remain R23, and Firefox/Safari/macOS/Windows print execution remains unverified.
+
+Release packaging passes checksum, extraction and the bundled Linux installer. Logs stay under `artifacts/logs/print-*`, with no root logs. The current immediate archive/delete/move toasts were reverified against delayed/failing actions before Print work; they still appear with the optimistic action and dismissed feedback cannot return on acknowledgment. Performance measurements remain deferred, quality/release workflows stay disabled, and the full-product goal remains active.
+
+
+Final checkpoint: the complete native run passed 94 of 95 functional scenarios; the sidebar-resize test began before initial body/layout presentation. Its saved scenario now waits for reader readiness plus a short presentation interval before dragging, and its targeted rerun passes. All 95 functional scenarios therefore pass across the complete run and that rerun, including all four Print flows, existing forwarding/find remaps, toasts/Undo/read state and attachment controls. No performance thresholds changed. Evidence is in `artifacts/logs/print-full-native-tests.log` and `print-sidebar-rerun.log`; the final Python rerun still passes all 24 tests.
+
+The optimized user installation and release binary match SHA-256 `a8c928de57d867bcfcc962fc2a12756ffc0b129ee4503d267fd2b50239f1428b`. Personal windows remain running and need reopening for this version. Strict docs build passes. R69 HTML rendering, R70 dock badges and R71 the malformed-refresh-icon report are recorded in TODO and the request audit; the last awaits clarification because its screenshot includes browser controls. The user requested pushing at the next working checkpoint; publication follows now, without waiting for the entire backlog.
+
+
+Shipped as `b120721e6c6c3314becf47605be19f8922225cc2` on main. R41 Print is complete and removed from TODO; its platform/browser execution limits remain explicit above and under R01/R06. The full-product goal remains active. The repository skill and AGENTS.md now describe the print harness, actual PDF evidence, X11/profile isolation and the updated shortcut positions.
+
+
+## 2026-09-06 — Refresh geometry and prepared HTML frames
+
+The shared Mail/Calendar refresh SVG now joins its circular strokes to both
+arrowheads. The previous path left disconnected segments. Saved native scenarios
+exercise refresh while navigating and capture light/dark, 900×640 and 120%
+interface scaling. Reviewed evidence is under `artifacts/e2e/4820b8a914ff/` and
+`artifacts/e2e/2b315964044a/`. The supplied browser crop's exact location remains
+unconfirmed; these checks establish the native controls specifically.
+
+HTML now waits for the actual canvas viewport before its first Load and keeps
+Find behind that Load. Loading stays inside the body allocation. Current-message
+frames for obsolete viewport/scroll geometry cannot replace the displayed frame;
+resource discovery survives rejection, and incompatible width/scale bitmaps
+are never stretched into a new layout. Each renderer reuses its own font system
+across documents, without locking iced's fonts. Same-size repaints clear/reuse
+the pixel allocation, and redundant unchanged viewport requests skip repainting.
+
+A separate background worker prepares the first viewport of up to two adjacent,
+already cached messages. Its replaceable mailbox drops obsolete queued work.
+The UI retains at most four prepared frames / 32 MiB, keyed by message/body,
+geometry, font, quotes, image permissions and cached-image revision. Preparation
+never fetches resources; permitted cached WebP bytes decode only if the document
+uses them. Document handles, glyphs and decoded resources remain isolated. The
+active renderer remains available independently and builds the selection/Find
+state after a prepared frame is shown.
+
+All 294 Rust tests pass (two opt-in live diagnostics ignored), along with all 24
+Python tests, formatting and all-target/all-feature Clippy with warnings denied.
+Five new Rust tests cover geometry/Find ordering, stale-frame isolation, image
+permission/source/layout cache keys, bounded LRU behavior and replaceable
+preparation with seeded images. Three saved native scenarios pass; the scaled
+scenario was corrected after visual inspection of the actual upward-opening
+preferences menu. The HTML flow verifies a cache hit before adjacent-message
+navigation, final-message text after rapid selection, End/Home, pane dragging
+and compact resize. Reviewed evidence is in `artifacts/e2e/5eba7ad959ed/`.
+
+The full native suite, optimized installation and publication are recorded below
+after completion. R69 remains open for late-discovered image/horizontal controls,
+compact reading space above wrapped attachments and remaining visual readiness
+work. R70 badges and the rest of the full product backlog remain open. No latency
+claim is inferred from these functional tests; performance measurements stay
+deferred and quality/release workflows stay disabled. Logs use
+`artifacts/logs/html-preparation-*`.
+
+
+The complete native run passes all 98 functional scenarios in one run, including
+existing HTML selection/Find/quotes/images, wrapped attachments, forwarding and
+actual browser printing, context menus, read/unread, immediate toasts and Undo.
+The log is `artifacts/logs/html-preparation-full-native.log`. Additional reviewed
+captures include `artifacts/e2e/7c888b317ab3/` (dark/compact HTML) and
+`artifacts/e2e/e5674c505059/html-wide-table-right.webp` (horizontal panning).
+No performance measurements were run.
+
+
+The optimized production package passes SHA-256, extraction and bundled-installer
+verification. The user installation matches `target/release/shep` at SHA-256
+`72db7cbaf528a24a2bcb9a2a628836f13b144279537271bc0a0e4fe7a3d20dbe`.
+Existing personal windows remain open and need reopening for the new build.
+Strict documentation validation passes. No root logs were created. Publication
+is recorded below after the authorized main push.
+
+
+Shipped to main as `cd8f7321aa0360c8ad05cb7648f4f86359a2636e`. The native refresh-control
+interpretation of R71 is complete: both Mail and Calendar use the corrected SVG,
+with normal/scaled/light/dark/compact visual evidence and saved native tests.
+R71 is removed from TODO on that basis; the browser crop itself was not reproduced
+as a separate browser UI defect. R69 remains in TODO for its remaining layout and
+readiness work, and the full-product goal remains active. The verified Linux
+installation is already in place; personal windows were not terminated.
+
+[Documentation run 34057767845](https://github.com/sam-ruff/shep.so/actions/runs/34057767845) passes for the shipped code commit.
+
+## HTML control placement and compact reading space — R69 follow-up
+
+Image-policy metadata now includes CSS/legacy backgrounds and base-relative image
+URLs, prepared alongside the parsed HTML on the backend. The blocked-image bar
+exists before rendering, including a CSS-only image fixture. The renderer still
+requests only resources used by the document, and existing image permissions and
+network validation still govern downloads. Metadata discovery does not fetch.
+
+Wide-message panning now uses a track inside the visible body, with a small band
+reserved from the initial layout. It no longer inserts a control above rendered
+text. The thumb responds to input before the worker repaints; obsolete horizontal
+frames cannot move it back. Dragging, Shift+wheel and focused Left/Right support
+panning, while Find input retains its own arrow keys. Selection and Find
+highlights are clipped above the track.
+
+Compact readers use a shorter sender header with measured address ellipses,
+two-column attachment buttons and a combined action/navigation row. The 900×640
+dark Prototype fixture now has readable body space with all four attachment
+controls visible. Full sender addresses remain available through the sender
+dialog. Reply all uses its icon and existing shortcut-aware tooltip in this view.
+
+Superseded document loads are discarded before unnecessary parsing. A native
+resize regression also exposed Find results arriving before a usable layout
+frame: one current-query result is now retained until its matching frame arrives,
+with stale query/document rejection. The regression is covered by both a Rust
+ordering test and the existing real-input compact Find flow.
+
+The new automated native scenarios use a controlled renderer delay to compare
+loading/ready body origins and exercise the in-body track, and a compact preview
+to check visible reading space and forwarded attachment retention. Reviewed WebP
+evidence includes `artifacts/e2e/7ef264c09b04/html-css-loading.webp` and
+`html-css-ready.webp`, `artifacts/e2e/3bbd2c4fa8f0/html-compact-reading-space.webp`,
+`artifacts/e2e/3aeebf82797e/find-wide-dark-compact.webp`, and
+`artifacts/e2e/fc35200f7734/html-compact-image-menu.webp`.
+
+All 100 native functional scenarios pass in one full run, alongside formatting,
+Clippy with warnings denied, 299 Rust tests (two opt-in live diagnostics ignored),
+and 25 Python tests. The optimized production package passes checksum, extraction
+and bundled-installer verification. Logs are under `artifacts/logs/html-layout-*`;
+no root logs were created. R69 remains active for preserving reading position when late images change document
+dimensions and the remaining readiness review. Performance measurements remain
+deferred; controlled fixture delays are correctness evidence only.
+
+The user installation matches the tested optimized binary at SHA-256
+`8de511f5d3f57cf511b8219fc10e5db1a01ea035cd537f54c3aaa7b4d7257483`.
+Personal windows were left running. Strict documentation validation passes.
+
+Shipped to main as `6d83b728a0b8fbec239a42a454b179026629d7ba`. The Linux
+installation is verified, all 100 native functional scenarios pass in one run,
+and the full-product goal remains active. R69 stays in TODO for the explicit
+remaining image-arrival and readiness work.
+
+[Documentation run 34061562636](https://github.com/sam-ruff/shep.so/actions/runs/34061562636) builds and deploys the shipped code successfully.
+
+
+## Reading position during image arrival and renderer recovery — R69
+
+A saved native fixture reproduced a 400-pixel displacement when two images
+without a fixed height arrived above the visible paragraph. The renderer now
+retains a visible text-node anchor across image layout, prepares the corrected
+viewport pixels, and coordinates the native scroll adjustment. Subsequent image
+layouts coalesce until acknowledgement; input and replacement documents continue
+through the existing channel. Images below the viewport do not move its content.
+The native operation checks document/view version, scroll position and geometry,
+so an old result cannot overwrite newer navigation. Acknowledgements never replace
+newer viewport observations. Find and selection use the corrected layout.
+
+The renderer regression compares the before/after pixel buffers exactly, exercises
+multiple arrivals and Copy while the scroller acknowledgement is pending, and
+checks images below the viewport and old document acknowledgements. Native tests
+cover the same two-image arrival in light mode and a compact dark reader with an
+active Find match, plus navigation to another message before images arrive. The
+reviewed captures keep paragraph 24 and the paragraph-30 Find match at the same
+screen position. Evidence includes `artifacts/e2e/d0907ab46ccf/`,
+`artifacts/e2e/4e0da012e9be/` and `artifacts/e2e/355ea02c14b9/`.
+
+Recoverable renderer errors now offer Retry formatted message. Retry preserves
+the selected mail, creates a new render generation, waits for its real viewport
+and rejects old errors. Plain text stays available. An unavailable worker keeps
+its explicit reopen instruction. The isolated failure/native Retry capture is
+`artifacts/e2e/68eb7d07359e/html-render-failure.webp`.
+
+The first full run also exposed two older tests that could capture nullable
+read/flag values before the initial detail arrived. Those tests now await known
+initial metadata before taking their snapshots. Immediate-feedback and rollback
+assertions are unchanged, and the failing scenario passes after that correction.
+
+Formatting, Clippy with warnings denied, 305 Rust tests (two opt-in live diagnostics
+ignored), and 27 Python tests pass. All 104 native functional scenarios pass in
+one full run. Final reviewed captures include `artifacts/e2e/c5f648fefa94/`,
+`artifacts/e2e/1e0e97d0a409/` and `artifacts/e2e/d4b91c137b88/`.
+Release checksum, extraction
+and the bundled installer pass. Performance measurements remain deferred to the
+final idle-host gates; no latency claim follows from these controlled delays.
+
+The installed Linux release matches `target/release/shep` at SHA-256
+`a7803f07d0a3b6b3baed85c98a73ca5834b31db61bd97c635b0ac892c05f2273`.
+Personal windows remain untouched; reopening starts the new binary. Logs are
+under `artifacts/logs/html-anchor-*`. Strict documentation validation passes.
+
+Shipped to main as `cc38af9d04eca6284214a030d5015262d19effed`. R69 is
+closed after the full native run, reviewed captures, installer verification and
+push. Final idle-host performance gates remain R03/R09; the full product goal
+remains active.
+
+## Linux unread launcher integration — R70, with R50/R60 count reconciliation
+
+The Linux adapter publishes the native Unity LauncherEntry protocol for Shep's
+installed desktop ID. A dedicated async worker receives only the newest unread
+count through a watch channel, retains its session-bus connection, republishes
+on dock-owner changes and reconnects after bus loss. Zero hides the badge.
+Preferences has a searchable, saved toggle. Counts include all connected mail
+accounts, independently of the currently selected folder or unified-inbox choice.
+
+The existing optimistic count adjustment depended on visible page rows. Pending
+read/move/Undo identities are now observed in the same database snapshot as global
+counts. The UI projects their intended membership separately from page contents,
+rejects snapshots requested before a new intent, and avoids applying changes twice
+when SQLite has committed before iced receives an acknowledgement. This includes
+Inbox destinations and known cross-account destination identities. Remaining
+ambiguous provider outcomes and durable recovery stay in R50/R60.
+
+Rust tests exercise actual private-bus Update/Query messages, hiding at zero,
+dock-owner replacement, rapid count replacement and lost-bus recovery. Other tests
+cover empty filtered pages, read failure, Inbox moves, rekeyed cross-account Undo,
+SQLite membership snapshots and preference persistence after reopening. All 313
+Rust tests pass (two opt-in live diagnostics ignored), alongside formatting,
+Clippy with warnings denied and 29 Python tests.
+
+Four saved native badge scenarios pass through the MCP harness, which starts an
+owned private bus and observes actual protocol messages. They exercise background
+arrival, read changes across folder navigation, archive/delete/move with Undo,
+failed archive rollback and the preference. Recent count history catches transient
+regressions. Final full-suite, compact visual and shipping evidence follow below.
+No personal desktop bus, mail account or process was used by these tests.
+
+This increment implements Linux publication. Actual dock rendering review,
+Windows/macOS adapters and execution remain open under R70; unsupported platforms
+do not show an ineffective preference. Protocol observations alone are not a
+GNOME screenshot. Performance measurements remain deferred to R03/R09.
+
+The first full native run completed 108 scenarios with one failure in the new
+compact preference test: it clicked before the complete search query/result had
+settled. Waiting for that exact native query/result fixes the scenario; all four
+badge scenarios then pass again with service activation disabled on the private
+bus. A fixture-bus unit test also verifies that no portal/keyring service is
+activatable. No processes with a stopped fixture's badge-bus address remain.
+The final full rerun uses that corrected harness and scenario.
+
+Reviewed preference evidence includes `artifacts/e2e/702328ea573b/` and
+`artifacts/e2e/8c4fb25cf9f1/badge-preference-compact-dark.webp`. The compact capture
+also exposes an existing clipped tab/scale-fragment rendering issue, retained
+explicitly in R15/R17/R21. Badge controls are visible and operable; this is not a
+claim that the remaining preferences polish is complete. The optimized release
+passes checksum, extraction and bundled-installer checks.
+
+The final full native rerun passes all 108 functional scenarios. Its badge
+preference evidence includes `artifacts/e2e/b6b3d7b40d33/`; the private-bus log
+confirms no service activation. Formatting, Clippy, 313 Rust tests (two ignored
+live diagnostics), 29 Python tests and strict documentation validation pass.
+Logs remain under `artifacts/logs/badge-*`; quality/release CI stays disabled.
+
+The installed Linux binary matches the verified optimized release at SHA-256
+`745bae0c21cf1c908c4b5f17185242f7e25aeffaf12495f22e974c6b17b5b738`.
+Personal windows were left running; reopening uses the new binary. R70 and the
+full product goal remain active for their explicitly recorded remaining work.
+
+Shipped to main as `90776fad7d344eeada6ba910e0aad4277170b157`. The Linux
+installation and all 108 native functional scenarios are verified. R70 remains
+open for its platform/rendering/recovery follow-ups; the full goal is active.
+
+## 2026-09-07 — Preferences clipping and refresh verification
+
+Compact Preferences could draw part of the Interface size dropdown below its
+scroll viewport. Searching for a setting left those pixels behind until a full
+repaint. The saved native regression reproduces that behavior before the fix
+(`artifacts/e2e/685033e171ef/`) and checks the empty margin after filtering and
+after resizing by one pixel and back.
+
+The released iced 0.14 software renderer treated a cached text viewport as if it
+were the glyph bounds, sometimes omitting its clip entirely. Shep now patches
+that renderer to intersect the local viewport and damaged layer for cached text.
+Raw text also resets its shared mask so a preceding label cannot clip it. Normal
+partial redraws remain enabled. Only `engine.rs` differs from the upstream src/
+copy; the release archive includes its MIT license and patch provenance.
+
+Three direct renderer tests cover partially/fully scrolled text, damage-region
+intersection and clip-mask ordering, using the bundled Noto Sans font. All 316
+Rust tests pass (two opt-in live diagnostics ignored), along with Clippy with
+warnings denied and 29 Python tests. The saved native clipping test passes and
+its corrected captures are in `artifacts/e2e/b5e139f565dd/`.
+
+The existing Mail/Calendar refresh scenarios pass again, including 120% interface
+size and compact dark mode. The native icons were visually reviewed in
+`artifacts/e2e/1741714f5abe/` and `artifacts/e2e/7480b4601efe/`; their geometry is
+correct. This verifies the native icon already shipped for R71, not the browser
+chrome in the original crop. No performance timings were measured.
+
+The first full run completed 109 scenarios with two failures: the Google
+permissions flow clicked Backups before the returned Preferences layout was
+ready, and rapid HTML navigation queued subsequent clicks without observing each
+intermediate selection. Both saved flows now observe native UI state before the
+next click. They pass individually; HTML navigation still does not wait for
+intermediate body rendering. The final complete rerun passes all 109 functional
+scenarios. Reviewed final preference evidence is in
+`artifacts/e2e/fae64a84b9dc/`, and rapid HTML navigation/resize evidence is in
+`artifacts/e2e/84a416a2c2e2/`. Logs are under `artifacts/logs/preferences-clip-*`.
+
+Shipped to main: `0d2feb1ab5cf4885aa8a02ec3cb24134204072de`. Formatting,
+Clippy, all Rust/Python tests and strict documentation validation pass. The
+optimized archive passes checksum, extraction and bundled-installer checks.
+The installed user binary matches the release at SHA-256
+`e3f8577cd11b9671874179cf6663bf9fd7d40801b3494641287751449b0cdc28`.
+Personal windows were left running. Quality/release workflows remain disabled;
+performance and the remaining product TODO stay open.
+
+Built-in imagegen was used for transparent logo extraction. Light and dark
+candidates and prompt provenance are saved under ignored
+`artifacts/imagegen/launcher-alpha/`. The dark extractions have visible edge
+defects and were rejected. Approved production assets remain unchanged; R64 is
+open for a clean cutout and desktop theme integration.
+
+## 2026-09-07 — Selection storage groundwork for R42
+
+Inbox queries and captured selections now share a single scope/ranking plan.
+Selection membership and its ordered positions live in process-local SQLite
+tables. Capturing a query includes all matching pages without sending all IDs,
+message bodies or MIME to iced. Counts and requested visible membership are small
+results, and selected metadata is read in pages of at most 50 messages.
+
+The store API supports individual selection/deselection, replacement, ranges in
+both directions across page boundaries, additive ranges, all and clear. Revisions
+reject stale changes and page continuations; failed changes roll back atomically.
+A review gets its own immutable membership snapshot, independent of later inbox
+selection or scope changes. New arrivals do not join an existing selection, and
+selected versus available counts make disappeared messages explicit. Metadata
+pages read current flags/folders. Snapshots must be released by their caller and
+do not survive closing or opening another Store connection.
+
+Six integration tests exercise matching membership/order for every sort and
+search mode, combined folders, Sent mappings, unread/read/flag/attachment filters,
+cross-page ranges, stale/failing changes, review isolation, arrivals/deletions,
+current flags and connection/restart isolation. All 322 Rust tests pass (two
+opt-in live diagnostics ignored), as do Clippy with warnings denied and 29 Python
+tests. Five existing native MCP regressions pass for best-match search, flags and
+paging, combined sidebar folders, unread dock counts and cached navigation. These
+native flows exercise the existing inbox after the query refactor; they do not
+demonstrate multi-selection controls. Logs are in `artifacts/logs/selection-*`.
+
+R42 remains open. Next work must connect native controls and optimistic selection
+through bounded channels, clean up abandoned snapshots, and implement reviewed
+bulk execution with immediate feedback, per-message outcomes, grouped Undo and
+durable recovery. Temporary selection snapshots alone are not an operation
+journal. No new multi-selection UI is claimed by this checkpoint. Performance
+measurements remain deferred.
+
+Shipped to main: `0833456`. Formatting, Clippy, all Rust/Python tests and strict
+documentation validation pass. The optimized release passes checksum, extraction
+and bundled-installer verification. The installed user binary matches SHA-256
+`2670efb78c57edd8a3bc6da1123c6259524be68ba5149ca6203edc95a6ee23d2`.
+Personal windows were left running. Quality/release CI remains disabled, and the
+full product goal and R42 remain active.
+
+
+## 2026-09-07 — Native selection controls in development (R42)
+
+The working tree now connects selection storage to native Select/Done, padded
+checkboxes, Ctrl-click, Shift-click ranges and a remappable Select All action.
+Selection survives paging, clears immediately when the query scope changes, and
+keeps the reader anchor separate. Clear unchecks messages; Done/Escape leaves
+selection mode. Repeating Select All explicitly captures arrivals that did not
+join the earlier snapshot. Checkbox/modifier gestures preserve the open message
+and do not count every chosen row as read. Modified double-clicks do not open the
+full reader; an ordinary double-click still does.
+
+A separate bounded FIFO channel handles selection independently of provider work
+and draft/settings saves. The UI projects one visible page immediately, keeps at
+most 32 queued gestures and one request in flight, and releases an obsolete
+snapshot before starting another. Five controller tests cover immediate
+projection, cross-page ranges, bounded input, cancellation/cleanup, stale replies,
+arrival handling, input focus and errors. The provider-saturation regression also
+executes selection capture/change while every network slot and queue is occupied.
+
+All 327 Rust tests pass (two opt-in live diagnostics ignored), along with Clippy
+with warnings denied, formatting, 29 Python tests and strict documentation build.
+The first full native run passed 111 of 112 functional scenarios. Its sole failure
+was the existing Preferences-to-Mail resize scenario: the drag did not change
+the divider. Its saved flow now allows 150 ms for presentation and captures the
+returned layout before dragging. On the rebuilt current test binary, that flow
+and all three selection scenarios pass. This is a targeted rerun, not a claim
+that the complete 112-scenario run was green. Logs use the ignored
+`artifacts/logs/selection-controls-*` and `selection-native-*` paths.
+
+Reviewed current selection evidence is in `artifacts/e2e/f4503f4c6b5b/`,
+`artifacts/e2e/0ca3ac406efe/` and `artifacts/e2e/e45b797e0557/`; corrected resize
+evidence is in `artifacts/e2e/4e337cae83fa/`. The saved refresh scenarios also pass
+in light/dark, compact and 120% layouts (`eb6fea58a85d/` and `65f4c08de024/`).
+These verify native Shep controls, not browser chrome in the user's original crop.
+
+This UI work is **uncommitted, uninstalled and unshipped**. R42 remains open:
+preview toolbar/keybinds still need selected-group scope, exact frozen reviews,
+Y/N/Enter/Escape, bounded execution, immediate projected results, partial failures,
+grouped Undo and durable recovery. Do not treat the controls alone as delivery or
+install them over the user's working app before that integration. Finish remaining
+selection conventions alongside bulk work, including retaining a range anchor
+when Select All recaptures membership.
+
+The installed optimized binary remains the shipped `0833456` checkpoint, SHA-256
+`2670efb78c57edd8a3bc6da1123c6259524be68ba5149ca6203edc95a6ee23d2`.
+Main and origin/main are at audit commit `2e50d50`; its documentation workflow
+and the preceding code workflow succeeded. Personal windows remain running.
+Performance measurements remain deferred; quality and release CI remain disabled.
+
+
+## 2026-09-07 — Integrated selection and durable bulk actions
+
+The selection UI now drives group Archive/Trash/Move, read/unread and flags.
+Multi-message actions review frozen membership and accept Y/N/Enter/Escape.
+Default moves keep each message in its own account; enabled cross-account moves
+retain the existing IMAP policy. Select All preserves the range anchor, and
+mouse selection remains independent of reading/text selection.
+
+The persistent group journal stores metadata and exact per-message receipts.
+Indexed counters, bounded pages, a coalescing wake channel and one provider slot
+keep group membership outside UI memory. Pending effects drive ordinary queries
+while provider operations use actual cached identities. Whole-group unread
+counts and weighted toasts project immediately. Undo cancels queued work,
+reverses acknowledged moves/flags, and waits for a running forward receipt.
+Page phase observations prevent double projection before acknowledgment.
+Unconfirmed outcomes are retained for explicit review; definite inverse failures
+can retry. A file lease prevents another process replaying a live job.
+
+Graceful close finishes the current receipt and leaves queued items for a fresh
+engine. Account-removal reviews fingerprint related group entries, require
+cancellation for unfinished work and remove only affected history. Ten bulk
+storage tests, six engine group tests, UI snapshot/Undo tests, the native-widget
+click regression and account-removal coverage join the suite: **347 Rust tests pass**, with
+two opt-in live diagnostics ignored. Clippy, formatting and 29 Python tests pass.
+
+Four saved native bulk flows cover mouse and keyboard scope, multi-page review,
+red Trash confirmation, cancellation, forced slow pending Undo, read/unread,
+flags, mixed-account Projects moves, failures and History details in normal and
+compact dark layouts. Final verification also caught queued clicks using the
+batch-final pointer location; the root wrapper now preserves each motion before
+scroll transforms. A deterministic native-widget test covers two clicks in one
+batch. Stop-at-entry now acknowledges a pending close without claiming a message.
+
+All **116 native functional scenarios pass**, run as two consecutive 58-case
+batches on the same final binary: artifacts/logs/bulk-final-native-a.log and
+bulk-final-native-b.log. The final Rust/Clippy logs are bulk-pointer-all-rust.log
+and bulk-pointer-clippy.log; Python reports 29 passing tests. Strict Zensical
+builds pass. Optimized checksum/extraction/bundled-installer verification passes
+in bulk-pointer-release.log.
+
+Installed atomically for the Linux user; the existing running window was left
+alone. The installed binary matches target/release/shep, SHA-256
+`f189f322b567bb07b02fdcc1fc773a17b633085ecc0cfcff8db59684d9aa93d9`.
+Shipped to main as `af056a9c7f925b901052ae61b56afa840417143d`.
+Quality and release workflows remain disabled; documentation CI stays enabled.
+
+The existing native refresh-icon fix was reverified in light/dark, compact and
+120% layouts. Final reviewed captures include artifacts/e2e/7a94b5a1f5a6/
+and artifacts/e2e/2bd3f73aad10/. The arrows render cleanly. These are native Shep
+checks, not reproduction of the browser chrome in the original crop.
+
+The full product goal remains active. Remaining platform/provider verification,
+optimistic ambiguity/restart work and the rest of TODO are not completed by
+these fixture results. Performance measurements remain deferred.
+
+R42 remains open for explicit selection of new arrivals without losing existing
+membership, group/individual mutation coordination and the remaining native
+History/recovery paths. These are tracked explicitly in TODO; passing the current
+fixture suite does not establish live-provider or cross-platform coverage.
+
+
+## Client worktree integration of committed desktop main
+
+The review worktree integrates desktop main through `10d8569` (33 commits) while preserving the client work under `flutter/`, `web/`, `website/` and `backend/`. The separate main worktree's uncommitted selection/mutation work is untouched. Imported main evidence above describes its original commits; the following checks exercise the merged source.
+
+Mail protocols remain in `shared/mail-core`, including pinned/routed gateway connections, acknowledged move recovery and exact SMTP identities. Desktop render payloads extend the shared detail type without introducing iced or storage dependencies into the transport crate. Forward formatting metadata and MIME assembly are shared; `build_with_message_id` and browser reply contracts survive the merge. The desktop renderer and printing now consume shared MIME representation selection. A single-document adapter rebinds CID references before combining related sections, handles CSS URL tokens and each section's base URL, and leaves ambiguous references unresolved. It does not sanitize HTML itself; native rendering and print confinement remain responsible for that boundary. Tests cover independent/ambiguous CID scopes, CSS references, mixed text and section bases, retained forward files/formatting and rejection of damaged forward resources without a partial draft. Readable cached text remains available when an optional inline resource is damaged.
+
+The merged source passes formatting/Clippy and **372 root/shared Rust tests**, with two opt-in personal-account diagnostics intentionally ignored; **52 native bridge tests**, **34 gateway tests**, **43 Flutter host tests**, **69 browser unit tests**, **26 browser Playwright scenarios**, **49 actual Rust HTTPS stages**, **39 Python tests** and **27 parity review contracts** also pass. Both Flutter browser paths pass: nine formatted-reader stages and six standard stages. The first standard Flutter browser runner terminated with exit status 143 before its result; the unchanged rerun passed. The complete iced functional run passes **116/116** in one run. This does not erase the earlier two 57/58-run limitations recorded above or establish final timing budgets.
+
+The optimized Linux production archive passed checksum verification, extraction and the bundled installer in temporary directories. No personal desktop installation was replaced. Reviewed native captures include immediate archive/group Undo, compact per-message failures, Find's final visible match, styled HTML and its inline image in dark compact mode, forwarded attachments, the actual print dialog and a browser-created styled PDF. Full header, reflow, selection, native printing and other saved scenarios remain in the suite. Evidence is under ignored `artifacts/logs/desktop-integration-*` and `artifacts/e2e/`.
+
+The first full Android run passed swipe, native account/draft and composition scenarios, then its incoming picker helper acted on an old DocumentsUI dump and stalled. The failure log and screenshot are preserved. Helpers now remove the previous dump before observing, reject empty/malformed observations and wait for an explicit first-save intent. A regression reproduces a successful dump command that writes nothing, then recovery with current controls. The next full run passed through incoming save/Find/removal, then the formatted-reader assertion observed Flutter’s Find count before the native WebView applied its highlights. The test now awaits the actual read-only DOM highlight/scroll observations with the existing bounded deadline. Its failed log is preserved. The older Outbox handover assertion also expected a plain text widget despite the current editable/selectable reader. It now uses the same read-only body observation as the preceding Sent assertion, allowing MIME terminal whitespace. The native repository test still checks exact stored body text. Targeted completion and final shipping evidence follow below.
+
+Mobile/browser Forward/Print, selection/bulk, current read-on-leave/toast defaults, remote-image policies/anchors, OS badges/background lifecycle and the broader provider/calendar/backup gaps remain active. Apple execution, live providers, final idle-host performance and VPS deployment are unverified. R75 Google provider sign-in and R76 scheduled grouped Automatic replies remain TODOs. This integration ships only to the authorized client review branch; quality/release workflows stay disabled.
+
+
+### Android integration completion
+
+All **14 Android integration scenarios** are verified across the full runs and targeted reruns after the automation corrections, with **five formatted-reader Appium stages** and **six standard Appium stages** passing. This is not a claim of a single uninterrupted green Android wrapper run. Actual controls cover swipe/remapping/Undo, native profiles and secure-storage roundtrip, drafts and credential handover, real attachment selection/save/cancel, cached reader/Find/removal, formatted HTML/Copy/links, durable Outbox/local/provider Sent recovery and independent-process lock exclusion. The formatted and Outbox reruns pass after awaiting the native render result and observing the current selectable body. Current light/dark captures were regenerated from this run's PNGs and reviewed, including native selection, visible Find highlights, account removal and Sent handover. Production APK inspection and the prompt review-branch shipping commit are recorded below.
+
+
+The production Android APK contains all three Rust ABI libraries, has Internet permission and excludes fixture markers; its SHA-256 is `4ae8c6141583c4b8e3fb95d2b6c30af3dc7c1b077234234e0efda0545437f4a4`. It is a development-signed build, not a store-ready signed release. The Linux production binary SHA-256 is `2cf7a67aced01eaf394bd4f41f9f531532469d95dd2c7d5a20e67171adf0cd64`; archive `3d9176fc540ff7df49459e6ea37d9a1853c25374e4cf77e9acb599729a7ea30f` passed the bundled installer verification. Final Flutter analysis and pinned strict documentation validation pass. No client feature is marked complete solely by this integration, and no personal installation or VPS deployment is included. The merge commit and verified remote push follow in the shipping record.

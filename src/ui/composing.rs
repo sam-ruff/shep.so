@@ -22,9 +22,251 @@ pub(super) struct Composer {
     pub show_recipients: bool,
     pub io: Option<String>,
     saving: Option<(String, u64, Exit)>,
+    pub context: Option<DraftMenu>,
+    discard: Option<Draft>,
+    discard_return: Option<Dialog>,
+    pub discard_pending: bool,
+    pub forward_pending: Option<(String, String, u64)>,
+    forward_error: Option<String>,
+}
+
+pub(super) struct DraftMenu {
+    pub id: String,
+    pub position: iced::Point,
+    pub discard: bool,
 }
 
 impl App {
+    pub(super) fn begin_forward(&mut self, source: String) {
+        if self.dialog.is_some() || self.composer.forward_pending.is_some() {
+            return;
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        if self.try_command(Command::ForwardDraft(source.clone(), id.clone())) {
+            self.composer.forward_pending = Some((id, source, self.detail_revision));
+        }
+    }
+
+    pub(super) fn forward_ready(
+        &mut self,
+        id: String,
+        result: Result<Arc<DraftState>, String>,
+    ) -> Task<Message> {
+        let Some((request, source, revision)) = self.composer.forward_pending.as_ref() else {
+            return Task::none();
+        };
+        if request != &id {
+            return Task::none();
+        }
+        let open = self.tab == Tab::Mail
+            && self.dialog.is_none()
+            && self.reader_id() == Some(source.as_str())
+            && self.detail_revision == *revision;
+        self.composer.forward_pending = None;
+        match result {
+            Ok(state) => {
+                if let Some(error) = self.composer.forward_error.take()
+                    && self
+                        .notice
+                        .as_ref()
+                        .is_some_and(|notice| notice.1 && notice.0 == error)
+                {
+                    self.notice = None;
+                }
+                self.observe_drafts(&state);
+                if open
+                    && let Some(draft) = self
+                        .workspace
+                        .drafts
+                        .iter()
+                        .find(|draft| draft.id == id)
+                        .cloned()
+                {
+                    self.load_draft(draft);
+                    return focus_after_layout("to");
+                }
+                self.notice("Forward saved in Drafts.", false);
+            }
+            Err(error) => {
+                self.composer.forward_error = Some(error.clone());
+                self.notice(error, true);
+            }
+        }
+        Task::none()
+    }
+
+    pub(super) fn review_discard_draft(&mut self, id: String) {
+        if self.compose_locked() || self.composer.discard_pending {
+            return;
+        }
+        if self.workspace.outgoing_drafts.contains(&id) {
+            self.notice(
+                "Review this message in Outbox before discarding its draft.",
+                true,
+            );
+            return;
+        }
+        let draft = if self.dialog == Some(Dialog::Compose) && self.draft_id == id {
+            Some(self.current_draft())
+        } else {
+            self.workspace
+                .drafts
+                .iter()
+                .find(|draft| draft.id == id)
+                .cloned()
+        };
+        if let Some(draft) = draft {
+            self.composer.discard = Some(draft);
+            self.composer.discard_return = self.dialog;
+            self.composer.saving = None;
+            self.composer.context = None;
+            self.dialog = Some(Dialog::DiscardDraft);
+        }
+    }
+
+    pub(super) fn cancel_discard_draft(&mut self) {
+        if !self.composer.discard_pending {
+            self.dialog = self.composer.discard_return.take();
+            self.composer.discard = None;
+        }
+    }
+
+    pub(super) fn confirm_discard_draft(&mut self) {
+        if self.dialog != Some(Dialog::DiscardDraft) || self.composer.discard_pending {
+            return;
+        }
+        if let Some(draft) = &self.composer.discard
+            && self.try_command(Command::DeleteDraft(draft.id.clone()))
+        {
+            self.composer.discard_pending = true;
+        }
+    }
+
+    pub(super) fn draft_deleted(&mut self, id: String, result: Result<Arc<DraftState>, String>) {
+        let current = self
+            .composer
+            .discard
+            .as_ref()
+            .is_some_and(|draft| draft.id == id);
+        if current {
+            self.composer.discard_pending = false;
+        }
+        match result {
+            Ok(state) => {
+                self.observe_drafts(&state);
+                if current {
+                    self.composer.discard = None;
+                    self.composer.discard_return = None;
+                    if self.dialog == Some(Dialog::DiscardDraft) {
+                        self.dialog = None;
+                        if self.draft_id == id {
+                            self.draft_dirty = None;
+                            self.draft_id.clear();
+                            self.editor = text_editor::Content::new();
+                            self.fields.clear();
+                            self.composer.draft = Draft::default();
+                        }
+                    }
+                }
+                self.notice("Draft discarded.", false);
+            }
+            Err(error) => self.notice(error, true),
+        }
+    }
+
+    pub(super) fn discard_draft_form(&self) -> Element<'_, Message> {
+        let Some(draft) = &self.composer.discard else {
+            return space().into();
+        };
+        column![
+            text(if draft.subject.is_empty() {
+                "Untitled draft"
+            } else {
+                &draft.subject
+            })
+            .size(16)
+            .font(BOLD),
+            text(if draft.attachments.is_empty() {
+                "This permanently deletes the draft.".into()
+            } else {
+                format!(
+                    "This permanently deletes the draft and its {} attached {}.",
+                    draft.attachments.len(),
+                    if draft.attachments.len() == 1 {
+                        "file"
+                    } else {
+                        "files"
+                    }
+                )
+            })
+            .size(13),
+            row![
+                action("Keep draft", Message::Close),
+                space().width(Length::Fill),
+                button(
+                    text(if self.composer.discard_pending {
+                        "Discarding…"
+                    } else {
+                        "Discard draft"
+                    })
+                    .size(12)
+                )
+                .padding([12, 16])
+                .style(destructive)
+                .on_press_maybe(
+                    (!self.composer.discard_pending).then_some(Message::ConfirmDiscardDraft)
+                )
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+        ]
+        .spacing(18)
+        .into()
+    }
+
+    pub(super) fn draft_context_view(&self) -> Element<'_, Message> {
+        let Some(menu) = &self.composer.context else {
+            return space().into();
+        };
+        let mut items = column![].spacing(2);
+        for (discard, name, glyph) in [
+            (false, "Open draft", "compose"),
+            (true, "Discard draft…", "trash"),
+        ] {
+            items = items.push(
+                button(
+                    row![icon(glyph, 18.), text(name).size(12)]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .padding([10, 12])
+                .style(if menu.discard == discard {
+                    selected
+                } else {
+                    ghost
+                })
+                .on_press(Message::DraftContextAction(discard)),
+            );
+        }
+        let scale = self.preferences.interface_scale as f32 / 100.;
+        container(widget::opaque(
+            container(items).width(220).padding(6).style(card),
+        ))
+        .padding(iced::Padding {
+            left: menu
+                .position
+                .x
+                .clamp(8., (self.size.width / scale - 230.).max(8.)),
+            top: menu
+                .position
+                .y
+                .clamp(8., (self.size.height / scale - 100.).max(8.)),
+            ..Default::default()
+        })
+        .into()
+    }
+
     pub(super) fn compose_form(&self) -> Element<'_, Message> {
         let choices: Vec<_> = self
             .workspace
@@ -166,6 +408,11 @@ impl App {
                         .then_some(Message::ChooseAttachments)
                 ),
                 space().width(Length::Fill),
+                self.icon_action(
+                    "trash",
+                    "Discard draft",
+                    Message::ReviewDiscardDraft(self.draft_id.clone())
+                ),
                 button(text("Save draft").size(12))
                     .padding([12, 14])
                     .style(ghost)

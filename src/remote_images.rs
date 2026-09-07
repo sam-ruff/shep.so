@@ -33,46 +33,101 @@ pub fn allowed(preferences: &Preferences, mail: &Mail) -> bool {
                 .any(|c| c.eq_ignore_ascii_case(&address)))
 }
 pub fn extract(parsed: &mailparse::ParsedMail<'_>) -> Vec<RemoteImage> {
-    fn walk(part: &mailparse::ParsedMail<'_>, images: &mut Vec<RemoteImage>) {
-        if images.len() >= 8 {
-            return;
-        }
-        if part.ctype.mimetype == "text/html"
-            && let Ok(body) = part.get_body()
+    crate::email_content::extract(parsed)
+        .ok()
+        .and_then(|content| content.html)
+        .map(|h| h.remote_images)
+        .unwrap_or_default()
+}
+pub fn extract_html(source: &str) -> Vec<RemoteImage> {
+    extract_document(&scraper::Html::parse_document(source))
+}
+pub(crate) fn extract_document(html: &scraper::Html) -> Vec<RemoteImage> {
+    use std::collections::HashSet;
+    let base = html
+        .select(&scraper::Selector::parse("base[href]").expect("static selector"))
+        .next()
+        .and_then(|e| url::Url::parse(e.value().attr("href")?).ok());
+    let mut images = Vec::new();
+    let mut seen = HashSet::new();
+    let mut add = |src: &str, alt: &str| {
+        let parsed = url::Url::parse(src).or_else(|_| {
+            base.as_ref()
+                .ok_or(url::ParseError::RelativeUrlWithoutBase)?
+                .join(src)
+        });
+        if let Ok(url) = parsed
+            && matches!(url.scheme(), "https" | "http")
+            && url.username().is_empty()
+            && url.password().is_none()
+            && seen.insert(url.to_string())
         {
-            let html = scraper::Html::parse_document(&body);
-            let selector = scraper::Selector::parse("img[src]").expect("static selector");
-            for element in html.select(&selector) {
-                if images.len() >= 8 {
-                    break;
-                }
-                let value = element.value();
-                let src = value.attr("src").unwrap_or_default();
-                if let Ok(url) = url::Url::parse(src)
-                    && matches!(url.scheme(), "https" | "http")
-                    && url.username().is_empty()
-                    && url.password().is_none()
-                    && !images.iter().any(|i| i.url == url.as_str())
-                {
-                    images.push(RemoteImage {
-                        url: url.to_string(),
-                        alt: value
-                            .attr("alt")
-                            .unwrap_or("Email image")
-                            .chars()
-                            .take(160)
-                            .collect(),
-                    });
-                }
-            }
+            images.push(RemoteImage {
+                url: url.to_string(),
+                alt: alt.chars().take(160).collect(),
+            });
         }
-        for child in &part.subparts {
-            walk(child, images);
+    };
+    for element in html.select(&scraper::Selector::parse("img[src],body[background],table[background],td[background],th[background],[style],style").expect("static selector")) {
+        let value = element.value();
+        if value.name() == "img" && let Some(src) = value.attr("src") {
+            add(src, value.attr("alt").unwrap_or("Email image"));
+        }
+        if matches!(value.name(), "body" | "table" | "td" | "th") && let Some(src) = value.attr("background") {
+            add(src, "Email background");
+        }
+        if let Some(style) = value.attr("style") {
+            css_images(style, &mut add);
+        }
+        if value.name() == "style" {
+            css_images(&element.text().collect::<String>(), &mut add);
         }
     }
-    let mut images = Vec::new();
-    walk(parsed, &mut images);
     images
+}
+fn css_images(source: &str, add: &mut impl FnMut(&str, &str)) {
+    use cssparser::{Parser, ParserInput, Token};
+    fn scan<'i>(parser: &mut Parser<'i, '_>, add: &mut impl FnMut(&str, &str), depth: u8) {
+        while let Ok(token) = parser.next().cloned() {
+            match token {
+                Token::AtKeyword(name)
+                    if name.eq_ignore_ascii_case("import")
+                        || name.eq_ignore_ascii_case("font-face")
+                        || name.eq_ignore_ascii_case("namespace") =>
+                {
+                    while let Ok(token) = parser.next() {
+                        if matches!(token, Token::Semicolon | Token::CurlyBracketBlock) {
+                            break;
+                        }
+                    }
+                }
+                Token::UnquotedUrl(url) => add(&url, "Email background"),
+                Token::Function(name) if name.eq_ignore_ascii_case("url") => {
+                    let _: Result<(), cssparser::ParseError<'i, ()>> =
+                        parser.parse_nested_block(|p| {
+                            if let Ok(value) = p.expect_string() {
+                                add(value, "Email background");
+                            }
+                            Ok(())
+                        });
+                }
+                Token::Function(_)
+                | Token::ParenthesisBlock
+                | Token::SquareBracketBlock
+                | Token::CurlyBracketBlock
+                    if depth < 64 =>
+                {
+                    let _: Result<(), cssparser::ParseError<'i, ()>> =
+                        parser.parse_nested_block(|p| {
+                            scan(p, add, depth + 1);
+                            Ok(())
+                        });
+                }
+                _ => {}
+            }
+        }
+    }
+    scan(&mut Parser::new(&mut ParserInput::new(source)), add, 0);
 }
 pub fn public_ip(ip: IpAddr) -> bool {
     match ip {
@@ -163,8 +218,26 @@ pub fn convert_to_webp(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
     limits.max_image_height = Some(2048);
     limits.max_alloc = Some(32 * 1024 * 1024);
     reader.limits(limits);
-    let decoded = reader.decode()?.thumbnail(1024, 1024);
+    let decoded = reader.decode()?;
+    let decoded = if decoded.width() > 1024 || decoded.height() > 1024 {
+        decoded.thumbnail(1024, 1024)
+    } else {
+        decoded
+    };
     let mut output = Cursor::new(Vec::new());
     decoded.write_to(&mut output, image::ImageFormat::WebP)?;
     Ok(output.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn webp_conversion_preserves_small_images_natural_size() {
+        let image = image::DynamicImage::new_rgba8(32, 16);
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        let converted = super::convert_to_webp(&bytes.into_inner()).unwrap();
+        let decoded = image::load_from_memory(&converted).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (32, 16));
+    }
 }

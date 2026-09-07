@@ -2,6 +2,23 @@ use super::*;
 
 const NETWORK_CONCURRENCY: usize = 8;
 
+#[derive(Clone)]
+pub(super) struct Slots(Arc<tokio::sync::Semaphore>);
+impl Default for Slots {
+    fn default() -> Self {
+        Self(Arc::new(tokio::sync::Semaphore::new(NETWORK_CONCURRENCY)))
+    }
+}
+impl Slots {
+    pub(super) async fn acquire(&self) -> tokio::sync::OwnedSemaphorePermit {
+        self.0
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("Provider slots stay open")
+    }
+}
+
 /// Independent bounded queues keep local interaction independent of slow providers.
 #[derive(Clone, Debug)]
 pub struct CommandSender {
@@ -9,6 +26,10 @@ pub struct CommandSender {
     prefetch: mpsc::Sender<Command>,
     persistence: mpsc::Sender<Command>,
     network: mpsc::Sender<Command>,
+    sync: mpsc::Sender<Command>,
+    printing: mpsc::Sender<Command>,
+    selections: mpsc::Sender<Command>,
+    bulk: mpsc::Sender<Command>,
 }
 
 pub(super) struct Inputs {
@@ -16,6 +37,10 @@ pub(super) struct Inputs {
     prefetch: mpsc::Receiver<Command>,
     persistence: mpsc::Receiver<Command>,
     network: mpsc::Receiver<Command>,
+    sync: mpsc::Receiver<Command>,
+    printing: mpsc::Receiver<Command>,
+    selections: mpsc::Receiver<Command>,
+    pub(super) bulk: mpsc::Receiver<Command>,
 }
 
 impl CommandSender {
@@ -31,23 +56,41 @@ impl CommandSender {
         (sender, inputs.persistence)
     }
 
+    #[cfg(test)]
+    pub(crate) fn selection_test_channel() -> (Self, mpsc::Receiver<Command>) {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.selections)
+    }
+
     pub(super) fn channel() -> (Self, Inputs) {
         let (reads, read_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (prefetch, prefetch_input) = mpsc::channel(8);
         let (persistence, persistence_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (network, network_input) = mpsc::channel(CHANNEL_CAPACITY);
+        let (sync, sync_input) = mpsc::channel(1);
+        let (printing, print_input) = mpsc::channel(2);
+        let (selections, selection_input) = mpsc::channel(CHANNEL_CAPACITY);
+        let (bulk, bulk_input) = mpsc::channel(1);
         (
             Self {
                 reads,
                 prefetch,
                 persistence,
                 network,
+                sync,
+                printing,
+                selections,
+                bulk,
             },
             Inputs {
                 reads: read_input,
                 prefetch: prefetch_input,
                 persistence: persistence_input,
                 network: network_input,
+                sync: sync_input,
+                printing: print_input,
+                selections: selection_input,
+                bulk: bulk_input,
             },
         )
     }
@@ -56,16 +99,44 @@ impl CommandSender {
         &self,
         command: Command,
     ) -> Result<(), Box<mpsc::error::TrySendError<Command>>> {
+        if matches!(command, Command::Sync | Command::BulkRun(_)) {
+            let queue = if matches!(command, Command::Sync) {
+                &self.sync
+            } else {
+                &self.bulk
+            };
+            return match queue.try_send(command) {
+                // A pending full refresh already covers another click. Retain
+                // one follow-up request while a cycle is active, never drop it
+                // because the unrelated provider queue is occupied.
+                Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => Ok(()),
+                Err(error) => Err(Box::new(error)),
+            };
+        }
         let channel = match &command {
+            Command::Print(..) => &self.printing,
+            Command::Selection(..)
+            | Command::ReviewSelection(..)
+            | Command::ReleaseSelection(_)
+            | Command::BulkStart(..)
+            | Command::BulkUndo(_)
+            | Command::BulkResolve(_)
+            | Command::BulkStop
+            | Command::BulkResume(_) => &self.selections,
+            Command::BulkRun(_) => &self.bulk,
             Command::Query(_, _, true) | Command::Detail { prefetch: true, .. } => &self.prefetch,
             Command::Query(..)
             | Command::Detail { .. }
             | Command::Conversation(..)
             | Command::RemovalPreview(..)
-            | Command::OutgoingPage(..) => &self.reads,
+            | Command::OutgoingPage(..)
+            | Command::BulkJobs(..)
+            | Command::BulkItems(..) => &self.reads,
             Command::SavePreferences(..)
             | Command::SaveDraft(_)
             | Command::AutoSaveDraft(_)
+            | Command::DeleteDraft(_)
+            | Command::ForwardDraft(..)
             | Command::RemoveDraftFile(..) => &self.persistence,
             _ => &self.network,
         };
@@ -75,11 +146,27 @@ impl CommandSender {
 
 impl Engine {
     pub(super) async fn run(self, input: Inputs, output: Output) {
+        let background = !self.demo || {
+            #[cfg(feature = "test-support")]
+            {
+                std::env::args().any(|arg| arg == "--background-sync")
+            }
+            #[cfg(not(feature = "test-support"))]
+            {
+                false
+            }
+        };
         tokio::join!(
+            self.clone()
+                .run_mail_sync(input.sync, output.clone(), background),
             self.clone().run_reads(input.reads, output.clone(), 2),
             self.clone().run_reads(input.prefetch, output.clone(), 1),
+            self.clone().run_reads(input.printing, output.clone(), 1),
+            self.clone()
+                .run_persistence(input.selections, output.clone()),
             self.clone()
                 .run_persistence(input.persistence, output.clone()),
+            self.clone().run_bulk_queue(input.bulk, output.clone()),
             self.run_network(input.network, output),
         );
     }
@@ -128,7 +215,7 @@ impl Engine {
         let mut busy = HashSet::new();
         let mut timer = tokio::time::interval(Duration::from_secs(60));
         timer.tick().await;
-        let mut last_sync = Instant::now();
+        let mut last_calendar_sync = Instant::now();
         let mut last_backup_attempt: Option<(BackupTarget, Instant)> = None;
         loop {
             tokio::select! {
@@ -146,12 +233,13 @@ impl Engine {
                     if let Some(key)=&key{busy.insert(key.clone());let _=output.send(Event::Busy(key.clone(),true)).await;}
                     let engine=engine.clone();let output=output.clone();
                     jobs.spawn(async move {
+                        let _slot = engine.provider_slots.acquire().await;
                         // Uploads have bounded HTTP requests and progress checks,
                         // plus a durable journal. Do not cancel a healthy transfer
                         // merely because the whole archive takes over ten minutes.
                         // Restore also must observe its blocking SQLite commit;
                         // dropping its future cannot cancel that transaction.
-                        let result = if matches!(&command, Command::Move(..) | Command::Flags(..) | Command::Backup(..) | Command::AutomaticBackup(_) | Command::Restore(..) | Command::Send(_) | Command::DisconnectGoogle(_) | Command::CleanupGoogle | Command::GoogleLogin(..) | Command::ResolveOutgoing(..) | Command::RepairOutgoing | Command::IndexConversations | Command::ConnectCalendars(..) | Command::SaveAccount(..) | Command::RemoveConnection(..) | Command::CleanupCredentials | Command::RestoreGoogleCalendars) {
+                        let result = if matches!(&command, Command::Move(..) | Command::Transfer(..) | Command::UndoMove(..) | Command::Flags(..) | Command::Backup(..) | Command::AutomaticBackup(_) | Command::Restore(..) | Command::Send(_) | Command::DisconnectGoogle(_) | Command::CleanupGoogle | Command::GoogleLogin(..) | Command::ResolveOutgoing(..) | Command::RepairOutgoing | Command::IndexConversations | Command::ConnectCalendars(..) | Command::SaveAccount(..) | Command::RemoveConnection(..) | Command::CleanupCredentials | Command::RestoreGoogleCalendars) {
                             engine.execute(command, output).await
                         } else {
                             tokio::time::timeout(Duration::from_secs(600), engine.execute(command, output)).await
@@ -162,13 +250,14 @@ impl Engine {
                 }
                 _=timer.tick(),if !demo=>{
                     if let Ok(prefs)=engine.store.get::<Preferences>("preferences").await{
-                        if last_sync.elapsed()>=Duration::from_secs(prefs.sync_minutes*60)&&!busy.contains("sync")&&jobs.len()<NETWORK_CONCURRENCY{
-                            last_sync=Instant::now();busy.insert("sync".into());let _=output.send(Event::Busy("sync".into(),true)).await;
-                            let worker=engine.clone();let events=output.clone();jobs.spawn(async move{(Some("sync".into()),worker.execute(Command::Sync,events).await)});
-                            if !busy.contains("calendar") && jobs.len()<NETWORK_CONCURRENCY {
-                                busy.insert("calendar".into());
-                                let worker=engine.clone();let events=output.clone();jobs.spawn(async move{(Some("calendar".into()),worker.execute(Command::SyncCalendar,events).await)});
-                            }
+                        if last_calendar_sync.elapsed() >= Duration::from_secs(prefs.sync_minutes * 60) && !busy.contains("calendar") && jobs.len() < NETWORK_CONCURRENCY {
+                            last_calendar_sync = Instant::now();
+                            busy.insert("calendar".into());
+                            let worker = engine.clone(); let events = output.clone();
+                            jobs.spawn(async move {
+                                let _slot = worker.provider_slots.acquire().await;
+                                (Some("calendar".into()), worker.execute(Command::SyncCalendar, events).await)
+                            });
                         }
                         let target = BackupTarget::from_preferences(&prefs);
                         let interval = Duration::from_secs(prefs.backup_hours * 3600);
@@ -176,7 +265,7 @@ impl Engine {
                         if prefs.auto_backup && prefs.backup_ready && retry_due && chrono::Utc::now().timestamp()-prefs.last_backup.unwrap_or(0)>=interval.as_secs()as i64&&!busy.contains("backup")&&jobs.len()<NETWORK_CONCURRENCY {
                                 last_backup_attempt = Some((target.clone(), Instant::now()));
                                 busy.insert("backup".into());let _=output.send(Event::Busy("backup".into(),true)).await;
-                                let engine=engine.clone();let output=output.clone();jobs.spawn(async move{(Some("backup".into()),engine.execute(Command::AutomaticBackup(target),output).await)});
+                                let engine=engine.clone();let output=output.clone();jobs.spawn(async move{let _slot = engine.provider_slots.acquire().await; (Some("backup".into()),engine.execute(Command::AutomaticBackup(target),output).await)});
                             }
                     }
                 }
@@ -188,6 +277,25 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn manual_refresh_has_a_coalescing_queue_independent_of_provider_backpressure() {
+        let (sender, mut inputs) = CommandSender::channel();
+        for _ in 0..CHANNEL_CAPACITY {
+            sender.try_send(Command::LoadImages(vec![])).unwrap();
+        }
+        assert!(sender.try_send(Command::LoadImages(vec![])).is_err());
+        for _ in 0..100 {
+            sender.try_send(Command::Sync).unwrap();
+        }
+        assert_eq!(inputs.sync.len(), 1);
+        assert!(matches!(inputs.sync.recv().await, Some(Command::Sync)));
+        assert!(inputs.sync.try_recv().is_err());
+        sender.try_send(Command::Sync).unwrap();
+        assert!(matches!(inputs.sync.recv().await, Some(Command::Sync)));
+        drop(inputs);
+        assert!(sender.try_send(Command::Sync).is_err());
+    }
 
     struct Running(tokio::task::JoinHandle<()>);
     impl Drop for Running {
@@ -217,6 +325,10 @@ mod tests {
             passphrases: Arc::new(backup::OsPassphraseStore),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
             backup_uploads: Default::default(),
+            mail_sync_settings: Default::default(),
+            provider_slots: Default::default(),
+            printing: Default::default(),
+            bulk_control: Default::default(),
         };
         let (sender, input) = CommandSender::channel();
         let (output, mut events) = futures::channel::mpsc::channel(32);
@@ -237,10 +349,10 @@ mod tests {
             .await
             .unwrap();
         for _ in 0..CHANNEL_CAPACITY {
-            sender.try_send(Command::Sync).unwrap();
+            sender.try_send(Command::LoadImages(vec![])).unwrap();
         }
         assert!(matches!(
-            sender.try_send(Command::Sync),
+            sender.try_send(Command::LoadImages(vec![])),
             Err(error) if matches!(*error, mpsc::error::TrySendError::Full(_))
         ));
         sender
@@ -252,7 +364,7 @@ mod tests {
         sender
             .try_send(Command::Detail {
                 revision: 0,
-                id,
+                id: id.clone(),
                 prefetch: false,
             })
             .unwrap();
@@ -292,10 +404,32 @@ mod tests {
                 ..draft
             }))
             .unwrap();
+        let selection = crate::store::MailSelectionId::default();
+        sender
+            .try_send(Command::Selection(
+                44,
+                selections::Request::Capture(selection, MailQuery::default()),
+                vec![id.clone()],
+            ))
+            .unwrap();
+        sender
+            .try_send(Command::Selection(
+                45,
+                selections::Request::Change(selection, 0, crate::store::SelectionChange::All),
+                vec![id.clone()],
+            ))
+            .unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
-            let (mut page, mut detail, mut saved, mut conversation) = (false, false, false, false);
-            while !(page && detail && saved && conversation) {
+            let (mut page, mut detail, mut saved, mut conversation, mut selected) =
+                (false, false, false, false, false);
+            while !(page && detail && saved && conversation && selected) {
                 match events.next().await.expect("Dispatcher stopped") {
+                    Event::Selection(45, result) => {
+                        let snapshot = result.unwrap().unwrap();
+                        assert_eq!(snapshot.selected, 1);
+                        assert!(snapshot.visible.contains(&id));
+                        selected = true;
+                    }
                     Event::Page(42, result, false) => {
                         assert_eq!(result.total, 1);
                         page = true;
@@ -328,6 +462,65 @@ mod tests {
         assert_eq!(workspace.preferences.reader_font_size, 18);
         assert_eq!(workspace.drafts.len(), 1);
         assert_eq!(workspace.drafts[0].body, "Latest text");
+        sender
+            .try_send(Command::DeleteDraft("saved-draft".into()))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Event::DraftDeleted(id, result) =
+                    events.next().await.expect("Dispatcher stopped")
+                {
+                    assert_eq!(id, "saved-draft");
+                    assert!(result.unwrap().drafts.is_empty());
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("Discard waited for blocked provider jobs");
+        assert!(store.workspace().await.unwrap().drafts.is_empty());
+        sender
+            .try_send(Command::ForwardDraft(
+                id.clone(),
+                "forward-without-network".into(),
+            ))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Event::ForwardDraft(id, result) =
+                    events.next().await.expect("Dispatcher stopped")
+                {
+                    assert_eq!(id, "forward-without-network");
+                    assert_eq!(result.unwrap().drafts[0].subject, "Fwd: Still readable");
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("Forward waited for blocked provider jobs");
+        sender
+            .try_send(Command::Print(77, id, Default::default()))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Event::Print(request, result) =
+                    events.next().await.expect("Dispatcher stopped")
+                {
+                    assert_eq!(request, 77);
+                    let preview = result.unwrap();
+                    let response = reqwest::get(&preview.url)
+                        .await
+                        .unwrap()
+                        .text()
+                        .await
+                        .unwrap();
+                    assert!(response.contains("Still readable"));
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("Print waited for blocked provider jobs");
         release.notify_waiters();
     }
 }

@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -14,6 +15,123 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_badge_fixture_requires_a_boolean_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (0, 1, "1", None):
+                with self.assertRaisesRegex(ValueError, "Desktop badge fixture"):
+                    desktop.start(desktop_badges=value)
+            launch.assert_not_called()
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux launcher protocol")
+    def test_badge_observer_reads_real_signals_on_an_owned_bus(self):
+        desktop = harness.Desktop()
+        with tempfile.TemporaryDirectory() as directory:
+            desktop.directory = Path(directory)
+            try:
+                desktop.start_badge_bus()
+                address = desktop.env["DBUS_SESSION_BUS_ADDRESS"]
+                self.assertEqual(address, f"unix:path={directory}/badge-bus")
+                activatable = json.loads(desktop.command("busctl", f"--address={address}", "--json=short", "call",
+                    "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListActivatableNames"))
+                self.assertEqual(activatable["data"], [["org.freedesktop.DBus"]])
+                self.assertEqual(desktop.env["XDG_RUNTIME_DIR"], str(Path(directory)/"runtime"))
+                for count in (2, 0):
+                    desktop.command("busctl", f"--address={address}", "emit", "/so/shep/Shep/Launcher",
+                                    "com.canonical.Unity.LauncherEntry", "Update", "sa{sv}",
+                                    "application://so.shep.Shep.desktop", "2", "count", "x", str(count),
+                                    "count-visible", "b", "true" if count else "false")
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline:
+                        observed = desktop.badge_state()
+                        if observed and observed["count"] == count:
+                            break
+                        time.sleep(0.02)
+                    self.assertEqual(observed["count"], count)
+                    self.assertEqual(observed["visible"], bool(count))
+                bus, monitor = desktop.badge_bus, desktop.badge_monitor
+            finally:
+                desktop.stop()
+            self.assertIsNotNone(bus.poll())
+            self.assertIsNotNone(monitor.poll())
+
+    def test_html_failure_fixture_rejects_non_boolean_values(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (0, 1, "1", None):
+                with self.assertRaisesRegex(ValueError, "HTML failure fixture"):
+                    desktop.start(html_failure_once=value)
+            launch.assert_not_called()
+
+    def test_image_delay_is_bounded_and_invalid_values_never_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for delay in (-1, 5001, True, "500", 1.5):
+                with self.assertRaisesRegex(ValueError, "Image fixture delay"):
+                    desktop.start(image_delay_ms=delay)
+            launch.assert_not_called()
+
+    def test_html_delay_is_bounded_and_invalid_values_never_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for delay in (-1, 2001, True, "500", 1.5):
+                with self.assertRaisesRegex(ValueError, "HTML fixture delay"):
+                    desktop.start(html_delay_ms=delay)
+            launch.assert_not_called()
+
+    def test_print_fixture_is_explicit_and_schema_matches_batch_actions(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            with self.assertRaisesRegex(ValueError, "Unknown print browser"):
+                desktop.start(print_browser="personal")
+            launch.assert_not_called()
+        start = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        self.assertEqual(start["inputSchema"]["properties"]["print_browser"]["enum"], ["pdf", "dialog", "fail"])
+        batch = next(t for t in harness.TOOLS if t["name"] == "desktop.batch")
+        actions = batch["inputSchema"]["properties"]["actions"]["items"]["properties"]["type"]["enum"]
+        for action in ("print_output", "cancel_print", "focus_app"):
+            self.assertIn(action, actions)
+
+    def test_print_failure_launcher_cannot_fall_back_to_a_personal_browser(self):
+        with tempfile.TemporaryDirectory() as directory:
+            desktop = harness.Desktop()
+            desktop.directory = Path(directory)
+            with patch.object(harness.subprocess, "Popen") as launch:
+                desktop.start_print_browser("fail")
+                launch.assert_not_called()
+            launcher = desktop.env["SHEP_TEST_PRINT_BROWSER"]
+            self.assertEqual(Path(launcher).parent, desktop.directory)
+            self.assertEqual(subprocess.run([launcher, "http://127.0.0.1:1/fixture"]).returncode, 1)
+            desktop.stop()
+            self.assertNotIn("SHEP_TEST_PRINT_BROWSER", desktop.env)
+
+    def test_print_output_rejects_paths_and_invalid_counts(self):
+        desktop = harness.Desktop()
+        for arguments in ({"count":0}, {"pages":0}, {"name":"../private"}):
+            with self.assertRaisesRegex(ValueError, "Invalid print output"):
+                desktop.print_output(**arguments)
+
+    def test_print_browser_uses_owned_x11_profile_and_waits_before_app_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            desktop = harness.Desktop()
+            desktop.directory = Path(directory)
+            desktop.env["DISPLAY"] = ":321"
+            browser = Mock(pid=12345)
+            browser.poll.return_value = 0  # Cleanup must never signal a real PID, even if this test fails.
+            desktop.command = Mock(return_value="456")
+            with patch.object(harness.shutil, "which", return_value="/bin/true"), patch.object(harness.subprocess, "Popen", return_value=browser) as launch:
+                desktop.start_print_browser("pdf")
+                args = launch.call_args.args[0]
+                self.assertIn("--ozone-platform=x11", args)
+                self.assertIn(f"--user-data-dir={desktop.directory / 'print-profile'}", args)
+                self.assertIn("--kiosk-printing", args)
+                self.assertEqual(launch.call_args.kwargs["env"]["DISPLAY"], ":321")
+                self.assertTrue(launch.call_args.kwargs["start_new_session"])
+                desktop.command.assert_called_with("xdotool", "search", "--onlyvisible", "--pid", "12345")
+            # The process is a mock; cleanup must never signal a real PID.
+            desktop.browser = None
+            desktop.stop()
+
     def test_invalid_mail_action_fault_mode_is_rejected_before_launch(self):
         desktop = harness.Desktop()
         with self.assertRaisesRegex(ValueError, "Unknown mail actions"):
@@ -48,20 +166,82 @@ class HarnessTests(unittest.TestCase):
             fixture.write_text("Fixture")
             windows = iter(["123", "", "123", ""])
             desktop.window = "main"
-            desktop.command = Mock(side_effect=lambda *args: next(windows) if args[1] == "search" else "")
+            clipboard_reads = iter(["previous path", str(fixture), str(fixture)])
+            desktop.command = Mock(side_effect=lambda *args: next(windows) if args[1] == "search" else next(clipboard_reads) if args[0] == "xclip" else "")
             with patch.object(harness.time, "sleep"), patch.object(harness.subprocess, "Popen") as clipboard:
+                clipboard.return_value.poll.return_value = 0
                 self.assertEqual(desktop.choose_file(str(fixture)), {"selected": str(fixture)})
                 commands = [call.args for call in desktop.command.call_args_list]
-                self.assertIn(("xdotool", "windowfocus", "123"), commands)
+                self.assertIn(("xdotool", "windowfocus", "--sync", "123"), commands)
+                self.assertEqual(commands.count(("xclip", "-selection", "clipboard", "-out")), 3)
+                self.assertLess(next(i for i, command in enumerate(commands) if command[0] == "xclip"), commands.index(("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v")))
                 self.assertIn(("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v"), commands)
                 clipboard.return_value.stdin.write.assert_called_once_with(str(fixture).encode())
                 desktop.choose_file()
                 self.assertIn(("xdotool", "key", "--clearmodifiers", "--delay", "1", "Escape"), [call.args for call in desktop.command.call_args_list])
-                self.assertEqual(desktop.command.call_args.args, ("xdotool", "windowfocus", "main"))
+                self.assertEqual(desktop.command.call_args.args, ("xdotool", "windowfocus", "--sync", "main"))
             desktop.command.reset_mock()
             with self.assertRaises(ValueError):
                 desktop.choose_file(str(ROOT / "Cargo.toml"))
             desktop.command.assert_not_called()
+
+    def test_picker_retries_ignored_input_and_requires_gtk_clipboard_ownership(self):
+        desktop = harness.Desktop()
+        fixture = Path("/isolated/fixture.txt")
+        desktop.command = Mock(return_value=str(fixture))
+        pending, copied = Mock(), Mock()
+        pending.poll.return_value = None
+        copied.poll.return_value = 0
+        tick = [0.0]
+        def advance(seconds):
+            tick[0] += seconds
+        with patch.object(harness.time, "monotonic", side_effect=lambda: tick[0]), \
+             patch.object(harness.time, "sleep", side_effect=advance), \
+             patch.object(harness.subprocess, "Popen", side_effect=[pending, copied]):
+            desktop.enter_picker_path("picker", fixture)
+        pending.terminate.assert_called_once()
+        commands = [call.args for call in desktop.command.call_args_list]
+        self.assertEqual(commands.count(("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+l")), 2)
+        self.assertNotIn(("xdotool", "key", "--clearmodifiers", "--delay", "1", "Return"), commands)
+        desktop.clipboard = None
+
+    def test_picker_never_submits_a_path_that_gtk_did_not_accept(self):
+        desktop = harness.Desktop()
+        fixture = Path("/isolated/fixture.txt")
+        desktop.command = Mock(return_value=str(fixture))
+        owner = Mock()
+        owner.poll.return_value = None
+        tick = [0.0]
+        def advance(seconds):
+            tick[0] += seconds
+        with patch.object(harness.time, "monotonic", side_effect=lambda: tick[0]), \
+             patch.object(harness.time, "sleep", side_effect=advance), \
+             patch.object(harness.subprocess, "Popen", return_value=owner):
+            with self.assertRaisesRegex(RuntimeError, "location field"):
+                desktop.enter_picker_path("picker", fixture)
+        self.assertGreaterEqual(tick[0], 3)
+        desktop.clipboard = None
+
+    def test_picker_confirmation_retries_only_its_window_after_filename_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            desktop = harness.Desktop()
+            desktop.directory = Path(directory)
+            fixture = desktop.directory / "fixture.txt"
+            fixture.write_text("Fixture")
+            desktop.enter_picker_path = Mock()
+            desktop.window = "main"
+            windows = iter(["123"] * 9 + [""])
+            desktop.command = Mock(side_effect=lambda *args: next(windows) if args[1] == "search" else "")
+            tick = [0.0]
+            def advance(seconds):
+                tick[0] += seconds
+            with patch.object(harness.time, "monotonic", side_effect=lambda: tick[0]), \
+                 patch.object(harness.time, "sleep", side_effect=advance):
+                desktop.choose_file(fixture)
+            desktop.enter_picker_path.assert_called_once_with("123", fixture)
+            confirms = [call.args for call in desktop.command.call_args_list if call.args[-1] == "Return"]
+            self.assertEqual(confirms, [("xdotool", "key", "--window", "123", "--clearmodifiers", "--delay", "1", "Return")] * 2)
+            self.assertEqual(desktop.command.call_args.args, ("xdotool", "windowfocus", "--sync", "main"))
 
     def test_mcp_initialize_discovery_and_unknown_tool(self):
         messages = [
@@ -123,6 +303,10 @@ class HarnessTests(unittest.TestCase):
             with patch.object(harness.time, "sleep"):
                 result = desktop.batch([{"type": "wait_for", "path": "rows.0.folder", "value": "Projects"}])
             self.assertEqual(result["actions"][0]["result"], "Projects")
+            desktop.state = Mock(side_effect=[{"removal": None}, {"removal": {"transfers": 1}}, {}])
+            with patch.object(harness.time, "sleep"):
+                result = desktop.batch([{"type": "wait_for", "path": "removal.transfers", "value": 1}])
+            self.assertEqual(result["actions"][0]["result"], 1)
             desktop.state = Mock(return_value={"rows": []})
             with self.assertRaises(AssertionError):
                 desktop.assertion({"path": "rows.0.folder", "value": "Projects"})

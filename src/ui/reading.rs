@@ -5,6 +5,28 @@ use iced::{
 };
 
 impl App {
+    pub(super) fn reader_width(&self) -> f32 {
+        let width = self.size.width / (self.preferences.interface_scale as f32 / 100.);
+        if self.full_reader {
+            return width - 32.;
+        }
+        let available = (width - self.sidebar_width() - 41.).max(1.);
+        let minimum = 300_f32.min(available / 2.);
+        available - (available * self.preferences.reader_split).clamp(minimum, available - minimum)
+    }
+    pub(super) fn compact_reader(&self) -> bool {
+        self.reader_width() < 500.
+            || self.size.height / (self.preferences.interface_scale as f32 / 100.) < 720.
+    }
+    pub(super) fn reader_padding(&self) -> f32 {
+        if self.compact_reader() {
+            14.
+        } else if self.size.width < 1200. {
+            22.
+        } else {
+            35.
+        }
+    }
     pub(super) fn reading_settings(&self) -> Element<'_, Message> {
         column![
             text("Reading and layout").size(17).font(BOLD),
@@ -88,25 +110,46 @@ impl App {
         ].spacing(16)).padding(23).style(card).into()
     }
     pub(super) fn image_bar(&self) -> Element<'_, Message> {
-        container(
-            column![
+        let compact = self.reader_width() - self.reader_padding() * 2. < 540.;
+        if compact {
+            return container(
                 row![
-                    icon("image", 18.),
-                    text("External images are blocked").size(12)
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-                row![
-                    action("This email", Message::AllowImages(0)),
-                    action("This sender", Message::AllowImages(1)),
-                    action("This domain", Message::AllowImages(2))
+                    icon("image", 16.),
+                    text("Images blocked").size(11),
+                    space().width(Length::Fill),
+                    pick_list(
+                        [ImageScope::Email, ImageScope::Sender, ImageScope::Domain],
+                        None::<ImageScope>,
+                        |scope| Message::AllowImages(scope as u8)
+                    )
+                    .placeholder("Show images")
+                    .style(select_input)
+                    .menu_style(select_menu)
+                    .text_size(11)
+                    .padding(7)
                 ]
                 .spacing(6)
-                .wrap(),
+                .align_y(Alignment::Center),
+            )
+            .padding(8)
+            .width(Length::Fill)
+            .style(subtle)
+            .into();
+        }
+        container(
+            row![
+                icon("image", 16.),
+                text("Images blocked").size(11),
+                space().width(Length::Fill),
+                action("This email", Message::AllowImages(0)),
+                action("This sender", Message::AllowImages(1)),
+                action("This domain", Message::AllowImages(2))
             ]
-            .spacing(8),
+            .spacing(8)
+            .align_y(Alignment::Center),
         )
-        .padding(12)
+        .padding([6, 10])
+        .width(Length::Fill)
         .style(subtle)
         .into()
     }
@@ -129,5 +172,21 @@ impl App {
         ]
         .spacing(12)
         .into()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageScope {
+    Email,
+    Sender,
+    Domain,
+}
+impl std::fmt::Display for ImageScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Email => "This email",
+            Self::Sender => "This sender",
+            Self::Domain => "This domain",
+        })
     }
 }

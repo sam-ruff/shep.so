@@ -19,7 +19,8 @@ fn cached_envelope_and_reply_match_shared_browser_fixtures() {
         mail.summary.timestamp = c["timestamp"].as_i64().unwrap();
         mail.summary.sender = c["sender"].as_str().unwrap().into();
         mail.summary.subject = c["subject"].as_str().unwrap().into();
-        let detail = MailDetail {
+        let detail = MailDetail::<()> {
+            html: None,
             summary: mail.summary,
             body: c["text"].as_str().unwrap().into(),
             latest_body: String::new(),

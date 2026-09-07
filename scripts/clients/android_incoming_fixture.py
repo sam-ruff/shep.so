@@ -39,8 +39,11 @@ class IncomingPicker(AndroidPicker):
             time.sleep(.3)
         self.adb('shell','run-as',PACKAGE,'sh','-c',f"'cat > {FIXTURE}.tmp'",data=source.read_bytes())
         self.adb('shell','run-as',PACKAGE,'mv',f'{FIXTURE}.tmp',FIXTURE)
-        phase='cancel';deadline=time.monotonic()+150
+        phase='await-cancel';deadline=time.monotonic()+150
         while time.monotonic()<deadline:
+            if phase=='await-cancel':
+                if self.adb('exec-out','run-as',PACKAGE,'cat',REQUEST,check=False).strip()!=b'cancel-file':time.sleep(.2);continue
+                phase='cancel'
             if phase=='await-save':
                 if self.adb('exec-out','run-as',PACKAGE,'cat',REQUEST,check=False).strip()!=b'save-file':time.sleep(.2);continue
                 phase='save'

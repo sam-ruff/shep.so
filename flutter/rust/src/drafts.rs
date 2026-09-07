@@ -29,7 +29,7 @@ pub fn editable(db: &Connection, id: &str) -> Result<Draft> {
 }
 pub fn attachments(db: &Connection, id: &str) -> Result<Vec<DraftAttachment>> {
     Ok(db.prepare("SELECT id,name,media_type,length(bytes) FROM draft_files WHERE draft_id=?1 ORDER BY rowid")?
-        .query_map([id],|r|Ok(DraftAttachment{id:r.get(0)?,name:r.get(1)?,media_type:r.get(2)?,size:r.get::<_,u32>(3)? as usize}))?
+        .query_map([id],|r|Ok(DraftAttachment{content_id:None,id:r.get(0)?,name:r.get(1)?,media_type:r.get(2)?,size:r.get::<_,u32>(3)? as usize}))?
         .collect::<rusqlite::Result<Vec<_>>>()?)
 }
 pub fn snapshot(db: &Connection, id: &str) -> Result<Value> {
@@ -100,6 +100,7 @@ pub fn read_files(paths: Vec<SelectedFile>) -> Result<Vec<FilePart>> {
             "Attachments must total 18 MiB or less."
         );
         let attachment = DraftAttachment {
+            content_id: None,
             id: uuid::Uuid::new_v4().to_string(),
             media_type: mime_guess::from_path(&selected.name)
                 .first_or_octet_stream()

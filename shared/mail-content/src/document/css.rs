@@ -2,6 +2,12 @@
 use cssparser::{Parser, ParserInput, ToCss, Token};
 
 pub(super) fn rewrite(source: &str, mut image: impl FnMut(&str) -> Option<String>) -> String {
+    rewrite_urls(source, |url| {
+        image(url).map(|key| format!("urn:shep-image:{key}"))
+    })
+}
+
+pub(crate) fn rewrite_urls(source: &str, mut image: impl FnMut(&str) -> Option<String>) -> String {
     fn scan<'i>(
         parser: &mut Parser<'i, '_>,
         image: &mut impl FnMut(&str) -> Option<String>,
@@ -76,7 +82,7 @@ pub(super) fn rewrite(source: &str, mut image: impl FnMut(&str) -> Option<String
     }
     fn resource(value: &str, image: &mut impl FnMut(&str) -> Option<String>) -> String {
         image(value)
-            .map(|key| format!("url(\"urn:shep-image:{key}\")"))
+            .map(|url| format!("url({})", Token::QuotedString(url.into()).to_css_string()))
             .unwrap_or_else(|| "none".into())
     }
     // CSS string escapes can decode to an HTML raw-text end tag. Keep that tag

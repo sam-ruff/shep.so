@@ -1,10 +1,16 @@
 pub mod backup;
+pub mod bulk;
 pub mod compose;
+pub mod desktop_badge;
+pub mod email_content;
 pub mod engine;
 pub mod fuzzy;
+pub mod html_render;
 pub mod mail_actions;
+pub mod message_find;
 pub mod model;
 pub mod outgoing;
+pub mod printing;
 pub mod providers;
 pub mod remote_images;
 pub mod replies;

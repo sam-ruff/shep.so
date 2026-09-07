@@ -1,15 +1,18 @@
 mod backups;
 #[cfg(test)]
 mod backups_tests;
+mod bulk;
 mod calendar_connections;
 mod dispatch;
 mod google_lifecycle;
 mod mail_actions;
+mod mail_sync;
 mod outgoing;
 mod removals;
 mod restore;
 #[cfg(test)]
 mod restore_tests;
+pub mod selections;
 pub use dispatch::CommandSender;
 
 use crate::{
@@ -31,6 +34,17 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone)]
 pub enum Command {
     Query(u64, MailQuery, bool),
+    Selection(u64, selections::Request, Vec<String>),
+    ReviewSelection(u64, crate::store::MailSelectionId, u64, Vec<String>),
+    ReleaseSelection(crate::store::MailSelectionId),
+    BulkStart(String, crate::store::MailSelectionId, crate::bulk::Action),
+    BulkRun(String),
+    BulkStop,
+    BulkResume(String),
+    BulkUndo(String),
+    BulkJobs(u64, usize),
+    BulkItems(u64, String, Option<u64>),
+    BulkResolve(String),
     Conversation(u64, String, Option<String>, Option<usize>),
     IndexConversations,
     LoadImages(Vec<String>),
@@ -44,10 +58,14 @@ pub enum Command {
     SavePreferences(u64, Preferences),
     Sync,
     Move(u64, Mail, String),
-    Transfer(Mail, String, String),
+    Transfer(u64, Mail, String, String),
+    UndoMove(u64, Mail, Arc<crate::mail_actions::MoveReceipt>),
     Flags(u64, Mail, crate::mail_actions::Flags),
     SaveDraft(Draft),
     AutoSaveDraft(Draft),
+    DeleteDraft(String),
+    ForwardDraft(String, String),
+    Print(u64, String, crate::printing::Options),
     AddDraftFiles(Draft, Vec<std::path::PathBuf>),
     RemoveDraftFile(String, String),
     Send(Draft),
@@ -97,8 +115,9 @@ impl Command {
             Self::Send(d) => Some(format!("send:{}", d.id)),
             Self::SaveEvent(e) | Self::DeleteEvent(e) => Some(format!("event:{}", e.key())),
             Self::Flags(request, m, _) => Some(format!("flags:{}:{request}", m.id)),
+            Self::UndoMove(request, m, _) => Some(format!("undo:{}:{request}", m.id)),
             Self::Move(request, m, _) => Some(format!("move:{}:{request}", m.id)),
-            Self::Transfer(m, _, _) => Some(format!("message:{}", m.id)),
+            Self::Transfer(request, m, _, _) => Some(format!("transfer:{}:{request}", m.id)),
             _ => None,
         }
     }
@@ -106,6 +125,19 @@ impl Command {
 #[derive(Debug, Clone)]
 pub enum Event {
     Ready(CommandSender, Arc<Workspace>, bool),
+    Selection(
+        u64,
+        Result<Option<Arc<crate::store::SelectionSnapshot>>, String>,
+    ),
+    BulkReview(u64, Result<Arc<crate::store::SelectionSnapshot>, String>),
+    BulkStarted(String, Result<Arc<crate::bulk::Job>, String>),
+    BulkUpdate(Arc<crate::bulk::Job>),
+    BulkIdentity(String, String, Option<String>),
+    BulkStopped,
+    BulkResumed(String),
+    BulkFinished(String, Result<Arc<crate::bulk::Job>, String>),
+    BulkJobs(u64, Result<Arc<Vec<crate::bulk::Job>>, String>),
+    BulkItems(u64, String, Result<Arc<Vec<crate::bulk::Item>>, String>),
     RemoteImage(String, Result<Vec<u8>, String>),
     Workspace(Arc<Workspace>),
     PreferencesSaved(u64, Arc<crate::store::PreferenceSnapshot>),
@@ -123,8 +155,26 @@ pub enum Event {
         result: Result<Arc<MailDetail>, String>,
         prefetch: bool,
     },
+    MailSyncFinished(Result<(), String>),
     FlagsFinished(u64, Mail, Result<(), String>),
-    MoveFinished(u64, Mail, String, Result<(), String>),
+    MoveFinished(
+        u64,
+        Mail,
+        String,
+        Result<Arc<crate::mail_actions::MoveReceipt>, String>,
+    ),
+    TransferFinished(
+        u64,
+        Mail,
+        Result<Arc<crate::mail_actions::MoveReceipt>, String>,
+    ),
+    UndoFinished(
+        u64,
+        Mail,
+        Result<Arc<crate::mail_actions::MoveReceipt>, String>,
+    ),
+    #[cfg(feature = "test-support")]
+    PreviewSync(u64),
     Changed,
     Calendar(u64, Arc<Vec<CalendarEvent>>),
     Backups(u64, BackupTarget, Result<Arc<Vec<BackupCopy>>, String>),
@@ -144,7 +194,10 @@ pub enum Event {
     ),
     CalendarsConnected(u64, Result<(), String>),
     DraftSaved(String, u64, Result<Arc<crate::store::DraftState>, String>),
+    DraftDeleted(String, Result<Arc<crate::store::DraftState>, String>),
     DraftFiles(String, Result<Arc<crate::store::DraftState>, String>),
+    ForwardDraft(String, Result<Arc<crate::store::DraftState>, String>),
+    Print(u64, Result<Arc<crate::printing::Preview>, String>),
     Sent(String, u64),
     SubmissionQueued(String, u64),
     OutgoingPage(u64, Result<Arc<crate::outgoing::OutgoingPage>, String>),
@@ -170,6 +223,10 @@ struct Engine {
     passphrases: Arc<dyn backup::PassphraseStore>,
     restore_credentials: Arc<dyn backup::restore::CredentialRestorer>,
     backup_uploads: Arc<tokio::sync::OnceCell<backup::journal::Journal>>,
+    mail_sync_settings: mail_sync::Settings,
+    provider_slots: dispatch::Slots,
+    printing: crate::printing::Service,
+    bulk_control: Arc<bulk::Control>,
 }
 type Output = futures::channel::mpsc::Sender<Event>;
 
@@ -230,6 +287,10 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             passphrases: Arc::new(backup::OsPassphraseStore),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
             backup_uploads: Default::default(),
+            mail_sync_settings: Default::default(),
+            provider_slots: Default::default(),
+            printing: Default::default(),
+            bulk_control: Default::default(),
         };
         let workspace = match engine.store.workspace().await {
             Ok(w) => w,
@@ -238,6 +299,9 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
                 return;
             }
         };
+        engine
+            .mail_sync_settings
+            .set(workspace.preferences.mail_check_seconds);
         if !demo && workspace.preferences.google_lifecycle.cleanup_pending {
             let _ = tx.try_send(Command::CleanupGoogle);
         } else if !demo && !workspace.preferences.active_google_client().is_empty() {
@@ -382,6 +446,85 @@ impl Engine {
         let explicit_draft = matches!(&command, Command::SaveDraft(_));
         let deleting_event = matches!(&command, Command::DeleteEvent(_));
         match command {
+            Command::ReviewSelection(serial, id, revision, visible) => {
+                let result = async {
+                    let frozen = self.store.freeze_selection(id, revision).await?;
+                    match self.store.selection_snapshot(frozen.id, visible).await {
+                        Ok(snapshot) => Ok(snapshot),
+                        Err(error) => {
+                            let _ = self.store.release_selection(frozen.id).await;
+                            Err(error)
+                        }
+                    }
+                }
+                .await
+                .map(Arc::new)
+                .map_err(|e: anyhow::Error| format!("{e:#}"));
+                output.send(Event::BulkReview(serial, result)).await?;
+            }
+            Command::ReleaseSelection(id) => self.store.release_selection(id).await?,
+            Command::BulkStart(id, selection, action) => {
+                let result = self
+                    .store
+                    .start_bulk(id.clone(), selection, action)
+                    .await
+                    .map(Arc::new)
+                    .map_err(|e| format!("{e:#}"));
+                output.send(Event::BulkStarted(id, result)).await?;
+            }
+            Command::BulkResume(id) => {
+                self.bulk_control
+                    .stopping
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                output.send(Event::BulkResumed(id)).await?;
+            }
+            Command::BulkStop => {
+                use std::sync::atomic::Ordering::SeqCst;
+                self.bulk_control.stopping.store(true, SeqCst);
+                if !self.bulk_control.active.load(SeqCst) {
+                    output.send(Event::BulkStopped).await?;
+                }
+            }
+            Command::BulkRun(_) => anyhow::bail!("Mail groups use their dedicated execution queue"),
+            Command::BulkUndo(id) => match self.store.request_bulk_undo(id.clone()).await {
+                Ok(job) => output.send(Event::BulkUpdate(Arc::new(job))).await?,
+                Err(error) => {
+                    output
+                        .send(Event::BulkFinished(id, Err(format!("{error:#}"))))
+                        .await?
+                }
+            },
+            Command::BulkJobs(serial, offset) => {
+                let result = self
+                    .store
+                    .bulk_jobs(offset)
+                    .await
+                    .map(Arc::new)
+                    .map_err(|e| format!("{e:#}"));
+                output.send(Event::BulkJobs(serial, result)).await?;
+            }
+            Command::BulkItems(serial, id, after) => {
+                let result = self
+                    .store
+                    .bulk_items(id.clone(), after)
+                    .await
+                    .map(Arc::new)
+                    .map_err(|e| format!("{e:#}"));
+                output.send(Event::BulkItems(serial, id, result)).await?;
+            }
+            Command::BulkResolve(id) => {
+                let result = async {
+                    let lease = self.store.bulk_lease(id.clone()).await?;
+                    self.store.accept_bulk_uncertainty(&lease).await
+                }
+                .await
+                .map(Arc::new)
+                .map_err(|e: anyhow::Error| format!("{e:#}"));
+                output.send(Event::BulkFinished(id, result)).await?;
+            }
+            Command::Selection(serial, request, visible) => {
+                self.selection(serial, request, visible, output).await?;
+            }
             Command::CheckGoogleConnection => {
                 let _guard = self.google_connection_lock.read().await;
                 let prefs: Preferences = self.store.get("preferences").await?;
@@ -417,6 +560,8 @@ impl Engine {
                 let results = futures::stream::iter(urls.into_iter().take(8))
                     .map(|url| async move {
                         let result = if self.demo {
+                            #[cfg(feature = "test-support")]
+                            crate::test_support::image_delay().await;
                             Ok(include_bytes!("../assets/logo-light.webp").to_vec())
                         } else {
                             crate::remote_images::fetch(&url)
@@ -546,156 +691,120 @@ impl Engine {
             }
             Command::SavePreferences(request, prefs) => {
                 let event = match self.store.save_preferences(prefs).await {
-                    Ok(snapshot) => Event::PreferencesSaved(request, Arc::new(snapshot)),
+                    Ok(snapshot) => {
+                        self.mail_sync_settings
+                            .set(snapshot.value.mail_check_seconds);
+                        Event::PreferencesSaved(request, Arc::new(snapshot))
+                    }
                     Err(error) => Event::PreferencesSaveFailed(request, error.to_string()),
                 };
                 output.send(event).await?;
             }
             Command::Sync => {
                 if self.demo {
+                    #[cfg(feature = "test-support")]
+                    {
+                        let round = crate::test_support::sync_mail(&self.store).await?;
+                        output.send(Event::PreviewSync(round)).await?;
+                    }
+                    #[cfg(not(feature = "test-support"))]
                     tokio::time::sleep(Duration::from_millis(1500)).await;
                     output.send(Event::Changed).await?;
-                    output.send(Event::Notice("Preview messages are stored locally. Add an account outside preview to sync.".into())).await?;
                     return Ok(());
                 }
                 let accounts: Vec<Account> = self.store.get("accounts").await?;
                 let results: Vec<_> = futures::stream::iter(accounts)
                     .map(|a| {
                         let engine = self.clone();
-                        let output = output.clone();
+                        let mut output = output.clone();
                         async move {
                             let name = a.name.clone();
-                            engine
-                                .sync_account(a, output)
+                            let result = engine
+                                .sync_account(a, output.clone())
                                 .await
-                                .with_context(|| format!("{name} sync failed"))
+                                .with_context(|| format!("{name} sync failed"));
+                            // Flush even a short account check's final cache
+                            // changes without waiting for a slower account.
+                            output.send(Event::Changed).await?;
+                            result
                         }
                     })
                     .buffer_unordered(3)
                     .collect()
                     .await;
-                for result in results {
-                    if let Err(e) = result {
-                        output.send(Event::Error(format!("{e:#}"))).await?;
-                    }
-                }
+                let failures: Vec<_> = results
+                    .into_iter()
+                    .filter_map(|result| result.err().map(|error| format!("{error:#}")))
+                    .collect();
                 self.workspace(&mut output).await?;
                 output.send(Event::Changed).await?;
+                anyhow::ensure!(failures.is_empty(), "{}", failures.join("\n"));
             }
-            Command::Transfer(mail, destination, folder) => {
-                let preferences: Preferences = self.store.get("preferences").await?;
-                anyhow::ensure!(
-                    preferences.cross_account_moves,
-                    "Enable moving between accounts in Preferences first."
-                );
-                anyhow::ensure!(
-                    mail.account_id != destination,
-                    "Choose a different destination account."
-                );
-                anyhow::ensure!(
-                    !mail.remote_id.starts_with("local-sent-"),
-                    "This copy is stored locally. Save and sync its server Sent copy before moving it to another account."
-                );
-                // Always lock in the same order to prevent opposing transfers deadlocking.
-                let mut ids = [mail.account_id.clone(), destination.clone()];
-                ids.sort();
-                let first = self.account_lock(&ids[0]).await;
-                let second = self.account_lock(&ids[1]).await;
-                let source = self.account(&mail.account_id).await?;
-                let destination = self.account(&destination).await?;
-                anyhow::ensure!(
-                    source.protocol == Protocol::Imap && destination.protocol == Protocol::Imap,
-                    "Moving between accounts requires two IMAP accounts. POP3 keeps server originals."
-                );
-                let raw = self.store.raw_message(mail.id.clone()).await?;
-                if self.demo {
-                    let moved = parse_mail(
-                        &destination.id,
-                        &format!("local-sent-transfer-{}", uuid::Uuid::new_v4()),
-                        &folder,
-                        raw,
-                        mail.unread,
-                        mail.starred,
-                    )?;
-                    self.store.upsert(vec![moved]).await?;
-                } else {
-                    let source_secret = providers::read_secret(&source.id).await?;
-                    let destination_secret = providers::read_secret(&destination.id).await?;
-                    let journal_key = format!("transfer:{}", mail.id);
-                    let journal: Option<(String, String, String)> =
-                        self.store.get(&journal_key).await?;
-                    if let Some((account, target, stage)) = &journal {
-                        anyhow::ensure!(
-                            account == &destination.id && target == &folder,
-                            "A transfer is already pending for this message. Resume with the same destination."
-                        );
-                        anyhow::ensure!(
-                            stage == "copied",
-                            "The previous upload was interrupted. The original is safe. Check the destination in webmail before moving it there manually; Shep will not upload a possible duplicate."
-                        );
-                    }
-                    tokio::time::timeout(
-                        Duration::from_secs(35),
-                        providers::mail::prepare_transfer(&source, &source_secret, &mail),
-                    )
-                    .await??;
-                    if journal.is_none() {
-                        self.store
-                            .put(
-                                &journal_key,
-                                Some((
-                                    destination.id.clone(),
-                                    folder.clone(),
-                                    "uploading".to_owned(),
-                                )),
-                            )
-                            .await?;
-                        tokio::time::timeout(Duration::from_secs(60), providers::mail::append_transfer(&destination, &destination_secret, &mail, &folder, raw)).await
-                            .context("Upload timed out; the source is retained. Check the destination before retrying.")??;
-                        self.store
-                            .put(
-                                &journal_key,
-                                Some((destination.id.clone(), folder.clone(), "copied".to_owned())),
-                            )
-                            .await?;
-                    }
-                    tokio::time::timeout(Duration::from_secs(35), providers::mail::finish_transfer(&source, &source_secret, &mail)).await
-                        .context("The destination has a copy; source removal timed out. Retry the same destination to finish without uploading again.")?
-                        .context("The destination has a copy; source removal could not be confirmed. Retry the same destination to finish.")?;
-                }
-                let journal_key = format!("transfer:{}", mail.id);
-                self.store.remove(mail.id).await?;
-                self.store
-                    .put(&journal_key, Option::<(String, String, String)>::None)
-                    .await?;
-                drop(second);
-                drop(first);
-                output.send(Event::Changed).await?;
+            Command::Transfer(request, mail, destination, folder) => {
+                let result = self
+                    .transfer_message(&mail, destination, folder, output.clone())
+                    .await;
+                let refresh = result.as_ref().ok().map(|(account, _)| account.clone());
                 output
-                    .send(Event::Notice(format!(
-                        "Moved to {} / {folder}.",
-                        destination.name
-                    )))
+                    .send(Event::TransferFinished(
+                        request,
+                        mail,
+                        result
+                            .map(|(_, receipt)| Arc::new(receipt))
+                            .map_err(|e| format!("{e:#}")),
+                    ))
                     .await?;
-                if !self.demo {
-                    self.sync_account(destination, output.clone()).await?;
+                if !self.demo
+                    && let Some(account) = refresh
+                    && let Err(error) = self.sync_account(account, output.clone()).await
+                {
+                    output.send(Event::Error(format!("The message was moved, but refreshing folders failed. Try Refresh. {error:#}"))).await?;
                 }
             }
             Command::Move(request, mail, folder) => {
                 let result = self.change_folder(&mail, &folder, output.clone()).await;
-                let refresh = result.as_ref().ok().cloned().flatten();
+                let refresh = result
+                    .as_ref()
+                    .ok()
+                    .and_then(|(account, _)| account.clone());
                 output
                     .send(Event::MoveFinished(
                         request,
                         mail,
                         folder,
-                        result.map(|_| ()).map_err(|e| format!("{e:#}")),
+                        result
+                            .map(|(_, receipt)| Arc::new(receipt))
+                            .map_err(|e| format!("{e:#}")),
                     ))
                     .await?;
                 if let Some(account) = refresh
                     && let Err(error) = self.sync_account(account, output.clone()).await
                 {
                     output.send(Event::Error(format!("The message was moved, but refreshing folders failed. Try Refresh. {error:#}"))).await?;
+                }
+            }
+            Command::UndoMove(request, original, receipt) => {
+                let result = self
+                    .undo_move(original.clone(), &receipt, output.clone())
+                    .await;
+                let refresh = result
+                    .as_ref()
+                    .ok()
+                    .and_then(|(account, _)| account.clone());
+                output
+                    .send(Event::UndoFinished(
+                        request,
+                        original,
+                        result
+                            .map(|(_, receipt)| Arc::new(receipt))
+                            .map_err(|e| format!("{e:#}")),
+                    ))
+                    .await?;
+                if !self.demo
+                    && let Some(account) = refresh
+                    && let Err(error) = self.sync_account(account, output.clone()).await
+                {
+                    output.send(Event::Error(format!("The message was restored, but refreshing folders failed. Try Refresh. {error:#}"))).await?;
                 }
             }
             Command::Flags(request, mail, changes) => {
@@ -725,6 +834,33 @@ impl Engine {
                     output.send(Event::Notice("Draft saved.".into())).await?;
                 }
             }
+            Command::DeleteDraft(id) => {
+                let result = async {
+                    #[cfg(feature = "test-support")]
+                    if self.demo
+                        && std::env::args().any(|arg| arg == "--discard-failure-once")
+                        && !self.store.get::<bool>("preview_discard_failed").await?
+                    {
+                        self.store.put("preview_discard_failed", true).await?;
+                        anyhow::bail!("Preview storage failure. Your draft is intact; try again.");
+                    }
+                    self.store.delete_draft(id.clone()).await
+                }
+                .await;
+                let deleted = result.is_ok();
+                output
+                    .send(Event::DraftDeleted(
+                        id,
+                        result
+                            .map(Arc::new)
+                            .map_err(|e| format!("Could not discard the draft: {e:#}")),
+                    ))
+                    .await?;
+                if deleted {
+                    self.workspace(&mut output).await?;
+                    output.send(Event::OutgoingChanged).await?;
+                }
+            }
             Command::AddDraftFiles(draft, paths) => {
                 let id = draft.id.clone();
                 let result = self.store.add_draft_files(draft, paths).await;
@@ -732,6 +868,37 @@ impl Engine {
                     .send(Event::DraftFiles(
                         id,
                         result.map(Arc::new).map_err(|e| format!("{e:#}")),
+                    ))
+                    .await?;
+            }
+            Command::Print(request, source, options) => {
+                let result = async {
+                    #[cfg(feature = "test-support")]
+                    if self.demo {
+                        crate::test_support::print_delay(&self.store).await?;
+                    }
+                    self.printing.prepare(&self.store, &source, options).await
+                }
+                .await;
+                output
+                    .send(Event::Print(request, result.map_err(|e| e.to_string())))
+                    .await?;
+            }
+            Command::ForwardDraft(source, id) => {
+                let result = async {
+                    #[cfg(feature = "test-support")]
+                    if self.demo {
+                        crate::test_support::forward_delay(&self.store).await?;
+                    }
+                    self.store.forward_draft(source, id.clone()).await
+                }
+                .await;
+                output
+                    .send(Event::ForwardDraft(
+                        id,
+                        result
+                            .map(Arc::new)
+                            .map_err(|e| format!("Could not prepare the forward: {e:#}")),
                     ))
                     .await?;
             }
@@ -1119,6 +1286,10 @@ mod calendar_tests {
             passphrases: Arc::new(backup::OsPassphraseStore),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
             backup_uploads: Default::default(),
+            mail_sync_settings: Default::default(),
+            provider_slots: Default::default(),
+            printing: Default::default(),
+            bulk_control: Default::default(),
         }
     }
     pub(super) fn event(source: &str) -> CalendarEvent {

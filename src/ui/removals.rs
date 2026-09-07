@@ -150,10 +150,13 @@ impl App {
             if preview.outgoing > 0 {
                 body=body.push(text(format!("{} outgoing recovery records will also be removed. Review Outbox first if delivery is uncertain.",preview.outgoing)).size(12));
             }
+            if preview.mail_history > 0 {
+                body=body.push(text(format!("{} mail-change history entries and their Undo receipts will also be removed.",preview.mail_history)).size(12));
+            }
             if preview.transfers > 0 {
                 body = body.push(container(column![
-                    text(format!("{} unfinished {} this account. Copies may already exist at the destination.",preview.transfers, if preview.transfers == 1 { "move involves" } else { "moves involve" })).size(12),
-                    checkbox(state.cancel_transfers).label("Cancel these unfinished moves locally").text_size(13).on_toggle_maybe(state.removing.is_none().then_some(Message::CancelPendingTransfers)),
+                    text(format!("{} unfinished {} this account. Copies may already exist at the destination.",preview.transfers, if preview.transfers == 1 { "mail change involves" } else { "mail changes involve" })).size(12),
+                    checkbox(state.cancel_transfers).label("Cancel these unfinished mail changes locally").text_size(13).on_toggle_maybe(state.removing.is_none().then_some(Message::CancelPendingTransfers)),
                 ].spacing(10)).padding(12).style(subtle));
             }
         } else if state.loading {
@@ -230,6 +233,7 @@ mod tests {
             events: 1,
             transfers: 0,
             outgoing: 0,
+            mail_history: 0,
             fingerprint: "fixture".into(),
         }
     }

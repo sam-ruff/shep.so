@@ -1,18 +1,32 @@
 use super::*;
-use crate::mail_actions::Flags;
+use crate::mail_actions::{Flags, MoveReceipt};
+mod counts;
+mod undo;
 
 #[derive(Default)]
 pub(super) struct Actions {
+    pub(super) read_candidate: Option<Mail>,
     pub base_page: Arc<MailPage>,
     flags: HashMap<String, PendingFlags>,
     sequence: u64,
     moves: HashMap<String, PendingMove>,
+    transfers: HashMap<String, PendingTransfer>,
+    undo: HashMap<u64, undo::Record>,
+}
+
+struct PendingTransfer {
+    mail: Mail,
+    account: String,
+    folder: String,
+    request: Option<u64>,
+    toast: u64,
 }
 
 struct PendingMove {
     mail: Mail,
     destination: String,
     request: Option<u64>,
+    toast: u64,
 }
 
 struct PendingFlags {
@@ -31,6 +45,8 @@ impl Actions {
             .filter(|entry| entry.request.is_some())
             .count()
             + self.moves.len()
+            + self.transfers.len()
+            + self.undo.values().filter(|entry| entry.pending()).count()
     }
     pub fn effective<'a>(&'a self, mail: &'a Mail) -> &'a Mail {
         self.flags
@@ -56,16 +72,28 @@ impl App {
             .retain(|id, entry| entry.request.is_some() || reader.as_ref() == Some(id));
         self.mail_actions.base_page = page;
         self.project_mail_flags();
+        self.selection_page_changed();
     }
 
-    fn project_mail_flags(&mut self) {
-        if self.mail_actions.flags.is_empty() && self.mail_actions.moves.is_empty() {
+    pub(super) fn project_mail_flags(&mut self) {
+        if self.mail_actions.flags.is_empty()
+            && self.mail_actions.moves.is_empty()
+            && self.mail_actions.transfers.is_empty()
+            && !self
+                .mail_actions
+                .undo
+                .values()
+                .any(|entry| entry.restoring())
+        {
             self.page = self.mail_actions.base_page.clone();
+            self.project_bulk();
             return;
         }
         let mut page = (*self.mail_actions.base_page).clone();
         page.rows.retain_mut(|mail| {
-            if self.mail_actions.moves.contains_key(&mail.id) {
+            if self.mail_actions.moves.contains_key(&mail.id)
+                || self.mail_actions.transfers.contains_key(&mail.id)
+            {
                 page.total = page.total.saturating_sub(1);
                 if mail.unread {
                     page.unread = page.unread.saturating_sub(1);
@@ -108,10 +136,25 @@ impl App {
             }
             keep
         });
+        self.project_undo(&mut page);
+        page.inbox_unread = self.project_inbox_counts();
         self.page = Arc::new(page);
+        self.project_bulk();
     }
 
     pub(super) fn toggle_mail_flag(&mut self, mail: Mail, unread: bool) {
+        if self.mail_actions.restoring(&mail.id) {
+            return;
+        }
+        if unread
+            && self
+                .mail_actions
+                .read_candidate
+                .as_ref()
+                .is_some_and(|candidate| candidate.id == mail.id)
+        {
+            self.mail_actions.read_candidate = None;
+        }
         let id = mail.id.clone();
         let current = self.mail_actions.effective(&mail).clone();
         let entry = self
@@ -134,6 +177,7 @@ impl App {
             entry.edits.1 += 1;
         }
         self.dispatch_flags(&id);
+        self.invalidate_action_snapshot();
         self.project_mail_flags();
     }
 
@@ -160,14 +204,140 @@ impl App {
         }
     }
 
-    pub(super) fn move_mail(&mut self, mail: Mail, destination: String) {
-        if mail.folder == destination || self.mail_actions.moves.contains_key(&mail.id) {
+    pub(super) fn transfer_mail(&mut self, mail: Mail, account: String, folder: String) {
+        let id = mail.id.clone();
+        if self.mail_actions.restoring(&id)
+            || self.mail_actions.transfers.contains_key(&id)
+            || self.mail_actions.moves.contains_key(&id)
+        {
             return;
         }
+        if self
+            .mail_actions
+            .read_candidate
+            .as_ref()
+            .is_some_and(|m| m.id == id)
+        {
+            self.finish_read();
+        }
+        let mail = self.mail_actions.effective(&mail).clone();
+        let toast = self.action_toasts.add(&account, &folder, Instant::now());
+        self.remember_move(toast, &mail);
+        self.mail_actions.transfers.insert(
+            id.clone(),
+            PendingTransfer {
+                mail,
+                account,
+                folder,
+                request: None,
+                toast,
+            },
+        );
+        self.dispatch_transfer(&id);
+        if self.mail_actions.transfers.contains_key(&id) {
+            self.invalidate_action_snapshot();
+            self.dialog = None;
+            self.focused_input = None;
+            self.pending_focus = None;
+            self.project_mail_flags();
+            if self.selected.as_ref() == Some(&id) || self.reader_id() == Some(id.as_str()) {
+                self.selected = None;
+                self.detail = None;
+                self.conversation = Default::default();
+                if let Some(next) = self.page.rows.first() {
+                    self.select(next.id.clone());
+                }
+            }
+        }
+    }
+
+    fn dispatch_transfer(&mut self, id: &str) {
+        if self
+            .mail_actions
+            .flags
+            .get(id)
+            .is_some_and(|entry| entry.request.is_some())
+        {
+            return;
+        }
+        let Some(entry) = self.mail_actions.transfers.get_mut(id) else {
+            return;
+        };
+        if entry.request.is_some() {
+            return;
+        }
+        self.mail_actions.sequence += 1;
+        let request = self.mail_actions.sequence;
+        entry.request = Some(request);
+        let command = Command::Transfer(
+            request,
+            entry.mail.clone(),
+            entry.account.clone(),
+            entry.folder.clone(),
+        );
+        if !self.try_command(command) {
+            if let Some(entry) = self.mail_actions.transfers.remove(id) {
+                self.action_toasts.failed(entry.toast);
+                self.mail_actions.undo.remove(&entry.toast);
+            }
+            self.pending_close = None;
+        }
+    }
+
+    pub(super) fn transfer_receipt(
+        &mut self,
+        request: u64,
+        mail: Mail,
+        result: Result<Arc<MoveReceipt>, String>,
+    ) -> Task<Message> {
+        if self
+            .mail_actions
+            .transfers
+            .get(&mail.id)
+            .is_none_or(|entry| entry.request != Some(request))
+        {
+            return Task::none();
+        }
+        let entry = self.mail_actions.transfers.remove(&mail.id).unwrap();
+        // Share the same typed completion and rollback path as a folder move.
+        self.mail_actions.moves.insert(
+            mail.id.clone(),
+            PendingMove {
+                mail: entry.mail,
+                destination: entry.folder.clone(),
+                request: Some(request),
+                toast: entry.toast,
+            },
+        );
+        self.move_receipt(request, mail, entry.folder, result)
+    }
+
+    pub(super) fn move_mail(&mut self, mail: Mail, destination: String) {
+        if self.mail_actions.restoring(&mail.id)
+            || mail.folder == destination
+            || self.mail_actions.moves.contains_key(&mail.id)
+            || self.mail_actions.transfers.contains_key(&mail.id)
+        {
+            return;
+        }
+        if self
+            .mail_actions
+            .read_candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.id == mail.id)
+        {
+            self.finish_read();
+        }
+        let mail = self.mail_actions.effective(&mail).clone();
         let id = mail.id.clone();
+        let toast = self
+            .action_toasts
+            .add(&mail.account_id, &destination, Instant::now());
+        self.remember_move(toast, &mail);
         self.mail_actions.moves.insert(
             id.clone(),
             PendingMove {
+                toast,
                 mail,
                 destination,
                 request: None,
@@ -177,7 +347,10 @@ impl App {
         if !self.mail_actions.moves.contains_key(&id) {
             return;
         }
+        self.invalidate_action_snapshot();
         self.dialog = None;
+        self.focused_input = None;
+        self.pending_focus = None;
         self.project_mail_flags();
         if self.selected.as_ref() == Some(&id) || self.reader_id() == Some(id.as_str()) {
             self.selected = None;
@@ -209,17 +382,20 @@ impl App {
         entry.request = Some(request);
         let command = Command::Move(request, entry.mail.clone(), entry.destination.clone());
         if !self.try_command(command) {
-            self.mail_actions.moves.remove(id);
+            if let Some(entry) = self.mail_actions.moves.remove(id) {
+                self.action_toasts.failed(entry.toast);
+                self.mail_actions.undo.remove(&entry.toast);
+            }
             self.pending_close = None;
         }
     }
 
-    pub(super) fn move_finished(
+    pub(super) fn move_receipt(
         &mut self,
         request: u64,
         mail: Mail,
-        folder: String,
-        result: Result<(), String>,
+        _folder: String,
+        result: Result<Arc<MoveReceipt>, String>,
     ) -> Task<Message> {
         if self
             .mail_actions
@@ -229,36 +405,33 @@ impl App {
         {
             return Task::none();
         }
-        self.mail_actions.moves.remove(&mail.id);
-        let failed = result.is_err();
+        let entry = self.mail_actions.moves.remove(&mail.id).unwrap();
         match result {
-            Ok(()) => {
+            Ok(receipt) => {
+                if let Some(record) = self.mail_actions.undo.get_mut(&entry.toast) {
+                    record.original = entry.mail.clone();
+                    record.receipt = Some(receipt.clone());
+                }
                 let mut base = (*self.mail_actions.base_page).clone();
+                counts::confirm_move(&mut base, &entry.mail, receipt.current.as_ref());
                 if let Some(index) = base.rows.iter().position(|m| m.id == mail.id) {
                     let removed = base.rows.remove(index);
                     base.total = base.total.saturating_sub(1);
                     if removed.unread {
                         base.unread = base.unread.saturating_sub(1);
-                        if removed.folder.eq_ignore_ascii_case("INBOX") {
-                            let count = base.inbox_unread.entry(removed.account_id).or_default();
-                            *count = count.saturating_sub(1);
-                        }
                     }
                 }
                 self.mail_actions.base_page = Arc::new(base);
-                self.notice(
-                    format!(
-                        "Moved to {}.",
-                        if folder.eq_ignore_ascii_case("INBOX") {
-                            "Inbox"
-                        } else {
-                            &folder
-                        }
-                    ),
-                    false,
-                );
             }
             Err(error) => {
+                let undo_requested = self
+                    .mail_actions
+                    .undo
+                    .remove(&entry.toast)
+                    .is_some_and(|r| r.restoring());
+                if !undo_requested {
+                    self.action_toasts.failed(entry.toast);
+                }
                 self.pending_close = None;
                 self.notice(
                     format!(
@@ -273,8 +446,9 @@ impl App {
                 );
             }
         }
+        self.dispatch_undos();
         self.project_mail_flags();
-        let failure_notice = failed.then(|| self.notice.clone()).flatten();
+        let failure_notice = self.notice.clone().filter(|(_, error, _)| *error);
         let refresh = self.handle(Message::Backend(Event::Changed));
         if let Some(notice) = failure_notice {
             self.notice = Some(notice);
@@ -285,6 +459,34 @@ impl App {
             return Task::batch([refresh, self.handle(Message::WindowClose(window))]);
         }
         refresh
+    }
+
+    #[cfg(test)]
+    fn move_finished(
+        &mut self,
+        request: u64,
+        mail: Mail,
+        folder: String,
+        result: Result<(), String>,
+    ) -> Task<Message> {
+        let result = result.map(|()| Arc::new(MoveReceipt::local(&mail, &folder)));
+        self.move_receipt(request, mail, folder, result)
+    }
+    #[cfg(test)]
+    fn transfer_finished(
+        &mut self,
+        request: u64,
+        mail: Mail,
+        result: Result<(), String>,
+    ) -> Task<Message> {
+        let folder = self
+            .mail_actions
+            .transfers
+            .get(&mail.id)
+            .map(|e| e.folder.as_str())
+            .unwrap_or("Archive");
+        let result = result.map(|()| Arc::new(MoveReceipt::local(&mail, folder)));
+        self.transfer_receipt(request, mail, result)
     }
 
     pub(super) fn flags_finished(
@@ -311,7 +513,27 @@ impl App {
         newer.apply(&mut entry.desired);
         // Keep existing bodies in place. Only their small metadata is overlaid.
         let confirmed = entry.confirmed.clone();
+        for record in self
+            .mail_actions
+            .undo
+            .values_mut()
+            .filter(|r| r.original.id == sent.id)
+        {
+            record.original.unread = confirmed.unread;
+            record.original.starred = confirmed.starred;
+        }
+        if let Some(moving) = self.mail_actions.moves.get_mut(&sent.id) {
+            moving.mail.unread = confirmed.unread;
+            moving.mail.starred = confirmed.starred;
+        }
+        if let Some(entry) = self.mail_actions.transfers.get_mut(&sent.id) {
+            entry.mail.unread = confirmed.unread;
+            entry.mail.starred = confirmed.starred;
+        }
         let mut base = (*self.mail_actions.base_page).clone();
+        if result.is_ok() {
+            counts::confirm_flags(&mut base, &confirmed);
+        }
         if let Some(mail) = base.rows.iter_mut().find(|m| m.id == sent.id) {
             if mail.unread != confirmed.unread {
                 let adjust = |count: &mut usize| {
@@ -322,19 +544,11 @@ impl App {
                     };
                 };
                 adjust(&mut base.unread);
-                if mail.folder.eq_ignore_ascii_case("INBOX") {
-                    adjust(
-                        base.inbox_unread
-                            .entry(mail.account_id.clone())
-                            .or_default(),
-                    );
-                }
             }
             mail.unread = confirmed.unread;
             mail.starred = confirmed.starred;
         }
         self.mail_actions.base_page = Arc::new(base);
-        let failed = result.is_err();
         if let Err(error) = result {
             self.pending_close = None;
             self.notice(
@@ -342,9 +556,10 @@ impl App {
                 true,
             );
         }
-        let failure_notice = failed.then(|| self.notice.clone()).flatten();
+        let failure_notice = self.notice.clone().filter(|(_, error, _)| *error);
         self.dispatch_flags(&sent.id);
         self.dispatch_move(&sent.id);
+        self.dispatch_transfer(&sent.id);
         self.project_mail_flags();
         let refresh = self.handle(Message::Backend(Event::Changed));
         if let Some(notice) = failure_notice {
@@ -362,7 +577,60 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    async fn fixture() -> (App, tokio::sync::mpsc::Receiver<Command>, Arc<MailDetail>) {
+    #[tokio::test]
+    async fn metadata_actions_work_without_a_body_and_never_target_a_stale_body() {
+        for stale in [false, true] {
+            let (mut app, mut commands, original) = fixture().await;
+            app.detail = if stale {
+                let mut old = (*original).clone();
+                old.summary.id = "another-message".into();
+                Some(Arc::new(old))
+            } else {
+                None
+            };
+            let _ = app.handle(Message::ToggleRead);
+            assert!(!app.page.rows[0].unread);
+            let Command::Flags(request, mail, _) = commands.try_recv().unwrap() else {
+                panic!("Expected read change");
+            };
+            assert_eq!(mail.id, original.summary.id);
+            let _ = app.flags_finished(request, mail, Ok(()));
+            let _ = app.key(
+                Key::Character("m".into()),
+                keyboard::Modifiers::empty(),
+                false,
+            );
+            assert_eq!(app.dialog, Some(Dialog::Move));
+            app.focused_input = Some("folder-search");
+            let _ = app.handle(Message::Move("Archive".into()));
+            let Command::Move(_, mail, destination) = commands.try_recv().unwrap() else {
+                panic!("Expected move");
+            };
+            assert_eq!(mail.id, original.summary.id);
+            assert_eq!(destination, "Archive");
+            assert!(app.focused_input.is_none());
+            assert!(app.dialog.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_conversation_body_actions_keep_the_expanded_message_identity() {
+        let (mut app, mut commands, original) = fixture().await;
+        let mut older = original.summary.clone();
+        older.id = "older-reply".into();
+        older.folder = "Archive".into();
+        app.conversation.focus = Some(older.id.clone());
+        Arc::make_mut(&mut app.conversation.page).rows = vec![older.clone()];
+        // The old anchor body is still cached while the expanded reply loads.
+        let _ = app.handle(Message::ToggleRead);
+        let Command::Flags(_, mail, _) = commands.try_recv().unwrap() else {
+            panic!("Expected read change");
+        };
+        assert_eq!(mail.id, older.id);
+        assert_eq!(mail.folder, "Archive");
+    }
+
+    pub(super) async fn fixture() -> (App, tokio::sync::mpsc::Receiver<Command>, Arc<MailDetail>) {
         let store = crate::store::Store::memory().unwrap();
         let mail = parse_mail(
             "fixture",
@@ -433,6 +701,75 @@ mod tests {
         assert!(app.notice.as_ref().unwrap().0.contains("restored"));
     }
     #[tokio::test]
+    async fn toast_is_immediate_failure_only_changes_its_own_count_and_dismissal_sticks() {
+        let (mut app, mut commands, original) = fixture().await;
+        let _ = app.handle(Message::Move("Archive".into()));
+        assert_eq!(
+            app.action_toasts.current.as_ref().unwrap().label(),
+            "Archived 1 message"
+        );
+        let Command::Move(request, mail, folder) = commands.try_recv().unwrap() else {
+            panic!("Expected move")
+        };
+        let mut another = original.summary.clone();
+        another.id = "second".into();
+        app.move_mail(another, "Archive".into());
+        let Command::Move(second, other, other_folder) = commands.try_recv().unwrap() else {
+            panic!("Expected move")
+        };
+        assert_eq!(
+            app.action_toasts.current.as_ref().unwrap().label(),
+            "Archived 2 messages"
+        );
+        let _ = app.move_finished(
+            request,
+            mail.clone(),
+            folder.clone(),
+            Err("First rejected".into()),
+        );
+        assert_eq!(
+            app.action_toasts.current.as_ref().unwrap().label(),
+            "Archived 1 message"
+        );
+        let _ = app.move_finished(request, mail, folder, Err("Stale rejection".into()));
+        assert_eq!(
+            app.action_toasts.current.as_ref().unwrap().label(),
+            "Archived 1 message"
+        );
+        let _ = app.handle(Message::DismissActionToast);
+        let _ = app.move_finished(second, other, other_folder, Ok(()));
+        assert!(
+            app.action_toasts.current.is_none(),
+            "Completion must not revive a dismissed toast"
+        );
+        assert!(app.notice.as_ref().unwrap().0.contains("First rejected"));
+    }
+
+    #[tokio::test]
+    async fn transfer_feedback_is_immediate_and_failure_restores_without_changing_navigation() {
+        let (mut app, mut commands, original) = fixture().await;
+        app.transfer_mail(original.summary.clone(), "personal".into(), "Plans".into());
+        assert_eq!(app.page.total, 0);
+        assert_eq!(app.mail_actions.pending(), 1);
+        assert_eq!(
+            app.action_toasts.current.as_ref().unwrap().label(),
+            "Moved 1 message to Plans"
+        );
+        let Command::Transfer(request, mail, _, _) = commands.try_recv().unwrap() else {
+            panic!("Expected transfer")
+        };
+        app.project_mail_flags();
+        assert_eq!(app.page.total, 0);
+        let _ = app.transfer_finished(request, mail.clone(), Err("Upload rejected".into()));
+        assert_eq!(app.page.total, 1);
+        assert_eq!(app.page.rows[0].id, original.summary.id);
+        assert!(app.action_toasts.current.is_none());
+        assert!(app.notice.as_ref().unwrap().0.contains("Upload rejected"));
+        let _ = app.transfer_finished(request, mail, Ok(()));
+        assert_eq!(app.page.total, 1);
+    }
+
+    #[tokio::test]
     async fn archive_waits_for_latest_flags_without_waiting_to_hide_the_row() {
         let (mut app, mut commands, _) = fixture().await;
         let _ = app.handle(Message::ToggleRead);
@@ -457,10 +794,17 @@ mod tests {
     #[tokio::test]
     async fn a_full_queue_cannot_hide_an_unaccepted_archive() {
         let (mut app, _commands, _) = fixture().await;
-        while app.tx.as_ref().unwrap().try_send(Command::Sync).is_ok() {}
+        while app
+            .tx
+            .as_ref()
+            .unwrap()
+            .try_send(Command::LoadImages(Vec::new()))
+            .is_ok()
+        {}
         let _ = app.handle(Message::Move("Archive".into()));
         assert_eq!(app.page.total, 1);
         assert_eq!(app.mail_actions.pending(), 0);
+        assert!(app.action_toasts.current.is_none());
         assert!(app.notice.as_ref().unwrap().1);
     }
     #[tokio::test]
@@ -542,7 +886,13 @@ mod tests {
     #[tokio::test]
     async fn full_queue_restores_flags_and_close_waits_for_accepted_changes() {
         let (mut app, mut commands, _) = fixture().await;
-        while app.tx.as_ref().unwrap().try_send(Command::Sync).is_ok() {}
+        while app
+            .tx
+            .as_ref()
+            .unwrap()
+            .try_send(Command::LoadImages(Vec::new()))
+            .is_ok()
+        {}
         let _ = app.handle(Message::ToggleRead);
         assert!(app.page.rows[0].unread);
         assert_eq!(app.mail_actions.pending(), 0);
@@ -555,5 +905,67 @@ mod tests {
         let _ = app.flags_finished(request, sent, Err("Save failed".into()));
         assert!(app.pending_close.is_none());
         assert!(app.page.rows[0].unread);
+    }
+    #[tokio::test]
+    async fn native_focus_result_blocks_unhandled_destructive_chords_in_search() {
+        let (mut app, mut commands, _) = fixture().await;
+        for focused in [true, false] {
+            let _ = app.handle(Message::KeyFocusChecked(
+                Key::Character("d".into()),
+                keyboard::Modifiers::CTRL,
+                focused,
+            ));
+            if focused {
+                assert!(commands.try_recv().is_err());
+                assert_eq!(app.page.total, 1);
+                assert!(app.action_toasts.current.is_none());
+            } else {
+                assert!(matches!(commands.try_recv(), Ok(Command::Move(_, _, _))));
+                assert_eq!(app.page.total, 0);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn full_reader_keys_do_not_wait_for_a_missing_search_widget() {
+        let (mut app, mut commands, _) = fixture().await;
+        app.full_reader = true;
+        let _ = app.handle(Message::Key(
+            Key::Named(keyboard::key::Named::Escape),
+            keyboard::Modifiers::empty(),
+            false,
+        ));
+        assert!(!app.full_reader);
+        app.full_reader = true;
+        let _ = app.handle(Message::Key(
+            Key::Character("d".into()),
+            keyboard::Modifiers::CTRL,
+            false,
+        ));
+        assert!(matches!(commands.try_recv(), Ok(Command::Move(_, _, _))));
+        app.tab = Tab::Preferences;
+        let _ = app.handle(Message::Key(
+            Key::Character("d".into()),
+            keyboard::Modifiers::CTRL,
+            false,
+        ));
+        assert!(
+            commands.try_recv().is_err(),
+            "Mail shortcuts are scoped to mail"
+        );
+    }
+
+    #[test]
+    fn choosing_a_sort_cancels_stale_search_focus_observations_and_retries() {
+        let (mut app, _) = App::new();
+        app.focused_input = Some("search");
+        app.pending_focus = Some("search");
+        let _ = app.handle(Message::Sort(MailSort::Oldest));
+        assert!(app.focused_input.is_none());
+        assert!(app.pending_focus.is_none());
+        let _ = app.handle(Message::Focus("search", 1));
+        let _ = app.handle(Message::FocusChecked("search", true));
+        assert!(app.focused_input.is_none());
+        assert!(app.pending_focus.is_none());
     }
 }
