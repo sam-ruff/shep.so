@@ -23,8 +23,11 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
-## R30 — Native folder controls verification checkpoint (2026-09-07)
+## R30 — Native folder controls installed and pushed (2026-09-07)
 
+Source [3567de2](https://github.com/sam-ruff/shep.so/commit/3567de29847d81d29c8882269c82a6aa7fa986d4)
+is installed for the Linux user and pushed to `main`. Git hooks pass, including
+formatting, Clippy, the Rust suite and two drawing-adapter tests.
 Native sidebar right-click and Shift+F10 menus now open Move/Delete reviews.
 Parent search ranks readable folder names and highlights the Enter target;
 choosing a parent opens an explicit subtree/count review before changing it.
@@ -69,8 +72,8 @@ strict Zensical and the optimized release archive's checksum/extraction/installe
 checks pass. Production compilation caught a test-only observation call missing
 its feature guard; the release now compiles with fixtures disabled. Performance
 measurements remain deferred. The optimized production binary is installed
-atomically for the Linux user; existing windows were preserved. Shipping commit
-references will be recorded after the source commit.
+atomically for the Linux user; existing windows were preserved and need reopening
+to use the updated executable.
 
 Evidence is under ignored `artifacts/logs/folder-controls-*`. The full native
 binary was `f2ddff0212b6437231ca51b6eb8ce0a479461e4b739fce3016cb9ba129d430b8`;
