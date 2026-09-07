@@ -17,11 +17,13 @@ impl Engine {
         mut output: Output,
     ) {
         self.drain_bulk_jobs(output.clone()).await;
+        self.drain_folder_jobs(output.clone()).await;
         while let Some(command) = input.recv().await {
             if matches!(command, Command::BulkRun(_)) {
                 // This capacity-one channel is a wake signal. Exact jobs stay
                 // durable in SQLite, including requests coalesced while busy.
                 self.drain_bulk_jobs(output.clone()).await;
+                self.drain_folder_jobs(output.clone()).await;
             } else {
                 let _ = output
                     .send(Event::Error("Unexpected mail-operation command".into()))

@@ -4,6 +4,7 @@ mod backups_tests;
 mod bulk;
 mod calendar_connections;
 mod dispatch;
+pub mod folders;
 mod google_lifecycle;
 mod mail_actions;
 mod mail_sync;
@@ -34,6 +35,7 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    Folder(folders::Request),
     MoveRecoveries(u64, Option<String>),
     RecoverMailMove(
         u64,
@@ -135,6 +137,7 @@ impl Command {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
+    Folder(folders::Event),
     MoveRecoveries(
         u64,
         Result<Arc<Vec<crate::mail_actions::journal::MoveRecord>>, String>,
@@ -488,6 +491,7 @@ impl Engine {
                 output.send(Event::BulkReview(serial, result)).await?;
             }
             Command::ReleaseSelection(id) => self.store.release_selection(id).await?,
+            Command::Folder(request) => self.folder_command(request, output).await?,
             Command::BulkStart(id, selection, action) => {
                 let result = self
                     .store

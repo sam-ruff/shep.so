@@ -13,6 +13,17 @@ pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
         CREATE TABLE IF NOT EXISTS folder_steps(
         job TEXT NOT NULL REFERENCES folder_jobs(id) ON DELETE CASCADE,position INTEGER NOT NULL,
         step TEXT NOT NULL,status TEXT NOT NULL,error TEXT,PRIMARY KEY(job,position));")?;
+    let has_revision = c
+        .prepare("PRAGMA table_info(folder_jobs)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .any(|name| name == "revision");
+    if !has_revision {
+        c.execute_batch("ALTER TABLE folder_jobs ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;")?;
+    }
+    c.execute_batch("CREATE TRIGGER IF NOT EXISTS folder_step_insert_revision AFTER INSERT ON folder_steps BEGIN UPDATE folder_jobs SET revision=revision+1 WHERE id=NEW.job; END;
+        CREATE TRIGGER IF NOT EXISTS folder_step_update_revision AFTER UPDATE ON folder_steps BEGIN UPDATE folder_jobs SET revision=revision+1 WHERE id=NEW.job; END;")?;
     Ok(())
 }
 
@@ -65,6 +76,69 @@ fn catalog(c: &Connection, account: &str) -> anyhow::Result<Vec<Mailbox>> {
     catalogs
         .remove(account)
         .context("Refresh this account's folder list before changing folders.")
+}
+
+/// POP3 has no remote folder namespace. Initialize local folders and upgrade
+/// simple legacy local names without reinterpreting literal slash names or a
+/// reviewed operation's namespace. Never recreate folders the user deleted.
+pub(super) fn prepare_local_catalogs(c: &mut Connection) -> anyhow::Result<()> {
+    let accounts: Vec<Account> = get(c, "accounts")?;
+    if !accounts.iter().any(|a| a.protocol == Protocol::Pop3) {
+        return Ok(());
+    }
+    let tx = c.transaction()?;
+    let mut catalogs: HashMap<String, Vec<Mailbox>> = get(&tx, "folder_catalogs")?;
+    let mut names: HashMap<String, Vec<String>> = get(&tx, "account_folders")?;
+    let mut changed = false;
+    for account in accounts.iter().filter(|a| a.protocol == Protocol::Pop3) {
+        if idle(&tx, &account.id).is_err() {
+            continue;
+        }
+        let current = catalogs.entry(account.id.clone()).or_default();
+        let before = current.clone();
+        if current.is_empty() {
+            let mut initial = names.get(&account.id).cloned().unwrap_or_default();
+            if initial.is_empty() {
+                initial.extend(["INBOX", "Archive", "Sent", "Trash"].map(str::to_owned));
+            }
+            *current = initial.into_iter().map(Mailbox::flat).collect();
+        }
+        // New imports and local message moves can introduce a folder after the
+        // first catalog was created. A committed delete removed that mail too,
+        // so this does not resurrect an empty deleted folder.
+        let cached = tx
+            .prepare("SELECT DISTINCT folder FROM messages WHERE account=?")?
+            .query_map([&account.id], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        for name in cached {
+            if !current.iter().any(|m| m.name == name) {
+                current.push(Mailbox::flat(name));
+            }
+        }
+        for mailbox in current.iter_mut() {
+            if mailbox.delimiter.is_none() && !mailbox.name.contains('/') {
+                mailbox.delimiter = Some('/');
+            }
+        }
+        if *current != before {
+            changed = true;
+            names.insert(
+                account.id.clone(),
+                current
+                    .iter()
+                    .filter(|m| m.selectable)
+                    .map(|m| m.name.clone())
+                    .collect(),
+            );
+        }
+    }
+    if changed {
+        put(&tx, "folder_catalogs", &catalogs)?;
+        put(&tx, "account_folders", &names)?;
+        connections::changed(&tx)?;
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 fn review(c: &Connection, account: &str, source: &str, action: Action) -> anyhow::Result<Review> {
@@ -126,10 +200,10 @@ fn ready(c: &Connection, account: &str) -> anyhow::Result<()> {
 }
 
 fn job(c: &Connection, id: &str) -> anyhow::Result<Job> {
-    let (review, closed): (String, bool) = c.query_row(
-        "SELECT review,closed FROM folder_jobs WHERE id=?",
+    let (review, closed, revision): (String, bool, i64) = c.query_row(
+        "SELECT review,closed,revision FROM folder_jobs WHERE id=?",
         [id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;
     let steps = c
         .prepare(
@@ -153,9 +227,26 @@ fn job(c: &Connection, id: &str) -> anyhow::Result<Job> {
             })
         })
         .collect::<anyhow::Result<_>>()?;
+    let review: Review = serde_json::from_str(&review)?;
+    let root = review
+        .plan
+        .members
+        .iter()
+        .find(|m| m.path == review.plan.source)
+        .context("The saved folder review has no source folder")?;
+    let label = root
+        .mailbox
+        .encoding
+        .display(&review.plan.source)
+        .into_owned();
+    let destination_label =
+        Plan::wire_destination(root).map(|p| root.mailbox.encoding.display(&p).into_owned());
     Ok(Job {
+        revision: u64::try_from(revision)?,
+        label,
+        destination_label,
         id: id.into(),
-        review: serde_json::from_str(&review)?,
+        review,
         steps,
         closed,
     })
@@ -252,6 +343,17 @@ impl Store {
     }
     pub async fn folder_job(&self, id: String) -> anyhow::Result<Job> {
         self.run(move |c| job(c, &id)).await
+    }
+    pub async fn next_pending_folder(&self, after: String) -> anyhow::Result<Option<String>> {
+        self.run(move |c| {
+            Ok(c.query_row(
+                "SELECT id FROM folder_jobs WHERE closed=0 AND id>? ORDER BY id LIMIT 1",
+                [after],
+                |r| r.get(0),
+            )
+            .optional()?)
+        })
+        .await
     }
     pub async fn folder_jobs(&self, offset: usize) -> anyhow::Result<Vec<Job>> {
         self.run(move |c| {
@@ -469,7 +571,10 @@ fn close_if_finished(c: &Connection, id: &str) -> anyhow::Result<()> {
             Status::Done | Status::Accepted | Status::Cancelled
         )
     }) {
-        c.execute("UPDATE folder_jobs SET closed=1 WHERE id=?", [id])?;
+        c.execute(
+            "UPDATE folder_jobs SET closed=1,revision=revision+1 WHERE id=? AND closed=0",
+            [id],
+        )?;
     }
     Ok(())
 }

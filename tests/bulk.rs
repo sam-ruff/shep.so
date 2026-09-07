@@ -704,3 +704,19 @@ async fn resolved_undo_claims_cannot_steal_another_item_or_survive_a_finished_ph
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn memory_job_leases_exclude_competing_clones_without_disk_files() {
+    let store = Store::memory().unwrap();
+    let clone = store.clone();
+    let owned = store.bulk_lease("owned".into()).await.unwrap();
+    assert!(clone.bulk_lease("owned".into()).await.is_err());
+    let different = clone.bulk_lease("different".into()).await.unwrap();
+    drop(owned);
+    assert!(clone.bulk_lease("owned".into()).await.is_ok());
+    drop(different);
+    let folder = store.folder_lease("owned".into()).await.unwrap();
+    assert!(clone.folder_lease("owned".into()).await.is_err());
+    drop(folder);
+    assert!(clone.folder_lease("owned".into()).await.is_ok());
+}

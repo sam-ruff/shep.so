@@ -90,6 +90,10 @@ pub struct Progress {
 
 #[derive(Debug, Clone)]
 pub struct Job {
+    pub revision: u64,
+    /// Decoded on the storage worker; retained after the source leaves LIST.
+    pub label: String,
+    pub destination_label: Option<String>,
     pub id: String,
     pub review: Review,
     pub steps: Vec<Progress>,

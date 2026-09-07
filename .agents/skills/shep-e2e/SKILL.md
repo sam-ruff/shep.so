@@ -503,3 +503,31 @@ by an already-visible recovery Review click, and Ctrl+D in search/Find immediate
 followed by another message click. These deliberately do not wait for the earlier
 key to finish before the next input. Preserve screenshots and the ordinary
 Find/remapping/selection/context-menu flows alongside them.
+
+
+For folder changes use `desktop.start(nested_folders=true, persistent=true,
+folder_actions="slow" | "fail" | "uncertain")`. The fictional server catalog is
+persisted separately from the cache; no provider or keychain is contacted.
+`folder_changes` observes menus, review counts, pending projection and durable
+job/step states. Right-click Projects near x=95,y=540, or focus it then Shift+F10.
+Move destination Enter opens a review; a second Enter/Y confirms. Delete uses
+Down/Enter in the menu and an explicit red confirmation. N/Escape cancels.
+
+Keep all seven `test_folder_controls_*` automated equivalents. They cover
+immediate projection and browsing during slow work, rejected delete and Retry,
+unconfirmed result across restart, checkbox-gated Stop with retained cached
+mail, POP3 local moves, compact dark/keyboard/Inbox protection and graceful close.
+History is near x=90,y=477 after the first job. Its selected review exposes
+retryable errors separately from unconfirmed results. Disabled Retry/Stop clicks
+must do nothing; accepting uncertainty must say Stopped · unconfirmed.
+
+Each delayed wire step takes 1.6 seconds. Await individual step receipts for a
+four-folder delete rather than extending every wait deadline. The graceful-close
+flow reads only the owned fixture database after exit to prove one Done receipt
+and three Queued steps; these statuses are JSON-encoded enums. A failure cancels
+close; the saved scenario expects the harness close timeout, then uses native
+navigation/Retry before another successful close. Never kill or replace the
+personal application. After resizing, await its observed dimensions and allow
+native layout to settle before targeting a changed sidebar row. Review the
+WebP evidence, including the red compact confirmation and preserved cache after
+an unconfirmed move. These are functional tests, not latency or live-server claims.

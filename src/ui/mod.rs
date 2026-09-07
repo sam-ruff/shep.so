@@ -10,6 +10,7 @@ mod conversations;
 mod drag_mail;
 mod ellipsis;
 mod find_message;
+mod folder_controls;
 #[cfg(test)]
 mod google_lifecycle_tests;
 mod html_reader;
@@ -72,6 +73,8 @@ pub enum SettingsTab {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
+    FolderChange,
+    FolderHistory,
     MoveRecovery,
     BulkReview,
     BulkHistory,
@@ -97,6 +100,7 @@ enum MailPane {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Folders(folder_controls::Message),
     MoveRecovery(move_recovery::Message),
     WindowUnfocused,
     Html(html_reader::Message),
@@ -284,6 +288,7 @@ pub struct App {
     bulk: bulk::State,
     list_focus: bool,
     reader_selection: Option<Box<selectable::Content>>,
+    folder_controls: folder_controls::State,
     html_reader: html_reader::State,
     find_message: find_message::State,
     remote_bytes: VecDeque<(String, Arc<[u8]>)>,
@@ -436,6 +441,7 @@ impl App {
                 bulk: Default::default(),
                 list_focus: true,
                 reader_selection: None,
+                folder_controls: Default::default(),
                 html_reader: Default::default(),
                 find_message: Default::default(),
                 remote_bytes: VecDeque::new(),
@@ -892,6 +898,16 @@ impl App {
             return Task::none();
         }
         match message {
+            Message::Folders(message) => {
+                let focus = matches!(
+                    message,
+                    folder_controls::Message::Choose(0) | folder_controls::Message::Back
+                );
+                self.handle_folders(message);
+                if focus && self.dialog == Some(Dialog::FolderChange) {
+                    return focus_after_layout("folder-parent-search");
+                }
+            }
             Message::Notification(message) => self.handle_notification(message),
             Message::DesktopBadge(crate::desktop_badge::Event::Ready(sender)) => {
                 self.desktop_badge = Some(sender);
@@ -918,6 +934,7 @@ impl App {
             }
             Message::Noop => return Task::none(),
             Message::DismissContext => {
+                self.folder_controls.menu = None;
                 self.context_menu = None;
                 self.composer.context = None;
             }
@@ -982,9 +999,11 @@ impl App {
             }
             Message::MailContextAction(action) => return self.choose_mail_context(action),
             Message::Backend(event) => match event {
+                Event::Folder(event) => self.folder_event(event),
                 Event::Ready(tx, workspace, google) => {
                     self.tx = Some(tx);
                     self.send(Command::BulkJobs(0, 0));
+                    self.send(Command::Folder(engine::folders::Request::History(0, 0)));
                     self.preferences = workspace.preferences.clone();
                     self.preference_sync =
                         preference_sync::PreferenceSync::new(PreferenceSnapshot {
@@ -1025,6 +1044,7 @@ impl App {
                         workspace.accounts = self.workspace.accounts.clone();
                         workspace.calendars = self.workspace.calendars.clone();
                         workspace.account_folders = self.workspace.account_folders.clone();
+                        workspace.folder_trees = self.workspace.folder_trees.clone();
                         workspace.folders = self.workspace.folders.clone();
                         workspace.connections_revision = self.workspace.connections_revision;
                         workspace.credential_cleanup = self.workspace.credential_cleanup;
@@ -1043,6 +1063,7 @@ impl App {
                         workspace.drafts_revision = self.workspace.drafts_revision;
                     }
                     self.workspace = Arc::new(workspace);
+                    self.reconcile_folder_accounts();
                     if let Some(folders) = &mut self.query.folders {
                         let before = folders.len();
                         folders.retain(|s| {
@@ -1536,9 +1557,15 @@ impl App {
                 if self.dialog == Some(Dialog::DiscardDraft) && !self.composer.discard_pending {
                     self.cancel_discard_draft();
                 }
-                if self.bulk.staging.is_some() || self.tx.is_some() && !self.bulk.stopped {
+                if self.folder_staging()
+                    || self.bulk.staging.is_some()
+                    || self.tx.is_some() && !self.bulk.stopped
+                {
                     self.pending_close = Some(window);
-                    if self.bulk.staging.is_some() || self.bulk.jobs.iter().any(|j| j.remaining > 0)
+                    if self.bulk.staging.is_some()
+                        || self.bulk.jobs.iter().any(|j| j.remaining > 0)
+                        || self.folder_controls.jobs.iter().any(|j| !j.closed)
+                        || self.folder_staging()
                     {
                         self.notice(
                         "Finishing the current mail change. Queued changes will resume next time.",
@@ -1889,6 +1916,7 @@ impl App {
                         self.find_message.open && self.tab == Tab::Mail && self.dialog.is_none()
                     }
                     "folder-search" => self.dialog == Some(Dialog::Move),
+                    "folder-parent-search" => self.dialog == Some(Dialog::FolderChange),
                     "event-title" => self.dialog == Some(Dialog::Event),
                     "to" => self.dialog == Some(Dialog::Compose),
                     "search" => self.tab == Tab::Mail && self.dialog.is_none() && !self.full_reader,
@@ -2573,6 +2601,7 @@ impl App {
                 return self.handle(Message::Folder("INBOX".into()));
             }
             Message::AccountFolder(account, folder) => {
+                let folder = self.original_folder(&account, &folder);
                 self.query.account = Some(account);
                 return self.handle(Message::Folder(folder));
             }
@@ -3013,6 +3042,37 @@ impl App {
         })
     }
     fn key(&mut self, key: Key, modifiers: keyboard::Modifiers, captured: bool) -> Task<Message> {
+        if let Some(menu) = &mut self.folder_controls.menu {
+            use keyboard::key::Named;
+            match key {
+                Key::Named(Named::Escape) => self.folder_controls.menu = None,
+                Key::Named(Named::ArrowDown) => menu.index = (menu.index + 1) % 3,
+                Key::Named(Named::ArrowUp) => menu.index = (menu.index + 2) % 3,
+                Key::Named(Named::Enter) => {
+                    let index = menu.index;
+                    return self.handle(Message::Folders(folder_controls::Message::Choose(index)));
+                }
+                _ => {}
+            }
+            return Task::none();
+        }
+        if self.dialog == Some(Dialog::FolderChange) && modifiers.is_empty() && !captured {
+            match &key {
+                Key::Named(keyboard::key::Named::Enter) => {
+                    self.handle_folders(folder_controls::Message::Submit);
+                    return Task::none();
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("y") => {
+                    self.handle_folders(folder_controls::Message::Submit);
+                    return Task::none();
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("n") => {
+                    return self.handle(Message::Close);
+                }
+                _ => {}
+            }
+        }
+
         if key == Key::Named(keyboard::key::Named::Escape) && self.mail_drag.consume_escape()
             || self.mail_drag.holding()
         {
@@ -3110,6 +3170,24 @@ impl App {
                     return self.choose_mail_context(action);
                 }
                 _ => {}
+            }
+            return Task::none();
+        }
+        if !captured
+            && self.dialog.is_none()
+            && self.tab == Tab::Mail
+            && self.sidebar_focus
+            && modifiers.shift()
+            && key == Key::Named(keyboard::key::Named::F10)
+        {
+            if let Some(item) = self.sidebar_items().get(self.sidebar_index)
+                && let Some((account, path)) = self.sidebar_folder_context(&item.action)
+            {
+                self.handle_folders(folder_controls::Message::Context(
+                    account.clone(),
+                    path.clone(),
+                    iced::Point::new(40., 220.),
+                ));
             }
             return Task::none();
         }
@@ -3396,6 +3474,10 @@ impl App {
         data["loaded_message_id"] =
             serde_json::json!(self.detail.as_ref().map(|detail| &detail.summary.id));
         data["reader_message_id"] = serde_json::json!(self.reader_id());
+        #[cfg(feature = "test-support")]
+        {
+            data["folder_changes"] = self.folder_test_state();
+        }
         data["move_recovery"] = serde_json::json!({"total":self.workspace.move_pending_total,"selected":self.move_recovery.selected.as_ref().map(|r|&r.token),"stage":self.move_recovery.selected.as_ref().map(|r|r.stage),"action":self.move_recovery.action,"confirmed":self.move_recovery.confirmed,"pending":self.move_recovery.pending.len(),"error":self.move_recovery.error,"rows":*self.move_recovery.rows});
         data["outgoing_pending"] = serde_json::json!(self.workspace.outgoing_pending);
         data["outgoing_rows"] = serde_json::json!(self.outbox.page.rows);
