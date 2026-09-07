@@ -878,3 +878,66 @@ is complete and removed from TODO. The full product goal remains active;
 individual/group ordering, provider ambiguity, independent-process coordination
 and the other TODO requests remain open. Performance measurements stay deferred,
 and quality/release CI remain disabled.
+
+## R45 — Drag messages into sidebar folders (2026-09-07)
+
+Shipped in `ca39080b3afe3ac95685d42858cd017f76a956e3`.
+
+Drag one inbox row or the entire selected group to a sidebar folder. Destination
+outlines and a floating label show the target/count/account. Hover opens collapsed
+accounts and unified Inbox; wheel scrolling works while holding. Group drops
+freeze the existing cross-page selection and use the normal review, optimistic
+commit, durable history and Undo. Single drops use the dragged metadata even
+when a different body is open, and show immediate counted feedback and Undo.
+
+Cached rules reject missing accounts/folders, same-folder no-ops and disabled or
+POP3 cross-account transfers; local POP3 folder moves remain available. Inbox,
+Archive and Trash preserve each source account. Combined Sent/Flagged views are
+not drop destinations; actual account folder rows remain available. Real provider
+capabilities are checked by the existing commit path. Escape, right-click,
+focus/cursor loss and outside drops cancel without leaking a row/sidebar click.
+Flag/checkbox presses and ordinary click jitter do not start a drag.
+
+A compact screenshot exposed a software-renderer shadow trail. Damage bounds
+omitted shadows and shadow drawing ignored the damaged layer's mask. The vendor
+patch includes full shadow damage, clips buffers/drawing to visible damage, and
+handles shadow-only intersections. Two renderer regressions fail on the prior
+code and pass after the fix; a third covers offscreen positioning. The native
+Unicode-folder scrolling scenario checks a saved WebP region before any forced
+repaint. Reviewed corrected capture: `artifacts/e2e/10eef656611e/`; the final full-run
+capture in `951f9763ca4d/` also passes the pixel check. Its previous failing
+capture had a 95-level grayscale range in the otherwise empty footer region.
+
+Reviewed final captures also cover hover expansion (`2abba962dd82/`), explicit
+account destinations (`a7b06ef9ec65/`), red Trash review (`50434b0bdf5f/`), all-page
+review (`b652be35da4b/`) and 120% controls (`92074448e407/`). Native refresh arrows
+remain clean in compact dark and scaled Calendar (`bf9c15901e35/`,
+`9c769d176277/`). The original browser-chrome crop was not separately reproduced.
+
+The MCP harness now supports owned left-button mouse_down/mouse_up actions, so
+hover, scroll, waits, assertions and screenshots can be batched during a drag.
+Cleanup releases held input. Optional pop3_account fixture setup tests destination
+rules without a real provider. Every interaction is saved in scripts/e2e.py.
+
+Validation: **374 Rust tests**, **33 Python tests**, formatting, Clippy and Git
+hooks pass. All **137 saved native functional scenarios** pass on the final
+test binary, SHA-256
+`bb7b3c2f1c565be6057a77e15905395cc82a1561769c712702309c7009039ec3`.
+Logs: `artifacts/logs/drag-mail-final-native-full.log`,
+`drag-mail-final-native-result.json`, `drag-mail-final-rust.log`,
+`drag-mail-final-python.log` and `drag-mail-final-clippy.log`. No failed scenario
+was omitted. Ten added native scenarios cover
+source identity/Undo, group reviews and mixed accounts, cancellation/no-op,
+cross-account preference, hover reveal, failed writes/navigation, POP3 local and
+cross-account rules, compact dark/120% layouts, scrolling/Unicode/shadow cleanup,
+and all 120 selected messages across pages. The initial complete 137-case run
+passed before the final renderer change; it is not substituted for the final run.
+
+Strict Zensical builds and optimized release checksum, extraction and bundled
+installer checks pass. The installed Linux binary matches `target/release/shep`,
+SHA-256 `901418794f54e89eea29b9d5de0d96719d0b64e6ba261d790602785746ce0bfe`.
+Personal windows and data were preserved.
+R45 is removed from TODO after this checkpoint was installed and pushed. The full product
+goal remains active; folder trees/context menus, other TODO features, live-provider
+and platform validation remain outstanding. Performance measurements stay deferred.
+Quality/release workflows remain disabled; documentation CI remains enabled.
