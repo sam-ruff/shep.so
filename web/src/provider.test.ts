@@ -57,6 +57,7 @@ function controlledIntent(effective: Fields) {
     register: async (_id, fields) => ({ ...lease, fields }),
     claim: async () => lease,
     effective: async () => effective,
+    uncached: async (lease) => lease.fields,
     finish: async (_lease, status) => {
       outcomes.push(status);
     },

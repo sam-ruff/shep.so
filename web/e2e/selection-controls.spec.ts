@@ -12,8 +12,11 @@ test("a committed local archive keeps its count and Undo when only display refre
       snapshot = BrowserStore.prototype.snapshot,
       commit = BrowserStore.prototype.commit;
     let failed = false;
-    BrowserStore.prototype.commit = async function (changes: any[]) {
-      await commit.call(this, changes);
+    BrowserStore.prototype.commit = async function (
+      changes: any[],
+      intent?: any,
+    ) {
+      await commit.call(this, changes, intent);
       if (
         !failed &&
         changes.some(
@@ -85,8 +88,11 @@ test("an acknowledged row flag survives list refresh failure and Retry cannot re
     const snapshot = BrowserStore.prototype.snapshot,
       commit = BrowserStore.prototype.commit;
     (window as any).mailFlagWrites = 0;
-    BrowserStore.prototype.commit = async function (changes: any[]) {
-      await commit.call(this, changes);
+    BrowserStore.prototype.commit = async function (
+      changes: any[],
+      intent?: any,
+    ) {
+      await commit.call(this, changes, intent);
       if (
         changes.some(
           (c) =>

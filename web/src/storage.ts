@@ -2,7 +2,9 @@ import { cacheStores, mailMetadata, recordCacheChanges } from "./cache_changes";
 import {
   BrowserIntents,
   adoptIntentAliases,
+  acknowledgeIntentCache,
   type IntentStore,
+  type IntentLease,
 } from "./mail_intents";
 import {
   checkRemovedWrites,
@@ -37,7 +39,7 @@ export interface LocalStore {
   removeAccount?(review: RemovalReview, discard: boolean): Promise<void>;
   all<T>(store: StoreName): Promise<T[]>;
   get<T>(store: StoreName, key: string): Promise<T | undefined>;
-  commit(changes: Change[]): Promise<void>;
+  commit(changes: Change[], intent?: IntentLease): Promise<void>;
   snapshot(
     names: readonly StoreName[],
   ): Promise<Partial<Record<StoreName, unknown[]>>>;
@@ -220,7 +222,7 @@ export class BrowserStore implements LocalStore {
       }
     });
   }
-  commit(changes: Change[]): Promise<void> {
+  commit(changes: Change[], intent?: IntentLease): Promise<void> {
     if (!changes.length) return Promise.resolve();
     return new Promise((resolve, reject) => {
       const tx = this.db.transaction(
@@ -235,6 +237,7 @@ export class BrowserStore implements LocalStore {
             ...(changes.some((c) => c.store === "mailAliases")
               ? ["mailIntents"]
               : []),
+            ...(intent ? ["mailIntents", "mailAliases", "mailMetadata"] : []),
             "removedAccounts" as const,
           ]),
         ],
@@ -266,6 +269,7 @@ export class BrowserStore implements LocalStore {
             changes.some((c) => c.store === "mail" || c.store === "mailAliases")
           )
             recordCacheChanges(tx, changes);
+          if (intent) await acknowledgeIntentCache(tx, intent, changes);
         } catch (error) {
           cause =
             error instanceof Error &&
