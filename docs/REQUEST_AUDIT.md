@@ -218,3 +218,8 @@ Committed and pushed as [`64d4936`](https://github.com/sam-ruff/shep.so/commit/6
 ### Client Forward controls — R41/R67/R69/R71/R73/R77
 
 Native Flutter and the separate browser now connect complete-source preparation to atomic draft/file storage, retained quotation/CID metadata, independent editor behavior and stable retries. Native schema migration/rollback, Outbox ownership and gateway MIME contracts have automated evidence; real Android controls, browser workers/IndexedDB and the Rust HTTPS harness cover restart and failure/recovery. The completion log records counts, visual review, automation corrections, remaining limits and the prompt review-branch push. R41 remains open for Apple/full-composition/live evidence; broader parity, R75/R76 and deployment prerequisites are preserved.
+
+
+### Client Forward shipping record
+
+Committed and pushed as [`21ca299`](https://github.com/sam-ruff/shep.so/commit/21ca299907ef943aa4046166a3c934e15b4779b3) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), with the exact remote SHA verified. Required hooks passed formatting, Clippy and **377 root/shared Rust tests**; two personal-account diagnostics remain intentionally ignored. Client native/protocol/browser/HTTPS tests, reviewed captures, corrected automation and production artifact inspection are recorded in the completion log. The dedicated emulator is stopped and artifacts remain ignored. R77's prompt push is fulfilled for this increment. Main and the personal desktop installation were not changed. Full parity, Apple/live/performance evidence, R75/R76 and VPS deployment remain active. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
