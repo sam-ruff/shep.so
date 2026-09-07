@@ -153,6 +153,8 @@ pub enum Request {
         oldest: bool,
         #[serde(default)]
         offset: u32,
+        #[serde(default)]
+        projection: std::collections::BTreeMap<String, crate::paging::Edit>,
     },
     Detail {
         id: String,
@@ -251,7 +253,7 @@ pub enum Request {
         confirmed: bool,
     },
 }
-fn summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<Mail> {
+pub(crate) fn summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<Mail> {
     Ok(Mail {
         id: row.get(0)?,
         account_id: row.get(1)?,
@@ -267,7 +269,7 @@ fn summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<Mail> {
         attachment_count: row.get::<_, u32>(11)? as usize,
     })
 }
-const SUMMARY: &str = "id,account_id,remote_id,folder,sender,recipient,subject,preview,timestamp,unread,starred,attachment_count";
+pub(crate) const SUMMARY: &str = "id,account_id,remote_id,folder,sender,recipient,subject,preview,timestamp,unread,starred,attachment_count";
 pub(crate) fn stored_account(db: &Connection, id: &str) -> Result<Account> {
     let json: String = db
         .query_row("SELECT settings FROM accounts WHERE id=?1", [id], |r| {
@@ -485,26 +487,8 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             }).await?;
             Ok(json!({"saved":true}))
         }
-        Request::Page{folder,account,query,filter,oldest,offset} => db.read(move |db| {
-            let folder=if folder.eq_ignore_ascii_case("Inbox") {"INBOX".to_owned()} else {folder};
-            let words=query.split_whitespace().map(|w|format!("\"{}\"*",w.replace('"',"\"\""))).collect::<Vec<_>>().join(" AND ");
-            let folder_condition=if folder=="Sent" {"(folder=?1 OR (account_id,folder) IN (SELECT account_id,folder FROM sent_folder_names))"} else {"folder=?1"};
-            let conditions=format!("moved=0 AND {folder_condition} AND (?2 IS NULL OR account_id=?2) AND (?3!='Unread' OR unread=1) AND (?3!='Flagged' OR starred=1) AND (?4='' OR rowid IN (SELECT rowid FROM mail_search WHERE mail_search MATCH ?4))");
-            let total:i64=db.query_row(&format!("SELECT COUNT(*) FROM mail WHERE {conditions}"),params![folder,account,filter,words],|r|r.get(0))?;
-            let order=if oldest {"ASC"}else{"DESC"};
-            let mut rows=db.prepare(&format!("SELECT {SUMMARY} FROM mail WHERE {conditions} ORDER BY timestamp {order},id LIMIT 50 OFFSET ?5"))?;
-            let mail=rows.query_map(params![folder,account,filter,words,offset],summary)?.collect::<rusqlite::Result<Vec<_>>>()?;
-            let unread:i64=db.query_row("SELECT COUNT(*) FROM mail WHERE moved=0 AND folder='INBOX' AND unread=1",[],|r|r.get(0))?;
-            let mut aliases=std::collections::BTreeMap::new();
-            let mut alias_query=db.prepare("SELECT alias,id FROM mail_aliases WHERE id=?1")?;
-            for message in &mail {
-                for row in alias_query.query_map([&message.id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))? {
-                    let (alias,id)=row?; aliases.insert(alias,id);
-                }
-            }
-            let mut folder_membership:std::collections::BTreeMap<String,HashSet<String>>=Default::default();
-            if folder=="Sent" { for message in &mail {folder_membership.entry(message.account_id.clone()).or_default().insert(message.folder.clone());} }
-            Ok(json!({"mail":mail,"total":total,"unread":unread,"aliases":aliases,"folder_membership":folder_membership}))
+        Request::Page{folder,account,query,filter,oldest,offset,projection} => db.read(move |db| {
+            crate::paging::page(db, folder, account, query, filter, oldest, offset, projection)
         }).await,
         Request::Print{id,options} => {
             let permit=profile.operations.printing.clone().try_acquire_owned().context("Print preparation is busy. Finish a preview and retry.")?;

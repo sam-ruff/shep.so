@@ -231,3 +231,8 @@ Shared complete-source printing now connects to Flutter Android's native printer
 
 
 The Print increment shipped for review in [`67f206c`](https://github.com/sam-ruff/shep.so/commit/67f206caf2a8cdab9ccf46ab66c2012f332360c8), with the exact remote SHA verified and all required hooks passing. R77’s prompt-push request is fulfilled for this increment; [the completion log](COMPLETION.md) records the client tests, actual PDFs, production artifacts and remaining parity/platform/deployment work.
+
+
+### Client read-on-leave — R65/R67/R68/R69/R71/R73/R77
+
+The desktop read-on-leave default now has Flutter/browser control equivalents, explicit unread precedence and ordered quiet mutation recovery. Native paged cache queries remain available during provider work and project folder/filter/count intent in one read snapshot. Host, native Rust, Android controls and Playwright evidence, corrected failed runs and reviewed captures are recorded in [the completion log](COMPLETION.md). The full parity request remains active: close/OS/Apple lifecycle, large-cache performance, counted notifications and remaining client features are still TODOs. R77 continues to authorize prompt verified pushes to the client review branch; no main merge or personal installation is included.

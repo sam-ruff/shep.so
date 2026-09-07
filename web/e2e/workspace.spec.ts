@@ -4,6 +4,38 @@ const subject = "A little room for good ideas";
 test.beforeEach(async ({ page }) => {
   await page.goto("/preview.html");
 });
+test("each saved draft remains clickable in the compact list", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 640 });
+  const subjects = [
+    "First saved draft",
+    "Second saved draft",
+    "Third saved draft",
+    "Fourth saved draft",
+  ];
+  for (const subject of subjects) {
+    await page
+      .getByRole("button", { name: "New message", exact: true })
+      .click();
+    await page
+      .getByRole("textbox", { name: "Subject", exact: true })
+      .fill(subject);
+    await page.getByRole("button", { name: "Save draft", exact: true }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  }
+  await page.getByRole("button", { name: "Drafts", exact: true }).click();
+  for (const subject of subjects) {
+    await page.getByRole("button", { name: subject, exact: true }).click();
+    await expect(
+      page.getByRole("textbox", { name: "Subject", exact: true }),
+    ).toHaveValue(subject);
+    await page.getByRole("button", { name: "Save draft", exact: true }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  }
+  await expect(page.locator("header")).toContainText("4 drafts");
+  await page.screenshot({ path: "../artifacts/web/draft-list-compact.png" });
+});
 test("reader, select text, full window, Escape and reply refusal", async ({
   page,
 }) => {
@@ -18,7 +50,9 @@ test("reader, select text, full window, Escape and reply refusal", async ({
     page.getByRole("textbox", { name: "To", exact: true }),
   ).toHaveValue("alex@example.test");
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(page.getByRole("dialog")).toContainText("Preview cannot send mail");
+  await expect(page.getByRole("dialog")).toContainText(
+    "Preview cannot send mail",
+  );
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toHaveValue(/The first sketches/);
@@ -180,7 +214,9 @@ test("verified session opens empty client and exposes sign out", async ({
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("Add a mail account in Preferences");
+  await expect(page.getByRole("alert")).toContainText(
+    "Add a mail account in Preferences",
+  );
 });
 for (const theme of ["light", "dark"])
   for (const [width, height] of [

@@ -188,6 +188,27 @@ export class Workspace extends EventTarget {
   query = "";
   newestFirst = true;
   page = 0;
+  private readCandidate: Mail | null = null;
+  beginReading(id: string) {
+    id = this.canonical(id);
+    const mail = this.message(id);
+    if (!mail) return;
+    if (!this.readCandidate || this.canonical(this.readCandidate.id) !== id) {
+      void this.finishReading();
+      if (mail.unread) this.readCandidate = structuredClone(mail);
+    }
+    this.selected = id;
+    this.changed();
+  }
+  async finishReading() {
+    const candidate = this.readCandidate;
+    this.readCandidate = null;
+    if (!candidate) return;
+    const id = this.canonical(candidate.id);
+    if ((this.message(id) ?? this.confirmed.get(id))?.unread) {
+      await this.change(id, { unread: false }, false, true);
+    }
+  }
   private selectedId: string | null = null;
   private retainedReader: Mail | null = null;
   get selected() {
@@ -365,6 +386,7 @@ export class Workspace extends EventTarget {
     this.dispatchEvent(new Event("change"));
   }
   navigate(folder: string, account: string | null = null) {
+    void this.finishReading();
     this.folder = folder;
     this.account = account;
     this.page = 0;
@@ -373,6 +395,7 @@ export class Workspace extends EventTarget {
     this.changed();
   }
   search(value: string) {
+    void this.finishReading();
     this.query = value;
     this.page = 0;
     this.selection.clear();
@@ -418,6 +441,7 @@ export class Workspace extends EventTarget {
   accountRemoved(id: string) {
     if (this.removedAccountIds.has(id)) return;
     this.removedAccountIds.add(id);
+    if (this.readCandidate?.accountId === id) this.readCandidate = null;
     for (const [key, draft] of this.drafts)
       if (draft.accountId === id) this.drafts.delete(key);
     if (this.readerMessage?.accountId === id) this.selected = null;
@@ -493,9 +517,23 @@ export class Workspace extends EventTarget {
                 : {};
     return this.change(id, fields);
   }
-  async change(id: string, fields: Fields, offerUndo = true) {
+  async change(id: string, fields: Fields, offerUndo = true, quiet = false) {
     id = this.canonical(id);
-    const current = this.message(id);
+    if (
+      fields.folder &&
+      this.readCandidate &&
+      this.canonical(this.readCandidate.id) === id
+    )
+      void this.finishReading();
+    if (
+      !quiet &&
+      fields.unread !== undefined &&
+      this.readCandidate &&
+      this.canonical(this.readCandidate.id) === id
+    )
+      this.readCandidate = null;
+    const current =
+      this.message(id) ?? (!offerUndo ? this.confirmed.get(id) : undefined);
     if (!current || !Object.keys(fields).length) return;
     const previous = Object.fromEntries(
       Object.keys(fields).map((key) => [key, current[key as keyof Mail]]),
@@ -510,11 +548,13 @@ export class Workspace extends EventTarget {
         this.undo = null;
         void this.change(id, previous, false);
       };
-    this.notice = fields.folder
-      ? `Moved to ${fields.folder}`
-      : "Message updated";
-    this.error = null;
-    this.retry = null;
+    if (!quiet) {
+      this.notice = fields.folder
+        ? `Moved to ${fields.folder}`
+        : "Message updated";
+      this.error = null;
+      this.retry = null;
+    }
     const previousJobs = [...this.queues]
       .filter(([key]) => this.canonical(key) === id)
       .map(([, job]) => job);
@@ -532,8 +572,10 @@ export class Workspace extends EventTarget {
           const key = this.canonical(id);
           this.confirmed.set(key, { ...this.confirmed.get(key)!, ...fields });
           this.error = error.message;
-          this.notice = null;
-          this.undo = null;
+          if (!quiet) {
+            this.notice = null;
+            this.undo = null;
+          }
           this.retry = () => void this.refresh();
           return;
         }
@@ -551,12 +593,14 @@ export class Workspace extends EventTarget {
         this.paint(this.canonical(id), rollback);
         if (Object.keys(rollback).length) {
           this.error = `Could not confirm the update to ${current.subject}. The affected display was restored. ${error instanceof Error ? error.message : "The affected change was restored. Retry."}`;
-          this.notice = null;
-          this.undo = null;
+          if (!quiet) {
+            this.notice = null;
+            this.undo = null;
+          }
           this.retry =
             error instanceof MutationFailure
               ? () => void this.refresh()
-              : () => void this.change(id, fields);
+              : () => void this.change(id, fields, !quiet, quiet);
         }
       }
     });

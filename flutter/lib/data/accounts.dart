@@ -84,8 +84,10 @@ class MailPage {
     this.total,
     this.unread, {
     this.aliases = const {},
+    this.confirmed = const {},
     this.folderMembership = const {},
   });
+  final Map<String, Mail> confirmed;
   final Map<String, Set<String>> folderMembership;
   final Map<String, String> aliases;
   final List<Mail> mail;
@@ -106,6 +108,7 @@ abstract interface class AccountRepository {
     required String filter,
     required bool oldest,
     required int offset,
+    Map<String, Map<String, Object>> projection = const {},
   });
   Future<Mail> detail(String id);
   Future<void> discard(String id, int revision);

@@ -158,9 +158,20 @@ export function mount(
       });
     }
   });
+  const blurred = () =>
+    queueMicrotask(() => {
+      if (!document.hasFocus()) void w.finishReading();
+    });
+  const hidden = () => {
+    if (document.hidden) void w.finishReading();
+  };
+  window.addEventListener("blur", blurred);
+  document.addEventListener("visibilitychange", hidden);
   window.addEventListener("pagehide", (event) => {
     // A page retained by browser history resumes with the same controls/model.
     if (!event.persisted) {
+      window.removeEventListener("blur", blurred);
+      document.removeEventListener("visibilitychange", hidden);
       find.dispose();
       searchWorker.dispose();
       printer?.dispose();
@@ -740,6 +751,7 @@ export function mount(
     }
   }
   async function composer(original?: Mail, existing?: Draft, all = false) {
+    void w.finishReading();
     if (original && gateway && !existing) {
       try {
         existing = await gateway.reply(original.id, all);
@@ -1088,6 +1100,7 @@ export function mount(
       const b = button(
         name,
         () => {
+          void w.finishReading();
           tab = name;
           fullReader = false;
           w.changed();
@@ -1168,6 +1181,7 @@ export function mount(
     const prefs = button(
       "Preferences",
       () => {
+        void w.finishReading();
         tab = "Preferences";
         fullReader = false;
         w.changed();
@@ -1184,10 +1198,12 @@ export function mount(
         button(
           "Sign out",
           () => {
-            find.dispose();
-            searchWorker.dispose();
-            printer?.dispose();
-            login.signOut();
+            void w.finishReading().then(() => {
+              find.dispose();
+              searchWorker.dispose();
+              printer?.dispose();
+              login.signOut();
+            });
           },
           "lock",
         ),
@@ -1243,9 +1259,7 @@ export function mount(
   }
   function open(m: Mail) {
     attachmentState = undefined;
-    w.selected = m.id;
-    if (m.unread) void w.change(m.id, { unread: false }, false);
-    else w.changed();
+    w.beginReading(m.id);
   }
   function inbox() {
     const box = el(
@@ -1254,6 +1268,7 @@ export function mount(
     );
     box.setAttribute("aria-label", "Mail workspace");
     if (w.folder === "Drafts") {
+      box.classList.add("draft-list");
       for (const d of w.drafts.values())
         box.append(
           button(
@@ -1270,6 +1285,7 @@ export function mount(
     const controls = el("div", "list-controls");
     controls.append(
       select("Filter", w.filter, ["All", "Unread", "Flagged"], (v) => {
+        void w.finishReading();
         w.filter = v;
         w.page = 0;
         w.changed();
@@ -1279,6 +1295,7 @@ export function mount(
         w.newestFirst ? "Newest first" : "Oldest first",
         ["Newest first", "Oldest first"],
         (v) => {
+          void w.finishReading();
           w.newestFirst = v === "Newest first";
           w.page = 0;
           w.changed();
@@ -1289,6 +1306,9 @@ export function mount(
       clearTimeout(searchTimer);
       searchTimer = setTimeout(() => w.search(v), 100);
     });
+    search
+      .querySelector("input")
+      ?.addEventListener("focus", () => void w.finishReading());
     search.classList.add("search-field");
     controls.append(search);
     list.append(controls);
@@ -1305,7 +1325,7 @@ export function mount(
       const main = button(m.subject, () => open(m));
       main.className = "row-open";
       main.ondblclick = () => {
-        w.selected = m.id;
+        w.beginReading(m.id);
         fullReader = true;
         w.changed();
       };
@@ -1374,6 +1394,7 @@ export function mount(
     const prev = button(
       "Previous page",
       () => {
+        void w.finishReading();
         w.page--;
         w.changed();
       },
@@ -1384,6 +1405,7 @@ export function mount(
     const next = button(
       "Next page",
       () => {
+        void w.finishReading();
         w.page++;
         w.changed();
       },
@@ -1534,6 +1556,7 @@ export function mount(
         button(
           "Close full reader",
           () => {
+            void w.finishReading();
             fullReader = false;
             w.changed();
           },
@@ -1970,7 +1993,9 @@ export function mount(
         el(
           "span",
           "muted",
-          `${w.matching.length} messages · ${w.unread} unread`,
+          w.folder === "Drafts"
+            ? `${w.drafts.size} ${w.drafts.size === 1 ? "draft" : "drafts"}`
+            : `${w.matching.length} messages · ${w.unread} unread`,
         ),
       );
     header.append(el("span", "spacer"));
@@ -2083,6 +2108,7 @@ export function mount(
       return true;
     }
     if (combo === "Escape" && fullReader) {
+      void w.finishReading();
       fullReader = false;
       w.changed();
       return true;
@@ -2120,6 +2146,7 @@ export function mount(
       if (m) printMessage(m);
     } else if (action === "reader") {
       if (w.selected) {
+        w.beginReading(w.selected);
         fullReader = true;
         w.changed();
       }

@@ -328,6 +328,7 @@ class NativeRepository
     required String filter,
     required bool oldest,
     required int offset,
+    Map<String, Map<String, Object>> projection = const {},
   }) async {
     final id = mailAccounts
         .where((a) => a.id == account || a.email == account)
@@ -342,6 +343,7 @@ class NativeRepository
               'filter': filter,
               'oldest': oldest,
               'offset': offset,
+              'projection': projection,
             })
             as Map<String, dynamic>;
     final mail = (data['mail'] as List).map((m) => mailFrom(m)).toList();
@@ -350,6 +352,10 @@ class NativeRepository
       mail,
       data['total'],
       data['unread'],
+      confirmed: {
+        for (final m in data['confirmed'] as List? ?? [])
+          m['id'] as String: mailFrom(m),
+      },
       aliases: (data['aliases'] as Map<String, dynamic>? ?? {})
           .cast<String, String>(),
       folderMembership:

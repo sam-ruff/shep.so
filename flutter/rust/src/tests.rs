@@ -64,6 +64,68 @@ pub(crate) async fn seed(profile: &MobileProfile, count: usize) {
 fn page(offset: u32) -> Value {
     json!({"op":"page","folder":"Inbox","offset":offset})
 }
+
+#[tokio::test]
+async fn projected_pages_filter_count_and_page_without_committing_intent() {
+    let (_directory, p) = profile().await;
+    seed(&p, 125).await;
+    let _occupied = p.operations.hold_network_capacity().await;
+    let original = request(&p, page(0)).await;
+    let id = original["mail"][0]["id"].as_str().unwrap().to_owned();
+    let alias = "old-message-alias";
+    let target = id.clone();
+    p.database
+        .write(move |db| {
+            db.execute(
+                "INSERT INTO mail_aliases(alias,id) VALUES(?1,?2)",
+                params![alias, target],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let projection = json!({alias: {"folder":"Archive","unread":false,"starred":true}});
+    let archived = request(&p, json!({"op":"page","folder":"Archive","filter":"Flagged","query":"needle 124","projection":projection})).await;
+    assert_eq!(archived["total"], 1);
+    assert_eq!(archived["unread"], 62);
+    assert_eq!(archived["mail"][0]["id"], id);
+    assert_eq!(archived["mail"][0]["folder"], "Archive");
+    assert_eq!(archived["mail"][0]["unread"], false);
+    assert_eq!(archived["aliases"][alias], id);
+    assert_eq!(archived["confirmed"][0]["folder"], "INBOX");
+    assert_eq!(archived["confirmed"][0]["unread"], true);
+    let inbox = request(
+        &p,
+        json!({"op":"page","folder":"Inbox","projection":projection}),
+    )
+    .await;
+    assert_eq!(inbox["total"], 124);
+    assert_eq!(inbox["mail"][0]["subject"], "Message 123");
+    let second = request(
+        &p,
+        json!({"op":"page","folder":"Inbox","offset":50,"projection":projection}),
+    )
+    .await;
+    assert_eq!(second["mail"][0]["subject"], "Message 073");
+    let unread = request(
+        &p,
+        json!({"op":"page","folder":"Inbox","filter":"Unread","projection":projection}),
+    )
+    .await;
+    assert_eq!(unread["total"], 62);
+    let different_account = request(
+        &p,
+        json!({"op":"page","folder":"Archive","account":"other","projection":projection}),
+    )
+    .await;
+    assert_eq!(different_account["total"], 0);
+    assert_eq!(different_account["unread"], 62); // Global badge, independent of scope.
+    let persisted = request(&p, page(0)).await;
+    assert_eq!(persisted["total"], 125);
+    assert_eq!(persisted["unread"], 63);
+    assert_eq!(persisted["mail"][0]["folder"], "INBOX");
+    assert_eq!(persisted["mail"][0]["unread"], true);
+}
 pub(crate) fn draft(revision: u64, body: &str) -> Value {
     json!({"id":"draft-one","account_id":"fixture","to":"robin@example.test","cc":"","bcc":"hidden@example.test","subject":"Draft","body":body,"revision":revision})
 }

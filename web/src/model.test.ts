@@ -243,3 +243,91 @@ it("account removal clears a retained reader and a late failure cannot restore i
   expect(w.readerMessage).toBeNull();
   expect(w.pending).toBe(0);
 });
+
+describe("read-on-leave", () => {
+  it("only a deliberate visit arms reading; refresh and initial selection do not", async () => {
+    const repo = new Controlled(),
+      w = new Workspace(repo, new Settings());
+    w.selected = "1";
+    await w.refresh();
+    w.navigate("Inbox");
+    await tick();
+    expect(repo.jobs).toHaveLength(0);
+    w.beginReading("1");
+    expect(w.readerMessage?.unread).toBe(true);
+    await w.refresh();
+    await tick();
+    expect(repo.jobs).toHaveLength(0);
+    w.beginReading("2");
+    expect(w.mail[0].unread).toBe(false);
+    expect(w.selected).toBe("2");
+    expect(w.notice).not.toBe("Message updated");
+    await tick();
+    repo.jobs[0].resolve();
+    await tick();
+    expect(repo.cached[0].unread).toBe(false);
+  });
+  it("explicit unread survives a delayed read acknowledgment and another visit", async () => {
+    const repo = new Controlled(),
+      w = new Workspace(repo, new Settings());
+    w.beginReading("1");
+    const read = w.finishReading();
+    await tick();
+    const unread = w.change("1", { unread: true });
+    w.beginReading("2");
+    repo.jobs[0].resolve();
+    await read;
+    await tick();
+    expect(w.mail[0].unread).toBe(true);
+    repo.jobs[1].resolve();
+    await unread;
+    expect(repo.cached[0].unread).toBe(true);
+  });
+  it("read failure rolls back just its flag and keeps a newer move and Undo", async () => {
+    const repo = new Controlled(),
+      w = new Workspace(repo, new Settings());
+    w.beginReading("1");
+    const move = w.action("1", "archive");
+    const undo = w.undo;
+    expect(w.mail[0].folder).toBe("Archive");
+    expect(w.mail[0].unread).toBe(false);
+    await tick();
+    expect(repo.jobs).toHaveLength(1);
+    repo.jobs[0].reject();
+    await tick();
+    expect(repo.jobs).toHaveLength(2);
+    expect(w.mail[0].unread).toBe(true);
+    expect(w.notice).toBe("Moved to Archive");
+    expect(w.undo).toBe(undo);
+    expect(w.error).toContain("restored");
+    repo.jobs[1].resolve();
+    await move;
+    expect(repo.cached[0].folder).toBe("Archive");
+    expect(repo.cached[0].unread).toBe(true);
+  });
+  it("explicit read controls cancel the visit, and automatic reads keep older Undo", async () => {
+    const repo = new Controlled(),
+      w = new Workspace(repo, new Settings());
+    const starred = w.action("2", "star");
+    await tick();
+    repo.jobs[0].resolve();
+    await starred;
+    const undo = w.undo,
+      notice = w.notice;
+    w.beginReading("1");
+    const read = w.finishReading();
+    await tick();
+    repo.jobs[1].resolve();
+    await read;
+    expect(w.undo).toBe(undo);
+    expect(w.notice).toBe(notice);
+    w.beginReading("1");
+    const unread = w.change("1", { unread: true });
+    await tick();
+    repo.jobs[2].resolve();
+    await unread;
+    await w.finishReading();
+    expect(repo.jobs).toHaveLength(3);
+    expect(w.mail[0].unread).toBe(true);
+  });
+});
