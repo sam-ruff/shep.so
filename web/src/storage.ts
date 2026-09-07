@@ -1,3 +1,4 @@
+import { prepareLineage, type IdentityTransition } from "./mail_lineage";
 import { cacheStores, mailMetadata, recordCacheChanges } from "./cache_changes";
 import {
   BrowserIntents,
@@ -33,6 +34,7 @@ export interface Change {
   store: StoreName;
   key: string;
   value?: unknown;
+  identity?: IdentityTransition;
 }
 export interface LocalStore {
   readonly profileId?: string;
@@ -51,12 +53,13 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     throw new Error("Invalid browser profile identity.");
   return new Promise((resolve, reject) => {
     let abandoned = false;
+    // Version 12 tracks acknowledged physical identity continuity in metadata.
     // Version 11 fences writers that omit intent-only query invalidation.
     // Version 10 indexes account/physical identities without a JS body migration.
     // Version 9 binds the derived persistent index to this source incarnation.
     // Version 8 fences older tabs that remove accounts without group ownership.
     // Version 7 fenced writes lacking atomic cache-applied intent revisions.
-    const request = indexedDB.open(`shep.mail.v1.${user}`, 11);
+    const request = indexedDB.open(`shep.mail.v1.${user}`, 12);
     request.onupgradeneeded = (event) => {
       for (const store of stores)
         if (!request.result.objectStoreNames.contains(store))
@@ -94,6 +97,15 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
             },
             "mail",
           );
+      }
+      if (event.oldVersion >= 5 && event.oldVersion < 12) {
+        const cursor = tx.objectStore("mailMetadata").openCursor();
+        cursor.onsuccess = () => {
+          const row = cursor.result;
+          if (!row) return;
+          row.update({ ...row.value, lineage: crypto.randomUUID() });
+          row.continue();
+        };
       }
       const outgoing = tx.objectStore("outgoing");
       if (!outgoing.indexNames.contains("submission"))
@@ -250,6 +262,7 @@ export class BrowserStore implements LocalStore {
   }
   commit(changes: Change[], intent?: IntentLease): Promise<void> {
     if (!changes.length) return Promise.resolve();
+    changes = changes.map((change) => ({ ...change }));
     return new Promise((resolve, reject) => {
       const tx = this.db.transaction(
         [
@@ -266,6 +279,7 @@ export class BrowserStore implements LocalStore {
             ...(changes.some((c) => c.store === "mailAliases")
               ? ["mailIntents"]
               : []),
+            ...(changes.some((c) => c.store === "mail") ? ["mailAliases"] : []),
             ...(intent ? ["mailIntents", "mailAliases", "mailMetadata"] : []),
             "removedAccounts" as const,
           ]),
@@ -288,6 +302,12 @@ export class BrowserStore implements LocalStore {
       removed.onsuccess = async () => {
         try {
           checkRemovedWrites(changes, removed.result);
+          // Keep derived origin metadata atomic with the raw cache and aliases.
+          const prepared = changes.some(
+            (c) => c.store === "mail" || c.store === "mailAliases",
+          )
+            ? await prepareLineage(tx, changes)
+            : undefined;
           if (changes.some((c) => c.store === "mailAliases"))
             await adoptIntentAliases(tx, changes);
           for (const c of changes) {
@@ -302,7 +322,7 @@ export class BrowserStore implements LocalStore {
                 c.store === "mailIntents",
             )
           )
-            recordCacheChanges(tx, changes);
+            recordCacheChanges(tx, changes, false, prepared);
           if (intent) await acknowledgeIntentCache(tx, intent, changes);
         } catch (error) {
           cause =

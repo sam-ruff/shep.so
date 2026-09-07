@@ -2,6 +2,8 @@ import type { Account, Outgoing, RecordMail } from "./provider";
 import type { Change, LocalStore } from "./storage";
 
 export interface MailAlias {
+  lineage?: string;
+  targetLineage?: string;
   alias: string;
   target: string;
 }

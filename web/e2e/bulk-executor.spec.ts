@@ -518,7 +518,7 @@ test("a pending cache receipt cannot undo a later acknowledged move", async ({
   expect(r.moves).toHaveLength(2);
 });
 
-test("changed physical sources and foreign profiles cannot dispatch the reviewed group", async ({
+test("unproven physical changes and foreign profiles cannot dispatch the reviewed group", async ({
   page,
 }) => {
   await setup(page, 1);
@@ -532,7 +532,11 @@ test("changed physical sources and foreign profiles cannot dispatch the reviewed
     }
     const review = await e.prepare("group", { kind: "flags", unread: false });
     await e.executor.decide("group", review.revision, "approve");
-    await e.repo.mutate("m0", { folder: "Archive" });
+    const changed = await e.store.get("mail", "m0");
+    changed.core.folder = "Archive";
+    changed.core.remote_id = "92.1";
+    changed.core.id = "work:Archive:92.1";
+    await e.store.commit([{ store: "mail", key: "m0", value: changed }]);
     await e.executor.run();
     return {
       foreign,
@@ -947,4 +951,244 @@ test("a second tab cannot recover a live executor and tab loss leaves an unconfi
   });
   expect(recovered.writes).toHaveLength(0);
   await other.close();
+});
+
+for (const unknownUid of [false, true]) {
+  test(`reviewed flags follow an acknowledged individual move and Undo at its current UID (resolved=${unknownUid})`, async ({
+    page,
+  }) => {
+    await setup(page, 1);
+    const r = await page.evaluate(async (unknownUid) => {
+      const e = (window as any).executorFixture;
+      e.unknownUid = unknownUid;
+      const review = await e.prepare("follow", {
+        kind: "flags",
+        starred: true,
+      });
+      const origin = await e.store.get("mailMetadata", "m0");
+      await e.executor.decide("follow", review.revision, "approve");
+      await e.repo.mutate("m0", { folder: "Archive" });
+      await new e.BulkExecutor(e.profile, e.repo).run();
+      const job = await e.review("follow"),
+        items = await e.items("follow");
+      await e.executor.decide("follow", job.revision, "undo");
+      await new e.BulkExecutor(e.profile, e.repo).run();
+      return {
+        origin,
+        job,
+        item: items[0],
+        final: await e.review("follow"),
+        metadata: await e.store.get("mailMetadata", "m0"),
+        calls: e.calls,
+      };
+    }, unknownUid);
+    expect(r.job.counts).toMatchObject({ done: 1, failed: 0, uncertain: 0 });
+    expect(r.item.original).toMatchObject({
+      folder: "INBOX",
+      remoteId: "42.1",
+      lineage: r.origin.lineage,
+    });
+    expect(r.item.receipt.before).toMatchObject({
+      folder: "Archive",
+      remoteId: "91.1",
+      anchor: "m0",
+      lineage: r.origin.lineage,
+    });
+    expect(r.item.receipt.after).toMatchObject({
+      starred: true,
+      folder: "Archive",
+      remoteId: "91.1",
+    });
+    expect(r.final.counts).toMatchObject({
+      restored: 1,
+      failed: 0,
+      uncertain: 0,
+    });
+    expect(r.metadata).toMatchObject({
+      lineage: r.origin.lineage,
+      core: { folder: "Archive", remote_id: "91.1", starred: false },
+    });
+    const flags = r.calls.filter((c: any) => c.path.endsWith("/flags"));
+    expect(
+      flags.map((c: any) => [
+        c.body.mail.folder,
+        c.body.mail.remote_id,
+        c.body.starred,
+      ]),
+    ).toEqual([
+      ["Archive", "91.1", true],
+      ["Archive", "91.1", false],
+    ]);
+    expect(r.calls.filter((c: any) => c.path.endsWith("/move"))).toHaveLength(
+      1,
+    );
+    expect(
+      r.calls.filter((c: any) => c.path.endsWith("/resolve-move")),
+    ).toHaveLength(1);
+  });
+}
+
+test("frozen origins survive canonical aliases, atomic rollback, flattened merges and a lost cache checkpoint", async ({
+  page,
+}) => {
+  await setup(page, 1);
+  const r = await page.evaluate(async () => {
+    const e = (window as any).executorFixture,
+      s = e.store;
+    const path = "/src/sent_cache.ts",
+      { aliasChanges } = await import(path);
+    const review = await e.prepare("alias", { kind: "flags", starred: true });
+    await e.executor.decide("alias", review.revision, "approve");
+    const original = await s.get("mailMetadata", "m0");
+    const merge = async (from: string, to: string, fail = false) => {
+      const mail = await s.get("mail", from),
+        raw = await s.get("raw", from);
+      const changes = [
+        ...(await aliasChanges(s, from, to)),
+        { store: "mail", key: to, value: { ...mail, localId: to } },
+        { store: "raw", key: to, value: raw },
+        { store: "mail", key: from },
+        { store: "raw", key: from },
+      ];
+      const input = JSON.stringify(changes);
+      if (fail)
+        changes.push({ store: "drafts", key: "cannot-clone", value: () => {} });
+      try {
+        await s.commit(changes);
+      } catch {
+        return input === JSON.stringify(changes.slice(0, -1));
+      }
+      return true;
+    };
+    const before = await s.snapshot([
+      "mail",
+      "mailAliases",
+      "mailMetadata",
+      "mailIntents",
+      "cacheState",
+    ]);
+    const unchangedInput = await merge("m0", "copy", true);
+    const rollback =
+      JSON.stringify(before) ===
+      JSON.stringify(
+        await s.snapshot([
+          "mail",
+          "mailAliases",
+          "mailMetadata",
+          "mailIntents",
+          "cacheState",
+        ]),
+      );
+    await merge("m0", "copy");
+    const saved = e.BulkJournal.prototype.cacheSaved;
+    let fail = true;
+    e.BulkJournal.prototype.cacheSaved = async function (...args: any[]) {
+      if (fail) throw Error("Synthetic checkpoint reply lost");
+      return saved.apply(this, args);
+    };
+    await e.executor.run().catch(() => {});
+    fail = false;
+    const pending = await e.review("alias");
+    await merge("copy", "final");
+    await new e.BulkExecutor(e.profile, e.repo).run();
+    const job = await e.review("alias"),
+      items = await e.items("alias");
+    await e.executor.decide("alias", job.revision, "undo");
+    await new e.BulkExecutor(e.profile, e.repo).run();
+    return {
+      original,
+      unchangedInput,
+      rollback,
+      pending,
+      job,
+      item: items[0],
+      final: await e.review("alias"),
+      metadata: await s.get("mailMetadata", "final"),
+      alias: await s.get("mailAliases", "m0"),
+      calls: e.calls,
+    };
+  });
+  expect(r.unchangedInput && r.rollback).toBe(true);
+  expect(r.pending).toMatchObject({
+    pendingCache: 1,
+    counts: { done: 1, failed: 0 },
+  });
+  expect(r.job).toMatchObject({
+    pendingCache: 0,
+    counts: { done: 1, failed: 0 },
+  });
+  expect(r.item).toMatchObject({
+    id: "m0",
+    original: { lineage: r.original.lineage },
+    intent: { id: "copy", alias: { id: "m0", lineage: r.original.lineage } },
+    receipt: {
+      before: { id: "copy", anchor: "m0", lineage: r.original.lineage },
+    },
+  });
+  expect(r.alias).toMatchObject({
+    target: "final",
+    lineage: r.original.lineage,
+    targetLineage: r.metadata.lineage,
+  });
+  expect(r.final.counts).toMatchObject({
+    restored: 1,
+    failed: 0,
+    uncertain: 0,
+  });
+  expect(r.metadata.core.starred).toBe(false);
+  expect(r.calls.filter((c: any) => c.path.endsWith("/flags"))).toHaveLength(2);
+});
+
+test("unproven UID replacement retires old group projections and never dispatches its frozen intent", async ({
+  page,
+}) => {
+  await setup(page, 1);
+  const r = await page.evaluate(async () => {
+    const e = (window as any).executorFixture,
+      s = e.store;
+    const workerPath = "/src/mailbox_worker_client.ts",
+      { MailboxWorkerClient } = await import(workerPath);
+    const worker = new MailboxWorkerClient(e.profile);
+    const review = await e.prepare("stale", { kind: "flags", starred: true });
+    await e.executor.decide("stale", review.revision, "approve");
+    const projected = await worker.page({
+      scope: { folder: "Inbox", filter: "Flagged" },
+      offset: 0,
+    });
+    const old = await s.get("mailMetadata", "m0"),
+      mail = await s.get("mail", "m0");
+    mail.core.remote_id = "99.1";
+    mail.core.id = "work:INBOX:99.1";
+    await s.commit([{ store: "mail", key: "m0", value: mail }]);
+    const replacement = await s.get("mailMetadata", "m0");
+    const hidden = await worker.page({
+      scope: { folder: "Inbox", filter: "Flagged" },
+      offset: 0,
+    });
+    await worker.close();
+    const reopened = new MailboxWorkerClient(e.profile);
+    const persistent = await reopened.page({
+      scope: { folder: "Inbox", filter: "Flagged" },
+      offset: 0,
+    });
+    await reopened.close();
+    await e.executor.run();
+    return {
+      old,
+      replacement,
+      projected,
+      hidden,
+      persistent,
+      job: await e.review("stale"),
+      item: (await e.items("stale"))[0],
+      calls: e.calls,
+    };
+  });
+  expect(r.replacement.lineage).not.toBe(r.old.lineage);
+  expect(r.projected.total).toBe(1);
+  expect(r.hidden.total).toBe(0);
+  expect(r.persistent.total).toBe(0);
+  expect(r.job.counts).toMatchObject({ failed: 1, done: 0, uncertain: 0 });
+  expect(r.item.error).toContain("changed since the group review");
+  expect(r.calls.filter((c: any) => c.path.endsWith("/flags"))).toHaveLength(0);
 });

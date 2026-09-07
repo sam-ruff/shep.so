@@ -697,6 +697,27 @@ export async function providerFlows(page, context, origin, output, session) {
     }),
   ).toBeVisible();
 
+  const providerLineage = await page.evaluate(
+    async ({ user, providerKey }) => {
+      const db = await new Promise((resolve, reject) => {
+        const r = indexedDB.open(`shep.mail.v1.${user}`);
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = reject;
+      });
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction("mailMetadata"),
+          row = tx.objectStore("mailMetadata").get(providerKey);
+        tx.oncomplete = () => {
+          db.close();
+          resolve(row.result.lineage);
+        };
+        tx.onabort = reject;
+      });
+    },
+    { user: session.user_id, providerKey },
+  );
+  assert.equal(typeof providerLineage, "string");
+
   // A freshly opened tab has no passwords. Repair through its real controls;
   // the first tab retains its reader and a provider-ID Undo closure.
   const reopened = await context.newPage();
@@ -741,9 +762,16 @@ export async function providerFlows(page, context, origin, output, session) {
         r.onerror = reject;
       });
       return new Promise((resolve, reject) => {
-        const tx = db.transaction(["mail", "mailAliases", "raw", "outgoing"]);
+        const tx = db.transaction([
+          "mail",
+          "mailAliases",
+          "mailMetadata",
+          "raw",
+          "outgoing",
+        ]);
         const mail = tx.objectStore("mail").get(localKey),
           alias = tx.objectStore("mailAliases").get(providerKey),
+          metadata = tx.objectStore("mailMetadata").get(localKey),
           raw = tx.objectStore("raw").get(localKey),
           out = tx.objectStore("outgoing").getAll();
         tx.oncomplete = () => {
@@ -751,6 +779,7 @@ export async function providerFlows(page, context, origin, output, session) {
           resolve({
             mail: mail.result,
             alias: alias.result,
+            metadata: metadata.result,
             raw: raw.result,
             out: out.result.find((r) => r.mail?.core.id === localKey),
           });
@@ -760,7 +789,13 @@ export async function providerFlows(page, context, origin, output, session) {
     },
     { user: session.user_id, localKey, providerKey },
   );
-  assert.deepEqual(handover.alias, { alias: providerKey, target: localKey });
+  assert.equal(typeof handover.metadata.lineage, "string");
+  assert.deepEqual(handover.alias, {
+    alias: providerKey,
+    target: localKey,
+    lineage: providerLineage,
+    targetLineage: handover.metadata.lineage,
+  });
   assert.equal(handover.mail.core.remote_id, "91.4");
   assert.equal(handover.mail.core.folder, "Sent Mail");
   assert.equal(handover.mail.local, undefined);
