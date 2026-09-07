@@ -23,9 +23,11 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
-## R82 — New-mail notification checkpoint (2026-09-07)
+## R82 — New-mail notification checkpoint — installed and pushed (2026-09-07)
 
-Native delivery adapters and searchable Preferences controls are implemented.
+Source [ded5aca](https://github.com/sam-ruff/shep.so/commit/ded5aca104b5fa129f5b9c8d89199f3a826e9f96)
+is installed and pushed. Native delivery adapters and searchable Preferences
+controls are implemented.
 Popups, sound and sender/subject details default on and can be changed
 independently. Test notification uses the current settings; muted or failed tests
 release their pending state. Delivery runs separately from mail sync and iced,
@@ -55,7 +57,8 @@ Validation includes 444 Rust tests (three explicitly ignored live/profile tests)
 44 Python tests, and fmt/Clippy. Seven new SQLite tests and ten worker/UI/protocol
 tests cover import/restart identity, commit rollback, burst counts, mute/privacy,
 blocked delivery, private-bus sound hints and errors, and sync failure ordering.
-Windows GNU cross-target compilation passes; it is not Windows execution.
+Windows GNU `cargo check` passes with both all features and production defaults;
+it is not Windows execution.
 The MCP fixture never calls the host notification/audio service. Four saved native
 scenarios exercise defaults, independent outputs/privacy, restart, real arrival
 flows, compact dark layout and navigation during delayed failure/retry.
@@ -73,8 +76,15 @@ Reviewed WebP evidence includes popup-only/privacy (`5404d1b0741a/`), compact da
 `notifications-final-targeted.log`, `notifications-python.log`,
 `notifications-native-full.log` and `notifications-native-recovery-current.log`.
 
-Release checksum, extraction and bundled-installer verification pass. Shipping
-evidence will be recorded after the final checks. R82 remains
+The corrected modal-transition scenario passes in `notifications-shortcut-transitions.log`.
+Final Git hooks pass 444 Rust tests plus two drawing-adapter tests, fmt and Clippy.
+Strict Zensical, optimized release checksum/extraction and bundled-installer
+verification pass. The installed Linux binary matches the release, SHA-256
+`9754ccd700b5dc60cd1ed3eb990955406d231dd591b10915e905e9023fb4cec8`.
+Installation was atomic and existing personal windows were preserved; reopen
+those windows to use this build. Shipping logs: `notifications-commit.log`,
+`notifications-release-verified.log`, `notifications-install.log` and
+`notifications-push.log`. R82 remains
 open for actual Windows/macOS delivery, Mac app-bundle integration and desktop
 sound/popup review. Other performance measurements remain deferred. Quality and
 release workflows stay disabled; documentation CI remains enabled. The full
@@ -151,7 +161,8 @@ pass. The optimized Linux binary is installed atomically, SHA-256
 `551f9ef3afae31f29b5b039c0ca7cee89ac4293fd01dd71e727aee35a13615d7`. Personal windows remain running on their earlier
 executable until reopened. Git hooks and the direct main push passed.
 Release/install logs: `html-offset-release.log` and
-`html-offset-install.log`.
+`html-offset-install.log`. Documentation CI runs **34115749075** and
+**34115885902** completed build and deployment successfully.
 R81 default reading styles and R82 configurable native notifications are recorded
 in TODO/audit. Other performance measurements stay deferred. Quality/release
 workflows remain disabled; documentation CI remains enabled. These tests do not
