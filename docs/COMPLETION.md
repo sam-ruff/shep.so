@@ -23,7 +23,11 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
-## Complex HTML and reader interaction follow-up — verification checkpoint
+## Complex HTML and reader interaction follow-up — installed and pushed
+
+Source [ebddf54](https://github.com/sam-ruff/shep.so/commit/ebddf54c0124c30561db117c2b041ee184aa4c3c)
+is installed and pushed. R72, R78, R79 and R80 are removed from TODO only after
+that verified shipping step.
 
 R72 was reopened after the earlier synthetic result failed to explain the user's
 1–2 second pause. Read-only diagnostics reproduced it in the original cached
@@ -88,8 +92,8 @@ Logs remain in ignored `artifacts/logs/`: `html-selection-native-full.log`,
 Strict Zensical and release checksum/extraction/bundled-installer verification
 pass. The optimized Linux binary is installed atomically, SHA-256
 `551f9ef3afae31f29b5b039c0ca7cee89ac4293fd01dd71e727aee35a13615d7`. Personal windows remain running on their earlier
-executable until reopened. The source commit and push are recorded below once
-shipping completes. Release/install logs: `html-offset-release.log` and
+executable until reopened. Git hooks and the direct main push passed.
+Release/install logs: `html-offset-release.log` and
 `html-offset-install.log`.
 R81 default reading styles and R82 configurable native notifications are recorded
 in TODO/audit. Other performance measurements stay deferred. Quality/release
