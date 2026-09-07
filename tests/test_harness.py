@@ -15,6 +15,16 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_reading_mail_fixture_is_explicit_and_validated_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in ("true", 1, None):
+                with self.assertRaisesRegex(ValueError, "Reading mail fixture"):
+                    desktop.start(reading_mail=value)
+            launch.assert_not_called()
+        tool = next(tool for tool in harness.TOOLS if tool["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["reading_mail"], {"type":"boolean", "default":False})
+
     def test_move_recovery_fixture_rejects_unrecognized_modes_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

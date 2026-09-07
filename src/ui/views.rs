@@ -903,8 +903,9 @@ impl App {
             }
             return reading;
         }
-        reading =
-            reading.push(self.find_highlights(detail, 0, self.selectable_body(detail, 0, body)));
+        let mut message =
+            column![self.find_highlights(detail, 0, self.selectable_body(detail, 0, body))]
+                .spacing(gap);
         if self.preferences.reply_display != ReplyDisplay::LatestOnly {
             for (index, reply) in detail.replies.iter().enumerate() {
                 let expanded = self.expanded_replies.contains(&index)
@@ -930,7 +931,7 @@ impl App {
                         self.selectable_body(detail, index + 1, &reply.body),
                     ));
                 }
-                reading = reading.push(
+                message = message.push(
                     container(section)
                         .padding(12)
                         .width(Length::Fill)
@@ -947,13 +948,13 @@ impl App {
                     .iter()
                     .find(|(url, _)| url == &remote.url)
                 {
-                    reading = reading.push(
+                    message = message.push(
                         image(handle.clone())
                             .width(Length::Fill)
                             .content_fit(iced::ContentFit::Contain),
                     );
                 } else {
-                    reading = reading.push(
+                    message = message.push(
                         muted(
                             self.image_errors
                                 .get(&remote.url)
@@ -966,9 +967,9 @@ impl App {
             }
         }
         if detail.body_truncated {
-            reading=reading.push(muted("Showing the first 32,000 characters. Export the original email to read the full message."));
+            message=message.push(muted("Showing the first 32,000 characters. Export the original email to read the full message."));
         }
-        reading
+        reading.push(self.text_column(message.into()))
     }
     pub(super) fn reader_actions<'a>(&'a self, detail: &'a MailDetail) -> Element<'a, Message> {
         let mut footer = row![

@@ -472,3 +472,12 @@ When a scenario leaves search with Escape before independently opening another
 control, wait for `focused_input == null` before clicking. Key injection returning
 is not proof that iced processed the key; delayed Escape can otherwise close the
 newly opened dialog. Keep rapid-key cancellation as a separate regression (R63).
+
+For reading styles use `desktop.start(reading_mail=true)`: fictional plain and
+minimally styled HTML letters plus a conversation with white and navy message
+backgrounds. The saved `test_reading_columns_*` flow verifies native selection,
+Find, full/compact layout and actual body pixels for centered padding. Clear the
+existing Find text before typing a new query; Find deliberately retains it.
+`test_conversation_surfaces_*` samples the card gutter outside the HTML canvas,
+switches between cached messages, refreshes without losing the scroller, and
+captures both app themes and compact sizes. These fixtures never contact servers.
