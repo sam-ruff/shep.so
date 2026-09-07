@@ -296,3 +296,10 @@ Committed and pushed as [`d2074db`](https://github.com/sam-ruff/shep.so/commit/d
 ### Persistent browser intent — R42/R50/R60/R65/R67/R69/R71/R73/R77
 
 Individual browser controls reserve field ownership before queued work, check it at dispatch, reconcile superseded input and retain acknowledged outcomes through action-record failures. Schema-six migration, alias transactions and account-removal review/cleanup preserve that ownership across tabs and missing mail. Saved unit and Chromium control/storage scenarios cover the increment; the completion log records final evidence and prompt review-branch shipping. Group claim/Undo primitives are prerequisites: the provider runner, visible group review/History/Undo, optimistic queries and native equivalents remain active TODOs. No request is closed by this checkpoint.
+
+
+### Persistent browser intent shipping record
+
+Committed and pushed as [`353d259`](https://github.com/sam-ruff/shep.so/commit/353d2597ecb57fb649adea54dd312d4a01b1b6ab) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Verification includes **107 browser unit tests**, **73 Playwright scenarios**, **55 real Rust HTTPS beta/mail stages**, **39 Python tests**, **30 parity contracts**, TypeScript, production browser inspection and pinned strict documentation validation. The reviewed compact removal capture and retained migration-assertion failure evidence are recorded above.
+
+R77's prompt push is fulfilled for this increment. Group execution/recovery, bounded optimistic queries, native client parity and the wider product/deployment backlog remain active, including R75/R76 and missing VPS/owner/OAuth configuration. Main and the personal installation were untouched; artifacts remain ignored and owned test processes are stopped. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
