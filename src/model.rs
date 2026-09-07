@@ -174,6 +174,11 @@ pub struct Mail {
     pub starred: bool,
     pub attachment_count: usize,
 }
+impl Mail {
+    pub fn is_local_copy(&self) -> bool {
+        self.remote_id.starts_with("local-sent-") || self.remote_id.starts_with("local-recovered-")
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredMail {
@@ -272,12 +277,52 @@ pub struct MailQuery {
     pub account: Option<String>,
     pub folder: String,
     pub search: String,
+    /// Interactive search spans the folders of the selected accounts. Keep the
+    /// browsing scope so clearing the text returns to the previous folder.
+    #[serde(default)]
+    pub search_all_folders: bool,
     pub unread_only: bool,
     pub read_only: bool,
     pub attachments_only: bool,
     pub sort: MailSort,
     pub starred_only: bool,
     pub offset: usize,
+}
+
+impl MailQuery {
+    pub fn searches_all_folders(&self) -> bool {
+        self.search_all_folders && !self.search.trim().is_empty()
+    }
+    /// Shared by SQLite results, frozen selections and optimistic UI membership.
+    /// Explicit folder groups keep their account set, including an empty set.
+    pub fn search_scope(&self) -> std::borrow::Cow<'_, Self> {
+        if !self.searches_all_folders() {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let mut scope = self.clone();
+        scope.search_all_folders = false;
+        scope.folder.clear();
+        scope.sent_only = false;
+        if let Some(folders) = &self.folders {
+            scope.account = None;
+            if folders.iter().any(|f| f.account.is_none()) {
+                scope.folders = None;
+            } else {
+                let mut folders: Vec<_> = folders
+                    .iter()
+                    .map(|f| FolderSelection {
+                        account: f.account.clone(),
+                        folder: String::new(),
+                        sent_only: false,
+                    })
+                    .collect();
+                folders.sort_by(|a, b| a.account.cmp(&b.account));
+                folders.dedup();
+                scope.folders = Some(folders);
+            }
+        }
+        std::borrow::Cow::Owned(scope)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,6 +345,9 @@ pub struct FolderSelection {
 
 #[derive(Debug, Clone, Default)]
 pub struct MailPage {
+    pub move_pending_total: usize,
+    pub relocated: std::collections::HashMap<String, Mail>,
+    pub move_recovery: std::collections::HashMap<String, crate::mail_actions::journal::MoveRecord>,
     pub move_placeholders: std::collections::HashSet<String>,
     pub bulk_observed: std::collections::HashMap<String, bool>,
     pub bulk_placeholders: std::collections::HashSet<String>,
@@ -313,6 +361,10 @@ pub struct MailPage {
 }
 
 impl MailPage {
+    /// Durable recovery IDs address protected cached MIME and can be read cold.
+    pub fn is_transient_placeholder(&self, id: &str) -> bool {
+        self.is_placeholder(id) && !self.move_recovery.contains_key(id)
+    }
     pub fn is_placeholder(&self, id: &str) -> bool {
         self.bulk_placeholders.contains(id) || self.move_placeholders.contains(id)
     }

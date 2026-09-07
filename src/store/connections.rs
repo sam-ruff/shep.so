@@ -178,6 +178,7 @@ fn preview(c: &Connection, target: ConnectionRef) -> anyhow::Result<RemovalPrevi
             let (history, pending_bulk) = bulk::account_review(c, &out.target.id, &mut digest)?;
             out.mail_history = history;
             out.transfers += pending_bulk;
+            out.transfers += move_journal::account_review(c, &out.target.id, &mut digest)?;
             out.transfers += folder_actions::account_review(c, &out.target.id, &mut digest)?;
         }
         ConnectionKind::Calendar => {
@@ -226,6 +227,7 @@ impl Store {
                     tx.execute("DELETE FROM sent_folders WHERE account=?",[&target.id])?;
                     outgoing::changed(&tx)?;
                     bulk::remove_account(&tx,&target.id)?;
+                    move_journal::remove_account(&tx, &target.id)?;
                     tx.execute("DELETE FROM folder_jobs WHERE account=?", [&target.id])?;
                     tx.execute("DELETE FROM messages WHERE account=?", [&target.id])?;
                     super::notifications::remove_account(&tx, &target.id)?;

@@ -43,7 +43,7 @@ const SETTINGS: &[Setting] = &[
     Setting {
         title: "Your accounts",
         tab: SettingsTab::Accounts,
-        keywords: "add account email imap pop3 smtp password server tls ssl authentication connection remove",
+        keywords: "add account email imap pop3 smtp password server tls ssl authentication connection remove unfinished moves recovery local copy",
     },
     Setting {
         title: "Google connection",

@@ -501,7 +501,7 @@ class NativeFlows(unittest.TestCase):
     def test_conversation_refresh_preserves_scrolled_position(self):
         self.mcp.call("desktop.start",conversation_mail=True)
         self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("Long project review"),
-                       check("total",1),key("Escape"),check("conversation_total",25),wait(100),
+                       check("total",25),key("Escape"),check("conversation_total",25),wait(100),
                        click(1288,194),check("conversation_offset",0),wait(100),
                        {"type":"hover","x":1050,"y":600},{"type":"scroll","amount":12},
                        check("conversation_scroll",400,"gte"),shot("thread-before-refresh"))
@@ -944,7 +944,10 @@ class NativeFlows(unittest.TestCase):
                        check("focused_input", "folder-search"), type_text("cafe"),
                        check("move_enter_destination", "Café"), shot("move-accent-match-highlight"),
                        key("Return"), check("dialog", None), check("mail_pending", 0),
-                       click(100, 617), check("folder", "Café"), check("total", 1), check("selected", "Quick note"),
+                       click(100, 617), check("folder", "Café"), check("total", 5),
+                       key("ctrl+k"), check("focused_input", "search"), key("ctrl+a"), key("BackSpace"),
+                       check("query", ""), check("total", 1), check("selected", "Quick note"), key("Escape"),
+                       check("focused_input", None),
                        click(85, 115), check("folder", "INBOX"), check("query", ""),
                        check("total", 123), check("selected", None, "ne"))
         subject = self.selected_mail_subject()
@@ -1705,6 +1708,170 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+a"), type_text("no-match-938481"), check("total", 0),
                        key("ctrl+a"), key("BackSpace"), check("total", 120), key("Escape"))
 
+    def test_search_finds_other_folders_moves_results_and_returns_to_browsing_folder(self):
+        started=self.mcp.call("desktop.start",long_folders=True,mail_actions="slow")
+        print(f"Across-folder search evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("folder","INBOX"),check("total",120),key("ctrl+k"),check("focused_input","search"),
+                       type_text("Sidebar fixture"),check("total",4),key("Escape"),check("reader_text_ready",True),shot("search-other-folders"))
+        state=self.mcp.call("desktop.state")
+        self.assertTrue(all(row["folder"]!="INBOX" for row in state["mail_rows"]))
+        subject=state["selected"]
+        self.mcp.batch(key("m"),check("focused_input","folder-search"),type_text("Projects"),check("move_enter_destination","Projects"),key("Return"),
+                       check("dialog",None),check("mail_pending",1),check("total",4),check("selected",subject),
+                       shot("search-result-move-pending"),check("mail_pending",0),check("reader_text_ready",True))
+        state=self.mcp.call("desktop.state")
+        moved=next(row for row in state["mail_rows"] if row["subject"]==subject)
+        self.assertEqual(moved["folder"],"Projects")
+        self.mcp.batch(key("ctrl+k"),check("focused_input","search"),key("ctrl+a"),key("BackSpace"),
+                       check("query",""),check("folder","INBOX"),check("total",120),key("Escape"),
+                       click(85,536),check("folder","Projects"),check("total",2),shot("search-cleared-browsing-restored"))
+        self.assertIn(subject,[row["subject"] for row in self.mcp.call("desktop.state")["mail_rows"]])
+
+    def test_search_bulk_selection_includes_matches_in_all_result_folders(self):
+        started=self.mcp.call("desktop.start",long_folders=True)
+        print(f"Across-folder selection evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("Sidebar fixture"),check("total",4),key("Escape"),
+                       click(400,245),key("ctrl+a"),check("mail_selection.count",4),check("mail_selection.pending",False),
+                       key("Delete"),check("dialog","BulkReview"),check("bulk.review_count",4),shot("search-all-folders-bulk-review"),
+                       key("Return"),check("dialog",None),check("bulk.jobs.0.completed",4),check("total",4))
+        self.assertTrue(all(row["folder"]=="Archive" for row in self.mcp.call("desktop.state")["mail_rows"]))
+        self.mcp.batch(key("Escape"),key("ctrl+k"),check("focused_input","search"),key("ctrl+a"),key("BackSpace"),
+                       check("query",""),check("total",120),key("Escape"),click(85,399),check("folder","Archive"),check("total",4),shot("search-bulk-archive-verified"))
+
+    def test_search_respects_account_scope_and_shows_folder_labels_in_compact_dark_layout(self):
+        started=self.mcp.call("desktop.start",long_folders=True)
+        print(f"Search account scope evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("Coffee next Thursday"),check("total",1),
+                       key("Escape"),check("mail_rows.0.account_id","preview-personal"),
+                       key("ctrl+comma"),check("tab","Preferences"),wait(100),click(690,366),check("dark",True),
+                       click(286,737),check("unified",False),key("ctrl+1"),check("tab","Mail"),
+                       key("ctrl+k"),check("focused_input","search"),type_text("Coffee next Thursday"),check("total",0),
+                       key("ctrl+a"),type_text("Sidebar fixture"),check("total",4),key("Escape"),
+                       {"type":"resize","width":900,"height":640},wait(120),shot("search-folders-dark-compact"))
+        self.assertTrue(all(row["account_id"]=="preview-work" for row in self.mcp.call("desktop.state")["mail_rows"]))
+
+    def test_move_recovery_review_preserves_original_and_requires_explicit_choice(self):
+        for mode in ("committed", "copied", "unconfirmed"):
+            result=self.mcp.call("desktop.start",move_recovery=mode,persistent=True)
+            print(f"Move review {mode}: {result['artifacts']}",flush=True)
+            if mode=="committed":
+                self.mcp.batch(click(85,536),check("folder","Projects"))
+            else:
+                self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("keepsake"),check("total",1),key("Escape"),check("focused_input",None))
+            self.mcp.batch(check("selected","Recovered keepsake"),check("reader_text_ready",True),
+                           click(1340,192),check("dialog","MoveRecovery"),
+                           check("move_recovery.stage",{"committed":"Committed","copied":"Copied","unconfirmed":"Started"}[mode]),
+                           wait(100),shot("move-review-"+mode))
+            if mode=="unconfirmed":
+                self.mcp.batch(key("Return"),key("y"),wait(100),check("move_recovery.pending",0),
+                               check("dialog","MoveRecovery"),check("move_recovery.confirmed",False))
+            self.mcp.batch(key("Escape"),check("dialog",None),check("selected","Recovered keepsake"),
+                           check("reader_text_ready",True),check("move_recovery.total",1))
+
+    def test_move_recovery_finishes_verified_copy_and_keeps_navigation_available(self):
+        for mode in ("copied", "unconfirmed"):
+            result=self.mcp.call("desktop.start",move_recovery=mode,persistent=True)
+            print(f"Move recovery completion {mode}: {result['artifacts']}",flush=True)
+            self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("keepsake"),check("total",1),key("Escape"),
+                           check("selected","Recovered keepsake"),check("reader_text_ready",True),click(1340,192),check("dialog","MoveRecovery"),wait(100))
+            if mode=="unconfirmed":
+                self.mcp.batch(click(470,571),check("move_recovery.confirmed",True))
+            self.mcp.batch(key("y"),check("move_recovery.pending",1),shot("move-recovery-running"),
+                           key("Escape"),check("dialog",None),key("ctrl+2"),check("tab","Calendar"),
+                           check("move_recovery.pending",0),check("notice","Move recovered.","contains"),
+                           key("ctrl+1"),check("tab","Mail"),click(85,636 if mode=="copied" else 536),
+                           check("folder","Projects"),check("selected","Recovered keepsake"),check("reader_text_ready",True),
+                           check("mail_rows.0.group_pending",False),check("move_recovery.total",0),
+                           shot("move-recovery-finished"),{"type":"restart"},
+                           click(85,636 if mode=="copied" else 536),check("selected","Recovered keepsake"),
+                           check("reader_text_ready",True),check("mail_rows.0.group_pending",False),shot("move-recovery-finished-restarted"))
+
+    def test_move_recovery_failure_keeps_cached_reader_and_can_retry(self):
+        result=self.mcp.call("desktop.start",move_recovery="fail-once",persistent=True)
+        print(f"Move recovery failure evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(click(85,536),check("selected","Recovered keepsake"),check("reader_text_ready",True),
+                       click(1340,192),check("dialog","MoveRecovery"),wait(100),click(920,588),
+                       check("move_recovery.pending",1),key("Escape"),check("dialog",None),
+                       key("ctrl+2"),check("tab","Calendar"),check("move_recovery.pending",0),
+                       check("notice","temporarily unavailable","contains"),key("ctrl+1"),check("tab","Mail"),
+                       click(85,536),check("selected","Recovered keepsake"),check("reader_text_ready",True),
+                       check("mail_rows.0.group_pending",True),click(1340,192),check("dialog","MoveRecovery"),
+                       wait(100),shot("move-recovery-retry-error"),key("Return"),check("move_recovery.pending",1),
+                       check("move_recovery.pending",0),check("dialog",None),check("move_recovery.total",0),
+                       check("selected","Recovered keepsake"),check("mail_rows.0.group_pending",False),
+                       check("notice","Move recovered.","contains"),shot("move-recovery-retry-complete"))
+
+    def test_move_recovery_local_copy_has_confirmation_and_survives_sync_restart(self):
+        result=self.mcp.call("desktop.start",move_recovery="unconfirmed",persistent=True)
+        print(f"Move recovery local evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("keepsake"),check("total",1),key("Escape"),
+                       check("selected","Recovered keepsake"),check("reader_text_ready",True),
+                       click(1340,192),check("dialog","MoveRecovery"),wait(100),click(720,485),
+                       check("move_recovery.action","KeepLocal"),check("move_recovery.confirmed",False),
+                       key("Return"),wait(80),check("move_recovery.pending",0),shot("move-recovery-keep-local-review"),
+                       click(470,560),check("move_recovery.confirmed",True),key("Return"),check("dialog",None),
+                       check("move_recovery.total",0),check("notice","Local copy kept","contains"),
+                       check("selected_id","local-recovered-","contains"),check("reader_text_ready",True),
+                       check("mail_rows.0.group_pending",False),shot("move-recovery-local-copy"),
+                       click(568,218),check("mail_rows.0.starred",True),check("mail_pending",0),
+                       click(1400,36),check("refreshing",False),check("selected_id","local-recovered-","contains"),
+                       {"type":"restart"},key("ctrl+k"),check("focused_input","search"),type_text("keepsake"),check("total",1),key("Escape"),
+                       check("selected_id","local-recovered-","contains"),check("reader_text_ready",True),
+                       check("mail_rows.0.starred",True),shot("move-recovery-local-after-restart"))
+
+    def test_move_recovery_preferences_entry_and_compact_dark_local_review(self):
+        result=self.mcp.call("desktop.start",move_recovery="unconfirmed",persistent=True)
+        print(f"Move recovery compact Preferences evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(690,366),check("dark",True),
+                       click(383,156),check("settings_tab","Accounts"),shot("move-recovery-accounts-entry"),
+                       click(380,530),check("dialog","MoveRecovery"),check("move_recovery.stage","Started"),
+                       {"type":"resize","width":900,"height":640},wait(120),shot("move-recovery-review-dark-compact"),
+                       click(450,345),check("move_recovery.action","KeepLocal"),wait(80),shot("move-recovery-local-dark-compact"),
+                       key("Return"),check("move_recovery.pending",0),click(200,420),check("move_recovery.confirmed",True),
+                       key("y"),check("dialog",None),check("move_recovery.total",0),
+                       check("notice","Local copy kept","contains"),shot("move-recovery-accounts-completed"),
+                       key("ctrl+1"),check("tab","Mail"),key("ctrl+k"),check("focused_input","search"),
+                       type_text("keepsake"),check("total",1),key("Escape"),check("selected_id","local-recovered-","contains"),
+                       check("reader_text_ready",True),shot("move-recovery-local-reader-dark-compact"))
+
+    def test_move_recovery_graceful_close_observes_receipt_before_exit(self):
+        started=self.mcp.call("desktop.start",move_recovery="copied",persistent=True)
+        print(f"Move recovery close evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("keepsake"),check("total",1),key("Escape"),
+                       check("reader_text_ready",True),click(1340,192),check("dialog","MoveRecovery"),wait(80),
+                       key("y"),check("move_recovery.pending",1))
+        closed=self.mcp.call("desktop.close")
+        self.assertEqual(closed["returncode"],0)
+        database=Path(started["artifacts"])/"fixture.sqlite"
+        with sqlite3.connect(database.as_uri()+"?mode=ro",uri=True) as cache:
+            rows=cache.execute("SELECT stage,cache_id,data FROM mail_moves").fetchall()
+            self.assertEqual(len(rows),1)
+            stage,cache_id,data=rows[0]
+            self.assertEqual(stage,"located")
+            self.assertIsNone(cache_id)
+            receipt=json.loads(data)["receipt"]
+            self.assertEqual(receipt["current"]["remote_id"],"91.701")
+            self.assertEqual(cache.execute("SELECT COUNT(*) FROM messages WHERE id=?",(receipt["current"]["id"],)).fetchone()[0],1)
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(click(85,636),check("folder","Projects"),check("selected","Recovered keepsake"),
+                       check("reader_text_ready",True),check("move_recovery.total",0),shot("move-recovery-after-graceful-close"))
+
+    def test_moved_cache_is_readable_after_restart_and_refresh_rekeys_the_open_reader(self):
+        result=self.mcp.call("desktop.start",move_recovery=True,persistent=True)
+        print(f"Move recovery native evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(click(85,536),check("folder","Projects"),check("total",1),
+                       check("selected","Recovered keepsake"),check("reader_text_ready",True),
+                       check("mail_rows.0.group_pending",True),shot("move-recovery-cold-cache"))
+        original=self.mcp.call("desktop.state")["selected_id"]
+        self.mcp.batch({"type":"restart"},click(85,536),check("folder","Projects"),
+                       check("total",1),check("selected","Recovered keepsake"),
+                       check("reader_text_ready",True),check("selected_id",original),
+                       check("mail_rows.0.group_pending",True),shot("move-recovery-after-restart"),
+                       click(1400,36),check("refreshing",True),check("selected","Recovered keepsake"),
+                       check("refreshing",False),check("selected_id",original,"ne"),
+                       check("selected","Recovered keepsake"),check("reader_text_ready",True),
+                       check("total",1),check("mail_rows.0.group_pending",False),check("notice",None),shot("move-recovery-located"))
+
     def test_move_shows_destination_before_server_acknowledgment(self):
         self.mcp.call("desktop.start", mail_actions="slow")
         subject = self.selected_mail_subject()
@@ -2067,7 +2234,7 @@ class NativeFlows(unittest.TestCase):
     def test_conversation_paging(self):
         self.mcp.call("desktop.start", conversation_mail=True)
         self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("Long project review"),
-                       check("total", 1), key("Escape"), check("conversation_total", 25),
+                       check("total", 25), key("Escape"), check("conversation_total", 25),
                        check("conversation_offset", 20), wait(150), shot("conversation-latest-page"),
                        click(1288, 194), check("conversation_offset", 0), check("loaded_message_id", "preview-work:Projects:long-0"),
                        check("conversation_rows.19.remote_id", "long-19"), shot("conversation-first-page"),

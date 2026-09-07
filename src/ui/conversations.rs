@@ -38,7 +38,7 @@ impl App {
                     .find(|mail| mail.id == id)
             })
             .or_else(|| self.page.rows.iter().find(|mail| mail.id == id))?;
-        Some(self.mail_actions.effective(mail))
+        (!mail.remote_id.is_empty()).then(|| self.mail_actions.effective(mail))
     }
 
     pub(super) fn reader_id(&self) -> Option<&str> {

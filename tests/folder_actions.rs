@@ -469,6 +469,7 @@ async fn completed_group_undo_receipts_follow_renamed_folders_and_delete_retires
         let current = mail[2].clone();
         let unaffected = mail[5].clone();
         let receipt = Receipt::Move(Box::new(MoveReceipt {
+            recovery: None,
             account: "work".into(),
             folder: current.folder.clone(),
             current: Some(current),

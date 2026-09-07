@@ -1,4 +1,5 @@
 pub mod folders;
+pub mod moves;
 #[cfg(test)]
 #[path = "mail/notification_tests.rs"]
 mod notification_tests;
@@ -761,6 +762,17 @@ async fn finish_transfer_session<
     mut session: async_imap::Session<T>,
     mail: &Mail,
 ) -> anyhow::Result<()> {
+    finish_transfer_commands(&mut session, mail).await?;
+    let _ = session.logout().await;
+    Ok(())
+}
+
+async fn finish_transfer_commands<
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
+>(
+    session: &mut async_imap::Session<T>,
+    mail: &Mail,
+) -> anyhow::Result<()> {
     let uid = validate_uid(mail, session.select(&mail.folder).await?.uid_validity)?;
     anyhow::ensure!(
         session.capabilities().await?.has_str("UIDPLUS"),
@@ -772,7 +784,6 @@ async fn finish_transfer_session<
     session
         .run_command_and_check_ok(format!("UID EXPUNGE {uid}"))
         .await?;
-    let _ = session.logout().await;
     Ok(())
 }
 

@@ -209,3 +209,124 @@ async fn a_short_body_with_line_endings_beats_repeated_keywords() {
         assert_eq!(page.rows[0].remote_id, "0", "{search}");
     }
 }
+
+#[tokio::test]
+async fn cross_folder_search_keeps_account_scope_relevance_and_browsing_location() {
+    let store = Store::memory().unwrap();
+    let mut rows = vec![];
+    for (id, account, folder) in [
+        (1, "work", "INBOX"),
+        (2, "work", "Archive"),
+        (3, "work", "A. Keep"),
+        (4, "personal", "INBOX"),
+        (5, "personal", "Projects"),
+        (6, "third", "Archive"),
+    ] {
+        rows.push(
+            parse_mail(
+                account,
+                &id.to_string(),
+                folder,
+                format!(
+                    "Subject: Notes\r\n\r\n{}",
+                    if id == 3 { "test" } else { "Other test notes" }
+                )
+                .into_bytes(),
+                true,
+                false,
+            )
+            .unwrap(),
+        );
+    }
+    store.upsert(rows).await.unwrap();
+    let browse = MailQuery {
+        folder: "INBOX".into(),
+        account: Some("work".into()),
+        sort: MailSort::Relevance,
+        ..Default::default()
+    };
+    let query = MailQuery {
+        search: "test".into(),
+        search_all_folders: true,
+        ..browse.clone()
+    };
+    let page = store.query(query.clone()).await.unwrap();
+    assert_eq!(page.total, 3);
+    assert_eq!(page.rows[0].folder, "A. Keep");
+    assert!(page.rows.iter().all(|m| m.account_id == "work"));
+    assert_eq!(
+        query.folder, "INBOX",
+        "Search does not overwrite the browsing location"
+    );
+    assert_eq!(
+        store
+            .query(MailQuery {
+                search: String::new(),
+                ..query.clone()
+            })
+            .await
+            .unwrap()
+            .total,
+        1
+    );
+    assert_eq!(
+        store
+            .query(MailQuery {
+                sent_only: true,
+                folder: "Sent".into(),
+                ..query.clone()
+            })
+            .await
+            .unwrap()
+            .total,
+        3
+    );
+    assert_eq!(
+        store
+            .query(MailQuery {
+                account: None,
+                ..query.clone()
+            })
+            .await
+            .unwrap()
+            .total,
+        6
+    );
+    let selection = |account: Option<&str>, folder: &str| FolderSelection {
+        account: account.map(str::to_owned),
+        folder: folder.into(),
+        sent_only: false,
+    };
+    for (folders, count) in [
+        (vec![], 0),
+        (
+            vec![
+                selection(Some("work"), "INBOX"),
+                selection(Some("work"), "A. Keep"),
+            ],
+            3,
+        ),
+        (
+            vec![
+                selection(Some("work"), "INBOX"),
+                selection(Some("personal"), "Projects"),
+            ],
+            5,
+        ),
+        (vec![selection(None, "INBOX")], 6),
+    ] {
+        let scoped = MailQuery {
+            folders: Some(folders.clone()),
+            ..query.clone()
+        };
+        let result = store.query(scoped.clone()).await.unwrap();
+        assert_eq!(result.total, count);
+        assert_eq!(scoped.folders, Some(folders));
+    }
+    let legacy = serde_json::to_value(&browse).unwrap();
+    let mut legacy = legacy.as_object().unwrap().clone();
+    legacy.remove("search_all_folders");
+    let legacy: MailQuery = serde_json::from_value(legacy.into()).unwrap();
+    assert!(!legacy.search_all_folders);
+    assert_eq!(store.query(legacy).await.unwrap().total, 1);
+}

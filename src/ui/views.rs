@@ -222,7 +222,9 @@ impl App {
             .into()
     }
     fn mail_view(&self) -> Element<'_, Message> {
-        let title = if let Some(folders) = &self.query.folders {
+        let title = if self.query.searches_all_folders() {
+            "Search results".to_owned()
+        } else if let Some(folders) = &self.query.folders {
             match folders.as_slice() {
                 [] => "No folders selected".to_string(),
                 [folder] => {
@@ -503,12 +505,16 @@ impl App {
                         }),
                 );
             }
-            let bottom = row![
-                muted(truncate(&mail.preview, 84))
-                    .wrapping(text::Wrapping::None)
-                    .height(17)
-                    .size(12)
-                    .width(Length::Fill),
+            let mut bottom = row![
+                container(
+                    muted(truncate(&mail.preview, 84))
+                        .wrapping(text::Wrapping::None)
+                        .height(17)
+                        .size(12)
+                        .width(Length::Fill),
+                )
+                .width(Length::Fill)
+                .clip(true),
                 if mail.attachment_count > 0 {
                     icon("clip", 16.)
                 } else {
@@ -516,6 +522,16 @@ impl App {
                 }
             ]
             .spacing(8);
+            if self.query.searches_all_folders() {
+                let folder = self
+                    .workspace
+                    .folder_label(Some(mail.account_id.as_str()), &mail.folder);
+                bottom = bottom.push(
+                    container(muted(truncate(&folder, 18)).size(10))
+                        .padding([1, 5])
+                        .style(subtle),
+                );
+            }
             let entry = button(
                 column![
                     top,
@@ -820,6 +836,11 @@ impl App {
                 reading
             ]
             .spacing(gap);
+        }
+        if self.page.move_recovery.contains_key(&detail.summary.id) {
+            reading = column![self.move_recovery_bar(&detail.summary.id), reading].spacing(gap);
+        } else if detail.summary.is_local_copy() {
+            reading = reading.push(muted("Local copy").size(11));
         }
         let formatted = self.formatted(detail);
         if detail.html.is_some() {
@@ -1537,6 +1558,22 @@ impl App {
                 .push(line());
         }
         accounts = accounts.push(action("Add mail account", Message::Open(Dialog::Account)));
+        if self.workspace.move_pending_total > 0 {
+            accounts = accounts.push(
+                button(
+                    text(format!(
+                        "Review unfinished moves ({})",
+                        self.workspace.move_pending_total
+                    ))
+                    .size(12),
+                )
+                .padding([11, 14])
+                .style(outline)
+                .on_press(Message::MoveRecovery(
+                    super::move_recovery::Message::Open(None),
+                )),
+            );
+        }
         if self.workspace.credential_cleanup > 0 {
             accounts = accounts.push(self.cleanup_preferences());
         }
@@ -1925,6 +1962,7 @@ impl App {
     }
     fn dialog_view(&self, dialog: Dialog) -> Element<'_, Message> {
         let (title, subtitle) = match dialog {
+            Dialog::MoveRecovery => ("Recover a move", ""),
             Dialog::Removal => ("Remove connection?", ""),
             Dialog::GoogleDisconnect => ("Disconnect Google?", ""),
             Dialog::Outbox => ("Outbox", ""),
@@ -1978,6 +2016,7 @@ impl App {
         match dialog {
             Dialog::BulkReview => body=body.push(self.bulk_review_form()),
             Dialog::BulkHistory => body=body.push(self.bulk_history_form()),
+            Dialog::MoveRecovery => body=body.push(self.move_recovery_form()),
             Dialog::Removal => body = body.push(self.removal_form()),
             Dialog::GoogleDisconnect => {
                 let pending = self.google_disconnect_pending.is_some();
@@ -2032,7 +2071,7 @@ impl App {
             Dialog::Restore=>body=body.push(form_field("Backup passphrase","Enter the original passphrase",self.field("passphrase"),"passphrase",true)).push(muted("Existing mail, connection settings and passwords are kept. Missing account passwords are filled from the copy when available. Google sign-in and preferences stay unchanged.").size(11)).push(row![action("Cancel",Message::Close),button(text("Restore & merge").size(12)).padding([12,18]).style(primary).on_press(Message::ConfirmRestore)].spacing(10)),
         }
         if let Some((notice, true, _)) = &self.notice
-            && dialog != Dialog::BulkHistory
+            && !matches!(dialog, Dialog::BulkHistory | Dialog::MoveRecovery)
         {
             body = body.push(container(text(notice).size(11)).padding(12).style(subtle));
         }

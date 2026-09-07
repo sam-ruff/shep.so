@@ -717,6 +717,8 @@ impl App {
         account: &str,
         folder: &str,
     ) -> bool {
+        let scope = query.search_scope();
+        let query = scope.as_ref();
         let contains = |selected: &Option<String>, target: &str, sent: bool| {
             selected.as_ref().is_none_or(|a| a == account)
                 && if sent {

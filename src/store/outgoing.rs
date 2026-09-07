@@ -285,7 +285,7 @@ fn reconcile_saved(c: &Connection, info: &OutgoingInfo) -> anyhow::Result<()> {
     Ok(())
 }
 pub(super) fn reconcile(c: &Connection, message: &Mail) -> anyhow::Result<()> {
-    if message.remote_id.starts_with("local-sent-") {
+    if message.is_local_copy() {
         return Ok(());
     }
     let logical: Option<String> = c

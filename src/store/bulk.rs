@@ -238,8 +238,8 @@ impl Store {
                 '$.account_id',m.account,'$.folder',m.folder,'$.unread',json(CASE m.unread WHEN 1 THEN 'true' ELSE 'false' END),
                 '$.starred',json(CASE m.starred WHEN 1 THEN 'true' ELSE 'false' END)) END,
                 CASE WHEN m.id IS NULL THEN 'failed' ELSE 'queued' END,
-                CASE WHEN m.id IS NULL THEN 'This message is no longer in the cache. Refresh its folder.' END
-                FROM temp.mail_selection_rows s LEFT JOIN messages m ON m.id=s.id WHERE s.selection=? AND s.selected=1",
+                CASE WHEN m.id IS NULL THEN 'This message is unavailable. Refresh its folder or review its pending move.' END
+                FROM temp.mail_selection_rows s LEFT JOIN selectable_mail m ON m.id=s.id WHERE s.selection=? AND s.selected=1",
                 params![id,selection.to_string()])?;
             let (account,folder,unread,starred) = match &action {
                 Action::Move{account,folder} => (account.clone(),Some(folder.clone()),None,None),

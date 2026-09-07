@@ -2,6 +2,8 @@ use crate::{model::*, store::Store};
 mod bulk_history;
 #[path = "html_mail.rs"]
 mod html_mail;
+mod move_recovery;
+pub use move_recovery::recover_move;
 pub mod workspace;
 
 pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
@@ -12,6 +14,7 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
     if std::env::args().any(|a| a == "--bulk-history") {
         bulk_history::seed(store).await?;
     }
+    move_recovery::seed(store).await?;
     // These seeded accounts model a completed initial import. Only subsequent
     // fixture sync arrivals exercise notification delivery policy.
     for account in store.get::<Vec<Account>>("accounts").await? {
@@ -590,6 +593,7 @@ pub async fn sync_mail(
         !fail_once || round != 1,
         "Fixture mail server is temporarily unavailable. Try Refresh again."
     );
+    move_recovery::refresh(store).await?;
     let arrival = if background {
         store.sync_message(parse_mail("preview-work", "1.9000", "INBOX",
             b"From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: New mail from the background\r\n\r\nThis fictional message arrived through the automatic refresh.".to_vec(), true, false)?).await?

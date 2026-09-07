@@ -2,6 +2,17 @@
 use super::*;
 use async_imap::imap_proto::{RequestId, Response, ResponseCode, Status, UidSetMember};
 
+/// An APPEND tagged rejection means its atomic upload was not applied. MOVE
+/// deliberately does not use this error: RFC 6851 allows partial effects on NO.
+#[derive(Debug)]
+pub(super) struct UploadRejected;
+impl std::fmt::Display for UploadRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The server rejected the upload. The original is retained.")
+    }
+}
+impl std::error::Error for UploadRejected {}
+
 pub(super) fn quoted(value: &str) -> anyhow::Result<String> {
     anyhow::ensure!(
         !value.is_empty() && !value.contains(['\r', '\n', '\0']),
@@ -95,6 +106,9 @@ where
             "The server disconnected before confirming the operation. Refresh before retrying."
         );
         if matches!(reply.parsed(), Response::Done { .. }) {
+            if matches!(kind, Kind::Append) && matches!(status, Status::No | Status::Bad) {
+                return Err(UploadRejected.into());
+            }
             anyhow::ensure!(
                 *status == Status::Ok,
                 "The server did not confirm this operation. Refresh before retrying."
@@ -155,6 +169,11 @@ where
         )?;
         match reply.parsed() {
             Response::Continue { .. } => break,
+            Response::Done {
+                tag: received,
+                status: Status::No | Status::Bad,
+                ..
+            } if received == &tag => return Err(UploadRejected.into()),
             Response::Done { .. }
             | Response::Data {
                 status: Status::Bye,
@@ -231,6 +250,12 @@ mod tests {
                 .unwrap();
             let result = move_message(&mut session, "7", "A. Keep \"folder\"").await;
             assert_eq!(result.is_ok(), accepted, "{reply}: {result:?}");
+            if let Err(error) = &result {
+                assert!(
+                    error.downcast_ref::<UploadRejected>().is_none(),
+                    "A MOVE error must not be treated as an atomic APPEND rejection"
+                );
+            }
             if accepted {
                 assert_eq!(result.unwrap().as_deref(), expected);
             }
@@ -274,9 +299,61 @@ mod tests {
             let mail = parse_mail("work", "1.7", "INBOX", raw.to_vec(), false, true).unwrap();
             let result = append_message(&mut session, &mail.summary, "Keep", raw).await;
             assert_eq!(result.is_ok(), accepted);
+            if let Err(error) = &result {
+                assert_eq!(
+                    error.downcast_ref::<UploadRejected>().is_some(),
+                    reply.contains(" NO ")
+                );
+            }
             if accepted {
                 assert_eq!(result.unwrap().as_deref(), expected);
             }
+            task.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn append_requires_its_own_tagged_rejection_before_treating_upload_as_not_applied() {
+        for (reply, rejected) in [
+            ("{tag} NO quota\r\n", true),
+            ("{tag} BAD invalid\r\n", true),
+            ("other NO quota\r\n", false),
+            ("* BYE closed\r\n", false),
+            ("", false),
+        ] {
+            let (client, server) = tokio::io::duplex(4096);
+            let task = tokio::spawn(async move {
+                let mut socket = BufReader::new(server);
+                login(&mut socket).await;
+                let (tag, command) = line(&mut socket).await;
+                assert!(command.starts_with("APPEND "));
+                socket
+                    .get_mut()
+                    .write_all(reply.replace("{tag}", &tag).as_bytes())
+                    .await
+                    .unwrap();
+            });
+            let mut session = async_imap::Client::new(client)
+                .login("fixture", "secret")
+                .await
+                .unwrap();
+            let mail = parse_mail(
+                "work",
+                "1.7",
+                "INBOX",
+                b"Subject: Copy\r\n\r\nBody".to_vec(),
+                true,
+                false,
+            )
+            .unwrap();
+            let error = append_message(&mut session, &mail.summary, "Keep", &mail.raw)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<UploadRejected>().is_some(),
+                rejected,
+                "{reply}"
+            );
             task.await.unwrap();
         }
     }

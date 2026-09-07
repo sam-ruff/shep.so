@@ -23,6 +23,113 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
+## R73 recovery controls and R84 cross-folder search — validation in progress (2026-09-07)
+
+This working-tree checkpoint is **not yet installed or pushed**. The full product
+backlog remains active; the initial R73 foundation evidence below is historical.
+
+Recovery is available from the cached reader and Preferences → Accounts. Retry
+checks a confirmed destination, while unconfirmed moves require explicit review
+before using an existing, byte-verified copy. Keeping a local original requires
+confirmation and never changes server copies. Local recovery assigns a new local
+identity, preserves content/flags through restart and sync, and retires the old
+server Undo action. Removing a destination account retains another account's
+original with the same local-identity protection. Closing waits for an active
+recovery receipt; failure cancels that pending close.
+
+Interactive search now spans folders within the selected account scope, including
+combined folder views. Results display their folder. Clearing search restores the
+browsing folder and usual sort. SQLite queries, frozen selection membership and
+optimistic move membership share the scope rule. Read/flag/attachment filters
+remain explicit. Global search retains a moved result that still matches.
+
+Verification so far: **484 Rust tests**, **45 Python tests**, Clippy, formatting,
+and the pinned strict docs build pass. The optimized production archive passes
+checksum, extraction and bundled-installer verification. Relevant logs are
+`all-folder-search-full-rust.log`, `all-folder-search-clippy.log`,
+`recovery-and-search-python.log`, `recovery-and-search-docs.log`, and
+`recovery-and-search-release.log` under ignored `artifacts/logs/`.
+
+Seven recovery native scenarios and three cross-folder search scenarios have
+passing targeted runs. Recovery evidence covers explicit confirmation, delayed
+success/failure/retry with navigation, retained copies and flags after restart,
+Preferences discovery, compact dark layout and graceful close with a read-only
+inspection of its committed fixture receipt. Reviewed screenshots include
+`66bd98906785`, `b9b00e6f29ae`, `50d3bdc7497e`, `47e37f2b3611`, and
+`9e8979f97c08` under ignored `artifacts/e2e/`. Fixtures never contact personal
+providers or OS credentials. No new performance measurements were run.
+
+The first full run passed 163 of 167 scenarios. Two conversation assertions and
+a move/folder assertion expected the old folder-only search count. The recovery
+review scenario also exposed delayed Escape arriving after its independent
+mouse click; it now waits for native search focus to clear before that click,
+with rapid-input cancellation still tracked under R63. All four corrected
+scenarios pass across `all-folder-search-conversation-rerun.log` and
+`recovery-and-search-final-targeted.log`. Visual review also caught preview text
+overlapping folder labels; previews now clip within their allocated space.
+Light/compact-dark captures `45e02c844b68` and `2b9ce6702a98` have been reviewed.
+
+A clean 167-flow functional rerun is in progress in
+`recovery-and-search-final-native-full.log`. Current native binary SHA-256:
+`a9d68d7925147b37d7004a251a852a4c11e6d17ed229c7d031c7a57e2644b5ff`.
+Windows GNU cross-target compilation also passes; this does not establish
+Windows GUI or real-provider behavior.
+
+Remaining R73 work includes actual adapter wire/journal integration, broader
+Undo/group/folder-history lifecycle checks, repeated-move aliases and the live
+A. Keep report. R84 awaits completed regression and shipping checks. R83 database
+export/import remains tracked separately and is not implemented by this work.
+
+## R73 — Durable recovery work in progress (2026-09-07)
+
+This follow-up is **not installed or pushed**. The shipped checkpoint below is
+still the installed version; R73 and the full product goal remain active.
+
+The working tree connects IMAP moves/transfers to a durable journal before the
+first provider write. It protects original MIME through sync/restart, retains
+APPENDUID and incoming connection identities, migrates old transfer tuples
+atomically and resolves confirmed destinations without repeating MOVE/APPEND.
+A known UID completes the cache without another network request; a missing UID
+returns the acknowledgment before background lookup. Copied transfers verify
+exact destination bytes and identity before retrying source cleanup. Timed-out
+or unconfirmed results keep their originals. A tagged MOVE NO can have partial
+effects, whereas unsuccessful APPEND is atomic; the protocol tests preserve this
+distinction ([MOVE semantics](https://www.rfc-editor.org/rfc/rfc6851.html#section-3.3),
+[APPEND semantics](https://www.rfc-editor.org/rfc/rfc9051.html#section-6.3.12)).
+
+Destination search/pages retain protected cached mail after restart; provider
+IDs are withheld until resolved. Both new and older bulk selections exclude
+protected identities. Folder navigation includes the pending destination.
+Cache relocation and journal completion commit atomically, retaining originals
+on conflicts. The reader follows acknowledged aliases when a page or body read
+overtakes its completion event; a native screenshot exposed a late old-ID error
+toast and the corrected detail lookup removes it.
+
+Foundation-stage verification: **474 Rust tests**, **44 Python tests**, Clippy and formatting
+pass. Ten store, eight runner and added protocol/controller tests cover original
+protection, cache collisions, copied/committed restart, stale writes, changed
+connections, bad lookup identity/content, legacy migration, bounded retry/pages
+and provider-safe selection. Logs: `move-recovery-verified-rust.log`,
+`move-recovery-verified-clippy.log`, `move-recovery-final-python.log` under ignored
+`artifacts/logs/`. No performance measurements were run.
+
+Four targeted native scenarios passed in `move-recovery-native-targeted.log`.
+After correcting the toast, the saved cold/restart/refresh scenario passes again
+in `move-recovery-native-verified.log`; its assertion now includes an empty
+notice. Reviewed WebPs are under `artifacts/e2e/daabe132d246/` (restarted/located
+reader), with the initial reproduction under `4e818eb298d6/`. These use owned
+fixtures, not a live account or keychain. The whole 158-flow native suite has not
+been rerun for this working tree. The corrected native test used binary SHA-256
+`255ac6c42f4500aae2fd5d38c5f39aec674a12d44be32e4287600c01b6b7a763`.
+The pinned strict documentation build also passes (`move-recovery-docs.log`).
+
+At that foundation stage, remaining work included visible retry/review controls
+for Copied/Started/failed lookup states and actual adapter wire/journal integration,
+Undo/bulk/folder-history lifecycle review, complete native failure/recovery
+coverage and release/install/push checks. Do not infer these from the fixture
+lookup or the passing prior 157-flow shipped run. The new full-database export
+request remains separately tracked as R83.
+
 ## R73 — Pending destination checkpoint — installed and pushed (2026-09-07)
 
 Source [acb33c0](https://github.com/sam-ruff/shep.so/commit/acb33c0d20f547f626c2aa934190858b30cf446e)

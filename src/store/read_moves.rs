@@ -6,16 +6,18 @@ pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
     c.execute_batch("CREATE TEMP TABLE IF NOT EXISTS read_moves(
         id TEXT PRIMARY KEY, source_account TEXT NOT NULL, source_folder TEXT NOT NULL,
         account TEXT NOT NULL, folder TEXT NOT NULL, unread INTEGER NOT NULL, starred INTEGER NOT NULL);")?;
-    for (view, source) in [
-        ("read_visible_mail", "messages"),
-        ("read_visible_bulk", "visible_mail"),
+    for (view, source, pending) in [
+        ("read_visible_mail", "messages", "0"),
+        ("read_visible_bulk", "visible_mail", "0"),
+        ("read_recovered_mail", "recovered_mail", "m.pending_move"),
+        ("read_recovered_bulk", "recovered_bulk", "m.pending_move"),
     ] {
         // UNION keeps ordinary folder predicates indexable; only the small
         // modified branch needs to retrieve source rows by their primary key.
         c.execute_batch(&format!(
             "CREATE TEMP VIEW IF NOT EXISTS {view} AS
             SELECT m.rowid AS rowid,m.id,m.account,m.folder,m.sender,m.subject,m.body,m.timestamp,
-                m.unread,m.starred,m.data,0 AS pending_move
+                m.unread,m.starred,m.data,{pending} AS pending_move
             FROM {source} m WHERE NOT EXISTS(SELECT 1 FROM read_moves e
                 WHERE e.id=m.id AND e.source_account=m.account AND e.source_folder=m.folder)
             UNION ALL
@@ -47,4 +49,15 @@ pub(super) fn prepare(c: &Connection, moves: &[MailMoveProjection]) -> anyhow::R
         ])?;
     }
     Ok(())
+}
+
+pub(super) fn source(c: &Connection) -> anyhow::Result<&'static str> {
+    Ok(
+        match (bulk::has_effects(c)?, move_journal::has_projection(c)?) {
+            (false, false) => "messages",
+            (true, false) => "visible_mail",
+            (false, true) => "recovered_mail",
+            (true, true) => "recovered_bulk",
+        },
+    )
 }

@@ -70,6 +70,26 @@ impl Actions {
 
 impl App {
     pub(super) fn set_mail_page(&mut self, page: Arc<MailPage>) {
+        Arc::make_mut(&mut self.workspace).move_pending_total = page.move_pending_total;
+        if let Some(id) = self.selected.clone()
+            && let Some(current) = page.relocated.get(&id)
+        {
+            let original = self
+                .page
+                .rows
+                .iter()
+                .find(|m| m.id == id)
+                .cloned()
+                .or_else(|| {
+                    self.detail
+                        .as_ref()
+                        .filter(|d| d.summary.id == id)
+                        .map(|d| d.summary.clone())
+                });
+            if let Some(original) = original {
+                self.reconcile_move_row(&original, Some(current), false);
+            }
+        }
         let reader = self.reader_id().map(str::to_owned);
         self.mail_actions
             .flags
@@ -431,10 +451,7 @@ impl App {
                     record.original = entry.mail.clone();
                     record.receipt = Some(receipt.clone());
                 }
-                let mut base = (*self.mail_actions.base_page).clone();
-                counts::confirm_move(&mut base, &entry.mail, receipt.current.as_ref());
-                self.mail_actions.base_page = Arc::new(base);
-                self.reconcile_move_row(&entry.mail, receipt.current.as_ref(), false);
+                self.confirm_move_display(&entry.mail, &receipt);
                 self.mail_actions.flags.remove(&mail.id);
             }
             Err(error) => {
