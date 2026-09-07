@@ -168,7 +168,7 @@
       "id": "desktop-bulk-selection",
       "contract": "Explicit focused-list selection across pages, frozen reviewed bulk jobs, per-message results and durable grouped Undo",
       "mobile": "OPEN: K9 selection gestures, selection review, durable bulk controls and native recovery tests",
-      "browser": "Focused checkbox/Ctrl/Shift/Select all controls now have actual Chromium evidence. OPEN: reviewed durable bulk jobs, per-message receipts and grouped Undo/history/recovery controls; selection mode does not dispatch an unrelated reader action."
+      "browser": "Focused checkbox/Ctrl/Shift/Select all controls have Chromium evidence. bulk-journal.spec.ts exercises production frozen export, 100,000-item bounded staging with independent draft saves, complete/partial reopen, physical forward/inverse receipts, queued Undo, definite retry, stale-result rejection, exclusive tabs and abrupt owner loss, bounded history and profile isolation. OPEN: provider runner/current-state and individual-intent coordination, account removal/cleanup, optimistic queries, native equivalent and actual review/History/Undo controls; storage tests do not establish executed group-mail parity."
     },
     {
       "id": "desktop-reading-defaults",

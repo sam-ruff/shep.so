@@ -220,8 +220,25 @@ try {
         const page = await call({
           command: { kind: "page", id: "https-review", expected: 0 },
         });
+        // The real HTTPS worker acquires its journal Web Lock and opens local
+        // storage, but an empty frozen selection cannot create runnable work.
+        let emptyReviewRefused = false;
+        try {
+          await call({
+            prepareBulk: {
+              selection: "https-review",
+              expected: 0,
+              job: "https-empty",
+              action: { kind: "flags", unread: false },
+            },
+          });
+        } catch (error) {
+          emptyReviewRefused = String(error).includes(
+            "Select at least one message",
+          );
+        }
         await call({ close: true });
-        return { capture, frozen, page };
+        return { capture, frozen, page, emptyReviewRefused };
       } finally {
         worker.terminate();
       }
@@ -231,6 +248,7 @@ try {
   assert.equal(selectionResult.capture.total, 0);
   assert.equal(selectionResult.frozen.frozen, true);
   assert.deepEqual(selectionResult.page.rows, []);
+  assert.equal(selectionResult.emptyReviewRefused, true);
 
   const providerScenarios = await providerFlows(
     page,
@@ -278,6 +296,7 @@ try {
       "replay-rejection",
       "secure-cookie-no-store",
       "production-sqlite-selection-worker",
+      "production-durable-journal-empty-review-refusal",
       "csrf-origin",
       "ui-logout-revocation",
     ],

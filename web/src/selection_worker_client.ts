@@ -3,6 +3,7 @@ import type {
   SelectionRepository,
   SelectionResult,
 } from "./selection_types";
+import type { BulkAction, BulkJob } from "./bulk_journal";
 
 /** One temporary SQLite connection per worker. The UI sends gestures and
  * rendered IDs only; membership and ranking stay in worker-owned storage. */
@@ -21,7 +22,7 @@ export class SelectionWorkerClient
   private pending = new Map<
     number,
     {
-      resolve: (value: SelectionResult) => void;
+      resolve: (value: unknown) => void;
       reject: (reason: Error) => void;
     }
   >();
@@ -62,10 +63,10 @@ export class SelectionWorkerClient
       ),
     );
   }
-  private send(
+  private send<T = SelectionResult>(
     value: Record<string, unknown>,
     closing = false,
-  ): Promise<SelectionResult> {
+  ): Promise<T> {
     if (this.closed)
       return Promise.reject(
         Error("Selection storage is closed. Select the messages again."),
@@ -76,7 +77,7 @@ export class SelectionWorkerClient
       );
     const id = this.sequence++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { resolve: (value) => resolve(value as T), reject });
       try {
         this.worker.postMessage({ ...value, id });
       } catch {
@@ -97,6 +98,19 @@ export class SelectionWorkerClient
   }
   close(): Promise<void> {
     return (this.closing ??= this.finishClose());
+  }
+  async prepareBulk(
+    selection: string,
+    expected: number,
+    job: string,
+    action: BulkAction,
+  ): Promise<BulkJob> {
+    await this.ready;
+    if (this.closing)
+      throw Error("Selection is closing. Select messages again.");
+    return this.send<BulkJob>({
+      prepareBulk: { selection, expected, job, action },
+    });
   }
   private async finishClose(): Promise<void> {
     if (this.closed) return;
