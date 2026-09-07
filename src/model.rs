@@ -262,6 +262,7 @@ pub struct MailQuery {
     /// Small pending-action identities observed in the same snapshot as counts.
     /// This does not alter the folder/search result scope.
     pub observe: Vec<String>,
+    pub observe_bulk: Vec<String>,
     pub folders: Option<Vec<FolderSelection>>,
     pub sent_only: bool,
     pub account: Option<String>,
@@ -284,6 +285,10 @@ pub struct FolderSelection {
 
 #[derive(Debug, Clone, Default)]
 pub struct MailPage {
+    pub bulk_observed: std::collections::HashMap<String, bool>,
+    pub bulk_placeholders: std::collections::HashSet<String>,
+    pub bulk_revision: u64,
+    pub bulk_pending: std::collections::HashSet<String>,
     pub rows: Vec<Mail>,
     pub total: usize,
     pub unread: usize,

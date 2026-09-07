@@ -103,7 +103,7 @@ impl Actions {
 }
 
 impl App {
-    pub(super) fn invalidate_action_snapshot(&mut self) {
+    pub(in crate::ui) fn invalidate_action_snapshot(&mut self) {
         // A page requested before this intent has no observations for it. Its
         // counts must not replace the baseline after the action starts writing.
         self.generation += 1;

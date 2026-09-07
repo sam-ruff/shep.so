@@ -18,6 +18,7 @@ pub enum Action {
     OpenMessage,
     ClosePreview,
     ReplyAll,
+    SelectAll,
     Delete,
     Inbox,
     Find,
@@ -25,7 +26,7 @@ pub enum Action {
     Print,
 }
 impl Action {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::Move,
         Self::Compose,
         Self::Reply,
@@ -41,6 +42,7 @@ impl Action {
         Self::OpenMessage,
         Self::ClosePreview,
         Self::ReplyAll,
+        Self::SelectAll,
         Self::Delete,
         Self::Inbox,
         Self::Find,
@@ -64,6 +66,7 @@ impl Action {
             Self::OpenMessage => "Open full-window reader",
             Self::ClosePreview => "Close full-window reader",
             Self::ReplyAll => "Reply to all",
+            Self::SelectAll => "Select all messages (list)",
             Self::Delete => "Move to Trash",
             Self::Inbox => "Go to Inbox (sidebar)",
             Self::Find => "Find in message",
@@ -177,6 +180,7 @@ impl Default for Keymap {
                     "Enter",
                     "Escape",
                     "Shift+R",
+                    "Mod+A",
                     "Mod+D",
                     "I",
                     "Mod+F",
@@ -234,8 +238,8 @@ impl Keymap {
             anyhow::ensure!(
                 (key != "ESCAPE" || *action == Action::ClosePreview)
                     && key != "TAB"
-                    && key != "MOD+A",
-                "Escape, Tab and Select all are reserved."
+                    && (key != "MOD+A" || *action == Action::SelectAll),
+                "Escape and Ctrl+A are reserved for their matching actions; Tab switches focus."
             );
             anyhow::ensure!(
                 seen.insert(key.clone()),

@@ -11,14 +11,14 @@ pub(super) struct ActionToasts {
 pub(super) struct Toast {
     account: String,
     folder: String,
-    items: HashSet<u64>,
+    items: HashMap<u64, usize>,
     updated: Instant,
     restored: bool,
 }
 
 impl Toast {
     pub fn label(&self) -> String {
-        let count = self.items.len();
+        let count: usize = self.items.values().sum();
         let noun = if count == 1 { "message" } else { "messages" };
         if self.restored {
             format!("Restored {count} {noun}")
@@ -39,16 +39,16 @@ impl Toast {
         if self.restored {
             return vec![];
         }
-        let mut tokens: Vec<_> = self.items.iter().copied().collect();
+        let mut tokens: Vec<_> = self.items.keys().copied().collect();
         tokens.sort_unstable();
         tokens
     }
     pub fn contains(&self, token: u64) -> bool {
-        self.items.contains(&token)
+        self.items.contains_key(&token)
     }
     #[cfg(feature = "test-support")]
     pub fn count(&self) -> usize {
-        self.items.len()
+        self.items.values().sum()
     }
 }
 
@@ -60,7 +60,7 @@ impl ActionToasts {
         let toast = self.current.get_or_insert_with(|| Toast {
             account: account.into(),
             folder: folder.into(),
-            items: HashSet::new(),
+            items: HashMap::new(),
             updated: now,
             restored: false,
         });
@@ -75,16 +75,42 @@ impl ActionToasts {
             *toast = Toast {
                 account: account.into(),
                 folder: folder.into(),
-                items: HashSet::new(),
+                items: HashMap::new(),
                 updated: now,
                 restored: false,
             };
         }
-        toast.items.insert(token);
+        toast.items.insert(token, 1);
         toast.updated = now;
         token
     }
     pub fn restored(&mut self, tokens: Vec<u64>, now: Instant) {
+        let tokens: Vec<_> = tokens
+            .into_iter()
+            .map(|token| (token, self.weight(token)))
+            .collect();
+        self.restored_counts(tokens, now);
+    }
+    pub fn weight(&self, token: u64) -> usize {
+        self.current
+            .as_ref()
+            .and_then(|t| t.items.get(&token))
+            .copied()
+            .unwrap_or(1)
+    }
+    pub fn add_group(&mut self, account: &str, folder: &str, count: usize, now: Instant) -> u64 {
+        let token = self.add(account, folder, now);
+        self.set_count(token, count);
+        token
+    }
+    pub fn set_count(&mut self, token: u64, count: usize) {
+        if count == 0 {
+            self.failed(token);
+        } else if let Some(value) = self.current.as_mut().and_then(|t| t.items.get_mut(&token)) {
+            *value = count;
+        }
+    }
+    pub fn restored_counts(&mut self, tokens: Vec<(u64, usize)>, now: Instant) {
         self.current = (!tokens.is_empty()).then(|| Toast {
             account: String::new(),
             folder: String::new(),

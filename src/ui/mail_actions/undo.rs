@@ -20,6 +20,11 @@ impl Record {
     }
 }
 impl Actions {
+    pub fn undo_available(&self, token: u64) -> bool {
+        self.undo
+            .get(&token)
+            .is_some_and(|r| !r.requested || r.error.is_some())
+    }
     pub fn restoring(&self, id: &str) -> bool {
         self.undo.values().any(|r| {
             r.restoring()

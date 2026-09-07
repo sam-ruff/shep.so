@@ -36,6 +36,13 @@ pub enum SelectionChange {
 }
 
 #[derive(Debug, Clone)]
+pub struct SelectionGroup {
+    pub account: String,
+    pub folder: String,
+    pub total: usize,
+    pub unread: usize,
+}
+#[derive(Debug, Clone)]
 pub struct SelectionSnapshot {
     pub id: MailSelectionId,
     pub revision: u64,
@@ -48,8 +55,11 @@ pub struct SelectionSnapshot {
     pub unread: usize,
     pub starred: usize,
     pub accounts: BTreeMap<String, usize>,
+    pub groups: Vec<SelectionGroup>,
     /// Selected, still-available IDs among one requested visible page.
     pub visible: HashSet<String>,
+    /// Captured ordinals for observed rows, including unselected rows.
+    pub positions: std::collections::HashMap<String, u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -122,6 +132,9 @@ fn snapshot(
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
         })?
         .collect::<rusqlite::Result<_>>()?;
+    let groups = c.prepare("SELECT m.account,m.folder,COUNT(*),SUM(m.unread) FROM temp.mail_selection_rows s JOIN messages m ON m.id=s.id WHERE s.selection=? AND s.selected=1 GROUP BY m.account,m.folder")?
+        .query_map([&key],|r|Ok(SelectionGroup { account:r.get(0)?,folder:r.get(1)?,total:r.get::<_,i64>(2)? as usize,unread:r.get::<_,i64>(3)? as usize }))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut observed = HashSet::new();
     let mut statement = c.prepare(
         "SELECT EXISTS(SELECT 1 FROM temp.mail_selection_rows s
@@ -130,6 +143,19 @@ fn snapshot(
     for mail in visible {
         if statement.query_row(params![key, mail], |r| r.get::<_, bool>(0))? {
             observed.insert(mail.clone());
+        }
+    }
+    let mut positions = std::collections::HashMap::new();
+    for mail in visible {
+        if let Some(position) = c
+            .query_row(
+                "SELECT position FROM temp.mail_selection_rows WHERE selection=? AND id=?",
+                params![key, mail],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+        {
+            positions.insert(mail.clone(), position as u64);
         }
     }
     Ok(SelectionSnapshot {
@@ -142,7 +168,9 @@ fn snapshot(
         unread: unread as usize,
         starred: starred as usize,
         accounts,
+        groups,
         visible: observed,
+        positions,
     })
 }
 

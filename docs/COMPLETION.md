@@ -659,3 +659,113 @@ and bundled-installer verification. The installed user binary matches SHA-256
 `2670efb78c57edd8a3bc6da1123c6259524be68ba5149ca6203edc95a6ee23d2`.
 Personal windows were left running. Quality/release CI remains disabled, and the
 full product goal and R42 remain active.
+
+
+## 2026-09-07 — Native selection controls in development (R42)
+
+The working tree now connects selection storage to native Select/Done, padded
+checkboxes, Ctrl-click, Shift-click ranges and a remappable Select All action.
+Selection survives paging, clears immediately when the query scope changes, and
+keeps the reader anchor separate. Clear unchecks messages; Done/Escape leaves
+selection mode. Repeating Select All explicitly captures arrivals that did not
+join the earlier snapshot. Checkbox/modifier gestures preserve the open message
+and do not count every chosen row as read. Modified double-clicks do not open the
+full reader; an ordinary double-click still does.
+
+A separate bounded FIFO channel handles selection independently of provider work
+and draft/settings saves. The UI projects one visible page immediately, keeps at
+most 32 queued gestures and one request in flight, and releases an obsolete
+snapshot before starting another. Five controller tests cover immediate
+projection, cross-page ranges, bounded input, cancellation/cleanup, stale replies,
+arrival handling, input focus and errors. The provider-saturation regression also
+executes selection capture/change while every network slot and queue is occupied.
+
+All 327 Rust tests pass (two opt-in live diagnostics ignored), along with Clippy
+with warnings denied, formatting, 29 Python tests and strict documentation build.
+The first full native run passed 111 of 112 functional scenarios. Its sole failure
+was the existing Preferences-to-Mail resize scenario: the drag did not change
+the divider. Its saved flow now allows 150 ms for presentation and captures the
+returned layout before dragging. On the rebuilt current test binary, that flow
+and all three selection scenarios pass. This is a targeted rerun, not a claim
+that the complete 112-scenario run was green. Logs use the ignored
+`artifacts/logs/selection-controls-*` and `selection-native-*` paths.
+
+Reviewed current selection evidence is in `artifacts/e2e/f4503f4c6b5b/`,
+`artifacts/e2e/0ca3ac406efe/` and `artifacts/e2e/e45b797e0557/`; corrected resize
+evidence is in `artifacts/e2e/4e337cae83fa/`. The saved refresh scenarios also pass
+in light/dark, compact and 120% layouts (`eb6fea58a85d/` and `65f4c08de024/`).
+These verify native Shep controls, not browser chrome in the user's original crop.
+
+This UI work is **uncommitted, uninstalled and unshipped**. R42 remains open:
+preview toolbar/keybinds still need selected-group scope, exact frozen reviews,
+Y/N/Enter/Escape, bounded execution, immediate projected results, partial failures,
+grouped Undo and durable recovery. Do not treat the controls alone as delivery or
+install them over the user's working app before that integration. Finish remaining
+selection conventions alongside bulk work, including retaining a range anchor
+when Select All recaptures membership.
+
+The installed optimized binary remains the shipped `0833456` checkpoint, SHA-256
+`2670efb78c57edd8a3bc6da1123c6259524be68ba5149ca6203edc95a6ee23d2`.
+Main and origin/main are at audit commit `2e50d50`; its documentation workflow
+and the preceding code workflow succeeded. Personal windows remain running.
+Performance measurements remain deferred; quality and release CI remain disabled.
+
+
+## 2026-09-07 — Integrated selection and durable bulk actions
+
+The selection UI now drives group Archive/Trash/Move, read/unread and flags.
+Multi-message actions review frozen membership and accept Y/N/Enter/Escape.
+Default moves keep each message in its own account; enabled cross-account moves
+retain the existing IMAP policy. Select All preserves the range anchor, and
+mouse selection remains independent of reading/text selection.
+
+The persistent group journal stores metadata and exact per-message receipts.
+Indexed counters, bounded pages, a coalescing wake channel and one provider slot
+keep group membership outside UI memory. Pending effects drive ordinary queries
+while provider operations use actual cached identities. Whole-group unread
+counts and weighted toasts project immediately. Undo cancels queued work,
+reverses acknowledged moves/flags, and waits for a running forward receipt.
+Page phase observations prevent double projection before acknowledgment.
+Unconfirmed outcomes are retained for explicit review; definite inverse failures
+can retry. A file lease prevents another process replaying a live job.
+
+Graceful close finishes the current receipt and leaves queued items for a fresh
+engine. Account-removal reviews fingerprint related group entries, require
+cancellation for unfinished work and remove only affected history. Ten bulk
+storage tests, six engine group tests, UI snapshot/Undo tests, the native-widget
+click regression and account-removal coverage join the suite: **347 Rust tests pass**, with
+two opt-in live diagnostics ignored. Clippy, formatting and 29 Python tests pass.
+
+Four saved native bulk flows cover mouse and keyboard scope, multi-page review,
+red Trash confirmation, cancellation, forced slow pending Undo, read/unread,
+flags, mixed-account Projects moves, failures and History details in normal and
+compact dark layouts. Final verification also caught queued clicks using the
+batch-final pointer location; the root wrapper now preserves each motion before
+scroll transforms. A deterministic native-widget test covers two clicks in one
+batch. Stop-at-entry now acknowledges a pending close without claiming a message.
+
+All **116 native functional scenarios pass**, run as two consecutive 58-case
+batches on the same final binary: artifacts/logs/bulk-final-native-a.log and
+bulk-final-native-b.log. The final Rust/Clippy logs are bulk-pointer-all-rust.log
+and bulk-pointer-clippy.log; Python reports 29 passing tests. Strict Zensical
+builds pass. Optimized checksum/extraction/bundled-installer verification passes
+in bulk-pointer-release.log.
+
+Installed atomically for the Linux user; the existing running window was left
+alone. The installed binary matches target/release/shep, SHA-256
+`f189f322b567bb07b02fdcc1fc773a17b633085ecc0cfcff8db59684d9aa93d9`.
+The source checkpoint is prepared for the authorized main push.
+
+The existing native refresh-icon fix was reverified in light/dark, compact and
+120% layouts. Final reviewed captures include artifacts/e2e/7a94b5a1f5a6/
+and artifacts/e2e/2bd3f73aad10/. The arrows render cleanly. These are native Shep
+checks, not reproduction of the browser chrome in the original crop.
+
+The full product goal remains active. Remaining platform/provider verification,
+optimistic ambiguity/restart work and the rest of TODO are not completed by
+these fixture results. Performance measurements remain deferred.
+
+R42 remains open for explicit selection of new arrivals without losing existing
+membership, group/individual mutation coordination and the remaining native
+History/recovery paths. These are tracked explicitly in TODO; passing the current
+fixture suite does not establish live-provider or cross-platform coverage.

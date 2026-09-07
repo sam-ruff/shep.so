@@ -6,7 +6,7 @@ A calm, native email and calendar app built with Rust and iced. Comfortable with
 
 ![Shep in light mode, with a unified inbox and an open email](docs/images/mail-light.webp)
 
-- **Mail in one place.** Multiple accounts, a unified inbox, search and conversation reading.
+- **Mail in one place.** Multiple accounts, a unified inbox, search, conversation reading and bulk actions with Undo.
 - **Everyday essentials.** Replies, forwarding, printing, attachments, autosaved drafts and recovery for interrupted sends.
 - **Calendars alongside.** Google Calendar and CalDAV, with a month view and agenda.
 - **Make it yours.** Light, Dark or System appearance, resizable panes and configurable shortcuts.

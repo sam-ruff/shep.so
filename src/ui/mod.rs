@@ -1,6 +1,7 @@
 mod account;
 mod action_toasts;
 mod backups;
+mod bulk;
 mod calendar_setup;
 mod components;
 mod composing;
@@ -13,6 +14,7 @@ mod google_lifecycle_tests;
 mod html_reader;
 mod layout;
 mod mail_actions;
+mod mail_selection;
 mod outgoing;
 mod preference_sync;
 mod printing;
@@ -64,6 +66,8 @@ pub enum SettingsTab {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
+    BulkReview,
+    BulkHistory,
     Removal,
     GoogleDisconnect,
     Outbox,
@@ -91,6 +95,7 @@ pub enum Message {
     Find(find_message::Message),
     HtmlScaleRequest(iced::window::Id),
     Backend(Event),
+    Bulk(bulk::Message),
     Tick,
     Noop,
     Tab(Tab),
@@ -205,6 +210,12 @@ pub enum Message {
     SidebarAction(usize),
     SidebarClick(usize, keyboard::Modifiers),
     SelectClick(String, keyboard::Modifiers),
+    OpenMessageClick(String, keyboard::Modifiers),
+    ToggleSelection,
+    CheckMail(String),
+    SelectAllMail,
+    ClearSelection,
+    MailPaneClicked(widget::pane_grid::Pane),
     ToggleInboxExpanded,
     ToggleAccountFolders(String),
     Modifiers(keyboard::Modifiers),
@@ -253,6 +264,9 @@ pub struct App {
     context_menu: Option<context_menu::Menu>,
     pending_mail_action: Option<(String, context_menu::MailAction)>,
     mail_actions: mail_actions::Actions,
+    mail_selection: mail_selection::State,
+    bulk: bulk::State,
+    list_focus: bool,
     reader_selection: Option<Box<selectable::Content>>,
     html_reader: html_reader::State,
     find_message: find_message::State,
@@ -394,6 +408,9 @@ impl App {
                 context_menu: None,
                 pending_mail_action: None,
                 mail_actions: Default::default(),
+                mail_selection: Default::default(),
+                bulk: Default::default(),
+                list_focus: true,
                 reader_selection: None,
                 html_reader: Default::default(),
                 find_message: Default::default(),
@@ -606,6 +623,7 @@ impl App {
         self.fields.get(key).map(String::as_str).unwrap_or("")
     }
     fn request_page(&mut self) {
+        self.reconcile_selection_scope();
         if self.last_list_query != self.query {
             self.inbox_scroll = 0.;
             self.list_revision += 1;
@@ -616,6 +634,7 @@ impl App {
         self.prefetch_query = None;
         let mut query = self.query.clone();
         query.observe = self.mail_actions.observed_ids();
+        query.observe_bulk = self.bulk_observed_ids();
         self.send(Command::Query(self.generation, query, false));
     }
     fn cache_detail(&mut self, detail: Arc<MailDetail>) {
@@ -644,6 +663,9 @@ impl App {
         }
     }
     fn preload(&mut self, id: String) {
+        if self.page.bulk_placeholders.contains(&id) {
+            return;
+        }
         if self.detail_cache.iter().any(|d| d.summary.id == id)
             || self.pending_details.contains(&id)
         {
@@ -663,6 +685,17 @@ impl App {
             self.conversation.page = Default::default();
         }
         self.selected = Some(id.clone());
+        if self.page.bulk_placeholders.contains(&id) {
+            self.bulk.waiting_reader = Some(id.clone());
+            self.conversation = Default::default();
+            self.detail = self
+                .detail_cache
+                .iter()
+                .find(|d| d.summary.id == id)
+                .cloned();
+            return;
+        }
+        self.bulk.waiting_reader = None;
         if self.mail_actions.restoring(&id) {
             self.conversation = Default::default();
             self.detail = self
@@ -743,6 +776,7 @@ impl App {
         }
         let start = Instant::now();
         let task = self.handle(message);
+        self.pump_bulk();
         self.update_desktop_badge();
         let task = Task::batch([
             task,
@@ -804,6 +838,7 @@ impl App {
                 return iced::window::scale_factor(id)
                     .map(|s| Message::Html(html_reader::Message::Scale(s)));
             }
+            Message::Bulk(message) => return self.handle_bulk(message),
             Message::Html(message) => return self.handle_html(message),
             Message::Find(message) => return self.handle_find(message),
             Message::WindowUnfocused => self.modifiers = keyboard::Modifiers::default(),
@@ -875,6 +910,7 @@ impl App {
             Message::Backend(event) => match event {
                 Event::Ready(tx, workspace, google) => {
                     self.tx = Some(tx);
+                    self.send(Command::BulkJobs(0, 0));
                     self.preferences = workspace.preferences.clone();
                     self.preference_sync =
                         preference_sync::PreferenceSync::new(PreferenceSnapshot {
@@ -1037,6 +1073,21 @@ impl App {
                         }
                     }
                 }
+                Event::BulkResumed(id) => self.send(Command::BulkRun(id)),
+                Event::BulkStopped => {
+                    self.bulk.stopped = true;
+                    if let Some(window) = self.pending_close.take() {
+                        return self.handle(Message::WindowClose(window));
+                    }
+                }
+                event @ (Event::BulkReview(..)
+                | Event::BulkStarted(..)
+                | Event::BulkUpdate(..)
+                | Event::BulkIdentity(..)
+                | Event::BulkFinished(..)
+                | Event::BulkJobs(..)
+                | Event::BulkItems(..)) => self.bulk_event(event),
+                Event::Selection(serial, result) => self.selection_finished(serial, result),
                 Event::Page(g, page, prefetch) if g == self.generation => {
                     if prefetch {
                         if let Some(query) = self.prefetch_query.take() {
@@ -1044,6 +1095,16 @@ impl App {
                         }
                     } else {
                         self.set_mail_page(page);
+                        if let Some(id) = self.bulk.waiting_reader.clone()
+                            && !self.page.bulk_placeholders.contains(&id)
+                        {
+                            self.bulk.waiting_reader = None;
+                            if self.selected.as_ref() == Some(&id)
+                                && self.page.rows.iter().any(|m| m.id == id)
+                            {
+                                self.select(id);
+                            }
+                        }
                         if let Some(menu) = &mut self.context_menu
                             && let Some(current) =
                                 self.page.rows.iter().find(|mail| mail.id == menu.mail.id)
@@ -1069,6 +1130,7 @@ impl App {
                             query.offset += PAGE_SIZE;
                             self.prefetch_query = Some(query.clone());
                             query.observe = self.mail_actions.observed_ids();
+                            query.observe_bulk = self.bulk_observed_ids();
                             self.send(Command::Query(g, query, true));
                         }
                         let ids: Vec<_> = self
@@ -1351,7 +1413,15 @@ impl App {
                 if self.dialog == Some(Dialog::DiscardDraft) && !self.composer.discard_pending {
                     self.cancel_discard_draft();
                 }
-                if self.mail_actions.pending() > 0 {
+                if self.bulk.staging.is_some()
+                    || !self.bulk.stopped && self.bulk.jobs.iter().any(|j| j.remaining > 0)
+                {
+                    self.pending_close = Some(window);
+                    self.notice(
+                        "Finishing the current mail change. Queued changes will resume next time.",
+                        false,
+                    );
+                } else if self.mail_actions.pending() > 0 {
                     self.pending_close = Some(window);
                     self.notice("Finishing your mail changes before closing…", false);
                 } else if self.removal.removing.is_some()
@@ -1407,6 +1477,7 @@ impl App {
                 }
             }
             Message::Tick => {
+                self.pump_selection();
                 self.action_toasts.expire(Instant::now());
                 self.prune_undos();
                 self.dispatch_undos();
@@ -1491,6 +1562,10 @@ impl App {
                 }
             }
             Message::Close => {
+                if self.dialog == Some(Dialog::BulkReview) {
+                    self.cancel_bulk_review();
+                    return widget::operation::focus("unfocused");
+                }
                 if self.dialog == Some(Dialog::DiscardDraft) {
                     self.cancel_discard_draft();
                     return Task::none();
@@ -1521,6 +1596,7 @@ impl App {
                     self.query.sort = MailSort::Relevance;
                 }
                 self.query.search = query;
+                self.reconcile_selection_scope();
                 self.query.offset = 0;
                 self.generation += 1;
                 self.selected = None;
@@ -1593,6 +1669,7 @@ impl App {
                 self.request_page();
             }
             Message::Select(id) => {
+                self.list_focus = true;
                 self.focused_input = None;
                 self.pending_focus = None;
                 let double = self
@@ -1730,6 +1807,14 @@ impl App {
                 }
             }
             Message::Move(folder) => {
+                if self.mail_selection.mode {
+                    let account = (self.dialog == Some(Dialog::Move)
+                        && self.preferences.cross_account_moves
+                        && !self.field("move_account").is_empty())
+                    .then(|| self.field("move_account").to_owned());
+                    self.begin_bulk(bulk::Intent::Move { account, folder });
+                    return Task::none();
+                }
                 if let Some(mail) = self.action_mail().cloned() {
                     let destination = self.field("move_account");
                     let transfer = self.dialog == Some(Dialog::Move)
@@ -1750,6 +1835,14 @@ impl App {
                 }
             }
             Message::ToggleStar | Message::ToggleRead => {
+                if self.mail_selection.mode {
+                    self.begin_bulk(if matches!(message, Message::ToggleRead) {
+                        bulk::Intent::Read
+                    } else {
+                        bulk::Intent::Star
+                    });
+                    return Task::none();
+                }
                 if let Some(mail) = self.action_mail().cloned() {
                     self.toggle_mail_flag(mail, matches!(message, Message::ToggleRead));
                 }
@@ -2060,6 +2153,22 @@ impl App {
                 }
             }
             Message::Key(key, modifiers, captured) => {
+                // Scope Select All at input time as well as after the async
+                // native focus check. A delayed reader key must not select mail
+                // merely because the user clicked the list in the meantime.
+                if self.dialog.is_none()
+                    && self.remapping.is_none()
+                    && chord(&key, modifiers)
+                        .as_deref()
+                        .and_then(|k| self.preferences.shortcuts.resolve(k))
+                        == Some(Action::SelectAll)
+                    && (self.tab != Tab::Mail
+                        || !self.list_focus
+                        || self.sidebar_focus
+                        || self.full_reader)
+                {
+                    return Task::none();
+                }
                 if self.find_message.open
                     && self.tab == Tab::Mail
                     && self.dialog.is_none()
@@ -2316,7 +2425,7 @@ impl App {
                 self.action_toasts.current = None;
                 self.prune_undos();
             }
-            Message::UndoActions(tokens) => self.undo_actions(tokens),
+            Message::UndoActions(tokens) => self.undo_combined_actions(tokens),
             Message::DismissUndoErrors(tokens) => self.dismiss_undo_errors(tokens),
             Message::Dismiss => self.notice = None,
             Message::BrowseBackup => {
@@ -2370,12 +2479,27 @@ impl App {
                 self.modifiers = modifiers;
                 return self.handle(Message::SidebarAction(index));
             }
+            Message::OpenMessageClick(id, modifiers) => {
+                if !modifiers.control() && !modifiers.command() && !modifiers.shift() {
+                    return self.handle(Message::OpenMessage(id));
+                }
+            }
             Message::SelectClick(id, modifiers) => {
                 self.modifiers = modifiers;
-                return self.handle(Message::Select(id));
+                self.list_focus = true;
+                return self.click_select_mail(id, modifiers);
             }
+            Message::MailPaneClicked(pane) => {
+                self.sidebar_focus = false;
+                self.list_focus = matches!(self.panes.get(pane), Some(MailPane::Inbox));
+            }
+            Message::ToggleSelection => return self.toggle_selection_mode(),
+            Message::CheckMail(id) => return self.checkbox_mail(id),
+            Message::SelectAllMail => return self.select_all_mail(),
+            Message::ClearSelection => self.clear_selected_mail(),
             Message::SidebarAction(index) => {
                 self.sidebar_focus = true;
+                self.list_focus = false;
                 self.sidebar_index = index;
                 if let Some(item) = self.sidebar_items().get(index) {
                     if (self.modifiers.control() || self.modifiers.command())
@@ -2577,6 +2701,30 @@ impl App {
         }
     }
     fn move_folders(&self) -> Vec<String> {
+        if self.mail_selection.mode && self.field("move_account").is_empty() {
+            let Some(snapshot) = &self.mail_selection.snapshot else {
+                return vec![];
+            };
+            let mut accounts = snapshot.accounts.keys();
+            let Some(first) = accounts.next() else {
+                return vec![];
+            };
+            let mut folders = self
+                .workspace
+                .account_folders
+                .get(first)
+                .cloned()
+                .unwrap_or_default();
+            for account in accounts {
+                folders.retain(|folder| {
+                    self.workspace
+                        .account_folders
+                        .get(account)
+                        .is_some_and(|f| f.contains(folder))
+                });
+            }
+            return folders;
+        }
         let account = if self.field("move_account").is_empty() {
             self.action_mail()
                 .map(|mail| mail.account_id.as_str())
@@ -2807,6 +2955,20 @@ impl App {
         })
     }
     fn key(&mut self, key: Key, modifiers: keyboard::Modifiers, captured: bool) -> Task<Message> {
+        if self.dialog == Some(Dialog::BulkReview) && modifiers.is_empty() {
+            match &key {
+                Key::Named(keyboard::key::Named::Enter) => {
+                    return self.handle_bulk(bulk::Message::Confirm);
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("y") => {
+                    return self.handle_bulk(bulk::Message::Confirm);
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("n") => {
+                    return self.handle(Message::Close);
+                }
+                _ => {}
+            }
+        }
         if self.dialog == Some(Dialog::DiscardDraft) && modifiers.is_empty() {
             match &key {
                 Key::Named(keyboard::key::Named::Enter) => {
@@ -2903,11 +3065,16 @@ impl App {
                 }
                 return Task::none();
             }
+            if self.dialog.is_none() && self.mail_selection.mode && self.list_focus {
+                self.clear_mail_selection();
+                return Task::none();
+            }
             return self.handle(Message::Close);
         }
         if key == Key::Named(keyboard::key::Named::Tab) {
             if self.tab == Tab::Mail && self.dialog.is_none() {
                 self.sidebar_focus = !self.sidebar_focus;
+                self.list_focus = !self.sidebar_focus;
                 return widget::operation::focus("unfocused");
             }
             return if modifiers.shift() {
@@ -2973,6 +3140,7 @@ impl App {
             .and_then(|k| self.preferences.shortcuts.resolve(k))
         {
             return match action {
+                Action::SelectAll => self.select_all_mail(),
                 Action::Find => self.handle_find(find_message::Message::Open),
                 Action::Search => {
                     self.focused_input = None;
@@ -2981,7 +3149,9 @@ impl App {
                     focus_after_layout("search")
                 }
                 Action::Move => {
-                    if self.action_mail().is_some() {
+                    if (self.mail_selection.mode && self.mail_selection.count > 0)
+                        || self.action_mail().is_some()
+                    {
                         self.open(Dialog::Move);
                         return focus_after_layout("folder-search");
                     }
@@ -3028,6 +3198,22 @@ impl App {
         let mut samples: Vec<_> = self.update_samples.iter().copied().collect();
         samples.sort_by(f64::total_cmp);
         let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|self.mail_actions.effective(&d.summary).starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts.0,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
+        self.bulk_test_state(&mut data);
+        data["mail_selection"] = serde_json::json!({
+            "mode": self.mail_selection.mode, "count": self.mail_selection.count,
+            "pending": self.mail_selection.busy(), "visible": self.mail_selection.visible,
+            "ready": self.mail_selection.ready(), "list_focus": self.list_focus,
+            "available": self.mail_selection.snapshot.as_ref().map(|s| s.available),
+        });
+        #[cfg(feature = "test-support")]
+        {
+            data["mail_selection"]["drawn"] = serde_json::json!(
+                self.mail_selection
+                    .drawn_epoch
+                    .load(std::sync::atomic::Ordering::Acquire)
+                    == self.mail_selection.draw_epoch
+            );
+        }
         data["move_enter_destination"] = serde_json::json!(if self.dialog == Some(Dialog::Move) {
             crate::fuzzy::ranked(self.field("folder_search"), self.move_folders())
                 .first()
@@ -3261,7 +3447,7 @@ impl App {
         )
     }
     fn view(&self) -> Element<'_, Message> {
-        self.layout()
+        context_menu::ContextArea::root(self.layout()).into()
     }
 }
 pub fn chord(key: &Key, modifiers: keyboard::Modifiers) -> Option<String> {

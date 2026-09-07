@@ -260,6 +260,14 @@ impl App {
             } else {
                 space().into()
             },
+            if self.bulk.jobs.is_empty() {
+                Element::from(space().width(0))
+            } else {
+                Element::from(action(
+                    "History",
+                    Message::Bulk(super::bulk::Message::History),
+                ))
+            },
             self.toggle_icon_action(
                 "sync",
                 self.shortcut_hint(
@@ -288,6 +296,7 @@ impl App {
             .spacing(1)
             .min_size(300)
             .on_resize(8, Message::PaneResize)
+            .on_click(Message::MailPaneClicked)
             .height(Length::Fill)
             .style(|theme| {
                 let p = colors(theme);
@@ -363,8 +372,51 @@ impl App {
         ]
         .spacing(6)
         .align_y(Alignment::Center);
-        let search =
-            input("Search conversations…", &self.query.search, Message::Query).id("search");
+        let search = row![
+            input("Search conversations…", &self.query.search, Message::Query)
+                .id("search")
+                .width(Length::Fill),
+            button(
+                text(if self.mail_selection.mode {
+                    "Done"
+                } else {
+                    "Select"
+                })
+                .size(11)
+            )
+            .padding([12, 9])
+            .style(if self.mail_selection.mode {
+                primary
+            } else {
+                outline
+            })
+            .on_press(Message::ToggleSelection),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+        let filters: Element<'_, Message> = if self.mail_selection.mode {
+            row![
+                text(if self.mail_selection.busy() {
+                    format!("{} selected…", self.mail_selection.count)
+                } else {
+                    format!("{} selected", self.mail_selection.count)
+                })
+                .size(12),
+                space().width(Length::Fill),
+                button(text("All").size(11))
+                    .padding([9, 8])
+                    .style(ghost)
+                    .on_press(Message::SelectAllMail),
+                button(text("Clear").size(11))
+                    .padding([9, 8])
+                    .style(ghost)
+                    .on_press(Message::ClearSelection),
+            ]
+            .align_y(Alignment::Center)
+            .into()
+        } else {
+            filters.into()
+        };
         // Fixed-height rows let us shape only visible text plus a small overscan.
         let row_height = 104.;
         let first = ((self.inbox_scroll / row_height) as usize)
@@ -378,7 +430,11 @@ impl App {
         let end = (first + count).min(self.page.rows.len());
         let mut messages = column![space().height(first as f32 * row_height)].spacing(0);
         for (index, mail) in self.page.rows.iter().enumerate().take(end).skip(first) {
-            let active = self.selected.as_deref() == Some(&mail.id);
+            let active = if self.mail_selection.mode {
+                self.mail_selection.visible.contains(&mail.id)
+            } else {
+                self.selected.as_deref() == Some(&mail.id)
+            };
             let unread = mail.unread;
             let sender = sender_name(&mail.sender);
             let date = chrono::DateTime::from_timestamp(mail.timestamp, 0)
@@ -390,7 +446,22 @@ impl App {
                 date.format("%d %b").to_string()
             };
             let mut top = row![
-                avatar(&sender, index, 30.),
+                if self.mail_selection.mode {
+                    button(
+                        checkbox(self.mail_selection.visible.contains(&mail.id))
+                            .size(18)
+                            .on_toggle({
+                                let id = mail.id.clone();
+                                move |_| Message::CheckMail(id.clone())
+                            }),
+                    )
+                    .padding(6)
+                    .style(ghost)
+                    .on_press(Message::CheckMail(mail.id.clone()))
+                    .into()
+                } else {
+                    avatar(&sender, index, 30.)
+                },
                 text(truncate(&sender, 23)).size(12).font(if unread {
                     BOLD
                 } else {
@@ -472,14 +543,18 @@ impl App {
                 }
             })
             .on_press(Message::Select(mail.id.clone()));
-            messages = messages
-                .push(super::context_menu::ContextArea::new(
-                    mouse_area(entry)
-                        .on_enter(Message::Hover(mail.id.clone()))
-                        .on_double_click(Message::OpenMessage(mail.id.clone())),
-                    mail.id.clone(),
-                ))
-                .push(line());
+            let entry = super::context_menu::ContextArea::new(
+                mouse_area(entry)
+                    .on_enter(Message::Hover(mail.id.clone()))
+                    .on_double_click(Message::OpenMessage(mail.id.clone())),
+                mail.id.clone(),
+            );
+            #[cfg(feature = "test-support")]
+            let entry = entry.with_draw_witness(
+                self.mail_selection.draw_epoch,
+                self.mail_selection.drawn_epoch.clone(),
+            );
+            messages = messages.push(entry).push(line());
         }
         messages = messages.push(space().height((self.page.rows.len() - end) as f32 * row_height));
         if self.page.rows.is_empty() {
@@ -548,6 +623,9 @@ impl App {
         .into()
     }
     fn reader(&self) -> Element<'_, Message> {
+        if self.mail_selection.mode && !self.full_reader {
+            return self.group_reader();
+        }
         if self.conversation_visible() {
             return self.conversation_reader();
         }
@@ -1841,7 +1919,16 @@ impl App {
                 "Connect a calendar",
                 "Bring your home server calendar into Shep with CalDAV.",
             ),
-            Dialog::Move => ("Move message", "Choose a destination folder."),
+            Dialog::BulkReview => ("Review selected messages", ""),
+            Dialog::BulkHistory => ("Mail changes", ""),
+            Dialog::Move => (
+                if self.mail_selection.mode {
+                    "Move selected messages"
+                } else {
+                    "Move message"
+                },
+                "Choose a destination folder.",
+            ),
             Dialog::Compose => (
                 if self.composer.draft.forward.is_some() {
                     "Forward message"
@@ -1874,6 +1961,8 @@ impl App {
         .align_y(Alignment::Center);
         let mut body = column![header, line()].spacing(20);
         match dialog {
+            Dialog::BulkReview => body=body.push(self.bulk_review_form()),
+            Dialog::BulkHistory => body=body.push(self.bulk_history_form()),
             Dialog::Removal => body = body.push(self.removal_form()),
             Dialog::GoogleDisconnect => {
                 let pending = self.google_disconnect_pending.is_some();
@@ -1890,15 +1979,20 @@ impl App {
             Dialog::Account => body = body.push(self.account_wizard()),
             Dialog::Calendar => body = body.push(self.calendar_connection_form()),
             Dialog::Move=>{
-                if self.preferences.cross_account_moves {
-                    let choices: Vec<_> = self.workspace.accounts.iter().filter(|a| a.protocol == Protocol::Imap).map(|a| Choice(a.id.clone(), a.name.clone())).collect();
+                if self.preferences.cross_account_moves
+                    && (!self.mail_selection.mode || self.mail_selection.snapshot.as_ref().is_some_and(|s|s.accounts.keys().all(|id|self.workspace.accounts.iter().any(|a|&a.id==id && a.protocol==Protocol::Imap)))) {
+                    let mut choices: Vec<_> = self.workspace.accounts.iter().filter(|a| a.protocol == Protocol::Imap).map(|a| Choice(a.id.clone(), a.name.clone())).collect();
+                    if self.mail_selection.mode { choices.insert(0,Choice(String::new(), "Each message’s account".into())); }
                     let source = self.action_mail().map(|mail| mail.account_id.as_str()).unwrap_or("");
-                    let id = if self.field("move_account").is_empty() { source } else { self.field("move_account") };
+                    let id = if self.field("move_account").is_empty() && !self.mail_selection.mode { source } else { self.field("move_account") };
                     let chosen = choices.iter().find(|c| c.0 == id).cloned();
                     body = body.push(column![text("Destination account").size(12), pick_list(choices, chosen, |c:Choice| Message::Field("move_account", c.0)).text_size(12).padding(11).style(select_input).menu_style(select_menu).width(Length::Fill)].spacing(8));
                 }
                 let folders = crate::fuzzy::ranked(self.field("folder_search"), self.move_folders());
                 body=body.push(input("Find a folder…",self.field("folder_search"),|v|Message::Field("folder_search",v)).id("folder-search").on_submit(Message::MoveFirst));
+                if folders.is_empty() {
+                    body=body.push(muted(if self.field("folder_search").is_empty() { "No shared destination folders. Refresh mail to load each account’s folders." } else { "No matching folders." }).size(12));
+                }
                 for (index, folder) in folders.iter().enumerate() {
                     let target = index == 0;
                     let trailing: Element<'_, Message> = if target { muted("Enter ↵").size(11).into() } else { icon("chevron", 14.) };
@@ -1922,7 +2016,9 @@ impl App {
             Dialog::Export=>body=body.push(form_field("Full destination path","/home/you/Downloads/message.eml",self.field("path"),"path",false)).push(action("Browse…",Message::BrowseExport)).push(button(text("Save file").size(12)).padding([12,18]).style(primary).on_press(Message::SaveExport)),
             Dialog::Restore=>body=body.push(form_field("Backup passphrase","Enter the original passphrase",self.field("passphrase"),"passphrase",true)).push(muted("Existing mail, connection settings and passwords are kept. Missing account passwords are filled from the copy when available. Google sign-in and preferences stay unchanged.").size(11)).push(row![action("Cancel",Message::Close),button(text("Restore & merge").size(12)).padding([12,18]).style(primary).on_press(Message::ConfirmRestore)].spacing(10)),
         }
-        if let Some((notice, true, _)) = &self.notice {
+        if let Some((notice, true, _)) = &self.notice
+            && dialog != Dialog::BulkHistory
+        {
             body = body.push(container(text(notice).size(11)).padding(12).style(subtle));
         }
         container(scrollable(container(body).padding(27)).height(Length::Shrink))
