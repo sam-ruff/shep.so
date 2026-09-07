@@ -1,4 +1,7 @@
 import { PrintLoader } from "./printing_loader";
+import { SelectionWorkerClient } from "./selection_worker_client";
+import { senderName } from "./mail_query";
+import type { SelectionCommand, SelectionRepository } from "./selection_types";
 import { ForwardLoader } from "./forward_loader";
 import type { ForwardPrepared } from "./forward_content";
 import {
@@ -242,7 +245,19 @@ async function* lines(response: Response): AsyncGenerator<unknown> {
     reader.releaseLock();
   }
 }
-export class GatewayRepository implements Repository {
+export class GatewayRepository implements Repository, SelectionRepository {
+  private selectionWorker?: SelectionWorkerClient;
+  // Account scope uses the stable account ID, as does the native repository.
+  selection(command: SelectionCommand, observed: string[] = []) {
+    return (this.selectionWorker ??= new SelectionWorkerClient(
+      this.session.user_id,
+    )).selection(command, observed);
+  }
+  async closeSelections() {
+    const worker = this.selectionWorker;
+    this.selectionWorker = undefined;
+    await worker?.close();
+  }
   createPrinter() {
     return new PrintLoader(this.session.user_id);
   }
@@ -317,9 +332,7 @@ export class GatewayRepository implements Repository {
         const address = m.sender.match(/<([^<>]+)>/)?.[1] ?? m.sender;
         return {
           id: localId(record),
-          sender:
-            m.sender.replace(/\s*<[^<>]+>$/, "").replace(/^"|"$/g, "") ||
-            address,
+          sender: senderName(m.sender),
           address,
           subject: m.subject,
           preview: m.preview,

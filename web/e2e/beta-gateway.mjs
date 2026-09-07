@@ -176,6 +176,62 @@ try {
     path: path.join(output, "allowed-owner-empty-client.png"),
   });
 
+  // Exercise the actual bundled SQLite/WASM worker under production gateway
+  // CSP. This is a storage contract, not evidence of selection UI controls.
+  const selectionAsset = (await readdir(path.join(root, "dist/assets"))).find(
+    (name) => /^selection_worker-.*\.js$/.test(name),
+  );
+  assert.ok(selectionAsset);
+  const selectionResult = await page.evaluate(
+    async ({ asset, user }) => {
+      const worker = new Worker(`/app/assets/${asset}`, { type: "module" });
+      let id = 0;
+      const call = (value) =>
+        new Promise((resolve, reject) => {
+          const expected = ++id;
+          worker.onerror = () =>
+            reject(Error("Production selection worker failed"));
+          worker.onmessage = ({ data }) => {
+            if (data.id !== expected || data.phase) return;
+            if (data.error) reject(Error(data.error));
+            else resolve(data.result);
+          };
+          worker.postMessage({ id: expected, ...value });
+        });
+      try {
+        await call({ initialize: user });
+        const capture = await call({
+          command: {
+            kind: "capture",
+            id: "https-capture",
+            revision: 0,
+            scope: { folder: "Inbox" },
+            all: true,
+          },
+        });
+        const frozen = await call({
+          command: {
+            kind: "freeze",
+            id: "https-capture",
+            expected: 0,
+            target: "https-review",
+          },
+        });
+        const page = await call({
+          command: { kind: "page", id: "https-review", expected: 0 },
+        });
+        await call({ close: true });
+        return { capture, frozen, page };
+      } finally {
+        worker.terminate();
+      }
+    },
+    { asset: selectionAsset, user: session.user_id },
+  );
+  assert.equal(selectionResult.capture.total, 0);
+  assert.equal(selectionResult.frozen.frozen, true);
+  assert.deepEqual(selectionResult.page.rows, []);
+
   const providerScenarios = await providerFlows(
     page,
     context,
@@ -221,6 +277,7 @@ try {
       "allowed-owner",
       "replay-rejection",
       "secure-cookie-no-store",
+      "production-sqlite-selection-worker",
       "csrf-origin",
       "ui-logout-revocation",
     ],

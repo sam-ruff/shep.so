@@ -453,3 +453,19 @@ it("an acknowledged Undo metadata warning permits refresh but never another muta
     w.dispose();
   }
 });
+
+describe("captured query ordering", () => {
+  it("keeps ordinal identity ties stable in both date directions", () => {
+    const repo = new Controlled();
+    repo.cached = ["a", "Z", "A"].map((id) => ({
+      ...repo.cached[0],
+      id,
+      folder: "INBOX",
+    }));
+    const workspace = new Workspace(repo, new Settings());
+    expect(workspace.matching.map((m) => m.id)).toEqual(["A", "Z", "a"]);
+    workspace.newestFirst = false;
+    expect(workspace.matching.map((m) => m.id)).toEqual(["A", "Z", "a"]);
+    workspace.dispose();
+  });
+});
