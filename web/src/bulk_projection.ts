@@ -13,7 +13,7 @@ CREATE INDEX IF NOT EXISTS bulk_index_identity ON bulk_index_items(id);
 CREATE TABLE IF NOT EXISTS bulk_source_state(singleton INTEGER PRIMARY KEY,epoch TEXT NOT NULL,revision INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS bulk_source_intents(id TEXT PRIMARY KEY,data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS bulk_source_aliases(alias TEXT PRIMARY KEY,target TEXT NOT NULL,lineage TEXT,target_lineage TEXT);
-CREATE TABLE IF NOT EXISTS bulk_source_lineages(id TEXT PRIMARY KEY,lineage TEXT);
+CREATE TABLE IF NOT EXISTS bulk_source_lineages(id TEXT PRIMARY KEY,lineage TEXT,cached_folder TEXT,cached_unread INTEGER,cached_starred INTEGER);
 CREATE TEMP TABLE IF NOT EXISTS bulk_source_accounts(id TEXT PRIMARY KEY);
 CREATE TEMP TABLE IF NOT EXISTS bulk_current(id TEXT PRIMARY KEY,folder TEXT,unread INTEGER,starred INTEGER);
 `;
@@ -33,6 +33,15 @@ export class BulkProjection {
     ) {
       sql.exec(
         "ALTER TABLE bulk_source_aliases ADD COLUMN lineage TEXT; ALTER TABLE bulk_source_aliases ADD COLUMN target_lineage TEXT; DELETE FROM bulk_source_state;",
+      );
+    }
+    if (
+      !sql.selectValue(
+        "SELECT 1 FROM pragma_table_info('bulk_source_lineages') WHERE name='cached_folder'",
+      )
+    ) {
+      sql.exec(
+        "ALTER TABLE bulk_source_lineages ADD COLUMN cached_folder TEXT; ALTER TABLE bulk_source_lineages ADD COLUMN cached_unread INTEGER; ALTER TABLE bulk_source_lineages ADD COLUMN cached_starred INTEGER; DELETE FROM bulk_source_state;",
       );
     }
   }
@@ -89,6 +98,42 @@ export class BulkProjection {
       }),
     );
   }
+  /** Only derived SQLite is changed, inside the caller's query transaction.
+   * A preview never reserves intent, changes the journal, or issues provider work. */
+  previewUndo(id: string) {
+    const data = this.sql.selectValue(
+      "SELECT data FROM bulk_index_jobs WHERE id=?",
+      [id],
+    );
+    if (typeof data !== "string")
+      throw Error("This group is no longer available. Refresh History.");
+    const job = JSON.parse(data) as BulkJob;
+    if (!["review", "ready"].includes(job.state))
+      throw Error(
+        "This group review is incomplete. Select its messages again.",
+      );
+    if (!job.undo && job.state === "ready") {
+      job.undo = true;
+      job.undoIntent = Number.MAX_SAFE_INTEGER;
+      this.exec("UPDATE bulk_index_jobs SET data=? WHERE id=?", [
+        JSON.stringify(job),
+        id,
+      ]);
+    }
+    this.materialize();
+    let restored = false;
+    return {
+      id,
+      revision: job.revision,
+      committed: (JSON.parse(data) as BulkJob).undo,
+      restore: () => {
+        if (restored) return;
+        restored = true;
+        this.exec("UPDATE bulk_index_jobs SET data=? WHERE id=?", [data, id]);
+        this.materialize();
+      },
+    };
+  }
   materialize() {
     this.exec("DELETE FROM bulk_current");
     this.exec(
@@ -125,8 +170,14 @@ export class BulkProjection {
     );
     if (value)
       this.exec(
-        "INSERT INTO bulk_source_lineages VALUES(?,?) ON CONFLICT(id) DO UPDATE SET lineage=excluded.lineage",
-        [id, value.lineage ?? null],
+        "INSERT INTO bulk_source_lineages VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET lineage=excluded.lineage,cached_folder=excluded.cached_folder,cached_unread=excluded.cached_unread,cached_starred=excluded.cached_starred",
+        [
+          id,
+          value.lineage ?? null,
+          value.core.folder,
+          +value.core.unread,
+          +value.core.starred,
+        ],
       );
     else this.exec("DELETE FROM bulk_source_lineages WHERE id=?", [id]);
   }
@@ -196,7 +247,7 @@ export class BulkProjection {
           "INSERT INTO bulk_source_aliases VALUES(?,?,?,?)",
         ),
         lineage = this.sql.prepare(
-          "INSERT INTO bulk_source_lineages VALUES(?,?)",
+          "INSERT INTO bulk_source_lineages VALUES(?,?,?,?,?)",
         );
       try {
         await walk(tx.objectStore("mailIntents").openCursor(), (row) => {
@@ -216,10 +267,14 @@ export class BulkProjection {
             .stepReset();
         });
         await walk(tx.objectStore("mailMetadata").openCursor(), (row) => {
+          const value = row.value as CacheMail;
           lineage
             .bind([
               String(row.primaryKey),
-              (row.value as CacheMail).lineage ?? null,
+              value.lineage ?? null,
+              value.core.folder,
+              +value.core.unread,
+              +value.core.starred,
             ])
             .stepReset();
         });
@@ -247,7 +302,7 @@ export class BulkProjection {
  * ownership revisions preserve newer choices even when their values match. */
 export const bulkEffects = `
 bulk_candidates AS (
- SELECT COALESCE(a.target,i.id) id,i.data item,j.data job,s.data intent,
+ SELECT COALESCE(a.target,i.id) id,i.data item,j.data job,s.data intent,l.cached_folder,l.cached_unread,l.cached_starred,
  json_extract(j.data,'$.forwardIntent') forward_revision,
  json_extract(j.data,'$.undoIntent') undo_revision,
  json_extract(j.data,'$.undo') undo
@@ -262,7 +317,7 @@ bulk_candidates AS (
 ),
 bulk_fields AS (
  SELECT c.id,item,job,intent,forward_revision,undo_revision,undo,f.value field,
- CASE WHEN undo THEN COALESCE(json_extract(item,'$.receipt.before.'||f.value),json_extract(item,'$.original.'||f.value))
+ CASE WHEN undo THEN COALESCE(json_extract(item,'$.receipt.before.'||f.value), CASE WHEN json_extract(item,'$.status')='running' THEN CASE f.value WHEN 'folder' THEN cached_folder WHEN 'unread' THEN cached_unread WHEN 'starred' THEN cached_starred END ELSE json_extract(item,'$.original.'||f.value) END)
  ELSE json_extract(job,'$.action.'||f.value) END value,
  CASE WHEN undo THEN undo_revision ELSE forward_revision END revision,
  json_extract(intent,'$.fields.'||f.value||'.revision') owner_revision,
@@ -278,10 +333,10 @@ bulk_ranked AS (
  FROM bulk_fields
  WHERE value IS NOT NULL AND revision>0 AND applied_revision<revision AND (
  (NOT undo AND COALESCE(owner_revision,0)<=forward_revision
-  AND (json_extract(item,'$.status') IN('pending','running') OR (json_extract(item,'$.status')='done' AND json_extract(item,'$.cache')=1))
+  AND json_extract(item,'$.status') IN('pending','running','done')
   AND NOT(COALESCE(owner_revision=forward_revision AND owner_status='failed' AND json_extract(item,'$.status')='running',0)))
  OR (undo AND (owner_revision=forward_revision OR (owner_revision=undo_revision AND owner_origin=forward_revision))
-  AND (json_extract(item,'$.status') IN('running','done','undo_running') OR (json_extract(item,'$.status')='restored' AND json_extract(item,'$.cache')=1)))
+  AND json_extract(item,'$.status') IN('running','done','undo_running','restored'))
 )),
 bulk_effect AS (
  SELECT id,MAX(CASE WHEN field='folder' THEN value END) folder,

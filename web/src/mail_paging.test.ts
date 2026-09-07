@@ -465,3 +465,106 @@ it("group-only query updates reach an off-page retained reader without replacing
   expect(w.mail).toHaveLength(50);
   w.dispose();
 });
+
+async function archivedGroup() {
+  const { repo, w } = await create();
+  const original = await repo.mailbox.page({
+    scope: { folder: "Inbox" },
+    offset: 0,
+  });
+  const groupFields = Object.fromEntries(
+    original.rows.map((m) => [
+      m.id,
+      {
+        folder: m.folder,
+        unread: m.unread,
+        starred: m.starred,
+      },
+    ]),
+  );
+  for (const mail of repo.source.values()) mail.folder = "Archive";
+  repo.revision++;
+  await w.retryPage();
+  const page = repo.mailbox.page;
+  repo.mailbox.page = async (query) => {
+    const current = await page(query);
+    if (!query.undo) return current;
+    return {
+      ...original,
+      revision: repo.revision,
+      groupFields,
+      confirmed: Object.fromEntries(
+        original.rows.map((m) => [
+          m.id,
+          {
+            ...groupFields[m.id],
+            folder: "Archive",
+          },
+        ]),
+      ),
+      undo: {
+        id: query.undo,
+        revision: 10,
+        committed: false,
+        textMatches: Object.fromEntries(original.rows.map((m) => [m.id, true])),
+        beforeFields: Object.fromEntries(
+          original.rows.map((m) => [
+            m.id,
+            { ...groupFields[m.id], folder: "Archive" },
+          ]),
+        ),
+      },
+    };
+  };
+  await w.prepareGroupUndo("group");
+  return { repo, w };
+}
+
+it("paints group Undo synchronously through held queries and rolls back without losing a newer reader flag", async () => {
+  const { repo, w } = await archivedGroup();
+  repo.holdPages = true;
+  w.beginGroupUndo("group");
+  expect(w.total).toBe(125);
+  expect(w.unread).toBe(63);
+  expect(w.visible).toHaveLength(50);
+  w.beginReading("m0000");
+  await until(() => !!w.readerMessage?.bodyLoaded);
+  const flag = w.change("m0000", { starred: false });
+  expect(w.readerMessage?.starred).toBe(false);
+  w.finishGroupUndo("group", false);
+  expect(w.total).toBe(0);
+  expect(w.unread).toBe(0);
+  expect(w.visible).toHaveLength(0);
+  expect(w.readerMessage?.folder).toBe("Archive");
+  expect(w.readerMessage?.starred).toBe(false);
+  expect(w.readerMessage?.body).toBe("Complete cached needle 0");
+  await until(() => repo.jobs.length === 1);
+  w.dispose();
+  repo.jobs[0].resolve();
+  await flag;
+  for (const call of repo.pageCalls) call.resolve(call.value);
+});
+
+it("never paints a group preview into a changed query, removed account or replacement cache", async () => {
+  for (const change of ["query", "account", "cache"]) {
+    const { repo, w } = await archivedGroup();
+    if (change === "cache") {
+      repo.epoch = "replacement-cache";
+      await w.retryPage();
+    } else if (change === "account") {
+      repo.holdPages = true;
+      w.accountRemoved("work");
+    } else {
+      repo.holdPages = true;
+      w.navigate("Trash");
+    }
+    repo.holdPages = true;
+    w.beginGroupUndo("group");
+    expect(w.total).toBe(0);
+    expect(w.visible).toHaveLength(0);
+    w.finishGroupUndo("group", false);
+    expect(w.total).toBe(0);
+    w.dispose();
+    for (const call of repo.pageCalls) call.resolve(call.value);
+  }
+});

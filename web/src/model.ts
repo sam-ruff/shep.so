@@ -243,6 +243,174 @@ export class Workspace extends EventTarget {
   private commandCount = 0;
   private flagUndoId?: string;
   private groupedFields: Record<string, Fields> = {};
+  private undoWatch?: string;
+  private undoPaging?: MailPaging;
+  private groupUndoPreview?: {
+    id: string;
+    view: string;
+    since: number;
+    page: MailboxPage;
+  };
+  private pendingGroupUndo?: {
+    id: string;
+    before: { view: string; since: number; page: MailboxPage };
+  };
+  watchGroupUndo(id?: string) {
+    if (
+      id === this.undoWatch ||
+      (id && id === this.pendingGroupUndo?.id) ||
+      !this.repository.mailbox
+    )
+      return;
+    this.undoWatch = id;
+    this.undoPaging?.close();
+    this.undoPaging = undefined;
+    if (this.groupUndoPreview?.id !== id) this.groupUndoPreview = undefined;
+    if (!id) return;
+    this.undoPaging = new MailPaging(
+      this.repository.mailbox,
+      () => ({ ...this.pageQuery(), undo: id, previewOnly: true }),
+      (page) => {
+        if (this.undoWatch !== id || page.undo?.id !== id || this.disposed)
+          return;
+        this.groupUndoPreview = {
+          id,
+          view: this.paging!.currentView,
+          since: this.revision,
+          page,
+        };
+      },
+      () => {},
+    );
+    this.undoPaging.sync();
+  }
+  async prepareGroupUndo(id: string) {
+    this.watchGroupUndo(id);
+    await this.undoPaging?.reload();
+    if (this.undoPaging?.error) throw Error(this.undoPaging.error);
+  }
+  private groupPage() {
+    const rows = this.mail.slice(0, 50).map((m) => this.metadataOnly(m));
+    return {
+      view: this.paging?.currentView ?? "",
+      since: this.revision,
+      page: {
+        rows,
+        total: this.pageTotal,
+        unread: this.pageUnread,
+        epoch: this.pageEpoch,
+        revision: this.cacheRevision,
+        aliases: {},
+        confirmed: {},
+        groupFields: Object.fromEntries(
+          rows.map((m) => [
+            m.id,
+            { folder: m.folder, unread: m.unread, starred: m.starred },
+          ]),
+        ),
+      } as MailboxPage,
+    };
+  }
+  /** One additional metadata page is prepared before input. Never wait for a
+   * query or decision write to display this expected successful result. */
+  beginGroupUndo(id: string) {
+    if (this.pendingGroupUndo?.id === id) return;
+    if (this.pendingGroupUndo)
+      throw Error(
+        "The previous group decision is still saving. Retry shortly.",
+      );
+    const before = this.groupPage(),
+      preview = this.groupUndoPreview;
+    if (
+      preview?.id === id &&
+      preview.view === this.paging?.currentView &&
+      preview.page.epoch === this.pageEpoch
+    ) {
+      before.page.groupFields = {
+        ...preview.page.undo?.beforeFields,
+        ...before.page.groupFields,
+      };
+      this.applyGroupPage(preview.page, preview.since);
+    }
+    this.pendingGroupUndo = { id, before };
+    this.undoPaging?.close();
+    this.undoPaging = undefined;
+    this.undoWatch = undefined;
+    this.groupChanged();
+  }
+  finishGroupUndo(id: string, success: boolean) {
+    const pending = this.pendingGroupUndo;
+    if (pending?.id !== id) return;
+    this.pendingGroupUndo = undefined;
+    if (
+      !success &&
+      pending.before.view === this.paging?.currentView &&
+      pending.before.page.epoch === this.pageEpoch
+    )
+      this.applyGroupPage(pending.before.page, pending.before.since);
+    if (!success) this.watchGroupUndo(id);
+    this.groupChanged();
+  }
+  private applyGroupPage(page: MailboxPage, since: number) {
+    const current = new Map([
+      ...this.confirmed,
+      ...this.mail.map((m) => [m.id, m] as const),
+      ...this.painted,
+    ]);
+    const rows = new Map(
+      page.rows.map((m) => [
+        this.canonical(m.id),
+        this.metadataOnly({ ...m, id: this.canonical(m.id) }),
+      ]),
+    );
+    let total = page.total,
+      unread = page.unread;
+    const reader = this.readerMessage;
+    const projected = new Map<string, Fields>();
+    for (const [oldId, base] of Object.entries(page.groupFields ?? {})) {
+      const id = this.canonical(oldId),
+        mail = current.get(id) ?? rows.get(id);
+      if (!mail) continue;
+      const before = { ...mail, ...base, id },
+        fields: Fields = {};
+      for (const key of ["folder", "unread", "starred"] as const)
+        if ((this.versions.get(`${id}:${key}`) ?? 0) > since)
+          Object.assign(fields, {
+            [key]: current.get(id)?.[key] ?? before[key],
+          });
+      const after = { ...before, ...fields };
+      if (page.undo?.textMatches[oldId] !== false)
+        total += +this.matchesMetadata(after) - +this.matchesMetadata(before);
+      unread +=
+        +(after.folder === "Inbox" && after.unread) -
+        +(before.folder === "Inbox" && before.unread);
+      if (rows.has(id)) rows.set(id, this.metadataOnly(after));
+      projected.set(id, {
+        folder: after.folder,
+        unread: after.unread,
+        starred: after.starred,
+      });
+    }
+    this.mail = [...rows.values()];
+    for (const row of this.mail) {
+      this.painted.set(row.id, this.metadataOnly(row));
+      // A restored row may have left the retained metadata page long ago.
+      // Keep its physical baseline so an immediate follow-up action can pass
+      // the source guard before another page read has completed.
+      if (!this.confirmed.has(row.id))
+        this.confirmed.set(
+          row.id,
+          this.metadataOnly({ ...row, ...page.confirmed[row.id] }),
+        );
+    }
+    if (reader && this.selected === reader.id) {
+      const fields = projected.get(reader.id) ?? page.groupFields?.[reader.id];
+      if (fields) this.retainedReader = { ...reader, ...fields };
+    }
+    this.pageTotal = Math.max(0, total);
+    this.pageUnread = Math.max(0, unread);
+  }
+
   get groupObserved() {
     return [
       ...new Set(
@@ -268,8 +436,14 @@ export class Workspace extends EventTarget {
     const originals = this.mail
       .filter((m) => selected.has(m.id))
       .map((m) => this.metadataOnly(m));
+    const beforePage = this.groupPage();
     const versions = new Map(this.versions),
       revision = ++this.revision;
+    this.groupUndoPreview = {
+      ...beforePage,
+      id: review.job.id,
+      since: revision,
+    };
     const beforeTotal = this.pageTotal,
       beforeUnread = this.pageUnread;
     for (const id of selected) {
@@ -362,6 +536,7 @@ export class Workspace extends EventTarget {
       offset: this.page * 50,
       observed,
       generation: this.revision,
+      undo: this.pendingGroupUndo?.id,
     };
   }
   async retryPage() {
@@ -385,6 +560,8 @@ export class Workspace extends EventTarget {
       this.bodyNeedsRefresh = true;
     }
     if (incarnationChanged) {
+      this.groupUndoPreview = undefined;
+      this.pendingGroupUndo = undefined;
       this.moves.dispose();
       this.moves.records = [];
       this.undoFailures.clear();
@@ -793,6 +970,7 @@ export class Workspace extends EventTarget {
   dispose() {
     this.disposed = true;
     this.paging?.close();
+    this.undoPaging?.close();
     this.bodies.clear();
     void this.repository.mailbox?.close().catch(() => {});
     this.moves.dispose();
@@ -1032,6 +1210,7 @@ export class Workspace extends EventTarget {
   changed() {
     if (this.disposed) return;
     this.paging?.sync();
+    this.undoPaging?.sync();
     this.pruneMailState();
     this.selection.reconcileScope();
     this.dispatchEvent(new Event("change"));
@@ -1097,6 +1276,9 @@ export class Workspace extends EventTarget {
   accountRemoved(id: string) {
     if (this.removedAccountIds.has(id)) return;
     this.removedAccountIds.add(id);
+    this.watchGroupUndo(undefined);
+    this.groupUndoPreview = undefined;
+    this.pendingGroupUndo = undefined;
     this.bodies.clear();
     this.prefetched.clear();
     this.bodyGeneration++;

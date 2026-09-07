@@ -32,6 +32,7 @@ export class MailPaging {
         query.scope,
         query.offset,
         query.generation,
+        query.undo,
         this.nonce,
       ]),
     };

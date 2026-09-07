@@ -371,10 +371,12 @@ export class GatewayRepository implements Repository, SelectionRepository {
     if (!this.store.profileId) return;
     return (this.mailboxAdapter ??= {
       page: async (query) => {
-        await this.groupClient?.settledDecision();
+        if (!query.undo) await this.groupClient?.settledDecision();
         const page = await this.queryWorker().page(query);
-        this.cached = page.rows;
-        this.aliases = new Map(Object.entries(page.aliases));
+        if (!query.previewOnly) {
+          this.cached = page.rows;
+          this.aliases = new Map(Object.entries(page.aliases));
+        }
         return page;
       },
       detail: async (id) => this.queryWorker().detail(id),

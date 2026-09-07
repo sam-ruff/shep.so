@@ -426,3 +426,9 @@ The identity-continuity increment passes 125/125 Chromium scenarios, 121 unit te
 
 
 R77 shipping is verified for the identity-continuity increment in [`396b806`](https://github.com/sam-ruff/shep.so/commit/396b806156e2fe91b74334b9d40a0b42c860ff88) on the combined review branch. Required hooks pass 381 root/shared Rust tests plus formatting/Clippy; final client evidence and unchanged limitations are recorded in the completion log. R42 and the full mobile/browser/deployment goal remain active. Main and the personal installation were not changed.
+
+
+R42/R50/R60/R63/R67/R69/R71/R73/R74/R77 continuation: prepared browser group Undo paints rows/counts before local persistence, preserves immediate follow-up actions/newer reader flags, and reports rejection after History closes. Counterfactual queries retain actual dispatch folders without changing the durable source. History/query contention and restored-row source guards are covered by the saved regressions; failures, validation and prompt review-branch shipping are recorded under “Browser immediate group Undo” in [the completion log](COMPLETION.md). The complete mobile/browser/website/deployment goal remains active; native group controls and the broader lifecycle/parity gaps stay in TODO.
+
+
+**R78 — Handover, TODO cleanup and push:** requested because credits are nearly exhausted. Added root `handover.md` and consolidated repetitive TODO history into remaining work, preserving all 40 active request entries. Full parity and the observed Find-remapping issue remain open; stop feature development after checkpoint shipping. See the completion log for exact verification and commit evidence.
