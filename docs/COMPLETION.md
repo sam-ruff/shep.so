@@ -1335,3 +1335,10 @@ The first full browser run passed 72 of 73 scenarios; the remaining version-two 
 
 
 Final verification passes **107 browser unit tests**, **73 Playwright scenarios** in a complete unchanged-source run, **39 Python tests**, **30 parity contracts**, TypeScript and the production browser build. The real Rust HTTPS beta/mail integration test passes against the new production assets. The compact account-removal capture is reviewed and saved as a lossless WebP under ignored artifacts. Production inspection excludes the preview entry and checked fixture markers, includes bundled licenses, and preserves the previously recorded SQLite/shared MIME WASM hashes. Pinned strict documentation validation passes; required commit hooks and exact review-branch shipping follow.
+
+
+### Persistent browser intent shipping record
+
+Committed and pushed as [`353d259`](https://github.com/sam-ruff/shep.so/commit/353d2597ecb57fb649adea54dd312d4a01b1b6ab) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Verification includes **107 browser unit tests**, **73 Playwright scenarios**, **55 real Rust HTTPS beta/mail stages**, **39 Python tests**, **30 parity contracts**, TypeScript, production browser inspection and pinned strict documentation validation. The reviewed compact removal capture and retained migration-assertion failure evidence are recorded above.
+
+R77's prompt push is fulfilled for this increment. Group execution/recovery, bounded optimistic queries, native client parity and the wider product/deployment backlog remain active, including R75/R76 and missing VPS/owner/OAuth configuration. Main and the personal installation were untouched; artifacts remain ignored and owned test processes are stopped. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
