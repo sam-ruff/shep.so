@@ -819,3 +819,62 @@ Existing personal windows were left running. R42 multi-selection is removed from
 TODO; its remaining bulk History/recovery/pagination paths stay open. The full
 product goal remains active, performance measurements remain deferred, and
 quality/release CI remain disabled.
+
+
+## R42 — History and process recovery (2026-09-07)
+
+Shipped in `b352d125a267e36322803549c52e2d903916876b`.
+
+**Continue** now clears the persisted pause before waking the worker; completed
+receipts are never replayed. History keeps its visible group page separate from
+active progress tracking, preserves newer receipts when an older read arrives,
+and returns to the top after group or message pagination. Unconfirmed-result
+reviews accept mouse input and Y/Enter, cancel with N/Escape, and cannot leak
+into a reopened History dialog. Acceptance replaces the stale recovery error
+with an explicit accepted-state note and keeps Undo available for other
+acknowledged messages.
+
+Real window-close tests exposed renderer workers keeping the process alive
+after the window disappeared. Subscription cancellation now wakes both HTML and
+neighbor-preparation receivers even while UI state retains their senders. Close
+flushes pending pane sizes and quiesces the bulk worker before exiting, including
+when the displayed History page contains no running work. Closing before engine
+readiness does not wait for a missing worker.
+
+The MCP harness now owns optional persistent, explicitly marked fixture caches.
+It refuses unmarked databases before migration. Native close/restart keeps the
+owned display and cache; explicit crash mode kills only that fixture process.
+A close timeout reports the failure without silently killing or replacing the
+app. The graceful-close scenario reads the fixture journal while the app is
+closed, proving one durable receipt and one queued step before restart.
+
+Validation: **362 Rust tests**, **32 Python tests**, formatting, Clippy and Git
+hooks pass. All **127 saved native functional scenarios** pass on the final test
+binary: the complete existing 126-case run plus the newly added empty-Inbox
+restart case. Logs are `artifacts/logs/bulk-history-native-full.log`,
+`bulk-history-native-result.json`, `bulk-history-empty-native.log`,
+`bulk-history-final-rust.log`, `bulk-history-final-python.log` and
+`bulk-history-clippy.log`. No failed scenario was omitted.
+
+Eight added native scenarios cover graceful and crash recovery, uncertainty
+acceptance/cancellation, retained Undo, failed inverse retry after restart,
+Continue, both pagination types, compact dark mouse review, formatted-reader
+shutdown with saved appearance, and reopening an empty Inbox with all 120
+archived messages retained. Reviewed final WebP evidence includes accepted
+results in `artifacts/e2e/ae702538d9b8/`, compact dark review in `ce03b78c5462/`,
+History pages in `f7e68df55523/` and `d9648d6faece/`, and empty Inbox/Archive in
+`74fbf4c5f512/`. These fixtures establish application recovery; they do not prove
+live-provider or independent-process correctness.
+
+Native refresh arrows remain clean in compact dark and 120% Calendar captures
+(`1207d242ae17/`, `734c9cbabbe5/`). The browser-chrome crop from the original
+report was not separately reproduced.
+
+Strict documentation builds and optimized release checksum, extraction and
+bundled-installer checks pass. The installed Linux binary matches the release,
+SHA-256 `6b2fcf3b5824437208ff74ded58a4bfa2cf3d604a2f82478bc800098f8e49cb2`.
+Existing personal windows were preserved. R42's remaining native verification
+is complete and removed from TODO. The full product goal remains active;
+individual/group ordering, provider ambiguity, independent-process coordination
+and the other TODO requests remain open. Performance measurements stay deferred,
+and quality/release CI remain disabled.
