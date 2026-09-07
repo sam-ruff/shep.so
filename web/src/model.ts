@@ -88,6 +88,7 @@ export interface Preferences {
     | "move"
     | "reply"
     | "forward"
+    | "print"
     | "search"
     | "reader"
     | "find",
@@ -107,6 +108,7 @@ export const defaults: Preferences = {
     move: "m",
     reply: "r",
     forward: "f",
+    print: "Control+p",
     search: "Control+k",
     reader: "Enter",
     find: "Control+f",

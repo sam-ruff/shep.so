@@ -359,7 +359,8 @@ async fn security_headers(request: Request, next: Next) -> Response {
     headers.insert("referrer-policy", HeaderValue::from_static("no-referrer"));
     static CSP: std::sync::LazyLock<HeaderValue> = std::sync::LazyLock::new(|| {
         let runtime = shep_mail_core::document::runtime_csp_source();
-        HeaderValue::from_str(&format!("default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {runtime}; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")).expect("Static reader CSP")
+        let print_runtime = shep_mail_core::printing::runtime_csp_source();
+        HeaderValue::from_str(&format!("default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {runtime} {print_runtime}; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")).expect("Static reader CSP")
     });
     headers.insert("content-security-policy", CSP.clone());
     headers.insert(

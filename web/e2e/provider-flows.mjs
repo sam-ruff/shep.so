@@ -80,6 +80,19 @@ export async function providerFlows(page, context, origin, output, session) {
   await expect(
     page.locator('iframe[title="Formatted message"]'),
   ).toHaveAttribute("sandbox", "allow-scripts");
+  const popupReady = page.waitForEvent("popup");
+  await fileReader.getByRole("button", { name: "Print", exact: true }).click();
+  const printPreview = await popupReady;
+  await expect(
+    printPreview.getByRole("button", { name: "Print", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    printPreview.frameLocator("iframe").locator("body"),
+  ).toContainText("Formatted cached files.");
+  await printPreview.screenshot({
+    path: path.join(output, "print-real-https.png"),
+  });
+  await printPreview.close();
   await page
     .getByRole("combobox", { name: "Message format", exact: true })
     .selectOption("Plain text");
@@ -1168,6 +1181,7 @@ export async function providerFlows(page, context, origin, output, session) {
     "streamed-mail-cache",
     "cached-attachment-worker-failure-retry",
     "formatted-reader-real-https-csp-worker-retry-and-plain-choice",
+    "print-preview-real-https-beta-gate-csp-and-worker",
     "offline-exact-binary-duplicate-and-encoded-attachments",
     "incoming-files-light-dark-compact-axe",
     "flag-ack-reload",

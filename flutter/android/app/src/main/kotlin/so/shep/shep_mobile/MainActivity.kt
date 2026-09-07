@@ -8,12 +8,16 @@ import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
+    private var messagePrinter: MessagePrint? = null
     private var pending: MethodChannel.Result? = null
     private var content: ByteArray? = null
     private val writer = Executors.newSingleThreadExecutor()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        messagePrinter = MessagePrint(this).also { printer ->
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "so.shep/message-print").setMethodCallHandler(printer::handle)
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "so.shep/attachment-save")
             .setMethodCallHandler { call, result ->
                 if (call.method != "save") { result.notImplemented(); return@setMethodCallHandler }
@@ -67,6 +71,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        messagePrinter?.dispose(); messagePrinter = null
         pending?.error("closed", "The save was interrupted. Reopen Shep and retry.", null)
         pending = null; content = null
         writer.shutdown()

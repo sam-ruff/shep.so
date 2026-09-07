@@ -136,3 +136,16 @@ Complete-source Forward preparation uses `shared/forward-fixtures.json` in nativ
 
 
 The saved Forward path is `android_e2e.py --device emulator-5554 --forward-only` (or the full wrapper). Its helper hands over synthetic cached MIME before the native profile opens; test-only acknowledgment loss wraps the real cache operation. Android controls verify blank recipients/new thread, exact retained file metadata, file removal, restart, missing-credential refusal, complete long source, damaged resources and a newer editor during preparation. External ADB captures avoid a mounted WebView screenshot hang; the same dedicated-emulator helper uses Android Back to dismiss the keyboard before the file-removal click. Browser `forward.spec.ts` exercises real WASM workers/IndexedDB and the same failure/restart controls, plus remapping and compact composer accessibility. The HTTPS provider flow separately exercises the production worker under gateway CSP. Composer accessibility checks target the active modal; authored-email contrast remains a separate rendering audit.
+
+
+## Client printing
+
+`web/e2e/printing.spec.ts` uses real browser controls and a separately owned Xvfb/Chromium profile for `window.print()` → Save as PDF. Install Xvfb and Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) on the Linux browser runner. It verifies full long-message output, headers, filenames, inline images, retry, independent navigation/editing and remappable/input-safe shortcuts. Stable synthetic PDF evidence is under `artifacts/web/print-output/`. The Rust HTTPS flow also verifies protected `print.html` and the production worker/runtime CSP.
+
+Run the native printer scenario with:
+
+```sh
+python3 scripts/clients/android_e2e.py --device emulator-5554 --print-only
+```
+
+It is also included in the full Android wrapper. The fixture is handed over before the cache opens; Flutter drives Shep controls and the saved ADB helper selects Android's printer destination, cancels, retries and saves PDFs through DocumentsUI. The helper validates complete PDF text and pagination, then acknowledges completion before fixture cleanup. Review `artifacts/flutter/native/print/` PDFs and WebP captures. Android/Chromium results do not establish Apple or other browser-engine printing. Preparation/dialog launch is not a print receipt.

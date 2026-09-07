@@ -1,3 +1,4 @@
+import { PrintController } from "./printing_controller";
 import { MessageFind, SearchWorker } from "./message_find";
 import { FormattedFrame } from "./formatted_frame";
 import type { PreparedMessage } from "./formatted_content";
@@ -26,6 +27,7 @@ const paths: Record<string, string> = {
   flag: "M5 22V3 M5 3c5-4 9 4 14 0v11c-5 4-9-4-14 0",
   move: "M3 6h7l2 3h9v12H3z M11 13l3 3-3 3 M7 16h7",
   reply: "m10 6-6 6 6 6 M4 12h9c4 0 7 2 7 6",
+  print: "M6 9V3h12v6 M6 18H3V9h18v9h-3 M6 14h12v7H6z M17 11h1",
   forward: "m14 6 6 6-6 6 M20 12h-9c-4 0-7 2-7 6",
   search: "M20 20l-5-5 M17 10a7 7 0 1 0-14 0 7 7 0 0 0 14 0",
   refresh: "M20 10a8 8 0 1 0-2 8 M20 3v7h-7",
@@ -161,6 +163,7 @@ export function mount(
     if (!event.persisted) {
       find.dispose();
       searchWorker.dispose();
+      printer?.dispose();
       formattedFrame?.dispose();
       gateway?.formattedMessages.cancel();
       systemAppearance.removeEventListener("change", appearanceChanged);
@@ -255,6 +258,28 @@ export function mount(
   let sidebarOpen = false;
   const gateway =
     w.repository instanceof GatewayRepository ? w.repository : undefined;
+  const printer = gateway
+    ? new PrintController(
+        () => gateway.createPrinter(),
+        () => w.changed(),
+        (message) => {
+          w.error = message;
+          w.changed();
+        },
+      )
+    : undefined;
+  function printMessage(m: Mail) {
+    if (!printer) {
+      w.error = "Printing is available for cached account messages.";
+      w.changed();
+      return;
+    }
+    printer.open(
+      m.id,
+      formattedState?.id === m.id && formattedState.plain,
+      darkReader() ? "dark" : "light",
+    );
+  }
   let formattedFrame: FormattedFrame | undefined;
   let formattedState:
     | {
@@ -281,6 +306,7 @@ export function mount(
       ...Object.values(w.preferences.shortcuts).filter(Boolean),
       "Escape",
       ...(w.preferences.shortcuts.find === "Control+f" ? ["Meta+f"] : []),
+      ...(w.preferences.shortcuts.print === "Control+p" ? ["Meta+p"] : []),
     ];
   }
   function reviewLink(value: string) {
@@ -1160,6 +1186,7 @@ export function mount(
           () => {
             find.dispose();
             searchWorker.dispose();
+            printer?.dispose();
             login.signOut();
           },
           "lock",
@@ -1689,6 +1716,14 @@ export function mount(
         ),
         { disabled: forwarding.has(m.id) },
       ),
+      Object.assign(
+        button(
+          printer?.preparing(m.id) ? "Preparing print…" : "Print",
+          () => printMessage(m),
+          "print",
+        ),
+        { disabled: printer?.preparing(m.id) ?? false },
+      ),
     );
     content.append(actions);
     panel.append(content);
@@ -2061,6 +2096,12 @@ export function mount(
       w.preferences.shortcuts.find === "Control+f"
     )
       entry = ["find", "Control+f"];
+    if (
+      !entry &&
+      combo === "Meta+p" &&
+      w.preferences.shortcuts.print === "Control+p"
+    )
+      entry = ["print", "Control+p"];
     if (!entry) return false;
     const action = entry[0];
     if (action === "find") openFind();
@@ -2074,6 +2115,9 @@ export function mount(
     } else if (action === "forward") {
       const m = w.readerMessage;
       if (m) void forward(m);
+    } else if (action === "print") {
+      const m = w.readerMessage;
+      if (m) printMessage(m);
     } else if (action === "reader") {
       if (w.selected) {
         fullReader = true;

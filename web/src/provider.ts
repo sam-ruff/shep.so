@@ -1,3 +1,4 @@
+import { PrintLoader } from "./printing_loader";
 import { ForwardLoader } from "./forward_loader";
 import type { ForwardPrepared } from "./forward_content";
 import {
@@ -242,6 +243,9 @@ async function* lines(response: Response): AsyncGenerator<unknown> {
   }
 }
 export class GatewayRepository implements Repository {
+  createPrinter() {
+    return new PrintLoader(this.session.user_id);
+  }
   preview = false;
   cached: Mail[] = [];
   events: CalendarEntry[] = [];

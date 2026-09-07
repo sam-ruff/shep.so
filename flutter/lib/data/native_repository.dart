@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'attachments.dart';
 import 'message_search.dart';
 import 'formatted_message.dart';
+import 'printing.dart';
 import 'package:flutter/foundation.dart';
 import '../src/rust/api.dart';
 import '../src/rust/frb_generated.dart';
@@ -26,7 +27,8 @@ class NativeRepository
         AttachmentRepository,
         AccountRemovalRepository,
         TextSearchRepository,
-        FormattedMessageRepository {
+        FormattedMessageRepository,
+        PrintRepository {
   NativeRepository(this.profile, this.credentials);
   final MobileProfile profile;
   final CredentialStore credentials;
@@ -62,6 +64,19 @@ class NativeRepository
     }
     return response['data'];
   }
+
+  @override
+  Future<PreparedPrint> preparePrint(
+    String id, {
+    required String generation,
+    required bool plain,
+  }) async => PreparedPrint.fromJson(
+    await call({
+      'op': 'print',
+      'id': id,
+      'options': {'generation': generation, 'plain': plain},
+    }),
+  );
 
   @override
   Future<PreparedMessage> formattedMessage(
