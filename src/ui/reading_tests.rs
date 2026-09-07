@@ -2,6 +2,59 @@
 //! separately by the native MCP suite; these tests control result arrival order.
 use super::*;
 
+#[test]
+fn search_uses_relevance_without_overwriting_browse_sort_and_rejects_stale_pages() {
+    let (mut app, _) = App::new();
+    app.preferences.mail_sort = MailSort::Oldest;
+    app.query.sort = MailSort::Oldest;
+    let _ = app.handle(Message::Query("test".into()));
+    assert_eq!(app.query.sort, MailSort::Relevance);
+    let old_generation = app.generation;
+    let _ = app.handle(Message::Sort(MailSort::Sender));
+    assert_eq!(app.preferences.mail_sort, MailSort::Oldest);
+    let _ = app.handle(Message::Query("other".into()));
+    assert_eq!(app.query.sort, MailSort::Sender);
+    let _ = app.handle(Message::Backend(Event::Page(
+        old_generation,
+        Arc::new(MailPage {
+            total: 42,
+            ..Default::default()
+        }),
+        false,
+    )));
+    assert_ne!(app.page.total, 42);
+    let _ = app.handle(Message::Query("".into()));
+    assert_eq!(app.query.sort, MailSort::Oldest);
+    let _ = app.handle(Message::Query("new search".into()));
+    assert_eq!(app.query.sort, MailSort::Relevance);
+    let _ = app.handle(Message::Tab(Tab::Mail));
+    assert!(app.query.search.is_empty());
+    assert_eq!(app.query.sort, MailSort::Oldest);
+}
+
+#[test]
+fn recovered_mail_sync_clears_its_error_but_preserves_other_action_errors() {
+    let (mut app, _) = App::new();
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(Err(
+        "Mail server unavailable. Try Refresh again.".into(),
+    ))));
+    assert!(app.notice.as_ref().unwrap().1);
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(Ok(()))));
+    assert!(app.notice.is_none());
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(Err(
+        "Mail server unavailable.".into(),
+    ))));
+    // Give the unrelated notice a distinct, deterministic identity.
+    app.sync_notice = Some(Instant::now() - std::time::Duration::from_secs(1));
+    app.notice("Archive failed. The message was restored.", true);
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(Ok(()))));
+    assert_eq!(
+        app.notice.as_ref().unwrap().0,
+        "Archive failed. The message was restored."
+    );
+    assert!(app.sync_notice.is_none());
+}
+
 #[tokio::test]
 async fn stale_prefetch_cannot_restore_flags_or_errors_after_a_mail_change() {
     let store = crate::store::Store::memory().unwrap();

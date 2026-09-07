@@ -331,3 +331,95 @@ async fn failed_removal_rolls_back_data_indexes_credentials_and_tombstone() {
     assert!(store.cleanup_jobs().await.unwrap().is_empty());
     store.check_connection(preview.target).await.unwrap();
 }
+
+#[tokio::test]
+async fn removing_an_account_reviews_pending_groups_and_cleans_only_its_history() {
+    use shep::{bulk::Action, store::MailSelectionId};
+    let store = Store::memory().unwrap();
+    for id in ["work", "personal"] {
+        store.save_account(account(id)).await.unwrap();
+        store.upsert(vec![mail(id, "1")]).await.unwrap();
+    }
+    let source = MailSelectionId::default();
+    store
+        .capture_selection(source, 0, MailQuery::default(), true, vec![])
+        .await
+        .unwrap();
+    let frozen = store.freeze_selection(source, 0).await.unwrap();
+    store
+        .start_bulk(
+            "shared".into(),
+            frozen.id,
+            Action::Move {
+                account: None,
+                folder: "Archive".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let selected = target(ConnectionKind::Account, "work");
+    let review = store.removal_preview(selected.clone()).await.unwrap();
+    assert_eq!((review.mail_history, review.transfers), (1, 1));
+    assert!(
+        store
+            .remove_connection(review.clone(), false)
+            .await
+            .is_err()
+    );
+    let mut step = store
+        .claim_bulk_item("shared".into())
+        .await
+        .unwrap()
+        .unwrap();
+    if step.original.as_ref().unwrap().account_id != "work" {
+        store
+            .finish_bulk_item(step, Err(("Other account fixture result".into(), false)))
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .removal_preview(selected.clone())
+                .await
+                .unwrap()
+                .fingerprint,
+            review.fingerprint,
+            "Another account's result must not change this account's reviewed scope"
+        );
+        step = store
+            .claim_bulk_item("shared".into())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    assert_eq!(step.original.as_ref().unwrap().account_id, "work");
+    assert!(
+        store.remove_connection(review, true).await.is_err(),
+        "A changed group needs a fresh review"
+    );
+    store
+        .finish_bulk_item(step, Err(("Cancelled fixture step".into(), false)))
+        .await
+        .unwrap();
+    let review = store.removal_preview(selected).await.unwrap();
+    store.remove_connection(review, true).await.unwrap();
+    let remaining = store.bulk_items("shared".into(), None).await.unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(
+        remaining[0].original.as_ref().unwrap().account_id,
+        "personal"
+    );
+    let archive = store
+        .query(MailQuery {
+            folder: "Archive".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(archive.rows.iter().all(|m| m.account_id == "personal"));
+    let personal = store
+        .removal_preview(target(ConnectionKind::Account, "personal"))
+        .await
+        .unwrap();
+    store.remove_connection(personal, true).await.unwrap();
+    assert!(store.bulk_jobs(0).await.unwrap().is_empty());
+}

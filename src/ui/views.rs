@@ -111,32 +111,95 @@ impl App {
             // Keep the base widget tree alive as dialogs open and close. Replacing the
             // root Stack with a Container drops native input focus and shaped text.
             let mut layers = stack![base];
-            if self.context_menu.is_some() {
+            if self.context_menu.is_some() || self.composer.context.is_some() {
                 layers = layers.push(opaque(
                     mouse_area(container(space()).width(Length::Fill).height(Length::Fill))
                         .on_press(Message::DismissContext)
                         .on_right_press(Message::DismissContext),
                 ));
-                layers = layers.push(self.mail_context_view());
+                layers = layers.push(if self.composer.context.is_some() {
+                    self.draft_context_view()
+                } else {
+                    self.mail_context_view()
+                });
+            }
+            let mut toasts = column![].spacing(8).align_x(Alignment::End);
+            if let Some(toast) = &self.action_toasts.current {
+                toasts = toasts.push(opaque(
+                    container(
+                        row![
+                            icon("check", 18.),
+                            text(toast.label()).size(13),
+                            if toast.undo_tokens().is_empty() {
+                                Element::from(space().width(0))
+                            } else {
+                                Element::from(
+                                    button(text("Undo").size(13))
+                                        .style(ghost)
+                                        .on_press(Message::UndoActions(toast.undo_tokens()))
+                                        .padding([6, 10]),
+                                )
+                            },
+                            self.icon_action("close", "Dismiss", Message::DismissActionToast)
+                        ]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding([8, 14])
+                    .max_width(580)
+                    .style(card),
+                ));
+            }
+            let undo_failures = self.mail_actions.undo_failures();
+            if !undo_failures.is_empty() {
+                let count = undo_failures.len();
+                toasts = toasts.push(opaque(
+                    container(
+                        row![
+                            text(format!(
+                                "Undo failed for {count} {}",
+                                if count == 1 { "message" } else { "messages" }
+                            ))
+                            .size(13),
+                            action("Retry Undo", Message::UndoActions(undo_failures.clone())),
+                            self.icon_action(
+                                "close",
+                                "Dismiss",
+                                Message::DismissUndoErrors(undo_failures)
+                            )
+                        ]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding([8, 14])
+                    .max_width(580)
+                    .style(card),
+                ));
             }
             if self.saved_toast.is_some() {
+                toasts = toasts.push(opaque(
+                    container(
+                        row![
+                            icon("check", 18.),
+                            text("Changes saved").size(13),
+                            self.icon_action("close", "Dismiss", Message::DismissToast)
+                        ]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding([8, 14])
+                    .style(card),
+                ));
+            }
+            if self.saved_toast.is_some()
+                || self.action_toasts.current.is_some()
+                || !self.mail_actions.undo_failures().is_empty()
+            {
                 layers = layers.push(
-                    container(opaque(
-                        container(
-                            row![
-                                icon("check", 18.),
-                                text("Changes saved").size(13),
-                                self.icon_action("close", "Dismiss", Message::DismissToast)
-                            ]
-                            .spacing(10)
-                            .align_y(Alignment::Center),
-                        )
-                        .padding([8, 14])
-                        .style(card),
-                    ))
-                    .align_right(Length::Fill)
-                    .align_bottom(Length::Fill)
-                    .padding(20),
+                    container(toasts)
+                        .align_right(Length::Fill)
+                        .align_bottom(Length::Fill)
+                        .padding(20),
                 );
             }
             layers.into()
@@ -181,8 +244,14 @@ impl App {
         let header = row![
             heading(title),
             muted(format!(
-                "{} messages · {} unread",
-                self.page.total, self.page.unread
+                "{} {} · {} unread",
+                self.page.total,
+                if self.page.total == 1 {
+                    "message"
+                } else {
+                    "messages"
+                },
+                self.page.unread
             ))
             .size(12),
             space().width(Length::Fill),
@@ -190,6 +259,14 @@ impl App {
                 badge("TEST")
             } else {
                 space().into()
+            },
+            if self.bulk.jobs.is_empty() {
+                Element::from(space().width(0))
+            } else {
+                Element::from(action(
+                    "History",
+                    Message::Bulk(super::bulk::Message::History),
+                ))
             },
             self.toggle_icon_action(
                 "sync",
@@ -219,6 +296,7 @@ impl App {
             .spacing(1)
             .min_size(300)
             .on_resize(8, Message::PaneResize)
+            .on_click(Message::MailPaneClicked)
             .height(Length::Fill)
             .style(|theme| {
                 let p = colors(theme);
@@ -277,17 +355,68 @@ impl App {
                 .menu_style(select_menu)
                 .padding([9, 8])
                 .width(Length::Fill),
-            pick_list(MailSort::ALL, Some(self.query.sort), Message::Sort)
-                .text_size(11)
-                .style(select_input)
-                .menu_style(select_menu)
-                .padding([9, 8])
-                .width(Length::Fill),
+            pick_list(
+                if self.query.search.trim().is_empty() {
+                    &MailSort::BROWSE[..]
+                } else {
+                    &MailSort::SEARCH[..]
+                },
+                Some(self.query.sort),
+                Message::Sort
+            )
+            .text_size(11)
+            .style(select_input)
+            .menu_style(select_menu)
+            .padding([9, 8])
+            .width(Length::Fill),
         ]
         .spacing(6)
         .align_y(Alignment::Center);
-        let search =
-            input("Search conversations…", &self.query.search, Message::Query).id("search");
+        let search = row![
+            input("Search conversations…", &self.query.search, Message::Query)
+                .id("search")
+                .width(Length::Fill),
+            button(
+                text(if self.mail_selection.mode {
+                    "Done"
+                } else {
+                    "Select"
+                })
+                .size(11)
+            )
+            .padding([12, 9])
+            .style(if self.mail_selection.mode {
+                primary
+            } else {
+                outline
+            })
+            .on_press(Message::ToggleSelection),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+        let filters: Element<'_, Message> = if self.mail_selection.mode {
+            row![
+                text(if self.mail_selection.busy() {
+                    format!("{} selected…", self.mail_selection.count)
+                } else {
+                    format!("{} selected", self.mail_selection.count)
+                })
+                .size(12),
+                space().width(Length::Fill),
+                button(text("All").size(11))
+                    .padding([9, 8])
+                    .style(ghost)
+                    .on_press(Message::SelectAllMail),
+                button(text("Clear").size(11))
+                    .padding([9, 8])
+                    .style(ghost)
+                    .on_press(Message::ClearSelection),
+            ]
+            .align_y(Alignment::Center)
+            .into()
+        } else {
+            filters.into()
+        };
         // Fixed-height rows let us shape only visible text plus a small overscan.
         let row_height = 104.;
         let first = ((self.inbox_scroll / row_height) as usize)
@@ -301,7 +430,11 @@ impl App {
         let end = (first + count).min(self.page.rows.len());
         let mut messages = column![space().height(first as f32 * row_height)].spacing(0);
         for (index, mail) in self.page.rows.iter().enumerate().take(end).skip(first) {
-            let active = self.selected.as_deref() == Some(&mail.id);
+            let active = if self.mail_selection.mode {
+                self.mail_selection.visible.contains(&mail.id)
+            } else {
+                self.selected.as_deref() == Some(&mail.id)
+            };
             let unread = mail.unread;
             let sender = sender_name(&mail.sender);
             let date = chrono::DateTime::from_timestamp(mail.timestamp, 0)
@@ -313,7 +446,22 @@ impl App {
                 date.format("%d %b").to_string()
             };
             let mut top = row![
-                avatar(&sender, index, 30.),
+                if self.mail_selection.mode {
+                    button(
+                        checkbox(self.mail_selection.visible.contains(&mail.id))
+                            .size(18)
+                            .on_toggle({
+                                let id = mail.id.clone();
+                                move |_| Message::CheckMail(id.clone())
+                            }),
+                    )
+                    .padding(6)
+                    .style(ghost)
+                    .on_press(Message::CheckMail(mail.id.clone()))
+                    .into()
+                } else {
+                    avatar(&sender, index, 30.)
+                },
                 text(truncate(&sender, 23)).size(12).font(if unread {
                     BOLD
                 } else {
@@ -324,10 +472,16 @@ impl App {
                 button(flag_icon(mail.starred, 18.))
                     .padding(6)
                     .style(if mail.starred { flagged } else { ghost })
-                    .on_press(Message::FlagRow(mail.id.clone()))
+                    .on_press_maybe(
+                        (!self.mail_actions.restoring(&mail.id))
+                            .then(|| Message::FlagRow(mail.id.clone()))
+                    )
             ]
             .spacing(9)
             .align_y(Alignment::Center);
+            if self.mail_actions.restoring(&mail.id) {
+                top = top.push(muted("Restoring…").size(10));
+            }
             if unread {
                 top = top.push(
                     container(space())
@@ -389,14 +543,18 @@ impl App {
                 }
             })
             .on_press(Message::Select(mail.id.clone()));
-            messages = messages
-                .push(super::context_menu::ContextArea::new(
-                    mouse_area(entry)
-                        .on_enter(Message::Hover(mail.id.clone()))
-                        .on_double_click(Message::OpenMessage(mail.id.clone())),
-                    mail.id.clone(),
-                ))
-                .push(line());
+            let entry = super::context_menu::ContextArea::new(
+                mouse_area(entry)
+                    .on_enter(Message::Hover(mail.id.clone()))
+                    .on_double_click(Message::OpenMessage(mail.id.clone())),
+                mail.id.clone(),
+            );
+            #[cfg(feature = "test-support")]
+            let entry = entry.with_draw_witness(
+                self.mail_selection.draw_epoch,
+                self.mail_selection.drawn_epoch.clone(),
+            );
+            messages = messages.push(entry).push(line());
         }
         messages = messages.push(space().height((self.page.rows.len() - end) as f32 * row_height));
         if self.page.rows.is_empty() {
@@ -465,6 +623,9 @@ impl App {
         .into()
     }
     fn reader(&self) -> Element<'_, Message> {
+        if self.mail_selection.mode && !self.full_reader {
+            return self.group_reader();
+        }
         if self.conversation_visible() {
             return self.conversation_reader();
         }
@@ -488,18 +649,17 @@ impl App {
             .center_y(Length::Fill)
             .into();
         };
-        let footer = column![self.reader_actions(detail), self.reader_navigation()].spacing(4);
+        let mut footer = column![self.reader_actions(detail)].spacing(4);
+        if !self.compact_reader() {
+            footer = footer.push(self.reader_navigation());
+        }
         column![
             container(self.reader_toolbar(detail)).padding([10, 18]),
             line(),
-            scrollable(
-                container(self.reader_body(detail, true)).padding(if self.size.width < 1200. {
-                    22.
-                } else {
-                    35.
-                })
-            )
-            .height(Length::Fill),
+            self.find_bar(),
+            scrollable(container(self.reader_body(detail, true)).padding(self.reader_padding()))
+                .id("message-reader")
+                .height(Length::Fill),
             container(footer).padding([10, 20])
         ]
         .width(Length::Fill)
@@ -541,12 +701,17 @@ impl App {
                 summary.starred,
                 Message::ToggleStar
             ),
+            self.icon_action(
+                "search",
+                self.shortcut_hint("Find in message", Action::Find),
+                Message::Find(super::find_message::Message::Open)
+            ),
             space().width(Length::Fill),
             if (self.size.width / (self.preferences.interface_scale as f32 / 100.)
                 - self.sidebar_width()
                 - 57.)
                 * (1. - self.preferences.reader_split)
-                < 440.
+                < 500.
             {
                 self.icon_action(
                     "move",
@@ -585,19 +750,37 @@ impl App {
         detail: &'a MailDetail,
         subject: bool,
     ) -> iced::widget::Column<'a, Message> {
+        let compact = self.compact_reader();
+        let gap = if compact { 8 } else { 18 };
         let sender = sender_name(&detail.summary.sender);
         let date = chrono::DateTime::from_timestamp(detail.summary.timestamp, 0)
             .unwrap_or_default()
             .with_timezone(&chrono::Local);
         let sender_header = row![
             avatar(&sender, 0, 41.),
-            column![
-                text(sender.clone()).font(BOLD).size(13),
-                muted(&detail.summary.sender).size(10),
-                muted(format!("To: {}", detail.summary.recipient)).size(10)
-            ]
-            .spacing(5)
-            .width(Length::Fill),
+            if compact {
+                column![
+                    super::ellipsis::Ellipsis::new(sender.clone(), 13.).font(BOLD),
+                    container(super::ellipsis::Ellipsis::new(
+                        format!("To: {}", detail.summary.recipient),
+                        10.
+                    ))
+                    .style(|theme| container::Style {
+                        text_color: Some(colors(theme).muted),
+                        ..Default::default()
+                    })
+                ]
+                .spacing(5)
+                .width(Length::Fill)
+            } else {
+                column![
+                    text(sender.clone()).font(BOLD).size(13),
+                    muted(&detail.summary.sender).size(10),
+                    muted(format!("To: {}", detail.summary.recipient)).size(10)
+                ]
+                .spacing(5)
+                .width(Length::Fill)
+            },
             column![
                 muted(date.format("%d %b %Y").to_string()).size(10),
                 muted(date.format("%H:%M").to_string()).size(10)
@@ -614,17 +797,79 @@ impl App {
                 .on_press(Message::Open(Dialog::Sender)),
             line()
         ]
-        .spacing(18);
+        .spacing(gap);
         if subject {
-            reading =
-                column![text(&detail.summary.subject).size(25).font(BOLD), reading].spacing(18);
+            reading = column![
+                text(&detail.summary.subject)
+                    .size(if compact { 21 } else { 25 })
+                    .font(BOLD),
+                reading
+            ]
+            .spacing(gap);
         }
-        if !detail.remote_images.is_empty()
+        let formatted = self.formatted(detail);
+        if detail.html.is_some() {
+            reading = reading.push(
+                row![
+                    button(text("Formatted").size(12))
+                        .padding([6, 10])
+                        .style(if formatted { primary } else { outline })
+                        .on_press(Message::Html(super::html_reader::Message::Plain(false))),
+                    button(text("Plain text").size(12))
+                        .padding([6, 10])
+                        .style(if formatted { outline } else { primary })
+                        .on_press(Message::Html(super::html_reader::Message::Plain(true)))
+                ]
+                .spacing(6),
+            );
+        }
+        if formatted
+            && !detail.remote_images.is_empty()
             && !crate::remote_images::allowed(&self.preferences, &detail.summary)
         {
             reading = reading.push(self.image_bar());
         }
-        reading = reading.push(self.selectable_body(detail, 0, body));
+        if formatted {
+            if let Some(error) = &self.html_reader.error {
+                let mut recovery = column![muted(error)].spacing(10);
+                if self.html_reader.can_retry() {
+                    recovery = recovery.push(action(
+                        "Retry formatted message",
+                        Message::Html(super::html_reader::Message::Retry),
+                    ));
+                }
+                reading = reading.push(recovery);
+            } else {
+                reading = reading.push(self.find_highlights(detail, 0, self.html_canvas()));
+            }
+            if detail.html.as_ref().is_some_and(|h| h.has_quotes)
+                && self.preferences.reply_display != ReplyDisplay::LatestOnly
+            {
+                reading = reading.push(
+                    button(
+                        text(if self.html_quotes_hidden(detail) {
+                            "Show quoted text"
+                        } else {
+                            "Hide quoted text"
+                        })
+                        .size(12),
+                    )
+                    .padding([8, 12])
+                    .style(outline)
+                    .on_press(Message::Html(super::html_reader::Message::Quotes)),
+                );
+            }
+            if crate::remote_images::allowed(&self.preferences, &detail.summary) {
+                for url in &self.html_reader.resources {
+                    if let Some(error) = self.image_errors.get(url) {
+                        reading = reading.push(muted(error).size(11));
+                    }
+                }
+            }
+            return reading;
+        }
+        reading =
+            reading.push(self.find_highlights(detail, 0, self.selectable_body(detail, 0, body)));
         if self.preferences.reply_display != ReplyDisplay::LatestOnly {
             for (index, reply) in detail.replies.iter().enumerate() {
                 let expanded = self.expanded_replies.contains(&index)
@@ -644,7 +889,11 @@ impl App {
                 ]
                 .spacing(8);
                 if expanded {
-                    section = section.push(self.selectable_body(detail, index + 1, &reply.body));
+                    section = section.push(self.find_highlights(
+                        detail,
+                        index + 1,
+                        self.selectable_body(detail, index + 1, &reply.body),
+                    ));
                 }
                 reading = reading.push(
                     container(section)
@@ -654,7 +903,9 @@ impl App {
                 );
             }
         }
-        if crate::remote_images::allowed(&self.preferences, &detail.summary) {
+        if detail.html.is_none()
+            && crate::remote_images::allowed(&self.preferences, &detail.summary)
+        {
             for remote in &detail.remote_images {
                 if let Some((_, handle)) = self
                     .remote_handles
@@ -697,26 +948,78 @@ impl App {
             .padding([10, 14])
             .style(primary)
             .on_press(Message::Reply),
-            action("Reply all", Message::ReplyAll)
+            if self.compact_reader() {
+                self.icon_action(
+                    "reply-all",
+                    self.shortcut_hint("Reply all", Action::ReplyAll),
+                    Message::ReplyAll,
+                )
+            } else {
+                action("Reply all", Message::ReplyAll).into()
+            },
+            if self.composer.forward_pending.is_some() {
+                button(text("Preparing…").size(12))
+                    .padding([10, 12])
+                    .style(ghost)
+                    .into()
+            } else {
+                self.icon_action(
+                    "forward",
+                    self.shortcut_hint("Forward", Action::Forward),
+                    Message::Forward,
+                )
+            },
+            if self.printing.pending {
+                button(icon("print", 20.))
+                    .style(ghost)
+                    .padding([8, 10])
+                    .into()
+            } else {
+                self.icon_action(
+                    "print",
+                    self.shortcut_hint("Print", Action::Print),
+                    Message::Print(super::printing::Message::Open),
+                )
+            }
         ]
-        .spacing(8)
+        .spacing(if self.compact_reader() { 4 } else { 8 })
         .align_y(Alignment::Center);
+        if self.compact_reader() && !self.conversation_visible() {
+            footer = footer
+                .push(self.icon_action(
+                    "left",
+                    self.shortcut_hint("Previous inbox message", Action::Previous),
+                    Message::PreviousMessage(true),
+                ))
+                .push(self.icon_action(
+                    "chevron",
+                    self.shortcut_hint("Next inbox message", Action::Next),
+                    Message::PreviousMessage(false),
+                ));
+        }
         for (index, attachment) in detail.attachments.iter().enumerate() {
-            footer = footer.push(
-                button(
-                    row![
-                        icon("clip", 18.),
-                        text(truncate(&attachment.name, 24))
-                            .size(12)
-                            .line_height(1.)
-                    ]
+            let compact = self.compact_reader();
+            let label: Element<'_, Message> = if compact {
+                super::ellipsis::Ellipsis::new(attachment.name.clone(), 12.).into()
+            } else {
+                text(truncate(&attachment.name, 24))
+                    .size(12)
+                    .line_height(1.)
+                    .into()
+            };
+            let attachment_button = button(
+                row![icon("clip", 18.), label]
                     .spacing(7)
                     .align_y(Alignment::Center),
-                )
-                .padding([10, 12])
-                .style(outline)
-                .on_press(Message::ExportAttachment(index)),
-            );
+            )
+            .padding([10, 12])
+            .style(outline)
+            .on_press(Message::ExportAttachment(index));
+            footer = footer.push(if compact {
+                attachment_button.width(((self.reader_width() - 64.) / 2.).max(100.))
+            } else {
+                attachment_button
+            });
         }
         footer.wrap().into()
     }
@@ -1121,23 +1424,30 @@ impl App {
                     row![
                         column![
                             text("Check for new mail").size(13),
-                            muted("Minutes between background checks").size(11)
+                            muted("Seconds between background checks").size(11)
                         ]
                         .spacing(5),
                         space().width(Length::Fill),
-                        input("5", self.field("sync_minutes"), |v| Message::Field(
-                            "sync_minutes",
+                        input("15", self.field("mail_check_seconds"), |v| Message::Field(
+                            "mail_check_seconds",
                             v
                         ))
                         .width(90)
                     ]
                     .align_y(Alignment::Center),
-                    line(),
-                    row![
-                        icon("check", 16.),
-                        muted("Next messages and the next page preload automatically.")
-                    ]
-                    .spacing(10)
+                    if crate::desktop_badge::SUPPORTED {
+                        Element::from(
+                            column![
+                                checkbox(self.preferences.unread_badge)
+                                    .label("Show unread Inbox count on the dock icon")
+                                    .on_toggle(Message::PrefUnreadBadge),
+                                muted("Counts unread Inbox messages across all accounts.").size(11)
+                            ]
+                            .spacing(19),
+                        )
+                    } else {
+                        space().into()
+                    }
                 ]
                 .spacing(19)
                 .into()
@@ -1609,11 +1919,25 @@ impl App {
                 "Connect a calendar",
                 "Bring your home server calendar into Shep with CalDAV.",
             ),
+            Dialog::BulkReview => ("Review selected messages", ""),
+            Dialog::BulkHistory => ("Mail changes", ""),
             Dialog::Move => (
-                "Move message",
-                "Choose a destination folder. POP3 folders are local to this device.",
+                if self.mail_selection.mode {
+                    "Move selected messages"
+                } else {
+                    "Move message"
+                },
+                "Choose a destination folder.",
             ),
-            Dialog::Compose => ("New message", ""),
+            Dialog::Compose => (
+                if self.composer.draft.forward.is_some() {
+                    "Forward message"
+                } else {
+                    "New message"
+                },
+                "",
+            ),
+            Dialog::DiscardDraft => ("Discard draft?", ""),
             Dialog::Event => ("Calendar event", "Times use this device's timezone."),
             Dialog::Export => (
                 "Save a copy",
@@ -1637,6 +1961,8 @@ impl App {
         .align_y(Alignment::Center);
         let mut body = column![header, line()].spacing(20);
         match dialog {
+            Dialog::BulkReview => body=body.push(self.bulk_review_form()),
+            Dialog::BulkHistory => body=body.push(self.bulk_history_form()),
             Dialog::Removal => body = body.push(self.removal_form()),
             Dialog::GoogleDisconnect => {
                 let pending = self.google_disconnect_pending.is_some();
@@ -1653,15 +1979,20 @@ impl App {
             Dialog::Account => body = body.push(self.account_wizard()),
             Dialog::Calendar => body = body.push(self.calendar_connection_form()),
             Dialog::Move=>{
-                if self.preferences.cross_account_moves {
-                    let choices: Vec<_> = self.workspace.accounts.iter().filter(|a| a.protocol == Protocol::Imap).map(|a| Choice(a.id.clone(), a.name.clone())).collect();
-                    let source = self.detail.as_ref().map(|d| d.summary.account_id.as_str()).unwrap_or("");
-                    let id = if self.field("move_account").is_empty() { source } else { self.field("move_account") };
+                if self.preferences.cross_account_moves
+                    && (!self.mail_selection.mode || self.mail_selection.snapshot.as_ref().is_some_and(|s|s.accounts.keys().all(|id|self.workspace.accounts.iter().any(|a|&a.id==id && a.protocol==Protocol::Imap)))) {
+                    let mut choices: Vec<_> = self.workspace.accounts.iter().filter(|a| a.protocol == Protocol::Imap).map(|a| Choice(a.id.clone(), a.name.clone())).collect();
+                    if self.mail_selection.mode { choices.insert(0,Choice(String::new(), "Each message’s account".into())); }
+                    let source = self.action_mail().map(|mail| mail.account_id.as_str()).unwrap_or("");
+                    let id = if self.field("move_account").is_empty() && !self.mail_selection.mode { source } else { self.field("move_account") };
                     let chosen = choices.iter().find(|c| c.0 == id).cloned();
                     body = body.push(column![text("Destination account").size(12), pick_list(choices, chosen, |c:Choice| Message::Field("move_account", c.0)).text_size(12).padding(11).style(select_input).menu_style(select_menu).width(Length::Fill)].spacing(8));
                 }
                 let folders = crate::fuzzy::ranked(self.field("folder_search"), self.move_folders());
                 body=body.push(input("Find a folder…",self.field("folder_search"),|v|Message::Field("folder_search",v)).id("folder-search").on_submit(Message::MoveFirst));
+                if folders.is_empty() {
+                    body=body.push(muted(if self.field("folder_search").is_empty() { "No shared destination folders. Refresh mail to load each account’s folders." } else { "No matching folders." }).size(12));
+                }
                 for (index, folder) in folders.iter().enumerate() {
                     let target = index == 0;
                     let trailing: Element<'_, Message> = if target { muted("Enter ↵").size(11).into() } else { icon("chevron", 14.) };
@@ -1669,6 +2000,7 @@ impl App {
                 }
             }
             Dialog::Compose => body = body.spacing(14).push(self.compose_form()),
+            Dialog::DiscardDraft => body = body.push(self.discard_draft_form()),
             Dialog::Event if self.editing_event.is_some() && !self.event_access().update => body = body.push(self.read_only_event()),
             Dialog::Event=>{
                 let choices:Vec<_>=self.workspace.calendars.iter().filter(|s| if let Some(event) = &self.editing_event { s.id == event.source_id } else { s.access.create }).map(|a|Choice(a.id.clone(),a.name.clone())).collect();let chosen=choices.iter().find(|a|a.0==self.field("source")).cloned();
@@ -1684,7 +2016,9 @@ impl App {
             Dialog::Export=>body=body.push(form_field("Full destination path","/home/you/Downloads/message.eml",self.field("path"),"path",false)).push(action("Browse…",Message::BrowseExport)).push(button(text("Save file").size(12)).padding([12,18]).style(primary).on_press(Message::SaveExport)),
             Dialog::Restore=>body=body.push(form_field("Backup passphrase","Enter the original passphrase",self.field("passphrase"),"passphrase",true)).push(muted("Existing mail, connection settings and passwords are kept. Missing account passwords are filled from the copy when available. Google sign-in and preferences stay unchanged.").size(11)).push(row![action("Cancel",Message::Close),button(text("Restore & merge").size(12)).padding([12,18]).style(primary).on_press(Message::ConfirmRestore)].spacing(10)),
         }
-        if let Some((notice, true, _)) = &self.notice {
+        if let Some((notice, true, _)) = &self.notice
+            && dialog != Dialog::BulkHistory
+        {
             body = body.push(container(text(notice).size(11)).padding(12).style(subtle));
         }
         container(scrollable(container(body).padding(27)).height(Length::Shrink))

@@ -43,7 +43,7 @@ Quality and release workflow definitions remain deliberately named `.github/work
 To enable when Sam asks:
 
 1. Provision trusted self-hosted runner labels from the CI matrix: `[self-hosted, Linux, X64]`, `[self-hosted, Windows, X64]`, `[self-hosted, macOS, ARM64]`. Adjust labels to the actual machines first. Do not run untrusted fork code on persistent self-hosted runners.
-2. Install Rust with `rustfmt` and `clippy`, Python 3, Node 24, and platform development libraries. The Linux GUI harness additionally needs `Xvfb`, `xdotool`, `zenity`, `xclip`, and ImageMagick `import` with WebP support. Linux needs OpenSSL/dbus/X11/Wayland development packages and a Secret Service for real credentials.
+2. Install Rust with `rustfmt` and `clippy`, CMake and a C++ compiler for vendored litehtml, Python 3, Node 24, and platform development libraries. The Linux GUI harness additionally needs `Xvfb`, `xdotool`, `zenity`, `xclip`, `dbus-daemon`, `busctl`, and ImageMagick `import` with WebP support. Print flows need Chrome/Chromium, Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and ImageMagick `convert`. Linux needs OpenSSL/dbus/X11/Wayland development packages and a Secret Service for real credentials.
 3. Rename both `.yml.disabled` files to `.yml`.
 4. `gh api --method PUT repos/sam-ruff/shep.so/actions/permissions -F enabled=true`
 5. Run the quality workflow manually, inspect results, then let the release workflow run only after a successful push build on `main`.
@@ -87,11 +87,13 @@ Artifacts go to ignored `artifacts/e2e/<run>/`: WebP screenshots, state, action 
 
 **Optimistic interaction is an app-wide requirement.** For reversible actions, show the expected successful result immediately and reconcile persistence/server state in the background. Archive/move removes a message from the current folder immediately; flags and read/unread indicators update immediately. Do not wait for SQLite, credentials, network requests or account sync before displaying that change. If an operation fails, restore the affected state and show an actionable error. Preserve newer user intent when older results arrive; keep pending changes through background refreshes and test slow success, failure/rollback and rapid repeated input. Responsiveness takes priority over waiting for confirmation, while correctness must converge and failures remain visible. This does not turn a pending operation into a confirmed server success.
 
+Read-on-leave and action feedback requirements: selecting an inbox message and then leaving it marks it read; explicit mark-unread intent must survive. Archive/delete/move toasts appear in the same optimistic UI update, refresh their timeout and increment their count on repeated actions. Each offers Undo, including while the original write is pending. Track original account/folder and acknowledged server identities for reversal; never reuse an obsolete IMAP UID after moving. Rollbacks and failures remain visible. Read-on-leave, immediate counted feedback and session Undo are delivered. Preserve their protocol/cache/native regressions when changing mail actions.
+
 - UI update handlers: p95 < 8 ms, target < 2 ms. No filesystem, credential-store, SQL, network, compression, crypto or MIME parsing in iced `update`/`view`.
 - Cached inbox/search page on 100,000 messages: p95 < 50 ms. Cached body load: p95 < 10 ms. Search debounces for 100 ms; stale results must not overwrite newer queries.
 - Aim for 60 Hz interaction (16.7 ms frame budget), cached message navigation under 100 ms, and visible acknowledgement within 100 ms. Measure full native input-to-state latency separately from handler timing; handler timing is not a frame-rate claim.
 - Keep 50 messages per page and render only visible rows plus a small overscan. Prefetch adjacent messages and the next page in background. Retain at most 8 bodies / 32 MiB in the prefetch cache. Avoid decoding assets repeatedly.
-- Bounded foreground-read, persistence and provider-command channels (32 each), prefetch/download channels (8 each), and an event channel (32). `engine/dispatch.rs` reserves two foreground read workers and one prefetch worker; settings/drafts use a separate FIFO worker. Provider work has eight slots, with account sync limited to three. `try_send` must never wait on the UI thread. Interactive backpressure produces visible feedback; a full speculative prefetch queue quietly drops that optional request.
+- Bounded foreground-read, persistence and provider-command channels (32 each), prefetch/download channels (8 each), and an event channel (32). `engine/dispatch.rs` reserves two foreground read workers and one prefetch worker; settings/drafts use a separate FIFO worker. Provider work shares eight slots, with account sync limited to three. Manual mail refresh has its own capacity-one coalescing channel, independent of provider backpressure. `try_send` must never wait on the UI thread. Interactive backpressure produces visible feedback; a full speculative prefetch queue quietly drops that optional request.
 - Test browsing, typing, remapping and appearance while a backend operation is pending. Slow or unavailable servers must never disable navigation.
 - Prefer 40–44 px click targets; visible focus, descriptive labels/tooltips, persistent errors with a clear recovery, no text clipping at 900×640 and 1440×920. Mouse and keyboard should reach the same core actions.
 - User-visible messages should explain the problem and next action. Do not present sample data as live accounts, pretend a sync succeeded after errors, or silently lose unsent drafts.
@@ -108,11 +110,26 @@ The full product goal is still active. Keep [docs/COMPLETION.md](docs/COMPLETION
 
 `src/ui/` owns presentation and small caches. `engine.rs` bridges bounded channels and background work. `store.rs` runs SQLite WAL/FTS work through `spawn_blocking`. `providers::MailProvider`, `CalendarProvider`, and `backup::BackupProvider` are extension points: add a provider without teaching the UI its wire protocol.
 
+The software renderer is patched through `vendor/iced_tiny_skia` (released iced 0.14.0, MIT). Cached dropdown text must intersect its own viewport with the damaged layer, and raw text must reset a shared clip mask after preceding text. Otherwise scrolled controls leave stray pixels that only a full repaint clears. Keep `tests/software_rendering.rs` and the saved filtered-preferences native regression when updating iced; remove the patch only after both pass upstream. The release archive includes the vendor license and patch provenance. Do not edit the Cargo registry cache or replace partial redraws with continuous full-window redraws to hide defects.
+
+Multi-selection storage lives in `store/selection.rs`; native controls in `ui/mail_selection.rs` use their own bounded FIFO channel in `engine/selections.rs`. Native group actions use frozen reviews and the durable journal described below. Keep shipping and remaining verification status in the completion log. `store/mail_query.rs` owns the common scope/ranking plan for inbox pages and captured membership. Keep selected IDs/ranks in SQLite and return at most one metadata page to iced. The controller keeps one request in flight and at most 32 pending gestures, projects visible selection immediately, and releases an abandoned snapshot before capturing a new scope. Scope changes clear selection immediately; page changes preserve it. New arrivals do not silently join a selection, but another explicit Select All captures them. Clear unchecks messages; Done/Escape exits selection mode. Checkbox/modifier gestures must not mark mail as read. Select All is remappable and scoped to native list focus at both key input and asynchronous focus-check completion. Preserve normal text Ctrl+A, sidebar focus and double-click reading.
+
+`capture_selection` ignores page offset, `change_selection` checks the expected revision atomically, and `freeze_selection` copies exact selected membership for a review. Missing mail remains explicit in selected versus available counts. Snapshot metadata pages read current flags/folders; immutable membership does not freeze message content. Temporary selection tables disappear on connection close; the bulk journal copies reviewed membership into durable jobs before execution. Preserve `tests/selections.rs`, controller ordering/cleanup tests, provider-saturation coverage and the saved `test_mail_selection_*` native scenarios when changing query scopes, ranking, pagination or selection lifecycle. Preserve the group toolbar, confirmation, failure and Undo native scenarios when changing this path.
+
+
+Bulk mail changes live in `bulk.rs`, `store/bulk.rs`, `engine/bulk.rs` and `ui/bulk.rs`. Persist exact membership and original metadata with per-message receipts; keep MIME in the mail table. Pending effects project query membership/flags without giving a provider a speculative destination UID. Status counters and indexes on job/position avoid scanning the whole group for every receipt. History reads at most 20 jobs or 50 items; iced retains at most one original metadata page for immediate Undo.
+
+A capacity-one wake channel coalesces requests; queued job IDs remain durable in SQLite. The worker uses one shared provider slot at a time, and updates progress at bounded intervals. Successful provider receipts are observed through persistence; do not drop them at a generic timeout. An owned `fs2` file lock prevents two processes from recovering/executing the same job. Memory stores must never create lock files in the repository. Startup does not repeat an unacknowledged running step: retain its ownership and show an unconfirmed result for explicit review. Never treat that conservative classification as proof that the server rejected the write.
+
+Undo cancels unsent steps and reverses acknowledged steps using their actual receipt identities, including when a forward write is still running. Preserve newer unrelated flag intent. Definite inverse failures may retry; ambiguous outcomes need explicit acceptance after checking folders. Query snapshots observe forward/Undo phase alongside counts, preventing double projection when a page arrives before its acknowledgment. Temporary restored rows cannot issue body/provider requests with obsolete IDs. Bulk toasts carry weighted group counts and adjust after failures.
+
+Closing requests the bulk worker to stop after its current receipt is durable; remaining queued work resumes with a fresh engine. An error cancels pending close. An explicitly resumed/new group can continue after another close dependency failed. Account-removal reviews include related group state and history; changed reviews are rejected, unfinished changes require the existing cancellation checkbox, and removal deletes only affected account entries/receipts. Preserve the independent-process lock test, query/receipt/restart/close/account-removal tests and all saved `test_bulk_*` native scenarios.
+
 Passwords and Google refresh tokens belong in the operating system keychain, never SQLite. Google login uses system browser + loopback callback, PKCE and state validation. Drive is opt-in and uses the app-private `appDataFolder` scope. Encrypted backups use Argon2id + AES-256-GCM, fresh salt/nonce, authenticated version header, and compress-before-encrypt. Retention runs only after a successful new upload. Never remove unrelated files. Restore validates/decrypts first and merges downloaded messages.
 
 Incoming IMAP/POP3 support SSL/TLS or STARTTLS; SMTP has independent TLS and authentication settings. Fastmail uses implicit TLS on 993/995 and SMTP 465 with an app password. Never disable certificate verification. POP3 leaves server originals intact and has local folders/flags. IMAP mutations check UIDVALIDITY; same-account safe move requires MOVE. Cross-account moves require two IMAP accounts and source UIDPLUS; preserve the destination acknowledgement journal, never remove the source before APPEND succeeds, and never automatically repeat an ambiguous upload. CalDAV writes use ETags; expanded recurring series are not overwritten through a single-occurrence editor.
 
-Current practical limits and unsupported behavior must remain explicit in README: 25 MiB individual-message download ceiling, 256 MiB raw-mail snapshot ceiling, text rendering with policy-controlled external images, Google Gmail uses app passwords rather than Gmail OAuth, calendar sync window -90/+365 days, recurring CalDAV edits belong in the server calendar UI. Improve these deliberately; do not hide them with success messages.
+Current practical limits and unsupported behavior must remain explicit in README: 25 MiB individual-message download ceiling, 256 MiB raw-mail snapshot ceiling, static HTML/text rendering with policy-controlled external images, Google Gmail uses app passwords rather than Gmail OAuth, calendar sync window -90/+365 days, recurring CalDAV edits belong in the server calendar UI. Improve these deliberately; do not hide them with success messages.
 
 ## Releases
 
@@ -137,7 +154,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 58 functional flows plus the navigation performance gate.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 116 functional flows plus the navigation performance gate.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -180,7 +197,7 @@ SMTP construction validates To/Cc/Bcc together, supports quoted display names, d
 
 `tests/composing.rs` verifies recipient privacy, reply headers, old-draft migration, attachment MIME/Unicode/binary roundtrips, reopening without source files, atomic failed imports, stale saves/removals and sent revisions. `shared/mail-core/src/providers/smtp_tests.rs` exercises the production delivery function through an object-scoped loopback SMTP transport, including rejected recipients and lost DATA acknowledgments; only that fixture transport uses plaintext. UI ordering tests cover stale file/workspace snapshots, failed saves and unrelated dialogs. These tests do not send personal mail.
 
-The native composer flows use `desktop.batch`'s `choose_file` action after clicking Attach files. Its optional `path` must resolve to a fixture file inside the current run's artifact directory; omit the path to cancel. The harness disables access to the user's desktop portal and isolates GTK config/data/cache directories. It operates the real Zenity picker with X11 input, pastes the complete path using an owned Xvfb clipboard, waits for the dialog to close and restores app focus (Xvfb has no window manager). GTK path completion can corrupt paths injected character by character. `xclip` and Zenity are additional Linux harness dependencies; the owned clipboard process is stopped on cleanup. Keep the actual picker flow, its protocol/unit tests and the saved native scenarios together. A 400 ms visual settling wait after file import is not a performance measurement; final timing gates remain deferred until the host is idle.
+The native composer flows use `desktop.batch`'s `choose_file` action after clicking Attach files. Its optional `path` must resolve to a fixture file inside the current run's artifact directory; omit the path to cancel. The harness disables access to the user's desktop portal and isolates GTK config/data/cache directories. It operates the real Zenity picker with X11 input, pastes the complete path using an owned Xvfb clipboard, verifies GTK copied back the exact entered path after replacing the harness clipboard owner, waits for the dialog to close and restores app focus (Xvfb has no window manager). Filename validation is asynchronous: bounded Return retries target only the picker window, so its closing cannot send a key to the composer. GTK path completion can corrupt paths injected character by character. `xclip` and Zenity are additional Linux harness dependencies; the owned clipboard process is stopped on cleanup. Keep the actual picker flow, its protocol/unit tests and the saved native scenarios together. A 400 ms visual settling wait after file import is not a performance measurement; final timing gates remain deferred until the host is idle.
 
 Conversation reading lives in `store/conversations.rs` and `ui/conversations.rs`. Link only explicit Message-ID/References/In-Reply-To within an account, including cached mail from different folders. Keep individual inbox rows and anchor selection distinct from the expanded message: reply/move/flags/export/image actions target the expanded physical message. Duplicate folder copies display once; prefer the selected/focused UID. A General preference disables grouping independently of quote-history display.
 
@@ -257,7 +274,7 @@ Inbox right-click actions retain the clicked message identity. Reply/move/export
 
 Contacts has its own Preferences tab; image policy and exceptions remain under Privacy. The Calendar view omits the redundant breadcrumb/footer and uses a refresh icon. Native calendar tests must follow its actual new event/agenda positions.
 
-The native functional suite now contains 58 saved flows (plus the deferred performance gate), including combined folder selection, account collapse, long labels, sidebar/window resizing, Contacts/save toast and inbox context actions in light/dark/compact layouts. The harness accepts `hover`, native `resize`, and `click`/`double_click` with `button` and optional modifiers; release held modifiers even if input fails. Schema and implementation must agree. Window persistence additionally has a real SQLite reopen test, and UI tests cover close-before-debounce, failed saves, stale acknowledgments and a full persistence queue.
+The native functional suite includes combined folder selection, account collapse, long labels, sidebar/window resizing, Contacts/save toast and inbox context actions in light/dark/compact layouts. The harness accepts `hover`, native `resize`, and `click`/`double_click` with `button` and optional modifiers; release held modifiers even if input fails. Schema and implementation must agree. Window persistence additionally has a real SQLite reopen test, and UI tests cover close-before-debounce, failed saves, stale acknowledgments and a full persistence queue.
 
 The active request backlog in `docs/COMPLETION.md` includes folder trees/context mutations, collapsible/deletable drafts, an inline composer with multiple drafts, palette editing, encrypted/streamed large mail and multiple backup destinations. Those are not complete merely because this increment passes.
 
@@ -268,7 +285,7 @@ The active request backlog in `docs/COMPLETION.md` includes folder trees/context
 
 Native `ContextArea` snapshots modifiers while processing the mouse event. Do not read a later global modifier value to interpret Ctrl-click. Background mail Changed notifications must preserve an open context menu; refreshed metadata updates its owned target. Normal outside clicks/Escape still dismiss. Preview sync emits the same refresh event so the saved native regression can detect accidental dismissal.
 
-Read-only editor buffers for mail text are prepared off-thread with one blocking preparation permit; cancelled/stale results never replace another message. Only selection/cursor/copy operations are accepted. The native suite copies text from preview/full reader and checks ordinary shortcuts still work. Faithful HTML and Ctrl+F remain separate TODO items.
+Read-only editor buffers for mail text are prepared off-thread with one blocking preparation permit; cancelled/stale results never replace another message. Only selection/cursor/copy operations are accepted. The native suite copies text from preview/full reader and checks ordinary shortcuts still work. HTML has its own worker and visible-text selection path, described below; Ctrl+F uses the displayed-text find path described below.
 
 Preferences search indexes actual editable sections in `ui/settings_search.rs`; update that index when adding settings. Search results open the matching controls. Preserve icon-only tooltip behavior and both tooltip preferences. Unread Inbox counts cover the cache independent of the current query. The Move chooser shows the server's INBOX as Inbox and marks its first result with the Enter hint.
 
@@ -286,3 +303,238 @@ Move search Enter resolves the latest form text in `Message::MoveFirst`; do not 
 
 
 Client Find text contracts live in `shared/mail-content/src/find.rs` and `shared/find-cases.json`: retain literal Unicode case folding, Rust whitespace normalization and original UTF-16 offsets. Native search runs with a separate blocking permit; browser search uses a preloaded Rust WASM worker so cached Find works offline. Only displayed quoted text enters the search, and both models coalesce pending work and reject stale source/query/case/error results. Keep native text selection/Copy intact. Saved controls live in `flutter/test/support/message_find_scenario.dart` (host plus Android incoming integration) and `web/e2e/message-find-flow.mjs` (preview plus actual Rust HTTPS), with remapping/layout checks in `message-find.spec.ts`. Inspect the active match in the scroll viewport and review captures; do not substitute direct model actions for UI input. HTML, bounded large-text layout/search and Apple execution remain explicit parity gaps.
+## Frequent background mail checks
+
+`engine/mail_sync.rs` starts a check after cached Ready and uses a saved seconds-based interval, default 15 and configurable from 5–3600. `sync_minutes` remains the separate calendar cadence for compatibility. Do not restore a minutes-long mail default. Settings changes update a watch channel only after persistence; unrelated saves do not reset the schedule. A single scheduling loop prevents overlapping cycles and retains one requested follow-up during background/manual work. Manual clicks update the refresh control immediately; automatic checks use a separate busy key. A completed short account check flushes its cached changes without waiting for slower accounts.
+
+The sync worker shares the provider semaphore and cannot consume foreground-read or persistence workers. Timeout/failure releases the current cycle and permits retry. Typed `MailSyncFinished` results clear only the earlier sync error after recovery; successful explicit settings saves clear only their settings error. Preserve unrelated errors. Keep optimistic mail overlays and open context menus through background refreshes.
+
+Virtual-time Rust tests exercise the actual scheduler with object-scoped cycle implementations: immediate startup, repeated checks, interval changes, queued/coalesced refresh, failure and timeout recovery. These are correctness checks, not performance measurements. Native `background_sync: true` uses a delayed fictional arrival; `sync_failure_once: true` fails its first check. Both require test-support and never contact a real mail server. Production startup remains automatic; ordinary native fixtures keep automatic checks off for reproducibility.
+
+
+## Search relevance and library matching
+
+`fuzzy.rs` uses RapidFuzz 0.5 (OSA edits, LCS subsequences and ratio) instead of the handwritten edit matrix. Exact folder/leaf names, prefixes, words, typos and abbreviations have deterministic ordering; Enter still resolves the latest field text. Normalize Latin accents while preserving Japanese marks and recomposing Hangul. Keep Unicode regression coverage when changing token normalization.
+
+New inbox searches select Best match; explicit search sorting is temporary. Clearing search or using Mail to return to Inbox restores the saved browsing sort. SQLite performs ranked selection and paging off-thread. Separate exact-term BM25 from expanded-term BM25 so a rare typo does not inflate an exact hit. Sender weight is lower than subject/body. A short whole-body equality check takes priority over keyword repetition; guard it with `octet_length` metadata and CASE before reading text. The guard allows normal surrounding line endings; longer bodies remain eligible through indexed ranking. Stable timestamp/ID ties, filtered counts, folder scopes and stale-page rejection must remain correct.
+
+Vocabulary expansion retains indexed one-edit lookup and bounded two-edit candidates from a shared prefix, verified/ranked with the library. Numeric tokens remain exact. Input is tokenized and bound as data, never interpreted as raw FTS/SQL syntax. A nonempty query without indexable tokens returns no results. The existing performance benchmark now exercises Relevance; keep its measurement deferred until the final idle-host run.
+
+Native `search_mail: true` provides an old exact-body message, newer weak/repeated/typo matches and a Café folder. Keep the saved search/sort/sync and accent/fast-Enter move scenarios. Observe `sort`, `mail_rows`, `selected`, `move_enter_destination` and destination-folder contents through real controls. This fixture contains no personal account data.
+
+References: [RapidFuzz](https://docs.rs/rapidfuzz/latest/rapidfuzz/), [SQLite FTS5 ranking](https://www.sqlite.org/fts5.html#the_bm25_function), [SQLite octet_length](https://www.sqlite.org/lang_corefunc.html#octet_length).
+
+Message actions resolve the current reader ID against matching body metadata, the expanded conversation page or the inbox page, in that order. Move/read/flag must work while a body is loading and must never target a stale body from another message. Clear native-focus observation when Move closes; a stale folder-search focus value cannot prove a later dialog is ready. Native tests must assert that Move opened before checking field focus and typing.
+
+## Draft navigation and permanent discard
+
+Drafts form a counted, collapsible sidebar group; `Preferences.collapsed_drafts` preserves the choice. Draft rows use the native `ContextArea` right-click path, retain their owned target through mail refreshes, and support mouse controls plus Up/Down/Enter/Escape. Discard from the editor's bin or context menu opens a review with the subject and attachment count. Cancel/Escape/N preserves unsaved fields; Enter/Y confirms. Do not resume editing or close the window while a confirmed discard is pending. A storage error keeps the review and original editor available for retry/cancellation.
+
+`Store::delete_draft` atomically retires the identity with the maximum supported revision in `draft_sent`, removes its text/attachment blobs, and advances the draft snapshot revision. The permanent tombstone must survive restart and later send cleanup. It rejects saves/file imports captured before discard, even with a newer edit revision. Submitting, uncertain and accepted outgoing records require Outbox review before discard; known rejections can be discarded directly and their wire/envelope record is removed atomically. Check this in the same SQLite transaction so a concurrent submission cannot bypass it. Send commit already checks the retirement record. Route DeleteDraft through the independent FIFO persistence worker and return a typed DraftDeleted snapshot; old snapshots cannot restore deleted rows or close another editor.
+
+`tests/composing.rs`, `tests/outgoing.rs` and UI ordering tests cover reopen, late saves/files, transaction rollback, send/discard exclusion, cancellation, failed save/retry and stale acknowledgments. The saturated-provider dispatcher test also discards a real cached draft while every network worker remains occupied. Native scenarios cover group collapse, menu survival during refresh, bin/keyboard review, attachments and light/dark/compact layouts. `desktop.start(discard_failure_once=true)` injects one fixture storage failure through test-support; it never changes production storage or contacts a server. Performance measurements remain deferred.
+
+## Read after deliberate selection
+
+`ui/read_tracking.rs` distinguishes deliberate inbox selection/arrow navigation/full-window opening from the programmatic first selection, hover and prefetch. Selecting an unread message arms a small metadata candidate; leaving for another message, folder, search, composer, tab or window marks it read through the existing optimistic flag path. Do not require loading a body or wait for a provider before the visual change. Explicit read/unread controls clear the candidate, so leaving cannot undo a user's mark-unread action. Refresh events must never finish a read by themselves.
+
+Archive/move finishes an armed read first and waits for its flag acknowledgment before using the source UID. Keep the expected UI removal immediate. After success or failure of the read write, pass the confirmed flags into the queued move. Failed read saves restore their old indicator without selecting the old message/folder. A full provider queue must not close the window while discarding a newly requested read change. Native scenarios cover deliberate vs startup selection, slow success, explicit unread, failure after folder navigation and arrows in an Unread filter. Measurements remain deferred.
+
+Archive/delete/move toast regressions: create feedback in the same update as the optimistic row change, even while waiting behind a read/flag save. Count archive and delete across accounts in the unified inbox; custom folders group by destination account/folder. Failures remove only their correlated count and retain the error. Successful completion must not recreate an expired/dismissed toast or replace a newer action. The current display lifetime is six seconds, refreshed by each action. Cross-account moves have typed completions and wait for source flags; keep that ordering when adding Undo and persistent action recovery.
+
+A focused iced text input may leave an unhandled modified key uncaptured (for example Ctrl+D). Before dispatching mail-target shortcuts, query native search focus with a widget operation; do not infer editing focus from `event::Status` or the harness focus observation alone. Test both mouse/shortcut search focus and remapped destructive keys, then verify the action still works outside search. Ignore delayed focus-check replies after changing tabs/dialogs. Inline composition must extend this guard to its editable controls when implemented.
+
+
+## Undo for optimistic mail moves
+
+`ui/mail_actions/undo.rs` retains only the original metadata, query membership and an acknowledged `MoveReceipt`. Toast Undo carries a snapshot of counted tokens. Restore the source rows and feedback immediately; cancel a move still waiting behind flags, or wait for the accepted forward command before dispatching its inverse. Retry a full bounded provider queue on Tick without blocking. Window close counts queued/in-flight Undo. Keep navigation usable and preserve selection of unrelated mail; a restoring placeholder must never send flags, detail or conversation requests using an obsolete UID.
+
+IMAP MOVE/APPEND receipts parse COPYUID/APPENDUID and the final tagged status explicitly. Missing mapping after tagged OK remains acknowledged success. Cache relocation changes identity inside a SQLite transaction, preserving original bytes, flags and indexes. Undo validates frozen incoming connection identity and, for real IMAP, verifies exact raw bytes at the destination before moving back. When a mapping is absent or UIDVALIDITY changed, search by size/Message-ID and accept only one exact SHA-256 match; ambiguous copies require choosing the copy in the destination folder. POP3 reversal stays local. Cross-account Undo reverses the already authorized transfer even if its preference is subsequently disabled and retains the transfer upload journal on retry.
+
+Failed Undo removes only its optimistic restored row/count and keeps a persistent Retry Undo/Dismiss card. Correlate the error notice so a successful retry clears its own error without dismissing an unrelated one. Do not recreate dismissed/expired feedback on acknowledgment. The history is scoped to the running session; durable pending-intent recovery remains R50/R60 work.
+
+
+## Native HTML reading
+
+`email_content.rs` selects MIME alternatives before rendering and recognizes complete mislabeled/escaped XHTML documents. Explicit HTML attachments remain attachments; related Content-ID resources belong to their selected representation. `HtmlBody` holds the source, scoped inline bytes, a content signature and cache weight, prepared in backend work. Preserve raw original exports and the explicit Plain text option. Plain preview truncation and large-message streaming remain R23 work.
+
+`html_render.rs` owns litehtml DOM/font/layout/image state on one worker. Bounded channels pass immutable viewport frames to iced. Coalesce geometry/hover work without losing selection Down/Up/Copy boundaries; ignore obsolete generations and retain the current document through metadata-only flag refresh. Never parse or render HTML in an iced handler. The native canvas participates in the outer reader scroll and must explicitly use a renderer clip layer even when the document is shorter than the viewport: the software image backend alone does not enforce the supplied image clip rectangle.
+
+Owned visible-text geometry supports selection/copy without raw DOM pointers, excluding collapsed quotations. While the HTML body has native focus, arrows/Page Up/Page Down/Home/End scroll its outer reader and cannot navigate the inbox. Clicking outside returns keyboard focus to the surrounding UI; keep the native focus-transition regression. The Formatted/Plain text controls preserve the MIME alternative; HTML quoted-history controls respect the existing reply preference. Rebuild the renderer when image permission is revoked so previously loaded pixels cannot remain visible. HTML sources/inline bytes count toward the existing body-prefetch budget.
+
+No email JavaScript, CSS imports, filesystem or automatic network loader is installed in the renderer. CID/data images decode off-thread to WebP; remote resources use the existing per-message/sender/domain/Contacts policy and public-address/redirect validation. Preserve natural dimensions when converting small images. External HTTP(S) links open through a background system-browser task; mailto opens a draft and cannot inject hidden headers or attachments.
+
+`vendor/shep-html-pixbuf` is the MIT-licensed upstream 0.2.6 drawing adapter with corrected image sizing/position/repetition/device scale. The layout engine stays pinned to upstream litehtml. Keep its license/provenance in release archives. Worker pixel tests prove scaled image contents and repeated backgrounds; native screenshots prove clipping and controls remain visible. Static email HTML is supported; this is not a JavaScript browser or full support for every advanced browser CSS feature.
+
+
+## Find within the open message
+
+`Action::Find` defaults to Mod+F and uses the same primary/secondary remapping, conflict migration and disable rules as other shortcuts. The reader toolbar offers a Find icon. Its bar searches only the expanded message's displayed body and visible quoted sections; it does not change the inbox query. Enter/Shift+Enter and mouse arrows wrap through matches; Aa toggles case matching. Escape closes Find before the full-window reader. Preserve tooltip preferences and show only primary shortcut hints for the Find action.
+
+`message_find::TextIndex` normalizes whitespace while mapping results back to original byte offsets. Queries are escaped literal text with Unicode simple case folding from `regex`; they are never evaluated as user regex syntax. HTML matching uses owned visible text geometry on the existing layout worker. Plain matching uses a separate cosmic-text font system and bundled Noto Sans, never iced's UI font lock. Bounded reader channels, coalescing, a short input debounce, revision checks and cancellation keep old results from replacing a new message/query. Plain search shaping and result geometry stay off the UI thread. Highlight rectangles are indexed by block/y so drawing visits the visible region; nearby text runs merge into one phrase highlight. Preserve original message text and native copy selection.
+
+Find reveal scrolls the actual parent reader and, when needed, a wide HTML table horizontally. Width/font/quote changes rebuild the relevant geometry. Native Enter handling must carry the key event's Shift state and find revision through focus inspection: a later global modifier value can already reflect key release. Close/navigation clear pending focus observations; tests must wait for a newly opened field, not a stale focus label. The compact toolbar leaves room for Find and Export.
+
+The saved five `test_find_*` native flows cover formatted/plain long mail, case matching, mouse/keyboard next/previous, delete isolation, new-message replacement, quoted history, dark/compact/full-window wide tables, remapping both slots and disabling Find. At the bottom of the standard shortcut list, Forward is near y=780, Find y=720, Inbox y=660 and Delete y=600. Keep the existing Inbox/Delete remapping regressions on their actual rows. Performance measurements remain deferred; these are functional checks.
+
+Matching references: [RegexBuilder Unicode case folding](https://docs.rs/regex/latest/regex/struct.RegexBuilder.html#method.unicode), [literal escaping](https://docs.rs/regex/latest/regex/fn.escape.html).
+
+
+## Forward drafts
+
+`compose/forwarding.rs` prepares forwards from complete cached MIME on the persistence worker, independently of network-job capacity. Copy the selected MIME representation, full text, styles, original body attributes, scoped CID images and ordinary attachments. Do not download external images. Exclude Bcc and transport headers from the quoted header block. Start a new draft identity/thread with empty To/Cc/Bcc; retain the source account and add Fwd only when absent. Forward is the preview footer arrow, with default remappable F and the same input-focus guards as other mail actions.
+
+`Draft.forward` preserves the original text/HTML. A note prepended to the original keeps its HTML alternative; editing the quoted original deliberately sends the edited plain text, with former inline images retained as ordinary attachments. Keep this behavior explicit in user docs. Never silently send stale HTML after the user edits the quote. `draft_inline` holds Content-ID metadata alongside independent attachment blobs and cascades on file deletion; ordinary text autosaves cannot rewrite file associations. Forward preparation commits text/files in one transaction and rejects a missing source, retired/duplicate draft ID or attachment-limit violation without saving a partial draft. Current sending/attachment ceilings remain R23 work.
+
+Typed results match the request/source/reader generation. A late result after navigation or opening another composer stays in Drafts and must not replace the current editor. Repeated Forward while preparation is pending is coalesced. Show Preparing immediately, keep navigation available, wait before window close and clear only the matching failed-preparation notice after retry. `mail_actions="slow"` delays fixture preparation; `"fail"` rejects the first fixture forward and allows retry. These never touch a personal account. Rust tests cover complete source, MIME/header/attachment roundtrip, restart, rollback, native editor roundtrip, stale results and saturated-provider dispatch. Preserve saved native forwarding scenarios with WebP evidence.
+
+
+## Printing from the reader
+
+Print is the footer printer icon or remappable Mod+P, including both binding slots and disable behavior. It snapshots the expanded physical message and current Formatted/Plain choice. Preparation has its own bounded capacity-two command channel and worker, independent of provider jobs and foreground reads. MIME parsing and raster conversion run off-thread using complete cached raw mail, including quoted history and attachment names. Only CID resources and already cached images permitted for this message are embedded, as WebP; printing never fetches remote resources. The current R23 download/cache limits still apply.
+
+`printing::Service` serves a self-contained document from memory on a random IPv4 loopback port and unguessable single-use path. Validate Host/method/path, bound headers/connections/timeouts, send no-store/no-referrer/CSP and stop after serving, cancellation or five-minute expiry. At most two unconsumed previews retain documents. The default browser owns printer/PDF selection; opening it is not evidence that the user printed. Retain the preview handle while its browser load may still be pending; dropping it stops an unconsumed server. Launcher and preparation failures remain visible and retry clears only the matching error. Printing does not mutate messages or block native navigation.
+
+The trusted parent prints its sandboxed srcdoc child, so long messages paginate. The child has allow-same-origin/allow-modals, never allow-scripts, forms or popups; a stricter child CSP blocks scripts and all network resources. Remove active elements/attributes and unsafe links before serialization; the parent prevents message navigation. Escape srcdoc and header data separately and substitute template markers once, never recursively into user text. Header insertion must wait for the actual srcdoc document, not the initial about:blank document. Review actual PDFs, not just serialized markup.
+
+The saved native Print flows start `desktop.start(print_browser="pdf" | "dialog" | "fail")`. An isolated Chrome/Chromium profile lives under the run artifacts and **must pass --ozone-platform=x11** so it stays on the harness-owned Xvfb display even on a Wayland host. The fixture-only launcher never falls back to the personal browser. PDF mode uses the actual browser print path with Save as PDF and kiosk printing, never a physical printer. Batch `print_output` asserts PDF text/pages and captures a first-page WebP; `browser_screenshot` captures the owned display, `cancel_print` uses native Escape, and `focus_app` raises/refocuses only the fixture window. Stop the owned browser process group before Xvfb. All scenarios remain in scripts/e2e.py. Linux Chromium evidence does not establish Firefox/Safari/macOS/Windows printing.
+
+Adding Print moves bottom-scrolled shortcut rows: Print y=780, Forward y=720, Find y=660, Inbox y=600 and Delete y=540 at 1440×920 without a bottom notice. Verify the actual presentation before adjusting coordinate tests. Performance measurements remain deferred; controlled preparation delays are correctness checks.
+
+References: [Window.print](https://developer.mozilla.org/en-US/docs/Web/API/Window/print), [iframe sandbox](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe), [srcdoc isolation](https://developer.mozilla.org/en-US/docs/Web/API/HTMLIFrameElement/srcdoc).
+
+
+## HTML frame preparation and geometry
+
+Discover remote image references while preparing `HtmlBody` on the backend,
+including CSS backgrounds and base-relative URLs. The blocked-image control
+must exist before the first frame; rendering must never insert that control
+above an already displayed body. Discovery is metadata only: fetch only resources
+actually requested by the renderer and permitted by the existing image policy.
+
+Horizontal panning belongs inside the visible HTML canvas. Reserve its small
+bottom band from the first layout, clip text selection/Find highlights above the
+track, and update the thumb immediately while the worker prepares pixels. Reject
+superseded pan frames. Horizontal arrows and Shift+wheel act only on the focused
+body and must not capture editing keys from Find. Keep compact attachments in
+two columns, with navigation sharing the action row so the body remains readable.
+Retain at most one set of current-query Find results that arrives before its
+matching layout frame. A rejected resize paint followed by a pan-only paint
+must not lose those results; reject older query/document revisions as usual.
+
+The fixture-only `html_delay_ms` MCP start option (0–2000) pauses the renderer
+worker, never iced, and must be paired with `--demo`. Use it for readiness/layout
+correctness checks, not performance claims. The native observations
+`html_body_bounds` and `html_body_visible` are in the parent's content coordinates;
+reset parent scroll before using them for native clicks. `html_pan_target` is
+desired horizontal position. These are observations, never an action API. Preserve the
+saved CSS-background delayed-render and compact attachment/body-space scenarios.
+
+The first HTML Load waits for the native canvas viewport, including when the body
+is below the visible portion of the reader. Keep Find and input behind that Load.
+Reject obsolete generation/viewport/scroll frames before presenting them, while
+retaining their current-document resource discovery. Draw old frames only at
+compatible width/scale; never stretch a bitmap from different geometry. Loading
+indicators belong inside the body allocation rather than a temporary extra row.
+
+The interactive HTML worker retains its own font discovery across documents;
+never share iced's font lock. A separate speculative worker has a replaceable
+mailbox of at most two neighboring cached messages. Its first-frame cache holds
+at most four frames / 32 MiB, keyed by body signature, message identity, geometry,
+font, quote policy, image permission and cached-image revision. It performs no
+network requests and cannot use the interactive renderer's capacity. Seed only
+permitted cached WebP bytes, decoded lazily when that document references them.
+Keep document font handles, glyphs and decoded resources isolated. Same-size
+repaints clear/reuse the viewport allocation.
+
+The saved native preparation flow checks cache use, rapid selection, End/Home,
+pane drag and compact resize through actual input; observe html_view_current,
+html_cache_ids, html_cache_hits and html_cache_bytes. These are correctness
+observations, not latency measurements. Preserve existing selection, Find,
+quote/image-policy and delayed-action scenarios and review their WebP captures.
+
+## HTML image reflow and recovery
+
+When an image changes layout above a scrolled reading position, retain a visible
+text-node anchor on the renderer worker. Use its DOM traversal identity and text
+fingerprint, including identities for zero-size text nodes; visible-run indices
+alone are not stable identities. The new viewport pixels account for the anchor's
+displacement. Image arrivals may decode into the existing document resources, but
+coalesce additional layouts until the native scroller acknowledges the first
+adjustment. This adds no deferred image queue and must not block Copy, navigation
+or a replacement Load. Images below the reading position do not move it; a reader
+at the start stays at the start.
+
+`ui/html_reader/anchor.rs` applies an absolute native scroll only when the target,
+view version, current offset and viewport geometry still match the snapshot.
+Newer user navigation wins. An acknowledgement updates the renderer, never the
+UI's newer observed viewport. Temporary image/selection positioning bridges the
+adjustment; Find overlays wait for it to settle. Ignore older document/layout
+acknowledgements. Preserve the pixel-equality, coalescing, below-viewport and
+stale-navigation regressions when changing this protocol.
+
+Recoverable render failures offer Retry formatted message and retain Plain text.
+Retry creates a fresh generation for the same selected message, waits for real
+canvas geometry and rejects old errors. A stopped worker keeps its explicit
+reopen instruction instead of offering an ineffective Retry button.
+
+The isolated harness accepts `image_delay_ms` (0–5000) and
+`html_failure_once` (boolean), honored only by demo/test-support code. The HTML
+fixture's Trash contains Delayed illustrated report, with two undimensioned
+images above the text. `remote_image_pending` and `remote_image_cached` are
+read-only observations. Save light/compact-dark/Find, navigate-before-arrival and
+native Retry scenarios in the automated suite. These controlled waits establish
+correctness, not performance measurements.
+
+## Unread launcher badges
+
+`desktop_badge` owns native badge publication separately from mail/provider work.
+The Linux adapter maintains a session-bus connection and publishes the Unity
+LauncherEntry Update/Query protocol for `application://so.shep.Shep.desktop`,
+matching the installed desktop entry and iced application ID. A watch channel
+retains only the newest count. Zero hides the badge; disconnection retries off
+thread; a new `com.canonical.Unity` owner receives the current value. Keep IPC
+bounded and never invoke a shell command from an iced handler. Windows/macOS
+adapters remain desktop-main:R70 work; show the preference only on implemented platforms.
+
+The badge counts unread Inbox messages across all connected mail accounts,
+independent of the open folder, filter, search or unified-inbox setting. Removing
+an account excludes it immediately. Preferences → General → Mail & performance
+has the persisted toggle, also searchable as badge/dock/taskbar. Publish only
+changed values; badges do not depend on whether a body has loaded.
+
+`MailQuery.observe` requests small pending-message membership records in the
+same SQLite read transaction as page rows and global counts. Never retrieve raw
+mail for this. `ui/mail_actions/counts.rs` projects intent independently of visible
+rows, distinguishes a missing observed identity from an unobserved one, and
+reconciles acknowledgements without double-counting a completed cache write.
+Invalidate older page/prefetch generations when an intent starts. Preserve tests
+for filtered pages, read rollback, Inbox moves, cross-account rekeying and Undo.
+Ambiguous provider receipts and durable pending-action recovery remain R50/R60.
+
+The MCP `desktop.start(desktop_badges=true)` option starts an owned private
+`dbus-daemon` and a `busctl` observer before the fixture app. Its explicit bus
+configuration has no service directories or activatable portal/keyring services,
+and it owns a private runtime directory. It never uses the personal session bus. `desktop_badge` in harness state comes from actual protocol
+messages, with count/visible/URI/sender and recent count history; it is not an app
+self-report or action API. Stop only owned processes. Backend tests also use a
+private bus for Query, zero visibility, owner changes, bus loss and reconnect.
+Native tests operate the real preference, mail controls and Undo. Protocol/native
+input evidence does not establish an actual GNOME/KDE/Windows/macOS dock render.
+
+Protocol references: [Unity Launcher API](https://wiki.ubuntu.com/Unity/LauncherAPI)
+and [Dash to Dock's receiver](https://github.com/micheleg/dash-to-dock/blob/master/launcherAPI.js).
+
+Native selection tests wait for `mail_selection.mode` and the test-only
+`mail_selection.drawn` observation before clicking new checkboxes. The row
+wrapper records its actual draw epoch; merely acknowledging Select in the
+controller is insufficient. Keep native mouse input and screenshot review.
+This observation is not evidence of display scanout or a performance result.
+
+The root `ContextArea` preserves motion-event cursor positions before dispatch
+into scrollable coordinates. iced 0.14 supplies the final pointer position for an
+input batch; using that for every queued click can toggle the same checkbox
+twice. Preserve overlay exclusion and clear the captured position on redraw.
+The native bulk flows intentionally click different rows consecutively, without
+inserting sleeps between clicks; the widget regression submits both clicks in
+one event batch. Do not mask this regression by slowing down native input.

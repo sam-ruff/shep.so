@@ -158,3 +158,62 @@ fn corrupt_optional_images_do_not_block_cache_text_or_replies() {
             .contains("inline image")
     );
 }
+
+#[test]
+fn single_document_adapter_keeps_cid_scopes_and_rewrites_css_without_cross_binding() {
+    let fixtures: Vec<Value> =
+        serde_json::from_str(include_str!("../../reader-fixtures.json")).unwrap();
+    let case = fixtures
+        .iter()
+        .find(|case| case["name"] == "independent-mixed-cid-scopes")
+        .unwrap();
+    let mut body = reader::decode(case["raw"].as_str().unwrap().as_bytes()).unwrap();
+    for section in &mut body.html {
+        section.source.push_str(r#"<style>.picture{background:u\72l('CID:logo')}</style><div style="background:url(cid:logo)"></div>"#);
+    }
+    let flat = reader::flatten(body).unwrap();
+    let document = scraper::Html::parse_document(&flat.source);
+    let images: Vec<_> = document
+        .select(&scraper::Selector::parse("img").unwrap())
+        .map(|img| img.attr("src").unwrap())
+        .collect();
+    assert_eq!(images.len(), 2);
+    assert_ne!(images[0], images[1]);
+    for (src, bytes) in images
+        .into_iter()
+        .zip([b"first".as_slice(), b"second".as_slice()])
+    {
+        assert_eq!(&*flat.inline[src.strip_prefix("cid:").unwrap()], bytes);
+        assert_eq!(
+            flat.source.matches(src).count(),
+            3,
+            "HTML, inline CSS and escaped stylesheet URLs must agree"
+        );
+    }
+    let case = fixtures
+        .iter()
+        .find(|case| case["name"] == "inner-ambiguous-cid-shadows-outer")
+        .unwrap();
+    let mut body = reader::decode(case["raw"].as_str().unwrap().as_bytes()).unwrap();
+    body.html[0]
+        .source
+        .push_str(r#"<img src="cid:logo"><div style="background:url(cid:logo)"></div>"#);
+    let flat = reader::flatten(body).unwrap();
+    assert!(flat.inline.is_empty());
+    assert!(
+        !flat.source.contains("cid:"),
+        "Ambiguous IDs must never fall back to the outer image"
+    );
+}
+
+#[test]
+fn single_document_adapter_preserves_each_sections_base_and_plain_section() {
+    let raw = b"Content-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: text/plain\r\n\r\nKeep <this> text\r\n--m\r\nContent-Type: text/html\r\n\r\n<html><head><base href='https://one.example.test/news/'></head><body bgcolor='#ffeecc'><img src='../a.webp'><a href='read'>Read</a></body></html>\r\n--m\r\nContent-Type: text/html\r\n\r\n<base href='https://two.example.test/'><style>p{background:url('b.webp')}</style><p>Second</p>\r\n--m--\r\n";
+    let flat = reader::flatten(reader::decode(raw).unwrap()).unwrap();
+    assert!(flat.source.contains("Keep &lt;this&gt; text"));
+    assert!(flat.source.contains("https://one.example.test/a.webp"));
+    assert!(flat.source.contains("https://one.example.test/news/read"));
+    assert!(flat.source.contains("https://two.example.test/b.webp"));
+    assert!(flat.source.contains("bgcolor=\"#ffeecc\""));
+    assert!(!flat.source.contains("<base"));
+}

@@ -317,3 +317,6 @@ fn mislabeled_html(body: &str) -> Option<String> {
     }
     None
 }
+
+mod flat;
+pub use flat::{FlatHtml, flatten};

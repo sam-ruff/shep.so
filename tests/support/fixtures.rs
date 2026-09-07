@@ -1,4 +1,6 @@
 use crate::{model::*, store::Store};
+#[path = "html_mail.rs"]
+mod html_mail;
 
 pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
     store
@@ -158,6 +160,27 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
             .await?;
     }
     store.upsert(mails).await?;
+    if std::env::args().any(|arg| arg == "--html-mail") {
+        html_mail::seed(store).await?;
+    }
+    if std::env::args().any(|arg| arg == "--search-mail") {
+        let mut messages = Vec::new();
+        for (index, subject, body) in [
+            (0, "Quick note", "test".to_owned()),
+            (
+                1,
+                "Project testing plan",
+                "Here is the test plan. Other project notes. ".repeat(50),
+            ),
+            (2, "Camping equipment", "tent".to_owned()),
+            (3, "Testing checklist", "testing".to_owned()),
+        ] {
+            let mut mail = parse_mail("preview-work", &format!("search-{index}"), "INBOX", format!("From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: {subject}\r\n\r\n{body}").into_bytes(), true, false)?;
+            mail.summary.timestamp = chrono::Utc::now().timestamp() + 60 - (3 - index) * 3600;
+            messages.push(mail);
+        }
+        store.upsert(messages).await?;
+    }
     if std::env::args().any(|a| a == "--outgoing-mail") {
         seed_outgoing(store).await?;
     }
@@ -199,6 +222,24 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
                 .await?;
         }
         store.save_folders("preview-work".into(), folders).await?;
+    }
+    if std::env::args().any(|arg| arg == "--search-mail") {
+        store
+            .save_folders(
+                "preview-work".into(),
+                [
+                    "INBOX",
+                    "Archive",
+                    "Projects",
+                    "Projects/Archive",
+                    "Café",
+                    "Sent",
+                    "Trash",
+                ]
+                .map(str::to_owned)
+                .to_vec(),
+            )
+            .await?;
     }
     if std::env::args().any(|a| a == "--empty-calendars") {
         return Ok(());
@@ -480,4 +521,65 @@ pub async fn mail_action_delay() -> anyhow::Result<()> {
         anyhow::ensure!(mode != "fail", "Fixture server rejected this change.");
     }
     Ok(())
+}
+
+/// Forward preparation fails once in the isolated failure fixture, then retries.
+pub async fn forward_delay(store: &Store) -> anyhow::Result<()> {
+    let mode =
+        std::env::args().find_map(|arg| arg.strip_prefix("--mail-actions=").map(str::to_owned));
+    if let Some(mode) = mode {
+        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+        if mode == "fail" && !store.get::<bool>("preview-forward-failed").await? {
+            store.put("preview-forward-failed", true).await?;
+            anyhow::bail!("Fixture storage failure. Try Forward again.");
+        }
+    }
+    Ok(())
+}
+
+/// A new arrival proves that an automatic cycle reaches the ordinary cache/UI.
+pub async fn sync_mail(store: &Store) -> anyhow::Result<u64> {
+    let background = std::env::args().any(|arg| arg == "--background-sync");
+    let fail_once = std::env::args().any(|arg| arg == "--sync-failure-once");
+    let round = store.get::<u64>("preview-sync-round").await? + 1;
+    store.put("preview-sync-round", round).await?;
+    tokio::time::sleep(std::time::Duration::from_millis(if background {
+        2500
+    } else {
+        1500
+    }))
+    .await;
+    anyhow::ensure!(
+        !fail_once || round != 1,
+        "Fixture mail server is temporarily unavailable. Try Refresh again."
+    );
+    if background {
+        store.upsert(vec![parse_mail("preview-work", "1.9000", "INBOX",
+            b"From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: New mail from the background\r\n\r\nThis fictional message arrived through the automatic refresh.".to_vec(), true, false)?]).await?;
+    }
+    Ok(round)
+}
+
+/// Controlled print delay/retry uses only isolated fixture storage.
+pub async fn print_delay(store: &Store) -> anyhow::Result<()> {
+    let mode =
+        std::env::args().find_map(|arg| arg.strip_prefix("--mail-actions=").map(str::to_owned));
+    if let Some(mode) = mode {
+        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+        if mode == "fail" && !store.get::<bool>("preview-print-failed").await? {
+            store.put("preview-print-failed", true).await?;
+            anyhow::bail!("Fixture storage failure. Try Print again.");
+        }
+    }
+    Ok(())
+}
+
+/// Controlled image delivery in isolated demo workspaces only.
+pub async fn image_delay() {
+    let delay = std::env::var("SHEP_TEST_IMAGE_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0)
+        .min(5000);
+    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
 }

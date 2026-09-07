@@ -72,6 +72,7 @@ void main() {
         );
       }
       await tester.ensureVisible(save);
+      await request.writeAsString('cancel-file', flush: true);
       await tester.tap(save);
       await tester.pump();
       await wait(() => find.text('Save cancelled.').evaluate().isNotEmpty);

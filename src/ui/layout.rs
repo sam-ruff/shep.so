@@ -261,6 +261,39 @@ mod tests {
         assert_eq!(request, app.preference_sync.generation());
         assert_eq!(prefs.sidebar_width, Some(340.));
     }
+
+    #[test]
+    fn saving_corrected_settings_clears_only_the_settings_error() {
+        let (mut app, _) = App::new();
+        let (sender, _receiver) = engine::CommandSender::persistence_test_channel();
+        app.tx = Some(sender);
+        app.settings_fields();
+        for unrelated_error in [false, true] {
+            app.fields.insert("mail_check_seconds", "0".into());
+            let _ = app.handle(Message::SavePreferences);
+            assert!(app.notice.as_ref().unwrap().0.contains("5–3600 seconds"));
+            app.fields.insert("mail_check_seconds", "5".into());
+            let _ = app.handle(Message::SavePreferences);
+            let request = app.confirm_save.unwrap();
+            let saved = app.preferences.clone();
+            if unrelated_error {
+                app.preference_notice = Some(Instant::now() - std::time::Duration::from_secs(1));
+                app.notice("Archive failed.", true);
+            }
+            let _ = app.handle(Message::Backend(Event::PreferencesSaved(
+                request,
+                Arc::new(PreferenceSnapshot {
+                    revision: request,
+                    value: saved,
+                }),
+            )));
+            assert!(app.saved_toast.is_some());
+            assert_eq!(
+                app.notice.as_ref().map(|notice| notice.0.as_str()),
+                unrelated_error.then_some("Archive failed.")
+            );
+        }
+    }
     #[test]
     fn sidebar_clamps_display_width_without_overwriting_the_saved_preference() {
         let (mut app, _) = App::new();

@@ -83,24 +83,37 @@ impl App {
                 section: false,
             });
         }
-        for draft in self
+        let drafts: Vec<_> = self
             .workspace
             .drafts
             .iter()
             .filter(|d| !self.workspace.outgoing_drafts.contains(&d.id))
-        {
+            .collect();
+        if !drafts.is_empty() {
             items.push(SidebarItem {
-                label: if draft.subject.is_empty() {
-                    "Untitled draft".into()
-                } else {
-                    draft.subject.clone()
-                },
+                label: format!("Drafts ({})", drafts.len()),
                 icon: "file",
-                action: Message::Draft(draft.id.clone()),
+                action: Message::ToggleDrafts,
                 active: false,
                 depth: 0,
                 section: false,
             });
+            if !self.preferences.collapsed_drafts {
+                for draft in drafts {
+                    items.push(SidebarItem {
+                        label: if draft.subject.is_empty() {
+                            "Untitled draft".into()
+                        } else {
+                            draft.subject.clone()
+                        },
+                        icon: "compose",
+                        action: Message::Draft(draft.id.clone()),
+                        active: false,
+                        depth: 1,
+                        section: false,
+                    });
+                }
+            }
         }
         for account in &self.workspace.accounts {
             items.push(SidebarItem {
@@ -232,35 +245,46 @@ impl App {
                     16.,
                 ));
             }
-            content = content.push(
-                container(super::context_menu::ContextArea::sidebar(
-                    button(label.width(Length::Fill))
-                        .width(Length::Fill)
-                        .padding([9, 10])
-                        .style(move |t, status| {
-                            let mut style = if item.active {
-                                selected(t, status)
-                            } else {
-                                ghost(t, status)
-                            };
-                            if focus {
-                                style.border = iced::Border {
-                                    color: colors(t).accent,
-                                    width: 1.,
-                                    radius: 7.into(),
-                                };
-                            }
-                            style
-                        })
-                        .on_press(Message::SidebarAction(index)),
-                ))
+            if matches!(item.action, Message::ToggleDrafts) {
+                label = label.push(icon(
+                    if self.preferences.collapsed_drafts {
+                        "chevron"
+                    } else {
+                        "down"
+                    },
+                    16.,
+                ));
+            }
+            let control = button(label.width(Length::Fill))
                 .width(Length::Fill)
-                .clip(true)
-                .padding(iced::Padding {
+                .padding([9, 10])
+                .style(move |t, status| {
+                    let mut style = if item.active {
+                        selected(t, status)
+                    } else {
+                        ghost(t, status)
+                    };
+                    if focus {
+                        style.border = iced::Border {
+                            color: colors(t).accent,
+                            width: 1.,
+                            radius: 7.into(),
+                        };
+                    }
+                    style
+                })
+                .on_press(Message::SidebarAction(index));
+            let control = if let Message::Draft(id) = item.action {
+                super::context_menu::ContextArea::draft(control, id)
+            } else {
+                super::context_menu::ContextArea::sidebar(control)
+            };
+            content = content.push(container(control).width(Length::Fill).clip(true).padding(
+                iced::Padding {
                     left: f32::from(item.depth) * 12.,
                     ..Default::default()
-                }),
-            );
+                },
+            ));
         }
 
         container(

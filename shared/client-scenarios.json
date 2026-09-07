@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "reference": "Rust iced desktop; docs/CLIENT_PARITY.md records gaps",
+  "reference": "Rust iced desktop committed 10d8569; merged-worktree verification and gaps in docs/CLIENT_PARITY.md",
   "scenarios": [
     {
       "id": "mail-list",
@@ -145,6 +145,24 @@
       "contract": "Prepare HTML/CSS and bounded inline WebP from selected cached MIME off-thread; retain authored layout, ordinary text selection and shared Find; remove sender active content and automatic remote resources; isolate the display frame, reject stale events, retain scroll/selection through app updates and expose plain text/retry when preparation or display fails.",
       "mobile": "Shared Rust/native bounded preparation and occupied-capacity test; formatted_message_test.dart generation/layout lifecycle; formatted_android_test.dart actual FFI/SQLite, CSS/inline image, Find/quotes/plain choice, scroll retention and damaged-message Retry. formatted_native.mjs uses Appium for real selection/Copy/paste, links and dark mode. formatted.mjs drives equivalent Flutter browser controls. See COMPLETION for execution; Apple, remote-image policy and large-document/performance parity OPEN.",
       "browser": "formatted_content.test.ts native/WASM contract; formatted-reader.spec.ts actual controls, sandbox/CSP/network isolation, Copy, quotes, Find and fallback, cancellation/retry, compact light/dark evidence; provider-flows.mjs actual Rust HTTPS inherited CSP/runtime and plain choice. Remote-image policy and large-document/performance parity OPEN."
+    },
+    {
+      "id": "desktop-forward-print",
+      "contract": "Forward complete MIME in a new thread with retained files and optional formatting; print the complete selected source with confined resources",
+      "mobile": "OPEN: Forward retained MIME/draft metadata and native Print controls/device tests",
+      "browser": "OPEN: Forward retained MIME/draft metadata and complete Print controls/browser tests"
+    },
+    {
+      "id": "desktop-bulk-selection",
+      "contract": "Explicit focused-list selection across pages, frozen reviewed bulk jobs, per-message results and durable grouped Undo",
+      "mobile": "OPEN: K9 selection gestures, selection review, durable bulk controls and native recovery tests",
+      "browser": "OPEN: Ctrl/Shift/checkbox selection, reviewed bulk jobs and durable history/recovery controls"
+    },
+    {
+      "id": "desktop-reading-defaults",
+      "contract": "Deliberate read-on-leave, refreshed counted action feedback, remote-image exceptions and stable reading anchors",
+      "mobile": "OPEN: current desktop defaults, image-policy controls/loading/anchors and OS badges/lifecycle",
+      "browser": "OPEN: current desktop defaults, image-policy controls/loading/anchors and background lifecycle"
     }
   ]
 }

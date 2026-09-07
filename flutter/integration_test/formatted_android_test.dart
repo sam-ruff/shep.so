@@ -90,6 +90,22 @@ void main() {
         return value;
       }
 
+      Future<void> observeUntil(
+        String expression,
+        Matcher matcher,
+        String reason,
+      ) async {
+        final end = DateTime.now().add(const Duration(seconds: 20));
+        while (true) {
+          final value = await observe(expression);
+          if (matcher.matches(value, <dynamic, dynamic>{})) return;
+          if (DateTime.now().isAfter(end)) {
+            expect(value, matcher, reason: reason);
+          }
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+      }
+
       Future<void> content() async {
         await wait(() => view.evaluate().isNotEmpty);
         final end = DateTime.now().add(const Duration(seconds: 20));
@@ -132,11 +148,12 @@ void main() {
       }
 
       await query('Alpha across spans', '1 of 1');
-      expect(
-        await observe(
-          'CSS.highlights?.get("shep-active")?.size ?? document.querySelectorAll("shep-match[data-active]").length',
-        ),
-        3,
+      // Flutter's count can paint before the asynchronous native JS command.
+      // Observe the actual WebView result; no script here performs an action.
+      await observeUntil(
+        'CSS.highlights?.get("shep-active")?.size ?? document.querySelectorAll("shep-match[data-active]").length',
+        equals(3),
+        'The native reader must highlight all three spans',
       );
       await query('Alpha', '1 of 2');
       await tester.ensureVisible(find.text('Show quoted history'));
@@ -146,7 +163,11 @@ void main() {
       await wait(() => find.text('2 of 3').evaluate().isNotEmpty);
       await tester.tap(find.byTooltip('Next match'));
       await wait(() => find.text('3 of 3').evaluate().isNotEmpty);
-      expect(await observe('scrollY'), greaterThan(1000));
+      await observeUntil(
+        'scrollY',
+        greaterThan(1000),
+        'The native reader must reveal the final Find match',
+      );
       await snapshot('native-formatted-find-tail');
       await tester.tap(find.byTooltip('Flag'));
       await tester.pumpAndSettle();

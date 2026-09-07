@@ -24,7 +24,11 @@ const SETTINGS: &[Setting] = &[
     Setting {
         title: "Mail & performance",
         tab: SettingsTab::General,
-        keywords: "sync interval minutes preload background speed",
+        keywords: if crate::desktop_badge::SUPPORTED {
+            "sync interval seconds minutes refresh preload background speed unread badge dock taskbar launcher notifications"
+        } else {
+            "sync interval seconds minutes refresh preload background speed"
+        },
     },
     Setting {
         title: "Tooltips",
@@ -59,7 +63,7 @@ const SETTINGS: &[Setting] = &[
     Setting {
         title: "Keyboard shortcuts",
         tab: SettingsTab::Shortcuts,
-        keywords: "key keys keybind remap primary secondary hotkey archive delete backspace inbox",
+        keywords: "key keys keybind remap primary secondary hotkey archive delete backspace inbox select all selection",
     },
     Setting {
         title: "Privacy",
@@ -129,6 +133,7 @@ mod tests {
         assert_eq!(matches("TLS")[0].title, "Your accounts");
         assert_eq!(matches("tooltip")[0].title, "Tooltips");
         assert_eq!(matches("secondary")[0].title, "Keyboard shortcuts");
+        assert_eq!(matches("select all")[0].title, "Keyboard shortcuts");
         assert!(matches("no-such-setting").is_empty());
     }
 }

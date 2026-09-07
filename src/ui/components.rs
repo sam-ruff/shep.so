@@ -417,11 +417,14 @@ fn icon_color<'a>(name: &str, size: f32, bright: bool, is_flagged: bool) -> Elem
         ("chevron",r#"<path d="m9 5 7 7-7 7"/>"#),
         ("left",r#"<path d="m15 5-7 7 7 7"/>"#),
         ("down",r#"<path d="m6 9 6 6 6-6"/>"#),
-        ("sync",r#"<path d="M20 7v5h-5M4 17v-5h5M5 7a8 8 0 0 1 13-2l2 3M4 16l2 3a8 8 0 0 0 13-2"/>"#),
+        ("sync",r#"<path d="M20 9a8.25 8.25 0 0 0-14-3L3 9m0-6v6h6M4 15a8.25 8.25 0 0 0 14 3l3-3m0 6v-6h-6"/>"#),
         ("settings",r#"<path d="m9 3 1-1h4l1 3 3 1 3 3-1 3 1 3-3 3-3 1-1 3h-4l-1-3-3-1-3-3 1-3-1-3 3-3 3-1V3Z"/><circle cx="12" cy="12" r="3"/>"#),
         ("shield",r#"<path d="m12 2 9 4v6c0 5-9 10-9 10S3 17 3 12V6l9-4Z"/><path d="m8 12 3 3 5-6"/>"#),
         ("cloud",r#"<path d="M6 18a5 5 0 0 1-1-10 7 7 0 0 1 13-2 6 6 0 0 1 0 12H6Z"/>"#),
         ("reply",r#"<path d="m9 4-6 6 6 6M3 10h11a7 7 0 0 1 7 7v3"/>"#),
+        ("reply-all",r#"<path d="m8 5-5 5 5 5m5-10-5 5 5 5M8 10h6a7 7 0 0 1 7 7v3"/>"#),
+        ("print",r#"<path d="M6 9V3h12v6M6 18H3V9h18v9h-3M6 14h12v7H6z"/><path d="M17 11h1"/>"#),
+        ("forward",r#"<path d="m15 4 6 6-6 6m6-6H10a7 7 0 0 0-7 7v3"/>"#),
         ("clip",r#"<path d="m21 11-9 9a6 6 0 0 1-8-8L14 2a4 4 0 0 1 6 6L10 18a2 2 0 0 1-3-3l9-9"/>"#),
         ("close",r#"<path d="m6 6 12 12M6 18 18 6"/>"#),
         ("check",r#"<path d="m5 12 4 4L19 6"/>"#),
@@ -430,6 +433,7 @@ fn icon_color<'a>(name: &str, size: f32, bright: bool, is_flagged: bool) -> Elem
         ("keyboard",r#"<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h1m3 0h1m3 0h1m3 0h1M6 12h1m3 0h1m3 0h1m3 0h1M7 16h10"/>"#),
         ("copy",r#"<rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3"/>"#),
         ("download",r#"<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>"#),
+        ("up",r#"<path d="m6 15 6-6 6 6"/>"#),
         ("clock",r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>"#),
     ].into_iter().map(|(name,path)|(name,svg::Handle::from_memory(format!(r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#777580" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{path}</svg>"##).into_bytes()))).collect());
     svg(icons.get(name).unwrap_or(&icons["mail"]).clone())

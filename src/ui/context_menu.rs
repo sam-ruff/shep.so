@@ -207,29 +207,72 @@ impl App {
 pub(super) struct ContextArea<'a> {
     content: Element<'a, Message>,
     mail: Option<String>,
+    draft: Option<String>,
+    preserve_pointer: bool,
+    #[cfg(feature = "test-support")]
+    draw_witness: Option<(u64, Arc<std::sync::atomic::AtomicU64>)>,
 }
 impl<'a> ContextArea<'a> {
     pub fn new(content: impl Into<Element<'a, Message>>, mail: String) -> Self {
         Self {
             content: content.into(),
             mail: Some(mail),
+            draft: None,
+            preserve_pointer: false,
+            #[cfg(feature = "test-support")]
+            draw_witness: None,
         }
+    }
+    #[cfg(feature = "test-support")]
+    pub fn with_draw_witness(
+        mut self,
+        epoch: u64,
+        drawn: Arc<std::sync::atomic::AtomicU64>,
+    ) -> Self {
+        self.draw_witness = Some((epoch, drawn));
+        self
     }
 }
 impl<'a> ContextArea<'a> {
+    /// The runtime supplies the final cursor for a whole input batch. Preserve
+    /// each motion before dispatch, outside scrollable coordinate transforms.
+    pub fn root(content: impl Into<Element<'a, Message>>) -> Self {
+        let mut area = Self::sidebar(content);
+        area.preserve_pointer = true;
+        area
+    }
     pub fn sidebar(content: impl Into<Element<'a, Message>>) -> Self {
         Self {
             content: content.into(),
             mail: None,
+            draft: None,
+            preserve_pointer: false,
+            #[cfg(feature = "test-support")]
+            draw_witness: None,
+        }
+    }
+    pub fn draft(content: impl Into<Element<'a, Message>>, id: String) -> Self {
+        Self {
+            content: content.into(),
+            mail: None,
+            draft: Some(id),
+            preserve_pointer: false,
+            #[cfg(feature = "test-support")]
+            draw_witness: None,
         }
     }
 }
+#[derive(Default)]
+struct InputState {
+    modifiers: keyboard::Modifiers,
+    pointer: std::cell::Cell<Option<Point>>,
+}
 impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
     fn tag(&self) -> iced::advanced::widget::tree::Tag {
-        iced::advanced::widget::tree::Tag::of::<keyboard::Modifiers>()
+        iced::advanced::widget::tree::Tag::of::<InputState>()
     }
     fn state(&self) -> iced::advanced::widget::tree::State {
-        iced::advanced::widget::tree::State::new(keyboard::Modifiers::default())
+        iced::advanced::widget::tree::State::new(InputState::default())
     }
     fn children(&self) -> Vec<Tree> {
         vec![Tree::new(&self.content)]
@@ -272,23 +315,47 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        let modifiers = tree.state.downcast_mut::<keyboard::Modifiers>();
+        let state = tree.state.downcast_mut::<InputState>();
         if let iced::Event::Keyboard(keyboard::Event::ModifiersChanged(value)) = event {
-            *modifiers = *value;
+            state.modifiers = *value;
         }
         if matches!(event, iced::Event::Window(iced::window::Event::Unfocused)) {
-            *modifiers = keyboard::Modifiers::default();
+            state.modifiers = keyboard::Modifiers::default();
         }
-        let modifiers = *modifiers;
+        let modifiers = state.modifiers;
+        let cursor = if self.preserve_pointer {
+            match event {
+                iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    state.pointer.set(Some(*position));
+                }
+                iced::Event::Mouse(mouse::Event::CursorLeft)
+                | iced::Event::Window(iced::window::Event::Unfocused)
+                | iced::Event::Window(iced::window::Event::RedrawRequested(_)) => {
+                    state.pointer.set(None);
+                }
+                _ => {}
+            }
+            match (cursor, state.pointer.get()) {
+                (mouse::Cursor::Available(_), Some(position)) => mouse::Cursor::Available(position),
+                // Preserve the runtime's overlay/scrollbar exclusion.
+                _ => cursor,
+            }
+        } else {
+            cursor
+        };
         if matches!(
             event,
             iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right))
         ) && cursor.is_over(layout.bounds())
             && cursor.is_over(*viewport)
-            && let Some(mail) = &self.mail
+            && (self.mail.is_some() || self.draft.is_some())
             && let Some(position) = cursor.position()
         {
-            shell.publish(Message::MailContext(mail.clone(), position));
+            if let Some(mail) = &self.mail {
+                shell.publish(Message::MailContext(mail.clone(), position));
+            } else if let Some(draft) = &self.draft {
+                shell.publish(Message::DraftContext(draft.clone(), position));
+            }
             shell.capture_event();
             return;
         }
@@ -307,6 +374,7 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
         shell.merge(child, |message| match message {
             Message::SidebarAction(index) => Message::SidebarClick(index, modifiers),
             Message::Select(id) => Message::SelectClick(id, modifiers),
+            Message::OpenMessage(id) => Message::OpenMessageClick(id, modifiers),
             other => other,
         });
     }
@@ -336,6 +404,9 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
+        if self.preserve_pointer {
+            tree.state.downcast_ref::<InputState>().pointer.set(None);
+        }
         self.content.as_widget().draw(
             &tree.children[0],
             renderer,
@@ -345,6 +416,14 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
             cursor,
             viewport,
         );
+        // Observe the real widget draw, never a controller acknowledgment.
+        // Native tests can wait for the checkbox layout before injecting input.
+        #[cfg(feature = "test-support")]
+        if let Some((epoch, drawn)) = &self.draw_witness
+            && layout.bounds().intersects(viewport)
+        {
+            drawn.store(*epoch, std::sync::atomic::Ordering::Release);
+        }
     }
     fn overlay<'b>(
         &'b mut self,
@@ -366,5 +445,83 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
 impl<'a> From<ContextArea<'a>> for Element<'a, Message> {
     fn from(area: ContextArea<'a>) -> Self {
         Self::new(area)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queued_clicks_keep_their_positions_before_scroll_transforms() {
+        let mut area = ContextArea::root(
+            iced::widget::column![
+                button("First")
+                    .width(100)
+                    .height(40)
+                    .on_press(Message::CheckMail("first".into())),
+                button("Second")
+                    .width(100)
+                    .height(40)
+                    .on_press(Message::CheckMail("second".into())),
+            ]
+            .spacing(10),
+        );
+        let mut renderer = Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.));
+        let mut tree = Tree::new(&area as &dyn Widget<Message, Theme, Renderer>);
+        let bounds = Size::new(200., 200.);
+        let node = area.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, bounds),
+        );
+        let mut messages = Vec::new();
+        let last_cursor = mouse::Cursor::Available(Point::new(10., 60.));
+        let first = Point::new(10., 10.);
+        let second = Point::new(10., 60.);
+        for position in [first, second] {
+            for event in [
+                iced::Event::Mouse(mouse::Event::CursorMoved { position }),
+                iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            ] {
+                area.update(
+                    &mut tree,
+                    &event,
+                    Layout::new(&node),
+                    last_cursor,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut Shell::new(&mut messages),
+                    &Rectangle::with_size(bounds),
+                );
+            }
+        }
+        let ids: Vec<_> = messages
+            .iter()
+            .filter_map(|m| match m {
+                Message::CheckMail(id) => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids, ["first", "second"]);
+        // A new frame with no motion must use its current cursor. Do not retain
+        // a position from before a popup, resize, or scroll completed.
+        area.draw(
+            &tree,
+            &mut renderer,
+            &Theme::Light,
+            &renderer::Style::default(),
+            Layout::new(&node),
+            last_cursor,
+            &Rectangle::with_size(bounds),
+        );
+        assert!(
+            tree.state
+                .downcast_ref::<InputState>()
+                .pointer
+                .get()
+                .is_none()
+        );
     }
 }

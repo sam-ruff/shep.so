@@ -2,7 +2,7 @@
 //! Prepare on a worker. The only executable code is the fixed display runtime;
 //! sender HTML is sanitized, links are inert metadata, and images are bounded
 //! WebP blobs. Callers must additionally sandbox frames and deny navigation.
-mod css;
+pub(crate) mod css;
 mod resources;
 
 use crate::reader::{Body, RawHtmlPart, escape};

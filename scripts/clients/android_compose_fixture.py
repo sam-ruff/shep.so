@@ -37,10 +37,19 @@ class AndroidPicker:
         return result.stdout if result.returncode == 0 else b''
 
     def window(self):
-        self.adb('shell', 'uiautomator', 'dump', '/data/local/tmp/shep-compose-window.xml')
-        xml = self.adb('exec-out', 'cat', '/data/local/tmp/shep-compose-window.xml')
+        # uiautomator can return success without a dump during transitions.
+        # Never use a previous picker's controls as the current window.
+        remote = '/data/local/tmp/shep-compose-window.xml'
+        self.adb('shell', 'rm', '-f', remote)
+        self.adb('shell', 'uiautomator', 'dump', remote, check=False)
+        xml = self.adb('exec-out', 'cat', remote, check=False)
         (OUTPUT / 'last-window.xml').write_bytes(xml)
-        return ET.fromstring(xml).findall('.//node')
+        if not xml:
+            return []
+        try:
+            return ET.fromstring(xml).findall('.//node')
+        except ET.ParseError:
+            return []
 
     def wait_for_system_ui(self, nodes):
         if not any(n.attrib.get('text') == "System UI isn't responding" for n in nodes):

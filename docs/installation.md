@@ -7,7 +7,7 @@ Linux is the currently verified platform. Windows and macOS still need testing.
 Install stable Rust (1.88 or newer) and Python 3. On Debian or Ubuntu, add these build dependencies:
 
 ```sh
-sudo apt install build-essential pkg-config libssl-dev libdbus-1-dev \
+sudo apt install build-essential cmake pkg-config libssl-dev libdbus-1-dev \
   libx11-dev libxkbcommon-dev libwayland-dev
 ```
 
@@ -40,3 +40,13 @@ bash scripts/install-linux.sh --uninstall
 ```
 
 Your accounts, downloaded mail, drafts and backups are kept.
+
+## Unread dock count
+
+On Linux, **Preferences → General → Mail & performance** controls the unread
+Inbox badge. It counts all connected accounts, even when viewing another folder.
+The installed desktop entry must remain named `so.shep.Shep.desktop`.
+
+The dock must support the [Unity Launcher API](https://wiki.ubuntu.com/Unity/LauncherAPI),
+as [Dash to Dock does](https://github.com/micheleg/dash-to-dock/blob/master/launcherAPI.js).
+Windows and macOS badge adapters are still pending.

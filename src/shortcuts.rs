@@ -18,11 +18,15 @@ pub enum Action {
     OpenMessage,
     ClosePreview,
     ReplyAll,
+    SelectAll,
     Delete,
     Inbox,
+    Find,
+    Forward,
+    Print,
 }
 impl Action {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 21] = [
         Self::Move,
         Self::Compose,
         Self::Reply,
@@ -38,8 +42,12 @@ impl Action {
         Self::OpenMessage,
         Self::ClosePreview,
         Self::ReplyAll,
+        Self::SelectAll,
         Self::Delete,
         Self::Inbox,
+        Self::Find,
+        Self::Forward,
+        Self::Print,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -58,8 +66,12 @@ impl Action {
             Self::OpenMessage => "Open full-window reader",
             Self::ClosePreview => "Close full-window reader",
             Self::ReplyAll => "Reply to all",
+            Self::SelectAll => "Select all messages (list)",
             Self::Delete => "Move to Trash",
             Self::Inbox => "Go to Inbox (sidebar)",
+            Self::Find => "Find in message",
+            Self::Forward => "Forward message",
+            Self::Print => "Print message",
         }
     }
 }
@@ -168,8 +180,12 @@ impl Default for Keymap {
                     "Enter",
                     "Escape",
                     "Shift+R",
+                    "Mod+A",
                     "Mod+D",
                     "I",
+                    "Mod+F",
+                    "F",
+                    "Mod+P",
                 ])
                 .map(|(a, k)| (a, k.into()))
                 .collect(),
@@ -222,8 +238,8 @@ impl Keymap {
             anyhow::ensure!(
                 (key != "ESCAPE" || *action == Action::ClosePreview)
                     && key != "TAB"
-                    && key != "MOD+A",
-                "Escape, Tab and Select all are reserved."
+                    && (key != "MOD+A" || *action == Action::SelectAll),
+                "Escape and Ctrl+A are reserved for their matching actions; Tab switches focus."
             );
             anyhow::ensure!(
                 seen.insert(key.clone()),

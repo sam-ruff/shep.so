@@ -562,3 +562,82 @@ async fn unified_sent_uses_each_accounts_real_folder_and_keeps_local_only_copies
         0
     );
 }
+
+#[tokio::test]
+async fn discard_and_submission_are_transactionally_exclusive() {
+    let store = Store::memory().unwrap();
+    let draft = draft("being-sent");
+    let queued = begin(&store, &draft).await;
+    for stage in [DeliveryState::Submitting, DeliveryState::Uncertain] {
+        if stage != DeliveryState::Submitting {
+            store
+                .record_delivery(queued.attempt.clone(), stage, None)
+                .await
+                .unwrap();
+        }
+        assert!(
+            store
+                .delete_draft(draft.id.clone())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Outbox")
+        );
+        assert_eq!(
+            store.draft_state().await.unwrap().drafts,
+            std::slice::from_ref(&draft)
+        );
+        assert_eq!(
+            store
+                .outgoing_submission(queued.attempt.clone())
+                .await
+                .unwrap()
+                .info
+                .delivery,
+            stage
+        );
+    }
+    store.release_outgoing(queued.attempt).await.unwrap();
+    store.delete_draft(draft.id.clone()).await.unwrap();
+    store.save_draft(draft.clone()).await.unwrap();
+    assert!(
+        store
+            .begin_outgoing(submission(&draft), draft)
+            .await
+            .is_err()
+    );
+    assert!(store.draft_state().await.unwrap().drafts.is_empty());
+}
+
+#[tokio::test]
+async fn discard_rejected_send_removes_its_wire_record_and_outbox_entry() {
+    let store = Store::memory().unwrap();
+    let draft = draft("rejected");
+    let queued = begin(&store, &draft).await;
+    store
+        .record_delivery(queued.attempt.clone(), DeliveryState::Rejected, None)
+        .await
+        .unwrap();
+    let before = store.workspace().await.unwrap();
+    assert_eq!(before.outgoing_pending, 1);
+    assert!(!before.outgoing_drafts.contains(&draft.id));
+    store.delete_draft(draft.id.clone()).await.unwrap();
+    let after = store.workspace().await.unwrap();
+    assert!(after.drafts.is_empty());
+    assert_eq!(after.outgoing_pending, 0);
+    assert!(after.outgoing_revision > before.outgoing_revision);
+    assert!(store.outgoing_submission(queued.attempt).await.is_err());
+    assert!(
+        store
+            .outgoing_for_draft(draft.id.clone())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .begin_outgoing(submission(&draft), draft)
+            .await
+            .is_err()
+    );
+}

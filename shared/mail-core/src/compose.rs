@@ -5,6 +5,9 @@ use lettre::message::{Mailbox, Mailboxes, MultiPart, SinglePart, header::Content
 use mailparse::MailHeaderMap;
 use std::collections::HashSet;
 
+mod forwarding;
+pub use forwarding::ForwardQuote;
+
 pub const MAX_ATTACHMENT_BYTES: usize = 18 * 1024 * 1024;
 pub const MAX_ATTACHMENTS: usize = 32;
 
@@ -56,7 +59,7 @@ impl ReplyHeaders {
         }
     }
 
-    pub fn draft(&self, mail: &MailDetail, accounts: &[Account], all: bool) -> Draft {
+    pub fn draft<Html>(&self, mail: &MailDetail<Html>, accounts: &[Account], all: bool) -> Draft {
         let own: HashSet<_> = accounts
             .iter()
             .filter_map(|account| account.email.parse::<Mailbox>().ok())
@@ -271,28 +274,70 @@ pub fn build_with_message_id(
         files.len() == draft.attachments.len() && files.len() <= MAX_ATTACHMENTS,
         "An attachment is missing. Reopen the draft and check its files."
     );
-    let message = if files.is_empty() {
-        builder.singlepart(SinglePart::plain(draft.body.clone()))?
-    } else {
-        let mut total = 0usize;
-        let mut multipart = MultiPart::mixed().singlepart(SinglePart::plain(draft.body.clone()));
-        for (file, expected) in files.into_iter().zip(&draft.attachments) {
+    let html = draft
+        .forward
+        .as_ref()
+        .and_then(|quote| quote.render(&draft.body));
+    let mut attachments = Vec::new();
+    let mut inline = Vec::new();
+    let mut total = 0usize;
+    let mut content_ids = HashSet::new();
+    for (file, expected) in files.into_iter().zip(&draft.attachments) {
+        anyhow::ensure!(
+            &file.attachment == expected && file.bytes.len() == expected.size,
+            "An attachment changed. Reopen the draft and check its files."
+        );
+        total = total
+            .checked_add(file.bytes.len())
+            .context("Attachment size overflow")?;
+        anyhow::ensure!(
+            total <= MAX_ATTACHMENT_BYTES,
+            "Attachments must total 18 MiB or less."
+        );
+        let kind = ContentType::parse(&file.attachment.media_type)
+            .context("An attachment has an invalid media type.")?;
+        if let Some(cid) = &expected.content_id {
             anyhow::ensure!(
-                &file.attachment == expected && file.bytes.len() == expected.size,
-                "An attachment changed. Reopen the draft and check its files."
+                !cid.is_empty()
+                    && cid.len() <= 998
+                    && !cid.contains(['\r', '\n', '\0', '<', '>'])
+                    && content_ids.insert(cid.clone()),
+                "An inline image has an invalid or repeated Content-ID."
             );
-            total = total
-                .checked_add(file.bytes.len())
-                .context("Attachment size overflow")?;
-            anyhow::ensure!(
-                total <= MAX_ATTACHMENT_BYTES,
-                "Attachments must total 18 MiB or less."
+        }
+        if let Some(cid) = expected.content_id.as_ref().filter(|_| html.is_some()) {
+            inline.push(
+                lettre::message::Attachment::new_inline_with_name(
+                    cid.clone(),
+                    file.attachment.name,
+                )
+                .body(file.bytes, kind),
             );
-            let kind = ContentType::parse(&file.attachment.media_type)
-                .context("An attachment has an invalid media type.")?;
-            multipart = multipart.singlepart(
+        } else {
+            attachments.push(
                 lettre::message::Attachment::new(file.attachment.name).body(file.bytes, kind),
             );
+        }
+    }
+    let plain = SinglePart::plain(draft.body.clone());
+    let message = if html.is_none() && attachments.is_empty() {
+        builder.singlepart(plain)?
+    } else {
+        let mut multipart = if let Some(html) = html {
+            let mut related = MultiPart::related().singlepart(SinglePart::html(html));
+            for part in inline {
+                related = related.singlepart(part);
+            }
+            MultiPart::mixed().multipart(
+                MultiPart::alternative()
+                    .singlepart(plain)
+                    .multipart(related),
+            )
+        } else {
+            MultiPart::mixed().singlepart(plain)
+        };
+        for part in attachments {
+            multipart = multipart.singlepart(part);
         }
         builder.multipart(multipart)?
     };
@@ -347,7 +392,8 @@ pub fn reply_from_raw(
     let parsed = crate::mime::parse(raw)?;
     let reply = ReplyHeaders::parse(&parsed);
     let (body, _) = content(&parsed)?;
-    let detail = MailDetail {
+    let detail = MailDetail::<()> {
+        html: None,
         summary,
         body: body.clone(),
         body_truncated: false,

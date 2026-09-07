@@ -202,6 +202,7 @@ async fn prepare(
                 "Attachments exceed the sending limit"
             );
             let attachment = DraftAttachment {
+                content_id: None,
                 id: file.id,
                 name: file.name,
                 media_type: file.media_type,

@@ -1,3 +1,6 @@
+mod bulk;
+mod mail_actions;
+mod mail_query;
 use crate::model::*;
 mod connections;
 mod conversations;
@@ -6,10 +9,16 @@ mod drafts;
 mod google_lifecycle;
 mod outgoing;
 mod restore;
+mod selection;
 use anyhow::Context;
+pub use bulk::BulkLease;
 pub use conversations::{CONVERSATION_PAGE_SIZE, ConversationPage};
 pub use drafts::DraftState;
 use rusqlite::{Connection, params};
+pub use selection::{
+    MailSelectionId, SelectedMail, SelectionChange, SelectionGroup, SelectionPage,
+    SelectionSnapshot,
+};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     path::Path,
@@ -83,12 +92,17 @@ impl Store {
                 id TEXT PRIMARY KEY, draft TEXT NOT NULL, name TEXT NOT NULL,
                 media_type TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL);
             CREATE INDEX IF NOT EXISTS draft_attachment_owner ON draft_attachments(draft);
+            CREATE TABLE IF NOT EXISTS draft_inline (
+                attachment TEXT PRIMARY KEY REFERENCES draft_attachments(id) ON DELETE CASCADE,
+                content_id TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS draft_sent (id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, source TEXT NOT NULL, start INTEGER NOT NULL, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS event_start ON events(start);")?;
         conversations::schema(&conn)?;
         connections::schema(&conn)?;
         outgoing::schema(&conn)?;
+        selection::schema(&conn)?;
+        bulk::schema(&conn)?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 2 {
             let tx = conn.transaction()?;
@@ -293,44 +307,43 @@ impl Store {
     }
     pub async fn query(&self, query: MailQuery) -> anyhow::Result<MailPage> {
         self.run(move |c| {
-            let mut filters = vec!["1=1".to_string()];
-            let mut values: Vec<rusqlite::types::Value> = Vec::new();
-            let sent = "((folder='Sent' AND (id LIKE '%:local-sent-%' OR account NOT IN (SELECT account FROM sent_folders))) OR (account,folder) IN (SELECT account,folder FROM sent_folders))";
-            let prefix = if let Some(folders) = query.folders {
-                values.push(serde_json::to_string(&folders)?.into());
-                // One bound JSON value avoids SQLite parameter/expression-depth
-                // limits. IN subqueries keep indexed account/folder lookups possible.
-                filters.push(format!("((account,folder) IN (SELECT account,folder FROM selected_folders WHERE account IS NOT NULL AND NOT sent_only) OR folder IN (SELECT folder FROM selected_folders WHERE account IS NULL AND NOT sent_only) OR ({sent} AND EXISTS(SELECT 1 FROM selected_folders s WHERE s.sent_only AND (s.account IS NULL OR s.account=messages.account))))"));
-                "WITH selected_folders AS (SELECT json_extract(value,'$.account') AS account,json_extract(value,'$.folder') AS folder,json_extract(value,'$.sent_only') AS sent_only FROM json_each(?)) "
-            } else {
-                if let Some(account) = query.account { filters.push("account=?".into()); values.push(account.into()); }
-                if query.sent_only { filters.push(sent.into()); }
-                else if !query.folder.is_empty() { filters.push("folder=?".into()); values.push(query.folder.into()); }
-                ""
-            };
-            if query.unread_only { filters.push("unread=1".into()); }
-            if query.read_only { filters.push("unread=0".into()); }
-            if query.attachments_only { filters.push("json_extract(data,'$.attachment_count')>0".into()); }
-            if query.starred_only { filters.push("starred=1".into()); }
-            let search = crate::fuzzy::mail_query(c, &query.search)?;
-            if !search.is_empty() { filters.push("rowid IN (SELECT rowid FROM mail_search WHERE mail_search MATCH ?)".into()); values.push(search.into()); }
-            let condition = filters.join(" AND ");
-            let total: i64 = c.query_row(&format!("{prefix}SELECT COUNT(*) FROM messages WHERE {condition}"), rusqlite::params_from_iter(&values), |r| r.get(0))?;
-            let unread: i64 = c.query_row(&format!("{prefix}SELECT COUNT(*) FROM messages WHERE {condition} AND unread=1"), rusqlite::params_from_iter(&values), |r| r.get(0))?;
-            values.push((PAGE_SIZE as i64).into()); values.push((query.offset as i64).into());
-            let order = match query.sort {
-                MailSort::Newest => "timestamp DESC,id",
-                MailSort::Oldest => "timestamp ASC,id",
-                MailSort::Sender => "sender COLLATE NOCASE,timestamp DESC,id",
-                MailSort::Subject => "subject COLLATE NOCASE,timestamp DESC,id",
-            };
-            let mut stmt = c.prepare(&format!("{prefix}SELECT data,unread,starred,folder FROM messages WHERE {condition} ORDER BY {order} LIMIT ? OFFSET ?"))?;
-            let rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?)))?
-                .map(|r| { let (data,unread,starred,folder)=r?; let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
-            let inbox_unread = c.prepare("SELECT account,COUNT(*) FROM messages WHERE folder='INBOX' AND unread=1 GROUP BY account")?
+            let transaction = c.transaction()?;
+            let c = &transaction;
+            let plan = mail_query::Plan::new(c, &query)?;
+            let (total, unread) = plan.counts(c)?;
+            let (sql, mut values) = plan.ordered("data,unread,starred,folder,account");
+            values.push((PAGE_SIZE as i64).into());
+            values.push((query.offset as i64).into());
+            let mut stmt = c.prepare(&format!("{sql} LIMIT ? OFFSET ?"))?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?)))?
+                .map(|r| { let (data,unread,starred,folder,account)=r?; let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;m.account_id=account;Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
+            let source = if bulk::has_effects(c)? { "visible_mail" } else { "messages" };
+            let inbox_unread = c.prepare(&format!("SELECT account,COUNT(*) FROM {source} WHERE folder='INBOX' AND unread=1 GROUP BY account"))?
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))?
                 .collect::<rusqlite::Result<_>>()?;
-            Ok(MailPage { rows, total:total as usize, unread:unread as usize, inbox_unread })
+            let mut observed = std::collections::HashMap::new();
+            let mut statement = c.prepare(&format!("SELECT account,folder,unread FROM {source} WHERE id=?"))?;
+            for id in query.observe {
+                use rusqlite::OptionalExtension;
+                let value = statement.query_row([&id], |row| Ok(MailMembership {
+                    account: row.get(0)?, folder: row.get(1)?, unread: row.get(2)?,
+                })).optional()?;
+                observed.insert(id, value);
+            }
+            anyhow::ensure!(query.observe_bulk.len() <= CHANNEL_CAPACITY, "Observe at most 32 mail operations at a time");
+            let mut bulk_observed = std::collections::HashMap::new();
+            for id in query.observe_bulk {
+                use rusqlite::OptionalExtension;
+                if let Some(undo) = c.query_row("SELECT undo_requested FROM bulk_jobs WHERE id=?",[&id],|r|r.get::<_,bool>(0)).optional()? {
+                    bulk_observed.insert(id,undo);
+                }
+            }
+            let mut bulk_pending = std::collections::HashSet::new();
+            for mail in &rows {
+                let pending: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM bulk_effects WHERE id=?)",[&mail.id],|r|r.get(0))?;
+                if pending { bulk_pending.insert(mail.id.clone()); }
+            }
+            Ok(MailPage { rows, total, unread, inbox_unread, observed, bulk_pending, bulk_observed, bulk_placeholders: Default::default(), bulk_revision: get(c,"bulk_revision")? })
         }).await
     }
     pub async fn detail(&self, id: String) -> anyhow::Result<MailDetail> {
@@ -346,17 +359,24 @@ impl Store {
             summary.starred = starred;
             summary.folder = folder;
             let parsed = shep_mail_core::mime::parse(&raw)?;
-            let (body, attachments) = crate::model::content(&parsed)?;
+            let content = crate::email_content::extract(&parsed)?;
+            let (body, attachments) = (content.text, content.attachments);
             let body_truncated = body.chars().count() > 32000;
             let body: String = body.chars().take(32000).collect();
             let (latest_body, replies) = crate::replies::split(&body);
+            let remote_images = content
+                .html
+                .as_ref()
+                .map(|h| h.remote_images.clone())
+                .unwrap_or_default();
             Ok(MailDetail {
+                html: content.html.map(Arc::new),
                 latest_body,
                 replies,
                 summary,
                 body,
                 body_truncated,
-                remote_images: crate::remote_images::extract(&parsed),
+                remote_images,
                 attachments: Arc::new(attachments),
                 reply: crate::compose::ReplyHeaders::parse(&parsed),
             })
@@ -589,16 +609,26 @@ impl Store {
         })
         .await
     }
-    pub async fn delete_draft(&self, id: String) -> anyhow::Result<()> {
+    pub async fn delete_draft(&self, id: String) -> anyhow::Result<DraftState> {
         self.run(move |c| {
             let tx = c.transaction()?;
+            anyhow::ensure!(!id.is_empty() && id.len() <= 256, "Invalid draft identity.");
+            let pending: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM outgoing WHERE draft=? AND stage IN ('Submitting','Uncertain','Accepted'))", [&id], |r| r.get(0))?;
+            anyhow::ensure!(!pending, "Review this message in Outbox before discarding its draft.");
+            // A discarded identity is retired permanently, including revisions
+            // captured by a file picker or autosave before the delete committed.
+            tx.execute("INSERT INTO draft_sent(id,revision) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision", params![id, i64::MAX])?;
             let mut drafts: Vec<Draft> = get(&tx, "drafts")?;
             drafts.retain(|d| d.id != id);
             put(&tx, "drafts", &drafts)?;
-            tx.execute("DELETE FROM draft_attachments WHERE draft=?", [id])?;
+            tx.execute("DELETE FROM draft_attachments WHERE draft=?", [&id])?;
+            if tx.execute("DELETE FROM outgoing WHERE draft=? AND stage IN ('Rejected','Released')", [&id])? > 0 {
+                outgoing::changed(&tx)?;
+            }
             drafts::changed(&tx)?;
+            let state = drafts::snapshot(&tx)?;
             tx.commit()?;
-            Ok(())
+            Ok(state)
         })
         .await
     }

@@ -3,7 +3,7 @@
 Use current stable Rust with `rustfmt` and `clippy`, and Python 3 for development scripts. On Debian/Ubuntu, build dependencies include:
 
 ```sh
-sudo apt install build-essential pkg-config libssl-dev libdbus-1-dev \
+sudo apt install build-essential cmake pkg-config libssl-dev libdbus-1-dev \
   libx11-dev libxkbcommon-dev libwayland-dev
 cargo run --release
 ```

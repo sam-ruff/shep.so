@@ -6,8 +6,8 @@ A calm, native email and calendar app built with Rust and iced. Comfortable with
 
 ![Shep in light mode, with a unified inbox and an open email](docs/images/mail-light.webp)
 
-- **Mail in one place.** Multiple accounts, a unified inbox, search and conversation reading.
-- **Everyday essentials.** Replies, attachments, autosaved drafts and recovery for interrupted sends.
+- **Mail in one place.** Multiple accounts, a unified inbox, search, conversation reading and bulk actions with Undo.
+- **Everyday essentials.** Replies, forwarding, printing, attachments, autosaved drafts and recovery for interrupted sends.
 - **Calendars alongside.** Google Calendar and CalDAV, with a month view and agenda.
 - **Make it yours.** Light, Dark or System appearance, resizable panes and configurable shortcuts.
 - **Encrypted backups.** Save locally or to Google Drive. Google is optional.
@@ -38,7 +38,7 @@ Mobile (`flutter/`), a separate browser client (`web/`), the promo site (`websit
 
 Fastmail login and Inbox sync have been verified. Live Google, other providers and Windows/macOS still need verification.
 
-- Mail uses text rendering; external images load only when your privacy settings allow them.
+- Mail supports static HTML layout and selectable text, with a plain-text option. External images load only when your privacy settings allow them.
 - Downloads: **25 MiB per message**; MIME nesting beyond 128 multipart levels is refused. Backups: **256 MiB of original mail**.
 - Gmail needs an app password; Google sign-in does not provide Gmail OAuth.
 - Calendar sync: **90 days back, 365 days ahead**. Edit recurring CalDAV series in your server's calendar UI.

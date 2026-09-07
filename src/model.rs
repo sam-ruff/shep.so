@@ -5,6 +5,7 @@ use std::fmt;
 pub const PAGE_SIZE: usize = 50;
 pub const CHANNEL_CAPACITY: usize = 32;
 pub use shep_mail_core::model::*;
+pub type MailDetail = shep_mail_core::model::MailDetail<crate::email_content::HtmlBody>;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MailSort {
@@ -13,9 +14,17 @@ pub enum MailSort {
     Oldest,
     Sender,
     Subject,
+    Relevance,
 }
 impl MailSort {
-    pub const ALL: [Self; 4] = [Self::Newest, Self::Oldest, Self::Sender, Self::Subject];
+    pub const BROWSE: [Self; 4] = [Self::Newest, Self::Oldest, Self::Sender, Self::Subject];
+    pub const SEARCH: [Self; 5] = [
+        Self::Relevance,
+        Self::Newest,
+        Self::Oldest,
+        Self::Sender,
+        Self::Subject,
+    ];
 }
 impl fmt::Display for MailSort {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -24,6 +33,7 @@ impl fmt::Display for MailSort {
             Self::Oldest => "Oldest first",
             Self::Sender => "Sender A–Z",
             Self::Subject => "Subject A–Z",
+            Self::Relevance => "Best match",
         })
     }
 }
@@ -59,6 +69,10 @@ impl fmt::Display for MailFilter {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MailQuery {
+    /// Small pending-action identities observed in the same snapshot as counts.
+    /// This does not alter the folder/search result scope.
+    pub observe: Vec<String>,
+    pub observe_bulk: Vec<String>,
     pub folders: Option<Vec<FolderSelection>>,
     pub sent_only: bool,
     pub account: Option<String>,
@@ -81,10 +95,31 @@ pub struct FolderSelection {
 
 #[derive(Debug, Clone, Default)]
 pub struct MailPage {
+    pub bulk_observed: std::collections::HashMap<String, bool>,
+    pub bulk_placeholders: std::collections::HashSet<String>,
+    pub bulk_revision: u64,
+    pub bulk_pending: std::collections::HashSet<String>,
     pub rows: Vec<Mail>,
     pub total: usize,
     pub unread: usize,
     pub inbox_unread: std::collections::BTreeMap<String, usize>,
+    pub observed: std::collections::HashMap<String, Option<MailMembership>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MailMembership {
+    pub account: String,
+    pub folder: String,
+    pub unread: bool,
+}
+impl From<&Mail> for MailMembership {
+    fn from(mail: &Mail) -> Self {
+        Self {
+            account: mail.account_id.clone(),
+            folder: mail.folder.clone(),
+            unread: mail.unread,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,11 +221,13 @@ pub struct Preferences {
     pub mail_sort: MailSort,
     pub unified_inbox: bool,
     pub collapsed_accounts: Vec<String>,
+    pub collapsed_drafts: bool,
     pub cross_account_moves: bool,
     pub reader_font_size: u16,
     pub interface_scale: u16,
     pub tooltips: bool,
     pub shortcut_tooltips: bool,
+    pub unread_badge: bool,
     pub image_policy: ImagePolicy,
     pub reply_display: ReplyDisplay,
     pub group_conversations: bool,
@@ -210,6 +247,7 @@ pub struct Preferences {
     pub google_grant: GoogleGrant,
     pub google_lifecycle: GoogleLifecycle,
     pub sync_minutes: u64,
+    pub mail_check_seconds: u64,
     pub google_client_id: String,
     pub google_client_secret: String,
     pub shortcuts: crate::shortcuts::Keymap,
@@ -224,11 +262,13 @@ impl Default for Preferences {
             mail_sort: MailSort::Newest,
             unified_inbox: true,
             collapsed_accounts: Vec::new(),
+            collapsed_drafts: false,
             cross_account_moves: false,
             reader_font_size: 14,
             interface_scale: 100,
             tooltips: true,
             shortcut_tooltips: true,
+            unread_badge: true,
             image_policy: ImagePolicy::BlockAll,
             reply_display: ReplyDisplay::Collapsed,
             group_conversations: true,
@@ -248,6 +288,7 @@ impl Default for Preferences {
             google_grant: Default::default(),
             google_lifecycle: Default::default(),
             sync_minutes: 5,
+            mail_check_seconds: 15,
             google_client_id: std::env::var("SHEP_GOOGLE_CLIENT_ID").unwrap_or_default(),
             google_client_secret: std::env::var("SHEP_GOOGLE_CLIENT_SECRET").unwrap_or_default(),
             shortcuts: Default::default(),
@@ -346,7 +387,11 @@ impl Preferences {
         );
         anyhow::ensure!(
             (1..=60).contains(&self.sync_minutes),
-            "Sync interval must be 1–60 minutes."
+            "Calendar sync interval must be 1–60 minutes."
+        );
+        anyhow::ensure!(
+            (5..=3600).contains(&self.mail_check_seconds),
+            "Mail check interval must be 5–3600 seconds."
         );
         anyhow::ensure!(
             (11..=26).contains(&self.reader_font_size),

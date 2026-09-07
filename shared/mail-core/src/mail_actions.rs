@@ -1,7 +1,7 @@
 use crate::model::Mail;
 
 /// Only the fields explicitly changed by the user are written to the server.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Flags {
     pub unread: Option<bool>,
     pub starred: Option<bool>,
