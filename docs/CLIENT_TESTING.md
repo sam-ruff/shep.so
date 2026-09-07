@@ -152,3 +152,6 @@ It is also included in the full Android wrapper. The fixture is handed over befo
 
 
 Counted move feedback uses `move_feedback_scenario.dart` from both host and Android native tests. Real swipes/buttons exercise two moves, partial rejection, pending Undo, failed reversal, Retry Undo, Dismiss and Undo from another open reader while read-on-leave is held. Query-only page projections restore the row and count without waiting for the provider. The pure model tests control the six-second clock and cover destination/account grouping, stale callbacks and acknowledged Undo warnings. `move-feedback.spec.ts` exercises browser controls/expiry; the real Rust HTTPS flows retain physical provider destinations. Keep general refresh/save status independent of the expiring move notification.
+
+
+Captured-selection prerequisites have Rust tests in `flutter/rust/src/selection_tests.rs`, bounded-controller tests in `flutter/test/mail_selection_test.dart`, and an actual FFI contract in `native_repository_test.dart`. The 100,000-message fixture verifies cardinality and bounded responses; it is not a latency benchmark. Held selection/provider work and cancelled callers verify independent cached reads/saves and FIFO ownership. These contracts do not establish selection-control or durable bulk-action parity; those controls and their Android/browser scenarios remain active.

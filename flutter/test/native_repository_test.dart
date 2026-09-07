@@ -9,6 +9,8 @@ import 'package:shep_mobile/data/credentials.dart';
 import 'package:shep_mobile/data/native_repository.dart';
 import 'package:shep_mobile/data/outgoing.dart';
 import 'package:shep_mobile/model/mail.dart';
+import 'package:shep_mobile/model/mail_selection.dart';
+import 'mail_selection_test.dart' show settled;
 
 class FixtureCredentials implements CredentialStore {
   final values = <String, List<String>>{};
@@ -142,6 +144,61 @@ void main() {
     ];
     return repository;
   }
+
+  test(
+    'native selection bridge captures, freezes and clears without credentials or read effects',
+    () async {
+      final credentials = FixtureCredentials()..unavailable = true;
+      final repository = await connection(credentials);
+      final account = repository.mailAccounts.single;
+      final page = await repository.page(
+        folder: 'Inbox',
+        account: account.email,
+        query: '',
+        filter: '',
+        oldest: false,
+        offset: 0,
+      );
+      final model = MailSelection(
+        repository: repository,
+        scope: () => {'folder': 'Inbox', 'account': account.email},
+        currentCount: () => page.total,
+        changed: () {},
+      );
+      addTearDown(model.dispose);
+      for (final mail in page.mail) {
+        model.watch(mail.id);
+      }
+      model.all();
+      await settled(() => !model.pending || model.error != null);
+      expect(model.error, isNull);
+      expect(model.count, page.total);
+      expect(model.selected(page.mail.first.id), true);
+      final captured = model.snapshot!;
+      final review =
+          await repository.selection({
+                'kind': 'freeze',
+                'id': captured.id,
+                'expected': captured.revision,
+                'target': 'host-review',
+              })
+              as Map<String, dynamic>;
+      expect(review['selected'], page.total);
+      model.clear();
+      await settled(() => !model.pending || model.error != null);
+      expect(model.error, isNull);
+      expect(model.count, 0);
+      final frozen = await repository.selection({
+        'kind': 'page',
+        'id': 'host-review',
+        'expected': 0,
+      });
+      expect((frozen['rows'] as List).length, page.total);
+      expect(frozen['rows'][0]['unread'], true);
+      await repository.selection({'kind': 'release', 'id': 'host-review'});
+      expect(credentials.reads, 0);
+    },
+  );
 
   test(
     'native Rust search shares exact UTF-16 ranges without opening credentials',

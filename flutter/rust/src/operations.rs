@@ -96,6 +96,11 @@ impl Operations {
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
     Accounts,
+    Selection {
+        command: crate::selection::Command,
+        #[serde(default)]
+        observed: Vec<String>,
+    },
     FindText {
         blocks: Vec<String>,
         query: String,
@@ -487,6 +492,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             }).await?;
             Ok(json!({"saved":true}))
         }
+        Request::Selection { command, observed } => profile.database.selection(move |db| crate::selection::run(db,command,observed)).await,
         Request::Page{folder,account,query,filter,oldest,offset,projection} => db.read(move |db| {
             crate::paging::page(db, folder, account, query, filter, oldest, offset, projection)
         }).await,

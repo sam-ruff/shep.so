@@ -1,9 +1,11 @@
+import 'selection_repository.dart';
+import 'package:shep_mobile/data/selection.dart';
 import 'dart:convert';
 import 'package:shep_mobile/data/repository.dart';
 import 'package:shep_mobile/model/mail.dart';
 import 'fixture_json.dart';
 
-class PreviewRepository implements MailRepository {
+class PreviewRepository implements MailRepository, SelectionRepository {
   PreviewRepository({
     this.delay = const Duration(milliseconds: 350),
     this.fail = false,
@@ -42,6 +44,12 @@ class PreviewRepository implements MailRepository {
         )
         .toList();
   }
+  late final selectionPreview = PreviewSelectionRepository(() => cached);
+  @override
+  Future<dynamic> selection(
+    Map<String, Object?> command, {
+    List<String> observed = const [],
+  }) => selectionPreview.selection(command, observed: observed);
   final Duration delay;
   bool fail;
   late List<Mail> _mail;

@@ -1,3 +1,4 @@
+import 'selection.dart';
 import 'dart:convert';
 import 'attachments.dart';
 import 'message_search.dart';
@@ -18,6 +19,7 @@ Map<String, dynamic> _decode(String data) =>
 
 class NativeRepository
     implements
+        SelectionRepository,
         MailRepository,
         AccountRepository,
         DraftRepository,
@@ -318,6 +320,31 @@ class NativeRepository
       fileError: fileError,
       bodyLoaded: loaded ?? body.isNotEmpty,
     );
+  }
+
+  @override
+  Future<dynamic> selection(
+    Map<String, Object?> command, {
+    List<String> observed = const [],
+  }) async {
+    final value = Map<String, Object?>.of(command);
+    if (value['scope'] case final Map original) {
+      final scope = Map<String, Object?>.from(original);
+      final selected = scope['account'];
+      if (selected != null) {
+        final account = mailAccounts
+            .where((a) => a.id == selected || a.email == selected)
+            .firstOrNull;
+        if (account == null) {
+          throw const MailOperationFailure(
+            'This account was removed. Select messages from a connected account.',
+          );
+        }
+        scope['account'] = account.id;
+      }
+      value['scope'] = scope;
+    }
+    return call({'op': 'selection', 'command': value, 'observed': observed});
   }
 
   @override
