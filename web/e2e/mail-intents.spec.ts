@@ -382,7 +382,15 @@ test("version-five upgrade retains metadata, drafts and Sent roles with a fresh 
   });
   expect(r.snapshot.drafts).toEqual([{ id: "d", body: "Keep this draft" }]);
   expect(r.snapshot.mailRoles[0].acknowledged).toEqual(["Actual Sent"]);
-  expect(r.snapshot.cacheState).toEqual([{ revision: 99, floor: 30 }]);
+  expect(r.snapshot.cacheState).toEqual([
+    {
+      revision: 99,
+      floor: 30,
+      epoch: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      ),
+    },
+  ]);
   expect(r.snapshot.mailIntents).toEqual([]);
   expect([r.first, r.second]).toEqual([1, 2]);
   expect(r.overflow).toBe(true);

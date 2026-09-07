@@ -282,7 +282,13 @@ test("version-four upgrade keeps newer Sent roles while adding selection indexes
   expect(result.mail.text).toBe("Exact cached text");
   expect(result.mail._shepNewest).toBeUndefined();
   expect(result.metadata.newest).toEqual([-42, "original"]);
-  expect(result.state).toEqual({ revision: 0, floor: 0 });
+  expect(result.state).toEqual({
+    revision: 0,
+    floor: 0,
+    epoch: expect.stringMatching(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    ),
+  });
 });
 
 test("worker-owned selections stay private and disappear with their worker", async ({
