@@ -24,3 +24,7 @@ abstract interface class DraftRepository {
   Future<DraftFiles> removeFile(String id, String file);
   Future<Draft> reply(String id, bool all);
 }
+
+abstract interface class ForwardRepository {
+  Future<Draft> forward(String id, String draftId);
+}

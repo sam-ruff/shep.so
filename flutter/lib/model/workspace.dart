@@ -577,6 +577,54 @@ class Workspace extends ChangeNotifier {
     _changed();
   }
 
+  final _forwardRequests = <String, String>{};
+  final _forwarding = <String>{};
+  bool isForwarding(String id) => _forwarding.contains(id);
+  Future<Draft?> forward(String id) async {
+    if (!_forwarding.add(id)) return null;
+    final startingError = error;
+    _changed();
+    try {
+      final repository = this.repository;
+      final Draft draft;
+      if (repository is ForwardRepository) {
+        final target = _forwardRequests.putIfAbsent(id, newDraftIdentity);
+        draft = await (repository as ForwardRepository).forward(id, target);
+      } else if (repository.preview) {
+        final original = mail(id);
+        if (original == null) return null;
+        draft = Draft(
+          id: newDraftIdentity(),
+          accountId: original.accountId,
+          subject: 'Fwd: ${original.subject}',
+          body:
+              '\n\n---------- Forwarded message ----------\nFrom: ${original.address}\nSubject: ${original.subject}\n\n${original.body}',
+        );
+        await repository.saveDraft(draft);
+      } else {
+        throw const MailOperationFailure(
+          'Forwarding is unavailable. Reopen Shep and retry.',
+        );
+      }
+      _forwardRequests.remove(id);
+      if (_removedAccounts.contains(draft.accountId)) {
+        throw const MailOperationFailure(
+          'This account was removed. Open Drafts or choose a connected account.',
+        );
+      }
+      drafts[draft.id] = draft;
+      notice = 'Forward saved in Drafts';
+      if (error == startingError) error = null;
+      return draft;
+    } catch (e) {
+      error = '$e';
+      return null;
+    } finally {
+      _forwarding.remove(id);
+      _changed();
+    }
+  }
+
   Future<Draft?> reply(String id, bool all) async {
     try {
       final original = mail(id);

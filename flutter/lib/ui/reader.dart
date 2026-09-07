@@ -734,6 +734,37 @@ class _ReaderState extends State<Reader> {
                                 label: Text(all ? 'Reply all' : 'Reply'),
                               ),
                             OutlinedButton.icon(
+                              onPressed: workspace.isForwarding(id)
+                                  ? null
+                                  : () async {
+                                      final source = id;
+                                      final draft = await workspace.forward(
+                                        source,
+                                      );
+                                      if (draft != null &&
+                                          context.mounted &&
+                                          widget.id == source &&
+                                          (ModalRoute.of(context)?.isCurrent ??
+                                              false)) {
+                                        await Navigator.push(
+                                          context,
+                                          MaterialPageRoute<void>(
+                                            builder: (_) => Composer(
+                                              workspace: workspace,
+                                              draft: draft,
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                    },
+                              icon: const Icon(Icons.forward),
+                              label: Text(
+                                workspace.isForwarding(id)
+                                    ? 'Preparing forward…'
+                                    : 'Forward',
+                              ),
+                            ),
+                            OutlinedButton.icon(
                               onPressed: () => act(id, MailAction.move),
                               icon: const Icon(Icons.drive_file_move_outline),
                               label: const Text('Move'),

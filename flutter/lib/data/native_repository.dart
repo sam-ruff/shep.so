@@ -20,6 +20,7 @@ class NativeRepository
         MailRepository,
         AccountRepository,
         DraftRepository,
+        ForwardRepository,
         OutgoingRepository,
         SentPreferencesRepository,
         AttachmentRepository,
@@ -457,11 +458,24 @@ class NativeRepository
         await call({'op': 'remove_draft_file', 'id': id, 'file': file}),
       );
   @override
+  Future<Draft> forward(String id, String draftId) async {
+    final draft = Draft.fromJson(
+      await call({'op': 'forward', 'id': id, 'draft_id': draftId}),
+    );
+    savedDrafts.removeWhere((d) => d.id == draft.id);
+    savedDrafts.add(draft);
+    return draft;
+  }
+
+  @override
   Future<Draft> reply(String id, bool all) async =>
       Draft.fromJson(await call({'op': 'reply', 'id': id, 'all': all}));
   @override
   Future<void> saveDraft(Draft draft) async {
-    await call({'op': 'save_draft', 'draft': draft.toJson()});
+    final text = draft.toJson()
+      ..remove('forward')
+      ..remove('attachments');
+    await call({'op': 'save_draft', 'draft': text});
   }
 
   @override

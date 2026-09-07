@@ -1,3 +1,5 @@
+import { ForwardLoader } from "./forward_loader";
+import type { ForwardPrepared } from "./forward_content";
 import {
   removalPreview,
   reviewStores,
@@ -89,6 +91,8 @@ function draftKey(d: Draft) {
     d.body,
     d.inReplyTo ?? null,
     d.references ?? [],
+    d.forward ?? null,
+    d.forwardSource ?? null,
     d.attachments ?? [],
     d.revision ?? 0,
   ]);
@@ -246,6 +250,7 @@ export class GatewayRepository implements Repository {
   removedAccounts = new Set<string>();
   private attachmentReader?: AttachmentReader;
   private documentLoader?: DocumentLoader;
+  private forwardLoader?: ForwardLoader;
   get formattedMessages() {
     return (this.documentLoader ??= new DocumentLoader(this.session.user_id));
   }
@@ -266,6 +271,7 @@ export class GatewayRepository implements Repository {
     private store: LocalStore,
     private request: Fetcher = (input, init) => fetch(input, init),
     private lock: Lock = browserLock,
+    private prepareForward?: (id: string) => Promise<ForwardPrepared>,
   ) {}
   private exclusive<T>(scope: string, fn: () => Promise<T>, wait = true) {
     return this.lock(`shep.${this.session.user_id}.${scope}`, fn, wait);
@@ -976,6 +982,63 @@ export class GatewayRepository implements Repository {
       return current.filter((f) => f.info.id !== file).map((f) => f.info);
     });
   }
+  async forward(id: string, draftId: string): Promise<Draft> {
+    return this.exclusive(`draft.${draftId}`, async () => {
+      const outgoing = await this.store.get<Outgoing>("outgoing", draftId);
+      if (outgoing)
+        throw new Error(
+          "This forward has a delivery record. Open Drafts or review Outbox before forwarding again.",
+        );
+      const existing = await this.store.get<Draft>("drafts", draftId);
+      if (existing) {
+        if (existing.forwardSource !== id)
+          throw new Error(
+            "This forward belongs to another message. Open it from Drafts.",
+          );
+        return { ...existing, attachments: await this.attachments(draftId) };
+      }
+      const prepared = await (this.prepareForward
+        ? this.prepareForward(id)
+        : (this.forwardLoader ??= new ForwardLoader(this.session.user_id)).load(
+            id,
+          ));
+      if (!(await this.store.get<Account>("accounts", prepared.accountId)))
+        throw new Error(
+          "This account was removed. Forward from a connected account.",
+        );
+      const files: StoredFile[] = prepared.files.map((file, order) => ({
+        draftId,
+        order,
+        info: { ...file.info, id: crypto.randomUUID() },
+        blob: new Blob([file.bytes as Uint8Array<ArrayBuffer>], {
+          type: file.info.media_type,
+        }),
+      }));
+      const draft: Draft = {
+        id: draftId,
+        accountId: prepared.accountId,
+        to: "",
+        cc: "",
+        bcc: "",
+        subject: prepared.subject,
+        body: prepared.body,
+        revision: 1,
+        forward: prepared.forward,
+        forwardSource: id,
+        attachments: files.map((f) => f.info),
+      };
+      await this.store.commit([
+        { store: "drafts", key: draftId, value: draft },
+        ...files.map((file) => ({
+          store: "draftFiles" as const,
+          key: file.info.id,
+          value: file,
+        })),
+      ]);
+      this.drafts = [...this.drafts.filter((d) => d.id !== draftId), draft];
+      return draft;
+    });
+  }
   async reply(id: string, all: boolean): Promise<Draft> {
     const record = await resolveMail(this.store, id);
     if (!record)
@@ -1010,7 +1073,12 @@ export class GatewayRepository implements Repository {
         throw new Error(
           "This draft has newer text in another editor. Reopen it before saving.",
         );
-      const saved = { ...draft, attachments: await this.attachments(draft.id) };
+      const saved = {
+        ...draft,
+        forward: current?.forward,
+        forwardSource: current?.forwardSource,
+        attachments: await this.attachments(draft.id),
+      };
       await this.store.commit([
         { store: "drafts", key: draft.id, value: saved },
       ]);
@@ -1064,6 +1132,14 @@ export class GatewayRepository implements Repository {
           throw new Error(
             "This draft changed in another editor. Reopen it before sending.",
           );
+        if (
+          JSON.stringify(saved?.forward ?? null) !==
+            JSON.stringify(draft.forward ?? null) ||
+          saved?.forwardSource !== draft.forwardSource
+        )
+          throw new Error(
+            "The original forward changed. Reopen the draft before sending.",
+          );
         const attachments = await this.files(draft.id);
         if (
           JSON.stringify(attachments.map((f) => f.info)) !==
@@ -1113,6 +1189,7 @@ export class GatewayRepository implements Repository {
               body: draft.body,
               in_reply_to: draft.inReplyTo ?? null,
               references: draft.references ?? [],
+              forward: draft.forward ?? null,
               revision: draft.revision ?? 0,
             },
             files: files.map(({ size, ...file }) => file),

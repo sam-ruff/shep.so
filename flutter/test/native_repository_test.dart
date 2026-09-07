@@ -59,6 +59,66 @@ void main() {
       ),
     );
   });
+  test(
+    'native Forward preserves quote and inline files through Dart autosave and restart',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'shep-forward-host-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final path = '${directory.path}/mail.sqlite';
+      final seeded = await Process.run('python3', [
+        '../scripts/clients/android_forward_fixture.py',
+        '--prepare',
+        path,
+      ]);
+      expect(seeded.exitCode, 0, reason: '${seeded.stderr}');
+      final credentials = FixtureCredentials()..unavailable = true;
+      var repository = await NativeRepository.open(
+        path,
+        credentials: credentials,
+      );
+      await repository.initialize();
+      final id = newDraftIdentity();
+      final original = await repository.forward('fixture:INBOX:source', id);
+      expect(original.to, isEmpty);
+      expect(original.inReplyTo, isNull);
+      expect(original.attachments.length, 3);
+      expect(original.attachments.last.contentId, startsWith('shep-'));
+      final edited = Draft.fromJson({
+        ...original.toJson(),
+        'revision': 2,
+        'body': 'A note.\n${original.body}',
+      });
+      await repository.saveDraft(edited);
+      repository = await NativeRepository.open(path, credentials: credentials);
+      await repository.initialize();
+      final recovered = repository.savedDrafts.single;
+      expect(recovered.body, edited.body);
+      expect(recovered.forward!.toJson(), original.forward!.toJson());
+      expect(
+        recovered.attachments.last.contentId,
+        original.attachments.last.contentId,
+      );
+      expect(
+        (await repository.forward('fixture:INBOX:source', id)).toJson(),
+        recovered.toJson(),
+      );
+      expect(credentials.reads, 0);
+      final long = await repository.forward(
+        'fixture:INBOX:long',
+        newDraftIdentity(),
+      );
+      expect(long.body.length, greaterThan(32000));
+      expect(long.body, endsWith('END OF COMPLETE ORIGINAL'));
+      await expectLater(
+        repository.forward('fixture:INBOX:broken', newDraftIdentity()),
+        throwsA(predicate((e) => '$e'.contains('Could not decode'))),
+      );
+      expect((await repository.call({'op': 'drafts'}) as List).length, 2);
+    },
+  );
+
   Future<ConnectionFixtureRepository> connection(
     FixtureCredentials credentials,
   ) async {

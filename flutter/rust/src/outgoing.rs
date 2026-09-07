@@ -232,11 +232,11 @@ pub(crate) async fn recover(
             let parts=crate::drafts::files(db,&mut draft)?;
             anyhow::ensure!(value.get("attachments").is_none() || draft.attachments==expected,"The saved attachments changed. Keep this delivery record and review the original message.");
             draft.id=uuid::Uuid::new_v4().to_string(); draft.revision=0;
+            let parts:Vec<_>=parts.into_iter().map(|mut file| { file.attachment.id=uuid::Uuid::new_v4().to_string(); file }).collect();
+            draft.attachments=parts.iter().map(|f|f.attachment.clone()).collect();
             let tx=db.transaction()?;
             tx.execute("INSERT INTO drafts VALUES(?1,0,?2)",params![draft.id,serde_json::to_string(&draft)?])?;
-            for file in parts {
-                tx.execute("INSERT INTO draft_files VALUES(?1,?2,?3,?4,?5)",params![uuid::Uuid::new_v4().to_string(),draft.id,file.attachment.name,file.attachment.media_type,file.bytes])?;
-            }
+            for file in parts { crate::drafts::insert_file(&tx,&draft.id,file)?; }
             tx.execute("DELETE FROM drafts WHERE id=?1",[original])?;
             tx.execute("INSERT INTO outgoing_meta(id,recovery,recovered_draft) VALUES(?1,'returned',?2) ON CONFLICT(id) DO UPDATE SET recovery='returned',recovered_draft=excluded.recovered_draft",params![id,draft.id])?;
             tx.commit()?;

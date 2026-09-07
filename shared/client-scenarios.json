@@ -149,8 +149,8 @@
     {
       "id": "desktop-forward-print",
       "contract": "Forward complete MIME in a new thread with retained files and optional formatting; print the complete selected source with confined resources",
-      "mobile": "Shared forward-fixtures.json/native content and core MIME tests cover complete preparation, isolated inline bytes, file metadata and new thread/SMTP identity. OPEN: Flutter atomic draft/file storage, Forward controls/device tests and native Print.",
-      "browser": "Shared forward-fixtures.json/WASM forward_content.test.ts cover complete preparation, byte ownership, MIME selection and controlled errors. OPEN: browser atomic draft/file storage, Forward controls/browser execution and complete Print."
+      "mobile": "Shared preparation/core fixtures plus native forward_tests.rs: atomic rollback, schema-8 migration, idempotent response-loss recovery, removed accounts, protected metadata and Outbox ownership. native_repository_test.dart and forward_android_test.dart use actual Rust/SQLite and controls for files, restart, refusal and independent edits. OPEN: Apple execution, full composition/multiple editors and Print.",
+      "browser": "Shared WASM fixtures, forward_provider.test.ts and gateway forward_tests.rs preserve files/HTML/CIDs and reject invalid headers. forward.spec.ts drives actual workers, autosave, file removal/restart, failures/retry, remapping/input isolation and independent editor controls; provider-flows.mjs covers production worker/CSP and reopen through real Rust HTTPS. OPEN: full composition/multiple editors and Print."
     },
     {
       "id": "desktop-bulk-selection",

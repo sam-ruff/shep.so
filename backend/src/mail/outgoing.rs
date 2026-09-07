@@ -121,6 +121,8 @@ async fn status(
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct File {
+    #[serde(default)]
+    content_id: Option<String>,
     id: String,
     name: String,
     media_type: String,
@@ -202,7 +204,7 @@ async fn prepare(
                 "Attachments exceed the sending limit"
             );
             let attachment = DraftAttachment {
-                content_id: None,
+                content_id: file.content_id,
                 id: file.id,
                 name: file.name,
                 media_type: file.media_type,

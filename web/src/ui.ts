@@ -26,6 +26,7 @@ const paths: Record<string, string> = {
   flag: "M5 22V3 M5 3c5-4 9 4 14 0v11c-5 4-9-4-14 0",
   move: "M3 6h7l2 3h9v12H3z M11 13l3 3-3 3 M7 16h7",
   reply: "m10 6-6 6 6 6 M4 12h9c4 0 7 2 7 6",
+  forward: "m14 6 6 6-6 6 M20 12h-9c-4 0-7 2-7 6",
   search: "M20 20l-5-5 M17 10a7 7 0 1 0-14 0 7 7 0 0 0 14 0",
   refresh: "M20 10a8 8 0 1 0-2 8 M20 3v7h-7",
   settings: "M4 7h16 M4 17h16 M8 4v6 M16 14v6",
@@ -664,6 +665,54 @@ export function mount(
     }
     await draw();
   }
+  const forwardRequests = new Map<string, string>();
+  const forwarding = new Set<string>();
+  async function forward(original: Mail) {
+    if (forwarding.has(original.id)) return;
+    const startingError = w.error;
+    forwarding.add(original.id);
+    w.changed();
+    try {
+      let draft: Draft;
+      if (gateway) {
+        const target = forwardRequests.get(original.id) ?? crypto.randomUUID();
+        forwardRequests.set(original.id, target);
+        draft = await gateway.forward(original.id, target);
+      } else {
+        draft = {
+          id: crypto.randomUUID(),
+          to: "",
+          cc: "",
+          bcc: "",
+          subject: `Fwd: ${original.subject}`,
+          body: `\n\n---------- Forwarded message ----------\nFrom: ${original.address}\nSubject: ${original.subject}\n\n${original.body}`,
+        };
+        await w.repository.saveDraft(draft);
+      }
+      forwardRequests.delete(original.id);
+      if (draft.accountId && gateway?.removedAccounts.has(draft.accountId))
+        throw new Error(
+          "This account was removed. Open Drafts or choose a connected account.",
+        );
+      w.rememberDraft(draft);
+      w.notice = "Forward saved in Drafts";
+      if (w.error === startingError) w.error = null;
+      if (
+        tab === "Mail" &&
+        w.readerMessage?.id === original.id &&
+        !document.querySelector("dialog[open]")
+      )
+        await composer(undefined, draft);
+    } catch (error) {
+      w.error =
+        error instanceof Error
+          ? error.message
+          : "Could not prepare this forward. Retry.";
+    } finally {
+      forwarding.delete(original.id);
+      w.changed();
+    }
+  }
   async function composer(original?: Mail, existing?: Draft, all = false) {
     if (original && gateway && !existing) {
       try {
@@ -694,7 +743,7 @@ export function mount(
             ? `\n\n> ${original.body.replaceAll("\n", "\n> ")}`
             : "",
         };
-    const d = modal("New message");
+    const d = modal(draft.forward ? "Forward message" : "New message");
     d.classList.add("composer");
     const fields = el("div", "composer-fields");
     const status = el("p", "form-status");
@@ -1632,6 +1681,14 @@ export function mount(
     actions.append(
       reply,
       button("Reply all", () => void composer(m, undefined, true), "reply"),
+      Object.assign(
+        button(
+          forwarding.has(m.id) ? "Preparing forward…" : "Forward",
+          () => void forward(m),
+          "forward",
+        ),
+        { disabled: forwarding.has(m.id) },
+      ),
     );
     content.append(actions);
     panel.append(content);
@@ -2014,6 +2071,9 @@ export function mount(
     else if (action === "reply") {
       const m = w.readerMessage;
       if (m) composer(m);
+    } else if (action === "forward") {
+      const m = w.readerMessage;
+      if (m) void forward(m);
     } else if (action === "reader") {
       if (w.selected) {
         fullReader = true;

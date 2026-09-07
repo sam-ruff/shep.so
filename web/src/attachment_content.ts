@@ -20,7 +20,7 @@ export const initializeAttachments = () =>
     ready = undefined;
     throw error;
   }));
-function rawBytes(raw: string) {
+export function rawBytes(raw: string) {
   const limit = 25 * 1024 * 1024;
   if (raw.length > Math.ceil(limit / 3) * 4)
     throw new Error("This message exceeds the current 25 MiB limit.");

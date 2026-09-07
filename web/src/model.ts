@@ -22,15 +22,24 @@ export interface CalendarEntry {
   location: string;
   readOnly: boolean;
 }
+export interface ForwardQuote {
+  text: string;
+  html_head: string;
+  html_attributes: string;
+  html_body: string;
+}
 export interface DraftAttachment {
   id: string;
   name: string;
   media_type: string;
   size: number;
+  content_id?: string | null;
 }
 export interface Draft {
   id: string;
   accountId?: string;
+  forward?: ForwardQuote | null;
+  forwardSource?: string;
   inReplyTo?: string | null;
   references?: string[];
   revision?: number;
@@ -74,7 +83,14 @@ export interface Preferences {
   sidebarWidth: number;
   listWidth: number;
   shortcuts: Record<
-    "archive" | "trash" | "move" | "reply" | "search" | "reader" | "find",
+    | "archive"
+    | "trash"
+    | "move"
+    | "reply"
+    | "forward"
+    | "search"
+    | "reader"
+    | "find",
     string
   >;
 }
@@ -90,6 +106,7 @@ export const defaults: Preferences = {
     trash: "Control+d",
     move: "m",
     reply: "r",
+    forward: "f",
     search: "Control+k",
     reader: "Enter",
     find: "Control+f",

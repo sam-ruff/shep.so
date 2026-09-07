@@ -7,6 +7,9 @@ use tower::ServiceExt;
 #[path = "sent_tests.rs"]
 mod sent;
 
+#[path = "forward_tests.rs"]
+mod forward;
+
 #[derive(Default)]
 struct FakeMail {
     sent: Arc<sent::Fixture>,
