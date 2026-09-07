@@ -1991,7 +1991,7 @@ impl App {
                 "Choose a destination folder.",
             ),
             Dialog::Compose => (
-                if self.composer.draft.forward.is_some() {
+                if self.composer.current.draft.forward.is_some() {
                     "Forward message"
                 } else {
                     "New message"

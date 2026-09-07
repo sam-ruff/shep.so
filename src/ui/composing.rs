@@ -17,9 +17,16 @@ pub(super) enum Exit {
 }
 
 #[derive(Default)]
-pub(super) struct Composer {
+pub(super) struct Session {
     pub draft: Draft,
+    pub editor: text_editor::Content,
+    pub dirty: Option<Instant>,
+    pub pending: Option<u64>,
     pub show_recipients: bool,
+}
+#[derive(Default)]
+pub(super) struct Composer {
+    pub current: Session,
     pub io: Option<String>,
     saving: Option<(String, u64, Exit)>,
     pub context: Option<DraftMenu>,
@@ -106,7 +113,8 @@ impl App {
             );
             return;
         }
-        let draft = if self.dialog == Some(Dialog::Compose) && self.draft_id == id {
+        let draft = if self.dialog == Some(Dialog::Compose) && self.composer.current.draft.id == id
+        {
             Some(self.current_draft())
         } else {
             self.workspace
@@ -159,12 +167,8 @@ impl App {
                     self.composer.discard_return = None;
                     if self.dialog == Some(Dialog::DiscardDraft) {
                         self.dialog = None;
-                        if self.draft_id == id {
-                            self.draft_dirty = None;
-                            self.draft_id.clear();
-                            self.editor = text_editor::Content::new();
-                            self.fields.clear();
-                            self.composer.draft = Draft::default();
+                        if self.composer.current.draft.id == id {
+                            self.composer.current = Session::default();
                         }
                     }
                 }
@@ -276,17 +280,19 @@ impl App {
             .collect();
         let chosen = choices
             .iter()
-            .find(|a| a.0 == self.field("account"))
+            .find(|a| a.0 == self.compose_field("account"))
             .cloned();
         let mut form = column![
             row![
                 muted("From").width(52),
-                pick_list(choices, chosen, |c: Choice| Message::Field("account", c.0))
-                    .style(select_input)
-                    .menu_style(select_menu)
-                    .text_size(12)
-                    .padding(10)
-                    .width(Length::Fill)
+                pick_list(choices, chosen, |c: Choice| Message::ComposeField(
+                    "account", c.0
+                ))
+                .style(select_input)
+                .menu_style(select_menu)
+                .text_size(12)
+                .padding(10)
+                .width(Length::Fill)
             ]
             .align_y(Alignment::Center)
         ]
@@ -297,9 +303,9 @@ impl App {
          -> Element<'_, Message> {
             row![
                 muted(label).width(52),
-                input(placeholder, self.field(key), move |v| Message::Field(
-                    key, v
-                ))
+                input(placeholder, self.compose_field(key), move |v| {
+                    Message::ComposeField(key, v)
+                })
                 .id(key)
             ]
             .align_y(Alignment::Center)
@@ -316,26 +322,26 @@ impl App {
             .spacing(8)
             .align_y(Alignment::Center),
         );
-        if self.composer.show_recipients
-            || !self.field("cc").is_empty()
-            || !self.field("bcc").is_empty()
+        if self.composer.current.show_recipients
+            || !self.compose_field("cc").is_empty()
+            || !self.compose_field("bcc").is_empty()
         {
             form = form
                 .push(address_row("Cc", "cc", "Copy recipients"))
                 .push(address_row("Bcc", "bcc", "Hidden recipients"));
         }
         form = form.push(address_row("Subject", "subject", "Add a subject"));
-        let extra = if self.composer.show_recipients {
+        let extra = if self.composer.current.show_recipients {
             96.
         } else {
             0.
-        } + if self.composer.draft.attachments.is_empty() {
+        } + if self.composer.current.draft.attachments.is_empty() {
             0.
         } else {
             100.
         };
         form = form.push(
-            widget::text_editor(&self.editor)
+            widget::text_editor(&self.composer.current.editor)
                 .on_action(Message::Editor)
                 .placeholder("Write your message…")
                 .style(editor_field)
@@ -343,9 +349,9 @@ impl App {
                 .padding(15)
                 .height((self.size.height - 410. - extra).clamp(80., 300.)),
         );
-        if !self.composer.draft.attachments.is_empty() {
+        if !self.composer.current.draft.attachments.is_empty() {
             let mut files = row![].spacing(6);
-            for file in &self.composer.draft.attachments {
+            for file in &self.composer.current.draft.attachments {
                 files = files.push(
                     container(
                         row![
@@ -384,8 +390,9 @@ impl App {
                 .padding([12, 16])
                 .style(primary)
                 .on_press_maybe(
-                    (!self.compose_locked() && self.composer.io.as_deref() != Some(&self.draft_id))
-                        .then_some(Message::Send)
+                    (!self.compose_locked()
+                        && self.composer.io.as_deref() != Some(&self.composer.current.draft.id))
+                    .then_some(Message::Send)
                 ),
                 button(
                     row![
@@ -411,7 +418,7 @@ impl App {
                 self.icon_action(
                     "trash",
                     "Discard draft",
-                    Message::ReviewDiscardDraft(self.draft_id.clone())
+                    Message::ReviewDiscardDraft(self.composer.current.draft.id.clone())
                 ),
                 button(text("Save draft").size(12))
                     .padding([12, 14])
@@ -424,40 +431,61 @@ impl App {
         form.into()
     }
 
+    pub(super) fn compose_field(&self, key: &str) -> &str {
+        let draft = &self.composer.current.draft;
+        match key {
+            "account" => &draft.account_id,
+            "to" => &draft.to,
+            "cc" => &draft.cc,
+            "bcc" => &draft.bcc,
+            "subject" => &draft.subject,
+            _ => "",
+        }
+    }
+
+    pub(super) fn edit_compose_field(&mut self, key: &str, value: String) {
+        if self.dialog != Some(Dialog::Compose) || self.compose_locked() {
+            return;
+        }
+        let draft = &mut self.composer.current.draft;
+        let field = match key {
+            "account" => &mut draft.account_id,
+            "to" => &mut draft.to,
+            "cc" => &mut draft.cc,
+            "bcc" => &mut draft.bcc,
+            "subject" => &mut draft.subject,
+            _ => return,
+        };
+        if *field != value {
+            *field = value;
+            self.draft_edited();
+        }
+    }
+
     pub(super) fn current_draft(&self) -> Draft {
         Draft {
-            id: self.draft_id.clone(),
-            account_id: self.field("account").into(),
-            to: self.field("to").into(),
-            cc: self.field("cc").into(),
-            bcc: self.field("bcc").into(),
-            subject: self.field("subject").into(),
-            body: self.editor.text(),
-            ..self.composer.draft.clone()
+            body: self.composer.current.editor.text(),
+            ..self.composer.current.draft.clone()
         }
     }
 
     pub(super) fn compose_locked(&self) -> bool {
         self.dialog == Some(Dialog::Compose)
-            && self.busy.contains(&format!("send:{}", self.draft_id))
+            && self
+                .busy
+                .contains(&format!("send:{}", self.composer.current.draft.id))
     }
 
     pub(super) fn draft_edited(&mut self) {
-        self.composer.draft.revision += 1;
-        self.draft_dirty = Some(Instant::now());
+        self.composer.current.draft.revision += 1;
+        self.composer.current.dirty = Some(Instant::now());
     }
 
     pub(super) fn load_draft(&mut self, draft: Draft) {
         self.open(Dialog::Compose);
-        self.draft_id = draft.id.clone();
-        self.fields.insert("account", draft.account_id.clone());
-        self.fields.insert("to", draft.to.clone());
-        self.fields.insert("cc", draft.cc.clone());
-        self.fields.insert("bcc", draft.bcc.clone());
-        self.fields.insert("subject", draft.subject.clone());
-        self.editor = text_editor::Content::with_text(&draft.body);
-        self.composer.show_recipients = !draft.cc.is_empty() || !draft.bcc.is_empty();
-        self.composer.draft = draft;
+        self.composer.current.editor = text_editor::Content::with_text(&draft.body);
+        self.composer.current.show_recipients = !draft.cc.is_empty() || !draft.bcc.is_empty();
+        self.composer.current.draft = draft;
     }
 
     pub(super) fn observe_drafts(&mut self, state: &DraftState) {
@@ -471,15 +499,27 @@ impl App {
     }
 
     pub(super) fn observe_draft_files(&mut self) {
-        if let Some(draft) = self.workspace.drafts.iter().find(|d| d.id == self.draft_id) {
+        if let Some(draft) = self
+            .workspace
+            .drafts
+            .iter()
+            .find(|d| d.id == self.composer.current.draft.id)
+        {
             // Body/recipient edits belong to the open editor. Only file metadata
             // comes from background updates, including late autosave snapshots.
-            self.composer.draft.attachments = draft.attachments.clone();
+            self.composer.current.draft.attachments = draft.attachments.clone();
         }
     }
 
     pub(super) fn defer_draft_exit(&mut self, exit: Exit) -> bool {
-        if self.dialog != Some(Dialog::Compose) || self.compose_locked() {
+        if self.compose_locked() {
+            return false;
+        }
+        if self.dialog != Some(Dialog::Compose)
+            && (!matches!(exit, Exit::Window(_))
+                || (self.composer.current.dirty.is_none()
+                    && self.composer.current.pending.is_none()))
+        {
             return false;
         }
         let draft = self.current_draft();
@@ -489,7 +529,9 @@ impl App {
             && draft.subject.is_empty()
             && draft.body.trim().is_empty()
             && draft.attachments.is_empty()
-            && self.composer.io.as_deref() != Some(&self.draft_id)
+            && self.composer.io.as_deref() != Some(&self.composer.current.draft.id)
+            && self.composer.current.dirty.is_none()
+            && self.composer.current.pending.is_none()
         {
             return false;
         }
@@ -497,15 +539,39 @@ impl App {
         true
     }
 
+    pub(super) fn autosave_draft(&mut self) {
+        if self.composer.current.pending.is_some()
+            || self.composer.discard_pending
+            || self
+                .composer
+                .current
+                .dirty
+                .is_none_or(|t| t.elapsed().as_secs() < 1)
+        {
+            return;
+        }
+        let draft = self.current_draft();
+        let revision = draft.revision;
+        if self.try_command(Command::AutoSaveDraft(draft)) {
+            self.composer.current.pending = Some(revision);
+            self.composer.current.dirty = None;
+        }
+    }
+
     pub(super) fn save_and_exit(&mut self, exit: Exit) {
         if self.compose_locked() {
+            return;
+        }
+        if let Some(revision) = self.composer.current.pending {
+            self.composer.saving = Some((self.composer.current.draft.id.clone(), revision, exit));
             return;
         }
         let draft = self.current_draft();
         let request = (draft.id.clone(), draft.revision, exit);
         if self.try_command(Command::SaveDraft(draft)) {
+            self.composer.current.pending = Some(request.1);
             self.composer.saving = Some(request);
-            self.draft_dirty = None;
+            self.composer.current.dirty = None;
         }
     }
 
@@ -515,11 +581,24 @@ impl App {
         revision: u64,
         result: Result<Arc<DraftState>, String>,
     ) -> Task<Message> {
+        let current = id == self.composer.current.draft.id;
+        let pending = current && self.composer.current.pending == Some(revision);
+        if pending {
+            self.composer.current.pending = None;
+        }
         match result {
             Err(error) => {
-                if id == self.draft_id {
-                    self.composer.saving = None;
-                    self.draft_dirty = Some(Instant::now());
+                // A delayed failure cannot cancel a newer save/close request.
+                if current && (pending || self.composer.current.draft.revision == revision) {
+                    if self
+                        .composer
+                        .saving
+                        .as_ref()
+                        .is_some_and(|(request, version, _)| request == &id && *version == revision)
+                    {
+                        self.composer.saving = None;
+                    }
+                    self.composer.current.dirty = Some(Instant::now());
                 }
                 self.notice(error, true);
             }
@@ -530,12 +609,16 @@ impl App {
                     && version == revision
                 {
                     self.composer.saving = None;
-                    if self.dialog == Some(Dialog::Compose) && self.draft_id == id {
-                        if self.composer.draft.revision != revision {
+                    if current
+                        && (self.dialog == Some(Dialog::Compose) || matches!(exit, Exit::Window(_)))
+                    {
+                        if self.composer.current.draft.revision != revision {
                             self.save_and_exit(exit);
                         } else {
-                            self.dialog = None;
-                            self.draft_dirty = None;
+                            if self.dialog == Some(Dialog::Compose) {
+                                self.dialog = None;
+                            }
+                            self.composer.current.dirty = None;
                             return match exit {
                                 Exit::Dialog => widget::operation::focus("unfocused"),
                                 Exit::Tab(tab) => self.handle(Message::Tab(tab)),
@@ -579,7 +662,7 @@ impl App {
             self.composer.io = None;
             return;
         }
-        let draft = if self.dialog == Some(Dialog::Compose) && captured.id == self.draft_id {
+        let draft = if captured.id == self.composer.current.draft.id {
             self.draft_edited();
             self.current_draft()
         } else {
@@ -594,8 +677,11 @@ impl App {
         if self.compose_locked() || self.composer.io.is_some() {
             return;
         }
-        if self.try_command(Command::RemoveDraftFile(self.draft_id.clone(), id)) {
-            self.composer.io = Some(self.draft_id.clone());
+        if self.try_command(Command::RemoveDraftFile(
+            self.composer.current.draft.id.clone(),
+            id,
+        )) {
+            self.composer.io = Some(self.composer.current.draft.id.clone());
             self.draft_edited();
         }
     }

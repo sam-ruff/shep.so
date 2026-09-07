@@ -6,6 +6,8 @@
 
 Do not remove an entry because code exists, a plan was proposed, or unrelated tests pass. Remove it only after the requested behavior and relevant unit/protocol/native tests pass, visual evidence is reviewed where appropriate, and the authorized shipping step is complete. Record the completed behavior, tests, limitations and commit in `docs/COMPLETION.md`; update `docs/REQUEST_AUDIT.md` so every original request remains traceable. Partially completed features stay in TODO with their remaining work stated. Never silently drop a request at compaction or replace the full product goal with the newest request.
 
+The current stopping point and restart order are in [handover.md](handover.md). Keep TODO authoritative; a pushed handover is not completion of the full product goal.
+
 ## Product direction
 
 Keep README and human documentation short, concise and easy to read. The Zensical home page links to a separate `docs/agents/` section for detailed behavior and implementation reference. Keep operational agent instructions in this file, and link to it from the agent docs rather than maintaining a second copy.
@@ -904,3 +906,17 @@ Python test and the three `test_native_*` ordering/isolation scenarios. The rapi
 Move/Escape reproduction fails on the previous installed executable. These flows
 intentionally omit waits between earlier keys and already-visible later controls;
 independent scenarios may still await focus/layout to isolate their own behavior.
+
+
+## Composer state checkpoint
+
+`ui/composing::Session` owns recipient/account/subject metadata and the native
+editor separately from generic dialog fields. Use `ComposeField` for those
+controls. Opening another form must not clear dirty draft state. Autosave keeps
+one current-session revision in flight and coalesces newer edits; window close
+must observe it and then save the newest revision, including while another form
+is visible. A failed save cancels close and retains edits. Late file/send/save
+results must preserve unrelated form state and newer draft revisions.
+This ownership checkpoint does not implement R35's inline view/session pool.
+Preserve its controller tests and native Preferences/graceful-restart scenario
+when completing that work; extend native editing-focus guards for inline fields.
