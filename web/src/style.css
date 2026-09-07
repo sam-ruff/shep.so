@@ -476,6 +476,7 @@ select {
   padding: 34px 32px;
   overflow: auto;
   flex: 1;
+  min-height: 0;
 }
 .reader-format-controls {
   display: flex;
@@ -570,9 +571,26 @@ select {
   height: 16px;
 }
 .reader-actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 32px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.reader-actions [aria-busy="true"] svg {
+  animation: reader-action-working 1s linear infinite;
+}
+@keyframes reader-action-working {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reader-actions [aria-busy="true"] svg {
+    animation: none;
+  }
 }
 .empty {
   display: flex;

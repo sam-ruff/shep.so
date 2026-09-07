@@ -1,3 +1,4 @@
+import { renderReaderTree } from "./reader_actions";
 import { PrintController } from "./printing_controller";
 import { MessageFind, SearchWorker } from "./message_find";
 import { FormattedFrame } from "./formatted_frame";
@@ -1522,6 +1523,13 @@ export function mount(
     rows.onkeydown = (e) => {
       if (!["ArrowDown", "ArrowUp", "Enter"].includes(e.key)) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (
+        e.key === "Enter" &&
+        ((e.target as Element).closest("button:not(.row-open)") ||
+          (!w.selection.mode &&
+            (e.shiftKey || w.preferences.shortcuts.reader !== "Enter")))
+      )
+        return;
       e.preventDefault();
       const focused = (
         document.activeElement as HTMLElement
@@ -1533,9 +1541,12 @@ export function mount(
         if (focused) w.selection.toggle(focused);
         return;
       }
-      if (e.key === "Enter" && w.selected) {
-        fullReader = true;
-        w.changed();
+      if (e.key === "Enter") {
+        const id = focused ?? w.selected;
+        if (id) {
+          fullReader = true;
+          w.beginReading(id);
+        }
         return;
       }
       const m =
@@ -1892,30 +1903,43 @@ export function mount(
     const files = incomingFiles(m);
     content.append(files);
     const actions = el("div", "reader-actions");
+    actions.setAttribute("role", "group");
+    actions.setAttribute("aria-label", "Message actions");
     const reply = button("Reply", () => composer(m), "reply");
     reply.classList.add("primary");
+    const forwardBusy = forwarding.has(m.id),
+      printBusy = printer?.preparing(m.id) ?? false;
+    const forwardButton = button(
+      "Forward",
+      () => void forward(m),
+      forwardBusy ? "refresh" : "forward",
+    );
+    const printButton = button(
+      "Print",
+      () => printMessage(m),
+      printBusy ? "refresh" : "print",
+    );
+    for (const [control, busy, label] of [
+      [forwardButton, forwardBusy, "Preparing forward…"],
+      [printButton, printBusy, "Preparing print…"],
+    ] as const) {
+      control.disabled = busy;
+      control.setAttribute("aria-busy", String(busy));
+      if (busy) {
+        control.setAttribute("aria-label", label);
+        control.title = label;
+      }
+    }
     actions.append(
       reply,
       button("Reply all", () => void composer(m, undefined, true), "reply"),
-      Object.assign(
-        button(
-          forwarding.has(m.id) ? "Preparing forward…" : "Forward",
-          () => void forward(m),
-          "forward",
-        ),
-        { disabled: forwarding.has(m.id) },
-      ),
-      Object.assign(
-        button(
-          printer?.preparing(m.id) ? "Preparing print…" : "Print",
-          () => printMessage(m),
-          "print",
-        ),
-        { disabled: printer?.preparing(m.id) ?? false },
-      ),
+      forwardButton,
+      printButton,
     );
-    content.append(actions);
-    panel.append(content);
+    actions.dataset.message = m.id;
+    for (const [index, child] of [...actions.children].entries())
+      (child as HTMLElement).dataset.focus = `reader-action:${m.id}:${index}`;
+    panel.append(content, actions);
     return panel;
   }
   function preferences() {
@@ -2149,7 +2173,8 @@ export function mount(
         w.savePreferences({ ...w.preferences, sidebarWidth: n }),
       ),
     );
-    root.replaceChildren(sidebar(), sizing);
+    const next = el("div");
+    next.append(sidebar(), sizing);
     const main = el("main");
     const header = el("header");
     header.append(
@@ -2262,7 +2287,8 @@ export function mount(
       );
       main.append(failure);
     }
-    root.append(main);
+    next.append(main);
+    renderReaderTree(root, next);
     for (const n of root.querySelectorAll<HTMLElement>("[data-scroll]"))
       n.scrollTop = scrolls.get(n.dataset.scroll) ?? 0;
     formattedFrame?.attach(
@@ -2303,7 +2329,16 @@ export function mount(
   w.addEventListener("change", render);
   document.addEventListener("keydown", (e) => {
     if (
+      e.defaultPrevented ||
       document.querySelector("dialog[open]") ||
+      (!e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        (e.key === "Enter" || e.key === " ") &&
+        (e.target as Element).closest(
+          "button, summary, a[href], input[type=checkbox], input[type=radio]",
+        )) ||
       (e.target instanceof HTMLInputElement && e.target.type !== "checkbox") ||
       e.target instanceof HTMLTextAreaElement ||
       e.target instanceof HTMLSelectElement ||
@@ -2382,10 +2417,13 @@ export function mount(
       const m = w.readerMessage;
       if (m) printMessage(m);
     } else if (action === "reader") {
-      if (w.selected) {
-        w.beginReading(w.selected);
+      const focused = (
+        document.activeElement as Element | null
+      )?.closest<HTMLElement>(".mail-row")?.dataset.id;
+      const id = focused ?? w.selected;
+      if (id) {
         fullReader = true;
-        w.changed();
+        w.beginReading(id);
       }
     } else act(action as Action);
     return true;
