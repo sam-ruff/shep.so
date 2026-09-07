@@ -102,7 +102,7 @@ test("IndexedDB upgrade preserves mail and seeds Sent roles; failed writes roll 
       version,
     };
   });
-  expect(evidence.version).toBe(4);
+  expect(evidence.version).toBe(5);
   expect(evidence.migrated.mail).toEqual([
     { id: "original", subject: "Storage fixture" },
   ]);

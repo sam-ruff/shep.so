@@ -1,4 +1,5 @@
 import { MoveFeedback, MoveRecord } from "./move-feedback";
+import { mailMatches } from "./mail_query";
 export interface Mail {
   id: string;
   sender: string;
@@ -434,26 +435,27 @@ export class Workspace extends EventTarget {
     return this.mail.filter((m) => m.folder === "Inbox" && m.unread).length;
   }
   get matching() {
-    const words = this.query.toLowerCase().trim().split(/\s+/);
+    const scope = {
+      folder: this.folder,
+      query: this.query,
+      filter: this.filter,
+    };
     return this.mail
       .filter(
         (m) =>
-          (m.folder === this.folder ||
-            (this.folder === "Sent" &&
-              this.repository.folderRoles
-                ?.get(m.accountId ?? m.account)
-                ?.has(m.folder))) &&
           (!this.account || m.account === this.account) &&
-          (this.filter !== "Unread" || m.unread) &&
-          (this.filter !== "Flagged" || m.starred) &&
-          words.every((q) =>
-            `${m.sender} ${m.subject} ${m.body}`.toLowerCase().includes(q),
+          mailMatches(
+            m,
+            scope,
+            this.repository.folderRoles?.get(m.accountId ?? m.account),
           ),
       )
-      .sort((a, b) =>
-        this.newestFirst
-          ? b.date.localeCompare(a.date)
-          : a.date.localeCompare(b.date),
+      .sort(
+        (a, b) =>
+          (this.newestFirst
+            ? b.date.localeCompare(a.date)
+            : a.date.localeCompare(b.date)) ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
       );
   }
   get visible() {

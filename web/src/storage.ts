@@ -1,3 +1,4 @@
+import { cacheStores, mailMetadata, recordCacheChanges } from "./cache_changes";
 import {
   checkRemovedWrites,
   removalChanges,
@@ -16,6 +17,7 @@ export const stores = [
   "mailAliases",
   "mailRoles",
   "removedAccounts",
+  ...cacheStores,
 ] as const;
 export type StoreName = (typeof stores)[number];
 export interface Change {
@@ -33,62 +35,89 @@ export interface LocalStore {
   ): Promise<Partial<Record<StoreName, unknown[]>>>;
   submissions<T>(id: string): Promise<T[]>;
 }
+export async function openMailDatabase(user: string): Promise<IDBDatabase> {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(user))
+    throw new Error("Invalid browser profile identity.");
+  return new Promise((resolve, reject) => {
+    let abandoned = false;
+    const request = indexedDB.open(`shep.mail.v1.${user}`, 5);
+    request.onupgradeneeded = (event) => {
+      for (const store of stores)
+        if (!request.result.objectStoreNames.contains(store))
+          request.result.createObjectStore(store);
+      // Seed acknowledged folder roles from the earlier outgoing journal in
+      // the same upgrade transaction; failure leaves version 2 intact.
+      const tx = request.transaction!;
+      if (event.oldVersion < 5) {
+        const metadata = tx.objectStore("mailMetadata");
+        metadata.createIndex("newest", "newest");
+        metadata.createIndex("oldest", "oldest");
+        const cursor = tx.objectStore("mail").openCursor();
+        cursor.onsuccess = () => {
+          const row = cursor.result;
+          if (!row) return;
+          const value = mailMetadata(row.value);
+          if (value) metadata.put(value, row.primaryKey);
+          row.continue();
+        };
+        tx.objectStore("cacheState").put({ revision: 0, floor: 0 }, "mail");
+      }
+      const outgoing = tx.objectStore("outgoing");
+      if (!outgoing.indexNames.contains("submission"))
+        outgoing.createIndex("submission", "id");
+      // Never replace roles acknowledged after the original v3 migration.
+      if (event.oldVersion >= 3) return;
+      const roles = new Map<string, Set<string>>();
+      const cursor = tx.objectStore("outgoing").openCursor();
+      cursor.onsuccess = () => {
+        const row = cursor.result;
+        if (row) {
+          const record = row.value;
+          const account = record.account?.id ?? record.draft?.accountId;
+          const folder = record.sent?.receipt?.folder;
+          if (
+            record.sent?.state === "saved" &&
+            typeof account === "string" &&
+            typeof folder === "string"
+          ) {
+            const known = roles.get(account) ?? new Set<string>();
+            known.add(folder);
+            roles.set(account, known);
+          }
+          row.continue();
+        } else
+          for (const [account, folders] of roles)
+            tx.objectStore("mailRoles").put(
+              { account, acknowledged: [...folders] },
+              account,
+            );
+      };
+    };
+    request.onerror = () =>
+      reject(
+        new Error(
+          "Browser storage is unavailable. Allow site storage and reopen Shep.",
+        ),
+      );
+    request.onblocked = () => {
+      abandoned = true;
+      reject(new Error("Close other Shep tabs to update browser storage."));
+    };
+    request.onsuccess = () => {
+      if (abandoned) {
+        request.result.close();
+        return;
+      }
+      request.result.onversionchange = () => request.result.close();
+      resolve(request.result);
+    };
+  });
+}
+
 export class BrowserStore implements LocalStore {
   private constructor(private db: IDBDatabase) {}
   static async open(user: string): Promise<BrowserStore> {
-    if (!/^[A-Za-z0-9_-]{43}$/.test(user))
-      throw new Error("Invalid browser profile identity.");
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(`shep.mail.v1.${user}`, 4);
-      request.onupgradeneeded = () => {
-        for (const store of stores)
-          if (!request.result.objectStoreNames.contains(store))
-            request.result.createObjectStore(store);
-        // Seed acknowledged folder roles from the earlier outgoing journal in
-        // the same upgrade transaction; failure leaves version 2 intact.
-        const tx = request.transaction!;
-        const outgoing = tx.objectStore("outgoing");
-        if (!outgoing.indexNames.contains("submission"))
-          outgoing.createIndex("submission", "id");
-        const roles = new Map<string, Set<string>>();
-        const cursor = tx.objectStore("outgoing").openCursor();
-        cursor.onsuccess = () => {
-          const row = cursor.result;
-          if (row) {
-            const record = row.value;
-            const account = record.account?.id ?? record.draft?.accountId;
-            const folder = record.sent?.receipt?.folder;
-            if (
-              record.sent?.state === "saved" &&
-              typeof account === "string" &&
-              typeof folder === "string"
-            ) {
-              const known = roles.get(account) ?? new Set<string>();
-              known.add(folder);
-              roles.set(account, known);
-            }
-            row.continue();
-          } else
-            for (const [account, folders] of roles)
-              tx.objectStore("mailRoles").put(
-                { account, acknowledged: [...folders] },
-                account,
-              );
-        };
-      };
-      request.onerror = () =>
-        reject(
-          new Error(
-            "Browser storage is unavailable. Allow site storage and reopen Shep.",
-          ),
-        );
-      request.onblocked = () =>
-        reject(new Error("Close other Shep tabs to update browser storage."));
-      request.onsuccess = () => {
-        request.result.onversionchange = () => request.result.close();
-        resolve(new BrowserStore(request.result));
-      };
-    });
+    return new BrowserStore(await openMailDatabase(user));
   }
   close() {
     this.db.close();
@@ -166,10 +195,12 @@ export class BrowserStore implements LocalStore {
           snapshot[name] = request.result;
           if (--remaining) return;
           try {
-            for (const c of removalChanges(snapshot, review, discard)) {
+            const changes = removalChanges(snapshot, review, discard);
+            for (const c of changes) {
               if (c.value === undefined) tx.objectStore(c.store).delete(c.key);
               else tx.objectStore(c.store).put(c.value, c.key);
             }
+            if (changes.length) recordCacheChanges(tx, changes, true);
           } catch (e) {
             error = e;
             tx.abort();
@@ -185,6 +216,11 @@ export class BrowserStore implements LocalStore {
         [
           ...new Set([
             ...changes.map((c) => c.store),
+            ...(changes.some(
+              (c) => c.store === "mail" || c.store === "mailAliases",
+            )
+              ? cacheStores
+              : []),
             "removedAccounts" as const,
           ]),
         ],
@@ -210,6 +246,10 @@ export class BrowserStore implements LocalStore {
             if (c.value === undefined) tx.objectStore(c.store).delete(c.key);
             else tx.objectStore(c.store).put(c.value, c.key);
           }
+          if (
+            changes.some((c) => c.store === "mail" || c.store === "mailAliases")
+          )
+            recordCacheChanges(tx, changes);
         } catch (error) {
           cause =
             error instanceof Error &&

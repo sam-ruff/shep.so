@@ -1,6 +1,8 @@
 import { defineConfig } from "vite";
 export default defineConfig(({ mode }) => ({
   base: "./",
+  optimizeDeps: { exclude: ["@sqlite.org/sqlite-wasm"] },
+  worker: { format: "es" },
   build: {
     outDir: mode === "preview" ? "dist-preview" : "dist",
     emptyOutDir: true,

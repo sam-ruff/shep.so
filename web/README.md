@@ -14,3 +14,5 @@ Open `http://127.0.0.1:5180/preview.html` for fictional mail. `/` requires a ver
 Formatted messages use shared Rust/WASM preparation in a cancellable worker, retaining tables, authored styles and bounded inline images. Selection, Find, quoted history and a plain-text choice remain available. Sender scripts and automatic remote images are blocked; remote-image exceptions/loading are still pending. Build the gateway and web app from the same revision so their display-runtime CSP hashes match.
 
 Print opens an independent preview from the complete cached message, with full quoted history, headers, attachment names and inline images. Choose a printer or Save as PDF; Print is remappable in Preferences. Chromium output is verified; other engines remain in the platform audit.
+
+Selection storage uses the pinned SQLite WASM package in a private worker and readonly cache snapshots. The captured-selection controller and visible bulk controls remain in progress. Dependency provenance is included in `public/SQLITE-LICENSE.txt`.
