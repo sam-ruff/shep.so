@@ -1,4 +1,6 @@
 import { MessageFind, SearchWorker } from "./message_find";
+import { FormattedFrame } from "./formatted_frame";
+import type { PreparedMessage } from "./formatted_content";
 import type { ReceivedAttachment } from "./attachments";
 import {
   type Action,
@@ -158,6 +160,9 @@ export function mount(
     if (!event.persisted) {
       find.dispose();
       searchWorker.dispose();
+      formattedFrame?.dispose();
+      gateway?.formattedMessages.cancel();
+      systemAppearance.removeEventListener("change", appearanceChanged);
     }
   });
   function openFind() {
@@ -181,6 +186,7 @@ export function mount(
     const input = field("Find in message", find.query, (value) =>
       find.setQuery(value),
     );
+    input.querySelector("input")!.placeholder = "Find in message";
     input.querySelector("input")!.onkeydown = (e) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -248,6 +254,129 @@ export function mount(
   let sidebarOpen = false;
   const gateway =
     w.repository instanceof GatewayRepository ? w.repository : undefined;
+  let formattedFrame: FormattedFrame | undefined;
+  let formattedState:
+    | {
+        id: string;
+        generation: string;
+        plain: boolean;
+        loading: boolean;
+        prepared?: PreparedMessage;
+        error?: string;
+        blocks: string[];
+        hasQuotes: boolean;
+      }
+    | undefined;
+  const systemAppearance = matchMedia("(prefers-color-scheme: dark)");
+  const appearanceChanged = () => {
+    if (w.preferences.appearance === "system") w.changed();
+  };
+  systemAppearance.addEventListener("change", appearanceChanged);
+  const darkReader = () =>
+    w.preferences.appearance === "dark" ||
+    (w.preferences.appearance === "system" && systemAppearance.matches);
+  function readerShortcuts() {
+    return [
+      ...Object.values(w.preferences.shortcuts).filter(Boolean),
+      "Escape",
+      ...(w.preferences.shortcuts.find === "Control+f" ? ["Meta+f"] : []),
+    ];
+  }
+  function reviewLink(value: string) {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      return;
+    }
+    if (
+      !["http:", "https:", "mailto:"].includes(url.protocol) ||
+      url.username ||
+      url.password
+    )
+      return;
+    const d = modal("Message link");
+    const address = el("p", "message-link-address", url.href);
+    const open = el("a", "button", "Open link");
+    open.href = url.href;
+    open.target = "_blank";
+    open.rel = "noopener noreferrer";
+    open.onclick = () => d.close();
+    const status = el("p", "form-status");
+    status.setAttribute("role", "status");
+    const copy = button("Copy address", async () => {
+      try {
+        await navigator.clipboard.writeText(url.href);
+        status.textContent = "Address copied.";
+      } catch {
+        status.textContent = "Select and copy the address above.";
+      }
+    });
+    d.append(address, open, copy, status);
+  }
+  function clearFormatted() {
+    formattedState = undefined;
+    formattedFrame?.dispose();
+    formattedFrame = undefined;
+    gateway?.formattedMessages.cancel();
+  }
+  function loadFormatted(m: Mail, plain = false) {
+    if (!gateway) return;
+    clearFormatted();
+    const state = (formattedState = {
+      id: m.id,
+      generation: crypto.randomUUID(),
+      plain,
+      loading: true,
+      blocks: [] as string[],
+      hasQuotes: false,
+    } as NonNullable<typeof formattedState>);
+    void gateway.formattedMessages
+      .load(m.id, {
+        generation: state.generation,
+        dark: darkReader(),
+        quotes: quoteState?.open ?? false,
+      })
+      .then((prepared) => {
+        if (formattedState !== state) return;
+        state.prepared = prepared;
+        if (prepared.document)
+          formattedFrame = new FormattedFrame(
+            state.generation,
+            prepared.document,
+            {
+              content: (blocks, hasQuotes) => {
+                if (formattedState !== state) return;
+                state.blocks = blocks;
+                state.hasQuotes = hasQuotes;
+                w.changed();
+              },
+              link: reviewLink,
+              shortcut: (key) => {
+                if (formattedState === state && !state.plain)
+                  handleShortcut(key);
+              },
+              error: () => {
+                if (formattedState !== state) return;
+                state.error =
+                  "Could not display formatted mail. Use plain text or retry.";
+                formattedFrame?.dispose();
+                formattedFrame = undefined;
+                w.changed();
+              },
+            },
+          );
+      })
+      .catch((error) => {
+        if (formattedState === state) state.error = error.message;
+      })
+      .finally(() => {
+        if (formattedState === state) {
+          state.loading = false;
+          w.changed();
+        }
+      });
+  }
   function folders() {
     return [
       ...new Set([
@@ -1377,21 +1506,28 @@ export function mount(
       panel.append(empty);
       return panel;
     }
-    const [latest, ...quote] = m.body.split("\n>");
     if (quoteState?.id !== m.id || quoteState.mode !== w.preferences.quoteMode)
       quoteState = {
         id: m.id,
         mode: w.preferences.quoteMode,
         open: w.preferences.quoteMode === "Expanded",
       };
-    find.setSource(m.id, [
-      latest,
-      ...(quote.length &&
-      w.preferences.quoteMode !== "Latest only" &&
-      quoteState.open
-        ? [quote.join("\n>")]
-        : []),
-    ]);
+    if (gateway && formattedState?.id !== m.id) loadFormatted(m);
+    const state = formattedState;
+    const html =
+      !!state && !state.plain && !!state.prepared?.document && !state.error;
+    if (html) panel.classList.add("has-formatted-message");
+    const [latest, ...quote] = (state?.prepared?.text ?? m.body).split("\n>");
+    if (html) find.setSource(`${m.id}:html:${state.generation}`, state.blocks);
+    else
+      find.setSource(`${m.id}:plain`, [
+        latest,
+        ...(quote.length &&
+        w.preferences.quoteMode !== "Latest only" &&
+        quoteState.open
+          ? [quote.join("\n>")]
+          : []),
+      ]);
     if (find.open) panel.append(findBar());
     const content = el("div", "reader-content");
     content.dataset.scroll = "reader";
@@ -1409,8 +1545,65 @@ export function mount(
       el("time", "", new Date(m.date).toLocaleString("en-GB")),
     );
     content.append(sender);
-    content.append(foundText(latest, 0));
-    if (quote.length && w.preferences.quoteMode !== "Latest only") {
+    if (state && (state.loading || state.error || state.prepared?.document)) {
+      const options = el("div", "reader-format-controls");
+      options.append(
+        select(
+          "Message format",
+          state.plain ? "Plain text" : "Formatted",
+          ["Formatted", "Plain text"],
+          (value) => {
+            state.plain = value === "Plain text";
+            w.changed();
+          },
+        ),
+      );
+      if (state.loading)
+        options.append(el("span", "muted", "Preparing formatted message…"));
+      if (
+        html &&
+        state.hasQuotes &&
+        w.preferences.quoteMode !== "Latest only"
+      ) {
+        const quotes = button(
+          quoteState.open ? "Hide quoted history" : "Show quoted history",
+          () => {
+            quoteState!.open = !quoteState!.open;
+            w.changed();
+          },
+        );
+        quotes.setAttribute("aria-expanded", String(quoteState.open));
+        options.append(quotes);
+      }
+      content.append(options);
+    }
+    if (state?.error) {
+      const error = el("p", "error", state.error);
+      error.setAttribute("role", "alert");
+      content.append(
+        error,
+        button("Retry formatted message", () => {
+          loadFormatted(m, state.plain);
+          w.changed();
+        }),
+      );
+    }
+    if (html) {
+      const count = state.prepared!.remote_images.length;
+      if (count)
+        content.append(
+          el(
+            "p",
+            "muted reader-image-status",
+            `${count} remote image${count === 1 ? "" : "s"} blocked.`,
+          ),
+        );
+      for (const issue of state.prepared!.issues)
+        content.append(el("p", "muted", issue));
+      const viewport = el("div", "formatted-viewport");
+      content.append(viewport);
+    } else content.append(foundText(latest, 0));
+    if (!html && quote.length && w.preferences.quoteMode !== "Latest only") {
       const quotes = el("details", "quoted");
       quotes.open = quoteState.open;
       quotes.ontoggle = () => {
@@ -1642,6 +1835,8 @@ export function mount(
     return panel;
   }
   function render() {
+    if (formattedState && formattedState.id !== w.readerMessage?.id)
+      clearFormatted();
     const active = document.activeElement as HTMLInputElement | null;
     const focus = active?.dataset.focus;
     const selection = active?.selectionStart;
@@ -1734,6 +1929,16 @@ export function mount(
     root.append(main);
     for (const n of root.querySelectorAll<HTMLElement>("[data-scroll]"))
       n.scrollTop = scrolls.get(n.dataset.scroll) ?? 0;
+    formattedFrame?.attach(
+      root.querySelector<HTMLElement>(".formatted-viewport") ?? undefined,
+    );
+    formattedFrame?.configure(
+      darkReader(),
+      quoteState?.open ?? false,
+      readerShortcuts(),
+    );
+    if (formattedState && !formattedState.plain && !formattedState.error)
+      formattedFrame?.highlight(find);
     if (focus) {
       const target = [
         ...root.querySelectorAll<HTMLInputElement>("[data-focus]"),
@@ -1743,6 +1948,7 @@ export function mount(
         target?.setSelectionRange(selection, selectionEnd ?? selection);
     }
     if (
+      !root.querySelector(".formatted-viewport") &&
       find.open &&
       !find.pending &&
       find.hits.length &&
@@ -1768,17 +1974,6 @@ export function mount(
       (e.target as HTMLElement).isContentEditable
     )
       return;
-    if (e.key === "Escape" && find.open) {
-      e.preventDefault();
-      closeFind();
-      return;
-    }
-    if (e.key === "Escape" && fullReader) {
-      fullReader = false;
-      w.changed();
-      return;
-    }
-    if (tab !== "Mail") return;
     const combo = [
       e.ctrlKey ? "Control" : e.metaKey ? "Meta" : "",
       e.altKey ? "Alt" : "",
@@ -1787,6 +1982,19 @@ export function mount(
     ]
       .filter(Boolean)
       .join("+");
+    if (handleShortcut(combo)) e.preventDefault();
+  });
+  function handleShortcut(combo: string) {
+    if (tab !== "Mail" || document.querySelector("dialog[open]")) return false;
+    if (combo === "Escape" && find.open) {
+      closeFind();
+      return true;
+    }
+    if (combo === "Escape" && fullReader) {
+      fullReader = false;
+      w.changed();
+      return true;
+    }
     let entry = Object.entries(w.preferences.shortcuts).find(
       ([, value]) => value && value === combo,
     );
@@ -1796,8 +2004,7 @@ export function mount(
       w.preferences.shortcuts.find === "Control+f"
     )
       entry = ["find", "Control+f"];
-    if (!entry) return;
-    e.preventDefault();
+    if (!entry) return false;
     const action = entry[0];
     if (action === "find") openFind();
     else if (action === "search")
@@ -1813,6 +2020,7 @@ export function mount(
         w.changed();
       }
     } else act(action as Action);
-  });
+    return true;
+  }
   render();
 }

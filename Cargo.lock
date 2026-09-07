@@ -82,6 +82,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ammonia"
+version = "4.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc6d763210e2eb7670d1a5183a08bebefa3f97db2a738a684f2ce00bd49f681d"
+dependencies = [
+ "cssparser",
+ "html5ever",
+ "maplit",
+ "url",
+]
+
+[[package]]
 name = "android-activity"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2469,6 +2481,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "maplit"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e2e65a1a2e43cfcb47a895c4c8b10d1f4a61097f9f254f183aee60cad9c651d"
+
+[[package]]
 name = "markup5ever"
 version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4392,14 +4410,19 @@ dependencies = [
 name = "shep-mail-content"
 version = "0.1.0"
 dependencies = [
+ "ammonia",
  "anyhow",
  "base64 0.22.1",
+ "cssparser",
+ "image",
  "mailparse",
+ "percent-encoding",
  "regex",
  "scraper",
  "serde",
  "serde_json",
  "sha2",
+ "url",
  "wasm-bindgen",
 ]
 

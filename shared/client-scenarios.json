@@ -132,13 +132,19 @@
       "id": "find-visible-message",
       "contract": "Literal Unicode case folding and Rust whitespace normalization preserve original UTF-16 match offsets. Search only displayed quote blocks; coalesce pending work, reject stale results/errors, wrap next/previous, reveal the active hit, preserve selection/copy and keep shortcuts out of text edits.",
       "mobile": "shared/find-cases.json + native Rust occupied-capacity test; message_find_test.dart and actual FFI native_repository_test.dart; message_find_scenario.dart shared by ui_test.dart and incoming_android_test.dart; full HTML, large-text bounds, remappable hardware keys and Apple execution OPEN",
-      "browser": "shared WASM goldens + message_find.test.ts coalescing/stale errors/shortcut migration; message-find.spec.ts real controls, remap/disable, quote scope, focus, compact light/dark axe; message-find-flow.mjs also runs offline against the real Rust HTTPS cached-mail path; full HTML and large-text bounds OPEN"
+      "browser": "shared WASM goldens + message_find.test.ts coalescing/stale errors/shortcut migration; message-find.spec.ts real controls, remap/disable, quote scope, focus, compact light/dark axe; message-find-flow.mjs also runs offline against the real Rust HTTPS cached-mail path; formatted-reader.spec.ts adds cross-span HTML, quote indexing, resize, native Copy, CSS Highlight and fallback marks; large-text bounds and full lifecycle audit OPEN"
     },
     {
       "id": "mime-representations",
       "contract": "select alternatives once; scoped/ambiguous CIDs; named inline files; iterative nesting preflight; readable cache independent of damaged attachments",
       "mobile": "shared/reader-fixtures.json / shared Rust reader and MIME tests / native cached-detail tests / incoming_android_test.dart; formatted HTML rendering OPEN",
-      "browser": "reader_content.test.ts uses the same WASM fixtures; provider-flows.mjs checks actual HTTPS text/files; formatted HTML rendering OPEN"
+      "browser": "reader_content.test.ts uses the same WASM fixtures; provider-flows.mjs checks actual HTTPS text/files; formatted-reader.spec.ts exercises the confined HTML representation."
+    },
+    {
+      "id": "confined-formatted-message",
+      "contract": "Prepare HTML/CSS and bounded inline WebP from selected cached MIME off-thread; retain authored layout, ordinary text selection and shared Find; remove sender active content and automatic remote resources; isolate the display frame, reject stale events, retain scroll/selection through app updates and expose plain text/retry when preparation or display fails.",
+      "mobile": "Shared Rust document tests and native bridge regression suite; actual Flutter WebView integration, Android/Apple controls and remote-image policy OPEN.",
+      "browser": "formatted_content.test.ts native/WASM contract; formatted-reader.spec.ts actual controls, sandbox/CSP/network isolation, Copy, quotes, Find and fallback, cancellation/retry, compact light/dark evidence; provider-flows.mjs actual Rust HTTPS inherited CSP/runtime and plain choice. Remote-image policy and large-document/performance parity OPEN."
     }
   ]
 }

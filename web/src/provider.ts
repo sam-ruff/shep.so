@@ -4,6 +4,7 @@ import {
   type RemovalReview,
 } from "./account_removal";
 import { AttachmentReader } from "./attachments";
+import { DocumentLoader } from "./document_loader";
 import {
   resolveMail,
   localId,
@@ -244,6 +245,10 @@ export class GatewayRepository implements Repository {
   accounts: Account[] = [];
   removedAccounts = new Set<string>();
   private attachmentReader?: AttachmentReader;
+  private documentLoader?: DocumentLoader;
+  get formattedMessages() {
+    return (this.documentLoader ??= new DocumentLoader(this.session.user_id));
+  }
   get incomingAttachments() {
     return (this.attachmentReader ??= new AttachmentReader(
       this.session.user_id,

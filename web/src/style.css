@@ -477,6 +477,33 @@ select {
   overflow: auto;
   flex: 1;
 }
+.reader-format-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.reader-image-status {
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.formatted-viewport {
+  height: clamp(320px, 65vh, 900px);
+  min-width: 0;
+}
+.formatted-frame {
+  position: fixed;
+  z-index: 1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.message-link-address {
+  overflow-wrap: anywhere;
+  user-select: text;
+  margin: 20px 0;
+}
 .reader-content h1 {
   font-size: 24px;
   margin-bottom: 24px;
@@ -566,7 +593,7 @@ select {
 .empty h2 {
   color: var(--text);
 }
-.full-reader {
+.mail-shell.full-reader {
   grid-template-columns: 1fr;
 }
 .full-reader > .mail-list,
@@ -1064,18 +1091,46 @@ dialog > .field,
 }
 
 .message-find {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 .message-find .field {
   margin: 0;
+  flex: 1;
+  min-width: 150px;
+}
+.message-find .field > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 .message-find-controls {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-top: 6px;
+  margin-top: 0;
+}
+.has-formatted-message .reader-content {
+  padding: 18px 20px;
+}
+.has-formatted-message .reader-content h1 {
+  font-size: 20px;
+  margin-bottom: 14px;
+}
+.has-formatted-message .sender-details {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+}
+.has-formatted-message .sender-details .avatar {
+  width: 32px;
+  height: 32px;
 }
 .find-status {
   flex: 1;
