@@ -981,6 +981,42 @@ export async function providerFlows(page, context, origin, output, session) {
     dialog.getByRole("button", { name: "Send", exact: true }),
   ).toBeVisible();
   await dialog.getByRole("button", { name: "Save draft", exact: true }).click();
+  // Forward runs the production WASM worker under the real gateway CSP.
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await page
+    .locator(".mail-row")
+    .getByRole("button", { name: "Incoming files fixture", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Forward", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Forward message" }),
+  ).toBeVisible();
+  for (const label of ["To", "Cc", "Bcc"])
+    await expect(dialog.getByLabel(label, { exact: true })).toHaveValue("");
+  await expect(dialog.locator(".draft-file")).toHaveCount(4);
+  const quote = await dialog
+    .getByLabel("Message", { exact: true })
+    .inputValue();
+  assert.ok(quote.includes("Find fixture sentinel."));
+  assert.ok(!quote.includes("OBSOLETE-MIME-ALTERNATIVE"));
+  await dialog
+    .getByLabel("Message", { exact: true })
+    .fill("Forward through the real gateway.\n" + quote);
+  await dialog.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.reload();
+  await page.getByRole("button", { name: "Drafts", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Fwd: Incoming files fixture", exact: true })
+    .click();
+  await expect(dialog.locator(".draft-file")).toHaveCount(4);
+  await expect(dialog.getByLabel("Message", { exact: true })).toHaveValue(
+    "Forward through the real gateway.\n" + quote,
+  );
+  await page.screenshot({
+    path: path.join(output, "forward-real-https-reopened.png"),
+  });
+  await dialog.getByRole("button", { name: "Save draft", exact: true }).click();
   // Observation-only oracle: inspect stored values; never drive app state here.
   const persisted = await page.evaluate(async (user) => {
     const databases = await indexedDB.databases();
@@ -1006,6 +1042,7 @@ export async function providerFlows(page, context, origin, output, session) {
     });
   }, session.user_id);
   assert.ok(persisted.includes("Uncertain delivery fixture"));
+  assert.ok(persisted.includes("Formatted cached files."));
   assert.ok(!persisted.includes("synthetic-password"));
   assert.ok(!persisted.includes(session.csrf));
   const stale = await context.newPage();
@@ -1167,5 +1204,6 @@ export async function providerFlows(page, context, origin, output, session) {
     "account-removal-atomic-local-cleanup-reopen",
     "account-removal-stale-tab-reconnect-and-refresh",
     "offline-Find-Unicode-case-quotes-next-previous",
+    "Forward-production-worker-CSP-files-and-restart",
   ];
 }

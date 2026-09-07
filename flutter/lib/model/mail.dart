@@ -1,10 +1,14 @@
+import 'dart:math';
+
 class ReceivedAttachment {
   const ReceivedAttachment({
     required this.id,
     required this.name,
     required this.mediaType,
     required this.size,
+    this.contentId,
   });
+  final String? contentId;
   final String id, name, mediaType;
   final int size;
   factory ReceivedAttachment.fromJson(Map<String, dynamic> value) =>
@@ -13,6 +17,7 @@ class ReceivedAttachment {
         name: value['name'],
         mediaType: value['media_type'],
         size: value['size'],
+        contentId: value['content_id'],
       );
 }
 
@@ -144,10 +149,13 @@ class DraftAttachment {
     required this.name,
     required this.mediaType,
     required this.size,
+    this.contentId,
   });
+  final String? contentId;
   final String id, name, mediaType;
   final int size;
-  Map<String, Object> toJson() => {
+  Map<String, Object?> toJson() => {
+    'content_id': contentId,
     'id': id,
     'name': name,
     'media_type': mediaType,
@@ -159,7 +167,39 @@ class DraftAttachment {
         name: value['name'],
         mediaType: value['media_type'],
         size: value['size'],
+        contentId: value['content_id'],
       );
+}
+
+String newDraftIdentity() {
+  final random = Random.secure();
+  final bytes = List.generate(16, (_) => random.nextInt(256));
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
+}
+
+class ForwardQuote {
+  const ForwardQuote({
+    required this.text,
+    required this.htmlHead,
+    required this.htmlAttributes,
+    required this.htmlBody,
+  });
+  final String text, htmlHead, htmlAttributes, htmlBody;
+  factory ForwardQuote.fromJson(Map<String, dynamic> value) => ForwardQuote(
+    text: value['text'],
+    htmlHead: value['html_head'],
+    htmlAttributes: value['html_attributes'] ?? '',
+    htmlBody: value['html_body'],
+  );
+  Map<String, String> toJson() => {
+    'text': text,
+    'html_head': htmlHead,
+    'html_attributes': htmlAttributes,
+    'html_body': htmlBody,
+  };
 }
 
 class Draft {
@@ -173,6 +213,7 @@ class Draft {
     this.accountId = '',
     this.revision = 0,
     this.fileRevision = 0,
+    this.forward,
     this.inReplyTo,
     this.references = const [],
     this.attachments = const [],
@@ -181,6 +222,7 @@ class Draft {
   final String accountId;
   final int revision, fileRevision;
   final String? inReplyTo;
+  final ForwardQuote? forward;
   final List<String> references;
   final List<DraftAttachment> attachments;
   Map<String, Object?> toJson() => {
@@ -195,6 +237,7 @@ class Draft {
     'in_reply_to': inReplyTo,
     'references': references,
     'file_revision': fileRevision,
+    'forward': forward?.toJson(),
     'attachments': attachments.map((a) => a.toJson()).toList(),
   };
   factory Draft.fromJson(Map<String, dynamic> json) => Draft(
@@ -207,6 +250,9 @@ class Draft {
     body: json['body'],
     revision: json['revision'],
     fileRevision: json['file_revision'] ?? 0,
+    forward: json['forward'] == null
+        ? null
+        : ForwardQuote.fromJson(json['forward']),
     inReplyTo: json['in_reply_to'],
     references: (json['references'] as List? ?? []).cast<String>(),
     attachments: (json['attachments'] as List? ?? [])

@@ -7,6 +7,8 @@ mod operations;
 mod tests;
 
 mod drafts;
+#[cfg(test)]
+mod forward_tests;
 
 mod outgoing;
 #[cfg(test)]

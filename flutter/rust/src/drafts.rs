@@ -28,8 +28,8 @@ pub fn editable(db: &Connection, id: &str) -> Result<Draft> {
     Ok(serde_json::from_str(&text)?)
 }
 pub fn attachments(db: &Connection, id: &str) -> Result<Vec<DraftAttachment>> {
-    Ok(db.prepare("SELECT id,name,media_type,length(bytes) FROM draft_files WHERE draft_id=?1 ORDER BY rowid")?
-        .query_map([id],|r|Ok(DraftAttachment{content_id:None,id:r.get(0)?,name:r.get(1)?,media_type:r.get(2)?,size:r.get::<_,u32>(3)? as usize}))?
+    Ok(db.prepare("SELECT f.id,f.name,f.media_type,length(f.bytes),i.content_id FROM draft_files f LEFT JOIN draft_inline i ON i.file_id=f.id WHERE f.draft_id=?1 ORDER BY f.rowid")?
+        .query_map([id],|r|Ok(DraftAttachment{content_id:r.get(4)?,id:r.get(0)?,name:r.get(1)?,media_type:r.get(2)?,size:r.get::<_,u32>(3)? as usize}))?
         .collect::<rusqlite::Result<Vec<_>>>()?)
 }
 pub fn snapshot(db: &Connection, id: &str) -> Result<Value> {
@@ -130,11 +130,7 @@ pub fn add(db: &mut Connection, id: &str, files: Vec<FilePart>) -> Result<Value>
         "Attachments must total 18 MiB or less."
     );
     for file in files {
-        let a = file.attachment;
-        tx.execute(
-            "INSERT INTO draft_files(id,draft_id,name,media_type,bytes) VALUES(?1,?2,?3,?4,?5)",
-            params![a.id, id, a.name, a.media_type, file.bytes],
-        )?;
+        insert_file(&tx, id, file)?;
     }
     changed(&tx, id)?;
     let result = snapshot(&tx, id)?;
@@ -177,4 +173,117 @@ pub fn files(db: &Connection, draft: &mut Draft) -> Result<Vec<FilePart>> {
             })
         })
         .collect()
+}
+
+pub fn insert_file(db: &Connection, id: &str, file: FilePart) -> Result<()> {
+    let a = file.attachment;
+    db.execute(
+        "INSERT INTO draft_files(id,draft_id,name,media_type,bytes) VALUES(?1,?2,?3,?4,?5)",
+        params![a.id, id, a.name, a.media_type, file.bytes],
+    )?;
+    if let Some(cid) = a.content_id {
+        db.execute(
+            "INSERT INTO draft_inline(file_id,content_id) VALUES(?1,?2)",
+            params![a.id, cid],
+        )?;
+    }
+    Ok(())
+}
+
+pub fn value(db: &Connection, id: &str) -> Result<Value> {
+    let mut value = serde_json::to_value(editable(db, id)?)?;
+    let files = snapshot(db, id)?;
+    value["attachments"] = files["attachments"].clone();
+    value["file_revision"] = files["file_revision"].clone();
+    Ok(value)
+}
+
+/// Lost acknowledgments retry the same draft identity without replacing newer
+/// text/files or depending on the source still being present in the cache.
+pub fn forwarded(db: &Connection, id: &str, source: &str) -> Result<Option<Value>> {
+    let saved: Option<String> = db
+        .query_row(
+            "SELECT source_id FROM draft_forwards WHERE draft_id=?1",
+            [id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(saved) = saved {
+        anyhow::ensure!(
+            saved == source,
+            "This forward belongs to another message. Open it from Drafts."
+        );
+        return Ok(Some(value(db, id)?));
+    }
+    let used: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM drafts WHERE id=?1) OR EXISTS(SELECT 1 FROM outgoing WHERE draft_id=?1) OR EXISTS(SELECT 1 FROM discarded_drafts WHERE id=?1)", [id], |r|r.get(0))?;
+    anyhow::ensure!(
+        !used,
+        "This draft has already been used. Open Drafts or review Outbox before forwarding again."
+    );
+    Ok(None)
+}
+
+pub fn create_forward(
+    db: &mut Connection,
+    source: &str,
+    draft: Draft,
+    files: Vec<FilePart>,
+) -> Result<Value> {
+    let tx = db.transaction()?;
+    if let Some(saved) = forwarded(&tx, &draft.id, source)? {
+        return Ok(saved);
+    }
+    let connected: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE id=?1)",
+        [&draft.account_id],
+        |r| r.get(0),
+    )?;
+    anyhow::ensure!(
+        connected,
+        "This account was removed. Forward from a connected account."
+    );
+    tx.execute(
+        "INSERT INTO drafts(id,revision,content) VALUES(?1,?2,?3)",
+        params![
+            draft.id,
+            crate::operations::positive_revision(draft.revision)?,
+            serde_json::to_string(&draft)?
+        ],
+    )?;
+    for file in files {
+        insert_file(&tx, &draft.id, file)?;
+    }
+    changed(&tx, &draft.id)?;
+    tx.execute(
+        "INSERT INTO draft_forwards(draft_id,source_id) VALUES(?1,?2)",
+        params![draft.id, source],
+    )?;
+    let result = value(&tx, &draft.id)?;
+    tx.commit()?;
+    Ok(result)
+}
+
+pub fn save_text(db: &mut Connection, mut draft: Draft) -> Result<()> {
+    let revision = crate::operations::positive_revision(draft.revision)?;
+    let tx = db.transaction()?;
+    let locked:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM outgoing WHERE draft_id=?1) OR EXISTS(SELECT 1 FROM discarded_drafts WHERE id=?1)",[&draft.id],|r|r.get(0))?;
+    anyhow::ensure!(
+        !locked,
+        "This draft has been submitted or discarded. Its delivery/discard record was preserved."
+    );
+    let current: Option<String> = tx
+        .query_row("SELECT content FROM drafts WHERE id=?1", [&draft.id], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    // Creation owns the immutable original quote. Text autosave can change its
+    // displayed body but cannot replace or erase the hidden formatting source.
+    draft.forward = current
+        .map(|s| serde_json::from_str::<Draft>(&s))
+        .transpose()?
+        .and_then(|d| d.forward);
+    draft.attachments = attachments(&tx, &draft.id)?;
+    tx.execute("INSERT INTO drafts(id,revision,content) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,content=excluded.content WHERE excluded.revision>=drafts.revision",params![draft.id,revision,serde_json::to_string(&draft)?])?;
+    tx.commit()?;
+    Ok(())
 }

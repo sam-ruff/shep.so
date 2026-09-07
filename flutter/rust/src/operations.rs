@@ -21,6 +21,7 @@ pub struct Operations {
     slots: Arc<Semaphore>,
     search: Arc<Semaphore>,
     rendering: Arc<Semaphore>,
+    forwarding: Arc<Semaphore>,
     accounts: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     pub(crate) outgoing: crate::outgoing::Runtime,
     pub(crate) sent: crate::sent::Runtime,
@@ -40,6 +41,7 @@ impl Operations {
             slots: Arc::new(Semaphore::new(8)),
             search: Arc::new(Semaphore::new(1)),
             rendering: Arc::new(Semaphore::new(2)),
+            forwarding: Arc::new(Semaphore::new(2)),
             accounts: Mutex::new(HashMap::new()),
             outgoing: crate::outgoing::Runtime::default(),
             sent: crate::sent::Runtime::default(),
@@ -193,6 +195,10 @@ pub enum Request {
         id: String,
         #[serde(default)]
         all: bool,
+    },
+    Forward {
+        id: String,
+        draft_id: String,
     },
     SaveDraft {
         draft: Draft,
@@ -400,7 +406,7 @@ pub(crate) fn reconcile_folder(
     }
     Ok(())
 }
-fn positive_revision(value: u64) -> Result<i64> {
+pub(crate) fn positive_revision(value: u64) -> Result<i64> {
     i64::try_from(value).context("Draft revision is invalid.")
 }
 async fn value<T: serde::Serialize>(result: Result<T>) -> Result<Value> {
@@ -547,14 +553,26 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             let accounts=accounts.query_map([],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?.into_iter().map(|s|serde_json::from_str::<Account>(&s)).collect::<std::result::Result<Vec<_>,_>>()?;
             Ok(serde_json::to_value(shep_mail_core::compose::reply_from_raw(summary,&raw,&accounts,all)?)?)
         }).await,
-        Request::SaveDraft{draft} => {
-            db.write(move |db| {
-                let revision=positive_revision(draft.revision)?;
-                let delivered:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM outgoing WHERE draft_id=?1) OR EXISTS(SELECT 1 FROM discarded_drafts WHERE id=?1)",[&draft.id],|r|r.get(0))?;
-                anyhow::ensure!(!delivered,"This draft has been submitted or discarded. Its delivery/discard record was preserved.");
-                db.execute("INSERT INTO drafts(id,revision,content) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,content=excluded.content WHERE excluded.revision>=drafts.revision",params![draft.id,revision,serde_json::to_string(&draft)?])?;
-                Ok(())
+        Request::Forward{id,draft_id} => {
+            anyhow::ensure!(uuid::Uuid::parse_str(&draft_id).is_ok(),"Choose a new forward identity before retrying.");
+            let source=id.clone(); let target=draft_id.clone();
+            if let Some(saved)=db.read(move|db|crate::drafts::forwarded(db,&target,&source)).await? { return Ok(saved); }
+            let permit=profile.operations.forwarding.clone().try_acquire_owned()
+                .context("Forward preparation is busy. Retry shortly.")?;
+            let source=id.clone();
+            let (account,raw)=db.read(move|db| {
+                let summary=stored_mail(db,&source)?;
+                let raw:Vec<u8>=db.query_row("SELECT raw FROM mail WHERE id=?1",[summary.id],|r|r.get(0))?;
+                Ok((summary.account_id,raw))
             }).await?;
+            let (draft,files)=tokio::task::spawn_blocking(move||{
+                let _permit=permit;
+                shep_mail_core::compose::prepare_forward(draft_id,account,&raw)
+            }).await??;
+            db.write(move|db|crate::drafts::create_forward(db,&id,draft,files)).await
+        }
+        Request::SaveDraft{draft} => {
+            db.write(move|db|crate::drafts::save_text(db,draft)).await?;
             Ok(json!({"saved":true}))
         }
         Request::DiscardDraft{id,revision} => {

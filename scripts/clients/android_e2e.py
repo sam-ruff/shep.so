@@ -86,6 +86,32 @@ def incoming(device, flutter, env):
                 try:fixture.wait(timeout=5)
                 except subprocess.TimeoutExpired:fixture.kill();fixture.wait()
 
+def forward(device, flutter, env):
+    with (LOGS/'android-forward-fixture.log').open('w') as log:
+        fixture=subprocess.Popen([sys.executable,str(ROOT/'scripts/clients/android_forward_fixture.py'),'--device',device],stdout=log,stderr=subprocess.STDOUT)
+        try:
+            test_env=env.copy();test_env['SHEP_NATIVE_REPORT']='integration-forward-result'
+            with (LOGS/'android-forward-integration.log').open('w') as driver_log:
+                driver=subprocess.Popen([flutter,'drive','--driver','test_driver/native_driver.dart','--target','integration_test/forward_android_test.dart','-d',device,'--flavor','preview'],cwd=ROOT/'flutter',env=test_env,stdout=driver_log,stderr=subprocess.STDOUT,start_new_session=True)
+                try:
+                    deadline=time.monotonic()+600
+                    while driver.poll() is None:
+                        if fixture.poll() not in (None,0):raise RuntimeError('Forward fixture stopped before the UI test finished')
+                        if time.monotonic()>deadline:raise TimeoutError('Forward UI test did not finish')
+                        time.sleep(.2)
+                    if driver.returncode!=0:raise RuntimeError('Forward UI test failed; see android-forward-integration.log')
+                finally:
+                    if driver.poll() is None:
+                        os.killpg(driver.pid,signal.SIGTERM)
+                        try:driver.wait(timeout=5)
+                        except subprocess.TimeoutExpired:os.killpg(driver.pid,signal.SIGKILL);driver.wait()
+            if fixture.wait(timeout=15)!=0:raise RuntimeError('Forward fixture failed; see its log')
+        finally:
+            if fixture.poll() is None:
+                fixture.terminate()
+                try:fixture.wait(timeout=5)
+                except subprocess.TimeoutExpired:fixture.kill();fixture.wait()
+
 def formatted(device, flutter, env):
     with (LOGS/'android-formatted-fixture.log').open('w') as log:
         fixture=subprocess.Popen([sys.executable,str(ROOT/'scripts/clients/android_html_fixture.py'),'--device',device],stdout=log,stderr=subprocess.STDOUT)
@@ -142,7 +168,7 @@ def native_automation(device,env,formatted_reader=False):
             try: process.wait(timeout=10)
             except subprocess.TimeoutExpired: process.kill();process.wait()
 
-def main(device, flutter='flutter', compose_only=False, outbox_only=False, incoming_only=False, appium_only=False, formatted_only=False):
+def main(device, flutter='flutter', compose_only=False, outbox_only=False, incoming_only=False, appium_only=False, formatted_only=False, forward_only=False):
     if not device.startswith('emulator-') or not device.removeprefix('emulator-').isdigit():
         raise ValueError('Only an explicit Android emulator is allowed; personal devices are refused')
     avd = subprocess.check_output(['adb', '-s', device, 'emu', 'avd', 'name'], text=True).splitlines()[0]
@@ -151,6 +177,10 @@ def main(device, flutter='flutter', compose_only=False, outbox_only=False, incom
     env = os.environ.copy()
     env['ANDROID_SERIAL'] = device
     env['APPIUM_HOME'] = str(ROOT / 'artifacts/appium')
+    if forward_only:
+        forward(device,flutter,env)
+        print('Android Forward scenario passed; other scenarios were not rerun.')
+        return
     if formatted_only:
         formatted(device,flutter,env)
         appium(device,flutter,env,formatted_reader=True)
@@ -175,6 +205,7 @@ def main(device, flutter='flutter', compose_only=False, outbox_only=False, incom
     run('android-integration', [flutter,'test','integration_test/mail_test.dart','-d',device,'--flavor','preview'], ROOT/'flutter')
     run('android-native-integration', [flutter,'drive','--driver','test_driver/native_driver.dart','--target','integration_test/native_mail_test.dart','-d',device,'--flavor','preview'], ROOT/'flutter')
     compose(device,flutter,env)
+    forward(device,flutter,env)
     incoming(device,flutter,env)
     formatted(device,flutter,env)
     appium(device,flutter,env,formatted_reader=True)
@@ -195,6 +226,7 @@ if __name__=='__main__':
     parser.add_argument('--incoming-only',action='store_true',help='Run only the real incoming attachment save/cancel scenario')
     parser.add_argument('--appium-only',action='store_true',help='Rebuild and run the saved Appium controls after targeted integration checks')
     parser.add_argument('--formatted-only',action='store_true',help='Run the actual native formatted-reader and selection scenario')
+    parser.add_argument('--forward-only',action='store_true',help='Run complete-source Forward and independent-draft controls')
     args=parser.parse_args()
-    if sum([args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only])>1: parser.error('Choose only one targeted scenario')
-    main(args.device,args.flutter,args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only)
+    if sum([args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only,args.forward_only])>1: parser.error('Choose only one targeted scenario')
+    main(args.device,args.flutter,args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only,args.forward_only)

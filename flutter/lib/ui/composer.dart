@@ -49,6 +49,7 @@ class _ComposerState extends State<Composer> {
     revision: revision,
     inReplyTo: widget.draft.inReplyTo,
     references: widget.draft.references,
+    forward: widget.draft.forward,
     attachments: fileState.attachments,
     fileRevision: fileState.revision,
   );
@@ -295,7 +296,7 @@ class _ComposerState extends State<Composer> {
     },
     child: Scaffold(
       appBar: AppBar(
-        title: const Text('New message'),
+        title: Text(widget.draft.forward != null ? 'Forward' : 'New message'),
         leading: IconButton(
           tooltip: 'Save and close',
           onPressed: busy || checking ? null : () => finish(false),
