@@ -417,3 +417,13 @@ Selection mode row clicks toggle only that row, and Shift ranges add to existing
 choices. The saved `test_selection_mode_row_clicks_toggle_without_clearing_other_pages`
 uses ordinary mouse clicks across two pages and checks the actual bulk review.
 Keep the separate checkbox, arrival, modifier, text-focus and double-click tests.
+
+
+Notification Preferences are searchable as `Notifications`. Their MCP state is
+under `notifications`: settings/saved settings, requested arrival serial, sent
+batch count, last delivery policy, test pending state and error. These are
+observation-only. Fixture mode never sends an OS notification or plays audio.
+Use `notification_delivery: "fail-once"` (or `"slow"`) on desktop.start to hold
+delivery for 1.8 s while testing native navigation, visible failure and Test
+notification recovery. `test_notifications_*` contains the automated equivalents;
+private-bus Rust tests cover the actual Linux wire adapter separately.

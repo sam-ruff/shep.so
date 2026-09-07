@@ -15,6 +15,16 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_notification_delivery_fixture_is_explicit_and_validated_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (True, 42, "native", "host", "unknown"):
+                with self.assertRaisesRegex(ValueError, "notification delivery fixture"):
+                    desktop.start(notification_delivery=value)
+            launch.assert_not_called()
+        start = next(tool for tool in harness.TOOLS if tool["name"] == "desktop.start")
+        self.assertEqual(start["inputSchema"]["properties"]["notification_delivery"]["enum"], ["slow", "fail-once"])
+
     def test_pixel_measurement_validates_current_resized_window_before_input(self):
         from scripts import native_pixels
         desktop = harness.Desktop()

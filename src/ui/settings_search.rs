@@ -25,10 +25,15 @@ const SETTINGS: &[Setting] = &[
         title: "Mail & performance",
         tab: SettingsTab::General,
         keywords: if crate::desktop_badge::SUPPORTED {
-            "sync interval seconds minutes refresh preload background speed unread badge dock taskbar launcher notifications"
+            "sync interval seconds minutes refresh preload background speed unread badge dock taskbar launcher"
         } else {
             "sync interval seconds minutes refresh preload background speed"
         },
+    },
+    Setting {
+        title: "Notifications",
+        tab: SettingsTab::General,
+        keywords: "notification popup banner sound audio alert new mail sender subject privacy",
     },
     Setting {
         title: "Tooltips",

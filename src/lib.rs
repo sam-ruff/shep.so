@@ -11,6 +11,7 @@ pub mod html_render;
 pub mod mail_actions;
 pub mod message_find;
 pub mod model;
+pub mod notifications;
 pub mod outgoing;
 pub mod printing;
 pub mod providers;

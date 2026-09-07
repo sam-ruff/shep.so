@@ -9,7 +9,7 @@ A calm, native email and calendar app built with Rust and iced. Comfortable with
 - **Mail in one place.** Multiple accounts, a unified inbox, search, conversation reading and bulk actions with Undo.
 - **Everyday essentials.** Replies, forwarding, printing, attachments, autosaved drafts and recovery for interrupted sends.
 - **Calendars alongside.** Google Calendar and CalDAV, with a month view and agenda.
-- **Make it yours.** Light, Dark or System appearance, resizable panes and configurable shortcuts.
+- **Make it yours.** Light, Dark or System appearance, resizable panes, configurable shortcuts and new-mail popup/sound controls.
 - **Encrypted backups.** Save locally or to Google Drive. Google is optional.
 
 ![Shep's calendar in dark mode, showing the month and upcoming events](docs/images/calendar-dark.webp)

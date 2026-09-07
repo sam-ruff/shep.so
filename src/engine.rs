@@ -156,6 +156,7 @@ pub enum Event {
         prefetch: bool,
     },
     MailSyncFinished(Result<(), String>),
+    MailArrived(Arc<crate::notifications::Arrival>),
     FlagsFinished(u64, Mail, Result<(), String>),
     MoveFinished(
         u64,
@@ -711,7 +712,10 @@ impl Engine {
                 if self.demo {
                     #[cfg(feature = "test-support")]
                     {
-                        let round = crate::test_support::sync_mail(&self.store).await?;
+                        let (round, arrival) = crate::test_support::sync_mail(&self.store).await?;
+                        if let Some(arrival) = arrival {
+                            output.send(Event::MailArrived(Arc::new(arrival))).await?;
+                        }
                         output.send(Event::PreviewSync(round)).await?;
                     }
                     #[cfg(not(feature = "test-support"))]
@@ -1210,7 +1214,14 @@ impl Engine {
                     skipped += 1;
                 }
                 let folders_changed = matches!(&mail, MailSyncItem::Folders(..));
-                store.apply_sync(mail).await?;
+                match mail {
+                    MailSyncItem::Message(mail) => {
+                        if let Some(arrival) = store.sync_message(mail).await? {
+                            output.send(Event::MailArrived(Arc::new(arrival))).await?;
+                        }
+                    }
+                    mail => store.apply_sync(mail).await?,
+                }
                 if folders_changed {
                     output
                         .send(Event::Workspace(Arc::new(store.workspace().await?)))

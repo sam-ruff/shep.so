@@ -30,6 +30,8 @@ Drafts save automatically and appear in the collapsible **Drafts** group. Right-
 
 Choose appearance, text size and quoted-history display in **Preferences → General**. External images are blocked by default; manage exceptions in **Privacy** and trusted addresses in **Contacts**.
 
+New-mail popups and sound are enabled by default. Search Preferences for **Notifications** to turn either off, hide sender/subject details, or try a test notification. Alerts cover newly received unread Inbox mail across your accounts; the first import and repeated syncs stay quiet. Shep must be running, and your operating system’s notification permissions and sound settings still apply.
+
 See [current limits](limits.md) for provider restrictions and size limits.
 
 Select email text with the mouse and copy it normally. Search Preferences to jump to a settings section. Icon tooltips can show the primary shortcut; both tooltips and their key hints can be turned off.

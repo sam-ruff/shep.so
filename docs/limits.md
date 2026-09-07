@@ -10,6 +10,7 @@ Shep is still in development. Fastmail authentication and Inbox sync have been v
 | Backups | Up to 256 MiB of original mail per snapshot. |
 | Gmail | Requires an app password and compatible account settings; Gmail OAuth is not supported. |
 | Calendar | Sync covers 90 days back and 365 days ahead. Edit recurring CalDAV series on the server. |
+| Notifications | Linux desktop notification protocol is tested in isolation. Windows cross-compilation passes; actual Windows/macOS delivery and macOS app-bundle distribution still need verification. Notifications require Shep to be running. |
 | Local storage | The mail cache is not encrypted at rest. Backups are encrypted; credentials use the OS keychain. |
 
 POP3 keeps folders and flags locally and leaves server originals intact. IMAP moves need server support. Invitations, IMAP IDLE and general offline action queues are not yet available.

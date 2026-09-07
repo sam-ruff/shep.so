@@ -372,6 +372,14 @@ pub struct MailDetail {
 
 #[derive(Debug)]
 pub enum MailSyncItem {
+    InboxSyncStarted {
+        account: String,
+        epoch: String,
+    },
+    InboxSyncFinished {
+        account: String,
+        epoch: String,
+    },
     Message(StoredMail),
     Flags(Vec<(String, bool, bool)>),
     Reconcile {
@@ -526,6 +534,7 @@ pub struct Preferences {
     pub tooltips: bool,
     pub shortcut_tooltips: bool,
     pub unread_badge: bool,
+    pub notifications: crate::notifications::Settings,
     pub image_policy: ImagePolicy,
     pub reply_display: ReplyDisplay,
     pub group_conversations: bool,
@@ -568,6 +577,7 @@ impl Default for Preferences {
             tooltips: true,
             shortcut_tooltips: true,
             unread_badge: true,
+            notifications: Default::default(),
             image_policy: ImagePolicy::BlockAll,
             reply_display: ReplyDisplay::Collapsed,
             group_conversations: true,

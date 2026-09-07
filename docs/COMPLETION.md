@@ -23,6 +23,63 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
+## R82 — New-mail notification checkpoint (2026-09-07)
+
+Native delivery adapters and searchable Preferences controls are implemented.
+Popups, sound and sender/subject details default on and can be changed
+independently. Test notification uses the current settings; muted or failed tests
+release their pending state. Delivery runs separately from mail sync and iced,
+coalescing bursts into a counted notification without retaining each body.
+Failures remain visible and navigation stays available.
+
+SQLite records per-account message identity and initial-import readiness.
+First imports and UIDVALIDITY resets remain quiet until their Inbox completes;
+new unread Inbox messages alert at most once. Repeated syncs, restart, read/flag
+changes, restored mail and moved copies do not turn into new arrivals. Claims
+are committed with cached mail: a process crash before OS delivery can lose that
+alert, but does not replay old alerts. Shep must be running.
+
+Linux uses its desktop notification protocol and system sound theme. Windows
+uses a per-user Shep AUMID with WinRT, and macOS uses the Shep bundle identity
+initialized once. Popup and sound-only paths remain independent. No adapter
+borrows another app's identity. Desktop permissions, Do Not Disturb and sound
+settings can prevent presentation despite an acknowledged request.
+
+Protocol failure tests exposed upstream async-imap SEARCH/FETCH helpers accepting
+rejected commands as empty success. The sync path now requires matching tagged
+OK, including after partial data, before returning results or reconciling cache
+membership. Inbox completion is independent of a later logout failure. These
+checks use production sync functions against scripted IMAP/POP3 connections.
+
+Validation includes 444 Rust tests (three explicitly ignored live/profile tests),
+44 Python tests, and fmt/Clippy. Seven new SQLite tests and ten worker/UI/protocol
+tests cover import/restart identity, commit rollback, burst counts, mute/privacy,
+blocked delivery, private-bus sound hints and errors, and sync failure ordering.
+Windows GNU cross-target compilation passes; it is not Windows execution.
+The MCP fixture never calls the host notification/audio service. Four saved native
+scenarios exercise defaults, independent outputs/privacy, restart, real arrival
+flows, compact dark layout and navigation during delayed failure/retry.
+
+The complete native run exercised 154 functional scenarios: 153 passed and one
+shortcut test observed a stale dialog before its close completed. That scenario
+passed in isolation; it now waits for actual close/open transitions. The rapid
+M/Escape asynchronous-focus ordering edge case remains tracked under R63 rather
+than being claimed fixed by a test wait. This is not a clean 154-case full run.
+All four notification flows passed in the full run on native binary SHA-256
+`0fba6d1bb2a5a9afe5aba851e22db29d0fa55a690cd8bd3a62ff7a851ab37963`.
+Reviewed WebP evidence includes popup-only/privacy (`5404d1b0741a/`), compact dark
+(`7fabfa3c966f/`) and delayed error/recovery (`064b37d21d81/`), under ignored
+`artifacts/e2e/`. Logs in `artifacts/logs/` include `notifications-full-rust.log`,
+`notifications-final-targeted.log`, `notifications-python.log`,
+`notifications-native-full.log` and `notifications-native-recovery-current.log`.
+
+Release checksum, extraction and bundled-installer verification pass. Shipping
+evidence will be recorded after the final checks. R82 remains
+open for actual Windows/macOS delivery, Mac app-bundle integration and desktop
+sound/popup review. Other performance measurements remain deferred. Quality and
+release workflows stay disabled; documentation CI remains enabled. The full
+product goal and remaining TODO entries are still active.
+
 ## Complex HTML and reader interaction follow-up — installed and pushed
 
 Source [ebddf54](https://github.com/sam-ruff/shep.so/commit/ebddf54c0124c30561db117c2b041ee184aa4c3c)
