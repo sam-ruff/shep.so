@@ -14,8 +14,6 @@ Active requests from this chat. Add new requests here immediately, including cor
 
 ## Mail reading, search and bulk actions
 
-- [ ] **R42 — Bulk actions:** preview toolbar and keybinds act on selected messages. Review multi-message actions with Y/N/Enter/Escape support, accurate scope/count and clear partial-failure handling.
-  Frozen durable jobs, bounded/coalescing execution, optimistic query effects and weighted feedback, per-message History, grouped Undo/retry, graceful stop/resume and account-removal cleanup are implemented. Selection preservation for new arrivals, redraw-safe pointer dispatch, group/individual mutation guards and resolved-Undo claims are shipped in 2444049. All 353 Rust tests, 119 native functional scenarios and 29 Python tests pass; the optimized Linux release is packaged, installed and pushed. Native History/recovery/pagination verification is now in progress, including an isolated persisted fixture workspace with real graceful/crash restart. Complete those paths before closing this request; ambiguity and broader individual/group ordering remain tracked under R50/R60 and independent-process coordination under R01/R06.
 - [ ] **R45 — Drag mail to folders:** drag one mail or a selected group onto sidebar folders; highlight valid destinations, respect cross-account preference/provider support, and use the bulk-move confirmation.
 
 ## Folders and composition
