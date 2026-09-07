@@ -136,6 +136,22 @@ impl App {
             return Task::none();
         };
         let mail = self.mail_actions.effective(&menu.mail).clone();
+        if self.bulk_owns_mail(&mail.id)
+            && matches!(
+                action,
+                MailAction::Read
+                    | MailAction::Flag
+                    | MailAction::Move
+                    | MailAction::Archive
+                    | MailAction::Trash
+            )
+        {
+            self.notice(
+                "This message is part of a group change. Finish it or open History to review it.",
+                true,
+            );
+            return Task::none();
+        }
         if self.busy.contains(&format!("message:{}", mail.id))
             && matches!(
                 action,
@@ -209,6 +225,7 @@ pub(super) struct ContextArea<'a> {
     mail: Option<String>,
     draft: Option<String>,
     preserve_pointer: bool,
+    interface_scale: u16,
     #[cfg(feature = "test-support")]
     draw_witness: Option<(u64, Arc<std::sync::atomic::AtomicU64>)>,
 }
@@ -219,6 +236,7 @@ impl<'a> ContextArea<'a> {
             mail: Some(mail),
             draft: None,
             preserve_pointer: false,
+            interface_scale: 100,
             #[cfg(feature = "test-support")]
             draw_witness: None,
         }
@@ -236,9 +254,10 @@ impl<'a> ContextArea<'a> {
 impl<'a> ContextArea<'a> {
     /// The runtime supplies the final cursor for a whole input batch. Preserve
     /// each motion before dispatch, outside scrollable coordinate transforms.
-    pub fn root(content: impl Into<Element<'a, Message>>) -> Self {
+    pub fn root(content: impl Into<Element<'a, Message>>, interface_scale: u16) -> Self {
         let mut area = Self::sidebar(content);
         area.preserve_pointer = true;
+        area.interface_scale = interface_scale;
         area
     }
     pub fn sidebar(content: impl Into<Element<'a, Message>>) -> Self {
@@ -247,6 +266,7 @@ impl<'a> ContextArea<'a> {
             mail: None,
             draft: None,
             preserve_pointer: false,
+            interface_scale: 100,
             #[cfg(feature = "test-support")]
             draw_witness: None,
         }
@@ -257,6 +277,7 @@ impl<'a> ContextArea<'a> {
             mail: None,
             draft: Some(id),
             preserve_pointer: false,
+            interface_scale: 100,
             #[cfg(feature = "test-support")]
             draw_witness: None,
         }
@@ -265,19 +286,28 @@ impl<'a> ContextArea<'a> {
 #[derive(Default)]
 struct InputState {
     modifiers: keyboard::Modifiers,
-    pointer: std::cell::Cell<Option<Point>>,
+    pointer: pointer::Tracker,
+    interface_scale: u16,
 }
 impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
     fn tag(&self) -> iced::advanced::widget::tree::Tag {
         iced::advanced::widget::tree::Tag::of::<InputState>()
     }
     fn state(&self) -> iced::advanced::widget::tree::State {
-        iced::advanced::widget::tree::State::new(InputState::default())
+        iced::advanced::widget::tree::State::new(InputState {
+            interface_scale: self.interface_scale,
+            ..InputState::default()
+        })
     }
     fn children(&self) -> Vec<Tree> {
         vec![Tree::new(&self.content)]
     }
     fn diff(&self, tree: &mut Tree) {
+        let state = tree.state.downcast_mut::<InputState>();
+        if state.interface_scale != self.interface_scale {
+            state.pointer.clear();
+            state.interface_scale = self.interface_scale;
+        }
         tree.diff_children(std::slice::from_ref(&self.content));
     }
     fn size(&self) -> Size<Length> {
@@ -324,22 +354,7 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
         }
         let modifiers = state.modifiers;
         let cursor = if self.preserve_pointer {
-            match event {
-                iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                    state.pointer.set(Some(*position));
-                }
-                iced::Event::Mouse(mouse::Event::CursorLeft)
-                | iced::Event::Window(iced::window::Event::Unfocused)
-                | iced::Event::Window(iced::window::Event::RedrawRequested(_)) => {
-                    state.pointer.set(None);
-                }
-                _ => {}
-            }
-            match (cursor, state.pointer.get()) {
-                (mouse::Cursor::Available(_), Some(position)) => mouse::Cursor::Available(position),
-                // Preserve the runtime's overlay/scrollbar exclusion.
-                _ => cursor,
-            }
+            state.pointer.update(event, cursor)
         } else {
             cursor
         };
@@ -404,9 +419,6 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        if self.preserve_pointer {
-            tree.state.downcast_ref::<InputState>().pointer.set(None);
-        }
         self.content.as_widget().draw(
             &tree.children[0],
             renderer,
@@ -433,13 +445,23 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        self.content.as_widget_mut().overlay(
-            &mut tree.children[0],
-            layout,
-            renderer,
-            viewport,
-            translation,
-        )
+        let tracker = tree.state.downcast_ref::<InputState>().pointer.clone();
+        self.content
+            .as_widget_mut()
+            .overlay(
+                &mut tree.children[0],
+                layout,
+                renderer,
+                viewport,
+                translation,
+            )
+            .map(|content| {
+                if self.preserve_pointer {
+                    tracker.wrap(content)
+                } else {
+                    content
+                }
+            })
     }
 }
 impl<'a> From<ContextArea<'a>> for Element<'a, Message> {
@@ -466,6 +488,7 @@ mod tests {
                     .on_press(Message::CheckMail("second".into())),
             ]
             .spacing(10),
+            100,
         );
         let mut renderer = Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.));
         let mut tree = Tree::new(&area as &dyn Widget<Message, Theme, Renderer>);
@@ -495,6 +518,27 @@ mod tests {
                     &mut Shell::new(&mut messages),
                     &Rectangle::with_size(bounds),
                 );
+                if matches!(event, iced::Event::Mouse(mouse::Event::CursorMoved { .. })) {
+                    area.update(
+                        &mut tree,
+                        &iced::Event::Window(iced::window::Event::RedrawRequested(Instant::now())),
+                        Layout::new(&node),
+                        last_cursor,
+                        &renderer,
+                        &mut iced::advanced::clipboard::Null,
+                        &mut Shell::new(&mut messages),
+                        &Rectangle::with_size(bounds),
+                    );
+                    area.draw(
+                        &tree,
+                        &mut renderer,
+                        &Theme::Light,
+                        &renderer::Style::default(),
+                        Layout::new(&node),
+                        mouse::Cursor::Available(position),
+                        &Rectangle::with_size(bounds),
+                    );
+                }
             }
         }
         let ids: Vec<_> = messages
@@ -505,8 +549,7 @@ mod tests {
             })
             .collect();
         assert_eq!(ids, ["first", "second"]);
-        // A new frame with no motion must use its current cursor. Do not retain
-        // a position from before a popup, resize, or scroll completed.
+        // Drawing must not erase motion before its corresponding click.
         area.draw(
             &tree,
             &mut renderer,
@@ -515,13 +558,6 @@ mod tests {
             Layout::new(&node),
             last_cursor,
             &Rectangle::with_size(bounds),
-        );
-        assert!(
-            tree.state
-                .downcast_ref::<InputState>()
-                .pointer
-                .get()
-                .is_none()
         );
     }
 }

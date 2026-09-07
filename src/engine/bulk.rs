@@ -165,11 +165,11 @@ impl Engine {
                 .context("The completed action has no Undo receipt")?
             {
                 Receipt::Move(receipt) => self
-                    .undo_move(original.clone(), receipt, output)
+                    .undo_move(original.clone(), receipt, output, Some(item))
                     .await
                     .map(|(_, receipt)| Receipt::Move(Box::new(receipt))),
                 Receipt::Flags { before, after } => {
-                    self.change_bulk_flags(original, *before, Some(*after))
+                    self.change_bulk_flags(original, *before, Some(*after), item)
                         .await?;
                     Ok(Receipt::Unchanged)
                 }
@@ -179,18 +179,24 @@ impl Engine {
         match action {
             Action::Move { account, folder } => {
                 if let Some(account) = account.as_ref().filter(|a| *a != &original.account_id) {
-                    self.transfer_message(original, account.clone(), folder.clone(), output)
-                        .await
-                        .map(|(_, r)| Receipt::Move(Box::new(r)))
+                    self.transfer_message(
+                        original,
+                        account.clone(),
+                        folder.clone(),
+                        output,
+                        Some(item),
+                    )
+                    .await
+                    .map(|(_, r)| Receipt::Move(Box::new(r)))
                 } else if original.folder == *folder {
                     Ok(Receipt::Unchanged)
                 } else {
-                    self.change_folder(original, folder, output)
+                    self.change_folder(original, folder, output, Some(item))
                         .await
                         .map(|(_, r)| Receipt::Move(Box::new(r)))
                 }
             }
-            Action::Flags(changes) => self.change_bulk_flags(original, *changes, None).await,
+            Action::Flags(changes) => self.change_bulk_flags(original, *changes, None, item).await,
         }
     }
 }
@@ -392,6 +398,88 @@ mod tests {
                 .unwrap()
                 .total,
             0
+        );
+    }
+
+    #[tokio::test]
+    async fn individual_mutations_and_undo_cannot_bypass_group_ownership() {
+        let engine = fixture(1).await;
+        let original = engine.store.query(MailQuery::default()).await.unwrap().rows[0].clone();
+        let (output, _input) = futures::channel::mpsc::channel(8);
+        let (_, receipt) = engine
+            .change_folder(&original, "Archive", output.clone(), None)
+            .await
+            .unwrap();
+        let current = receipt.current.clone().unwrap();
+        let mut preferences: Preferences = engine.store.get("preferences").await.unwrap();
+        preferences.cross_account_moves = true;
+        engine.store.put("preferences", preferences).await.unwrap();
+        start(
+            &engine,
+            "reading",
+            MailQuery::default(),
+            Action::Flags(crate::mail_actions::Flags {
+                unread: Some(false),
+                starred: None,
+            }),
+        )
+        .await;
+        for error in [
+            engine
+                .change_folder(&current, "Trash", output.clone(), None)
+                .await
+                .unwrap_err(),
+            engine
+                .transfer_message(
+                    &current,
+                    "other".into(),
+                    "INBOX".into(),
+                    output.clone(),
+                    None,
+                )
+                .await
+                .unwrap_err(),
+            engine
+                .undo_move(original.clone(), &receipt, output.clone(), None)
+                .await
+                .unwrap_err(),
+            engine
+                .change_flags(
+                    &current,
+                    crate::mail_actions::Flags {
+                        unread: None,
+                        starred: Some(true),
+                    },
+                )
+                .await
+                .unwrap_err(),
+        ] {
+            assert!(
+                error.to_string().contains("group action is pending"),
+                "{error:#}"
+            );
+        }
+        let unchanged = engine
+            .store
+            .mail_metadata(current.id.clone())
+            .await
+            .unwrap();
+        assert!(unchanged.unread && !unchanged.starred);
+        assert_eq!(unchanged.folder, "Archive");
+        assert_eq!(execute(&engine, "reading").await.completed, 1);
+        let (_, restored) = engine
+            .undo_move(original, &receipt, output, None)
+            .await
+            .unwrap();
+        let restored = engine
+            .store
+            .mail_metadata(restored.current.unwrap().id)
+            .await
+            .unwrap();
+        assert_eq!(restored.folder, "INBOX");
+        assert!(
+            !restored.unread,
+            "Undo retains the group's acknowledged read change"
         );
     }
     #[tokio::test]

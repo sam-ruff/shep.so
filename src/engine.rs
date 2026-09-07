@@ -742,7 +742,7 @@ impl Engine {
             }
             Command::Transfer(request, mail, destination, folder) => {
                 let result = self
-                    .transfer_message(&mail, destination, folder, output.clone())
+                    .transfer_message(&mail, destination, folder, output.clone(), None)
                     .await;
                 let refresh = result.as_ref().ok().map(|(account, _)| account.clone());
                 output
@@ -762,7 +762,9 @@ impl Engine {
                 }
             }
             Command::Move(request, mail, folder) => {
-                let result = self.change_folder(&mail, &folder, output.clone()).await;
+                let result = self
+                    .change_folder(&mail, &folder, output.clone(), None)
+                    .await;
                 let refresh = result
                     .as_ref()
                     .ok()
@@ -785,7 +787,7 @@ impl Engine {
             }
             Command::UndoMove(request, original, receipt) => {
                 let result = self
-                    .undo_move(original.clone(), &receipt, output.clone())
+                    .undo_move(original.clone(), &receipt, output.clone(), None)
                     .await;
                 let refresh = result
                     .as_ref()

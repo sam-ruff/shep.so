@@ -140,7 +140,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 116 functional flows plus the navigation performance gate.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 119 functional flows plus the navigation performance gate.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -519,7 +519,33 @@ This observation is not evidence of display scanout or a performance result.
 The root `ContextArea` preserves motion-event cursor positions before dispatch
 into scrollable coordinates. iced 0.14 supplies the final pointer position for an
 input batch; using that for every queued click can toggle the same checkbox
-twice. Preserve overlay exclusion and clear the captured position on redraw.
+twice. Preserve overlay exclusion and retain the captured position through redraws.
+`ui/pointer.rs` shares tracking with captured dropdown/nested-overlay events so
+closing a popup cannot leave a stale base position. Clear on pointer leave,
+window blur or interface-scale changes; never clear just because a frame drew.
 The native bulk flows intentionally click different rows consecutively, without
 inserting sleeps between clicks; the widget regression submits both clicks in
-one event batch. Do not mask this regression by slowing down native input.
+one event batch, including redraws between motion and press. Do not mask this
+regression by slowing down native input.
+
+Active selections retain their normalized query in a temporary SQLite row.
+Explicit clicks on arrivals and Shift ranges rebase query order while retaining
+previously selected identities, including unavailable ones. New rows stay
+unselected until an explicit gesture chooses them. Frozen reviews never rebase.
+Validate range endpoints against the current query before appending retained
+choices outside it. Keep all membership/ranking work in SQL; send at most one
+metadata page to iced. A rejected gesture preserves confirmed membership, and
+a failed passive observation retries without clearing it.
+
+Individual Move/Transfer/Undo/read/flag paths check group ownership inside their
+account mutation lock. Group paths validate the running item phase and atomically
+claim a resolved Undo identity without replacing another item’s ownership.
+Keep old receipt ownership until completion; a finished or cancelled phase
+cannot acquire new claims. Row/context controls reflect pending ownership, while
+other messages remain usable. This does not establish cross-process serialization
+of individual provider writes; that remains in the provider/platform audit.
+
+Disabled nested flag buttons must still absorb their mouse press; wrap them in
+`opaque` so the inbox row does not open or start read-on-leave tracking instead.
+The saved pending-group native flow verifies the reader stays on its original
+message when that disabled control is clicked.

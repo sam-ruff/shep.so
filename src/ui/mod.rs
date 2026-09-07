@@ -16,6 +16,7 @@ mod layout;
 mod mail_actions;
 mod mail_selection;
 mod outgoing;
+mod pointer;
 mod preference_sync;
 mod printing;
 mod read_tracking;
@@ -3263,6 +3264,11 @@ impl App {
                 .map(|d| self.mail_actions.effective(&d.summary).unread)
         );
         data["mail_rows"] = serde_json::json!(self.page.rows);
+        #[cfg(feature = "test-support")]
+        for (index, mail) in self.page.rows.iter().enumerate() {
+            data["mail_rows"][index]["group_pending"] =
+                serde_json::json!(self.bulk_owns_mail(&mail.id));
+        }
         data["conversation_rows"] = serde_json::json!(self.conversation.page.rows);
         data["conversation_offset"] = serde_json::json!(self.conversation.page.offset);
         data["conversation_collapsed"] = serde_json::json!(self.conversation.collapsed);
@@ -3447,7 +3453,7 @@ impl App {
         )
     }
     fn view(&self) -> Element<'_, Message> {
-        context_menu::ContextArea::root(self.layout()).into()
+        context_menu::ContextArea::root(self.layout(), self.preferences.interface_scale).into()
     }
 }
 pub fn chord(key: &Key, modifiers: keyboard::Modifiers) -> Option<String> {

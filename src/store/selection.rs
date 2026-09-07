@@ -77,7 +77,7 @@ pub struct SelectionPage {
 
 pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
     c.execute_batch("CREATE TEMP TABLE mail_selections(
-        id TEXT PRIMARY KEY, revision INTEGER NOT NULL, frozen INTEGER NOT NULL);
+        id TEXT PRIMARY KEY, revision INTEGER NOT NULL, frozen INTEGER NOT NULL, query TEXT);
         CREATE TEMP TABLE mail_selection_rows(
         selection TEXT NOT NULL REFERENCES mail_selections(id) ON DELETE CASCADE,
         id TEXT NOT NULL, position INTEGER NOT NULL, selected INTEGER NOT NULL,
@@ -101,6 +101,55 @@ fn position(c: &Connection, selection: MailSelectionId, id: &str) -> anyhow::Res
         |r| r.get(0),
     )
     .context("This message is outside the captured selection. Select the messages again.")
+}
+
+/// Explicit gestures may include arrivals; passive observations never grow the
+/// selected set. Rebase ranks to the current query and retain every chosen ID,
+/// including messages that disappeared while the user was choosing a range.
+fn rebase(c: &Connection, source: MailSelectionId, endpoints: &[&str]) -> anyhow::Result<()> {
+    let key = source.to_string();
+    let query: String = c.query_row(
+        "SELECT query FROM temp.mail_selections WHERE id=?",
+        [&key],
+        |r| r.get(0),
+    )?;
+    let query: MailQuery = serde_json::from_str(&query)?;
+    let candidate = MailSelectionId::default().to_string();
+    c.execute(
+        "INSERT INTO temp.mail_selections(id,revision,frozen) VALUES(?,0,0)",
+        [&candidate],
+    )?;
+    let (sql, values) = mail_query::Plan::new(c, &query)?.ordered("messages.id AS id");
+    let mut bindings = vec![candidate.clone().into()];
+    bindings.extend(values);
+    bindings.push(key.clone().into());
+    let count = c.execute(&format!("INSERT INTO temp.mail_selection_rows(selection,id,position,selected)
+        SELECT ?,ordered.id,row_number() OVER ()-1,COALESCE(chosen.selected,0)
+        FROM ({sql}) AS ordered LEFT JOIN temp.mail_selection_rows chosen ON chosen.selection=? AND chosen.id=ordered.id"),
+        rusqlite::params_from_iter(bindings))?;
+    // Validate against the current query before retaining unavailable choices.
+    for endpoint in endpoints {
+        let found: bool = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM temp.mail_selection_rows WHERE selection=? AND id=?)",
+            params![candidate, endpoint],
+            |r| r.get(0),
+        )?;
+        anyhow::ensure!(
+            found,
+            "This message is no longer in this view. Your previous selection is kept."
+        );
+    }
+    c.execute("INSERT INTO temp.mail_selection_rows(selection,id,position,selected)
+        SELECT ?,id,?+row_number() OVER (ORDER BY position)-1,1 FROM temp.mail_selection_rows previous
+        WHERE selection=? AND selected=1 AND NOT EXISTS(SELECT 1 FROM temp.mail_selection_rows current WHERE current.selection=? AND current.id=previous.id)",
+        params![candidate,i64::try_from(count)?,key,candidate])?;
+    c.execute(
+        "DELETE FROM temp.mail_selection_rows WHERE selection=?",
+        [&key],
+    )?;
+    c.execute("INSERT INTO temp.mail_selection_rows SELECT ?,id,position,selected FROM temp.mail_selection_rows WHERE selection=?", params![key,candidate])?;
+    c.execute("DELETE FROM temp.mail_selections WHERE id=?", [&candidate])?;
+    Ok(())
 }
 
 fn snapshot(
@@ -207,9 +256,13 @@ impl Store {
                 );
             }
             tx.execute("DELETE FROM temp.mail_selections WHERE id=?", [&key])?;
+            let mut scope = query.clone();
+            scope.offset = 0;
+            scope.observe.clear();
+            scope.observe_bulk.clear();
             tx.execute(
-                "INSERT INTO temp.mail_selections VALUES(?,?,0)",
-                params![key, revision as i64],
+                "INSERT INTO temp.mail_selections(id,revision,frozen,query) VALUES(?,?,0,?)",
+                params![key, revision as i64, serde_json::to_string(&scope)?],
             )?;
             let (sql, values) = mail_query::Plan::new(&tx, &query)?.ordered("messages.id AS id");
             // The ordered subquery feeds a window scan, preventing flattening
@@ -246,6 +299,11 @@ impl Store {
             let key = id.to_string();
             match change {
                 SelectionChange::Set { id: mail, selected, clear_others } => {
+                    let captured: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM temp.mail_selection_rows WHERE selection=? AND id=?)",
+                        params![key,mail], |r|r.get(0))?;
+                    if !captured {
+                        rebase(&tx, id, &[&mail])?;
+                    }
                     position(&tx, id, &mail)?;
                     if clear_others {
                         tx.execute("UPDATE temp.mail_selection_rows SET selected=0 WHERE selection=?", [&key])?;
@@ -254,6 +312,7 @@ impl Store {
                         params![selected,key,mail])?;
                 }
                 SelectionChange::Range { anchor, target, additive } => {
+                    rebase(&tx, id, &[&anchor, &target])?;
                     let a = position(&tx,id,&anchor)?;
                     let b = position(&tx,id,&target)?;
                     if !additive {
@@ -298,7 +357,7 @@ impl Store {
             let (revision, _) = version(&tx, source)?;
             anyhow::ensure!(revision == expected, "The selection changed. Review it again.");
             let id = MailSelectionId::default();
-            tx.execute("INSERT INTO temp.mail_selections VALUES(?,0,1)", [id.to_string()])?;
+            tx.execute("INSERT INTO temp.mail_selections(id,revision,frozen) VALUES(?,0,1)", [id.to_string()])?;
             tx.execute("INSERT INTO temp.mail_selection_rows(selection,id,position,selected)
                 SELECT ?,id,position,1 FROM temp.mail_selection_rows WHERE selection=? AND selected=1",
                 params![id.to_string(),source.to_string()])?;

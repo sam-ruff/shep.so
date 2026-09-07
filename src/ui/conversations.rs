@@ -21,7 +21,7 @@ pub(super) struct Conversation {
 impl App {
     pub(super) fn action_mail(&self) -> Option<&Mail> {
         let id = self.reader_id()?;
-        if self.mail_actions.restoring(id) || self.page.bulk_pending.contains(id) {
+        if self.mail_actions.restoring(id) || self.bulk_owns_mail(id) {
             return None;
         }
         let mail = self

@@ -469,13 +469,16 @@ impl App {
                 }),
                 space().width(Length::Fill),
                 muted(date).size(10),
-                button(flag_icon(mail.starred, 18.))
-                    .padding(6)
-                    .style(if mail.starred { flagged } else { ghost })
-                    .on_press_maybe(
-                        (!self.mail_actions.restoring(&mail.id))
+                opaque(
+                    button(flag_icon(mail.starred, 18.))
+                        .padding(6)
+                        .style(if mail.starred { flagged } else { ghost })
+                        .on_press_maybe(
+                            (!self.mail_actions.restoring(&mail.id)
+                                && !self.bulk_owns_mail(&mail.id))
                             .then(|| Message::FlagRow(mail.id.clone()))
-                    )
+                        )
+                )
             ]
             .spacing(9)
             .align_y(Alignment::Center);

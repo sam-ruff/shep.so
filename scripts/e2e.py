@@ -1058,6 +1058,24 @@ class NativeFlows(unittest.TestCase):
                        {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
                        check("bulk.jobs.0.failed",0),check("total",120),shot("bulk-dark-undo-complete"))
 
+    def test_bulk_pending_rows_reject_conflicting_context_actions_and_enable_after_completion(self):
+        result=self.mcp.call("desktop.start", mail_actions="slow")
+        print(f"Bulk conflict evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
+                       click(274,322),click(274,426),check("mail_selection.count",2),
+                       check("mail_selection.pending",False),key("s"),check("dialog","BulkReview"),
+                       key("Return"),check("dialog",None),check("bulk.jobs.0.running",1),
+                       check("mail_rows.1.group_pending",True),check("selected","A little more room to think"),
+                       click(568,322),check("mail_pending",0),check("selected","A little more room to think"),
+                       {"type":"click","x":400,"y":350,"button":3},check("context_menu",None,"ne"),
+                       key("Down"),key("Down"),key("Down"),key("Return"),check("context_menu",None),
+                       check("notice","part of a group change","contains"),check("mail_pending",0),
+                       shot("bulk-row-conflict-keeps-group"),
+                       {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
+                       check("bulk.jobs.0.failed",0),check("mail_rows.1.group_pending",False),wait(80),
+                       click(568,322),check("mail_rows.1.starred",False),check("mail_pending",1),
+                       check("mail_pending",0),shot("bulk-row-controls-restored"))
+
     def test_mail_selection_mouse_ranges_and_focus(self):
         self.mcp.batch(click(400, 255), check("selected", "A little more room to think"),
                        {"type":"click", "x":400, "y":360, "modifiers":["ctrl"]},
@@ -1076,6 +1094,37 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+k"), check("focused_input", "search"), type_text("Coffee next Thursday"),
                        check("total", 1), key("ctrl+a"), type_text("prototype"), check("total", 1),
                        check("mail_selection.mode", False), shot("selection-text-focus"))
+
+    def test_mail_selection_checkbox_can_include_an_arrival_without_losing_prior_choices(self):
+        result=self.mcp.call("desktop.start", background_sync=True)
+        print(f"Arrival checkbox evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("background_sync", True), click(584,164),
+                       check("mail_selection.mode",True), check("mail_selection.drawn",True),
+                       click(274,218), check("mail_selection.count",1), check("mail_selection.pending",False),
+                       check("total",121), check("mail_rows.0.subject","New mail from the background"),
+                       check("mail_selection.count",1), check("mail_selection.pending",False),
+                       shot("selection-arrival-unselected"), click(274,218),
+                       check("mail_selection.count",2), check("mail_selection.pending",False),
+                       check("mail_selection.available",2), shot("selection-arrival-checkbox"),
+                       key("BackSpace"), check("dialog","BulkReview"), check("bulk.review_count",2),
+                       key("Escape"), check("dialog",None), check("mail_selection.count",2))
+
+    def test_mail_selection_ctrl_click_and_shift_range_follow_arrivals(self):
+        result=self.mcp.call("desktop.start", background_sync=True)
+        print(f"Arrival range evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("background_sync",True), click(584,164),
+                       check("mail_selection.mode",True), check("mail_selection.drawn",True),
+                       click(274,218), check("mail_selection.count",1), check("mail_selection.pending",False),
+                       check("total",121), check("mail_rows.0.subject","New mail from the background"),
+                       check("mail_selection.count",1),
+                       {"type":"click","x":400,"y":250,"modifiers":["ctrl"]},
+                       check("mail_selection.count",2), check("mail_selection.pending",False),
+                       shot("selection-arrival-ctrl"),
+                       {"type":"click","x":400,"y":460,"modifiers":["shift"]},
+                       check("mail_selection.count",3), check("mail_selection.pending",False),
+                       check("mail_selection.available",3), shot("selection-arrival-range"),
+                       key("m"), check("dialog","Move"), key("Escape"), check("dialog",None),
+                       check("mail_selection.count",3))
 
     def test_mail_selection_checkboxes_pages_scope_and_compact(self):
         self.mcp.batch(click(584, 164), check("mail_selection.mode", True), check("mail_selection.drawn", True),
