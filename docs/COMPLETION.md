@@ -650,5 +650,12 @@ R42 remains open. Next work must connect native controls and optimistic selectio
 through bounded channels, clean up abandoned snapshots, and implement reviewed
 bulk execution with immediate feedback, per-message outcomes, grouped Undo and
 durable recovery. Temporary selection snapshots alone are not an operation
-journal. No new multi-selection UI is claimed by this checkpoint. Release and
-shipping verification follows; performance measurements remain deferred.
+journal. No new multi-selection UI is claimed by this checkpoint. Performance
+measurements remain deferred.
+
+Shipped to main: `0833456`. Formatting, Clippy, all Rust/Python tests and strict
+documentation validation pass. The optimized release passes checksum, extraction
+and bundled-installer verification. The installed user binary matches SHA-256
+`2670efb78c57edd8a3bc6da1123c6259524be68ba5149ca6203edc95a6ee23d2`.
+Personal windows were left running. Quality/release CI remains disabled, and the
+full product goal and R42 remain active.
