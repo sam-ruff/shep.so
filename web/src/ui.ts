@@ -144,6 +144,7 @@ export function mount(
   let tab = "Mail",
     fullReader = false,
     searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let searchInput: string | undefined;
   const searchWorker = new SearchWorker();
   const find = new MessageFind(searchWorker.search);
   let quoteState: { id: string; mode: string; open: boolean } | undefined;
@@ -315,7 +316,9 @@ export function mount(
     (w.preferences.appearance === "system" && systemAppearance.matches);
   function readerShortcuts() {
     return [
-      ...Object.values(w.preferences.shortcuts).filter(Boolean),
+      ...Object.entries(w.preferences.shortcuts)
+        .filter(([action, value]) => action !== "selectAll" && value)
+        .map(([, value]) => value),
       "Escape",
       ...(w.preferences.shortcuts.find === "Control+f" ? ["Meta+f"] : []),
       ...(w.preferences.shortcuts.print === "Control+p" ? ["Meta+p"] : []),
@@ -1303,35 +1306,110 @@ export function mount(
         },
       ),
     );
-    const search = field("Search conversations", w.query, (v) => {
-      clearTimeout(searchTimer);
-      searchTimer = setTimeout(() => w.search(v), 100);
-    });
+    const search = field(
+      "Search conversations",
+      searchInput ?? w.query,
+      (v) => {
+        searchInput = v;
+        if (w.selection.mode) w.selection.done();
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+          searchInput = undefined;
+          w.search(v);
+        }, 100);
+      },
+    );
     search
       .querySelector("input")
       ?.addEventListener("focus", () => void w.finishReading());
     search.classList.add("search-field");
-    controls.append(search);
+    const searchRow = el("div", "selection-search");
+    const selectionToggle = button(w.selection.mode ? "Done" : "Select", () => {
+      if (w.selection.mode) w.selection.done();
+      else {
+        if (searchInput !== undefined) {
+          clearTimeout(searchTimer);
+          const query = searchInput;
+          searchInput = undefined;
+          w.search(query);
+        }
+        w.selection.start();
+      }
+      root.querySelector<HTMLElement>(".rows")?.focus();
+    });
+    selectionToggle.dataset.focus = "selection-toggle";
+    searchRow.append(search, selectionToggle);
+    controls.append(searchRow);
     list.append(controls);
+    if (w.selection.mode) {
+      const choices = el("div", "selection-toolbar");
+      const status = el(
+        "span",
+        "selection-count",
+        `${w.selection.count} selected${!w.selection.error && (w.selection.pending || w.selection.observing) ? " · Updating…" : ""}`,
+      );
+      status.setAttribute("role", "status");
+      status.setAttribute("aria-label", "Selection status");
+      status.dataset.pending = String(
+        !w.selection.error && (w.selection.pending || w.selection.observing),
+      );
+      const all = button("Select all messages", () => w.selection.all());
+      all.dataset.focus = "selection-all";
+      all.querySelector("span")!.textContent = "Select all";
+      const clear = button("Clear selection", () => w.selection.clear());
+      clear.dataset.focus = "selection-clear";
+      clear.querySelector("span")!.textContent = "Clear";
+      choices.append(status, all, clear);
+      list.append(choices);
+    }
+    if (w.selection.error || w.selection.warning) {
+      const failure = el(
+        "div",
+        "selection-error",
+        w.selection.error ?? w.selection.warning,
+      );
+      failure.setAttribute("role", "alert");
+      failure.setAttribute("aria-label", "Selection error");
+      if (w.selection.error)
+        failure.append(button("Retry selection", () => w.selection.retry()));
+      list.append(failure);
+    }
     const rows = el("div", "rows");
     rows.tabIndex = 0;
+    rows.dataset.focus = "mail-list";
     rows.dataset.scroll = "mail-list";
     rows.setAttribute("aria-label", "Emails");
     for (const m of w.visible) {
       const row = el(
         "article",
-        `mail-row${w.selected === m.id ? " selected" : ""}${m.unread ? " unread" : ""}`,
+        `mail-row${!w.selection.mode && w.selected === m.id ? " selected" : ""}${w.selection.selected(m.id) ? " bulk-selected" : ""}${m.unread ? " unread" : ""}`,
       );
       row.dataset.id = m.id;
       const main = button(m.subject, () => open(m));
       main.className = "row-open";
-      main.ondblclick = () => {
+      main.dataset.focus = `mail-row:${m.id}`;
+      main.onclick = (event) => {
+        if (event.shiftKey)
+          w.selection.range(m.id, event.ctrlKey || event.metaKey);
+        else if (w.selection.mode || event.ctrlKey || event.metaKey)
+          w.selection.toggle(m.id);
+        else open(m);
+      };
+      main.ondblclick = (event) => {
+        if (
+          w.selection.mode ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.shiftKey
+        )
+          return;
         w.beginReading(m.id);
         fullReader = true;
         w.changed();
       };
       const top = el("div", "row-top");
-      if (w.preferences.avatars) top.append(el("span", "avatar", m.sender[0]));
+      if (w.preferences.avatars && !w.selection.mode)
+        top.append(el("span", "avatar", m.sender[0]));
       top.append(
         el("span", "sender", m.sender),
         el(
@@ -1360,6 +1438,23 @@ export function mount(
         true,
       );
       if (m.starred) flag.classList.add("flagged");
+      flag.dataset.focus = `flag-row:${m.id}`;
+      if (w.selection.mode) {
+        const label = el("label", "selection-checkbox");
+        const checkbox = el("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = w.selection.selected(m.id);
+        checkbox.setAttribute("aria-label", `Select ${m.subject}`);
+        checkbox.dataset.focus = `select-row:${m.id}`;
+        checkbox.onclick = (event) => {
+          event.stopPropagation();
+          if (event.shiftKey)
+            w.selection.range(m.id, event.ctrlKey || event.metaKey);
+          else w.selection.toggle(m.id);
+        };
+        label.append(checkbox);
+        row.append(label);
+      }
       row.append(main, flag);
       rows.append(row);
     }
@@ -1426,8 +1521,18 @@ export function mount(
     list.append(paging);
     rows.onkeydown = (e) => {
       if (!["ArrowDown", "ArrowUp", "Enter"].includes(e.key)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       e.preventDefault();
-      const index = w.visible.findIndex((m) => m.id === w.selected);
+      const focused = (
+        document.activeElement as HTMLElement
+      )?.closest<HTMLElement>(".mail-row")?.dataset.id;
+      const index = w.visible.findIndex(
+        (m) => m.id === (w.selection.mode ? focused : w.selected),
+      );
+      if (w.selection.mode && e.key === "Enter") {
+        if (focused) w.selection.toggle(focused);
+        return;
+      }
       if (e.key === "Enter" && w.selected) {
         fullReader = true;
         w.changed();
@@ -1440,6 +1545,17 @@ export function mount(
             Math.max(0, index + (e.key === "ArrowDown" ? 1 : -1)),
           )
         ];
+      if (m && w.selection.mode) {
+        if (e.shiftKey) w.selection.range(m.id);
+        const target = [
+          ...root.querySelectorAll<HTMLElement>(".mail-row"),
+        ].find((row) => row.dataset.id === m.id);
+        target
+          ?.querySelector<HTMLInputElement>('input[type="checkbox"]')
+          ?.focus();
+        target?.scrollIntoView({ block: "nearest" });
+        return;
+      }
       if (m) open(m);
       root
         .querySelector(".mail-row.selected")
@@ -1450,9 +1566,58 @@ export function mount(
       split("Message list width", w.preferences.listWidth, 280, 560, (n) =>
         w.savePreferences({ ...w.preferences, listWidth: n }),
       ),
-      reader(),
+      w.selection.mode ? selectionSummary() : reader(),
     );
+    w.selection.setObserved(w.visible.map((m) => m.id));
     return box;
+  }
+  function selectionSummary() {
+    const panel = el("section", "reader selection-summary");
+    panel.setAttribute("aria-label", "Selected messages");
+    panel.append(
+      el(
+        "h2",
+        "",
+        `${w.selection.count} ${w.selection.count === 1 ? "message" : "messages"} selected`,
+      ),
+    );
+    if (!w.selection.count)
+      panel.append(
+        el(
+          "p",
+          "muted",
+          "Choose messages using their checkboxes, or select all messages in this view.",
+        ),
+      );
+    else
+      panel.append(
+        el("p", "muted", "Your selection is kept when you change pages."),
+      );
+    if (w.selection.snapshot && !w.selection.pending) {
+      const snapshot = w.selection.snapshot;
+      if (snapshot.available !== snapshot.selected)
+        panel.append(
+          el(
+            "p",
+            "",
+            `${snapshot.available} of ${snapshot.selected} selected messages are available on this device.`,
+          ),
+        );
+      const groups = el("ul", "selection-groups");
+      for (const g of snapshot.groups) {
+        const account =
+          gateway?.accounts.find((a) => a.id === g.account)?.email ?? g.account;
+        groups.append(
+          el(
+            "li",
+            "",
+            `${g.total} in ${g.folder === "INBOX" ? "Inbox" : g.folder} · ${account}`,
+          ),
+        );
+      }
+      panel.append(groups);
+    }
+    return panel;
   }
   let attachmentState:
     | {
@@ -1801,7 +1966,15 @@ export function mount(
     const shortcuts = el("div", "shortcut-list");
     for (const [key, value] of Object.entries(p.shortcuts)) {
       const row = el("div", "shortcut");
-      row.append(el("span", "", key[0].toUpperCase() + key.slice(1)));
+      row.append(
+        el(
+          "span",
+          "",
+          key === "selectAll"
+            ? "Select all messages"
+            : key[0].toUpperCase() + key.slice(1),
+        ),
+      );
       const capture = button(value || "Disabled", () => {
         capture.textContent = "Press a key…";
         capture.onkeydown = (e) => {
@@ -1835,11 +2008,14 @@ export function mount(
           });
         };
       });
-      capture.setAttribute("aria-label", `Remap ${key}`);
+      capture.setAttribute(
+        "aria-label",
+        `Remap ${key === "selectAll" ? "select all messages" : key}`,
+      );
       row.append(
         capture,
         button(
-          `Clear ${key}`,
+          `Clear ${key === "selectAll" ? "select all messages" : key}`,
           () =>
             w.savePreferences({
               ...p,
@@ -2037,6 +2213,7 @@ export function mount(
           ? calendar()
           : preferences(),
     );
+    if (tab !== "Mail" || w.folder === "Drafts") w.selection.setObserved([]);
     if (w.notice) {
       const status = el("div", "status");
       status.setAttribute("role", "status");
@@ -2127,7 +2304,7 @@ export function mount(
   document.addEventListener("keydown", (e) => {
     if (
       document.querySelector("dialog[open]") ||
-      e.target instanceof HTMLInputElement ||
+      (e.target instanceof HTMLInputElement && e.target.type !== "checkbox") ||
       e.target instanceof HTMLTextAreaElement ||
       e.target instanceof HTMLSelectElement ||
       (e.target as HTMLElement).isContentEditable
@@ -2145,6 +2322,11 @@ export function mount(
   });
   function handleShortcut(combo: string) {
     if (tab !== "Mail" || document.querySelector("dialog[open]")) return false;
+    if (combo === "Escape" && w.selection.mode) {
+      w.selection.done();
+      root.querySelector<HTMLElement>(".rows")?.focus();
+      return true;
+    }
     if (combo === "Escape" && find.open) {
       closeFind();
       return true;
@@ -2170,8 +2352,21 @@ export function mount(
       w.preferences.shortcuts.print === "Control+p"
     )
       entry = ["print", "Control+p"];
+    if (
+      !entry &&
+      combo === "Meta+a" &&
+      w.preferences.shortcuts.selectAll === "Control+a"
+    )
+      entry = ["selectAll", "Control+a"];
     if (!entry) return false;
     const action = entry[0];
+    if (action === "selectAll") {
+      if (!root.querySelector(".mail-list")?.contains(document.activeElement))
+        return false;
+      w.selection.all();
+      return true;
+    }
+    if (w.selection.mode && action !== "search") return true;
     if (action === "find") openFind();
     else if (action === "search")
       root

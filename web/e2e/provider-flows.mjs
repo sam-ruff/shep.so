@@ -49,6 +49,36 @@ export async function providerFlows(page, context, origin, output, session) {
   await expect(page.getByText("Connected in this tab")).toBeVisible();
   await page.getByRole("button", { name: "Mail", exact: true }).click();
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Incoming files fixture", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Refresh", exact: true }),
+  ).toBeVisible();
+  const capturedCount = await page.locator(".mail-row").count();
+  const unreadBeforeSelection = await page.locator(".mail-row.unread").count();
+  await page.getByRole("button", { name: "Select", exact: true }).click();
+  await page.locator(".rows").press("Control+a");
+  const selectionStatus = page.getByRole("status", {
+    name: "Selection status",
+  });
+  await expect(selectionStatus).toContainText(`${capturedCount} selected`);
+  await expect(selectionStatus).toHaveAttribute("data-pending", "false");
+  await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(
+    capturedCount,
+  );
+  await expect(page.locator(".mail-row.unread")).toHaveCount(
+    unreadBeforeSelection,
+  );
+  await page.screenshot({
+    path: path.join(output, "selection-real-https.png"),
+  });
+  await page
+    .getByRole("button", { name: "Clear selection", exact: true })
+    .click();
+  await expect(selectionStatus).toContainText("0 selected");
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
   // A failed worker module request is visible and retryable. Mail bytes stay
   // in IndexedDB; cached attachment downloads then work with networking disabled.
   const wasmRoute = /\/assets\/shep_mail_content_bg[^/]*\.wasm$/;
@@ -1276,5 +1306,6 @@ export async function providerFlows(page, context, origin, output, session) {
     "account-removal-stale-tab-reconnect-and-refresh",
     "offline-Find-Unicode-case-quotes-next-previous",
     "Forward-production-worker-CSP-files-and-restart",
+    "captured-selection-controls-no-read",
   ];
 }

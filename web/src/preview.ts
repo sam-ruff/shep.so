@@ -1,4 +1,6 @@
 // This entry and its fictional data are excluded from the production build.
+import { PreviewSelection } from "./preview_selection";
+import type { SelectionCommand } from "./selection_types";
 import fixture from "../../shared/preview.json";
 import findFixture from "../../shared/find-preview.json";
 import {
@@ -12,6 +14,10 @@ import {
 import { mount } from "./ui";
 class PreviewRepository implements Repository {
   preview = true;
+  private selections = new PreviewSelection(() => this.cached);
+  selection(command: SelectionCommand, observed: string[] = []) {
+    return this.selections.selection(command, observed);
+  }
   cached = structuredClone(fixture.messages);
   events = structuredClone(fixture.events);
   constructor() {

@@ -14,6 +14,9 @@ export class SelectionWorkerClient
   private sequence = 0;
   private closed = false;
   private closing?: Promise<void>;
+  get stopped() {
+    return this.closed;
+  }
   private ready: Promise<SelectionResult>;
   private pending = new Map<
     number,
@@ -53,7 +56,11 @@ export class SelectionWorkerClient
       );
     this.ready = this.send({ initialize: user });
     // A lazy caller may close before awaiting initialization.
-    void this.ready.catch(() => {});
+    void this.ready.catch(() =>
+      this.terminate(
+        "Could not open selection storage. Select messages again to retry.",
+      ),
+    );
   }
   private send(
     value: Record<string, unknown>,

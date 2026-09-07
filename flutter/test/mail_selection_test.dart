@@ -67,6 +67,64 @@ class HeldSelection implements SelectionRepository {
 
 void main() {
   test(
+    'Range acknowledges its target while the observed rank is pending',
+    () async {
+      final mail = selectionMail();
+      final repo = HeldSelection(PreviewSelectionRepository(() => mail));
+      final model = MailSelection(
+        repository: repo,
+        scope: () => {'folder': 'Inbox'},
+        currentCount: () => mail.length,
+        changed: () {},
+      );
+      addTearDown(model.dispose);
+      model.watch(mail[0].id);
+      model.toggle(mail[0].id);
+      await settled(() => !model.pending);
+      repo.holdKind = 'observe';
+      repo.gate = Completer<void>();
+      model.unwatch(mail[0].id);
+      model.watch(mail[100].id);
+      await settled(() => repo.holdKind == null);
+      model.range(mail[100].id);
+      expect(model.selected(mail[100].id), true);
+      repo.gate!.complete();
+      await settled(() => !model.pending);
+      expect(model.count, 101);
+    },
+  );
+
+  test(
+    'Select all retains queued deselection when the row scrolls away',
+    () async {
+      final mail = selectionMail();
+      final memory = PreviewSelectionRepository(() => mail);
+      final repo = HeldSelection(memory);
+      final model = MailSelection(
+        repository: repo,
+        scope: () => {'folder': 'Inbox'},
+        currentCount: () => mail.length,
+        changed: () {},
+      );
+      addTearDown(model.dispose);
+      model.watch(mail[0].id);
+      model.start();
+      await settled(() => !model.pending);
+      repo.holdKind = 'capture';
+      repo.gate = Completer<void>();
+      model.all();
+      model.toggle(mail[0].id);
+      expect(model.count, 124);
+      model.unwatch(mail[0].id);
+      model.watch(mail[100].id);
+      expect(model.count, 124);
+      repo.gate!.complete();
+      await settled(() => !model.pending);
+      expect(model.count, 124);
+    },
+  );
+
+  test(
     'all, page observations, cross-page ranges and Clear preserve captured scope',
     () async {
       final mail = selectionMail();
