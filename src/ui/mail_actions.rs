@@ -39,6 +39,9 @@ struct PendingFlags {
 }
 
 impl Actions {
+    pub fn moving(&self, id: &str) -> bool {
+        self.moves.contains_key(id) || self.transfers.contains_key(id)
+    }
     pub fn pending(&self) -> usize {
         self.flags
             .values()

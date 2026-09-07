@@ -96,7 +96,7 @@ The full product goal is still active. Keep [docs/COMPLETION.md](docs/COMPLETION
 
 `src/ui/` owns presentation and small caches. `engine.rs` bridges bounded channels and background work. `store.rs` runs SQLite WAL/FTS work through `spawn_blocking`. `providers::MailProvider`, `CalendarProvider`, and `backup::BackupProvider` are extension points: add a provider without teaching the UI its wire protocol.
 
-The software renderer is patched through `vendor/iced_tiny_skia` (released iced 0.14.0, MIT). Cached dropdown text must intersect its own viewport with the damaged layer, and raw text must reset a shared clip mask after preceding text. Otherwise scrolled controls leave stray pixels that only a full repaint clears. Keep `tests/software_rendering.rs` and the saved filtered-preferences native regression when updating iced; remove the patch only after both pass upstream. The release archive includes the vendor license and patch provenance. Do not edit the Cargo registry cache or replace partial redraws with continuous full-window redraws to hide defects.
+The software renderer is patched through `vendor/iced_tiny_skia` (released iced 0.14.0, MIT). Cached dropdown text must intersect its own viewport with the damaged layer, and raw text must reset a shared clip mask after preceding text. Shadows must honor damage/layer clipping and include their full bounds in invalidation, including when only the shadow intersects the changed area. Otherwise moving or scrolled controls leave stray pixels that only a full repaint clears. Keep `tests/software_rendering.rs`, the filtered-preferences and scrolled mail-drag native regressions when updating iced; remove the patch only after these pass upstream. The release archive includes the vendor license and patch provenance. Do not edit the Cargo registry cache or replace partial redraws with continuous full-window redraws to hide defects.
 
 Multi-selection storage lives in `store/selection.rs`; native controls in `ui/mail_selection.rs` use their own bounded FIFO channel in `engine/selections.rs`. Native group actions use frozen reviews and the durable journal described below. Keep shipping and remaining verification status in the completion log. `store/mail_query.rs` owns the common scope/ranking plan for inbox pages and captured membership. Keep selected IDs/ranks in SQLite and return at most one metadata page to iced. The controller keeps one request in flight and at most 32 pending gestures, projects visible selection immediately, and releases an abandoned snapshot before capturing a new scope. Scope changes clear selection immediately; page changes preserve it. New arrivals do not silently join a selection, but another explicit Select All captures them. Clear unchecks messages; Done/Escape exits selection mode. Checkbox/modifier gestures must not mark mail as read. Select All is remappable and scoped to native list focus at both key input and asynchronous focus-check completion. Preserve normal text Ctrl+A, sidebar focus and double-click reading.
 
@@ -140,7 +140,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 119 functional flows plus the navigation performance gate.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 137 functional flows plus the navigation performance gate; shipped run evidence belongs in the completion log.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -585,3 +585,38 @@ steps without replaying provider work or inventing receipts, replaces the stale
 recovery instruction with an accepted-state note, and preserves Undo for the
 other acknowledged messages. Test mouse acceptance, Y/Enter and N/Escape, and
 reopening History without a stale confirmation.
+
+## Dragging messages into folders
+
+`ui/drag_mail.rs` validates cached account/folder rules; its widget module owns the
+pointer gesture. Reuse `context_menu::ContextArea` and the root pointer tracker so
+batched native motions, redraws and scroll coordinates keep their actual targets.
+Move only after six logical pixels of motion. Flag/checkbox presses cannot start
+a drag. Escape, focus/cursor loss and right-click cancel; swallow the subsequent
+release so it cannot select a row, open a reader or run a sidebar action. Ordinary
+clicks and release-based double-click reading retain their existing behavior.
+
+Payloads contain one message's metadata or the acknowledged selection snapshot,
+never all selected messages or MIME. Passive snapshot observations do not disable
+dragging; pending membership edits require their acknowledgment. At drop, recheck
+the source identity/current selection revision and destination. Inbox, Archive and Trash use each source account; the combined Sent/Flagged
+views are not destinations. Explicit destinations honor the cross-account
+preference and require two IMAP accounts. Provider operations still validate
+actual server capabilities. Only Inbox is a case-insensitive folder alias.
+Single drops use optimistic mail actions and Undo. Groups freeze through the
+existing review/journal path, including selections spanning other pages.
+
+Hover opens collapsed accounts/Inbox after 600 ms; it never toggles a group shut.
+Sidebar scrolling remains available while holding. Pointer motion requests local
+redraws; target transitions and completed gestures publish bounded app messages.
+Draw the floating label in its own renderer layer above pane clips. Preserve the
+shadow damage/clip regression; full repaint is not an acceptable substitute.
+
+The MCP batch actions `mouse_down` / `mouse_up` hold/release the left button on the
+owned fixture display, allowing hover, wheel input, assertions, short waits and
+screenshots during a drag. Duplicate presses/releases fail; cleanup releases a
+held button before stopping the owned display. `pop3_account=true` changes only
+the fictional personal account for local/cross-account destination checks.
+`mail_drag` is observation-only. Preserve all ten `test_drag_*` native scenarios,
+controller/widget/selection tests and harness ownership checks. The scrolled
+Unicode-folder scenario also checks saved WebP pixels for a stale shadow trail.

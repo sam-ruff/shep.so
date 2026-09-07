@@ -51,6 +51,15 @@ impl State {
     pub fn ready(&self) -> bool {
         self.mode && !self.busy() && self.count > 0
     }
+    pub fn ready_for_drag(&self) -> bool {
+        self.mode
+            && self.count > 0
+            && self.snapshot.is_some()
+            && self.queue.is_empty()
+            && self.inflight.as_ref().is_none_or(|(_, request)| {
+                matches!(request, Request::Observe(_) | Request::Release(_))
+            })
+    }
     fn reset(&mut self) {
         #[cfg(feature = "test-support")]
         {
@@ -496,6 +505,40 @@ mod tests {
         .map(|s| s.map(Arc::new))
         .map_err(|e| e.to_string());
         app.selection_finished(serial, result);
+    }
+    #[tokio::test]
+    async fn passive_selection_observation_does_not_disable_dragging_confirmed_choices() {
+        let (mut app, store, mut commands) = fixture().await;
+        let first = app.page.rows[0].id.clone();
+        let _ = app.checkbox_mail(first);
+        assert!(!app.mail_selection.ready_for_drag());
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        assert!(app.mail_selection.ready_for_drag());
+        store
+            .upsert(vec![
+                parse_mail(
+                    "fixture",
+                    "arrival",
+                    "INBOX",
+                    b"Subject: 000A\r\n\r\nArrival".to_vec(),
+                    true,
+                    false,
+                )
+                .unwrap(),
+            ])
+            .await
+            .unwrap();
+        app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
+        assert!(app.mail_selection.busy());
+        assert!(app.mail_selection.ready_for_drag());
+        reply(&mut app, &store, &mut commands).await;
+        let _ = app.checkbox_mail(app.page.rows[1].id.clone());
+        assert!(
+            !app.mail_selection.ready_for_drag(),
+            "Unacknowledged membership edits still need a reviewable snapshot"
+        );
     }
     #[tokio::test]
     async fn gestures_are_immediate_ordered_and_only_hold_one_metadata_page() {

@@ -218,11 +218,18 @@ impl Layer {
             &previous.quads,
             &current.quads,
             |(quad, _)| {
-                quad.bounds
-                    .expand(1.0)
-                    .intersection(&current.bounds)
-                    .into_iter()
-                    .collect()
+                let mut bounds = quad.bounds.expand(1.0);
+                if quad.shadow.color.a > 0.0 {
+                    bounds = bounds.union(
+                        &Rectangle {
+                            x: quad.bounds.x + quad.shadow.offset.x,
+                            y: quad.bounds.y + quad.shadow.offset.y,
+                            ..quad.bounds
+                        }
+                        .expand(quad.shadow.blur_radius + 1.0),
+                    );
+                }
+                bounds.intersection(&current.bounds).into_iter().collect()
             },
             |(quad_a, background_a), (quad_b, background_b)| {
                 quad_a == quad_b && background_a == background_b

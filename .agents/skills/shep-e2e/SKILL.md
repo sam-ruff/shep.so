@@ -285,3 +285,36 @@ then inspect a screenshot proving the next page returns to the top. The saved
 graceful restart. The empty-Inbox restart scenario archives all 120 fixture
 messages and checks Archive after reopening, covering startup without a selected
 message. Performance remains deferred.
+
+For mail dragging, use `hover` to position the cursor, `mouse_down` to hold the
+left button, then `hover`/`scroll`, assertions and screenshots before `mouse_up`.
+These actions are batchable and restricted to the owned fixture display. The
+harness releases held input on cleanup. Avoid nesting a complete `drag` action
+inside a held gesture. Escape/right-click cancels in the app; follow with
+`mouse_up` to release the physical input. Assert the selection remains unchanged
+and no row/context/folder click leaked through cancellation.
+
+Observe `mail_drag.active`, `count`, `target`, `account`, `valid` and `reason`.
+These describe the actual gesture; they cannot start or complete one. Source
+coordinates for the first/second standard rows are x=402,y=245/347. Archive is
+x=85,y=399; personal Projects is x=95,y=636 before expanding unified Inbox.
+Wait for confirmed selection membership (`mail_selection.pending=false`) before
+dragging a selected group. Select All then Next page must still review all 120
+fixture messages. Common folders preserve each source account; explicit account
+folders require the enabled cross-account preference for a transfer.
+
+Hold over a collapsed account or Inbox until the expanded observation arrives;
+the actual widget uses a 600 ms dwell. With `long_folders=true` at 900×640, wheel
+four ticks while holding over the sidebar, then hover the Japanese folder near
+x=85,y=438. Capture the floating destination label and check its old shadow has
+been erased near the Preferences footer. The saved scenario performs this pixel
+check without a forced full repaint. Review all light/dark/compact/120% captures.
+`pop3_account=true` changes only the personal fixture account: cross-account
+transfers reject it, while moving its own mail between local folders works.
+
+Preserve the ten saved `test_drag_*` automated equivalents: single source identity
+and pending Undo; group review/cancel and mixed accounts; Escape/right-click/
+outside/no-op cancellation; preference rejection/enabled transfer; hover reveal;
+failure rollback and continued navigation; POP3 restrictions; compact dark and
+scaled controls; sidebar scrolling/Unicode/shadow cleanup; and full cross-page
+selection. These are functional fixtures, not live-provider or latency evidence.

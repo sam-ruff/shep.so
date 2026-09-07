@@ -274,10 +274,28 @@ impl App {
                     style
                 })
                 .on_press(Message::SidebarAction(index));
+            let drop_target = self.sidebar_drop_target(&item.action);
+            let reveal = self.sidebar_drag_reveal(&item.action);
             let control = if let Message::Draft(id) = item.action {
                 super::context_menu::ContextArea::draft(control, id)
             } else {
                 super::context_menu::ContextArea::sidebar(control)
+            };
+            let control = if let Some(target) = drop_target {
+                control.with_drag(super::drag_mail::Region::Target(
+                    self.mail_drag.clone(),
+                    target,
+                    self.drag_rules(),
+                ))
+            } else {
+                control
+            };
+            let control = if let Some(reveal) = reveal {
+                super::context_menu::ContextArea::sidebar(control).with_drag(
+                    super::drag_mail::Region::Reveal(self.mail_drag.clone(), reveal),
+                )
+            } else {
+                control
             };
             content = content.push(container(control).width(Length::Fill).clip(true).padding(
                 iced::Padding {

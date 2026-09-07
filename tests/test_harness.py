@@ -15,6 +15,27 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_held_mouse_requires_an_owned_app_and_cleanup_releases_only_its_display(self):
+        desktop = harness.Desktop()
+        desktop.command = Mock()
+        with self.assertRaisesRegex(RuntimeError, "owned fixture"):
+            desktop.mouse_button(True)
+        desktop.command.assert_not_called()
+        desktop.app, desktop.xvfb = Mock(), Mock()
+        desktop.app.poll.return_value = desktop.xvfb.poll.return_value = None
+        desktop.mouse_button(True)
+        self.assertTrue(desktop.mouse_held)
+        with self.assertRaisesRegex(RuntimeError, "already held"):
+            desktop.mouse_button(True)
+        desktop.mouse_button(False)
+        self.assertFalse(desktop.mouse_held)
+        with self.assertRaisesRegex(RuntimeError, "not held"):
+            desktop.mouse_button(False)
+        desktop.mouse_button(True)
+        desktop.stop()
+        self.assertFalse(desktop.mouse_held)
+        self.assertEqual(desktop.command.call_args_list[-1].args, ("xdotool", "mouseup", "1"))
+
     def test_persistent_fixture_and_crash_mode_require_booleans(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

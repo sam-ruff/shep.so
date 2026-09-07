@@ -15,6 +15,7 @@ Active requests from this chat. Add new requests here immediately, including cor
 ## Mail reading, search and bulk actions
 
 - [ ] **R45 — Drag mail to folders:** drag one mail or a selected group onto sidebar folders; highlight valid destinations, respect cross-account preference/provider support, and use the bulk-move confirmation.
+  Implementation and native verification are in progress: metadata-based single/group dragging, destination feedback, cancellation, account restrictions and hover expansion. Ten targeted native paths pass. A compact screenshot exposed shadow trails in the software renderer; repair damage/clipping and preserve a pixel regression before final verification and shipping.
 
 ## Folders and composition
 

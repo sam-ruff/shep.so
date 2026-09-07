@@ -71,6 +71,142 @@ class NativeFlows(unittest.TestCase):
         self.artifacts = Path(result["artifacts"])
         print(f"\nEvidence: {result['artifacts']}", flush=True)
 
+    def hold_mail_over(self, source_x, source_y, target_x, target_y):
+        self.mcp.batch({"type":"hover","x":source_x,"y":source_y},{"type":"mouse_down"},
+                       {"type":"hover","x":target_x,"y":target_y},check("mail_drag.active",True))
+
+    def test_drag_single_message_uses_the_source_row_and_immediate_undo(self):
+        started=self.mcp.call("desktop.start",mail_actions="slow")
+        print(f"Single mail drag evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("selected","A little more room to think"))
+        self.hold_mail_over(402,347,85,399)
+        self.mcp.batch(check("mail_drag.count",1),check("mail_drag.target","Archive"),check("mail_drag.valid",True),
+                       shot("drag-single-archive-hover"),{"type":"mouse_up"},check("total",119),
+                       check("selected","A little more room to think"),check("mail_pending",1),
+                       check("action_toast.label","Archived 1 message"),shot("drag-archive-saving"),
+                       click(1340,874),check("total",120),{**check("mail_pending",0),"timeout_ms":5000},
+                       check("mail_rows.1.subject","Your weekly workspace digest"),shot("drag-archive-restored"))
+
+    def test_drag_group_review_cancel_and_mixed_account_trash(self):
+        self.mcp.batch(click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
+                       click(274,218),click(274,426),check("mail_selection.count",2),check("mail_selection.pending",False))
+        self.hold_mail_over(402,245,85,399)
+        self.mcp.batch(check("mail_drag.count",2),check("mail_drag.valid",True),shot("drag-group-archive-hover"),
+                       {"type":"mouse_up"},check("dialog","BulkReview"),check("bulk.review_count",2),
+                       check("total",120),shot("drag-group-review"),key("n"),check("dialog",None),
+                       check("mail_selection.count",2),check("mail_rows.0.unread",True),check("mail_rows.2.unread",True))
+        self.hold_mail_over(402,245,85,438)
+        self.mcp.batch(check("mail_drag.target","Trash"),{"type":"mouse_up"},check("dialog","BulkReview"),
+                       check("bulk.review_count",2),shot("drag-group-trash-review"),key("y"),
+                       check("total",118),check("bulk.jobs.0.completed",2),shot("drag-group-trash-complete"))
+
+    def test_drag_escape_outside_and_same_folder_preserve_selection(self):
+        self.mcp.batch(click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
+                       click(274,218),click(274,322),check("mail_selection.count",2),check("mail_selection.pending",False))
+        self.hold_mail_over(402,245,85,399)
+        self.mcp.batch(key("Escape"),check("mail_drag.active",False),check("mail_selection.count",2),
+                       {"type":"mouse_up"},check("total",120),check("dialog",None))
+        self.hold_mail_over(402,245,402,255)
+        self.mcp.batch({"type":"click","x":402,"y":255,"button":3},check("mail_drag.active",False),
+                       check("context_menu",None),{"type":"mouse_up"},check("mail_selection.count",2))
+        self.hold_mail_over(402,245,800,500)
+        self.mcp.batch(check("mail_drag.target",None),{"type":"mouse_up"},check("mail_selection.count",2),check("total",120))
+        self.hold_mail_over(402,245,85,278)
+        self.mcp.batch(check("mail_drag.target","INBOX"),check("mail_drag.valid",False),
+                       check("mail_drag.reason","already","contains"),shot("drag-already-in-inbox"),
+                       {"type":"mouse_up"},check("notice","already","contains"),check("dialog",None),
+                       check("total",120),check("mail_selection.count",2),check("mail_pending",0))
+
+    def test_drag_cross_account_preference_rejection_and_enabled_transfer(self):
+        self.hold_mail_over(402,245,95,636)
+        self.mcp.batch(check("mail_drag.account","preview-personal"),check("mail_drag.valid",False),
+                       check("mail_drag.reason","Preferences","contains"),shot("drag-cross-account-disabled"),
+                       {"type":"mouse_up"},check("total",120),check("mail_pending",0),check("notice","Preferences","contains"),
+                       key("ctrl+comma"),check("tab","Preferences"),wait(80),click(286,773),
+                       check("cross_account_moves",True),key("ctrl+1"),check("tab","Mail"),wait(80))
+        self.hold_mail_over(402,245,95,636)
+        self.mcp.batch(check("mail_drag.valid",True),shot("drag-cross-account-enabled"),{"type":"mouse_up"},
+                       check("total",119),check("mail_pending",0),click(95,636),check("folder","Projects"),
+                       check("selected","A little more room to think"),check("mail_rows.0.account_id","preview-personal"),
+                       shot("drag-cross-account-destination"))
+
+    def test_drag_hover_expands_accounts_and_unified_inbox(self):
+        self.mcp.batch(click(85,497),check("collapsed_accounts","preview-work","contains"),wait(80))
+        self.hold_mail_over(402,245,85,497)
+        self.mcp.batch(check("collapsed_accounts",[]),shot("drag-account-expanded"),
+                       {"type":"hover","x":85,"y":536},check("mail_drag.target","Projects"),
+                       check("mail_drag.account","preview-work"),check("mail_drag.valid",True),
+                       {"type":"mouse_up"},check("total",119),check("mail_pending",0),
+                       click(85,536),check("folder","Projects"),check("selected","A little more room to think"))
+        self.hold_mail_over(402,245,85,278)
+        self.mcp.batch(check("inbox_expanded",True),check("mail_drag.target","INBOX"),
+                       check("mail_drag.valid",True),shot("drag-unified-expanded"),{"type":"mouse_up"},
+                       check("total",0),check("mail_pending",0),click(85,278),check("folder","INBOX"),check("total",120))
+
+    def test_drag_failure_rolls_back_and_keeps_other_navigation_usable(self):
+        self.mcp.call("desktop.start",mail_actions="fail")
+        self.hold_mail_over(402,347,85,399)
+        self.mcp.batch({"type":"mouse_up"},check("total",119),check("mail_pending",1),
+                       check("action_toast.label","Archived 1 message"),
+                       key("ctrl+comma"),check("tab","Preferences"),shot("drag-failure-preferences-usable"),
+                       {**check("mail_pending",0),"timeout_ms":5000},check("notice","restored","contains"),
+                       key("ctrl+1"),check("tab","Mail"),check("total",120),
+                       check("mail_rows.1.subject","Your weekly workspace digest"),shot("drag-failure-restored"))
+
+    def test_drag_pop3_rejects_cross_account_but_allows_local_folder_moves(self):
+        self.mcp.call("desktop.start",pop3_account=True)
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),click(286,773),
+                       check("cross_account_moves",True),key("ctrl+1"),check("tab","Mail"),wait(80))
+        self.hold_mail_over(402,245,95,636)
+        self.mcp.batch(check("mail_drag.valid",False),check("mail_drag.reason","IMAP","contains"),
+                       shot("drag-pop3-cross-account-rejected"),{"type":"mouse_up"},check("total",120),check("mail_pending",0))
+        self.hold_mail_over(402,450,95,636)
+        self.mcp.batch(check("mail_drag.valid",True),shot("drag-pop3-local-folder"),{"type":"mouse_up"},
+                       check("total",119),check("mail_pending",0),click(95,636),check("folder","Projects"),
+                       check("selected","Coffee next Thursday?"),shot("drag-pop3-local-moved"))
+
+    def test_drag_compact_dark_and_large_interface_scale(self):
+        self.mcp.call("desktop.start",mail_actions="slow")
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),click(690,366),check("dark",True),
+                       key("ctrl+1"),check("tab","Mail"),{"type":"resize","width":900,"height":640},wait(120))
+        self.hold_mail_over(370,245,85,399)
+        self.mcp.batch(check("mail_drag.valid",True),shot("drag-compact-dark-hover"),{"type":"mouse_up"},
+                       check("total",119),check("mail_pending",1),click(800,594),check("total",120),
+                       {**check("mail_pending",0),"timeout_ms":5000},{"type":"resize","width":1440,"height":920},
+                       key("ctrl+comma"),check("tab","Preferences"),wait(120),click(1145,623),wait(80),click(1140,509),
+                       check("interface_scale",120),check("preferences_saved",True),key("ctrl+1"),check("tab","Mail"),wait(120))
+        self.hold_mail_over(480,295,102,478)
+        self.mcp.batch(check("mail_drag.target","Archive"),check("mail_drag.valid",True),shot("drag-large-scale-hover"),
+                       {"type":"mouse_up"},check("total",119),{**check("mail_pending",0),"timeout_ms":5000},shot("drag-large-scale-moved"))
+
+    def test_drag_can_scroll_to_a_folder_while_holding_the_message(self):
+        result = self.mcp.call("desktop.start",width=900,height=640,long_folders=True)
+        directory = Path(result["artifacts"])
+        print(f"Scrolled drag rendering evidence: {directory}", flush=True)
+        self.hold_mail_over(370,245,110,520)
+        self.mcp.batch({"type":"scroll","amount":4},wait(120),shot("drag-scrolled-folder-list"),
+                       {"type":"hover","x":85,"y":438},check("mail_drag.target","家族のカレンダーと旅行の計画と写真"),
+                       check("mail_drag.valid",True),shot("drag-unicode-folder-hover"))
+        # A previous label sat above the Preferences footer. Its shadow must be
+        # erased when the pointer moves, without needing a full-window repaint.
+        pixels = subprocess.check_output(["convert",str(directory / "drag-unicode-folder-hover.webp"),
+                                          "-crop","48x8+130+587","+repage","-colorspace","Gray","-depth","8","gray:-"])
+        self.assertLessEqual(max(pixels)-min(pixels),16,"Moving the drag label left a shadow trail")
+        self.mcp.batch({"type":"mouse_up"},
+                       check("total",119),check("mail_pending",0),click(85,438),
+                       check("folder","家族のカレンダーと旅行の計画と写真"),check("total",2),shot("drag-unicode-folder-moved"))
+
+    def test_drag_selection_across_pages_moves_the_entire_reviewed_group(self):
+        self.mcp.batch(click(402,245),key("ctrl+a"),check("mail_selection.count",120),
+                       check("mail_selection.pending",False),click(583,884),check("offset",50),
+                       check("mail_selection.pending",False),wait(80))
+        self.hold_mail_over(402,245,85,399)
+        self.mcp.batch(check("mail_drag.count",120),check("mail_drag.valid",True),shot("drag-all-pages-hover"),
+                       {"type":"mouse_up"},check("dialog","BulkReview"),check("bulk.review_count",120),
+                       shot("drag-all-pages-review"),key("Return"),check("total",0),
+                       {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},check("bulk.jobs.0.completed",120),
+                       click(85,399),check("folder","Archive"),check("total",120),shot("drag-all-pages-archived"))
+
     def archive_two_for_recovery(self):
         self.mcp.batch(click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
                        click(274,218),click(274,322),check("mail_selection.count",2),
