@@ -165,6 +165,91 @@ async function setup(page: Page, count = 3, seed = true) {
   );
 }
 
+test("mail version seven closes older writers and preserves their clock without inventing cache acknowledgments", async ({
+  page,
+}) => {
+  await page.route("**/upgrade-fixture", (r) =>
+    r.fulfill({
+      contentType: "text/html",
+      body: "<!doctype html><title>Writer upgrade fixture</title>",
+    }),
+  );
+  await page.goto("/upgrade-fixture");
+  const r = await page.evaluate(async (profile) => {
+    const path = "/src/storage.ts",
+      { BrowserStore, stores } = await import(path),
+      name = `shep.mail.v1.${profile}`;
+    const old = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open(name, 6);
+      r.onupgradeneeded = () => {
+        for (const name of stores) r.result.createObjectStore(name);
+        r.transaction!.objectStore("mailMetadata").createIndex(
+          "newest",
+          "newest",
+        );
+        r.transaction!.objectStore("mailMetadata").createIndex(
+          "oldest",
+          "oldest",
+        );
+        r.transaction!.objectStore("outgoing").createIndex("submission", "id");
+      };
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = old.transaction(
+        ["intentState", "mailIntents", "mailRoles"],
+        "readwrite",
+      );
+      tx.objectStore("intentState").put(13, "clock");
+      tx.objectStore("mailIntents").put(
+        {
+          id: "m0",
+          account: "work",
+          fields: { starred: { revision: 13, value: true, status: "applied" } },
+        },
+        "m0",
+      );
+      tx.objectStore("mailRoles").put(
+        { account: "work", acknowledged: ["Keep Sent"] },
+        "work",
+      );
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+    });
+    let changed = false;
+    old.onversionchange = () => {
+      changed = true;
+      old.close();
+    };
+    const store = await BrowserStore.open(profile);
+    let oldWriteRefused = false;
+    try {
+      old.transaction("mail", "readwrite");
+    } catch {
+      oldWriteRefused = true;
+    }
+    const oldOpenRefused = await new Promise<boolean>((resolve) => {
+      const r = indexedDB.open(name, 6);
+      r.onerror = () => resolve(r.error?.name === "VersionError");
+      r.onsuccess = () => {
+        r.result.close();
+        resolve(false);
+      };
+    });
+    const next = await store.intents.reserve(),
+      intent = await store.get("mailIntents", "m0"),
+      roles = await store.get("mailRoles", "work");
+    store.close();
+    return { changed, oldWriteRefused, oldOpenRefused, next, intent, roles };
+  }, profile);
+  expect(r.changed && r.oldWriteRefused && r.oldOpenRefused).toBe(true);
+  expect(r.next).toBe(14);
+  expect(r.intent.fields.starred.status).toBe("applied");
+  expect(r.intent.applied).toBeUndefined();
+  expect(r.roles.acknowledged).toEqual(["Keep Sent"]);
+});
+
 test("version-two migration retains an acknowledged cache gap and refuses execution without saved intent", async ({
   page,
 }) => {

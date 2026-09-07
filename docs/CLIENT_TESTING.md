@@ -167,3 +167,6 @@ Browser intent ordering has saved scenarios in `web/e2e/mail-intents.spec.ts`: t
 
 
 `web/e2e/bulk-executor.spec.ts` exercises the durable executor with frozen SQLite membership, real IndexedDB and Web Locks, and the production provider adapter using fictional responses. It verifies complete 125-message execution, partial/superseded field ownership, physical MOVE Undo, cache/applied-revision rollback, migration, identity recovery without repeated mutation, definite retry, lost acknowledgments, graceful stop and tab loss. Observe the specific Web Lock release after closing an owner tab; page-close completion alone is insufficient. The second tab must load cached state without reconnecting behind the deliberately occupied account lock. These API/transport scenarios do not replace the still-required visible group-control flows or live-provider verification.
+
+
+The mail-schema-seven executor regression opens a real older writer, observes version-change closure, rejects both a late write and reopening at the older version, and preserves the prior intent clock and Sent roles. Cache-applied ownership must not be inferred from older acknowledgment-only status.

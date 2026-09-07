@@ -308,3 +308,6 @@ R77's prompt push is fulfilled for this increment. Group execution/recovery, bou
 ### Browser durable executor — R42/R50/R60/R65/R67/R69/R71/R73/R77
 
 Exact frozen selections now connect to a single owned provider executor with approved/Undo field revisions, physical source checks, durable receipts, skipped outcomes, cache-only recovery, definite retry and conservative stop/restart. Atomic cache-applied revisions preserve newer actions across receipt recovery. The completion log records production-adapter Chromium evidence, corrected fixture setup and prompt checkpoint shipping. Application activation, optimistic query effects, group account cleanup, actual review/History/Undo controls and native parity remain active; this does not establish complete bulk or product parity.
+
+
+Compatibility correction: mail schema 7 closes older database writers before the executor relies on atomic cache-applied revisions. The real upgrade scenario preserves prior clocks/statuses/roles, rejects older writes/reopening, and does not invent cache success from acknowledgment-only status. The final 87-scenario browser and 55-stage Rust HTTPS runs pass; combined shipping is recorded in the completion log.

@@ -50,7 +50,9 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     throw new Error("Invalid browser profile identity.");
   return new Promise((resolve, reject) => {
     let abandoned = false;
-    const request = indexedDB.open(`shep.mail.v1.${user}`, 6);
+    // Version 7 also fences older tabs whose writes lack atomic cache-applied
+    // intent revisions. Do not let those writers share the new executor cache.
+    const request = indexedDB.open(`shep.mail.v1.${user}`, 7);
     request.onupgradeneeded = (event) => {
       for (const store of stores)
         if (!request.result.objectStoreNames.contains(store))
