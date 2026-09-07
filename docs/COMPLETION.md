@@ -23,9 +23,9 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
-## R63 — Native keyboard ordering verification in progress (2026-09-07)
+## R63 — Native keyboard ordering installed and pushed (2026-09-07)
 
-The working tree moves key presses from the asynchronous event subscription to
+Source **b45177792c84246308da78451684820aa70cef2a** moves key presses from the asynchronous event subscription to
 the root native widget's message stream. Keys retain their order relative to
 later mouse controls. Native widget operations snapshot search/Find focus during
 that event; mail actions cannot use the focus of a later click. The old async
@@ -41,12 +41,49 @@ context menus. Three direct native-widget tests cover ordered key/click output,
 focus at each event and Find Enter/Shift. An initial test incorrectly expected
 an Enter without an on-submit callback to be captured by iced; the assertion
 now reflects the actual widget contract and still requires the correct focus.
-Clippy and targeted Rust/Python tests pass.
+Formatting, Clippy, Git hooks, **495 Rust tests plus two drawing-adapter tests**,
+**47 Python tests** and Windows GNU cross-compilation pass. Visual review caught
+a new test accidentally double-clicking into the full reader; alternating inbox
+rows and explicitly checking the reader remains inline preserves the intended
+text-field/later-click regression. The strengthened test passes.
 
-Full native/regression, release installation and push are pending. R63's broader
-functionality-path coverage audit remains open. Evidence uses `native-input-*`
-logs under ignored `artifacts/logs/`, including the before/after native runs.
-No performance measurement or personal-provider operation was performed.
+The full native run passed **172/174** scenarios. One failed before keyboard input
+because the long HTML body did not become ready within its existing deadline;
+three unchanged targeted reruns pass. The other ran the earlier repeated-click
+scenario, which inadvertently entered the full reader and no longer clicked inbox
+rows. The corrected scenario alternates rows, checks the inbox stays open, and
+separately tests Find through actual field/body clicks in the full reader. The
+final rerun of all three new input scenarios plus the original Find scenario
+passes **4/4**, with no changed timeouts. All **174** scenarios have passing
+coverage across the full run and targeted reruns on the same native binary;
+this is not a single clean full run. The HTML readiness timeout remains recorded
+as intermittent evidence, without attributing it conclusively to host load.
+
+The optimized production archive passes checksum, extraction and bundled installer
+verification. Source **b45177792c84246308da78451684820aa70cef2a** is installed for
+the Linux user and pushed to `main`, with the strengthened native test and this
+evidence in the following audit commit. Pinned strict documentation building passes.
+The full product goal and R63's final functionality-path audit remain open.
+
+Native test binary SHA-256:
+`4a3d14e0b8e437cf59fbcd4efeb6ccbc76742f6c0810e90b146fe38c5012173c`.
+Installed production binary SHA-256:
+`7b85b2fa131e0064933724b3022d672fd4db11d5034b84411182b58542982e79`.
+Already-open windows need reopening to use the update.
+
+Reviewed WebP evidence is under ignored `artifacts/e2e/b7c44e3152f7`,
+`b144d2370089`, `47e5508a7b49`, `62aaf00e6a37`, `17144fd92471` and
+`35c641d8f01f`. This includes the final inbox/full-reader isolation and light/compact
+dark cross-folder search controls. Evidence under ignored `artifacts/logs/`:
+
+- `native-input-before-fix.log`, `native-input-after-fix.log`, `native-input-full-native.log` and `native-input-final-native-rerun.log`.
+- `native-input-click-isolation-targeted.log`, `native-input-full-reader-isolation.log` and `native-input-find-rerun.log`.
+- `native-input-commit.log`, `native-input-final-python.log` and `native-input-windows-check.log`.
+- `native-input-release.log`, `native-input-install.log`, `native-input-docs-final.log` and `native-input-push.log`.
+
+No performance measurement or personal-provider operation was performed. Quality
+and release CI stays disabled; documentation publishing remains enabled. No root
+log/database artifacts remain, and unrelated untracked work is preserved.
 
 ## R74 — Manual refresh installed and pushed (2026-09-07)
 
