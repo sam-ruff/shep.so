@@ -17,7 +17,7 @@ Active requests from this chat. Add new requests here immediately, including cor
 ## Folders and composition
 
 - [ ] **R30 — Folder context menus:** delete folders and move them inside another folder; review destructive scope, keep account/server/cache state consistent, and test failure/retry behavior.
-  Backend work in progress: reviewed subtree plans, checked IMAP LIST/RENAME/DELETE, durable per-step acknowledgment/recovery, atomic cache/history migration and account-removal integration have protocol/store tests. Still connect the native menu, destination/deletion review, optimistic presentation, visible recovery and close controls; complete POP3 local hierarchy setup, native failure/retry/restart scenarios and shipping before removing this item.
+  Backend checkpoint 5eabb52 is installed and pushed: reviewed subtree plans, checked IMAP LIST/RENAME/DELETE, durable per-step acknowledgment/recovery, atomic cache/history migration and account-removal integration have protocol/store tests. Still connect the native menu, destination/deletion review, optimistic presentation, visible recovery and close controls; complete POP3 local hierarchy setup, native failure/retry/restart scenarios and shipping before removing this item.
 - [ ] **R35 — Inline composer:** new messages/replies open in the preview pane; autosave while typing and support switching among multiple drafts and received mail without losing content, recipients or attachments.
 
 ## Account/settings sync and backups
