@@ -27,3 +27,7 @@ mod connections;
 mod connections_tests;
 
 mod paging;
+
+mod selection;
+#[cfg(test)]
+mod selection_tests;

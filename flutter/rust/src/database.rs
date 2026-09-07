@@ -19,6 +19,9 @@ pub struct Database {
     pub operations: Arc<crate::operations::Operations>,
     readers: [Arc<Mutex<Connection>>; 2],
     writer: Arc<Mutex<Connection>>,
+    selections: Arc<Mutex<Connection>>,
+    selection_order: Arc<AsyncMutex<()>>,
+    selection_slots: Arc<Semaphore>,
     order: Arc<AsyncMutex<()>>,
     reads: Arc<Semaphore>,
     writes: Arc<Semaphore>,
@@ -123,10 +126,20 @@ impl Database {
                 connection.busy_timeout(std::time::Duration::from_secs(5))?;
                 Ok(Arc::new(Mutex::new(connection)))
             };
+            let selections = reader()?;
+            {
+                let db = selections
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("Selection storage failed. Reopen Shep."))?;
+                crate::selection::schema(&db)?;
+            }
             let profile = Arc::new(Self {
                 operations: Arc::new(crate::operations::Operations::new()),
                 readers: [reader()?, reader()?],
                 writer: Arc::new(Mutex::new(writer)),
+                selections,
+                selection_order: Arc::new(AsyncMutex::new(())),
+                selection_slots: Arc::new(Semaphore::new(32)),
                 order: Arc::new(AsyncMutex::new(())),
                 reads: Arc::new(Semaphore::new(32)),
                 writes: Arc::new(Semaphore::new(32)),
@@ -141,6 +154,31 @@ impl Database {
     #[cfg(test)]
     pub fn pending_writes(&self) -> usize {
         32 - self.writes.available_permits()
+    }
+    #[cfg(test)]
+    pub fn pending_selections(&self) -> usize {
+        32 - self.selection_slots.available_permits()
+    }
+    pub async fn selection<T: Send + 'static>(
+        &self,
+        job: impl FnOnce(&mut Connection) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let permit = self
+            .selection_slots
+            .clone()
+            .try_acquire_owned()
+            .context("Selection is catching up. Retry that action shortly.")?;
+        let ordered = self.selection_order.clone().lock_owned().await;
+        let connection = self.selections.clone();
+        let lease = self.lease.clone();
+        tokio::task::spawn_blocking(move || {
+            let (_permit, _ordered, _lease) = (permit, ordered, lease);
+            let mut db = connection
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Selection storage failed. Reopen Shep."))?;
+            job(&mut db)
+        })
+        .await?
     }
     pub async fn read<T: Send + 'static>(
         &self,

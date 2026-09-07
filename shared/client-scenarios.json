@@ -175,6 +175,12 @@
       "contract": "Deliberate read-on-leave, refreshed counted action feedback, remote-image exceptions and stable reading anchors",
       "mobile": "read-on-leave and counted-move-feedback contracts above; OPEN: image-policy controls/loading/anchors and OS badges/lifecycle",
       "browser": "read-on-leave and counted-move-feedback contracts above; OPEN: image-policy controls/loading/anchors and background lifecycle"
+    },
+    {
+      "id": "captured-mail-selection",
+      "contract": "Capture the full ordered query independently of display pages; retain IDs/ranks in background storage, bound observations to 50 and queued gestures to 32, reject stale revisions, preserve passive membership, explicitly include arrivals, freeze exact review membership, and keep selection separate from reading. Scope changes release prior ownership; cache reads/saves remain independent.",
+      "mobile": "Native selection_tests.rs: 100,000 rows, aliases, explicit arrivals, ranges/freeze, failed recapture rollback, missing membership, held providers/selection with real cache reads/saves, bounded FIFO and cancellation. mail_selection_test.dart: ordered intent, optimistic failure/retry, lost acknowledgments, scrolling, stale observations and release. native_repository_test.dart: actual Dart/FFI capture/freeze/Clear with locked credentials and unread preservation. OPEN: controls, selection E2E, range/arrival UX, durable bulk execution, Apple and performance.",
+      "browser": "OPEN: captured IndexedDB worker, bounded controller, focused Ctrl/Shift/checkbox/Mod+A controls, exact reviews, durable bulk jobs and actual Playwright/provider recovery evidence."
     }
   ]
 }
