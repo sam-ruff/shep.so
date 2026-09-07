@@ -399,3 +399,229 @@ test("Print can be remapped and disabled and does not run in editable fields", a
   await page.keyboard.press("Alt+p");
   expect(context.pages()).toHaveLength(1);
 });
+
+async function holdReaderPreparation(page: Page) {
+  await page.evaluate(async () => {
+    const documentPath = "/src/document_loader.ts",
+      attachmentsPath = "/src/attachments.ts";
+    const { DocumentLoader } = await import(documentPath),
+      { AttachmentReader } = await import(attachmentsPath);
+    const load = DocumentLoader.prototype.load,
+      files = AttachmentReader.prototype.files;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    (window as any).releaseReaderPreparation = release;
+    DocumentLoader.prototype.load = async function (...args: any[]) {
+      const value = await load.apply(this, args);
+      await gate;
+      return value;
+    };
+    AttachmentReader.prototype.files = async function (...args: any[]) {
+      const value = await files.apply(this, args);
+      await gate;
+      return value;
+    };
+  });
+}
+for (const theme of ["light", "dark"] as const)
+  test(`reader actions keep their pointer target while attachments and formatted content arrive in ${theme}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(
+      theme === "light"
+        ? { width: 1280, height: 720 }
+        : { width: 900, height: 640 },
+    );
+    await page.emulateMedia({ colorScheme: theme });
+    await seed(page);
+    await holdReaderPreparation(page);
+    await open(page);
+    await expect(
+      page.getByText("Preparing formatted message…", { exact: true }),
+    ).toBeVisible();
+    const button = page.getByRole("button", { name: "Print", exact: true });
+    const before = await button.boundingBox();
+    expect(before).not.toBeNull();
+    await page.mouse.move(
+      before!.x + before!.width / 2,
+      before!.y + before!.height / 2,
+    );
+    await page.evaluate(() => (window as any).releaseReaderPreparation());
+    await expect(
+      page.getByTitle("Formatted message", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Save duplicate.bin", exact: true }),
+    ).toHaveCount(2);
+    const after = await button.boundingBox();
+    expect(after).toEqual(before);
+    const popup = page.waitForEvent("popup");
+    await page.mouse.down();
+    await page.mouse.up();
+    const preview = await popup;
+    await expect(
+      preview.getByRole("button", { name: "Print", exact: true }),
+    ).toBeEnabled();
+    await preview.close();
+    await page.screenshot({
+      path: `../artifacts/web/reader-footer-${theme}.png`,
+    });
+  });
+
+test("a pressed reader action keeps its native identity through background preparation and opens once on release", async ({
+  page,
+}) => {
+  await seed(page);
+  await holdReaderPreparation(page);
+  await open(page);
+  const button = page.getByRole("button", { name: "Print", exact: true });
+  const before = await button.boundingBox();
+  await button.evaluate((node) => {
+    (window as any).pressedPrint = node;
+  });
+  await page.mouse.move(
+    before!.x + before!.width / 2,
+    before!.y + before!.height / 2,
+  );
+  await page.mouse.down();
+  await page.evaluate(() => (window as any).releaseReaderPreparation());
+  await expect(
+    page.getByTitle("Formatted message", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Loading attachments…", { exact: true }),
+  ).toHaveCount(0);
+  expect(
+    await button.evaluate((node) => node === (window as any).pressedPrint),
+  ).toBe(true);
+  expect(await button.boundingBox()).toEqual(before);
+  const popup = page.waitForEvent("popup");
+  await page.mouse.up();
+  const preview = await popup;
+  await expect(
+    preview.getByRole("button", { name: "Print", exact: true }),
+  ).toBeEnabled();
+  expect(page.context().pages()).toHaveLength(2);
+  await preview.close();
+});
+
+test("reader action keyboard focus survives preparation and its footer stays reachable while the body scrolls", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 640 });
+  await seed(page);
+  await holdReaderPreparation(page);
+  await open(page);
+  const button = page.getByRole("button", { name: "Print", exact: true });
+  for (let i = 0; i < 30; i++) {
+    if (await button.evaluate((node) => document.activeElement === node)) break;
+    await page.keyboard.press("Tab");
+  }
+  await expect(button).toBeFocused();
+  await page.evaluate(() => (window as any).releaseReaderPreparation());
+  await expect(
+    page.getByTitle("Formatted message", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Loading attachments…", { exact: true }),
+  ).toHaveCount(0);
+  await expect(button).toBeFocused();
+  const popup = page.waitForEvent("popup");
+  await page.keyboard.press("Enter");
+  const preview = await popup;
+  await expect(
+    preview.getByRole("button", { name: "Print", exact: true }),
+  ).toBeEnabled();
+  await preview.close();
+  const before = await button.boundingBox(),
+    content = page.locator(".reader-content"),
+    box = await content.boundingBox();
+  await page.mouse.move(box!.x + 5, box!.y + 5);
+  await page.mouse.wheel(0, 400);
+  await expect
+    .poll(() => content.evaluate((node) => node.scrollTop))
+    .toBeGreaterThan(0);
+  expect(await button.boundingBox()).toEqual(before);
+  await page.getByRole("button", { name: "Reply", exact: true }).click();
+  // This print-only cache deliberately lacks Reply headers. The reachable
+  // native action must report that missing data instead of losing the click.
+  await expect(page.getByRole("alert")).toContainText(
+    "Reply headers are missing from this cache",
+  );
+});
+
+test("Enter and Space activate row controls while reader shortcuts follow the focused message and remapping", async ({
+  page,
+}) => {
+  await seed(page);
+  await open(page);
+  await page.keyboard.press("Tab");
+  const flag = page.getByRole("button", {
+    name: "Flag Café project",
+    exact: true,
+  });
+  await expect(flag).toBeFocused();
+  await page.keyboard.press("Enter");
+  const unflag = page.getByRole("button", {
+    name: "Unflag Café project",
+    exact: true,
+  });
+  await expect(unflag).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Close full reader" }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Space");
+  await expect(flag).toBeFocused();
+  // Tab to a different row without opening it first. Enter must read that row.
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("button", { name: "Long forward source", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("button", { name: "Close full reader" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Message reader" }),
+  ).toContainText("Long forward source");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Preferences", exact: true }).click();
+  await page.getByRole("button", { name: "Remap reader", exact: true }).click();
+  await page.keyboard.press("Alt+o");
+  await page.getByRole("button", { name: "Mail", exact: true }).click();
+  await open(page);
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("button", { name: "Close full reader" }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("button", { name: "Long forward source", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Alt+o");
+  await expect(
+    page.getByRole("button", { name: "Close full reader" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Message reader" }),
+  ).toContainText("Long forward source");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Preferences", exact: true }).click();
+  await page.getByRole("button", { name: "Clear reader", exact: true }).click();
+  await page.getByRole("button", { name: "Mail", exact: true }).click();
+  await open(page);
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Alt+o");
+  await expect(
+    page.getByRole("button", { name: "Close full reader" }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Open full reader", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Close full reader" }),
+  ).toBeVisible();
+});
