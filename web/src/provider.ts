@@ -1,3 +1,4 @@
+import { BrowserGroups } from "./bulk_client";
 import { MailboxWorkerClient } from "./mailbox_worker_client";
 import type {
   MailboxRepository,
@@ -299,6 +300,33 @@ async function* lines(response: Response): AsyncGenerator<unknown> {
   }
 }
 export class GatewayRepository implements Repository, SelectionRepository {
+  private groupClient?: BrowserGroups;
+  get groups() {
+    return (this.groupClient ??= new BrowserGroups(
+      this,
+      () => this.selectionWorker,
+    ));
+  }
+  async bulkCacheEpoch() {
+    const state = await this.store.get<{ epoch?: string }>(
+      "cacheState",
+      "mail",
+    );
+    if (!state?.epoch)
+      throw Error("The device cache identity is unavailable. Reopen Shep.");
+    return state.epoch;
+  }
+  async bulkUnavailable(id: string) {
+    const mail = await resolveMail(this.store, id);
+    if (!mail) return undefined; // Missing messages get their ordinary per-item result.
+    const account = this.accounts.find((a) => a.id === mail.core.account_id);
+    return account &&
+      account.protocol !== "Pop3" &&
+      !mail.local &&
+      !this.connected(account.id)
+      ? "Reconnect this account in Preferences, then retry the failed message and resume the group in History."
+      : undefined;
+  }
   private mailboxWorker?: MailboxWorkerClient;
   private mailboxStopped = false;
   private mailboxAdapter?: MailboxRepository;
@@ -317,6 +345,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
     if (!this.store.profileId) return;
     return (this.mailboxAdapter ??= {
       page: async (query) => {
+        await this.groupClient?.settledDecision();
         const page = await this.queryWorker().page(query);
         this.cached = page.rows;
         this.aliases = new Map(Object.entries(page.aliases));
@@ -335,6 +364,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
   }
   stopMailbox() {
     this.mailboxStopped = true;
+    this.groupClient?.stop();
     this.mailboxWorker?.terminate();
     this.mailboxWorker = undefined;
   }

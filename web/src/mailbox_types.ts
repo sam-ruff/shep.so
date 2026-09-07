@@ -10,6 +10,8 @@ export interface MailboxQuery {
   generation?: number;
 }
 export interface MailboxPage {
+  bulkRevision?: string;
+  groupFields?: Record<string, Fields>;
   revision: number;
   epoch: string;
   rows: Mail[];

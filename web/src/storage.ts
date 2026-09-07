@@ -51,11 +51,12 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     throw new Error("Invalid browser profile identity.");
   return new Promise((resolve, reject) => {
     let abandoned = false;
+    // Version 11 fences writers that omit intent-only query invalidation.
     // Version 10 indexes account/physical identities without a JS body migration.
     // Version 9 binds the derived persistent index to this source incarnation.
     // Version 8 fences older tabs that remove accounts without group ownership.
     // Version 7 fenced writes lacking atomic cache-applied intent revisions.
-    const request = indexedDB.open(`shep.mail.v1.${user}`, 10);
+    const request = indexedDB.open(`shep.mail.v1.${user}`, 11);
     request.onupgradeneeded = (event) => {
       for (const store of stores)
         if (!request.result.objectStoreNames.contains(store))
@@ -255,7 +256,10 @@ export class BrowserStore implements LocalStore {
           ...new Set([
             ...changes.map((c) => c.store),
             ...(changes.some(
-              (c) => c.store === "mail" || c.store === "mailAliases",
+              (c) =>
+                c.store === "mail" ||
+                c.store === "mailAliases" ||
+                c.store === "mailIntents",
             )
               ? cacheStores
               : []),
@@ -291,7 +295,12 @@ export class BrowserStore implements LocalStore {
             else tx.objectStore(c.store).put(c.value, c.key);
           }
           if (
-            changes.some((c) => c.store === "mail" || c.store === "mailAliases")
+            changes.some(
+              (c) =>
+                c.store === "mail" ||
+                c.store === "mailAliases" ||
+                c.store === "mailIntents",
+            )
           )
             recordCacheChanges(tx, changes);
           if (intent) await acknowledgeIntentCache(tx, intent, changes);

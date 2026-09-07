@@ -1270,3 +1270,57 @@ dialog > .field,
 .mail-error button {
   min-height: 44px;
 }
+
+.group-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 20px;
+}
+.group-actions button {
+  min-height: 44px;
+}
+.group-history-list {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+.group-history-list button {
+  justify-content: flex-start;
+  text-align: left;
+  min-height: 44px;
+}
+.group-detail {
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.group-progress,
+.group-item p {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.group-items {
+  max-height: 40vh;
+  overflow: auto;
+}
+.group-item {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.group-item .selection-checkbox {
+  display: flex;
+  gap: 8px;
+  width: auto;
+  padding: 8px 0;
+}
+.group-item .selection-checkbox input {
+  flex-shrink: 0;
+}
+.group-detail [hidden] {
+  display: none !important;
+}
+.group-detail button {
+  min-height: 44px;
+}

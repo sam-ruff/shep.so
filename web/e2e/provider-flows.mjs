@@ -79,6 +79,53 @@ export async function providerFlows(page, context, origin, output, session) {
   await expect(selectionStatus).toContainText("0 selected");
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page.getByRole("checkbox")).toHaveCount(0);
+  // The built application executes approved group flags through the actual
+  // authenticated Rust route, then restores their individual before values.
+  await page.getByRole("button", { name: "Select", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Select all messages", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Flag selected messages", exact: true })
+    .click();
+  const groupReview = page.getByRole("dialog", {
+    name: "Review group action",
+    exact: true,
+  });
+  await groupReview
+    .getByRole("button", {
+      name: `Flag ${capturedCount} messages`,
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", { name: "Group history", exact: true })
+    .click();
+  const groupHistory = page.getByRole("dialog", {
+    name: "Group history",
+    exact: true,
+  });
+  await groupHistory
+    .getByRole("button", {
+      name: new RegExp(`^Flag ${capturedCount} messages`),
+    })
+    .click();
+  await expect(groupHistory.locator(".group-progress")).toContainText(
+    `${capturedCount} changed`,
+  );
+  await groupHistory
+    .getByRole("button", { name: "Undo group", exact: true })
+    .click();
+  await expect(groupHistory.locator(".group-progress")).toContainText(
+    `${capturedCount} restored`,
+  );
+  await page.screenshot({ path: path.join(output, "group-real-https.png") });
+  await groupHistory
+    .getByRole("button", { name: "Close", exact: true })
+    .click();
+  await expect(page.locator(".mail-row.unread")).toHaveCount(
+    unreadBeforeSelection,
+  );
   // A failed worker module request is visible and retryable. Mail bytes stay
   // in IndexedDB; cached attachment downloads then work with networking disabled.
   const wasmRoute = /\/assets\/shep_mail_content_bg[^/]*\.wasm$/;
@@ -1307,5 +1354,6 @@ export async function providerFlows(page, context, origin, output, session) {
     "offline-Find-Unicode-case-quotes-next-previous",
     "Forward-production-worker-CSP-files-and-restart",
     "captured-selection-controls-no-read",
+    "captured-group-flags-physical-Undo-real-https",
   ];
 }

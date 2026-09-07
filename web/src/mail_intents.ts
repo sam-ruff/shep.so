@@ -1,6 +1,10 @@
 import type { Fields } from "./model";
 import type { Change } from "./storage";
-import type { CacheMail } from "./cache_changes";
+import {
+  cacheStores,
+  recordCacheChanges,
+  type CacheMail,
+} from "./cache_changes";
 import type { MailAlias } from "./sent_cache";
 
 export type IntentField = "folder" | "unread" | "starred";
@@ -47,6 +51,7 @@ const names = [
   "mailAliases",
   "mailMetadata",
   "removedAccounts",
+  ...cacheStores.filter((name) => name !== "mailMetadata"),
 ];
 export const intentFields: IntentField[] = ["folder", "unread", "starred"];
 const read = <T>(r: IDBRequest<T>) =>
@@ -153,6 +158,9 @@ export class BrowserIntents implements IntentStore {
             status: "pending",
           };
       tx.objectStore("mailIntents").put(record, record.id);
+      recordCacheChanges(tx, [
+        { store: "mailIntents", key: record.id, value: record },
+      ]);
       return {
         id: record.id,
         account: record.account,
@@ -200,6 +208,9 @@ export class BrowserIntents implements IntentStore {
         Object.assign(accepted, { [key]: value });
       }
       tx.objectStore("mailIntents").put(record, record.id);
+      recordCacheChanges(tx, [
+        { store: "mailIntents", key: record.id, value: record },
+      ]);
       return {
         id: record.id,
         account: record.account,
@@ -249,6 +260,9 @@ export class BrowserIntents implements IntentStore {
             intent.status = status;
       }
       tx.objectStore("mailIntents").put(current, current.id);
+      recordCacheChanges(tx, [
+        { store: "mailIntents", key: current.id, value: current },
+      ]);
     });
   }
   uncached(lease: IntentLease) {

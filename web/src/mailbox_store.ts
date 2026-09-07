@@ -1,3 +1,4 @@
+import { BulkProjection } from "./bulk_projection";
 import sqliteInit, {
   type Database,
   type Sqlite3Static,
@@ -26,6 +27,7 @@ const sourceStores = [
   "mailRoles",
   "cacheState",
   "mailChanges",
+  "mailIntents",
 ];
 const triggers = `CREATE TRIGGER IF NOT EXISTS messages_insert AFTER INSERT ON messages BEGIN
   INSERT INTO terms(rowid,search) VALUES(new.rowid,new.search);
@@ -224,8 +226,10 @@ export class MailboxStore {
           this.exec(schema);
           this.exec(triggers);
           this.insert = this.sql.prepare(insertMail);
+          const bulk = new BulkProjection(this.sql, this.user);
           this.exec("BEGIN");
           try {
+            const bulkRevision = await bulk.journal();
             const result = await snapshot(
               this.cache,
               sourceStores,
@@ -265,6 +269,8 @@ export class MailboxStore {
                 }
                 started?.();
                 await this.synchronize(tx, state);
+                await bulk.source(tx, state, accounts);
+                bulk.materialize();
                 for (const [id, fields] of Object.entries(
                   query.scope.projection ?? {},
                 )) {
@@ -283,7 +289,7 @@ export class MailboxStore {
                 const where: string[] = [],
                   bind: Bind = [],
                   folder = inboxFolder(query.scope.folder);
-                const effective = `WITH effective AS (SELECT m.rowid,m.id,m.account,COALESCE(p.folder,m.folder) folder,COALESCE(p.unread,m.unread) unread,COALESCE(p.starred,m.starred) starred,m.timestamp,m.core,m.search FROM messages m LEFT JOIN pending p ON p.id=m.id)`;
+                const effective = `WITH effective AS (SELECT m.rowid,m.id,m.account,COALESCE(p.folder,b.folder,m.folder) folder,COALESCE(p.unread,b.unread,m.unread) unread,COALESCE(p.starred,b.starred,m.starred) starred,m.timestamp,m.core,m.search FROM messages m LEFT JOIN pending p ON p.id=m.id LEFT JOIN bulk_current b ON b.id=m.id)`;
                 where.push(
                   folder === "Sent"
                     ? "(e.folder=? OR EXISTS(SELECT 1 FROM sent WHERE account=e.account AND folder=e.folder))"
@@ -363,6 +369,28 @@ export class MailboxStore {
                 return {
                   epoch: state.epoch,
                   revision: state.revision,
+                  bulkRevision,
+                  groupFields: Object.fromEntries(
+                    [
+                      ...new Set([
+                        ...rows.map((row) => row.id),
+                        ...(query.observed ?? []).map((id) =>
+                          this.canonical(id),
+                        ),
+                      ]),
+                    ].map((id) => {
+                      const fields = bulk.fields(id);
+                      return [
+                        id,
+                        {
+                          ...fields,
+                          ...(fields.folder === "INBOX"
+                            ? { folder: "Inbox" }
+                            : {}),
+                        },
+                      ];
+                    }),
+                  ),
                   total,
                   unread,
                   rows,

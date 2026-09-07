@@ -1,3 +1,5 @@
+import type { GroupReview } from "./bulk_client";
+import type { BulkAction } from "./bulk_journal";
 import { MailPaging, MailBodies } from "./mail_paging";
 import type {
   MailboxRepository,
@@ -240,6 +242,92 @@ export class Workspace extends EventTarget {
   >();
   private commandCount = 0;
   private flagUndoId?: string;
+  private groupedFields: Record<string, Fields> = {};
+  get groupObserved() {
+    return [
+      ...new Set(
+        [...this.queues.keys(), ...this.mail.map((m) => m.id)].map((id) =>
+          this.canonical(id),
+        ),
+      ),
+    ];
+  }
+  groupChanged() {
+    this.revision++;
+    this.selection.refresh();
+    this.changed();
+  }
+  optimisticGroup(review: GroupReview) {
+    const fields: Fields =
+      review.job.action.kind === "move"
+        ? { folder: review.job.action.folder }
+        : Object.fromEntries(
+            Object.entries(review.job.action).filter(([key]) => key !== "kind"),
+          );
+    const selected = new Set(review.selected.map((id) => this.canonical(id)));
+    const originals = this.mail
+      .filter((m) => selected.has(m.id))
+      .map((m) => this.metadataOnly(m));
+    const versions = new Map(this.versions),
+      revision = ++this.revision;
+    const beforeTotal = this.pageTotal,
+      beforeUnread = this.pageUnread;
+    for (const id of selected) {
+      for (const field of Object.keys(fields))
+        this.versions.set(`${id}:${field}`, revision);
+      this.paint(id, fields);
+    }
+    // The frozen review covers the current full query, including off-page rows.
+    let totalDelta = 0,
+      unreadDelta = 0;
+    for (const group of review.snapshot.groups) {
+      const before = {
+        accountId: group.account,
+        account: this.repository.accountIds
+          ? ([...this.repository.accountIds].find(
+              ([, id]) => id === group.account,
+            )?.[0] ?? group.account)
+          : group.account,
+        folder: group.folder.toLowerCase() === "inbox" ? "Inbox" : group.folder,
+        unread: true,
+        starred: true,
+      } as Mail;
+      const after = { ...before, ...fields };
+      const beforeInbox = before.folder.toLowerCase() === "inbox",
+        afterInbox = after.folder.toLowerCase() === "inbox";
+      const afterUnread =
+        fields.unread === undefined
+          ? group.unread
+          : fields.unread
+            ? group.total
+            : 0;
+      unreadDelta +=
+        (afterInbox ? afterUnread : 0) - (beforeInbox ? group.unread : 0);
+      if (!this.matchesMetadata(after)) totalDelta -= group.total;
+    }
+    this.pageTotal = Math.max(0, beforeTotal + totalDelta);
+    this.pageUnread = Math.max(0, beforeUnread + unreadDelta);
+    this.selected = null;
+    this.selection.done(false);
+    this.changed();
+    return () => {
+      for (const mail of originals) {
+        const rollback: Fields = {};
+        for (const field of Object.keys(fields) as (keyof Fields)[]) {
+          const key = `${mail.id}:${field}`;
+          if (this.versions.get(key) !== revision) continue;
+          const previous = versions.get(key);
+          if (previous === undefined) this.versions.delete(key);
+          else this.versions.set(key, previous);
+          Object.assign(rollback, {
+            [field]: this.confirmed.get(mail.id)?.[field] ?? mail[field],
+          });
+        }
+        this.paint(mail.id, rollback);
+      }
+      this.groupChanged();
+    };
+  }
   get paged() {
     return !!this.paging;
   }
@@ -287,6 +375,7 @@ export class Workspace extends EventTarget {
       !!this.pageEpoch && this.pageEpoch !== page.epoch;
     const cacheChanged =
       this.cacheRevision !== page.revision || this.pageEpoch !== page.epoch;
+    this.groupedFields = page.groupFields ?? {};
     this.pageEpoch = page.epoch;
     this.cacheRevision = page.revision;
     if (cacheChanged) {
@@ -351,6 +440,8 @@ export class Workspace extends EventTarget {
     ) {
       this.retainedReader = {
         ...(page.rows.find((m) => m.id === this.selected) ?? previousReader),
+        ...this.groupedFields[this.selected],
+        ...projection[this.selected],
         id: this.selected,
         body: previousReader.body,
         bodyLoaded: previousReader.bodyLoaded,
@@ -414,7 +505,10 @@ export class Workspace extends EventTarget {
         this.aliases.set(id, result.id);
         this.selectedId = result.id;
       }
-      const fields = this.selectionScope().projection?.[result.id] ?? {};
+      const fields = {
+        ...this.groupedFields[result.id],
+        ...this.selectionScope().projection?.[result.id],
+      };
       this.confirmed.set(result.id, this.metadataOnly(result.mail));
       this.retainedReader = {
         ...result.mail,
@@ -826,7 +920,12 @@ export class Workspace extends EventTarget {
       {
         selection: (command, observed) =>
           repository.selection
-            ? repository.selection(command, observed)
+            ? repository.selection(
+                command.kind === "observe"
+                  ? { ...command, projection: this.selectionScope().projection }
+                  : command,
+                observed,
+              )
             : Promise.reject(
                 Error(
                   "Selection storage is unavailable. Reopen Shep and retry.",

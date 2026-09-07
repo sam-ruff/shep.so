@@ -962,13 +962,12 @@ test("capture respects account, logical Sent, body search, projected filters and
   expect(result.oldest.positions).toEqual({ a: 1, b: 2, c: 0 });
   expect(result.newest.positions).toEqual({ a: 0, b: 1, c: 2 });
   expect(result.projected.visible).toEqual(["a", "e"]);
-  expect(result.projected.groups).toContainEqual({
-    account: "work",
-    folder: "INBOX",
-    total: 1,
-    unread: 0,
-    starred: 0,
-  });
+  // Selection summaries now observe the same optimistic fields as query rows;
+  // physical originals for execution remain in the separate frozen exporter.
+  expect(result.projected.groups).toEqual([
+    { account: "work", folder: "Sent", total: 1, unread: 0, starred: 1 },
+    { account: "work", folder: "Sent Mail", total: 1, unread: 0, starred: 1 },
+  ]);
 });
 
 test("gateway repository creates selection lazily and releases it for a fresh capture", async ({

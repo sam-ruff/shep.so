@@ -42,6 +42,8 @@ export interface BulkReceipt {
 }
 export interface BulkItem extends BulkOriginal {
   job: string;
+  /** Job revision at the last change to this item, for bounded query replay. */
+  changedAt?: number;
   status: BulkStatus;
   phase: "forward" | "undo";
   attempt?: string;
@@ -67,6 +69,7 @@ export interface BulkJob {
   counts: Record<BulkStatus, number>;
   pendingCache?: number;
   runnable?: number;
+  cacheEpoch?: string;
   forwardIntent?: number;
   undoIntent?: number;
 }
@@ -228,7 +231,7 @@ function action(v: BulkAction): BulkAction {
 async function open(user: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let abandoned = false;
-    const r = indexedDB.open(`shep.bulk.v1.${user}`, 4);
+    const r = indexedDB.open(`shep.bulk.v1.${user}`, 5);
     r.onupgradeneeded = (event) => {
       const tx = r.transaction!;
       if (event.oldVersion < 1) {
@@ -252,9 +255,13 @@ async function open(user: string): Promise<IDBDatabase> {
         r.result.createObjectStore("metadata");
         r.result.createObjectStore("removals", { keyPath: "id" });
         items.createIndex("owners", "owners", { multiEntry: true });
-        const rows = items.openCursor();
-        rows.onsuccess = () => {
-          const row = rows.result;
+      }
+      if (event.oldVersion < 5) {
+        tx.objectStore("metadata").put(crypto.randomUUID(), "epoch");
+        items.createIndex("changed", ["job", "changedAt", "position"]);
+        const records = items.openCursor();
+        records.onsuccess = () => {
+          const row = records.result;
           if (!row) return;
           const get = jobs.get(row.value.job);
           get.onsuccess = () => {
@@ -262,7 +269,11 @@ async function open(user: string): Promise<IDBDatabase> {
               tx.abort();
               return;
             }
-            row.update({ ...row.value, owners: owners(row.value, get.result) });
+            row.update({
+              ...row.value,
+              owners: owners(row.value, get.result),
+              changedAt: get.result.revision,
+            });
             row.continue();
           };
         };
@@ -308,7 +319,7 @@ async function observe(user: string): Promise<IDBDatabase> {
     r.onupgradeneeded = () => r.transaction!.abort();
     r.onerror = failed;
     r.onsuccess = () => {
-      if (r.result.version !== 4) {
+      if (r.result.version !== 5) {
         r.result.close();
         failed();
       } else {
@@ -337,10 +348,14 @@ export class BulkJournal {
   ): Promise<T> {
     if (!/^[A-Za-z0-9_-]{43}$/.test(user))
       throw Error("Invalid browser profile identity.");
-    const db = await navigator.locks.request(
-      `shep.bulk.v1.${user}`,
-      { ifAvailable: true },
-      (lock) => (lock ? open(user) : observe(user)),
+    // Ordinary observations must not contend with an executor starting after
+    // a decision. Acquire ownership only to create/upgrade the schema.
+    const db = await observe(user).catch(() =>
+      navigator.locks.request(
+        `shep.bulk.v1.${user}`,
+        { ifAvailable: true },
+        (lock) => (lock ? open(user) : observe(user)),
+      ),
     );
     const journal = new BulkJournal(db, false, user);
     try {
@@ -458,6 +473,7 @@ export class BulkJournal {
     job.counts[status]++;
     item.status = status;
     item.owners = owners(item, job);
+    item.changedAt = job.revision + 1;
     tx.objectStore("items").put(item);
     this.save(tx, job);
   }
@@ -629,6 +645,105 @@ export class BulkJournal {
       }
     });
   }
+  /** Replay changed metadata directly into a worker-owned derived index.
+   * A whole-job decision changes one job row; item transfer stays incremental. */
+  projection(visitor: {
+    begin(revision: string, epoch: string): void;
+    job(job: BulkJob): number;
+    item(item: BulkItem): void;
+    end(): void;
+  }): Promise<string> {
+    return this.transaction("readonly", async (tx) => {
+      const revision =
+        (await request<string | undefined>(
+          tx.objectStore("metadata").get("revision"),
+        )) ?? "initial";
+      const epoch = await request<string | undefined>(
+        tx.objectStore("metadata").get("epoch"),
+      );
+      if (!epoch)
+        throw Error(
+          "The group storage incarnation is unavailable. Reopen Shep.",
+        );
+      visitor.begin(revision, epoch);
+      await new Promise<void>((resolve, reject) => {
+        const jobs = tx.objectStore("jobs").openCursor();
+        jobs.onerror = () => reject(jobs.error);
+        jobs.onsuccess = () => {
+          const row = jobs.result;
+          if (!row) {
+            resolve();
+            return;
+          }
+          try {
+            const job = row.value as BulkJob,
+              after = visitor.job(job);
+            if (after >= job.revision) {
+              row.continue();
+              return;
+            }
+            const cursor = tx
+              .objectStore("items")
+              .index("changed")
+              .openCursor(
+                IDBKeyRange.bound(
+                  [job.id, after, Number.MAX_SAFE_INTEGER],
+                  [job.id, job.revision, Number.MAX_SAFE_INTEGER],
+                  true,
+                ),
+              );
+            cursor.onerror = () => reject(cursor.error);
+            cursor.onsuccess = () => {
+              const item = cursor.result;
+              if (!item) {
+                row.continue();
+                return;
+              }
+              try {
+                visitor.item(item.value);
+                item.continue();
+              } catch (error) {
+                reject(error);
+              }
+            };
+          } catch (error) {
+            reject(error);
+          }
+        };
+      });
+      visitor.end();
+      return revision;
+    });
+  }
+  view(id: string, after = -1) {
+    selectionToken(id);
+    if (after !== -1) bounds(after);
+    return this.transaction("readonly", async (tx) => ({
+      job: await this.job(tx, id),
+      items: await request<BulkItem[]>(
+        tx
+          .objectStore("items")
+          .getAll(
+            IDBKeyRange.bound([id, after], [id, Number.MAX_SAFE_INTEGER], true),
+            50,
+          ),
+      ),
+    }));
+  }
+  resolveUncertain(id: string, expected: number, position: number) {
+    bounds(position);
+    return this.transaction("readwrite", async (tx) => {
+      const job = await this.job(tx, id, expected),
+        item = await request<BulkItem | undefined>(
+          tx.objectStore("items").get([id, position]),
+        );
+      if (!item || item.status !== "uncertain") throw changed();
+      item.error =
+        "The user reviewed the server folders and accepted the current state. No provider success or rejection is inferred, and this step will not repeat.";
+      this.transition(tx, job, item, "skipped");
+      return job;
+    });
+  }
   get(id: string) {
     return this.transaction("readonly", (tx) => this.job(tx, id));
   }
@@ -724,6 +839,7 @@ export class BulkJournal {
     requested: BulkAction,
     total: number,
     chunks: AsyncIterable<BulkOriginal[]>,
+    cacheEpoch?: string,
   ): Promise<BulkJob> {
     selectionToken(id);
     bounds(total);
@@ -746,6 +862,7 @@ export class BulkJournal {
           paused: false,
           undo: false,
           counts,
+          ...(cacheEpoch ? { cacheEpoch: text(cacheEpoch) } : {}),
         } satisfies BulkJob),
       );
     });
@@ -784,6 +901,7 @@ export class BulkJournal {
           const status = original ? "pending" : "missing";
           tx.objectStore("items").add({
             job: id,
+            changedAt: job.revision + 1,
             position: row.position,
             id: text(row.id),
             account: text(row.account),
@@ -813,6 +931,56 @@ export class BulkJournal {
           "The complete group was not saved. Select and review it again.",
         );
       job.state = "review";
+      return this.save(tx, job);
+    });
+  }
+  /** Receipt progress may advance the revision while an Undo/Pause button is
+   * held. Compare its reviewed decision generation inside the same transaction,
+   * instead of treating unrelated per-message progress as a different decision. */
+  decideCurrent(
+    expected: BulkJob,
+    decision: "approve" | "pause" | "resume" | "undo",
+    intentRevision?: number,
+  ) {
+    bounds(expected.revision);
+    if (intentRevision !== undefined) {
+      bounds(intentRevision);
+      if (!intentRevision) throw changed();
+    }
+    return this.transaction("readwrite", async (tx) => {
+      const job = await this.job(tx, expected.id);
+      if (decision === "approve") {
+        if (
+          job.revision !== expected.revision ||
+          job.state !== "review" ||
+          !job.cacheEpoch ||
+          !intentRevision
+        )
+          throw changed();
+        job.state = "ready";
+        job.forwardIntent = intentRevision;
+      } else {
+        if (
+          job.state !== "ready" ||
+          job.forwardIntent !== expected.forwardIntent ||
+          job.undo !== expected.undo ||
+          job.undoIntent !== expected.undoIntent
+        )
+          throw changed();
+        if (decision === "undo") {
+          if (
+            !intentRevision ||
+            !job.forwardIntent ||
+            intentRevision <= job.forwardIntent ||
+            job.undo
+          )
+            throw changed();
+          job.undo = true;
+          job.undoIntent = intentRevision;
+        } else if (decision === "pause") job.paused = true;
+        else if (decision === "resume") job.paused = false;
+        else throw changed();
+      }
       return this.save(tx, job);
     });
   }
@@ -960,6 +1128,7 @@ export class BulkJournal {
       };
       if (item.phase === "forward") item.intent = saved;
       else item.undoIntent = saved;
+      item.changedAt = job.revision + 1;
       tx.objectStore("items").put(item);
       return this.save(tx, job);
     });
@@ -1116,6 +1285,7 @@ export class BulkJournal {
         item.cache = 0;
         job.pendingCache = (job.pendingCache ?? 0) - 1;
       }
+      item.changedAt = job.revision + 1;
       tx.objectStore("items").put(item);
       return this.save(tx, job);
     });
