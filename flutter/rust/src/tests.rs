@@ -927,3 +927,70 @@ async fn find_visible_text_works_with_all_provider_capacity_occupied() {
         assert_eq!(result, case["hits"]);
     }
 }
+
+#[tokio::test]
+async fn formatted_cache_aliases_work_without_provider_slots_and_do_not_occupy_find() {
+    let (_dir, p) = profile().await;
+    seed(&p, 0).await;
+    p.database
+        .write(move |db| {
+            operations::insert_mail(
+                db,
+                parse_mail(
+                    "fixture",
+                    "html",
+                    "INBOX",
+                    include_bytes!("../../../shared/html-reader-fixture.eml").to_vec(),
+                    false,
+                    false,
+                )?,
+                false,
+            )?;
+            db.execute(
+                "INSERT INTO mail_aliases(alias,id) VALUES('prior-html-id','fixture:INBOX:html')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let _occupied = p.operations.hold_network_capacity().await;
+    let op = json!({"op":"formatted","id":"prior-html-id","options":{"generation":"native-html","dark":true,"quotes":false}});
+    let prepared = request(&p, op.clone()).await;
+    assert!(
+        prepared["document"]
+            .as_str()
+            .unwrap()
+            .contains("Content-Security-Policy")
+    );
+    assert!(
+        prepared["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Plain alternative")
+    );
+    assert_eq!(prepared["remote_images"].as_array().unwrap().len(), 1);
+    let hold = p.operations.hold_render_capacity().await;
+    let blocked: Value =
+        serde_json::from_str(&p.request(op.clone().to_string()).await.unwrap()).unwrap();
+    assert!(
+        blocked["error"]
+            .as_str()
+            .unwrap()
+            .contains("formatted reader is busy")
+    );
+    let found = request(
+        &p,
+        json!({"op":"find_text","blocks":["Alpha"],"query":"alpha","match_case":false}),
+    )
+    .await;
+    assert_eq!(found, json!([{"block":0,"start":0,"end":5}]));
+    assert!(
+        request(&p, json!({"op":"detail","id":"prior-html-id"})).await["body"]
+            .as_str()
+            .unwrap()
+            .starts_with("Plain alternative")
+    );
+    drop(hold);
+    assert_eq!(request(&p, op).await["signature"], prepared["signature"]);
+}

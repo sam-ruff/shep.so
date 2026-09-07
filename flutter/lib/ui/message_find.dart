@@ -18,75 +18,79 @@ class MessageFindBar extends StatelessWidget {
   final VoidCallback close;
   final bool loading;
   @override
-  Widget build(BuildContext context) => CallbackShortcuts(
-    bindings: {
-      const SingleActivator(LogicalKeyboardKey.enter, shift: true): () =>
-          find.next(true),
-    },
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: query,
-                  focusNode: focus,
-                  decoration: const InputDecoration(
-                    labelText: 'Find in message',
-                    isDense: true,
-                  ),
-                  onChanged: find.setQuery,
-                  onEditingComplete: () {},
-                  onSubmitted: (_) => find.next(),
-                ),
-              ),
-              IconButton(
-                tooltip: 'Close Find',
-                onPressed: close,
-                icon: const Icon(Icons.close),
-              ),
-            ],
-          ),
-          Row(
-            children: [
-              Expanded(
-                child: Semantics(
-                  liveRegion: true,
-                  child: Text(
-                    loading ? 'Loading message…' : find.error ?? find.status,
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    explicitChildNodes: true,
+    child: CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.enter, shift: true): () =>
+            find.next(true),
+      },
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: query,
+                    focusNode: focus,
+                    decoration: const InputDecoration(
+                      labelText: 'Find in message',
+                      isDense: true,
+                    ),
+                    onChanged: find.setQuery,
+                    onEditingComplete: () {},
+                    onSubmitted: (_) => find.next(),
                   ),
                 ),
-              ),
-              if (find.error != null)
-                TextButton(
-                  onPressed: find.retry,
-                  child: const Text('Retry Find'),
+                IconButton(
+                  tooltip: 'Close Find',
+                  onPressed: close,
+                  icon: const Icon(Icons.close),
                 ),
-              IconButton(
-                tooltip: 'Match case',
-                isSelected: find.matchCase,
-                onPressed: find.toggleCase,
-                icon: const Icon(Icons.text_fields),
-              ),
-              IconButton(
-                tooltip: 'Previous match',
-                onPressed: find.hits.isEmpty || find.pending
-                    ? null
-                    : () => find.next(true),
-                icon: const Icon(Icons.keyboard_arrow_up),
-              ),
-              IconButton(
-                tooltip: 'Next match',
-                onPressed: find.hits.isEmpty || find.pending
-                    ? null
-                    : () => find.next(),
-                icon: const Icon(Icons.keyboard_arrow_down),
-              ),
-            ],
-          ),
-        ],
+              ],
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      loading ? 'Loading message…' : find.error ?? find.status,
+                    ),
+                  ),
+                ),
+                if (find.error != null)
+                  TextButton(
+                    onPressed: find.retry,
+                    child: const Text('Retry Find'),
+                  ),
+                IconButton(
+                  tooltip: 'Match case',
+                  isSelected: find.matchCase,
+                  onPressed: find.toggleCase,
+                  icon: const Icon(Icons.text_fields),
+                ),
+                IconButton(
+                  tooltip: 'Previous match',
+                  onPressed: find.hits.isEmpty || find.pending
+                      ? null
+                      : () => find.next(true),
+                  icon: const Icon(Icons.keyboard_arrow_up),
+                ),
+                IconButton(
+                  tooltip: 'Next match',
+                  onPressed: find.hits.isEmpty || find.pending
+                      ? null
+                      : () => find.next(),
+                  icon: const Icon(Icons.keyboard_arrow_down),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     ),
   );

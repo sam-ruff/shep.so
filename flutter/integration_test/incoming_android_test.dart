@@ -93,6 +93,9 @@ void main() {
       await tester.tap(save);
       await tester.pump();
       await wait(() => find.text('binary.bin saved.').evaluate().isNotEmpty);
+      await tester.ensureVisible(find.text('Plain text'));
+      await tester.tap(find.text('Plain text'));
+      await tester.pumpAndSettle();
       await binding.convertFlutterSurfaceToImage();
       await tester.pumpAndSettle();
       await binding.takeScreenshot('native-incoming-saved');

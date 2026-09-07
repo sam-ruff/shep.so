@@ -5,6 +5,7 @@
   const bridge = window.ShepReader;
   const generation = data.generation;
   const blobs = new Map();
+  let disposed = false;
   let booted = false,
     layout = 0,
     blocks = [],
@@ -18,6 +19,7 @@
     resizeTimer,
     selectionRevision = 0;
   function send(type, fields = {}) {
+    if (disposed) return;
     const message = { type, generation, layout, ...fields };
     if (bridge?.postMessage) bridge.postMessage(JSON.stringify(message));
     else if (window.parent !== window) window.parent.postMessage(message, "*");
@@ -234,7 +236,7 @@
       window.scrollTo({
         top: Math.max(0, scrollY + rect.top - 64),
         left: Math.max(0, scrollX + rect.left - 24),
-        behavior: "instant",
+        behavior: "auto",
       });
     }
     highlighting = false;
@@ -262,6 +264,17 @@
     else if (booted && value.type === "index") collect();
   }
   Object.defineProperty(window, "shepReaderCommand", { value: command });
+  function dispose() {
+    disposed = true;
+    booted = false;
+    clearTimeout(resizeTimer);
+    clear();
+    for (const url of blobs.values()) URL.revokeObjectURL(url);
+    blobs.clear();
+    data.images = {};
+    document.body.replaceChildren();
+  }
+  Object.defineProperty(window, "shepReaderDispose", { value: dispose });
   window.addEventListener("message", (event) => {
     if (event.source === window.parent) command(event.data);
   });
@@ -326,8 +339,7 @@
     }, 100);
   });
   window.addEventListener("pagehide", (event) => {
-    if (!event.persisted)
-      for (const url of blobs.values()) URL.revokeObjectURL(url);
+    if (!event.persisted) dispose();
   });
   (async () => {
     const decoded = [];
@@ -359,6 +371,9 @@
       node.style.setProperty("-webkit-user-select", "text", "important");
     }
     await Promise.all(decoded);
+    if (disposed) return;
+    data.images = {};
+    document.getElementById("shep-data")?.remove();
     const first = template.content.querySelector("[data-shep-body]");
     for (const attr of [...first.attributes])
       if (!attr.name.startsWith("data-"))
@@ -381,6 +396,11 @@
         placeholder: document.createComment("quoted history"),
       }));
     theme();
+    document.documentElement.style.setProperty(
+      "scroll-behavior",
+      "auto",
+      "important",
+    );
     setQuotes();
     booted = true;
     collect();

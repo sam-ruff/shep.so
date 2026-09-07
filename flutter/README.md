@@ -8,6 +8,8 @@ flutter run --flavor preview --target test/preview_main.dart
 flutter test
 ```
 
+Android requires API 24 or later. iOS targets 14.0 so the system reader can display the shared WebP inline images; Apple simulator verification remains open.
+
 Choose an isolated Android emulator. Preview data is fictional and sending is refused. Production uses `--flavor production` and `lib/main.dart`, starts empty, and contains no fixture import.
 
 The separate desktop-style browser app is in `../web/`. A Flutter browser build exists for Playwright testing of the mobile controls:
