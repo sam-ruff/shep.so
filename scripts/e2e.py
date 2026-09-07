@@ -119,6 +119,12 @@ class NativeFlows(unittest.TestCase):
                                key("ctrl+d"),click(400,y),check("selected",subject),
                                wait(80),check("full_reader",False),check("total",120),check("mail_pending",0))
         self.mcp.batch(shot("native-search-find-delete-isolation"),key("Escape"),check("find_open",False))
+        self.mcp.batch(double_click(400,245),check("full_reader",True),key("ctrl+f"),
+                       check("find_open",True),check("focused_input","find-message"))
+        for _ in range(4):
+            self.mcp.batch(click(400,150),key("ctrl+d"),click(700,400),wait(80),
+                           check("full_reader",True),check("total",120),check("mail_pending",0))
+        self.mcp.batch(shot("native-full-reader-find-delete-isolation"),key("Escape"),check("find_open",False))
 
     def test_nested_folder_roots_mouse_selection_and_restart(self):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True)
