@@ -21,6 +21,12 @@
       "browser": "model.test.ts / read-tracking.spec.ts / provider-flows.mjs"
     },
     {
+      "id": "counted-move-feedback",
+      "contract": "Six-second counted Archive/Delete/Move/Restored notifications, destination/account grouping, Dismiss and snapshot-scoped grouped Undo. Cancel unsent work; wait for acknowledged identities before reversal; retain partial failures and never repeat acknowledged Undo.",
+      "mobile": "move_feedback_test.dart / move_feedback_scenario.dart shared by ui_test.dart and native_mail_test.dart; real native reader/Inbox controls and projected page restoration; Apple and durable move-history review OPEN",
+      "browser": "move-feedback.test.ts / model.test.ts / move-feedback.spec.ts / provider-flows.mjs real Rust HTTPS; durable move-history review OPEN"
+    },
+    {
       "id": "rapid-intent",
       "contract": "older failure cannot overwrite newer flags/read or undo",
       "mobile": "workspace_test.dart",
@@ -167,8 +173,8 @@
     {
       "id": "desktop-reading-defaults",
       "contract": "Deliberate read-on-leave, refreshed counted action feedback, remote-image exceptions and stable reading anchors",
-      "mobile": "OPEN: current desktop defaults, image-policy controls/loading/anchors and OS badges/lifecycle",
-      "browser": "OPEN: current desktop defaults, image-policy controls/loading/anchors and background lifecycle"
+      "mobile": "read-on-leave and counted-move-feedback contracts above; OPEN: image-policy controls/loading/anchors and OS badges/lifecycle",
+      "browser": "read-on-leave and counted-move-feedback contracts above; OPEN: image-policy controls/loading/anchors and background lifecycle"
     }
   ]
 }

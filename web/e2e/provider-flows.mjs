@@ -291,7 +291,9 @@ export async function providerFlows(page, context, origin, output, session) {
     archive().click(),
   ]);
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Mail refreshed");
+  await expect(
+    page.getByRole("status", { name: "Mail status", exact: true }),
+  ).toContainText("Mail refreshed");
   await expect(row).toHaveCount(0);
   await Promise.all([
     page.waitForResponse(
@@ -587,7 +589,9 @@ export async function providerFlows(page, context, origin, output, session) {
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("button", { name: "Sent", exact: true }).click();
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Mail refreshed");
+  await expect(
+    page.getByRole("status", { name: "Mail status", exact: true }),
+  ).toContainText("Mail refreshed");
   const sentRows = page
     .locator(".mail-row")
     .filter({ hasText: "Lost response fixture" });
@@ -639,7 +643,9 @@ export async function providerFlows(page, context, origin, output, session) {
   await reopened.close();
 
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Mail refreshed");
+  await expect(
+    page.getByRole("status", { name: "Mail status", exact: true }),
+  ).toContainText("Mail refreshed");
   await expect(sentRows).toHaveCount(1);
   await expect(sentRows).toHaveAttribute("data-id", localKey);
   await expect(sentRows).toHaveClass(/selected/);

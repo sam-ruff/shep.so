@@ -1,3 +1,4 @@
+import 'mail_action_banner.dart';
 import 'mail_error.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -419,11 +420,6 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   style: TextStyle(fontSize: 9, letterSpacing: 1.8),
                 ),
               ),
-            if (tab == 2 && w.notice == 'Preferences saved')
-              const Padding(
-                padding: EdgeInsets.all(8),
-                child: Text('Preferences saved'),
-              ),
             MailErrorBanner(workspace: w),
             Expanded(
               child: tab == 0
@@ -432,58 +428,42 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   ? CalendarView(workspace: w)
                   : PreferencesView(workspace: w),
             ),
-            if (w.notice != null && w.undo != null && tab == 0)
-              Material(
-                color: Theme.of(context).colorScheme.inverseSurface,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          w.notice!,
-                          style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onInverseSurface,
-                          ),
-                        ),
-                      ),
-                      TextButton(onPressed: w.undo, child: const Text('Undo')),
-                    ],
-                  ),
-                ),
-              ),
           ],
         ),
         floatingActionButton: tab == 0
-            ? Padding(
-                padding: EdgeInsets.only(bottom: w.undo != null ? 52 : 0),
-                child: FloatingActionButton.extended(
-                  onPressed: compose,
-                  icon: const Icon(Icons.edit_outlined),
-                  label: const Text('Compose'),
-                ),
+            ? FloatingActionButton.extended(
+                onPressed: compose,
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('Compose'),
               )
             : null,
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: tab,
-          onDestinationSelected: (value) {
-            unawaited(w.finishReading());
-            setState(() => tab = value);
-          },
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.mail_outline),
-              selectedIcon: Icon(Icons.mail),
-              label: 'Mail',
+        bottomNavigationBar: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            MailActionBanner(workspace: w),
+            NavigationBar(
+              selectedIndex: tab,
+              onDestinationSelected: (value) {
+                unawaited(w.finishReading());
+                setState(() => tab = value);
+              },
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.mail_outline),
+                  selectedIcon: Icon(Icons.mail),
+                  label: 'Mail',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.calendar_month_outlined),
+                  selectedIcon: Icon(Icons.calendar_month),
+                  label: 'Calendar',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.tune),
+                  label: 'Preferences',
+                ),
+              ],
             ),
-            NavigationDestination(
-              icon: Icon(Icons.calendar_month_outlined),
-              selectedIcon: Icon(Icons.calendar_month),
-              label: 'Calendar',
-            ),
-            NavigationDestination(icon: Icon(Icons.tune), label: 'Preferences'),
           ],
         ),
       );

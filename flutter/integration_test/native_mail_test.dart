@@ -1,3 +1,4 @@
+import '../test/support/move_feedback_scenario.dart';
 import '../test/support/sent_handover_scenario.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -37,6 +38,15 @@ void main() {
     }
     await tester.pumpAndSettle();
   }
+
+  testWidgets('native counted moves, partial Undo recovery and reader expiry', (
+    tester,
+  ) async {
+    await moveFeedbackScenario(
+      tester,
+      capture: (name) => capture(tester, name),
+    );
+  });
 
   testWidgets(
     'Back finishes reading while cached navigation remains available during failure',

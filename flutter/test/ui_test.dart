@@ -1,3 +1,4 @@
+import 'support/move_feedback_scenario.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'dart:io';
@@ -12,6 +13,15 @@ import 'support/preview_repository.dart';
 import 'workspace_test.dart' show MemorySettings;
 
 void main() {
+  testWidgets('counted move Undo, partial failure, retry and reader expiry', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(412, 892);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await moveFeedbackScenario(tester);
+  });
   testWidgets(
     'Find controls, visible quote scope, wrapped matches and native selection',
     (tester) async {
@@ -63,6 +73,7 @@ void main() {
       PreviewRepository(delay: Duration.zero, fail: fail),
       MemorySettings(),
     );
+    addTearDown(w.dispose);
     await t.pumpWidget(ShepApp(workspace: w));
     await t.pumpAndSettle();
     return w;
@@ -114,6 +125,10 @@ void main() {
     await t.tap(find.text('Undo'));
     await t.pumpAndSettle();
     expect(find.text('A little room for good ideas'), findsOneWidget);
+    expect(find.text('Restored 1 message'), findsOneWidget);
+    await t.pump(const Duration(seconds: 6));
+    expect(find.text('Restored 1 message'), findsNothing);
+    expect(w.undo, isNull);
   });
   testWidgets('right swipe read; disabled swipe is inert', (t) async {
     final w = await start(t);
