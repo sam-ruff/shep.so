@@ -27,7 +27,7 @@ export type SelectionCommand =
       scope: SelectionScope;
       change: SelectionChange;
     }
-  | { kind: "observe"; id: string }
+  | { kind: "observe"; id: string; projection?: Record<string, Fields> }
   | { kind: "freeze"; id: string; expected: number; target: string }
   | { kind: "page"; id: string; expected: number; after?: number | null }
   | { kind: "release"; id: string };

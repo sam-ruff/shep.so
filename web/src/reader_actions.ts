@@ -32,6 +32,16 @@ export function renderReaderTree(root: HTMLElement, next: HTMLElement) {
     });
     leaves.add(old);
   };
+  const stable = new Map(
+    [...next.querySelectorAll<HTMLElement>("[data-stable]")].map((n) => [
+      n.dataset.stable,
+      n,
+    ]),
+  );
+  for (const old of root.querySelectorAll<HTMLElement>("[data-stable]")) {
+    const fresh = stable.get(old.dataset.stable);
+    if (fresh) retain(old, fresh);
+  }
   const oldActions = root.querySelector<HTMLElement>(".reader-actions"),
     newActions = next.querySelector<HTMLElement>(".reader-actions");
   if (

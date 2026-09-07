@@ -9,7 +9,12 @@ import {
 
 type Operations = Pick<
   GatewayRepository,
-  "profileId" | "bulkIntents" | "mutateWithReceipt" | "repairMutation"
+  | "profileId"
+  | "bulkIntents"
+  | "mutateWithReceipt"
+  | "repairMutation"
+  | "bulkCacheEpoch"
+  | "bulkUnavailable"
 >;
 type Decision = Parameters<BulkJournal["decide"]>[2];
 export interface BulkRun {
@@ -38,6 +43,7 @@ export class BulkExecutor {
     private user: string,
     private operations: Operations,
     private changed?: (job: BulkJob) => void,
+    private requireEpoch = false,
   ) {
     if (operations.profileId !== user)
       throw Error(
@@ -55,6 +61,36 @@ export class BulkExecutor {
         : undefined;
     const apply = (journal: BulkJournal) =>
       journal.decide(id, expected, decision, revision);
+    return this.journal
+      ? apply(this.journal)
+      : BulkJournal.own(this.user, apply);
+  }
+  async decideCurrent(expected: BulkJob, decision: Decision) {
+    const revision =
+      decision === "approve" || decision === "undo"
+        ? await this.operations.bulkIntents.reserve()
+        : undefined;
+    const apply = (journal: BulkJournal) =>
+      journal.decideCurrent(expected, decision, revision);
+    return this.journal
+      ? apply(this.journal)
+      : BulkJournal.own(this.user, apply);
+  }
+  resolve(id: string, expected: number, position: number) {
+    const apply = async (journal: BulkJournal) => {
+      const job = await journal.get(id),
+        item = await journal.getItem(id, position);
+      if (job.revision !== expected || item.status !== "uncertain")
+        throw Error(
+          "This group changed. Refresh its review before continuing.",
+        );
+      const lease = item.phase === "forward" ? item.intent : item.undoIntent;
+      // Retire only this unresolved local ownership before accepting the review.
+      // This does not classify the provider result as a rejection. A failed
+      // cleanup leaves the uncertain item available for another explicit try.
+      if (lease) await this.operations.bulkIntents.finish(lease, "failed");
+      return journal.resolveUncertain(id, expected, position);
+    };
     return this.journal
       ? apply(this.journal)
       : BulkJournal.own(this.user, apply);
@@ -133,6 +169,16 @@ export class BulkExecutor {
       // No provider writes while any acknowledged cache/identity gap remains.
       const repairs = await journal.pendingCache();
       for (const item of repairs) {
+        if (this.requireEpoch) {
+          const job = await journal.get(item.job);
+          if (
+            !job.cacheEpoch ||
+            job.cacheEpoch !== (await this.operations.bulkCacheEpoch())
+          )
+            throw Error(
+              "This saved result belongs to an earlier device cache. Review the server folders before repeating this change.",
+            );
+        }
         latest = await this.repair(journal, item);
         total.repairs++;
         if (this.stopped) break;
@@ -146,8 +192,33 @@ export class BulkExecutor {
           "This earlier group has no saved approval revision. Select and review its messages again.",
         );
       }
+      if (
+        this.requireEpoch &&
+        (!job.cacheEpoch ||
+          job.cacheEpoch !== (await this.operations.bulkCacheEpoch()))
+      ) {
+        const saved = await journal.decide(job.id, job.revision, "pause");
+        this.notice(saved, true);
+        throw Error(
+          "This group belongs to an earlier device cache. Select and review its messages again.",
+        );
+      }
       const item = await journal.claim(job.id);
       if (!item) break;
+      if (this.requireEpoch) {
+        const unavailable = await this.operations.bulkUnavailable(item.id);
+        if (unavailable) {
+          const failed = await journal.settle(
+            job.id,
+            item.position,
+            item.attempt!,
+            { kind: "rejected", error: unavailable },
+          );
+          const paused = await journal.decide(job.id, failed.revision, "pause");
+          this.notice(paused, true);
+          throw Error(unavailable);
+        }
+      }
       await this.execute(journal, job, item);
       total.steps++;
       latest = await journal.get(job.id);

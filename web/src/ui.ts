@@ -1,3 +1,4 @@
+import { GroupUI } from "./bulk_ui";
 import { renderReaderTree } from "./reader_actions";
 import { PrintController } from "./printing_controller";
 import { MessageFind, SearchWorker } from "./message_find";
@@ -43,7 +44,7 @@ const paths: Record<string, string> = {
   check: "m4 12 5 5L20 6",
   lock: "M5 10h14v11H5z M8 10V6a4 4 0 0 1 8 0v4",
 };
-function el<K extends keyof HTMLElementTagNameMap>(
+export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className = "",
   text?: string,
@@ -67,7 +68,7 @@ function icon(name: string) {
   svg.append(p);
   return svg;
 }
-function button(
+export function button(
   label: string,
   fn: () => void,
   iconName?: string,
@@ -122,7 +123,7 @@ function select(
   wrap.append(input);
   return wrap;
 }
-function modal(title: string) {
+export function modal(title: string) {
   const d = el("dialog");
   d.setAttribute("aria-label", title);
   const top = el("div", "dialog-heading");
@@ -272,6 +273,8 @@ export function mount(
   let sidebarOpen = false;
   const gateway =
     w.repository instanceof GatewayRepository ? w.repository : undefined;
+  const groupUI = gateway ? new GroupUI(w, gateway) : undefined;
+  window.addEventListener("pagehide", () => groupUI?.dispose(), { once: true });
   const printer = gateway
     ? new PrintController(
         () => gateway.createPrinter(),
@@ -1651,6 +1654,7 @@ export function mount(
       }
       panel.append(groups);
     }
+    if (groupUI) panel.append(groupUI.toolbar());
     return panel;
   }
   let attachmentState:
@@ -2238,6 +2242,12 @@ export function mount(
         ),
       );
     header.append(el("span", "spacer"));
+    if (groupUI) {
+      const history = button("Group history", () => groupUI.history());
+      history.querySelector("span")!.textContent = "History";
+      history.dataset.stable = "group-history";
+      header.append(history);
+    }
     if (w.repository.preview)
       header.append(el("span", "preview-badge", "PREVIEW"));
     if (tab === "Mail")
@@ -2250,6 +2260,8 @@ export function mount(
         ),
       );
     main.append(header);
+    const groupError = groupUI?.errorBanner();
+    if (groupError) main.append(groupError);
     if (w.error) {
       const error = el("div", "error-banner");
       error.setAttribute("role", "alert");
@@ -2324,6 +2336,8 @@ export function mount(
       );
       main.append(failure);
     }
+    const groupNotice = groupUI?.notification();
+    if (groupNotice) main.append(groupNotice);
     next.append(main);
     renderReaderTree(root, next);
     for (const n of root.querySelectorAll<HTMLElement>("[data-scroll]"))

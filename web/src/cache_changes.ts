@@ -52,7 +52,11 @@ export function recordCacheChanges(
       if (value) metadata.put(value, change.key);
       else metadata.delete(change.key);
     }
-    if (change.store === "mail" || change.store === "mailAliases")
+    if (
+      change.store === "mail" ||
+      change.store === "mailAliases" ||
+      change.store === "mailIntents"
+    )
       affected.add(change.key);
   }
   if (!affected.size && !removedAccount) return;

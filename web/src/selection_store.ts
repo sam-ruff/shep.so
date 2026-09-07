@@ -1,3 +1,5 @@
+import { BulkProjection } from "./bulk_projection";
+import { sourceState } from "./mailbox_cache";
 import sqliteInit, {
   type Database,
   type Sqlite3Static,
@@ -105,12 +107,20 @@ const schema = `PRAGMA foreign_keys=ON;
  * cache is opened read-only, so a large capture cannot own its write lock. */
 export class SelectionStore {
   private lastRevision = -1;
+  private bulk: BulkProjection;
   private constructor(
     private cache: IDBDatabase,
     private sql: Database,
     private user: string,
   ) {
     sql.exec(schema);
+    this.bulk = new BulkProjection(sql, user);
+    sql.exec(
+      "CREATE TEMP TABLE selection_pending(id TEXT PRIMARY KEY,folder TEXT,unread INTEGER,starred INTEGER)",
+    );
+    sql.exec(
+      "CREATE TEMP VIEW selection_current AS SELECT m.id,m.account,COALESCE(p.folder,b.folder,m.folder) folder,COALESCE(p.unread,b.unread,m.unread) unread,COALESCE(p.starred,b.starred,m.starred) starred,m.present FROM meta m LEFT JOIN bulk_current b ON b.id=m.id LEFT JOIN selection_pending p ON p.id=m.id",
+    );
   }
   static async open(user: string) {
     const cache = await openMailDatabase(user);
@@ -323,7 +333,10 @@ export class SelectionStore {
         (scope.account && m.account_id !== scope.account)
       )
         return false;
-      const fields = projection.get(mail.id);
+      const fields = {
+        ...this.bulk.fields(mail.id),
+        ...projection.get(mail.id),
+      };
       // Only search needs the cached body. Ordinary captures read metadata.
       const body = scope.query?.trim()
         ? ((
@@ -385,11 +398,11 @@ export class SelectionStore {
       unread: number;
       starred: number;
     }>(
-      "SELECT COUNT(*) AS available,COALESCE(SUM(m.unread),0) AS unread,COALESCE(SUM(m.starred),0) AS starred FROM membership s JOIN meta m ON s.id=m.id WHERE s.token=? AND s.selected=1 AND m.present=1",
+      "SELECT COUNT(*) AS available,COALESCE(SUM(m.unread),0) AS unread,COALESCE(SUM(m.starred),0) AS starred FROM membership s JOIN selection_current m ON s.id=m.id WHERE s.token=? AND s.selected=1 AND m.present=1",
       [id],
     )!;
     const groups = this.rows<SelectionGroup>(
-      "SELECT m.account,m.folder,COUNT(*) AS total,SUM(m.unread) AS unread,SUM(m.starred) AS starred FROM membership s JOIN meta m ON s.id=m.id WHERE s.token=? AND s.selected=1 AND m.present=1 GROUP BY m.account,m.folder ORDER BY m.account,m.folder",
+      "SELECT m.account,m.folder,COUNT(*) AS total,SUM(m.unread) AS unread,SUM(m.starred) AS starred FROM membership s JOIN selection_current m ON s.id=m.id WHERE s.token=? AND s.selected=1 AND m.present=1 GROUP BY m.account,m.folder ORDER BY m.account,m.folder",
       [id],
     );
     return {
@@ -428,7 +441,8 @@ export class SelectionStore {
         "CREATE TEMP TABLE IF NOT EXISTS bulk_export(position INTEGER PRIMARY KEY,id TEXT,account TEXT,original TEXT)",
       );
       this.exec("BEGIN");
-      let nextRevision = this.lastRevision;
+      let nextRevision = this.lastRevision,
+        cacheEpoch: string | undefined;
       try {
         await readonly(
           this.cache,
@@ -498,6 +512,7 @@ export class SelectionStore {
               after = rows.at(-1)!.position;
             }
             nextRevision = state.revision;
+            cacheEpoch = sourceState(state).epoch;
           },
         );
         this.exec("COMMIT");
@@ -533,6 +548,7 @@ export class SelectionStore {
           action,
           this.value("SELECT COUNT(*) FROM bulk_export"),
           chunks(),
+          cacheEpoch,
         );
       } finally {
         this.exec("DELETE FROM bulk_export");
@@ -561,8 +577,10 @@ export class SelectionStore {
         "accounts",
         "mailAliases",
         "mailRoles",
+        "mailIntents",
       ];
       if ("scope" in command && command.scope.query?.trim()) names.push("mail");
+      await this.bulk.journal();
       let nextRevision = this.lastRevision;
       const result = await readonly(this.cache, names, async (tx) => {
         const state = await read<CacheState>(
@@ -581,6 +599,22 @@ export class SelectionStore {
         );
         snapshotStarted();
         await this.synchronize(tx, state, accounts);
+        await this.bulk.source(tx, sourceState(state), accounts);
+        this.bulk.materialize();
+        this.exec("DELETE FROM selection_pending");
+        const projection =
+          "scope" in command
+            ? command.scope.projection
+            : command.kind === "observe"
+              ? command.projection
+              : undefined;
+        for (const [id, fields] of Object.entries(projection ?? {}))
+          this.exec("INSERT INTO selection_pending VALUES(?,?,?,?)", [
+            await this.canonical(tx, id),
+            fields.folder ?? null,
+            fields.unread === undefined ? null : +fields.unread,
+            fields.starred === undefined ? null : +fields.starred,
+          ]);
         nextRevision = state.revision;
         if (command.kind === "capture") {
           revision(command.revision);
@@ -735,7 +769,7 @@ export class SelectionStore {
               unread: number;
               starred: number;
             }>(
-              "SELECT s.position,s.id,m.account,m.folder,m.unread,m.starred FROM membership s JOIN meta m ON m.id=s.id WHERE s.token=? AND s.selected=1 AND m.present=1 AND s.position>? ORDER BY s.position LIMIT 50",
+              "SELECT s.position,s.id,m.account,m.folder,m.unread,m.starred FROM membership s JOIN selection_current m ON m.id=s.id WHERE s.token=? AND s.selected=1 AND m.present=1 AND s.position>? ORDER BY s.position LIMIT 50",
               [s.id, after],
             );
             return {

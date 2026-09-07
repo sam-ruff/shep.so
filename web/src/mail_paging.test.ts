@@ -444,3 +444,24 @@ it("rapid unread intent preserves filtered counts when the older write fails", a
   expect(w.visible[0].unread).toBe(true);
   w.dispose();
 });
+
+it("group-only query updates reach an off-page retained reader without replacing its cached body", async () => {
+  const { repo, w } = await create();
+  w.beginReading("m0000");
+  await until(() => !!w.readerMessage?.bodyLoaded);
+  w.page = 1;
+  w.changed();
+  await until(() => !w.pageLoading);
+  const query = repo.mailbox.page;
+  repo.mailbox.page = async (request) => ({
+    ...(await query(request)),
+    groupFields: { m0000: { starred: true, folder: "Archive" } },
+  });
+  w.groupChanged();
+  await until(() => !w.pageLoading);
+  expect(w.readerMessage?.starred).toBe(true);
+  expect(w.readerMessage?.folder).toBe("Archive");
+  expect(w.readerMessage?.body).toBe("Complete cached needle 0");
+  expect(w.mail).toHaveLength(50);
+  w.dispose();
+});

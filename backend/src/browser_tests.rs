@@ -18,6 +18,9 @@ const MOVE_RAW:&[u8]=b"From: Mail fixture <sender@example.test>\r\nReply-To: Sup
 struct BrowserMail {
     unread: AtomicBool,
     starred: AtomicBool,
+    attachment_unread: AtomicBool,
+    attachment_starred: AtomicBool,
+    attachment_flags: AtomicUsize,
     sends: AtomicUsize,
     moves: AtomicUsize,
     location: Mutex<Option<(String, String)>>,
@@ -100,8 +103,8 @@ impl HostedMail for BrowserMail {
                 "42.99",
                 folder,
                 raw.into_bytes(),
-                false,
-                false,
+                self.attachment_unread.load(Ordering::SeqCst),
+                self.attachment_starred.load(Ordering::SeqCst),
             )?;
             live_ids.insert(mail.summary.id.clone());
             output.send(MailSyncItem::Message(mail)).await?;
@@ -132,6 +135,16 @@ impl HostedMail for BrowserMail {
                 copy.starred = value;
             }
             self.sent.flags.fetch_add(1, Ordering::SeqCst);
+            return Ok(());
+        }
+        if mail.folder == "INBOX" && mail.remote_id == "42.99" {
+            if let Some(value) = flags.unread {
+                self.attachment_unread.store(value, Ordering::SeqCst);
+            }
+            if let Some(value) = flags.starred {
+                self.attachment_starred.store(value, Ordering::SeqCst);
+            }
+            self.attachment_flags.fetch_add(1, Ordering::SeqCst);
             return Ok(());
         }
         let location = self
@@ -481,6 +494,11 @@ async fn real_browser_beta_gate() {
         "Browser beta test failed:\n{}\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        transport.attachment_flags.load(Ordering::SeqCst),
+        2,
+        "The captured group flags and restores the second physical message exactly once"
     );
     assert_eq!(
         transport.moves.load(Ordering::SeqCst),
