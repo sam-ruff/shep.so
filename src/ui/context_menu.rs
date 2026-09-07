@@ -226,6 +226,7 @@ pub(super) struct ContextArea<'a> {
     draft: Option<String>,
     preserve_pointer: bool,
     interface_scale: u16,
+    drag: Option<drag_mail::Region>,
     #[cfg(feature = "test-support")]
     draw_witness: Option<(u64, Arc<std::sync::atomic::AtomicU64>)>,
 }
@@ -237,9 +238,14 @@ impl<'a> ContextArea<'a> {
             draft: None,
             preserve_pointer: false,
             interface_scale: 100,
+            drag: None,
             #[cfg(feature = "test-support")]
             draw_witness: None,
         }
+    }
+    pub fn with_drag(mut self, region: drag_mail::Region) -> Self {
+        self.drag = Some(region);
+        self
     }
     #[cfg(feature = "test-support")]
     pub fn with_draw_witness(
@@ -267,6 +273,7 @@ impl<'a> ContextArea<'a> {
             draft: None,
             preserve_pointer: false,
             interface_scale: 100,
+            drag: None,
             #[cfg(feature = "test-support")]
             draw_witness: None,
         }
@@ -278,6 +285,7 @@ impl<'a> ContextArea<'a> {
             draft: Some(id),
             preserve_pointer: false,
             interface_scale: 100,
+            drag: None,
             #[cfg(feature = "test-support")]
             draw_witness: None,
         }
@@ -358,6 +366,7 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
         } else {
             cursor
         };
+        let drag_cycle = self.drag.as_ref().map(|drag| drag.before(event, cursor));
         if matches!(
             event,
             iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right))
@@ -386,12 +395,29 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
             &mut child,
             viewport,
         );
-        shell.merge(child, |message| match message {
-            Message::SidebarAction(index) => Message::SidebarClick(index, modifiers),
-            Message::Select(id) => Message::SelectClick(id, modifiers),
-            Message::OpenMessage(id) => Message::OpenMessageClick(id, modifiers),
-            other => other,
+        shell.merge(child, |message| {
+            let message = if let Some(cycle) = &drag_cycle {
+                cycle.filter(message)
+            } else {
+                message
+            };
+            match message {
+                Message::SidebarAction(index) => Message::SidebarClick(index, modifiers),
+                Message::Select(id) => Message::SelectClick(id, modifiers),
+                Message::OpenMessage(id) => Message::OpenMessageClick(id, modifiers),
+                other => other,
+            }
         });
+        if let Some(drag) = &self.drag {
+            drag.after(
+                drag_cycle.as_ref().unwrap(),
+                event,
+                layout,
+                cursor,
+                viewport,
+                shell,
+            );
+        }
     }
     fn mouse_interaction(
         &self,
@@ -401,6 +427,9 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
+        if let Some(interaction) = self.drag.as_ref().and_then(|drag| drag.interaction()) {
+            return interaction;
+        }
         self.content.as_widget().mouse_interaction(
             &tree.children[0],
             layout,
@@ -428,6 +457,9 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
             cursor,
             viewport,
         );
+        if let Some(drag) = &self.drag {
+            drag.draw(layout, renderer, theme, viewport);
+        }
         // Observe the real widget draw, never a controller acknowledgment.
         // Native tests can wait for the checkbox layout before injecting input.
         #[cfg(feature = "test-support")]

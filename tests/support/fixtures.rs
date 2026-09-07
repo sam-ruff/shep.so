@@ -50,6 +50,11 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
             id: "preview-personal".into(),
             name: "Personal".into(),
             email: "alex@example.com".into(),
+            protocol: if std::env::args().any(|a| a == "--pop3-personal") {
+                Protocol::Pop3
+            } else {
+                Protocol::Imap
+            },
             ..account
         })
         .await?;

@@ -447,17 +447,20 @@ impl App {
             };
             let mut top = row![
                 if self.mail_selection.mode {
-                    button(
-                        checkbox(self.mail_selection.visible.contains(&mail.id))
-                            .size(18)
-                            .on_toggle({
-                                let id = mail.id.clone();
-                                move |_| Message::CheckMail(id.clone())
-                            }),
+                    super::context_menu::ContextArea::sidebar(
+                        button(
+                            checkbox(self.mail_selection.visible.contains(&mail.id))
+                                .size(18)
+                                .on_toggle({
+                                    let id = mail.id.clone();
+                                    move |_| Message::CheckMail(id.clone())
+                                }),
+                        )
+                        .padding(6)
+                        .style(ghost)
+                        .on_press(Message::CheckMail(mail.id.clone())),
                     )
-                    .padding(6)
-                    .style(ghost)
-                    .on_press(Message::CheckMail(mail.id.clone()))
+                    .with_drag(super::drag_mail::Region::Block(self.mail_drag.clone()))
                     .into()
                 } else {
                     avatar(&sender, index, 30.)
@@ -469,7 +472,7 @@ impl App {
                 }),
                 space().width(Length::Fill),
                 muted(date).size(10),
-                opaque(
+                super::context_menu::ContextArea::sidebar(opaque(
                     button(flag_icon(mail.starred, 18.))
                         .padding(6)
                         .style(if mail.starred { flagged } else { ghost })
@@ -478,7 +481,8 @@ impl App {
                                 && !self.bulk_owns_mail(&mail.id))
                             .then(|| Message::FlagRow(mail.id.clone()))
                         )
-                )
+                ))
+                .with_drag(super::drag_mail::Region::Block(self.mail_drag.clone()))
             ]
             .spacing(9)
             .align_y(Alignment::Center);
@@ -547,11 +551,13 @@ impl App {
             })
             .on_press(Message::Select(mail.id.clone()));
             let entry = super::context_menu::ContextArea::new(
-                mouse_area(entry)
-                    .on_enter(Message::Hover(mail.id.clone()))
-                    .on_double_click(Message::OpenMessage(mail.id.clone())),
+                mouse_area(entry).on_enter(Message::Hover(mail.id.clone())),
                 mail.id.clone(),
-            );
+            )
+            .with_drag(super::drag_mail::Region::Source(
+                self.mail_drag.clone(),
+                self.drag_payload(mail),
+            ));
             #[cfg(feature = "test-support")]
             let entry = entry.with_draw_witness(
                 self.mail_selection.draw_epoch,

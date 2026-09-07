@@ -7,6 +7,7 @@ mod components;
 mod composing;
 mod context_menu;
 mod conversations;
+mod drag_mail;
 mod ellipsis;
 mod find_message;
 #[cfg(test)]
@@ -207,6 +208,9 @@ pub enum Message {
     PaneResize(widget::pane_grid::ResizeEvent),
     SaveLayout(u64),
     InboxScroll(f32),
+    DragChanged,
+    DragReveal(drag_mail::Reveal),
+    DropMail(Arc<drag_mail::Payload>, Option<drag_mail::Target>),
     WindowClose(iced::window::Id),
     SidebarAction(usize),
     SidebarClick(usize, keyboard::Modifiers),
@@ -276,6 +280,7 @@ pub struct App {
     reader_selection_generation: u64,
     reader_preparation: Option<iced::task::Handle>,
     inbox_scroll: f32,
+    mail_drag: drag_mail::Handle,
     last_click: Option<(String, Instant)>,
     pending_focus: Option<&'static str>,
     focused_input: Option<&'static str>,
@@ -422,6 +427,7 @@ impl App {
                 reader_selection_generation: 0,
                 reader_preparation: None,
                 inbox_scroll: 0.,
+                mail_drag: Default::default(),
                 last_click: None,
                 pending_focus: None,
                 focused_input: None,
@@ -844,9 +850,17 @@ impl App {
                     .map(|s| Message::Html(html_reader::Message::Scale(s)));
             }
             Message::Bulk(message) => return self.handle_bulk(message),
+            Message::DropMail(payload, target) => self.drop_mail(payload, target),
+            Message::DragReveal(reveal) => self.reveal_drag_folders(reveal),
+            Message::DragChanged => {
+                self.last_click = None;
+            }
             Message::Html(message) => return self.handle_html(message),
             Message::Find(message) => return self.handle_find(message),
-            Message::WindowUnfocused => self.modifiers = keyboard::Modifiers::default(),
+            Message::WindowUnfocused => {
+                self.modifiers = keyboard::Modifiers::default();
+                self.mail_drag.clear();
+            }
             Message::Noop => return Task::none(),
             Message::DismissContext => {
                 self.context_menu = None;
@@ -1419,6 +1433,7 @@ impl App {
                 _ => {}
             },
             Message::WindowClose(window) => {
+                self.mail_drag.clear();
                 if self.flush_pane_resize() {
                     self.save_preferences();
                 }
@@ -2423,6 +2438,9 @@ impl App {
             }
             Message::SystemTheme(mode) => self.system_dark = mode == iced::theme::Mode::Dark,
             Message::Resize(size) => {
+                if size != self.size {
+                    self.mail_drag.clear();
+                }
                 self.size = size;
                 if self.tx.is_some() && size.width > 0. && size.height > 0. {
                     self.preferences.window_size = Some(WindowSize {
@@ -2971,6 +2989,11 @@ impl App {
         })
     }
     fn key(&mut self, key: Key, modifiers: keyboard::Modifiers, captured: bool) -> Task<Message> {
+        if key == Key::Named(keyboard::key::Named::Escape) && self.mail_drag.consume_escape()
+            || self.mail_drag.holding()
+        {
+            return Task::none();
+        }
         if self.bulk_confirming() && modifiers.is_empty() {
             match &key {
                 Key::Named(keyboard::key::Named::Enter) => {
@@ -3232,6 +3255,7 @@ impl App {
         samples.sort_by(f64::total_cmp);
         let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|self.mail_actions.effective(&d.summary).starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts.0,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
         self.bulk_test_state(&mut data);
+        data["mail_drag"] = self.mail_drag.observation();
         #[cfg(feature = "test-support")]
         {
             data["page_loaded"] = serde_json::json!(self.initial_page_loaded);
@@ -3489,7 +3513,17 @@ impl App {
         )
     }
     fn view(&self) -> Element<'_, Message> {
-        context_menu::ContextArea::root(self.layout(), self.preferences.interface_scale).into()
+        context_menu::ContextArea::root(self.layout(), self.preferences.interface_scale)
+            .with_drag(drag_mail::Region::Root(
+                self.mail_drag.clone(),
+                self.tab == Tab::Mail
+                    && !self.full_reader
+                    && self.dialog.is_none()
+                    && self.context_menu.is_none()
+                    && self.composer.context.is_none(),
+                self.drag_rules(),
+            ))
+            .into()
     }
 }
 pub fn chord(key: &Key, modifiers: keyboard::Modifiers) -> Option<String> {
