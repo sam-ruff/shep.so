@@ -774,11 +774,11 @@ Linux uses `org.freedesktop.Notifications` with Shep's desktop identity, escaped
 
 The native MCP fixture bypasses all real popup/audio delivery. `desktop.start` accepts `notification_delivery: "slow" | "fail-once"` for isolated delayed/error/retry scenarios. Save every interaction in `scripts/e2e.py`; the notification flows cover defaults, independent outputs/privacy, persistence, arrival/restart deduplication, compact dark layout and navigation during a delayed failure. Real Linux protocol tests start their own private bus and never touch the user's notification service. Keep logs/screenshots in ignored artifacts.
 
-## Mail move recovery — work in progress
+## Mail move recovery
 
-The unshipped R73 follow-up uses `mail_actions/journal.rs`, `runner.rs` and
+The a81d767 recovery checkpoint uses `mail_actions/journal.rs`, `runner.rs` and
 `store/move_journal.rs`. IMAP preflight finishes before durable preparation;
-Started/Copied/Committed/Located records retain the source MIME and actual
+Started/Copied/Committed/Located/Kept records retain the source MIME and actual
 acknowledgments. Do not repeat an unconfirmed MOVE/APPEND. In particular, tagged
 MOVE NO may have partial effects (RFC 6851 §3.3); only atomic APPEND rejection is
 classified as not applied. Keep matching-tag and disconnect protocol tests.
@@ -803,9 +803,10 @@ rate-limits attempts. Manual recovery/review and confirmed Keep local copy contr
 now have storage/runner/controller and native tests. Kept copies receive local
 identities, never an obsolete provider UID; retiring their old Undo avoids a
 false server reversal. Active recovery must save its receipt before app close,
-and a failure cancels close. Complete adapter/Undo/history integration and final
-shipping are still TODO.
-Do not call this follow-up delivered based on fixture happy-path coverage.
+and a failure cancels close. This checkpoint is installed/pushed with all 167
+native functional scenarios passing. Complete adapter wire/journal, broader
+Undo/history/alias integration and live-account verification remain in TODO;
+do not close R73 based on fixture happy-path coverage.
 Native `move_recovery=true` uses only a protected fictional cache and a fixture
 Refresh acknowledgment; see the repository MCP skill and saved automated flow.
 
