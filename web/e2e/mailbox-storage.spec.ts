@@ -480,74 +480,195 @@ test("indexed search preserves the list predicate for punctuation, combining mar
     expect(value.actual, value.query).toEqual(value.expected);
 });
 
-test("mail schema nine preserves the previous cache clock, intents and Sent roles while assigning one stable incarnation", async ({
+for (const version of [8, 9])
+  test(`mail schema ${version} upgrades without losing cache clocks, incarnation, indexed records, intents or Sent roles`, async ({
+    page,
+  }) => {
+    await page.goto("/preview.html");
+    const result = await page.evaluate(async (version) => {
+      const user = "V".repeat(43),
+        path = "/src/storage.ts",
+        { stores, BrowserStore } = await import(path);
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const r = indexedDB.open(`shep.mail.v1.${user}`, version);
+        r.onupgradeneeded = () => {
+          for (const name of stores) r.result.createObjectStore(name);
+          r.transaction!.objectStore("mailMetadata").createIndex(
+            "newest",
+            "newest",
+          );
+          r.transaction!.objectStore("mailMetadata").createIndex(
+            "oldest",
+            "oldest",
+          );
+          r.transaction!.objectStore("outgoing").createIndex(
+            "submission",
+            "id",
+          );
+        };
+        r.onerror = () => reject(r.error);
+        r.onsuccess = () => resolve(r.result);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(
+          [
+            "cacheState",
+            "intentState",
+            "mailIntents",
+            "mailRoles",
+            "mail",
+            "accounts",
+          ],
+          "readwrite",
+        );
+        tx.objectStore("cacheState").put(
+          {
+            revision: 456,
+            floor: 123,
+            ...(version === 9 ? { epoch: "existing-incarnation" } : {}),
+          },
+          "mail",
+        );
+        tx.objectStore("accounts").put(
+          { id: "work", email: "work@example.test" },
+          "work",
+        );
+        tx.objectStore("mail").put(
+          {
+            core: { id: "physical", account_id: "work", folder: "INBOX" },
+            text: "Preserved cached body",
+          },
+          "legacy",
+        );
+        tx.objectStore("intentState").put({ revision: 789 }, "clock");
+        tx.objectStore("mailIntents").put(
+          { id: "message", applied: { folder: 788 } },
+          "message",
+        );
+        tx.objectStore("mailRoles").put(
+          { account: "work", acknowledged: ["Recent Sent"] },
+          "work",
+        );
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error);
+      });
+      let closed = false;
+      db.onversionchange = () => {
+        closed = true;
+        db.close();
+      };
+      const store = await BrowserStore.open(user);
+      const first = await store.get("cacheState", "mail"),
+        preserved = await store.snapshot([
+          "intentState",
+          "mailIntents",
+          "mailRoles",
+        ]);
+      store.close();
+      const reopened = await BrowserStore.open(user),
+        second = await reopened.get("cacheState", "mail");
+      reopened.close();
+      const workerPath = "/src/mailbox_worker_client.ts";
+      const { MailboxWorkerClient } = await import(workerPath),
+        worker = new MailboxWorkerClient(user);
+      const scan = await worker.scan({ account: "work", serverId: "physical" }),
+        detail = await worker.detail("legacy");
+      await worker.close();
+      return { first, second, preserved, closed, scan, detail };
+    }, version);
+    expect(result.closed).toBe(true);
+    expect(result.first).toMatchObject({ revision: 456, floor: 123 });
+    if (version === 9) expect(result.first.epoch).toBe("existing-incarnation");
+    else expect(result.first.epoch).toMatch(/^[\w-]{36}$/);
+    expect(result.scan.rows.map((r: any) => r.key)).toEqual(["legacy"]);
+    expect(result.detail.body).toBe("Preserved cached body");
+    expect(result.second).toEqual(result.first);
+    expect(result.preserved).toEqual({
+      intentState: [{ revision: 789 }],
+      mailIntents: [{ id: "message", applied: { folder: 788 } }],
+      mailRoles: [{ account: "work", acknowledged: ["Recent Sent"] }],
+    });
+  });
+
+test("independent body and metadata reads finish while indexing waits, scans are bounded and shutdown stays closed", async ({
   page,
 }) => {
-  await page.goto("/preview.html");
+  await setup(page);
   const result = await page.evaluate(async () => {
-    const user = "V".repeat(43),
-      path = "/src/storage.ts",
-      { stores, BrowserStore } = await import(path);
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open(`shep.mail.v1.${user}`, 8);
-      r.onupgradeneeded = () => {
-        for (const name of stores) r.result.createObjectStore(name);
-        r.transaction!.objectStore("mailMetadata").createIndex(
-          "newest",
-          "newest",
-        );
-        r.transaction!.objectStore("mailMetadata").createIndex(
-          "oldest",
-          "oldest",
-        );
-        r.transaction!.objectStore("outgoing").createIndex("submission", "id");
-      };
-      r.onerror = () => reject(r.error);
-      r.onsuccess = () => resolve(r.result);
+    const t = (window as any).mailboxTest;
+    let release!: () => void, acquired!: () => void;
+    const ready = new Promise<void>((r) => (acquired = r));
+    const held = navigator.locks.request(
+      `shep.${t.user}.mailbox-index`,
+      async () => {
+        acquired();
+        await new Promise<void>((r) => (release = r));
+      },
+    );
+    await ready;
+    let completed = false;
+    const pending = t.worker
+      .page({ scope: { folder: "Inbox" }, offset: 0 })
+      .then((p: any) => {
+        completed = true;
+        return p;
+      });
+    const metadata = await t.worker.metadata("m000124");
+    const body = await t.worker.detail("m000124");
+    const scans = [];
+    let after: string | null = null;
+    do {
+      const scan = await t.worker.scan({
+        account: "work",
+        folder: "INBOX",
+        after,
+      });
+      scans.push(scan);
+      after = scan.next;
+    } while (after);
+    const identity = await t.worker.scan({
+      account: "work",
+      serverId: "m000124",
     });
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(
-        ["cacheState", "intentState", "mailIntents", "mailRoles"],
-        "readwrite",
-      );
-      tx.objectStore("cacheState").put({ revision: 456, floor: 123 }, "mail");
-      tx.objectStore("intentState").put({ revision: 789 }, "clock");
-      tx.objectStore("mailIntents").put(
-        { id: "message", applied: { folder: 788 } },
-        "message",
-      );
-      tx.objectStore("mailRoles").put(
-        { account: "work", acknowledged: ["Recent Sent"] },
-        "work",
-      );
-      tx.oncomplete = () => resolve();
-      tx.onabort = () => reject(tx.error);
-    });
-    let closed = false;
-    db.onversionchange = () => {
-      closed = true;
-      db.close();
+    const unrelated = await t.worker.scan({ account: "absent" });
+    const beforeRelease = completed;
+    release();
+    await held;
+    await pending;
+    await t.worker.close();
+    const closed = await Promise.allSettled([
+      t.worker.detail("m000124"),
+      t.worker.metadata("m000124"),
+      t.worker.prefetch("m000124"),
+      t.worker.scan({ account: "work" }),
+    ]);
+    t.store.close();
+    return {
+      metadata,
+      body,
+      scans,
+      identity,
+      unrelated,
+      beforeRelease,
+      closed: closed.map((x) => x.status),
     };
-    const store = await BrowserStore.open(user);
-    const first = await store.get("cacheState", "mail"),
-      preserved = await store.snapshot([
-        "intentState",
-        "mailIntents",
-        "mailRoles",
-      ]);
-    store.close();
-    const reopened = await BrowserStore.open(user),
-      second = await reopened.get("cacheState", "mail");
-    reopened.close();
-    return { first, second, preserved, closed };
   });
-  expect(result.closed).toBe(true);
-  expect(result.first).toMatchObject({ revision: 456, floor: 123 });
-  expect(result.first.epoch).toMatch(/^[\w-]{36}$/);
-  expect(result.second).toEqual(result.first);
-  expect(result.preserved).toEqual({
-    intentState: [{ revision: 789 }],
-    mailIntents: [{ id: "message", applied: { folder: 788 } }],
-    mailRoles: [{ account: "work", acknowledged: ["Recent Sent"] }],
-  });
+  expect(result.beforeRelease).toBe(false);
+  expect(result.metadata.mail.subject).toBe("Message 124");
+  expect(result.metadata.mail.bodyLoaded).toBe(false);
+  expect(result.body.body).toContain("Exact body needle 124");
+  expect(result.scans.map((p: any) => p.rows.length)).toEqual([50, 50, 25]);
+  const rows = result.scans.flatMap((p: any) => p.rows);
+  expect(new Set(rows.map((r: any) => r.key)).size).toBe(125);
+  expect(
+    rows.every((r: any) => !("text" in r) && !("raw" in r) && !("reply" in r)),
+  ).toBe(true);
+  expect(result.identity.rows.map((r: any) => r.key)).toEqual(["m000124"]);
+  expect(result.unrelated.rows).toEqual([]);
+  expect(result.closed).toEqual([
+    "rejected",
+    "rejected",
+    "rejected",
+    "rejected",
+  ]);
 });

@@ -1,10 +1,13 @@
 import type { Fields, Mail } from "./model";
 import type { SelectionScope } from "./selection_types";
+import type { CoreMail } from "./provider";
 
 export interface MailboxQuery {
   scope: SelectionScope;
   offset: number;
   observed?: string[];
+  /** UI generation; not part of the persistent search predicate. */
+  generation?: number;
 }
 export interface MailboxPage {
   revision: number;
@@ -13,6 +16,13 @@ export interface MailboxPage {
   total: number;
   unread: number;
   aliases: Record<string, string>;
+  confirmed: Record<string, Fields>;
+}
+export interface MailboxMetadata {
+  id: string;
+  mail?: Mail;
+  epoch: string;
+  revision: number;
 }
 export interface MailboxDetail {
   id: string;
@@ -23,7 +33,29 @@ export interface MailboxDetail {
 export interface MailboxRepository {
   page(query: MailboxQuery): Promise<MailboxPage>;
   detail(id: string): Promise<MailboxDetail>;
+  metadata(id: string): Promise<MailboxMetadata>;
+  prefetch?(id: string): Promise<MailboxDetail>;
   close(): Promise<void>;
+}
+/** Only small cache/protocol metadata may cross the scan worker boundary. */
+export interface MailScanEntry {
+  key: string;
+  core: CoreMail;
+  moved: boolean;
+  local: boolean;
+  pendingMove: boolean;
+  syncReady: boolean;
+  sentMessageId?: string | null;
+}
+export interface MailScanQuery {
+  account: string;
+  folder?: string;
+  serverId?: string;
+  after?: string | null;
+}
+export interface MailScanPage {
+  rows: MailScanEntry[];
+  next: string | null;
 }
 export function checkedQuery(value: MailboxQuery): MailboxQuery {
   if (

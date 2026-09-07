@@ -1379,6 +1379,15 @@ export function mount(
     rows.tabIndex = 0;
     rows.dataset.focus = "mail-list";
     rows.dataset.scroll = "mail-list";
+    rows.dataset.scope = JSON.stringify([
+      w.folder,
+      w.account,
+      w.query,
+      w.filter,
+      w.newestFirst,
+      w.page,
+      w.selection.mode,
+    ]);
     rows.setAttribute("aria-label", "Emails");
     for (const m of w.visible) {
       const row = el(
@@ -1459,7 +1468,21 @@ export function mount(
       row.append(main, flag);
       rows.append(row);
     }
-    if (!w.visible.length) {
+    if (w.pageError) {
+      const error = el("div", "mail-error");
+      error.setAttribute("role", "alert");
+      error.append(
+        el("p", "", w.pageError),
+        button("Retry page", () => void w.retryPage()),
+      );
+      rows.append(error);
+    }
+    if (w.pageLoading) {
+      const loading = el("p", "muted", "Loading cached mail…");
+      loading.setAttribute("role", "status");
+      rows.append(loading);
+    }
+    if (!w.visible.length && !w.pageLoading && !w.pageError) {
       const empty = el("div", "empty");
       empty.append(
         icon("inbox"),
@@ -1509,13 +1532,13 @@ export function mount(
       "chevron",
       true,
     );
-    next.disabled = (w.page + 1) * 50 >= w.matching.length;
+    next.disabled = (w.page + 1) * 50 >= w.total;
     paging.append(
       prev,
       el(
         "span",
         "",
-        `${w.matching.length ? w.page * 50 + 1 : 0}–${Math.min((w.page + 1) * 50, w.matching.length)} of ${w.matching.length}`,
+        `${w.total ? w.page * 50 + 1 : 0}–${Math.min((w.page + 1) * 50, w.total)} of ${w.total}`,
       ),
       next,
     );
@@ -1821,6 +1844,20 @@ export function mount(
       el("time", "", new Date(m.date).toLocaleString("en-GB")),
     );
     content.append(sender);
+    if (w.bodyLoading && !m.bodyLoaded) {
+      const loading = el("p", "muted", "Loading message…");
+      loading.setAttribute("role", "status");
+      content.append(loading);
+    }
+    if (w.bodyError) {
+      const error = el("div", "mail-error");
+      error.setAttribute("role", "alert");
+      error.append(
+        el("p", "", w.bodyError),
+        button("Retry message", () => w.retryBody()),
+      );
+      content.append(error);
+    }
     if (state && (state.loading || state.error || state.prepared?.document)) {
       const options = el("div", "reader-format-controls");
       options.append(
@@ -2197,7 +2234,7 @@ export function mount(
           "muted",
           w.folder === "Drafts"
             ? `${w.drafts.size} ${w.drafts.size === 1 ? "draft" : "drafts"}`
-            : `${w.matching.length} messages · ${w.unread} unread`,
+            : `${w.total} messages · ${w.unread} unread`,
         ),
       );
     header.append(el("span", "spacer"));

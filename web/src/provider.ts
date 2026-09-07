@@ -1,3 +1,9 @@
+import { MailboxWorkerClient } from "./mailbox_worker_client";
+import type {
+  MailboxRepository,
+  MailScanEntry,
+  MailScanQuery,
+} from "./mailbox_types";
 import { PrintLoader } from "./printing_loader";
 import {
   BulkJournal,
@@ -293,6 +299,76 @@ async function* lines(response: Response): AsyncGenerator<unknown> {
   }
 }
 export class GatewayRepository implements Repository, SelectionRepository {
+  private mailboxWorker?: MailboxWorkerClient;
+  private mailboxStopped = false;
+  private mailboxAdapter?: MailboxRepository;
+  private queryWorker() {
+    if (this.mailboxStopped)
+      throw Error("Mailbox storage is closed. Reopen Shep.");
+    if (this.mailboxWorker?.stopped) {
+      this.mailboxWorker.terminate();
+      this.mailboxWorker = undefined;
+    }
+    return (this.mailboxWorker ??= new MailboxWorkerClient(
+      this.session.user_id,
+    ));
+  }
+  get mailbox(): MailboxRepository | undefined {
+    if (!this.store.profileId) return;
+    return (this.mailboxAdapter ??= {
+      page: async (query) => {
+        const page = await this.queryWorker().page(query);
+        this.cached = page.rows;
+        this.aliases = new Map(Object.entries(page.aliases));
+        return page;
+      },
+      detail: async (id) => this.queryWorker().detail(id),
+      prefetch: async (id) => this.queryWorker().prefetch(id),
+      metadata: async (id) => this.queryWorker().metadata(id),
+      close: async () => {
+        this.mailboxStopped = true;
+        const worker = this.mailboxWorker;
+        this.mailboxWorker = undefined;
+        await worker?.close();
+      },
+    });
+  }
+  stopMailbox() {
+    this.mailboxStopped = true;
+    this.mailboxWorker?.terminate();
+    this.mailboxWorker = undefined;
+  }
+  private async *mailEntries(
+    query: Omit<MailScanQuery, "after">,
+  ): AsyncGenerator<MailScanEntry> {
+    if (this.store.profileId) {
+      let after: string | null = null;
+      do {
+        const page = await this.queryWorker().scan({ ...query, after });
+        for (const row of page.rows) yield row;
+        after = page.next;
+      } while (after !== null);
+    } else {
+      // The in-memory protocol-test adapter has no browser worker/IndexedDB.
+      for (const mail of await this.store.all<RecordMail>("mail")) {
+        if (
+          mail.core.account_id !== query.account ||
+          (query.folder !== undefined && mail.core.folder !== query.folder) ||
+          (query.serverId !== undefined && mail.core.id !== query.serverId)
+        )
+          continue;
+        yield {
+          key: localId(mail),
+          core: mail.core,
+          local: !!mail.local,
+          moved: !!mail.moved,
+          pendingMove: !!mail.pendingMove,
+          syncReady: !!mail.reply && mail.sentMessageId !== undefined,
+          sentMessageId: mail.sentMessageId,
+        };
+      }
+    }
+  }
   private selectionWorker?: SelectionWorkerClient;
   // Account scope uses the stable account ID, as does the native repository.
   selection(command: SelectionCommand, observed: string[] = []) {
@@ -376,7 +452,30 @@ export class GatewayRepository implements Repository, SelectionRepository {
       }
     }
   }
-  private async reloadMail() {
+  private async reloadMail(changedId?: string) {
+    if (this.mailbox) {
+      const snapshot = await this.store.snapshot(["mailRoles"]);
+      const roles = snapshot.mailRoles as MailRoles[];
+      this.folderRoles = new Map(
+        this.accounts.map((a) => [
+          a.id,
+          roleFolders(
+            a,
+            roles.find((r) => r.account === a.id),
+          ),
+        ]),
+      );
+      if (changedId) {
+        const current = await this.mailbox.metadata(changedId);
+        if (changedId !== current.id) this.aliases.set(changedId, current.id);
+        this.cached = this.cached.filter(
+          (m) => m.id !== changedId && m.id !== current.id,
+        );
+        if (current.mail) this.cached.push(current.mail);
+        this.cached = this.cached.slice(-50);
+      }
+      return;
+    }
     const snapshot = await this.store.snapshot([
       "mail",
       "mailRoles",
@@ -669,18 +768,17 @@ export class GatewayRepository implements Repository, SelectionRepository {
   private async sync(account: Account, folder: string) {
     if (account.protocol === "Pop3" && folder !== "Inbox") return;
     const connection = this.connection(account);
-    const before = (await this.store.all<RecordMail>("mail")).filter(
-      (m) => m.core.account_id === account.id,
-    );
+    const before = new Map<string, string>();
+    const knownIds: string[] = [];
+    for await (const entry of this.mailEntries({ account: account.id })) {
+      if (entry.moved) continue;
+      before.set(entry.core.id, entry.key);
+      if (!entry.local && entry.syncReady) knownIds.push(entry.core.id);
+    }
     const response = await this.response("/api/mail/sync", {
       connection,
       folder: folder === "Inbox" ? "INBOX" : folder,
-      known: before
-        .filter(
-          (m) =>
-            !m.moved && !m.local && m.reply && m.sentMessageId !== undefined,
-        )
-        .map((m) => m.core.id),
+      known: knownIds,
     });
     if (!response.ok) {
       const e = await response.json();
@@ -702,13 +800,17 @@ export class GatewayRepository implements Repository, SelectionRepository {
               typeof value.mail.raw !== "string"
             )
               throw new Error("Invalid sync message.");
-            const matching = (await this.store.all<RecordMail>("mail")).find(
-              (m) =>
-                !m.moved &&
-                m.core.id === core.id &&
-                m.core.account_id === account.id,
-            );
-            const key = matching ? localId(matching) : core.id;
+            let matching: MailScanEntry | undefined;
+            for await (const candidate of this.mailEntries({
+              account: account.id,
+              serverId: core.id,
+            })) {
+              if (!candidate.moved) {
+                matching = candidate;
+                break;
+              }
+            }
+            const key = matching?.key ?? core.id;
             const current = await this.store.get<RecordMail>("mail", key);
             // POP3's server has no folders or flags; preserve this device's edits.
             if (account.protocol === "Pop3" && current)
@@ -738,7 +840,6 @@ export class GatewayRepository implements Repository, SelectionRepository {
           case "flags": {
             if (!Array.isArray(value.flags))
               throw new Error("Invalid sync flags.");
-            const changes: Change[] = [];
             for (const entry of value.flags) {
               if (
                 !Array.isArray(entry) ||
@@ -747,12 +848,11 @@ export class GatewayRepository implements Repository, SelectionRepository {
                 typeof entry[2] !== "boolean"
               )
                 throw new Error("Invalid sync flags.");
-              const known = before.find(
-                (m) => m.core.id === entry[0] && !m.moved,
-              );
+            }
+            for (const entry of value.flags) {
               const m = await resolveMail(
                 this.store,
-                known ? localId(known) : entry[0],
+                before.get(entry[0]) ?? entry[0],
               );
               if (
                 m &&
@@ -761,10 +861,13 @@ export class GatewayRepository implements Repository, SelectionRepository {
                 account.protocol === "Imap"
               ) {
                 Object.assign(m.core, { unread: entry[1], starred: entry[2] });
-                changes.push({ store: "mail", key: localId(m), value: m });
+                // Each transaction retains one body, independent of the
+                // provider's metadata batch size. Validate the batch first.
+                await this.store.commit([
+                  { store: "mail", key: localId(m), value: m },
+                ]);
               }
             }
-            await this.store.commit(changes);
             break;
           }
           case "reconcile": {
@@ -834,7 +937,11 @@ export class GatewayRepository implements Repository, SelectionRepository {
       await this.exclusive(`cache.${account.id}`, async () => {
         const changes: Change[] = [];
         const removed = new Set<string>();
-        for (const current of await this.store.all<RecordMail>("mail")) {
+        for await (const entry of this.mailEntries({
+          account: account.id,
+          folder: reconcile!.folder,
+        })) {
+          const current = entry;
           if (
             current.core.account_id !== account.id ||
             current.moved ||
@@ -842,15 +949,19 @@ export class GatewayRepository implements Repository, SelectionRepository {
             current.core.folder !== reconcile!.folder
           )
             continue;
-          if (!reconcile!.ids.has(current.core.id))
-            removed.add(localId(current));
+          if (!reconcile!.ids.has(current.core.id)) removed.add(current.key);
           else if (current.pendingMove) {
-            delete current.pendingMove;
-            changes.push({
-              store: "mail",
-              key: localId(current),
-              value: current,
-            });
+            const saved = await this.store.get<RecordMail>("mail", current.key);
+            if (
+              saved?.pendingMove &&
+              !saved.moved &&
+              saved.core.id === current.core.id
+            ) {
+              delete saved.pendingMove;
+              await this.store.commit([
+                { store: "mail", key: current.key, value: saved },
+              ]);
+            }
           }
         }
         changes.push(...(await removeMailChanges(this.store, removed)));
@@ -864,9 +975,12 @@ export class GatewayRepository implements Repository, SelectionRepository {
     intent?: IntentLease,
   ) {
     const changes: Change[] = [];
-    for (const other of await this.store.all<RecordMail>("mail")) {
+    for await (const other of this.mailEntries({
+      account: latest.core.account_id,
+      serverId: latest.core.id,
+    })) {
       if (
-        localId(other) === id ||
+        other.key === id ||
         latest.moved ||
         other.moved ||
         other.core.id !== latest.core.id
@@ -874,16 +988,16 @@ export class GatewayRepository implements Repository, SelectionRepository {
         continue;
       const [raw, otherRaw] = await Promise.all([
         this.store.get<string>("raw", id),
-        this.store.get<string>("raw", localId(other)),
+        this.store.get<string>("raw", other.key),
       ]);
       if (!raw || raw !== otherRaw)
         throw new Error(
           "The destination cache contains conflicting content. Refresh before another action.",
         );
       changes.push(
-        ...(await aliasChanges(this.store, localId(other), id)),
-        { store: "mail", key: localId(other) },
-        { store: "raw", key: localId(other) },
+        ...(await aliasChanges(this.store, other.key, id)),
+        { store: "mail", key: other.key },
+        { store: "raw", key: other.key },
       );
     }
     changes.push({ store: "mail", key: id, value: latest });
@@ -1080,14 +1194,14 @@ export class GatewayRepository implements Repository, SelectionRepository {
         error.applied = displayFields(error.applied);
       if (!(error instanceof MutationSuperseded)) throw error;
       try {
-        await this.reloadMail();
+        await this.reloadMail(id);
       } catch {
         throw error;
       }
       return {};
     }
     try {
-      await this.reloadMail();
+      await this.reloadMail(id);
     } catch {
       throw new MutationFailure(
         "The change was saved, but the message list could not refresh. Refresh the folder to display it.",
@@ -1774,15 +1888,23 @@ export class GatewayRepository implements Repository, SelectionRepository {
             record.sent.receipt.folder,
           ),
         );
-        const candidates = (await this.store.all<RecordMail>("mail")).filter(
-          (m) =>
-            !m.local &&
-            m.core.account_id === original.core.account_id &&
-            m.core.folder === record.sent!.receipt!.folder &&
-            m.sentMessageId === `<${record.id}@shep.so>`,
-        );
-        if (candidates.length === 1) {
-          const incoming = candidates[0];
+        const candidates: string[] = [];
+        for await (const candidate of this.mailEntries({
+          account: original.core.account_id,
+          folder: record.sent.receipt.folder,
+        })) {
+          if (
+            !candidate.local &&
+            candidate.sentMessageId === `<${record.id}@shep.so>`
+          )
+            candidates.push(candidate.key);
+          if (candidates.length > 1) break;
+        }
+        const incoming =
+          candidates.length === 1
+            ? await this.store.get<RecordMail>("mail", candidates[0])
+            : undefined;
+        if (incoming) {
           const raw = await this.store.get<string>("raw", localId(incoming));
           if (raw)
             changes.push(

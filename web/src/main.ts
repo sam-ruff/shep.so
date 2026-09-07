@@ -38,11 +38,16 @@ async function start() {
       )
         void workspace.refresh();
     }, 15_000);
+    addEventListener("pageshow", (event) => {
+      if (event.persisted) location.reload();
+    });
     addEventListener(
       "pagehide",
       () => {
         clearInterval(timer);
         repository.forgetPasswords();
+        repository.stopMailbox();
+        workspace.dispose();
       },
       { once: true },
     );

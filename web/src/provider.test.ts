@@ -1097,3 +1097,20 @@ describe("durable terminal delivery receipts", () => {
     }
   });
 });
+
+it("a closed Gateway cannot recreate mailbox workers through a delayed caller", async () => {
+  const db = new Memory();
+  Object.assign(db, { profileId: session.user_id });
+  const repo = new GatewayRepository(session, db);
+  const mailbox = repo.mailbox!;
+  repo.stopMailbox();
+  await expect(
+    mailbox.page({ scope: { folder: "Inbox" }, offset: 0 }),
+  ).rejects.toThrow("closed");
+  await expect(mailbox.detail("old")).rejects.toThrow("closed");
+  await expect(mailbox.metadata("old")).rejects.toThrow("closed");
+  await expect(mailbox.prefetch!("old")).rejects.toThrow("closed");
+  await mailbox.close();
+  // Node has no Worker: accidentally recreating one would fail this assertion.
+  await expect(repo.mailbox!.detail("old")).rejects.toThrow("closed");
+});

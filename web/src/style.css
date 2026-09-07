@@ -1254,3 +1254,19 @@ dialog > .field,
   line-height: 1.8;
   overflow-wrap: anywhere;
 }
+
+.mail-error {
+  padding: 12px;
+  margin: 12px 0;
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  color: var(--error);
+  background: var(--error-bg);
+  overflow-wrap: anywhere;
+}
+.mail-error p {
+  margin: 0 0 8px;
+}
+.mail-error button {
+  min-height: 44px;
+}
