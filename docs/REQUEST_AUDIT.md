@@ -432,3 +432,6 @@ R42/R50/R60/R63/R67/R69/R71/R73/R74/R77 continuation: prepared browser group Und
 
 
 **R78 — Handover, TODO cleanup and push:** requested because credits are nearly exhausted. Added root `handover.md` and consolidated repetitive TODO history into remaining work, preserving all 40 active request entries. Full parity and the observed Find-remapping issue remain open; stop feature development after checkpoint shipping. See the completion log for exact verification and commit evidence.
+
+
+R78 completed and R77 checkpoint shipping verified in [`d4da04c`](https://github.com/sam-ruff/shep.so/commit/d4da04c4ebcf39358f9227fb6190c822f8094a8c). Handover/TODO cleanup, 381 mandatory-hook Rust tests, 56 production HTTPS stages and qualified Chromium results are recorded in the completion log. Only R78 leaves the active TODO; all unfinished product requirements remain. Feature development is stopped at the user's credit-limit request.
