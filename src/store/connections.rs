@@ -30,6 +30,7 @@ pub struct RemovalPreview {
     pub events: usize,
     pub transfers: usize,
     pub outgoing: usize,
+    pub mail_history: usize,
     pub fingerprint: String,
 }
 #[derive(Debug, Clone)]
@@ -135,6 +136,7 @@ fn preview(c: &Connection, target: ConnectionRef) -> anyhow::Result<RemovalPrevi
         events: 0,
         transfers: 0,
         outgoing: 0,
+        mail_history: 0,
         fingerprint: String::new(),
     };
     match out.target.kind {
@@ -173,6 +175,9 @@ fn preview(c: &Connection, target: ConnectionRef) -> anyhow::Result<RemovalPrevi
             let pending = transfers(c, &out.target.id)?;
             out.transfers = pending.len();
             digest.update(serde_json::to_vec(&pending)?);
+            let (history, pending_bulk) = bulk::account_review(c, &out.target.id, &mut digest)?;
+            out.mail_history = history;
+            out.transfers += pending_bulk;
         }
         ConnectionKind::Calendar => {
             let mut statement = c.prepare("SELECT data FROM events WHERE source=? ORDER BY id")?;
@@ -205,7 +210,7 @@ impl Store {
             if removed(&tx, target.kind, &target.id)?.is_some() { return Ok(()); }
             let current = preview(&tx, target.clone())?;
             anyhow::ensure!(current.fingerprint == expected.fingerprint, "Local data changed while this dialog was open. Review the updated counts before removing the connection.");
-            anyhow::ensure!(current.transfers == 0 || cancel_transfers, "Confirm cancellation of the unfinished moves before removing this account.");
+            anyhow::ensure!(current.transfers == 0 || cancel_transfers, "Confirm cancellation of the unfinished mail changes before removing this account.");
             let mut keys = Vec::new();
             let mut google_data = None;
             match target.kind {
@@ -219,6 +224,7 @@ impl Store {
                     tx.execute("DELETE FROM outgoing WHERE account=?",[&target.id])?;
                     tx.execute("DELETE FROM sent_folders WHERE account=?",[&target.id])?;
                     outgoing::changed(&tx)?;
+                    bulk::remove_account(&tx,&target.id)?;
                     tx.execute("DELETE FROM messages WHERE account=?", [&target.id])?;
                     tx.execute("DELETE FROM conversation_tokens WHERE account=?", [&target.id])?;
                     let mut folder_map: std::collections::HashMap<String,Vec<String>> = get(&tx, "account_folders")?;

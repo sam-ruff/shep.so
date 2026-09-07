@@ -72,9 +72,10 @@ impl App {
             .retain(|id, entry| entry.request.is_some() || reader.as_ref() == Some(id));
         self.mail_actions.base_page = page;
         self.project_mail_flags();
+        self.selection_page_changed();
     }
 
-    fn project_mail_flags(&mut self) {
+    pub(super) fn project_mail_flags(&mut self) {
         if self.mail_actions.flags.is_empty()
             && self.mail_actions.moves.is_empty()
             && self.mail_actions.transfers.is_empty()
@@ -85,6 +86,7 @@ impl App {
                 .any(|entry| entry.restoring())
         {
             self.page = self.mail_actions.base_page.clone();
+            self.project_bulk();
             return;
         }
         let mut page = (*self.mail_actions.base_page).clone();
@@ -137,6 +139,7 @@ impl App {
         self.project_undo(&mut page);
         page.inbox_unread = self.project_inbox_counts();
         self.page = Arc::new(page);
+        self.project_bulk();
     }
 
     pub(super) fn toggle_mail_flag(&mut self, mail: Mail, unread: bool) {

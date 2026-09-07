@@ -1,3 +1,4 @@
+mod bulk;
 mod mail_actions;
 mod mail_query;
 use crate::model::*;
@@ -10,11 +11,13 @@ mod outgoing;
 mod restore;
 mod selection;
 use anyhow::Context;
+pub use bulk::BulkLease;
 pub use conversations::{CONVERSATION_PAGE_SIZE, ConversationPage};
 pub use drafts::DraftState;
 use rusqlite::{Connection, params};
 pub use selection::{
-    MailSelectionId, SelectedMail, SelectionChange, SelectionPage, SelectionSnapshot,
+    MailSelectionId, SelectedMail, SelectionChange, SelectionGroup, SelectionPage,
+    SelectionSnapshot,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
@@ -99,6 +102,7 @@ impl Store {
         connections::schema(&conn)?;
         outgoing::schema(&conn)?;
         selection::schema(&conn)?;
+        bulk::schema(&conn)?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 2 {
             let tx = conn.transaction()?;
@@ -307,17 +311,18 @@ impl Store {
             let c = &transaction;
             let plan = mail_query::Plan::new(c, &query)?;
             let (total, unread) = plan.counts(c)?;
-            let (sql, mut values) = plan.ordered("data,unread,starred,folder");
+            let (sql, mut values) = plan.ordered("data,unread,starred,folder,account");
             values.push((PAGE_SIZE as i64).into());
             values.push((query.offset as i64).into());
             let mut stmt = c.prepare(&format!("{sql} LIMIT ? OFFSET ?"))?;
-            let rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?)))?
-                .map(|r| { let (data,unread,starred,folder)=r?; let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
-            let inbox_unread = c.prepare("SELECT account,COUNT(*) FROM messages WHERE folder='INBOX' AND unread=1 GROUP BY account")?
+            let rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?)))?
+                .map(|r| { let (data,unread,starred,folder,account)=r?; let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;m.account_id=account;Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
+            let source = if bulk::has_effects(c)? { "visible_mail" } else { "messages" };
+            let inbox_unread = c.prepare(&format!("SELECT account,COUNT(*) FROM {source} WHERE folder='INBOX' AND unread=1 GROUP BY account"))?
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))?
                 .collect::<rusqlite::Result<_>>()?;
             let mut observed = std::collections::HashMap::new();
-            let mut statement = c.prepare("SELECT account,folder,unread FROM messages WHERE id=?")?;
+            let mut statement = c.prepare(&format!("SELECT account,folder,unread FROM {source} WHERE id=?"))?;
             for id in query.observe {
                 use rusqlite::OptionalExtension;
                 let value = statement.query_row([&id], |row| Ok(MailMembership {
@@ -325,7 +330,20 @@ impl Store {
                 })).optional()?;
                 observed.insert(id, value);
             }
-            Ok(MailPage { rows, total, unread, inbox_unread, observed })
+            anyhow::ensure!(query.observe_bulk.len() <= CHANNEL_CAPACITY, "Observe at most 32 mail operations at a time");
+            let mut bulk_observed = std::collections::HashMap::new();
+            for id in query.observe_bulk {
+                use rusqlite::OptionalExtension;
+                if let Some(undo) = c.query_row("SELECT undo_requested FROM bulk_jobs WHERE id=?",[&id],|r|r.get::<_,bool>(0)).optional()? {
+                    bulk_observed.insert(id,undo);
+                }
+            }
+            let mut bulk_pending = std::collections::HashSet::new();
+            for mail in &rows {
+                let pending: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM bulk_effects WHERE id=?)",[&mail.id],|r|r.get(0))?;
+                if pending { bulk_pending.insert(mail.id.clone()); }
+            }
+            Ok(MailPage { rows, total, unread, inbox_unread, observed, bulk_pending, bulk_observed, bulk_placeholders: Default::default(), bulk_revision: get(c,"bulk_revision")? })
         }).await
     }
     pub async fn detail(&self, id: String) -> anyhow::Result<MailDetail> {

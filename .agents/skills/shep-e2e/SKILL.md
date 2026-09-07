@@ -191,3 +191,52 @@ captures to detect stale dropdown text; the state oracle cannot prove clipping.
 The pre-filter capture has a lossy-compression boundary next to visible content,
 so its exact clipping is covered by `tests/software_rendering.rs` and visual
 review. Do not substitute full-window redraws for fixing the renderer.
+
+
+For list multi-selection, preserve the saved `test_mail_selection_*` scenarios.
+Observe `mail_selection.mode`, `count`, `pending`, `visible`, `available` and
+`list_focus`; these are state observations, never actions. Use real Ctrl/Shift
+clicks, Ctrl+A, Select/Done and the row checkboxes. At the standard fixture size,
+Select is near x=574,y=155 and the first two checkboxes are x=274,y=218/322;
+their padded click targets also include x=260. Clear unchecks while keeping the
+mode; Done/Escape exits. Wait for pending=false after captures or page changes.
+Repeated Select All explicitly includes arrivals, while passive refresh preserves
+exact membership. Scope/search changes clear immediately. Test reader/search
+text selection, sidebar focus, cross-page ranges, checkbox gestures without
+read-on-leave, and light/dark/compact layouts. After scrolling Shortcuts to the
+bottom, Select all messages is y=480; Delete/Inbox/Find/Forward/Print retain their
+prior bottom-relative positions. Preserve the saved bulk scenarios below alongside these controls.
+
+For bulk actions, use actual Select/checkbox/Ctrl+A inputs before the preview
+toolbar or keys. Observe `bulk.review_count`, `action`, `staging`, and the bounded
+`jobs`/`items` result pages. Confirmations accept Y/Enter and cancel with N/Escape.
+After Select, wait for `mail_selection.mode == true` and
+`mail_selection.drawn == true` before clicking checkboxes. The latter observes
+the current row widget draw epoch through test-support code; a controller reply
+can arrive before the new controls draw. This is an observation, not an input
+API or a frame-latency measurement. Avoid fixed sleeps for this transition.
+
+Use `mail_actions="slow"` and wait for `bulk.jobs.0.running == 1` before Undo;
+otherwise a test might only cancel unsent work. Forward plus inverse each carry
+the fixture's 1.8-second delay, so the saved two-step completion wait explicitly
+allows five seconds. This is functional fault injection, not a performance
+budget. Immediate totals/toasts must be asserted before that completion wait.
+
+The `unread` observation is the open message's boolean. For group counts use
+`inbox_unread.<account>` and `mail_rows.<index>.unread`. First/second fixture rows
+belong to the work account; the third is personal. A mixed-account Projects move
+uses checkboxes near x=274,y=218/426. The Move default uses each original account.
+
+Preserve all four `test_bulk_*` flows: review/cancel/archive/Undo, flag/read/unread
+and mixed-account Move, failure/History detail pages, and compact dark reviews and
+pending Undo. At 1440x920, History is near x=1330,y=36; its first failed group is
+near x=700,y=490 in the saved scenario. Inspect both per-message errors and the
+red Trash confirmation. Compact toast Undo is near x=800,y=594. Engine/storage
+tests separately establish persisted receipts, process-lock exclusion, restart,
+graceful stopping and reviewed account cleanup; do not claim live-provider or
+native restart coverage from an in-memory MCP workspace.
+
+Keep consecutive checkbox clicks in the bulk scenarios. Their separate motion
+events must target separate rows even when processed together; do not add sleeps
+between clicks to mask cursor-batching defects. The root input wrapper has a
+widget-level regression for that sequence.

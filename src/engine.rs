@@ -1,6 +1,7 @@
 mod backups;
 #[cfg(test)]
 mod backups_tests;
+mod bulk;
 mod calendar_connections;
 mod dispatch;
 mod google_lifecycle;
@@ -11,6 +12,7 @@ mod removals;
 mod restore;
 #[cfg(test)]
 mod restore_tests;
+pub mod selections;
 pub use dispatch::CommandSender;
 
 use crate::{
@@ -32,6 +34,17 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone)]
 pub enum Command {
     Query(u64, MailQuery, bool),
+    Selection(u64, selections::Request, Vec<String>),
+    ReviewSelection(u64, crate::store::MailSelectionId, u64, Vec<String>),
+    ReleaseSelection(crate::store::MailSelectionId),
+    BulkStart(String, crate::store::MailSelectionId, crate::bulk::Action),
+    BulkRun(String),
+    BulkStop,
+    BulkResume(String),
+    BulkUndo(String),
+    BulkJobs(u64, usize),
+    BulkItems(u64, String, Option<u64>),
+    BulkResolve(String),
     Conversation(u64, String, Option<String>, Option<usize>),
     IndexConversations,
     LoadImages(Vec<String>),
@@ -112,6 +125,19 @@ impl Command {
 #[derive(Debug, Clone)]
 pub enum Event {
     Ready(CommandSender, Arc<Workspace>, bool),
+    Selection(
+        u64,
+        Result<Option<Arc<crate::store::SelectionSnapshot>>, String>,
+    ),
+    BulkReview(u64, Result<Arc<crate::store::SelectionSnapshot>, String>),
+    BulkStarted(String, Result<Arc<crate::bulk::Job>, String>),
+    BulkUpdate(Arc<crate::bulk::Job>),
+    BulkIdentity(String, String, Option<String>),
+    BulkStopped,
+    BulkResumed(String),
+    BulkFinished(String, Result<Arc<crate::bulk::Job>, String>),
+    BulkJobs(u64, Result<Arc<Vec<crate::bulk::Job>>, String>),
+    BulkItems(u64, String, Result<Arc<Vec<crate::bulk::Item>>, String>),
     RemoteImage(String, Result<Vec<u8>, String>),
     Workspace(Arc<Workspace>),
     PreferencesSaved(u64, Arc<crate::store::PreferenceSnapshot>),
@@ -200,6 +226,7 @@ struct Engine {
     mail_sync_settings: mail_sync::Settings,
     provider_slots: dispatch::Slots,
     printing: crate::printing::Service,
+    bulk_control: Arc<bulk::Control>,
 }
 type Output = futures::channel::mpsc::Sender<Event>;
 
@@ -263,6 +290,7 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),
             printing: Default::default(),
+            bulk_control: Default::default(),
         };
         let workspace = match engine.store.workspace().await {
             Ok(w) => w,
@@ -418,6 +446,85 @@ impl Engine {
         let explicit_draft = matches!(&command, Command::SaveDraft(_));
         let deleting_event = matches!(&command, Command::DeleteEvent(_));
         match command {
+            Command::ReviewSelection(serial, id, revision, visible) => {
+                let result = async {
+                    let frozen = self.store.freeze_selection(id, revision).await?;
+                    match self.store.selection_snapshot(frozen.id, visible).await {
+                        Ok(snapshot) => Ok(snapshot),
+                        Err(error) => {
+                            let _ = self.store.release_selection(frozen.id).await;
+                            Err(error)
+                        }
+                    }
+                }
+                .await
+                .map(Arc::new)
+                .map_err(|e: anyhow::Error| format!("{e:#}"));
+                output.send(Event::BulkReview(serial, result)).await?;
+            }
+            Command::ReleaseSelection(id) => self.store.release_selection(id).await?,
+            Command::BulkStart(id, selection, action) => {
+                let result = self
+                    .store
+                    .start_bulk(id.clone(), selection, action)
+                    .await
+                    .map(Arc::new)
+                    .map_err(|e| format!("{e:#}"));
+                output.send(Event::BulkStarted(id, result)).await?;
+            }
+            Command::BulkResume(id) => {
+                self.bulk_control
+                    .stopping
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                output.send(Event::BulkResumed(id)).await?;
+            }
+            Command::BulkStop => {
+                use std::sync::atomic::Ordering::SeqCst;
+                self.bulk_control.stopping.store(true, SeqCst);
+                if !self.bulk_control.active.load(SeqCst) {
+                    output.send(Event::BulkStopped).await?;
+                }
+            }
+            Command::BulkRun(_) => anyhow::bail!("Mail groups use their dedicated execution queue"),
+            Command::BulkUndo(id) => match self.store.request_bulk_undo(id.clone()).await {
+                Ok(job) => output.send(Event::BulkUpdate(Arc::new(job))).await?,
+                Err(error) => {
+                    output
+                        .send(Event::BulkFinished(id, Err(format!("{error:#}"))))
+                        .await?
+                }
+            },
+            Command::BulkJobs(serial, offset) => {
+                let result = self
+                    .store
+                    .bulk_jobs(offset)
+                    .await
+                    .map(Arc::new)
+                    .map_err(|e| format!("{e:#}"));
+                output.send(Event::BulkJobs(serial, result)).await?;
+            }
+            Command::BulkItems(serial, id, after) => {
+                let result = self
+                    .store
+                    .bulk_items(id.clone(), after)
+                    .await
+                    .map(Arc::new)
+                    .map_err(|e| format!("{e:#}"));
+                output.send(Event::BulkItems(serial, id, result)).await?;
+            }
+            Command::BulkResolve(id) => {
+                let result = async {
+                    let lease = self.store.bulk_lease(id.clone()).await?;
+                    self.store.accept_bulk_uncertainty(&lease).await
+                }
+                .await
+                .map(Arc::new)
+                .map_err(|e: anyhow::Error| format!("{e:#}"));
+                output.send(Event::BulkFinished(id, result)).await?;
+            }
+            Command::Selection(serial, request, visible) => {
+                self.selection(serial, request, visible, output).await?;
+            }
             Command::CheckGoogleConnection => {
                 let _guard = self.google_connection_lock.read().await;
                 let prefs: Preferences = self.store.get("preferences").await?;
@@ -1182,6 +1289,7 @@ mod calendar_tests {
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),
             printing: Default::default(),
+            bulk_control: Default::default(),
         }
     }
     pub(super) fn event(source: &str) -> CalendarEvent {

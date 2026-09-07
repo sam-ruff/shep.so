@@ -343,6 +343,58 @@ impl Engine {
         )
         .await
         .context("The account is still busy. Try the change again.")?;
+        anyhow::ensure!(
+            self.store.bulk_owner(mail.id.clone()).await?.is_none(),
+            "A group action is pending for this message. Finish or review it before making another change."
+        );
+        self.write_flags(mail, changes).await
+    }
+    pub(super) async fn change_bulk_flags(
+        &self,
+        original: &Mail,
+        changes: crate::mail_actions::Flags,
+        expected: Option<crate::mail_actions::Flags>,
+    ) -> anyhow::Result<crate::bulk::Receipt> {
+        let _guard = tokio::time::timeout(
+            Duration::from_secs(600),
+            self.account_lock(&original.account_id),
+        )
+        .await
+        .context("The account is still busy. Try the change again.")?;
+        let mail = self.store.mail_metadata(original.id.clone()).await?;
+        anyhow::ensure!(
+            mail.account_id == original.account_id && mail.folder == original.folder,
+            "The message changed folders. Refresh it before Undo."
+        );
+        if let Some(expected) = expected {
+            anyhow::ensure!(
+                expected.unread.is_none_or(|v| v == mail.unread)
+                    && expected.starred.is_none_or(|v| v == mail.starred),
+                "This message has a newer read or flag change. It was left unchanged."
+            );
+        }
+        let changes = crate::mail_actions::Flags {
+            unread: changes.unread.filter(|v| *v != mail.unread),
+            starred: changes.starred.filter(|v| *v != mail.starred),
+        };
+        if changes.is_empty() {
+            return Ok(crate::bulk::Receipt::Unchanged);
+        }
+        let before = crate::mail_actions::Flags {
+            unread: changes.unread.map(|_| mail.unread),
+            starred: changes.starred.map(|_| mail.starred),
+        };
+        self.write_flags(&mail, changes).await?;
+        Ok(crate::bulk::Receipt::Flags {
+            before,
+            after: changes,
+        })
+    }
+    async fn write_flags(
+        &self,
+        mail: &Mail,
+        changes: crate::mail_actions::Flags,
+    ) -> anyhow::Result<()> {
         #[cfg(feature = "test-support")]
         if self.demo {
             crate::test_support::mail_action_delay().await?;

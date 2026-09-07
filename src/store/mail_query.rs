@@ -50,12 +50,21 @@ impl Plan {
         if search.is_empty() && !query.search.trim().is_empty() {
             filters.push("0=1".into());
         }
+        let projected = super::bulk::has_effects(c)?;
         let from = if search.is_empty() {
-            "messages"
+            if projected {
+                "visible_mail AS messages"
+            } else {
+                "messages"
+            }
         } else {
             filters.push("mail_search.mail_search MATCH ?".into());
             values.push(search.clone().into());
-            "messages JOIN mail_search ON mail_search.rowid=messages.rowid"
+            if projected {
+                "visible_mail AS messages JOIN mail_search ON mail_search.rowid=messages.rowid"
+            } else {
+                "messages JOIN mail_search ON mail_search.rowid=messages.rowid"
+            }
         };
         Ok(Self {
             prefix,

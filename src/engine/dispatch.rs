@@ -28,6 +28,8 @@ pub struct CommandSender {
     network: mpsc::Sender<Command>,
     sync: mpsc::Sender<Command>,
     printing: mpsc::Sender<Command>,
+    selections: mpsc::Sender<Command>,
+    bulk: mpsc::Sender<Command>,
 }
 
 pub(super) struct Inputs {
@@ -37,6 +39,8 @@ pub(super) struct Inputs {
     network: mpsc::Receiver<Command>,
     sync: mpsc::Receiver<Command>,
     printing: mpsc::Receiver<Command>,
+    selections: mpsc::Receiver<Command>,
+    pub(super) bulk: mpsc::Receiver<Command>,
 }
 
 impl CommandSender {
@@ -52,6 +56,12 @@ impl CommandSender {
         (sender, inputs.persistence)
     }
 
+    #[cfg(test)]
+    pub(crate) fn selection_test_channel() -> (Self, mpsc::Receiver<Command>) {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.selections)
+    }
+
     pub(super) fn channel() -> (Self, Inputs) {
         let (reads, read_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (prefetch, prefetch_input) = mpsc::channel(8);
@@ -59,6 +69,8 @@ impl CommandSender {
         let (network, network_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (sync, sync_input) = mpsc::channel(1);
         let (printing, print_input) = mpsc::channel(2);
+        let (selections, selection_input) = mpsc::channel(CHANNEL_CAPACITY);
+        let (bulk, bulk_input) = mpsc::channel(1);
         (
             Self {
                 reads,
@@ -67,6 +79,8 @@ impl CommandSender {
                 network,
                 sync,
                 printing,
+                selections,
+                bulk,
             },
             Inputs {
                 reads: read_input,
@@ -75,6 +89,8 @@ impl CommandSender {
                 network: network_input,
                 sync: sync_input,
                 printing: print_input,
+                selections: selection_input,
+                bulk: bulk_input,
             },
         )
     }
@@ -83,8 +99,13 @@ impl CommandSender {
         &self,
         command: Command,
     ) -> Result<(), Box<mpsc::error::TrySendError<Command>>> {
-        if matches!(command, Command::Sync) {
-            return match self.sync.try_send(command) {
+        if matches!(command, Command::Sync | Command::BulkRun(_)) {
+            let queue = if matches!(command, Command::Sync) {
+                &self.sync
+            } else {
+                &self.bulk
+            };
+            return match queue.try_send(command) {
                 // A pending full refresh already covers another click. Retain
                 // one follow-up request while a cycle is active, never drop it
                 // because the unrelated provider queue is occupied.
@@ -94,12 +115,23 @@ impl CommandSender {
         }
         let channel = match &command {
             Command::Print(..) => &self.printing,
+            Command::Selection(..)
+            | Command::ReviewSelection(..)
+            | Command::ReleaseSelection(_)
+            | Command::BulkStart(..)
+            | Command::BulkUndo(_)
+            | Command::BulkResolve(_)
+            | Command::BulkStop
+            | Command::BulkResume(_) => &self.selections,
+            Command::BulkRun(_) => &self.bulk,
             Command::Query(_, _, true) | Command::Detail { prefetch: true, .. } => &self.prefetch,
             Command::Query(..)
             | Command::Detail { .. }
             | Command::Conversation(..)
             | Command::RemovalPreview(..)
-            | Command::OutgoingPage(..) => &self.reads,
+            | Command::OutgoingPage(..)
+            | Command::BulkJobs(..)
+            | Command::BulkItems(..) => &self.reads,
             Command::SavePreferences(..)
             | Command::SaveDraft(_)
             | Command::AutoSaveDraft(_)
@@ -131,7 +163,10 @@ impl Engine {
             self.clone().run_reads(input.prefetch, output.clone(), 1),
             self.clone().run_reads(input.printing, output.clone(), 1),
             self.clone()
+                .run_persistence(input.selections, output.clone()),
+            self.clone()
                 .run_persistence(input.persistence, output.clone()),
+            self.clone().run_bulk_queue(input.bulk, output.clone()),
             self.run_network(input.network, output),
         );
     }
@@ -293,6 +328,7 @@ mod tests {
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),
             printing: Default::default(),
+            bulk_control: Default::default(),
         };
         let (sender, input) = CommandSender::channel();
         let (output, mut events) = futures::channel::mpsc::channel(32);
@@ -368,10 +404,32 @@ mod tests {
                 ..draft
             }))
             .unwrap();
+        let selection = crate::store::MailSelectionId::default();
+        sender
+            .try_send(Command::Selection(
+                44,
+                selections::Request::Capture(selection, MailQuery::default()),
+                vec![id.clone()],
+            ))
+            .unwrap();
+        sender
+            .try_send(Command::Selection(
+                45,
+                selections::Request::Change(selection, 0, crate::store::SelectionChange::All),
+                vec![id.clone()],
+            ))
+            .unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
-            let (mut page, mut detail, mut saved, mut conversation) = (false, false, false, false);
-            while !(page && detail && saved && conversation) {
+            let (mut page, mut detail, mut saved, mut conversation, mut selected) =
+                (false, false, false, false, false);
+            while !(page && detail && saved && conversation && selected) {
                 match events.next().await.expect("Dispatcher stopped") {
+                    Event::Selection(45, result) => {
+                        let snapshot = result.unwrap().unwrap();
+                        assert_eq!(snapshot.selected, 1);
+                        assert!(snapshot.visible.contains(&id));
+                        selected = true;
+                    }
                     Event::Page(42, result, false) => {
                         assert_eq!(result.total, 1);
                         page = true;
