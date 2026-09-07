@@ -1,6 +1,7 @@
 //! Cached mail decoding for native Rust and browser workers. No credentials,
 //! network, filesystem, platform UI or server storage dependency.
 pub mod attachments;
+pub mod document;
 pub mod find;
 pub mod mime;
 mod plain;
@@ -10,6 +11,15 @@ pub const MAX_MESSAGE_BYTES: usize = 25 * 1024 * 1024;
 #[cfg(target_arch = "wasm32")]
 mod browser {
     use wasm_bindgen::prelude::*;
+    #[wasm_bindgen]
+    pub fn prepare_message(raw: &[u8], options: &str) -> Result<String, JsError> {
+        let options =
+            serde_json::from_str(options).map_err(|_| JsError::new("Invalid reader options"))?;
+        let prepared =
+            super::document::prepare(raw, &options).map_err(|e| JsError::new(&e.to_string()))?;
+        serde_json::to_string(&prepared)
+            .map_err(|_| JsError::new("Could not return formatted mail"))
+    }
     /// A decoding API for workers, not HTML safe to insert into a page. Rendering
     /// must use the separate confined-document preparation layer.
     #[wasm_bindgen]

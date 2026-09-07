@@ -58,9 +58,9 @@ export async function providerFlows(page, context, origin, output, session) {
     .locator(".mail-row")
     .getByRole("button", { name: "Incoming files fixture", exact: true })
     .click();
-  await expect(page.getByRole("alert")).toContainText(
-    "Could not read this cached attachment",
-  );
+  await expect(
+    page.getByRole("alert").filter({ hasText: "cached attachment" }),
+  ).toContainText("Could not read this cached attachment");
   await context.unroute(wasmRoute, failWasm);
   await page
     .getByRole("button", { name: "Reload attachments", exact: true })
@@ -69,8 +69,24 @@ export async function providerFlows(page, context, origin, output, session) {
   await expect(
     fileReader.getByRole("button", { name: "Save résumé.txt" }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Retry formatted message", exact: true })
+    .click();
+  await expect(
+    page
+      .frameLocator('iframe[title="Formatted message"]')
+      .getByText("Formatted cached files.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator('iframe[title="Formatted message"]'),
+  ).toHaveAttribute("sandbox", "allow-scripts");
+  await page
+    .getByRole("combobox", { name: "Message format", exact: true })
+    .selectOption("Plain text");
   await expect(fileReader).not.toContainText("OBSOLETE-MIME-ALTERNATIVE");
-  await expect(fileReader.getByRole("button", { name: /^Save / })).toHaveCount(3);
+  await expect(fileReader.getByRole("button", { name: /^Save / })).toHaveCount(
+    3,
+  );
   await expect(fileReader).not.toContainText("inline-logo.webp");
   await context.setOffline(true);
   try {
@@ -1114,6 +1130,7 @@ export async function providerFlows(page, context, origin, output, session) {
     "account-layout-axe-two-sizes",
     "streamed-mail-cache",
     "cached-attachment-worker-failure-retry",
+    "formatted-reader-real-https-csp-worker-retry-and-plain-choice",
     "offline-exact-binary-duplicate-and-encoded-attachments",
     "incoming-files-light-dark-compact-axe",
     "flag-ack-reload",
