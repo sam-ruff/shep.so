@@ -1,3 +1,4 @@
+import { MessageFind, SearchWorker } from "./message_find";
 import type { ReceivedAttachment } from "./attachments";
 import {
   type Action,
@@ -12,6 +13,8 @@ import { GatewayRepository } from "./provider";
 import { accountPanel } from "./accounts";
 
 const paths: Record<string, string> = {
+  up: "m6 15 6-6 6 6",
+  down: "m6 9 6 6 6-6",
   mail: "M3 5h18v14H3z M3 5l9 7 9-7",
   inbox: "M4 4h16l2 12v4H2v-4z M2 16h6l2 3h4l2-3h6",
   calendar: "M4 5h16v16H4z M4 10h16 M8 2v6 M16 2v6",
@@ -136,6 +139,111 @@ export function mount(
   let tab = "Mail",
     fullReader = false,
     searchTimer: ReturnType<typeof setTimeout> | undefined;
+  const searchWorker = new SearchWorker();
+  const find = new MessageFind(searchWorker.search);
+  let quoteState: { id: string; mode: string; open: boolean } | undefined;
+  let findRenderQueued = false,
+    findJump = -1;
+  find.addEventListener("change", () => {
+    if (!findRenderQueued) {
+      findRenderQueued = true;
+      queueMicrotask(() => {
+        findRenderQueued = false;
+        render();
+      });
+    }
+  });
+  window.addEventListener("pagehide", (event) => {
+    // A page retained by browser history resumes with the same controls/model.
+    if (!event.persisted) {
+      find.dispose();
+      searchWorker.dispose();
+    }
+  });
+  function openFind() {
+    if (!w.readerMessage) return;
+    find.show();
+    queueMicrotask(() => {
+      const input = root.querySelector<HTMLInputElement>(
+        'input[aria-label="Find in message"]',
+      );
+      input?.focus();
+      input?.select();
+    });
+  }
+  function closeFind() {
+    find.close();
+  }
+  function findBar() {
+    const bar = el("div", "message-find");
+    bar.setAttribute("role", "search");
+    bar.setAttribute("aria-label", "Search this message");
+    const input = field("Find in message", find.query, (value) =>
+      find.setQuery(value),
+    );
+    input.querySelector("input")!.onkeydown = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeFind();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        find.next(e.shiftKey);
+      } else if (
+        (e.ctrlKey || e.metaKey) &&
+        e.key.toLowerCase() === "f" &&
+        w.preferences.shortcuts.find === "Control+f"
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        (e.target as HTMLInputElement).select();
+      }
+    };
+    const controls = el("div", "message-find-controls");
+    const status = el("span", "find-status", find.error ?? find.status);
+    status.setAttribute("role", "status");
+    controls.append(status);
+    if (find.error) controls.append(button("Retry Find", () => find.retry()));
+    const matchCase = button("Match case", () => find.toggleCase());
+    matchCase.textContent = "Aa";
+    matchCase.title = "Match case";
+    matchCase.setAttribute("aria-pressed", String(find.matchCase));
+    const previous = button(
+        "Previous match",
+        () => find.next(true),
+        "up",
+        true,
+      ),
+      next = button("Next match", () => find.next(), "down", true);
+    previous.disabled = next.disabled = find.pending || !find.hits.length;
+    const close = button("Close Find", closeFind, "close", true);
+    for (const b of [matchCase, previous, next, close])
+      b.dataset.focus = b.getAttribute("aria-label")!;
+    controls.append(matchCase, previous, next, close);
+    bar.append(input, controls);
+    return bar;
+  }
+  function foundText(text: string, block: number) {
+    const content = el("div", "message-body");
+    let offset = 0;
+    if (find.open)
+      for (let i = 0; i < find.hits.length; i++) {
+        const hit = find.hits[i];
+        if (hit.block !== block) continue;
+        content.append(document.createTextNode(text.slice(offset, hit.start)));
+        const mark = el(
+          "mark",
+          i === find.active ? "find-hit active" : "find-hit",
+          text.slice(hit.start, hit.end),
+        );
+        mark.dataset.findHit = String(i);
+        content.append(mark);
+        offset = hit.end;
+      }
+    content.append(document.createTextNode(text.slice(offset)));
+    return content;
+  }
   let month = new Date(w.events[0]?.start ?? Date.now());
   let sidebarOpen = false;
   const gateway =
@@ -867,7 +975,18 @@ export function mount(
     aside.append(prefs);
     if (login) {
       const identity = el("p", "identity", login.email);
-      aside.append(identity, button("Sign out", login.signOut, "lock"));
+      aside.append(
+        identity,
+        button(
+          "Sign out",
+          () => {
+            find.dispose();
+            searchWorker.dispose();
+            login.signOut();
+          },
+          "lock",
+        ),
+      );
     }
     return aside;
   }
@@ -1228,6 +1347,9 @@ export function mount(
       if (name === "star" && m?.starred) b.classList.add("flagged");
       toolbar.append(b);
     }
+    const search = button("Find in message", openFind, "search", true);
+    search.disabled = !m;
+    toolbar.append(search);
     toolbar.append(el("span", "spacer"));
     const move = button("Move", () => act("move"), "move");
     move.disabled = !m;
@@ -1245,6 +1367,7 @@ export function mount(
     toolbar.append(expand);
     panel.append(toolbar);
     if (!m) {
+      find.setSource("", []);
       const empty = el("div", "empty");
       empty.append(
         icon("mail"),
@@ -1254,6 +1377,22 @@ export function mount(
       panel.append(empty);
       return panel;
     }
+    const [latest, ...quote] = m.body.split("\n>");
+    if (quoteState?.id !== m.id || quoteState.mode !== w.preferences.quoteMode)
+      quoteState = {
+        id: m.id,
+        mode: w.preferences.quoteMode,
+        open: w.preferences.quoteMode === "Expanded",
+      };
+    find.setSource(m.id, [
+      latest,
+      ...(quote.length &&
+      w.preferences.quoteMode !== "Latest only" &&
+      quoteState.open
+        ? [quote.join("\n>")]
+        : []),
+    ]);
+    if (find.open) panel.append(findBar());
     const content = el("div", "reader-content");
     content.dataset.scroll = "reader";
     content.append(el("h1", "", m.subject));
@@ -1270,14 +1409,23 @@ export function mount(
       el("time", "", new Date(m.date).toLocaleString("en-GB")),
     );
     content.append(sender);
-    const [latest, ...quote] = m.body.split("\n>");
-    content.append(el("div", "message-body", latest));
+    content.append(foundText(latest, 0));
     if (quote.length && w.preferences.quoteMode !== "Latest only") {
       const quotes = el("details", "quoted");
-      quotes.open = w.preferences.quoteMode === "Expanded";
+      quotes.open = quoteState.open;
+      quotes.ontoggle = () => {
+        if (
+          quotes.isConnected &&
+          quoteState?.id === m.id &&
+          quoteState.open !== quotes.open
+        ) {
+          quoteState.open = quotes.open;
+          w.changed();
+        }
+      };
       quotes.append(
         el("summary", "", "Quoted history"),
-        el("div", "message-body", quote.join("\n>")),
+        foundText(quote.join("\n>"), 1),
       );
       content.append(quotes);
     }
@@ -1497,6 +1645,7 @@ export function mount(
     const active = document.activeElement as HTMLInputElement | null;
     const focus = active?.dataset.focus;
     const selection = active?.selectionStart;
+    const selectionEnd = active?.selectionEnd;
     const scrolls = new Map(
       [...root.querySelectorAll<HTMLElement>("[data-scroll]")].map((n) => [
         n.dataset.scroll,
@@ -1590,7 +1739,23 @@ export function mount(
         ...root.querySelectorAll<HTMLInputElement>("[data-focus]"),
       ].find((n) => n.dataset.focus === focus);
       target?.focus();
-      if (selection != null) target?.setSelectionRange(selection, selection);
+      if (selection != null)
+        target?.setSelectionRange(selection, selectionEnd ?? selection);
+    }
+    if (
+      find.open &&
+      !find.pending &&
+      find.hits.length &&
+      findJump !== find.jump
+    ) {
+      findJump = find.jump;
+      const jump = findJump;
+      requestAnimationFrame(() => {
+        if (find.open && find.jump === jump)
+          root
+            .querySelector<HTMLElement>(`[data-find-hit="${find.active}"]`)
+            ?.scrollIntoView({ block: "center", inline: "nearest" });
+      });
     }
   }
   w.addEventListener("change", render);
@@ -1603,6 +1768,11 @@ export function mount(
       (e.target as HTMLElement).isContentEditable
     )
       return;
+    if (e.key === "Escape" && find.open) {
+      e.preventDefault();
+      closeFind();
+      return;
+    }
     if (e.key === "Escape" && fullReader) {
       fullReader = false;
       w.changed();
@@ -1617,13 +1787,20 @@ export function mount(
     ]
       .filter(Boolean)
       .join("+");
-    const entry = Object.entries(w.preferences.shortcuts).find(
+    let entry = Object.entries(w.preferences.shortcuts).find(
       ([, value]) => value && value === combo,
     );
+    if (
+      !entry &&
+      combo === "Meta+f" &&
+      w.preferences.shortcuts.find === "Control+f"
+    )
+      entry = ["find", "Control+f"];
     if (!entry) return;
     e.preventDefault();
     const action = entry[0];
-    if (action === "search")
+    if (action === "find") openFind();
+    else if (action === "search")
       root
         .querySelector<HTMLInputElement>('[aria-label="Search conversations"]')
         ?.focus();

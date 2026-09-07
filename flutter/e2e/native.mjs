@@ -162,7 +162,25 @@ try {
     await waitText("A little room for good ideas");
     await driver.saveScreenshot(path.join(out, "inbox-dark.png"));
   });
-  assert.equal(steps.length, 5);
+  await step("native dark reader Find", async () => {
+    await (
+      await driver.$(
+        'android=new UiSelector().descriptionContains("A little room for good ideas")',
+      )
+    ).click();
+    await tap("Find in message");
+    const input = await driver.$(
+      'android=new UiSelector().className("android.widget.EditText")',
+    );
+    await input.setValue("first");
+    await waitText("1 of 1");
+    await driver.saveScreenshot(path.join(out, "find-dark.png"));
+    await tap("Match case");
+    await input.setValue("FIRST");
+    await waitText("No matches");
+    await tap("Close Find");
+  });
+  assert.equal(steps.length, 6);
   await writeFile(
     path.join(out, "result.json"),
     JSON.stringify({ passed: true, serial, steps }, null, 2),

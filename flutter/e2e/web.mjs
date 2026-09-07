@@ -35,7 +35,11 @@ async function openDropdown(label) {
 async function waitText(text) {
   await page.waitForFunction(
     (t) =>
-      [...document.querySelectorAll("flt-semantics")].some((e) =>
+      [
+        ...document.querySelectorAll(
+          "flt-semantics, [aria-label], [aria-live]",
+        ),
+      ].some((e) =>
         (
           (e.textContent || "") +
           " " +
@@ -76,6 +80,19 @@ try {
   await clickText("Mail");
   await waitText("A little room for good ideas");
   await page.screenshot({ path: path.join(out, "inbox-dark.png") });
+  await page
+    .getByRole("group", { name: /A little room for good ideas/ })
+    .click();
+  await clickText("Find in message");
+  const findInput = page.getByRole("textbox", { name: "Find in message" });
+  await findInput.fill("first");
+  await waitText("1 of 1");
+  await page.screenshot({ path: path.join(out, "find-dark.png") });
+  await clickText("Match case");
+  await findInput.fill("FIRST");
+  await waitText("No matches");
+  await clickText("Close Find");
+  await clickText("Back");
   await clickText("Calendar");
   await waitText("September 2026");
   await page.screenshot({ path: path.join(out, "calendar-dark.png") });
@@ -85,7 +102,14 @@ try {
     JSON.stringify(
       {
         passed: true,
-        scenarios: ["inbox", "swipe-archive", "undo", "appearance", "calendar"],
+        scenarios: [
+          "inbox",
+          "swipe-archive",
+          "undo",
+          "appearance",
+          "calendar",
+          "Find-dark-case",
+        ],
         errors,
       },
       null,
@@ -95,6 +119,7 @@ try {
   console.log("PASS: Flutter browser inbox, real swipe, undo, theme, calendar");
 } catch (error) {
   await page.screenshot({ path: path.join(out, "failure.png") });
+  await writeFile(path.join(out, "failure.html"), await page.content());
   await writeFile(
     path.join(out, "labels.json"),
     JSON.stringify(await labels(), null, 2),

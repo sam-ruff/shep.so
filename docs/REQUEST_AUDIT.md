@@ -145,3 +145,10 @@ Reconnect now stages a separate device credential pair and atomically activates 
 
 
 Atomic native credential handover is committed and pushed as [`b9a0102`](https://github.com/sam-ruff/shep.so/commit/b9a0102397778444745a4afee8578284fea78748) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), with the remote SHA verified. Required formatting/Clippy hooks and **215 root/shared tests** pass; two opt-in personal-account diagnostics remain intentionally ignored. Pinned strict documentation validation passes. The owned Android emulator was stopped after verification. R77's prompt review-branch push is fulfilled for this increment; full parity remains active. Main, deployment and quality/release workflow enablement are unchanged.
+
+
+### R44/R67/R69/R71/R73 — Find in displayed client mail
+
+Flutter/native Rust and the separate browser/WASM now share the desktop's literal Unicode and whitespace matching contract, with original UTF-16 ranges, visible highlights, case matching, next/previous, quote visibility, stale-result protection and selection/Copy. Browser shortcuts can be remapped/disabled without replacing an older custom binding. Saved host, native, Appium and browser scenarios are tracked in the shared registry; final execution and shipping evidence follows in the completion log. Full HTML Find, large-text bounds, complete mobile keymaps, current-main integration and Apple execution remain open. R75 Sign in with Google and R76 scheduled grouped Automatic replies remain active. R77 continues to authorize promptly committing and pushing the review branch.
+
+The Find increment now has 50 native Rust, 41 Flutter host, 65 browser, 34 backend, 19 Playwright and 48 authenticated HTTPS stage results, plus the 13 Android integration scenarios, six Appium stages and six Flutter browser stages. Reviewed light/dark captures and production APK/browser fixture-exclusion reports are recorded in the completion log. This fulfills the tested text-reader increment while the explicitly listed parity and deployment gaps remain active; shipping is recorded with the commit below.

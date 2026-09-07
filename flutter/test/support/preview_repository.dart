@@ -7,8 +7,10 @@ class PreviewRepository implements MailRepository {
   PreviewRepository({
     this.delay = const Duration(milliseconds: 350),
     this.fail = false,
+    String? firstBody,
   }) {
     final data = jsonDecode(fixtureJson) as Map<String, dynamic>;
+    if (firstBody != null) data['messages'][0]['body'] = firstBody;
     _mail = (data['messages'] as List).map((raw) {
       final m = raw as Map<String, dynamic>;
       return Mail(

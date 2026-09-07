@@ -1,5 +1,6 @@
 // This entry and its fictional data are excluded from the production build.
 import fixture from "../../shared/preview.json";
+import findFixture from "../../shared/find-preview.json";
 import {
   BrowserSettings,
   Workspace,
@@ -13,6 +14,10 @@ class PreviewRepository implements Repository {
   preview = true;
   cached = structuredClone(fixture.messages);
   events = structuredClone(fixture.events);
+  constructor() {
+    if (new URLSearchParams(location.search).has("find"))
+      this.cached[0].body = findFixture.body;
+  }
   private async wait() {
     await new Promise((r) => setTimeout(r, 350));
     if (new URLSearchParams(location.search).has("fail"))

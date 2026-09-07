@@ -89,11 +89,17 @@ impl HostedMail for BrowserMail {
         if folder == "INBOX" {
             let fixture: serde_json::Value =
                 serde_json::from_str(include_str!("../../shared/attachment-fixtures.json"))?;
+            let find: serde_json::Value =
+                serde_json::from_str(include_str!("../../shared/find-preview.json"))?;
+            let raw = fixture[0]["raw"].as_str().unwrap().replace(
+                "Cached incoming files.",
+                &find["body"].as_str().unwrap().replace('\n', "\r\n"),
+            );
             let mail = parse_mail(
                 &c.account.id,
                 "42.99",
                 folder,
-                fixture[0]["raw"].as_str().unwrap().as_bytes().to_vec(),
+                raw.into_bytes(),
                 false,
                 false,
             )?;

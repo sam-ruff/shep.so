@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'dart:async';
 import 'support/connection_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -82,6 +83,34 @@ void main() {
     return repository;
   }
 
+  test(
+    'native Rust search shares exact UTF-16 ranges without opening credentials',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'shep-find-host-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final credentials = FixtureCredentials()..unavailable = true;
+      final repository = await NativeRepository.open(
+        '${directory.path}/mail.sqlite',
+        credentials: credentials,
+      );
+      final cases =
+          jsonDecode(await File('../shared/find-cases.json').readAsString())
+              as List;
+      for (final c in cases) {
+        expect(
+          (await repository.findText(
+            List<String>.from(c['blocks']),
+            c['query'],
+            c['match_case'],
+          )).map((h) => h.toJson()).toList(),
+          c['hits'],
+        );
+      }
+      expect(credentials.reads, 0);
+    },
+  );
   test(
     'SMTP without authentication can prepare a bound request while device credentials are locked',
     () async {

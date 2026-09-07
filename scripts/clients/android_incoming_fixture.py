@@ -15,12 +15,14 @@ def prepare(path):
     path=Path(path)
     if path.exists(): raise ValueError('Fixture destination must be new')
     case=json.loads((ROOT/'shared/attachment-fixtures.json').read_text())[0]
+    body=json.loads((ROOT/'shared/find-preview.json').read_text())['body']
+    raw=case['raw'].replace('Cached incoming files.',body.replace('\n','\r\n'))
     with sqlite3.connect(path) as db:
         db.executescript((ROOT/'flutter/rust/src/schema.sql').read_text())
         account=dict(id='fixture',name='Incoming fixture',email='owner@example.test',protocol='Pop3',host='mail.example.test',port=995,username='fixture',smtp_host='mail.example.test',smtp_port=465)
         db.execute('INSERT INTO accounts VALUES(?,?)',('fixture',json.dumps(account)))
         db.execute('INSERT INTO folders VALUES(?,?)',('fixture','["INBOX","Archive"]'))
-        db.execute('INSERT INTO mail(id,account_id,remote_id,folder,sender,recipient,subject,preview,timestamp,unread,starred,attachment_count,body,raw) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',('fixture:INBOX:files','fixture','files','INBOX','Files <files@example.test>','owner@example.test','Incoming files fixture','Cached incoming files.',1788692400,0,0,3,'Cached incoming files.',case['raw'].encode()))
+        db.execute('INSERT INTO mail(id,account_id,remote_id,folder,sender,recipient,subject,preview,timestamp,unread,starred,attachment_count,body,raw) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',('fixture:INBOX:files','fixture','files','INBOX','Files <files@example.test>','owner@example.test','Incoming files fixture','Cached incoming files.',1788692400,0,0,3,body,raw.encode()))
         draft=dict(id='removal-draft',account_id='fixture',to='recipient@example.test',cc='',bcc='',subject='Account removal draft',body='Synthetic draft retained until removal.',revision=1)
         db.execute('INSERT INTO drafts VALUES(?,?,?)',(draft['id'],1,json.dumps(draft)))
 
@@ -47,12 +49,7 @@ class IncomingPicker(AndroidPicker):
                     print('Cancelled and saved exact incoming binary through DocumentsUI',flush=True);return
                 time.sleep(.2);continue
             nodes=self.window()
-            if any(n.attrib.get('text')=="System UI isn't responding" for n in nodes):
-                wait=next((n for n in nodes if n.attrib.get('text')=='Wait'),None)
-                if wait is not None:
-                    self.tap(wait)
-                    print('Waited for the dedicated emulator System UI to recover',flush=True)
-                    continue
+            if self.wait_for_system_ui(nodes):continue
             if not any(n.attrib.get('package','').endswith('documentsui')for n in nodes):time.sleep(.2);continue
             if phase=='cancel':
                 self.capture('incoming-save-cancel');self.adb('shell','input','keyevent','4');phase='await-save';continue

@@ -1,5 +1,6 @@
 // Real controls, IndexedDB and production adapter against the Rust test router.
 import { expect } from "@playwright/test";
+import { messageFindFlow } from "./message-find-flow.mjs";
 import AxeBuilder from "@axe-core/playwright";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -70,6 +71,7 @@ export async function providerFlows(page, context, origin, output, session) {
   ).toBeVisible();
   await context.setOffline(true);
   try {
+    await messageFindFlow(page);
     for (const [index, bytes] of [
       [0, [0, 255, 1, 13, 10]],
       [1, [0, 1, 2]],
@@ -1144,5 +1146,6 @@ export async function providerFlows(page, context, origin, output, session) {
     "account-removal-light-dark-compact-axe",
     "account-removal-atomic-local-cleanup-reopen",
     "account-removal-stale-tab-reconnect-and-refresh",
+    "offline-Find-Unicode-case-quotes-next-previous",
   ];
 }

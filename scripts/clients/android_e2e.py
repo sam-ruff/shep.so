@@ -24,7 +24,20 @@ def compose(device, flutter, env):
         picker = subprocess.Popen([sys.executable,str(ROOT/'scripts/clients/android_compose_fixture.py'),'--device',device],stdout=log,stderr=subprocess.STDOUT)
         try:
             compose_env=env.copy();compose_env['SHEP_NATIVE_REPORT']='integration-compose-result'
-            run('android-compose-integration', [flutter,'drive','--driver','test_driver/native_driver.dart','--target','integration_test/attachments_android_test.dart','-d',device,'--flavor','preview'], ROOT/'flutter', env=compose_env)
+            with (LOGS/'android-compose-integration.log').open('w') as driver_log:
+                driver=subprocess.Popen([flutter,'drive','--driver','test_driver/native_driver.dart','--target','integration_test/attachments_android_test.dart','-d',device,'--flavor','preview'],cwd=ROOT/'flutter',env=compose_env,stdout=driver_log,stderr=subprocess.STDOUT,start_new_session=True)
+                try:
+                    deadline=time.monotonic()+600
+                    while driver.poll() is None:
+                        if picker.poll() not in (None,0):raise RuntimeError('Compose picker stopped before the UI test finished')
+                        if time.monotonic()>deadline:raise TimeoutError('Compose UI test did not finish')
+                        time.sleep(.2)
+                    if driver.returncode!=0:raise RuntimeError('Compose UI test failed; see android-compose-integration.log')
+                finally:
+                    if driver.poll() is None:
+                        os.killpg(driver.pid,signal.SIGTERM)
+                        try:driver.wait(timeout=5)
+                        except subprocess.TimeoutExpired:os.killpg(driver.pid,signal.SIGKILL);driver.wait()
             if picker.wait(timeout=15) != 0:
                 raise RuntimeError('Android file picker failed; see android-compose-picker.log')
         finally:
@@ -73,37 +86,7 @@ def incoming(device, flutter, env):
                 try:fixture.wait(timeout=5)
                 except subprocess.TimeoutExpired:fixture.kill();fixture.wait()
 
-def main(device, flutter='flutter', compose_only=False, outbox_only=False, incoming_only=False):
-    if not device.startswith('emulator-') or not device.removeprefix('emulator-').isdigit():
-        raise ValueError('Only an explicit Android emulator is allowed; personal devices are refused')
-    avd = subprocess.check_output(['adb', '-s', device, 'emu', 'avd', 'name'], text=True).splitlines()[0]
-    if not avd.startswith('shep-e2e'):
-        raise ValueError('Use a dedicated AVD named shep-e2e (or shep-e2e-...)')
-    env = os.environ.copy()
-    env['ANDROID_SERIAL'] = device
-    env['APPIUM_HOME'] = str(ROOT / 'artifacts/appium')
-    if incoming_only:
-        incoming(device,flutter,env)
-        print('Android incoming-attachment scenario passed; other scenarios were not rerun.')
-        return
-    if outbox_only:
-        outbox(device,flutter,env)
-        print('Android Outbox scenario passed; other scenarios were not rerun.')
-        return
-    if compose_only:
-        compose(device,flutter,env)
-        print('Android compose scenario passed; other scenarios were not rerun.')
-        return
-    run('android-integration', [flutter,'test','integration_test/mail_test.dart','-d',device,'--flavor','preview'], ROOT/'flutter')
-    run('android-native-integration', [flutter,'drive','--driver','test_driver/native_driver.dart','--target','integration_test/native_mail_test.dart','-d',device,'--flavor','preview'], ROOT/'flutter')
-    compose(device,flutter,env)
-    incoming(device,flutter,env)
-    outbox(device,flutter,env)
-    captures=ROOT/'artifacts/flutter/native';captures.mkdir(parents=True,exist_ok=True)
-    for name in ['native-credential-activation-failure','native-credential-cleanup-retry','native-account-removal-light','native-account-removal-dark','native-account-removal-cleanup','native-incoming-saved','native-sent-handover','sent-handover-reader','sent-handover-undo','native-draft-reopened','native-account-retry','native-production-startup','paged-swipe-undo','native-reply-attachments','native-outbox-review-light','native-outbox-review-dark','native-outbox-recovered-draft','native-outbox-empty','native-outbox-local-sent', 'native-sent-copy-review', 'native-sent-preferences', 'native-imap-local-sent-offline', 'native-imap-local-sent-reopened', 'native-imap-credential-recovery']:
-        png=captures/f'{name}.png'
-        subprocess.run(['convert',str(png),str(png.with_suffix('.webp'))],check=True)
-        png.unlink()
+def appium(device,flutter,env):
     # Integration tests replace the APK; rebuild the review entry before Appium.
     run('android-preview-build', [flutter,'build','apk','--debug','--flavor','preview','--target','test/preview_main.dart'], ROOT/'flutter')
     run('android-install', ['adb','-s',device,'install','-r',str(ROOT/'flutter/build/app/outputs/flutter-apk/app-preview-debug.apk')])
@@ -129,6 +112,43 @@ def main(device, flutter='flutter', compose_only=False, outbox_only=False, incom
             process.terminate()
             try: process.wait(timeout=10)
             except subprocess.TimeoutExpired: process.kill();process.wait()
+
+def main(device, flutter='flutter', compose_only=False, outbox_only=False, incoming_only=False, appium_only=False):
+    if not device.startswith('emulator-') or not device.removeprefix('emulator-').isdigit():
+        raise ValueError('Only an explicit Android emulator is allowed; personal devices are refused')
+    avd = subprocess.check_output(['adb', '-s', device, 'emu', 'avd', 'name'], text=True).splitlines()[0]
+    if not avd.startswith('shep-e2e'):
+        raise ValueError('Use a dedicated AVD named shep-e2e (or shep-e2e-...)')
+    env = os.environ.copy()
+    env['ANDROID_SERIAL'] = device
+    env['APPIUM_HOME'] = str(ROOT / 'artifacts/appium')
+    if appium_only:
+        appium(device,flutter,env)
+        print('Android Appium controls passed; integration scenarios were not rerun.')
+        return
+    if incoming_only:
+        incoming(device,flutter,env)
+        print('Android incoming-attachment scenario passed; other scenarios were not rerun.')
+        return
+    if outbox_only:
+        outbox(device,flutter,env)
+        print('Android Outbox scenario passed; other scenarios were not rerun.')
+        return
+    if compose_only:
+        compose(device,flutter,env)
+        print('Android compose scenario passed; other scenarios were not rerun.')
+        return
+    run('android-integration', [flutter,'test','integration_test/mail_test.dart','-d',device,'--flavor','preview'], ROOT/'flutter')
+    run('android-native-integration', [flutter,'drive','--driver','test_driver/native_driver.dart','--target','integration_test/native_mail_test.dart','-d',device,'--flavor','preview'], ROOT/'flutter')
+    compose(device,flutter,env)
+    incoming(device,flutter,env)
+    outbox(device,flutter,env)
+    captures=ROOT/'artifacts/flutter/native';captures.mkdir(parents=True,exist_ok=True)
+    for name in ['native-find-tail','native-find-quoted','native-credential-activation-failure','native-credential-cleanup-retry','native-account-removal-light','native-account-removal-dark','native-account-removal-cleanup','native-incoming-saved','native-sent-handover','sent-handover-reader','sent-handover-undo','native-draft-reopened','native-account-retry','native-production-startup','paged-swipe-undo','native-reply-attachments','native-outbox-review-light','native-outbox-review-dark','native-outbox-recovered-draft','native-outbox-empty','native-outbox-local-sent', 'native-sent-copy-review', 'native-sent-preferences', 'native-imap-local-sent-offline', 'native-imap-local-sent-reopened', 'native-imap-credential-recovery']:
+        png=captures/f'{name}.png'
+        subprocess.run(['convert',str(png),str(png.with_suffix('.webp'))],check=True)
+        png.unlink()
+    appium(device,flutter,env)
     print('Android integration and Appium passed sequentially; emulator remains available for review.')
 
 if __name__=='__main__':
@@ -137,6 +157,7 @@ if __name__=='__main__':
     parser.add_argument('--compose-only',action='store_true',help='Run only the saved native reply/attachment scenario during development')
     parser.add_argument('--outbox-only',action='store_true',help='Run only the saved native Outbox recovery scenario')
     parser.add_argument('--incoming-only',action='store_true',help='Run only the real incoming attachment save/cancel scenario')
+    parser.add_argument('--appium-only',action='store_true',help='Rebuild and run the saved Appium controls after targeted integration checks')
     args=parser.parse_args()
-    if sum([args.compose_only,args.outbox_only,args.incoming_only])>1: parser.error('Choose only one targeted scenario')
-    main(args.device,args.flutter,args.compose_only,args.outbox_only,args.incoming_only)
+    if sum([args.compose_only,args.outbox_only,args.incoming_only,args.appium_only])>1: parser.error('Choose only one targeted scenario')
+    main(args.device,args.flutter,args.compose_only,args.outbox_only,args.incoming_only,args.appium_only)
