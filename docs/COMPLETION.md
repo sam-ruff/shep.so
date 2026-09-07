@@ -23,6 +23,71 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
+## R30 — Native folder controls verification checkpoint (2026-09-07)
+
+Native sidebar right-click and Shift+F10 menus now open Move/Delete reviews.
+Parent search ranks readable folder names and highlights the Enter target;
+choosing a parent opens an explicit subtree/count review before changing it.
+Delete has a red confirmation. Accepted input projects the folder tree immediately,
+keeps moved mail readable from its original cache and permits navigation while
+provider work continues. Rejection removes the projection and restores the prior
+view only if later navigation has not superseded it.
+
+The durable folder runner uses local read/staging queues and the existing
+coalesced worker/close barrier. Local POP3 folders initialize without guessing
+hierarchy for literal slash names. History retains decoded source/destination
+labels after moves. Monotonic job revisions reject old history observations;
+separate recovery request state prevents a late history read from unlocking an
+active button. In-process leases now also exclude competing memory-store workers,
+without creating root lock files. A regression reproduced an older workspace
+restoring the previous folder tree after a committed move; the revision guard
+now retains the new tree alongside the new folder names. Close also stops a
+queued folder job while provider capacity remains occupied, preserving queued
+steps without waiting for unrelated network jobs.
+
+Seven saved native scenarios cover slow move/navigation/restart, rejected delete
+and retry, unconfirmed move/explicit acceptance with retained cache, local POP3
+move, compact dark review/keyboard/Inbox protection, graceful partial-delete close
+and resume, and failed-close navigation/retry followed by successful close. Initial
+new tests used lowercase SQLite statuses instead of JSON enum values and clicked
+a resized sidebar before its layout settled; their corrected equivalents pass.
+Neither correction changes application timeouts or performance budgets.
+The broader context-menu scenario now focuses its message row before Shift+F10:
+with the sidebar still focused after browsing, that key correctly belongs to
+folder controls. The actual mail-menu mouse and keyboard assertions remain. Reviewed
+WebPs show the compact red confirmation, pending moved folders, actionable history
+and preserved originals. No live provider, personal cache or OS credential was used.
+
+The full native run passed **180/181** scenarios in 702.7 seconds. Its one failure
+was the focus assumption above. After the late stale-tree/queued-close fixes,
+the final rebuilt binary passes **18/18** targeted native scenarios: the corrected
+mail menu, all seven folder controls, all five folder-tree scenarios and five
+search/ranking/focus scenarios. This is not a single clean full run; the final
+focused rerun follows the earlier full run.
+**511 Rust test executions**, **48 Python tests**, Clippy, Windows GNU compilation,
+strict Zensical and the optimized release archive's checksum/extraction/installer
+checks pass. Production compilation caught a test-only observation call missing
+its feature guard; the release now compiles with fixtures disabled. Performance
+measurements remain deferred. The optimized production binary is installed
+atomically for the Linux user; existing windows were preserved. Shipping commit
+references will be recorded after the source commit.
+
+Evidence is under ignored `artifacts/logs/folder-controls-*`. The full native
+binary was `f2ddff0212b6437231ca51b6eb8ce0a479461e4b739fce3016cb9ba129d430b8`;
+the final native binary is
+`5b7d2d81a11e01081a35c853b13fcae274ae9b726f3b88b30e900c83f480b1e0`.
+Installed production SHA-256:
+`06c0cccb3d3cc6703b143f8e7fa019c1be7032533ae6d4e776a81cc6f91ef34a`.
+Reviewed native evidence includes `b1c2028d31b9/folder-destinations.webp`,
+`c06d677b277f/folder-delete-history.webp`, `8f382ebe5ac2/folder-delete-dark-compact.webp`
+and `b0451d12173f/folder-uncertain-accepted.webp`; the final search runs are
+`a2e17065657d/` and `790d14014d97/`. These are fictional fixtures. No logs or
+SQLite files were left at the repository root. Quality/release CI remain disabled. R30 remains open for combined-folder optimistic
+scope, aggregate common-folder account choice, wider account/history pagination
+coverage and cache/server convergence after an accepted unconfirmed operation.
+Accepting uncertainty is explicitly recorded as stopping work, never as a
+confirmed move/delete.
+
 ## R63 — Native keyboard ordering installed and pushed (2026-09-07)
 
 Source **b45177792c84246308da78451684820aa70cef2a** moves key presses from the asynchronous event subscription to

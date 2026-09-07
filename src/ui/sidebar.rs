@@ -19,6 +19,29 @@ impl SidebarItem {
     }
 }
 impl App {
+    pub(super) fn sidebar_folder_context(&self, action: &Message) -> Option<(String, String)> {
+        if let Message::AccountFolder(account, path) | Message::ToggleFolderGroup(account, path) =
+            action
+        {
+            return Some((account.clone(), path.clone()));
+        }
+        let account = self
+            .query
+            .account
+            .as_deref()
+            .and_then(|id| self.workspace.accounts.iter().find(|a| a.id == id))
+            .or_else(|| {
+                (self.workspace.accounts.len() == 1).then(|| &self.workspace.accounts[0])
+            })?;
+        let path = match action {
+            Message::Folder(folder) => folder.clone(),
+            Message::SentFolder if !account.sent_folder.is_empty() => account.sent_folder.clone(),
+            Message::SentFolder => "Sent".into(),
+            Message::AccountFolderUnified => "INBOX".into(),
+            _ => return None,
+        };
+        Some((account.id.clone(), path))
+    }
     pub(super) fn reveal_sidebar_focus(&self) -> Task<Message> {
         self.sidebar_items()
             .get(self.sidebar_index)
@@ -121,6 +144,16 @@ impl App {
                 section: false,
             });
         }
+        if !self.folder_controls.jobs.is_empty() {
+            items.push(SidebarItem {
+                label: "Folder changes".into(),
+                icon: "clock",
+                action: Message::Folders(folder_controls::Message::History(0)),
+                active: self.dialog == Some(Dialog::FolderHistory),
+                depth: 0,
+                section: false,
+            });
+        }
         let drafts: Vec<_> = self
             .workspace
             .drafts
@@ -168,9 +201,7 @@ impl App {
             let fallback =
                 crate::folders::Tree::new(&[crate::folders::Mailbox::flat("INBOX".into())]);
             let tree = self
-                .workspace
-                .folder_trees
-                .get(&account.id)
+                .folder_tree(&account.id)
                 .map(Arc::as_ref)
                 .unwrap_or(&fallback);
             for (depth, node) in tree.visible(self.preferences.expanded_folders.get(&account.id)) {
@@ -190,13 +221,11 @@ impl App {
                     icon: "folder",
                     action: if node.mailbox.selectable {
                         Message::AccountFolder(account.id.clone(), folder.clone())
-                    } else if !node.children.is_empty() {
-                        Message::ToggleFolderGroup(account.id.clone(), node.path.clone())
                     } else {
-                        Message::Noop
+                        Message::ToggleFolderGroup(account.id.clone(), node.path.clone())
                     },
                     active: self.query.account.as_deref() == Some(&account.id)
-                        && self.query.folder == *folder,
+                        && self.query.folder == self.original_folder(&account.id, folder),
                     depth: depth + 1,
                     section: false,
                 });
@@ -349,6 +378,8 @@ impl App {
             let reveal = self.sidebar_drag_reveal(&item.action);
             let control = if let Message::Draft(id) = item.action {
                 super::context_menu::ContextArea::draft(control, id)
+            } else if let Some((account, path)) = self.sidebar_folder_context(&item.action) {
+                super::context_menu::ContextArea::folder(control, account, path)
             } else {
                 super::context_menu::ContextArea::sidebar(control)
             };
@@ -473,9 +504,7 @@ impl App {
     }
     pub(super) fn set_folder_expanded(&mut self, account: &str, path: &str, expanded: bool) {
         if self
-            .workspace
-            .folder_trees
-            .get(account)
+            .folder_tree(account)
             .and_then(|tree| tree.node(path))
             .is_none_or(|node| node.children.is_empty())
         {
@@ -502,7 +531,7 @@ impl App {
             }
             _ => return None,
         };
-        let node = self.workspace.folder_trees.get(account)?.node(path)?;
+        let node = self.folder_tree(account)?.node(path)?;
         (!node.children.is_empty()).then(|| (account.clone(), node.path.clone()))
     }
     pub(super) fn sidebar_tree_key(&mut self, expand: bool) -> Task<Message> {

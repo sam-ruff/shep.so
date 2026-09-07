@@ -111,13 +111,18 @@ impl App {
             // Keep the base widget tree alive as dialogs open and close. Replacing the
             // root Stack with a Container drops native input focus and shaped text.
             let mut layers = stack![base];
-            if self.context_menu.is_some() || self.composer.context.is_some() {
+            if self.context_menu.is_some()
+                || self.composer.context.is_some()
+                || self.folder_controls.menu.is_some()
+            {
                 layers = layers.push(opaque(
                     mouse_area(container(space()).width(Length::Fill).height(Length::Fill))
                         .on_press(Message::DismissContext)
                         .on_right_press(Message::DismissContext),
                 ));
-                layers = layers.push(if self.composer.context.is_some() {
+                layers = layers.push(if self.folder_controls.menu.is_some() {
+                    self.folder_context_view()
+                } else if self.composer.context.is_some() {
                     self.draft_context_view()
                 } else {
                     self.mail_context_view()
@@ -1963,6 +1968,8 @@ impl App {
     }
     fn dialog_view(&self, dialog: Dialog) -> Element<'_, Message> {
         let (title, subtitle) = match dialog {
+            Dialog::FolderChange => (self.folder_change_title(), ""),
+            Dialog::FolderHistory => ("Folder changes", ""),
             Dialog::MoveRecovery => ("Recover a move", ""),
             Dialog::Removal => ("Remove connection?", ""),
             Dialog::GoogleDisconnect => ("Disconnect Google?", ""),
@@ -2015,6 +2022,8 @@ impl App {
         .align_y(Alignment::Center);
         let mut body = column![header, line()].spacing(20);
         match dialog {
+            Dialog::FolderChange => body=body.push(self.folder_change_form()),
+            Dialog::FolderHistory => body=body.push(self.folder_history_form()),
             Dialog::BulkReview => body=body.push(self.bulk_review_form()),
             Dialog::BulkHistory => body=body.push(self.bulk_history_form()),
             Dialog::MoveRecovery => body=body.push(self.move_recovery_form()),

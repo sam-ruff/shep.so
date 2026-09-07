@@ -152,9 +152,14 @@ impl App {
         self.bulk.action = None;
         self.dialog = None;
     }
+    pub(super) fn resume_folder_close_barrier(&mut self) {
+        self.bulk.stopped = false;
+        self.bulk.stop_requested = false;
+    }
     pub(super) fn pump_bulk(&mut self) {
         if self.pending_close.is_some()
             && self.bulk.staging.is_none()
+            && !self.folder_staging()
             && !self.bulk.stop_requested
             && !self.bulk.stopped
             && self.try_command(Command::BulkStop)

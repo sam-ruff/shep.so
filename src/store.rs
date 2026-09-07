@@ -31,7 +31,10 @@ use std::{
 };
 
 #[derive(Clone)]
-pub struct Store(Arc<Mutex<Connection>>);
+pub struct Store(
+    Arc<Mutex<Connection>>,
+    Arc<Mutex<std::collections::HashSet<String>>>,
+);
 
 #[derive(Debug, Clone, Default)]
 pub struct Workspace {
@@ -160,7 +163,7 @@ impl Store {
             tx.pragma_update(None, "user_version", 2)?;
             tx.commit()?;
         }
-        Ok(Self(Arc::new(Mutex::new(conn))))
+        Ok(Self(Arc::new(Mutex::new(conn)), Arc::default()))
     }
     pub async fn run<T, F>(&self, f: F) -> anyhow::Result<T>
     where
@@ -268,6 +271,7 @@ impl Store {
     }
     pub async fn workspace(&self) -> anyhow::Result<Workspace> {
         self.run(|c| {
+            folder_actions::prepare_local_catalogs(c)?;
             let mut folders = vec![
                 "INBOX".into(),
                 "Archive".into(),

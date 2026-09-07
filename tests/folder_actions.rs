@@ -799,3 +799,166 @@ async fn runner_refuses_imap_without_provider_and_pop3_crash_can_resume_local_wo
             .closed
     );
 }
+
+#[tokio::test]
+async fn folder_job_revisions_increase_across_rejection_retry_and_commit() {
+    let store = Store::memory().unwrap();
+    seed(&store).await;
+    let lease = start(&store, "revision", move_to_storage()).await;
+    let initial = store.folder_job("revision".into()).await.unwrap();
+    let step = store.claim_folder_step(&lease).await.unwrap().unwrap();
+    let running = store.folder_job("revision".into()).await.unwrap();
+    assert!(running.revision > initial.revision);
+    let rejected = store
+        .record_folder_outcome(&lease, step.position, Outcome::Rejected("Try again".into()))
+        .await
+        .unwrap();
+    assert!(rejected.revision > running.revision);
+    let retried = store.retry_folder_change(&lease).await.unwrap();
+    assert!(retried.revision > rejected.revision);
+    store.claim_folder_step(&lease).await.unwrap();
+    let ack = store
+        .record_folder_outcome(&lease, step.position, Outcome::Applied)
+        .await
+        .unwrap();
+    let done = store
+        .commit_folder_step(&lease, step.position)
+        .await
+        .unwrap();
+    assert!(done.closed && done.revision > ack.revision);
+    assert_eq!(
+        store.next_pending_folder(String::new()).await.unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn pop3_workspace_prepares_local_folders_without_changing_flat_imap_names_or_resurrecting_deletes()
+ {
+    let store = Store::memory().unwrap();
+    let mut pop = account();
+    pop.protocol = Protocol::Pop3;
+    pop.sent_folder.clear();
+    store.save_account(pop).await.unwrap();
+    let initial = store.workspace().await.unwrap();
+    assert_eq!(
+        initial.folder_trees["work"]
+            .node("Archive")
+            .unwrap()
+            .mailbox
+            .delimiter,
+        Some('/')
+    );
+    let review = store
+        .folder_review("work".into(), "Archive".into(), Action::Delete)
+        .await
+        .unwrap();
+    store
+        .start_folder_change("local-delete".into(), review)
+        .await
+        .unwrap();
+    let lease = store.folder_lease("local-delete".into()).await.unwrap();
+    let job = shep::folder_actions::runner::run(&store, &lease, None, &Default::default(), None)
+        .await
+        .unwrap();
+    assert!(job.closed);
+    assert!(
+        store.workspace().await.unwrap().folder_trees["work"]
+            .node("Archive")
+            .is_none()
+    );
+    let mut imap = account();
+    imap.id = "remote".into();
+    store.save_account(imap).await.unwrap();
+    store
+        .save_folders("remote".into(), vec!["Literal/Name".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        store.workspace().await.unwrap().folder_trees["remote"]
+            .node("Literal/Name")
+            .unwrap()
+            .mailbox
+            .delimiter,
+        None
+    );
+}
+
+#[tokio::test]
+async fn pop3_local_catalog_includes_later_imports_without_inventing_slash_ancestry() {
+    let store = Store::memory().unwrap();
+    let mut pop = account();
+    pop.protocol = Protocol::Pop3;
+    store.save_account(pop).await.unwrap();
+    store.save_folders("work".into(), Vec::new()).await.unwrap();
+    assert!(
+        store.workspace().await.unwrap().folder_trees["work"]
+            .node("INBOX")
+            .is_some()
+    );
+    store
+        .upsert(vec![
+            parse_mail(
+                "work",
+                "later",
+                "Literal/Import",
+                b"From: sender@example.test\r\nSubject: Imported\r\n\r\nPreserved body".to_vec(),
+                true,
+                false,
+            )
+            .unwrap(),
+        ])
+        .await
+        .unwrap();
+    let workspace = store.workspace().await.unwrap();
+    let node = workspace.folder_trees["work"]
+        .node("Literal/Import")
+        .unwrap();
+    assert!(node.mailbox.selectable);
+    assert_eq!(node.mailbox.delimiter, None);
+    assert!(workspace.folder_trees["work"].node("Literal").is_none());
+    assert_eq!(
+        store
+            .folder_review("work".into(), "Literal/Import".into(), Action::Delete)
+            .await
+            .unwrap()
+            .cached_messages,
+        1
+    );
+}
+
+#[tokio::test]
+async fn folder_history_keeps_decoded_source_and_destination_after_catalog_changes() {
+    let store = Store::memory().unwrap();
+    seed(&store).await;
+    let source = "Projects/Design/&ZeVnLIqe-";
+    let review = store
+        .folder_review(
+            "work".into(),
+            source.into(),
+            Action::Move {
+                parent: Some("Storage".into()),
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .start_folder_change("unicode-label".into(), review)
+        .await
+        .unwrap();
+    let lease = store.folder_lease("unicode-label".into()).await.unwrap();
+    store.claim_folder_step(&lease).await.unwrap();
+    store
+        .record_folder_outcome(&lease, 0, Outcome::Applied)
+        .await
+        .unwrap();
+    store.commit_folder_step(&lease, 0).await.unwrap();
+    let job = store.folder_job("unicode-label".into()).await.unwrap();
+    assert_eq!(job.label, "Projects/Design/日本語");
+    assert_eq!(job.destination_label.as_deref(), Some("Storage/日本語"));
+    assert!(
+        store.workspace().await.unwrap().folder_trees["work"]
+            .node(source)
+            .is_none()
+    );
+}

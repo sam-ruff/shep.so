@@ -120,6 +120,13 @@ impl CommandSender {
             };
         }
         let channel = match &command {
+            Command::Folder(request) => {
+                if request.is_read() {
+                    &self.reads
+                } else {
+                    &self.selections
+                }
+            }
             Command::Print(..) => &self.printing,
             Command::Selection(..)
             | Command::ReviewSelection(..)

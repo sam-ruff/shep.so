@@ -144,7 +144,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 174 functional flows plus the navigation and HTML pixel performance gates; shipped run evidence belongs in the completion log.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 181 functional flows plus the navigation and HTML pixel performance gates; shipped run evidence belongs in the completion log.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -673,7 +673,7 @@ Japanese mailboxes. Preserve its five saved native scenarios: mouse/restart,
 keyboard/delimiters, hover/drop/Undo, Unicode Move/review/Ctrl-selection, and
 compact dark/120% keyboard reveal with saved window size. Backend tests use actual
 loopback IMAP protocol and reopened isolated SQLite files. This is not live
-personal-server evidence. Folder delete/move context menus remain tracked R30 work.
+personal-server evidence. Folder delete/move controls and their remaining lifecycle work are tracked under R30.
 
 MCP `paste` writes only the owned Xvfb clipboard and sends native Ctrl+V after
 verifying exact bytes. It shares the existing owned clipboard cleanup, preserves
@@ -690,11 +690,26 @@ requirement that metadata actions remain available while bodies load.
 
 ## Folder mutation work in progress
 
-R30 context menus are still unfinished. `folder_actions` now defines reviewed
-subtrees and a serial runner; `store/folder_actions` holds durable steps and cache
-migrations. Connect these to native controls and engine dispatch before claiming
-the feature is delivered. Run realistic mouse, keyboard, partial-failure,
-close/restart and recovery scenarios through MCP with automated equivalents.
+`ui/folder_controls` supplies native right-click/Shift+F10 folder menus, fuzzy
+parent search, explicit move/delete review and bounded recovery history.
+`engine/folders` routes options/reviews/history through local read workers and
+staging/retry/stop through the selection FIFO. The coalesced bulk wake worker
+executes durable folder jobs serially with the existing provider/account locks
+and close barrier. R30 remains open for its wider lifecycle and scope audit.
+
+Project reviewed folder changes immediately; projected moved paths browse the
+original cache until commit. Rollback must retain later navigation, even when a
+user leaves and returns to the same Inbox. Job revisions reject stale history
+and progress; history-fetch state must not unlock a separate recovery action.
+Unconfirmed results cannot retry or stop without the appropriate explicit review.
+Accepting uncertainty stops remaining work, retains cached originals and says the
+result is unconfirmed; it is never a successful server acknowledgment. Keep
+source/destination labels decoded on the storage worker after the source leaves
+LIST. Never perform MIME or mailbox encoding work in iced handlers.
+An older Workspace snapshot must retain the newer folder trees together with
+account-folder names at its connection revision. A closing folder job waiting
+for provider capacity or its account lock stays queued and releases that wait;
+only an already-started command needs to persist its receipt before exit.
 
 IMAP RENAME moves descendants; DELETE does not. Delete reviewed descendants
 deepest first and protect Inbox. Preserve NoInferiors/NonExistent metadata and
@@ -708,11 +723,14 @@ Only tagged rejection is retryable as a rejected command; lost acknowledgments
 remain Uncertain and require explicit review. A later LIST failure cannot repeat
 an acknowledged RENAME. The runner observes database commits to completion and
 can stop between durable receipts. Local POP3 work can resume after interruption
-because its cache update and Done state commit atomically. Native POP3 hierarchy
-setup and engine/close integration remain part of R30.
+because its cache update and Done state commit atomically. Workspace preparation
+initializes local POP3 catalogs and discovers later imported local folders. Keep
+literal slash names flat and never recreate a deleted empty folder. Do not change
+an IMAP namespace or an unfinished folder review during this preparation.
 
-The owned per-job filesystem lease excludes another executor/process. It does
-not establish cross-process serialization of every ordinary provider write;
+The owned per-job filesystem lease excludes another executor/process. A shared
+in-process claim also protects memory stores without creating disk lock files;
+release it on errors, cancellation and drop. This does not establish cross-process serialization of every ordinary provider write;
 that remains R01/R06. Pending folder changes gate account writes/sync and group
 staging. Account removal reviews include the journal and delete its records after
 confirmation. Cache moves copy MIME inside SQLite, rekey IMAP metadata, preserve

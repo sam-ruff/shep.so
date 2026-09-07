@@ -85,6 +85,135 @@ class NativeFlows(unittest.TestCase):
         self.assertIsNotNone(mail, "The selected action target must exist in the metadata page")
         return mail["subject"]
 
+    def test_folder_controls_move_review(self):
+        result=self.mcp.call("desktop.start",nested_folders=True,persistent=True,folder_actions="slow")
+        print(f"Folder controls evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(click(95,540),check("folder","Projects"),check("selected","Project overview"),
+                       {"type":"click","x":95,"y":540,"button":3},check("folder_changes.menu.source","Projects"),
+                       shot("folder-context-menu"),key("Return"),check("dialog","FolderChange"),
+                       check("folder_changes.loading",False),check("focused_input","folder-parent-search"),shot("folder-destinations"),
+                       type_text("Archive"),key("Return"),check("folder_changes.review.folders",4),
+                       check("folder_changes.review.messages",4),shot("folder-move-review"),key("Return"),
+                       check("dialog",None),check("folder_changes.pending",1),check("folder","Projects"),
+                       shot("folder-move-pending"),key("ctrl+2"),check("tab","Calendar"),
+                       check("folder_changes.pending",0),check("folder_changes.jobs.0.status","Completed"),
+                       key("ctrl+1"),check("tab","Mail"),click(85,624),check("folder","Archive/Projects"),
+                       check("selected","Project overview"),shot("folder-move-complete"),
+                       {"type":"restart"},check("folder_changes.jobs.0.status","Completed"),shot("folder-move-restarted"))
+
+    def test_folder_controls_delete_failure_review(self):
+        result=self.mcp.call("desktop.start",nested_folders=True,persistent=True,folder_actions="fail")
+        print(f"Folder delete failure evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(click(95,540),check("folder","Projects"),
+                       {"type":"click","x":95,"y":540,"button":3},check("folder_changes.menu.source","Projects"),
+                       key("Down"),key("Return"),check("dialog","FolderChange"),
+                       check("folder_changes.review.folders",4),shot("folder-delete-review"),
+                       key("n"),check("dialog",None),check("folder","Projects"),
+                       {"type":"click","x":95,"y":540,"button":3},key("Down"),key("Return"),
+                       check("folder_changes.review.folders",4),key("y"),check("dialog",None),
+                       check("folder","INBOX"),check("folder_changes.pending",1),shot("folder-delete-pending"),
+                       check("folder_changes.pending",0),check("folder_changes.jobs.0.status","Could not finish"),
+                       check("folder","Projects"),click(90,477),check("dialog","FolderHistory"),
+                       check("folder_changes.loading",False),shot("folder-delete-history"),
+                       click(490,541),check("folder_changes.jobs.0.steps.0.status","Done"),
+                       check("folder_changes.jobs.0.steps.1.status","Done"),
+                       check("folder_changes.jobs.0.steps.2.status","Done"),
+                       check("folder_changes.jobs.0.closed",True),check("folder_changes.jobs.0.status","Completed"),
+                       shot("folder-delete-retry-complete"),key("Escape"),check("dialog",None),
+                       {"type":"restart"},check("folder_changes.jobs.0.closed",True),
+                       shot("folder-delete-restart"))
+        self.assertNotIn("Projects",self.mcp.call("desktop.state")["sidebar_labels"])
+
+    def test_folder_controls_uncertain_move_requires_review(self):
+        result=self.mcp.call("desktop.start",nested_folders=True,persistent=True,folder_actions="uncertain")
+        print(f"Folder uncertainty evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch({"type":"click","x":95,"y":540,"button":3},key("Return"),
+                       check("dialog","FolderChange"),check("focused_input","folder-parent-search"),
+                       check("folder_changes.loading",False),type_text("Archive"),key("Return"),
+                       check("folder_changes.review.folders",4),key("Return"),check("dialog",None),
+                       check("folder_changes.jobs.0.status","Needs review"),
+                       {"type":"restart"},check("folder_changes.jobs.0.status","Needs review"),
+                       click(90,477),check("dialog","FolderHistory"),check("folder_changes.loading",False),
+                       shot("folder-uncertain-history"),click(490,563),click(610,563),
+                       check("folder_changes.jobs.0.status","Needs review"),check("folder_changes.accepted",False),
+                       click(470,525),check("folder_changes.accepted",True),click(610,563),
+                       check("folder_changes.jobs.0.status","Stopped · unconfirmed"),
+                       check("folder_changes.jobs.0.closed",True),shot("folder-uncertain-accepted"),
+                       key("Escape"),check("dialog",None),click(95,580),check("folder","Projects"),
+                       check("selected","Project overview"),shot("folder-uncertain-cache-kept"),
+                       {"type":"restart"},check("folder_changes.jobs.0.status","Stopped · unconfirmed"))
+
+    def test_folder_controls_graceful_close_saves_receipt_and_resumes_remaining_deletes(self):
+        result=self.mcp.call("desktop.start",nested_folders=True,persistent=True,folder_actions="slow")
+        print(f"Folder graceful close evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch({"type":"click","x":95,"y":540,"button":3},key("Down"),key("Return"),
+                       check("folder_changes.review.folders",4),key("Return"),check("dialog",None),
+                       check("folder_changes.jobs.0.steps.0.status","Running"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
+        database=Path(result["artifacts"])/"fixture.sqlite"
+        with sqlite3.connect(database.as_uri()+"?mode=ro",uri=True) as cache:
+            self.assertEqual([json.loads(row[0]) for row in cache.execute("SELECT status FROM folder_steps ORDER BY position")],
+                             ["Done","Queued","Queued","Queued"])
+            self.assertEqual(cache.execute("SELECT count(*) FROM messages WHERE folder LIKE 'Projects%'").fetchone()[0],3)
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(check("folder_changes.jobs.0.steps.1.status","Done"),
+                       check("folder_changes.jobs.0.steps.2.status","Done"),
+                       check("folder_changes.jobs.0.status","Completed"),shot("folder-graceful-restart-complete"))
+
+    def test_folder_controls_failed_close_keeps_window_open_and_retry_can_close(self):
+        result=self.mcp.call("desktop.start",nested_folders=True,persistent=True,folder_actions="fail")
+        print(f"Folder failed close evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch({"type":"click","x":95,"y":540,"button":3},key("Return"),
+                       check("dialog","FolderChange"),check("focused_input","folder-parent-search"),
+                       check("folder_changes.loading",False),type_text("Archive"),key("Return"),
+                       check("folder_changes.review.folders",4),key("Return"),check("dialog",None),
+                       check("folder_changes.jobs.0.steps.0.status","Running"))
+        with self.assertRaisesRegex(AssertionError,"has not closed"):
+            self.mcp.call("desktop.close")
+        self.mcp.batch(check("folder_changes.jobs.0.status","Could not finish"),
+                       key("ctrl+2"),check("tab","Calendar"),key("ctrl+1"),check("tab","Mail"),
+                       click(90,477),check("dialog","FolderHistory"),check("folder_changes.loading",False),
+                       shot("folder-close-error-recovery"))
+        # The review's Retry is an ordinary native button; close again while its
+        # wire command is running, proving the cancelled barrier can be reused.
+        self.mcp.batch(click(490,541),check("folder_changes.jobs.0.steps.0.status","Running"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(check("folder_changes.jobs.0.status","Completed"),shot("folder-close-retried-restart"))
+
+    def test_folder_controls_pop3_local_move_retains_mail_across_restart(self):
+        result=self.mcp.call("desktop.start",pop3_account=True,persistent=True)
+        print(f"POP3 folder controls evidence: {result['artifacts']}",flush=True)
+        self.hold_mail_over(402,450,95,636)
+        self.mcp.batch({"type":"mouse_up"},check("total",119),check("mail_pending",0),
+                       click(95,636),check("folder","Projects"),check("selected","Coffee next Thursday?"),
+                       {"type":"click","x":95,"y":636,"button":3},key("Return"),
+                       check("dialog","FolderChange"),check("focused_input","folder-parent-search"),
+                       check("folder_changes.loading",False),type_text("Archive"),key("Return"),
+                       check("folder_changes.review.folders",1),check("folder_changes.review.messages",1),
+                       shot("folder-pop3-move-review"),key("Return"),check("dialog",None),
+                       check("folder_changes.jobs.0.status","Completed"),check("folder","Archive/Projects"),
+                       check("selected","Coffee next Thursday?"),shot("folder-pop3-move-complete"),
+                       {"type":"restart"},check("folder_changes.jobs.0.status","Completed"))
+        # The fixture database is read-only here: native controls did the move.
+        database=Path(result["artifacts"])/"fixture.sqlite"
+        with sqlite3.connect(database.as_uri()+"?mode=ro",uri=True) as cache:
+            self.assertEqual(cache.execute("SELECT count(*) FROM messages WHERE account='preview-personal' AND folder='Archive/Projects'").fetchone()[0],1)
+
+    def test_folder_controls_compact_dark_keyboard_and_inbox_protection(self):
+        result=self.mcp.call("desktop.start",nested_folders=True,persistent=True)
+        print(f"Folder compact controls evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),click(690,366),check("dark",True),
+                       key("ctrl+1"),check("tab","Mail"),click(95,540),check("folder","Projects"),
+                       key("shift+F10"),check("folder_changes.menu.source","Projects"),key("Down"),key("Return"),
+                       check("folder_changes.review.folders",4),{"type":"resize","width":900,"height":640},
+                       shot("folder-delete-dark-compact"),key("n"),check("dialog",None),
+                       {"type":"resize","width":1440,"height":920},check("window_size",[1440,920]),wait(100),
+                       click(185,280),check("inbox_expanded",True),wait(80),
+                       {"type":"click","x":105,"y":323,"button":3},check("folder_changes.menu.source","INBOX"),
+                       shot("folder-inbox-protected"),key("Down"),key("Return"),check("dialog",None),
+                       check("notice","cannot be changed","contains"),check("folder_changes.jobs",[]))
+
     def test_native_keys_move_escape_and_repeated_navigation_stay_ordered(self):
         self.mcp.batch(check("reader_text_ready",True),keys(*(["m","Escape"]*8)),
                        wait(100),check("dialog",None),key("m"),check("dialog","Move"),
@@ -1616,7 +1745,8 @@ class NativeFlows(unittest.TestCase):
                        type_text("Archive"), key("Return"), check("dialog", None), check("total", 119),
                        click(85, 398), check("folder", "Archive"), check("selected", "Coffee next Thursday?"),
                        key("ctrl+comma"), check("tab", "Preferences"), click(690, 366), check("dark", True),
-                       key("ctrl+1"), check("tab", "Mail"), key("shift+F10"),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80), click(403,245),
+                       check("sidebar_focus",False), key("shift+F10"),
                        check("context_subject", "Coffee next Thursday?"), shot("inbox-context-dark"),
                        click(1400, 700), check("context_menu", None))
 

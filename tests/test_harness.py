@@ -583,6 +583,17 @@ class HarnessTests(unittest.TestCase):
         desktop.command.assert_not_called()
         desktop.app = None
 
+class FolderHarnessTests(unittest.TestCase):
+    def test_folder_action_fixtures_are_explicit_and_validated_before_launch(self):
+        desktop=harness.Desktop()
+        with patch.object(harness.subprocess,"Popen") as launch:
+            for mode in (True,"broken","",123):
+                with self.assertRaisesRegex(ValueError,"folder action"):
+                    desktop.start(folder_actions=mode)
+            launch.assert_not_called()
+        start=next(t for t in harness.TOOLS if t["name"]=="desktop.start")
+        self.assertEqual(start["inputSchema"]["properties"]["folder_actions"]["enum"],["slow","fail","uncertain"])
+
 
 if __name__ == "__main__":
     unittest.main()

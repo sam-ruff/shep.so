@@ -55,6 +55,7 @@ impl App {
             && self.dialog.is_none()
             && self.remapping.is_none()
             && self.context_menu.is_none()
+            && self.folder_controls.menu.is_none()
             && self.composer.context.is_none()
             && key == Key::Named(keyboard::key::Named::Enter)
             && focus.find
@@ -65,6 +66,7 @@ impl App {
             && self.dialog.is_none()
             && self.remapping.is_none()
             && self.context_menu.is_none()
+            && self.folder_controls.menu.is_none()
             && self.composer.context.is_none()
             && action.is_some_and(|action| {
                 !matches!(

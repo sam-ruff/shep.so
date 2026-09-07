@@ -233,6 +233,7 @@ pub(super) struct ContextArea<'a> {
     content: Element<'a, Message>,
     mail: Option<String>,
     draft: Option<String>,
+    folder: Option<(String, String)>,
     preserve_pointer: bool,
     interface_scale: u16,
     drag: Option<drag_mail::Region>,
@@ -245,6 +246,7 @@ impl<'a> ContextArea<'a> {
             content: content.into(),
             mail: Some(mail),
             draft: None,
+            folder: None,
             preserve_pointer: false,
             interface_scale: 100,
             drag: None,
@@ -280,6 +282,7 @@ impl<'a> ContextArea<'a> {
             content: content.into(),
             mail: None,
             draft: None,
+            folder: None,
             preserve_pointer: false,
             interface_scale: 100,
             drag: None,
@@ -287,11 +290,17 @@ impl<'a> ContextArea<'a> {
             draw_witness: None,
         }
     }
+    pub fn folder(content: impl Into<Element<'a, Message>>, account: String, path: String) -> Self {
+        let mut area = Self::sidebar(content);
+        area.folder = Some((account, path));
+        area
+    }
     pub fn draft(content: impl Into<Element<'a, Message>>, id: String) -> Self {
         Self {
             content: content.into(),
             mail: None,
             draft: Some(id),
+            folder: None,
             preserve_pointer: false,
             interface_scale: 100,
             drag: None,
@@ -381,13 +390,20 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
             iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right))
         ) && cursor.is_over(layout.bounds())
             && cursor.is_over(*viewport)
-            && (self.mail.is_some() || self.draft.is_some())
+            && (self.mail.is_some() || self.draft.is_some() || self.folder.is_some())
             && let Some(position) = cursor.position()
         {
             if let Some(mail) = &self.mail {
                 shell.publish(Message::MailContext(mail.clone(), position));
             } else if let Some(draft) = &self.draft {
                 shell.publish(Message::DraftContext(draft.clone(), position));
+            }
+            if let Some((account, path)) = &self.folder {
+                shell.publish(Message::Folders(folder_controls::Message::Context(
+                    account.clone(),
+                    path.clone(),
+                    position,
+                )));
             }
             shell.capture_event();
             return;
