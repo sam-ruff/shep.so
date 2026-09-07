@@ -76,6 +76,14 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch({"type":"hover","x":source_x,"y":source_y},{"type":"mouse_down"},
                        {"type":"hover","x":target_x,"y":target_y},check("mail_drag.active",True))
 
+    def selected_mail_subject(self):
+        # Action identity is ready with metadata. The reader's `selected`
+        # subject can still be None while its body loads independently.
+        state = self.mcp.call("desktop.state")
+        mail = next((mail for mail in state["mail_rows"] if mail["id"] == state["selected_id"]), None)
+        self.assertIsNotNone(mail, "The selected action target must exist in the metadata page")
+        return mail["subject"]
+
     def test_nested_folder_roots_mouse_selection_and_restart(self):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True)
         print(f"Nested folder persistence evidence: {result['artifacts']}",flush=True)
@@ -880,7 +888,7 @@ class NativeFlows(unittest.TestCase):
                        click(100, 617), check("folder", "Café"), check("total", 1), check("selected", "Quick note"),
                        click(85, 115), check("folder", "INBOX"), check("query", ""),
                        check("total", 123), check("selected", None, "ne"))
-        subject = self.mcp.call("desktop.state")["selected"]
+        subject = self.selected_mail_subject()
         self.mcp.batch(key("m"), check("dialog", "Move"), check("focused_input", "folder-search"), type_text("archvie"), key("Return"),
                        check("dialog", None), check("mail_pending", 0),
                        click(85, 398), check("folder", "Archive"), check("total", 1),
@@ -1126,7 +1134,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_delete_undo_failure_has_persistent_retry_and_restores_after_retry(self):
         self.mcp.call("desktop.start", mail_actions="slow", undo_failure_once=True)
-        subject = self.mcp.call("desktop.state")["selected"]
+        subject = self.selected_mail_subject()
         self.mcp.batch(key("ctrl+d"), check("action_toast.label", "Deleted 1 message"),
                        {**check("mail_pending", 0), "timeout_ms": 5000}, check("total", 119),
                        click(1340, 874), check("total", 120), check("action_toast.label", "Restored 1 message"),
@@ -1142,7 +1150,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_move_undo_from_destination_and_compact_dark_feedback(self):
         self.mcp.call("desktop.start", mail_actions="slow")
-        subject = self.mcp.call("desktop.state")["selected"]
+        subject = self.selected_mail_subject()
         self.mcp.batch(key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
                        type_text("Projects"), key("Return"), check("dialog", None),
                        check("action_toast.label", "Moved 1 message to Projects"),

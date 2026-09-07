@@ -664,3 +664,8 @@ clipboard setup must never paste stale content. Use it for Unicode tests; the
 initial Japanese xdotool typing scenario intermittently delivered no text even
 after native input focus was acknowledged. Keep ASCII typing and real keyboard
 shortcut coverage; paste is not direct application-state injection.
+
+Harness startup waits for the metadata page, not the message body. Use
+`selected_id` and its `mail_rows` entry when remembering an action's source.
+The reader's `selected` subject may still be null; waiting for it would hide the
+requirement that metadata actions remain available while bodies load.
