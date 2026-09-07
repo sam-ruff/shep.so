@@ -754,7 +754,8 @@ in bulk-pointer-release.log.
 Installed atomically for the Linux user; the existing running window was left
 alone. The installed binary matches target/release/shep, SHA-256
 `f189f322b567bb07b02fdcc1fc773a17b633085ecc0cfcff8db59684d9aa93d9`.
-The source checkpoint is prepared for the authorized main push.
+Shipped to main as `af056a9c7f925b901052ae61b56afa840417143d`.
+Quality and release workflows remain disabled; documentation CI stays enabled.
 
 The existing native refresh-icon fix was reverified in light/dark, compact and
 120% layouts. Final reviewed captures include artifacts/e2e/7a94b5a1f5a6/
