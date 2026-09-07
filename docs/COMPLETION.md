@@ -23,6 +23,34 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
+## R81/R76 reading styles — validation in progress (2026-09-07)
+
+This work is **not yet installed or pushed**. Plain text has a centered, padded
+column that follows the text-size preference. Simple HTML gets equivalent
+low-priority CSS defaults; MIME preparation classifies typography/color-only
+letters off-thread, preserving tables, explicit dimensions and layout CSS.
+Sender CSS can override defaults. Expanded conversation cards take the active
+email's opaque background and matching control colors without rebuilding their
+widget/scroller structure as a frame arrives.
+
+486 Rust tests, 46 Python tests and Clippy pass. New renderer checks use actual
+Find/selection geometry at 340/1000/1600 px and 14/22 px fonts. Native flows cover
+plain/HTML selection, Find, centered-padding pixels, full/compact layouts,
+contrasting conversation backgrounds, cached switching and refresh/scroll.
+Two initial setup errors (click above the plain editor; appending to a retained
+Find query) were corrected; both complete scenarios pass in
+`artifacts/logs/reading-column-native-refined.log`. Existing conversation actions
+and single-message surface tests also pass in `reading-column-native-initial.log`.
+
+Reviewed screenshots under ignored `artifacts/e2e/` include `5702d689ea4e`
+(plain full width), `53782149d020` (HTML full width), `871baa7be21d`
+(compact plain/HTML), and `4b26fba9eb20` (compact dark conversation).
+The full 169-flow functional suite and optimized archive build are in progress.
+Logs use the `reading-column-` prefix under `artifacts/logs/`.
+Native test binary SHA-256:
+`77e5f50ce98c63e8c8279acd689a627a7ee01312f09cda1809b47a8faeab799a`.
+Performance measurements remain deferred; no timing budget changed.
+
 ## R84 delivered; R73 recovery checkpoint shipped (2026-09-07)
 
 Source commit **a81d767d0d687338755ec1b76b807cb97e5b6635** is installed for the

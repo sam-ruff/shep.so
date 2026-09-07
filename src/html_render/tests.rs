@@ -107,6 +107,52 @@ fn start() -> (
     let thread = std::thread::spawn(move || worker(input, output, Arc::new(AtomicU64::new(0))));
     (tx, rx, thread)
 }
+
+#[tokio::test]
+async fn simple_letters_have_padded_centered_columns_with_selectable_wrapped_text() {
+    let (tx, mut rx, thread) = start();
+    for (generation, width, font, expected_x) in
+        [(1, 1000, 14, 184.), (2, 340, 14, 20.), (3, 1600, 22, 292.)]
+    {
+        tx.send(Input::Load {
+            generation,
+            body: body("<p style='margin:0'>Column marker</p><p>A readable letter with enough text to wrap naturally as the available space changes.</p>"),
+            viewport: Viewport { width, height: 400, scale: 1. },
+            font_size: font,
+            hide_quotes: false,
+            images: vec![],
+        }).await.unwrap();
+        let Event::Frame(frame) = next(&mut rx).await else {
+            panic!("Expected pixels")
+        };
+        assert!(frame.content_width <= width as f32 + 1.);
+        tx.send(Input::Find(
+            generation,
+            generation,
+            "Column marker".into(),
+            false,
+        ))
+        .await
+        .unwrap();
+        let Event::Found(_, _, _, Ok(found)) = next(&mut rx).await else {
+            panic!("Expected rendered text geometry")
+        };
+        let first = &found.matches[0].rectangles[0];
+        assert!(
+            (first[0] - expected_x).abs() < 2.,
+            "{width}/{font}: {first:?}"
+        );
+        assert!(first[1] >= 16., "Text must clear the top edge: {first:?}");
+        tx.send(Input::SelectAll(generation)).await.unwrap();
+        let Event::Selection(_, selected, _, _) = next(&mut rx).await else {
+            panic!("Expected native selection")
+        };
+        assert!(selected.contains("Column marker"));
+        assert!(selected.contains("available space changes"));
+    }
+    drop(tx);
+    thread.join().unwrap();
+}
 #[tokio::test]
 async fn image_reflows_keep_visible_pixels_and_coalesce_until_native_acknowledgement() {
     let (tx, mut rx, thread) = start();

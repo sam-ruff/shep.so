@@ -265,8 +265,13 @@ fn document(
     let surface = container::Surface::new(viewport.width, viewport.height, viewport.scale, fonts);
     let mut container = surface.clone();
     let font_size = font_size.clamp(11, 26);
+    let reading = if body.reading_column {
+        "body{box-sizing:border-box;max-width:48em;margin:0 auto;padding:16px 20px}"
+    } else {
+        ""
+    };
     let source = format!(
-        "<style>body{{font-family:sans-serif;font-size:{font_size}px;line-height:1.5;color:#18181b;background:#fff;margin:0}}img{{max-width:100%}}</style>{}",
+        "<style>body{{font-family:sans-serif;font-size:{font_size}px;line-height:1.5;color:#18181b;background:#fff;margin:0}}img{{max-width:100%}}{reading}</style>{}",
         body.source.replace('\0', "\u{fffd}")
     );
     let quotes =

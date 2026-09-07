@@ -3,6 +3,7 @@ mod bulk_history;
 #[path = "html_mail.rs"]
 mod html_mail;
 mod move_recovery;
+mod reading_mail;
 pub use move_recovery::recover_move;
 pub mod workspace;
 
@@ -15,6 +16,9 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
         bulk_history::seed(store).await?;
     }
     move_recovery::seed(store).await?;
+    if std::env::args().any(|arg| arg == "--reading-mail") {
+        reading_mail::seed(store).await?;
+    }
     // These seeded accounts model a completed initial import. Only subsequent
     // fixture sync arrivals exercise notification delivery policy.
     for account in store.get::<Vec<Account>>("accounts").await? {

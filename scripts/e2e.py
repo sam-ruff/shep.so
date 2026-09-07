@@ -482,6 +482,71 @@ class NativeFlows(unittest.TestCase):
                        check("html_selected_text","Fictional workshop supplies","contains"),
                        key("ctrl+f"),check("focused_input","find-message"),type_text("Quantity"),check("find_count",12))
 
+    def assert_letter_column_pixels(self, directory, name):
+        from PIL import Image
+        state = self.mcp.call("desktop.state")
+        x,y,width,_ = state["html_body_bounds"]
+        capture = Image.open(Path(directory)/(name+".webp")).convert("RGB")
+        ink = [px for py in range(int(y+16),int(y+40))
+               for px in range(int(x),int(x+width))
+               if max(capture.getpixel((px,py))) < 100]
+        self.assertTrue(ink,"Expected visible letter text below its top padding")
+        expected = x + max(0,(width-48*state["reader_size"])/2) + 20
+        self.assertAlmostEqual(min(ink),expected,delta=4)
+
+    def test_reading_columns_plain_html_selection_find_and_resize(self):
+        started=self.mcp.call("desktop.start",reading_mail=True)
+        print(f"Reading column evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("selected","Reading style plain letter"),check("reader_text_ready",True),
+                       double_click(400,245),check("full_reader",True),wait(120),shot("plain-letter-full"),
+                       click(500,410),key("ctrl+a"),check("reader_selected_text","Column marker","contains"),
+                       key("ctrl+f"),check("focused_input","find-message"),key("ctrl+a"),type_text("selectable"),check("find_count",1),
+                       key("Escape"),check("find_open",False),key("Escape"),check("full_reader",False),
+                       double_click(400,349),check("selected","Reading style HTML letter"),check("full_reader",True),
+                       check("html_view_current",True),wait(120),shot("html-letter-full"))
+        self.assert_letter_column_pixels(started["artifacts"],"html-letter-full")
+        state=self.mcp.call("desktop.state")
+        x,y,width,_=state["html_body_bounds"]
+        self.mcp.batch(click(int(x+width/2),int(y+30)),key("ctrl+a"),
+                       check("html_selected_text","Column marker","contains"),
+                       key("ctrl+f"),check("focused_input","find-message"),key("ctrl+a"),type_text("selectable"),check("find_count",1),
+                       key("Escape"),check("find_open",False),
+                       {"type":"resize","width":900,"height":640},check("html_view_current",True),wait(150),shot("html-letter-compact"))
+        self.assert_letter_column_pixels(started["artifacts"],"html-letter-compact")
+        self.mcp.batch(key("Escape"),check("full_reader",False),click(400,245),
+                       check("selected","Reading style plain letter"),check("reader_text_ready",True),shot("plain-letter-compact"))
+
+    def test_conversation_surfaces_follow_each_message_background_without_losing_scroll(self):
+        from PIL import Image
+        for dark in (False,True):
+            started=self.mcp.call("desktop.start",reading_mail=True)
+            print(f"Conversation surface evidence: {started['artifacts']}",flush=True)
+            if dark:
+                self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(690,366),
+                               check("dark",True),key("ctrl+1"),check("tab","Mail"))
+            self.mcp.batch(click(400,453),check("conversation_total",2),check("html_view_current",True),
+                           check("html_background",[255,255,255,255]),wait(120),shot(f"conversation-white-{dark}"))
+            state=self.mcp.call("desktop.state")
+            x,y,_,height=state["html_body_visible"]
+            capture=Image.open(Path(started["artifacts"])/f"conversation-white-{dark}.webp").convert("RGB")
+            self.assertTrue(all(v>=247 for v in capture.getpixel((int(x-8),int(y+min(25,height/2))))))
+            self.mcp.batch(click(800,258),check("loaded_message_id","preview-work:Archive:reading-2"),
+                           check("html_background",[23,42,58,255]),check("html_view_current",True),wait(120),shot(f"conversation-navy-{dark}"))
+            state=self.mcp.call("desktop.state")
+            x,y,_,height=state["html_body_visible"]
+            capture=Image.open(Path(started["artifacts"])/f"conversation-navy-{dark}.webp").convert("RGB")
+            pixel=capture.getpixel((int(x-8),int(y+min(25,height/2))))
+            self.assertTrue(all(abs(a-b)<=6 for a,b in zip(pixel,(23,42,58))),pixel)
+            for _ in range(2):
+                self.mcp.batch(click(800,785),check("loaded_message_id","preview-work:INBOX:reading-3"),
+                               check("html_background",[255,255,255,255]),check("html_view_current",True),
+                               click(800,258),check("loaded_message_id","preview-work:Archive:reading-2"),
+                               check("html_background",[23,42,58,255]),check("html_view_current",True))
+            before=self.mcp.call("desktop.state")["conversation_scroll"]
+            self.mcp.batch(key("ctrl+r"),check("refreshing",True),check("refreshing",False),
+                           check("conversation_scroll",before),check("html_view_current",True),
+                           {"type":"resize","width":900,"height":640},check("html_view_current",True),wait(150),shot(f"conversation-surface-compact-{dark}"))
+
     def test_html_background_matches_document_surround_in_both_themes(self):
         from PIL import Image
         for dark in (False, True):

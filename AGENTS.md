@@ -822,3 +822,19 @@ search returns to the browsing scope. Do not restore the old Inbox-only search.
 Folder labels in result rows must remain readable at compact sizes. Preserve the
 storage scope/ranking/paging/selection tests and all three `test_search_*` native
 cross-folder scenarios. Search and move-dialog folder matching are distinct.
+
+
+## Default reading layout
+
+MIME preparation computes `HtmlBody.reading_column` off the UI thread. Plain
+letters and HTML with typography/color styling get a centered column with
+comfortable padding. HTML tables, explicit dimensions/positioning and authored
+layout CSS retain sender geometry; do not apply the simple-column CSS to them.
+Font-size changes scale the column. Keep rendered Find/selection geometry and
+native full/compact pixel checks alongside any default CSS changes.
+
+Expanded conversation cards share the active document's opaque background and
+choose light/dark control colors for that surface. Their themer/container tree
+stays identical while rendering discovers a background, so theme updates cannot
+reset the scroller or native text selection. Preserve contrasting-message,
+cached-switching and refresh/scroll tests, as well as the standalone reader tests.

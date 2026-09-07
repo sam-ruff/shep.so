@@ -291,7 +291,16 @@ impl App {
                     .align_y(Alignment::Center),
                 );
             }
-            cards = cards.push(
+            let background = expanded
+                .then(|| {
+                    self.detail
+                        .as_ref()
+                        .filter(|detail| detail.summary.id == mail.id)
+                        .and_then(|detail| self.document_background(detail))
+                })
+                .flatten();
+            cards = cards.push(widget::themer(
+                super::reading::document_theme(background),
                 container(content)
                     .height(if expanded {
                         Length::Shrink
@@ -301,8 +310,19 @@ impl App {
                     .align_y(Alignment::Center)
                     .padding(14)
                     .width(Length::Fill)
-                    .style(if active { selected_card } else { card }),
-            );
+                    .style(move |theme| {
+                        let mut style = if active {
+                            selected_card(theme)
+                        } else {
+                            card(theme)
+                        };
+                        if let Some(background) = background {
+                            style.background = Some(background.into());
+                            style.text_color = Some(colors(theme).text);
+                        }
+                        style
+                    }),
+            ));
         }
         let controls = row![
             text(format!("{} messages", page.total)).size(12),
