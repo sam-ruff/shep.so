@@ -69,6 +69,7 @@ and several window-close branches still require another click after other saves.
 Use channel-owned control/cancellation for the remaining work; preserve actual
 in-flight receipts. `store/worker.rs` now owns the mail-cache connection and local
 leases behind 32 bounded commands; queued writes drain without their observers.
+Source checkpoint `db8c82a` is pushed to main and exact remote equality was verified.
 Its restart test exposed a SQLite 3.51.1 Unix WAL open/close deadlock, confirmed in
 a child-process debugger trace. Updating rusqlite to 0.40.2 / bundled SQLite 3.53.2
 fixes that reproduction. The five worker tests, 546 Rust/adapter executions,
