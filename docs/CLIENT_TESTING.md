@@ -179,3 +179,9 @@ Flutter reader actions use `test/support/reader_actions_scenario.dart` from host
 
 
 `web/e2e/bulk-controls.spec.ts` drives full mixed-account reviews, cancellation, all 125 messages across three pages, History/Undo, held provider requests, held native button presses, definite retry, explicit uncertain-result acceptance and conservative startup recovery. `bulk-projection.spec.ts` checks off-page counts/membership, newer field ownership, receipt/cache ordering and incremental journal observations. Keep light/dark/compact screenshots and axe checks; these synthetic controls complement the existing executor/provider transcripts, not live mail verification. History retains at most 20 groups and one 50-item page. Undo acknowledges input immediately and projects after its durable decision; synchronous row/count restoration while local decision storage is held remains an active parity gap.
+
+
+`web/e2e/preferences-controls.spec.ts` holds an ordinary fictional provider flag completion while actual shortcut controls receive a mouse press or modifier/key input. It verifies retained focus/activation, remapping persistence, conflicts, Escape, active Clear, switching captures, appearance and navigation cancellation. Light/dark screenshots are synthetic. These controls use the same isolated browser cache/transport fixtures as mailbox tests, never the owner’s phone or accounts.
+
+
+The successive-group control holds the initial History observation, a provider result and Undo-preview queries separately. Progress must reach the actual completed count while the preview stays held; Undo activates only after preparation. A rejected-preview scenario retains a persistent error, retries through Refresh history and restores the group. These deterministic fault boundaries reproduce the observed stale History count without relaxing assertion deadlines.

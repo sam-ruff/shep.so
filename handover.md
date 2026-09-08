@@ -1,6 +1,6 @@
 # Shep handover
 
-The user requested this handover, TODO cleanup and a push because credits are nearly exhausted. Stop feature development after shipping this checkpoint; resume only when requested. **The full product goal is unfinished.**
+This handover records the credit-limited stopping point. The user explicitly resumed development on 2026-09-08; continue from the restart order below. **The full product goal is unfinished.**
 
 ## Start here
 
@@ -21,7 +21,13 @@ Quality/release workflows remain `.yml.disabled`; documentation CI is enabled. R
 
 Keep R75: replace manual Google-token setup with provider OAuth “Sign in with Google”; beta login alone does not connect Gmail/Calendar/Drive. Keep R76: Preferences automatic replies with one message assigned to searchable account groups/all accounts, multiple entries, start/end times, visible timezone, overlap handling and honest per-provider results, preferably scheduled server-side. Linux app-store submissions remain R72.
 
-## Current checkpoint
+## Current work and phone installation
+
+The user resumed development after the credit-limited handover. R79 then authorized installing the normal app on the owner’s Android phone. Shep 0.1.0 (1), production-flavor ARM64 release, was built with its native Rust library, development-signed, installed without clearing data and launched successfully. Package/process verification passed; the final screen observation found the phone locked. The APK and build/signature evidence remain in ignored `artifacts/flutter/phone-install/` and `artifacts/logs/phone-*`. Do not preserve pairing codes, addresses or device identifiers in repository records, and do not run fixture automation on that phone. Full parity is still unfinished.
+
+R63 now has two deterministic failed-before regressions for shortcut capture/held presses interrupted by background mail completion. Mounted capture state and retained controls fix the failures, with an additional saved cancellation/current-setting scenario. Final Chromium regression passes 133/133 scenarios, all 123 unit tests and 15 targeted History/Find/Preferences controls pass, and light/dark/History WebP captures are reviewed. Production HTTPS, strict documentation, mandatory hooks and shipping follow in the completion log. The full run also exposed History waiting for Undo preview preparation after the durable group had completed. Independent preparation tokens and persistent Refresh recovery now pass deterministic held-result and failed-preview controls. Keep the earlier failing evidence below as historical evidence.
+
+## Previous shipped checkpoint
 
 Browser group Undo prepares a worker counterfactual and paints restored rows/counts before saving the decision or finishing another query. Rejection rolls back while preserving newer reader flags/body and leaves a workspace recovery error after History closes. Restored metadata retains its physical baseline for immediate follow-up actions.
 
@@ -29,7 +35,7 @@ Browser group Undo prepares a worker counterfactual and paints restored rows/cou
 
 Preserve existing mail schema 12/journal schema 6 lineage, canonical-alias proofs, acknowledged physical receipts, cache-only repair and conservative uncertain-write recovery. Never dispatch with a projected or obsolete UID. Query/selection workers retain bounded metadata pages and separate body reads; do not replace exact frozen membership with loaded-row loops.
 
-## Verification and known failure
+## Previous checkpoint verification and retained failures
 
 - 123 browser unit tests pass; all 28 targeted bulk control/executor scenarios pass.
 - Full Chromium run: **128/129 pass**. An existing Find-remapping scenario retained Control+f after Control+g/reload. Its unchanged test file then passed **9/9 across three repetitions**. This is not a clean full-suite pass; shortcut capture across asynchronous redraws remains R63.
@@ -39,7 +45,7 @@ Preserve existing mail schema 12/journal schema 6 lineage, canonical-alias proof
 
 ## Next work when resumed
 
-1. Investigate the saved Find capture failure with a deterministic held-update control scenario; do not hide it with forced clicks or relaxed timeouts.
+1. Finish the R63 shortcut-capture/History checkpoint production checks and prompt review-branch shipping. Its implementation and saved real controls are in `web/src/ui.ts`, `web/src/reader_actions.ts` and `web/e2e/preferences-controls.spec.ts`. Preserve the recorded failed baselines; never hide failures with forced clicks or relaxed timeouts.
 2. Finish browser Undo lifecycle coverage: queued approval, changed scope/page, partial failures, overlapping groups, startup notifications and abandoned review/staging cleanup.
 3. Connect Flutter's existing native SQLite capture and Dart controller to exact durable group execution, then Select/Done/Clear/all, review, Undo, History and recovery controls. Its current loaded-row actions are **not** full-mailbox parity.
 4. Continue the remaining account/calendar/Google/backup, composition, cache/large-message, remote-image, keymap, lifecycle and platform gaps in TODO. Port later committed desktop work deliberately, preserving both request histories and `desktop-main:` identifier collisions.

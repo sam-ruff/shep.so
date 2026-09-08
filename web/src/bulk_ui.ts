@@ -334,12 +334,14 @@ export class GroupUI {
       generation = 0,
       busy = false,
       refreshAgain = false,
-      undoPreparing: string | undefined;
+      undoPreparing: { id: string } | undefined;
     const title = el("h3"),
       summary = el("p", "group-progress"),
       items = el("div", "group-items"),
-      decisionError = el("p", "form-status");
+      decisionError = el("p", "form-status"),
+      previewError = el("p", "form-status");
     decisionError.setAttribute("role", "alert");
+    previewError.setAttribute("role", "alert");
     const act = async (decision: GroupDecision) => {
       if (!view || busy) return;
       const target = view.job;
@@ -390,6 +392,7 @@ export class GroupUI {
       title,
       summary,
       decisionError,
+      previewError,
       details,
       items,
       earlierItems,
@@ -403,7 +406,7 @@ export class GroupUI {
       undo.hidden = !job || job.state !== "ready" || job.undo;
       repair.hidden = !job?.pendingCache;
       for (const b of [pause, resume, undo, repair]) b.disabled = busy;
-      undo.disabled = busy || undoPreparing === job?.id;
+      undo.disabled = busy || undoPreparing?.id === job?.id;
       earlierItems.disabled = !positions.length;
       laterItems.disabled = (view?.items.length ?? 0) < 50;
     };
@@ -523,13 +526,18 @@ export class GroupUI {
     };
     const loadView = async (replace = false) => {
       if (!selected) return;
+      if (replace) {
+        undoPreparing = undefined;
+        previewError.textContent = "";
+      }
       const request = ++generation;
       try {
         const describe = replace || !view || view.job.id !== selected;
         const result = await this.groups.view(selected, after, describe);
         if (!d.isConnected || request !== generation) return;
-        const preparing = describe && !result.job.undo;
-        if (preparing) undoPreparing = result.job.id;
+        const preparing =
+          describe && !result.job.undo ? { id: result.job.id } : undefined;
+        if (preparing) undoPreparing = preparing;
         // Subjects/senders are one displayed metadata page, refreshed explicitly
         // or when changing pages, never reread for every provider receipt.
         if (!describe)
@@ -542,14 +550,24 @@ export class GroupUI {
         view = result;
         renderView(replace);
         status.textContent = "";
-        // Progress and other actions must not wait for a continuously changing
-        // counterfactual. Only Undo needs its initial preview before activation.
+        // Do not keep the History refresh loop waiting for a changing preview.
+        // Its independent token also rejects late results after switching groups.
         if (preparing) {
-          await this.w.prepareGroupUndo(result.job.id);
-          if (d.isConnected && selected === result.job.id) {
-            undoPreparing = undefined;
-            updateButtons();
-          }
+          const current = () =>
+            d.isConnected &&
+            selected === result.job.id &&
+            undoPreparing === preparing;
+          void this.w.prepareGroupUndo(result.job.id).then(
+            () => {
+              if (!current()) return;
+              undoPreparing = undefined;
+              updateButtons();
+            },
+            (error) => {
+              if (current())
+                previewError.textContent = `${message(error)} Refresh history to retry Undo.`;
+            },
+          );
         }
       } catch (error) {
         if (d.isConnected && request === generation)
@@ -584,6 +602,7 @@ export class GroupUI {
             `${groupActionName(job.action)} ${count(job.total)} · ${new Date(job.created).toLocaleString()}`,
             () => {
               selected = job.id;
+              undoPreparing = undefined;
               view = undefined;
               title.textContent = "";
               summary.textContent = "";
