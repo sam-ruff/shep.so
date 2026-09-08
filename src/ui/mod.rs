@@ -84,7 +84,6 @@ pub enum Dialog {
     Account,
     Calendar,
     Move,
-    Compose,
     DiscardDraft,
     Event,
     Export,
@@ -149,8 +148,12 @@ pub enum Message {
     ChooseAttachments,
     ChosenAttachments(Draft, Vec<std::path::PathBuf>),
     RemoveDraftAttachment(String),
+    NewMessage,
     ShowRecipients,
     ComposeField(&'static str, String),
+    CloseComposer,
+    ToggleComposer,
+    IncludeOriginal(bool),
     SaveDraft,
     Send,
     Field(&'static str, String),
@@ -744,6 +747,8 @@ impl App {
     fn select(&mut self, id: String) {
         self.pending_mail_action = None;
         if self.selected.as_deref() != Some(&id) {
+            self.park_composer();
+            self.composer.dismissed_for = None;
             self.expanded_replies.clear();
             self.conversation.page = Default::default();
         }
@@ -775,6 +780,7 @@ impl App {
             }
         }
         self.load_remote_images();
+        self.restore_reply();
     }
     fn open(&mut self, dialog: Dialog) {
         self.pending_focus = None;
@@ -793,19 +799,6 @@ impl App {
                 self.fields.insert("incoming_auth", "Password".into());
                 self.fields.insert("smtp_security", "StartTls".into());
                 self.fields.insert("smtp_auth", "Automatic".into());
-            }
-            Dialog::Compose => {
-                self.composer.current = composing::Session::default();
-                self.composer.current.draft.id = uuid::Uuid::new_v4().to_string();
-                self.composer.current.editor = text_editor::Content::new();
-                if let Some(account) = self
-                    .query
-                    .account
-                    .clone()
-                    .or_else(|| self.workspace.accounts.first().map(|a| a.id.clone()))
-                {
-                    self.composer.current.draft.account_id = account;
-                }
             }
             Dialog::Event => {
                 self.editing_event = None;
@@ -941,7 +934,7 @@ impl App {
             }
             Message::DraftContext(id, position) => {
                 if self.dialog.is_none()
-                    && self.workspace.drafts.iter().any(|draft| draft.id == id)
+                    && self.draft_labels().iter().any(|(draft, _)| *draft == id)
                     && !self.workspace.outgoing_drafts.contains(&id)
                 {
                     self.context_menu = None;
@@ -1270,6 +1263,7 @@ impl App {
                                 self.cache_detail(detail);
                             }
                             self.load_remote_images();
+                            self.restore_reply();
                             if self.pending_mail_action.is_some() {
                                 return self.finish_mail_context();
                             }
@@ -1420,8 +1414,12 @@ impl App {
                     }
                     match result {
                         Ok(state) => self.observe_drafts(&state),
-                        Err(error) => self.notice(error, true),
+                        Err(error) => {
+                            self.fail_removal_draft_wait(&id, &error);
+                            self.notice(error, true);
+                        }
                     }
+                    self.continue_removal_review();
                 }
                 Event::OutgoingPage(request, result) => self.outgoing_page(request, result),
                 Event::OutgoingChanged => {
@@ -1430,7 +1428,8 @@ impl App {
                     }
                 }
                 Event::ReviewOutgoing(id, revision) => {
-                    if self.dialog == Some(Dialog::Compose)
+                    if self.compose_visible()
+                        && self.dialog.is_none()
                         && self.composer.current.draft.id == id
                         && self.composer.current.draft.revision == revision
                     {
@@ -1440,14 +1439,7 @@ impl App {
                     }
                 }
                 Event::SubmissionQueued(id, revision) | Event::Sent(id, revision) => {
-                    if self.composer.current.draft.id == id
-                        && self.composer.current.draft.revision == revision
-                    {
-                        if self.dialog == Some(Dialog::Compose) {
-                            self.dialog = None;
-                        }
-                        self.composer.current = composing::Session::default();
-                    }
+                    self.retire_draft(&id, Some(revision));
                 }
                 Event::RemoteImage(url, result) => {
                     self.requested_images.remove(&url);
@@ -1638,6 +1630,7 @@ impl App {
                     self.saved_toast = None;
                 }
                 self.autosave_draft();
+                self.continue_removal_review();
                 if self
                     .notice
                     .as_ref()
@@ -1651,6 +1644,7 @@ impl App {
                     return Task::none();
                 }
                 if tab == Tab::Mail && self.tab == Tab::Mail {
+                    self.close_composer();
                     self.query.account = if self.preferences.unified_inbox {
                         None
                     } else {
@@ -1673,6 +1667,15 @@ impl App {
                 }
                 self.tab = tab;
                 self.dialog = None;
+                if tab == Tab::Mail
+                    && let Some(draft) = self
+                        .composer
+                        .resume
+                        .take()
+                        .and_then(|id| self.owned_draft(&id))
+                {
+                    self.load_draft(draft);
+                }
                 if tab == Tab::Preferences {
                     self.fields.clear();
                     self.settings_fields();
@@ -1700,12 +1703,17 @@ impl App {
                 self.save_preferences();
             }
             Message::SettingsTab(tab) => {
+                self.defer_draft_exit(composing::Exit::Tab(Tab::Preferences));
                 self.settings_search.clear();
                 self.settings_group = None;
                 self.tab = Tab::Preferences;
                 self.settings_tab = tab;
                 self.fields.clear();
                 self.settings_fields();
+            }
+            Message::NewMessage => {
+                self.new_composer();
+                return focus_after_layout("to");
             }
             Message::Open(dialog) => {
                 self.open(dialog);
@@ -1737,14 +1745,15 @@ impl App {
                 }
                 self.pending_focus = None;
                 self.focused_input = None;
-                if self.defer_draft_exit(composing::Exit::Dialog) {
-                    return Task::none();
+                if self.dialog.is_none() && self.compose_visible() {
+                    self.close_composer();
                 }
                 self.dialog = None;
                 self.remapping = None;
                 return widget::operation::focus("unfocused");
             }
             Message::Query(query) => {
+                self.close_composer();
                 if query.trim().is_empty() {
                     self.query.sort = self.preferences.mail_sort;
                 } else if self.query.search.trim().is_empty() {
@@ -1772,6 +1781,7 @@ impl App {
             Message::Folder(folder) => self.open_mail_folder(folder, false),
             Message::SentFolder => self.open_mail_folder("Sent".into(), true),
             Message::Account(account) => {
+                self.close_composer();
                 self.query.folders = None;
                 self.query.account = account.or_else(|| {
                     if self.preferences.unified_inbox {
@@ -1786,6 +1796,7 @@ impl App {
                 self.request_page();
             }
             Message::Sort(sort) => {
+                self.close_composer();
                 self.focused_input = None;
                 self.pending_focus = None;
                 self.query.sort = sort;
@@ -1799,6 +1810,7 @@ impl App {
                 self.request_page();
             }
             Message::Filter(filter) => {
+                self.close_composer();
                 self.focused_input = None;
                 self.pending_focus = None;
                 self.query.unread_only = filter == MailFilter::Unread;
@@ -1811,6 +1823,7 @@ impl App {
                 self.request_page();
             }
             Message::Starred => {
+                self.close_composer();
                 self.query.folders = None;
                 self.tab = Tab::Mail;
                 self.query.starred_only = true;
@@ -1845,6 +1858,7 @@ impl App {
             }
             Message::Hover(id) => self.preload(id),
             Message::NextPage(next) => {
+                self.close_composer();
                 self.query.offset = if next {
                     (self.query.offset + PAGE_SIZE)
                         .min(self.page.total.saturating_sub(1) / PAGE_SIZE * PAGE_SIZE)
@@ -1911,7 +1925,11 @@ impl App {
                     "folder-search" => self.dialog == Some(Dialog::Move),
                     "folder-parent-search" => self.dialog == Some(Dialog::FolderChange),
                     "event-title" => self.dialog == Some(Dialog::Event),
-                    "to" => self.dialog == Some(Dialog::Compose),
+                    "to" | "compose-body" => {
+                        self.compose_visible()
+                            && !self.composer.current.minimized
+                            && self.dialog.is_none()
+                    }
                     "search" => self.tab == Tab::Mail && self.dialog.is_none() && !self.full_reader,
                     _ => false,
                 };
@@ -2009,12 +2027,31 @@ impl App {
             }
             Message::Reply | Message::ReplyAll => {
                 if let Some(detail) = self.detail.clone() {
-                    let draft = detail.reply.draft(
+                    let mut draft = detail.reply.draft(
                         &detail,
                         &self.workspace.accounts,
                         matches!(message, Message::ReplyAll),
                     );
-                    self.load_draft(draft);
+                    self.restore_reply();
+                    if self
+                        .composer
+                        .current
+                        .draft
+                        .reply_context
+                        .as_ref()
+                        .is_some_and(|context| context.mail_id == detail.summary.id)
+                    {
+                        self.composer.current.minimized = false;
+                    } else {
+                        draft.reply_context = Some(ReplyContext {
+                            account_id: detail.summary.account_id.clone(),
+                            mail_id: detail.summary.id.clone(),
+                            quote: std::mem::take(&mut draft.body),
+                            include_quote: true,
+                        });
+                        self.load_draft(draft);
+                    }
+                    return focus_after_layout("compose-body");
                 }
             }
             Message::Forward => {
@@ -2027,14 +2064,38 @@ impl App {
             Message::ChosenAttachments(draft, paths) => self.attach_chosen(draft, paths),
             Message::RemoveDraftAttachment(id) => self.remove_draft_attachment(id),
             Message::ComposeField(key, value) => self.edit_compose_field(key, value),
+            Message::CloseComposer => {
+                self.close_composer();
+                return widget::operation::focus("unfocused");
+            }
+            Message::ToggleComposer => {
+                self.composer.current.minimized = !self.composer.current.minimized;
+                self.pending_focus = None;
+                self.focused_input = None;
+                return if self.composer.current.minimized {
+                    widget::operation::focus("unfocused")
+                } else {
+                    focus_after_layout("compose-body")
+                };
+            }
+            Message::IncludeOriginal(value) => {
+                if !self.compose_locked()
+                    && let Some(context) = &mut self.composer.current.draft.reply_context
+                {
+                    context.include_quote = value;
+                    self.draft_edited();
+                }
+            }
             Message::ShowRecipients => {
                 self.composer.current.show_recipients = !self.composer.current.show_recipients
             }
             Message::SaveDraft => {
-                self.save_and_exit(composing::Exit::Dialog);
+                self.save_current_draft();
             }
             Message::Send => {
-                if !self.compose_locked()
+                if self.compose_visible()
+                    && self.dialog.is_none()
+                    && !self.compose_locked()
                     && self.composer.io.as_deref() != Some(&self.composer.current.draft.id)
                 {
                     let draft = self.current_draft();
@@ -2049,8 +2110,9 @@ impl App {
                     self.open_outbox();
                     return Task::none();
                 }
-                if let Some(draft) = self.workspace.drafts.iter().find(|d| d.id == id).cloned() {
+                if let Some(draft) = self.owned_draft(&id) {
                     self.load_draft(draft);
+                    return focus_after_layout("compose-body");
                 }
             }
             Message::Field(key, value) => {
@@ -2336,7 +2398,7 @@ impl App {
                 self.save_preferences();
             }
             Message::Editor(action) => {
-                if self.compose_locked() {
+                if !self.compose_visible() || self.dialog.is_some() || self.compose_locked() {
                     return Task::none();
                 }
                 if action.is_edit() {
@@ -2844,6 +2906,7 @@ impl App {
         }
     }
     fn open_mail_folder(&mut self, folder: String, sent_only: bool) {
+        self.close_composer();
         self.tab = Tab::Mail;
         self.query.folders = None;
         self.query.folder = folder;
@@ -3335,7 +3398,7 @@ impl App {
                     }
                     Task::none()
                 }
-                Action::Compose => self.handle(Message::Open(Dialog::Compose)),
+                Action::Compose => self.handle(Message::NewMessage),
                 Action::Reply => self.handle(Message::Reply),
                 Action::ReplyAll => self.handle(Message::ReplyAll),
                 Action::Forward => self.handle(Message::Forward),
@@ -3386,9 +3449,14 @@ impl App {
             "bcc": self.compose_field("bcc"),
             "subject": self.compose_field("subject"),
         });
-        if self.dialog == Some(Dialog::Compose) {
-            data["fields"] = data["compose_fields"].clone();
-        }
+        data["composer"] = serde_json::json!({
+            "visible": self.compose_visible(),
+            "id": self.composer.current.draft.id,
+            "minimized": self.composer.current.minimized,
+            "parked": self.composer.parked.keys().collect::<Vec<_>>(),
+            "pending": self.composer.current.pending,
+            "reply": self.composer.current.draft.reply_context,
+        });
         self.bulk_test_state(&mut data);
         data["mail_drag"] = self.mail_drag.observation();
         #[cfg(feature = "test-support")]

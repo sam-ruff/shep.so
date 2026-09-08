@@ -43,6 +43,12 @@ impl Engine {
             Submission::new(account, &build_draft, message)
         })
         .await??;
+        #[cfg(feature = "test-support")]
+        if self.demo && std::env::args().any(|arg| arg == "--mail-actions=slow") {
+            // Hold fixture preparation so native tests can switch editors before
+            // the existing preview refusal. No SMTP or keychain access occurs.
+            tokio::time::sleep(Duration::from_millis(1600)).await;
+        }
         anyhow::ensure!(
             !self.demo,
             "Sending is disabled in preview. Your draft is saved locally."

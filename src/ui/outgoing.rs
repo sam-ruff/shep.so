@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn durable_submission_closes_only_its_composer_and_leaves_navigation_available() {
         let (mut app, _) = App::new();
-        app.open(Dialog::Compose);
+        app.new_composer();
         let id = app.composer.current.draft.id.clone();
         let revision = app.composer.current.draft.revision;
         app.busy.insert(format!("send:{id}"));

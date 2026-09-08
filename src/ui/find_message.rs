@@ -222,7 +222,9 @@ impl App {
             Message::Reveal(revision, jump, delta, pan)
                 if revision == self.find_message.revision && jump == self.find_message.jump =>
             {
-                let target = if self.conversation_visible() {
+                let target = if self.compose_visible() {
+                    "compose-reader"
+                } else if self.conversation_visible() {
                     "conversation-reader"
                 } else {
                     "message-reader"

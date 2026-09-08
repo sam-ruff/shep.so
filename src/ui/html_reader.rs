@@ -342,7 +342,9 @@ impl App {
                     self.html_reader.anchor_pending = Some(frame.layout_revision);
                     adjustment = anchor::apply(
                         &self.html_reader,
-                        if self.conversation_visible() {
+                        if self.compose_visible() {
+                            "compose-reader"
+                        } else if self.conversation_visible() {
                             "conversation-reader"
                         } else {
                             "message-reader"
@@ -390,15 +392,16 @@ impl App {
                 } else if let Ok(url) = url::Url::parse(&url)
                     && url.scheme() == "mailto"
                 {
-                    self.open(Dialog::Compose);
+                    let task = self.handle(super::Message::NewMessage);
                     // Treat the link as addresses only; do not accept hidden
                     // recipients/headers or attachments supplied by a message.
-                    self.fields.insert(
+                    self.edit_compose_field(
                         "to",
                         percent_encoding::percent_decode_str(url.path())
                             .decode_utf8_lossy()
                             .into_owned(),
                     );
+                    return task;
                 }
             }
             Message::Backend(Event::Error(id, error)) if id == self.html_reader.generation => {
@@ -487,7 +490,9 @@ impl App {
                 self.html_reader
                     .view_version
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let target = if self.conversation_visible() {
+                let target = if self.compose_visible() {
+                    "compose-reader"
+                } else if self.conversation_visible() {
                     "conversation-reader"
                 } else {
                     "message-reader"
@@ -501,7 +506,9 @@ impl App {
                 self.html_reader
                     .view_version
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let target = if self.conversation_visible() {
+                let target = if self.compose_visible() {
+                    "compose-reader"
+                } else if self.conversation_visible() {
                     "conversation-reader"
                 } else {
                     "message-reader"

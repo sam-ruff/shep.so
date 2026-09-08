@@ -63,6 +63,13 @@ impl CommandSender {
     }
 
     #[cfg(test)]
+    pub(crate) fn draft_review_test_channels()
+    -> (Self, mpsc::Receiver<Command>, mpsc::Receiver<Command>) {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.persistence, inputs.reads)
+    }
+
+    #[cfg(test)]
     pub(crate) fn selection_test_channel() -> (Self, mpsc::Receiver<Command>) {
         let (sender, inputs) = Self::channel();
         (sender, inputs.selections)

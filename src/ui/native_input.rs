@@ -9,6 +9,7 @@ use iced::advanced::widget::{Id, Operation, operation::Focusable};
 pub struct Focus {
     pub search: bool,
     pub find: bool,
+    pub compose: bool,
 }
 
 impl Operation for Focus {
@@ -24,6 +25,19 @@ impl Operation for Focus {
         let [search, find] = IDS.get_or_init(|| [Id::new("search"), Id::new("find-message")]);
         self.search |= id == Some(search);
         self.find |= id == Some(find);
+        static COMPOSE_IDS: std::sync::OnceLock<[Id; 5]> = std::sync::OnceLock::new();
+        self.compose |= COMPOSE_IDS
+            .get_or_init(|| {
+                [
+                    Id::new("to"),
+                    Id::new("cc"),
+                    Id::new("bcc"),
+                    Id::new("subject"),
+                    Id::new("compose-body"),
+                ]
+            })
+            .iter()
+            .any(|candidate| id == Some(candidate));
     }
 }
 
@@ -35,6 +49,18 @@ impl App {
         captured: bool,
         focus: Focus,
     ) -> Task<Message> {
+        if focus.compose && self.dialog.is_none() && self.remapping.is_none() {
+            if key == Key::Named(keyboard::key::Named::Tab) {
+                return if modifiers.shift() {
+                    widget::operation::focus_previous()
+                } else {
+                    widget::operation::focus_next()
+                };
+            }
+            if key == Key::Named(keyboard::key::Named::Escape) && modifiers.is_empty() {
+                return self.handle(Message::CloseComposer);
+            }
+        }
         let action = chord(&key, modifiers)
             .as_deref()
             .and_then(|key| self.preferences.shortcuts.resolve(key));
@@ -46,7 +72,8 @@ impl App {
                 || self.sidebar_focus
                 || self.full_reader
                 || focus.search
-                || focus.find)
+                || focus.find
+                || focus.compose)
         {
             return Task::none();
         }
@@ -88,7 +115,7 @@ impl App {
         self.key(
             key,
             modifiers,
-            captured || input_guard && (focus.search || focus.find),
+            captured || input_guard && (focus.search || focus.find || focus.compose),
         )
     }
 }

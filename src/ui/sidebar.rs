@@ -154,12 +154,7 @@ impl App {
                 section: false,
             });
         }
-        let drafts: Vec<_> = self
-            .workspace
-            .drafts
-            .iter()
-            .filter(|d| !self.workspace.outgoing_drafts.contains(&d.id))
-            .collect();
+        let drafts = self.draft_labels();
         if !drafts.is_empty() {
             items.push(SidebarItem {
                 label: format!("Drafts ({})", drafts.len()),
@@ -170,16 +165,16 @@ impl App {
                 section: false,
             });
             if !self.preferences.collapsed_drafts {
-                for draft in drafts {
+                for (id, subject) in drafts {
                     items.push(SidebarItem {
-                        label: if draft.subject.is_empty() {
+                        label: if subject.is_empty() {
                             "Untitled draft".into()
                         } else {
-                            draft.subject.clone()
+                            subject.to_owned()
                         },
                         icon: "compose",
-                        action: Message::Draft(draft.id.clone()),
-                        active: false,
+                        action: Message::Draft(id.to_owned()),
+                        active: self.compose_visible() && self.composer.current.draft.id == id,
                         depth: 1,
                         section: false,
                     });
@@ -282,7 +277,7 @@ impl App {
             .width(Length::Fill)
             .padding([12, 14])
             .style(primary)
-            .on_press(Message::Open(Dialog::Compose)),
+            .on_press(Message::NewMessage),
             space().height(12)
         ]
         .spacing(3)
@@ -468,6 +463,7 @@ impl App {
         })
     }
     pub(super) fn toggle_folder_selection(&mut self, folder: FolderSelection) {
+        self.close_composer();
         let folders = self.query.folders.get_or_insert_with(|| {
             if self.query.folder.is_empty() {
                 Vec::new()

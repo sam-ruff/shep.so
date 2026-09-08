@@ -834,7 +834,7 @@ class NativeFlows(unittest.TestCase):
                        check("attachment_count",4), wait(120), shot("html-compact-reading-space"))
         state = self.mcp.call("desktop.state")
         self.assertGreaterEqual(state["html_body_visible"][3], min(120.,state["html_body_bounds"][3]))
-        self.mcp.batch(key("f"), check("dialog","Compose"), check("draft_attachments.3.name",None,"ne"),
+        self.mcp.batch(key("f"), check("composer.visible", True), check("draft_attachments.3.name",None,"ne"),
                        key("Escape"), check("dialog",None))
 
     def test_html_image_arrival_keeps_compact_dark_find_and_reading_position(self):
@@ -1040,14 +1040,14 @@ class NativeFlows(unittest.TestCase):
     def test_forward_mouse_preserves_attachments_and_reopens_as_an_independent_draft(self):
         self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prototype"),
                        check("total", 1), key("Escape"), check("html_ready", True), wait(100),
-                       shot("forward-reader-actions"), click(835,784), check("dialog", "Compose"),
-                       check("draft_forward", True), check("draft_forward_html", True), check("fields.subject", "Fwd: Re: A few thoughts on the prototype"),
-                       check("fields.to", ""), check("fields.cc", ""), check("fields.bcc", ""),
+                       shot("forward-reader-actions"), click(835,784), check("composer.visible", True),
+                       check("draft_forward", True), check("draft_forward_html", True), check("compose_fields.subject", "Fwd: Re: A few thoughts on the prototype"),
+                       check("compose_fields.to", ""), check("compose_fields.cc", ""), check("compose_fields.bcc", ""),
                        check("draft_in_reply_to", None), check("draft_attachments.3.name", "review-checklist.txt"),
                        check("editor", "Can you send the updated prototype?", "contains"),
                        check("focused_input", "to"), type_text("reviewer@example.test"), wait(250),
                        shot("forward-composer-files"), key("Escape"), check("dialog", None), check("draft_count", 1),
-                       click(98,517), check("dialog", "Compose"), check("fields.to", "reviewer@example.test"),
+                       click(98,517), check("composer.visible", True), check("compose_fields.to", "reviewer@example.test"),
                        check("draft_forward", True), check("draft_forward_html", True), check("draft_attachments.3.name", "review-checklist.txt"),
                        shot("forward-reopened"))
 
@@ -1055,10 +1055,10 @@ class NativeFlows(unittest.TestCase):
         self.mcp.call("desktop.start", mail_actions="slow")
         self.mcp.batch(key("f"), check("forward_pending", True), check("dialog", None),
                        key("f"), click(400,350), check("selected", "Your weekly workspace digest"),
-                       key("c"), check("dialog", "Compose"), wait(100),
-                       click(650,362), type_text("A different draft"),
+                       key("c"), check("composer.visible", True), wait(100),
+                       click(850,279), type_text("A different draft"),
                        {**check("forward_pending", False), "timeout_ms":5000},
-                       check("dialog", "Compose"), check("fields.subject", "A different draft"),
+                       check("composer.visible", True), check("compose_fields.subject", "A different draft"),
                        check("draft_forward", False), check("notice", "Forward saved in Drafts.", "contains"),
                        check("draft_count", 2), shot("forward-pending-preserves-editor"),
                        key("Escape"), check("dialog", None), check("draft_count", 2))
@@ -1069,20 +1069,20 @@ class NativeFlows(unittest.TestCase):
                        {**check("forward_pending", False), "timeout_ms":5000}, check("dialog", None),
                        check("draft_count", 0), check("notice", "Try Forward again", "contains"),
                        key("f"), check("forward_pending", True),
-                       {**check("dialog", "Compose"), "timeout_ms":5000}, check("draft_count", 1),
-                       check("fields.subject", "Fwd: A little more room to think"), key("Escape"), check("dialog", None),
+                       {**check("composer.visible", True), "timeout_ms":5000}, check("draft_count", 1),
+                       check("compose_fields.subject", "Fwd: A little more room to think"), key("Escape"), check("dialog", None),
                        key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(690,366), check("dark", True),
                        key("ctrl+1"), check("tab", "Mail"), {"type":"resize", "width":900, "height":640}, wait(150),
-                       click(98,517), check("dialog", "Compose"), check("draft_forward", True),
-                       check("fields.to", ""), shot("forward-dark-compact"))
+                       click(98,517), check("composer.visible", True), check("draft_forward", True),
+                       check("compose_fields.to", ""), shot("forward-dark-compact"))
 
     def test_forward_targets_the_expanded_message_in_a_conversation(self):
         self.mcp.call("desktop.start", conversation_mail=True)
         self.mcp.batch(check("conversation_total",3), check("loaded_message_id","preview-work:INBOX:launch-2"),
                        wait(100), click(800,344), check("loaded_message_id","preview-work:Sent:launch-1"),
                        check("selected_id","preview-work:INBOX:launch-2"), check("attachment_count",1),
-                       key("f"), check("dialog","Compose"), check("fields.subject","Launch schedule","contains"),
-                       check("draft_attachments.0.size",1,"gte"), check("fields.to",""), check("draft_in_reply_to",None),
+                       key("f"), check("composer.visible", True), check("compose_fields.subject","Launch schedule","contains"),
+                       check("draft_attachments.0.size",1,"gte"), check("compose_fields.to",""), check("draft_in_reply_to",None),
                        shot("forward-conversation-target"))
 
     def test_forward_shortcuts_remap_disable_and_text_input_isolation(self):
@@ -1096,10 +1096,9 @@ class NativeFlows(unittest.TestCase):
                        key("F4"), key("alt+f"), check("dialog",None), check("query", "f"),
                        key("ctrl+a"), key("BackSpace"),
                        check("query",""), check("selected","A little more room to think"), key("Escape"), wait(80),
-                       key("F4"), check("dialog","Compose"),
-                       key("Escape"), check("dialog",None), key("alt+f"), check("dialog","Compose"),
-                       key("Escape"), check("dialog",None), check("notice", "Draft saved.", "contains"),
-                       click(1400,895), check("notice",None), key("ctrl+comma"), check("tab","Preferences"),
+                       key("F4"), check("composer.visible", True),
+                       key("Escape"), check("dialog",None), key("alt+f"), check("composer.visible", True),
+                       key("Escape"), check("composer.visible",False), check("draft_count",2), key("ctrl+comma"), check("tab","Preferences"),
                        click(645,156), check("settings_tab","Shortcuts"), {"type":"hover","x":1110,"y":690},
                        {"type":"scroll","amount":30}, wait(100), click(988,720), check("shortcuts.Forward",""),
                        click(1157,720), check("shortcut_secondary.Forward",""), check("preferences_saved",True),
@@ -1786,8 +1785,8 @@ class NativeFlows(unittest.TestCase):
         self.mcp.call("desktop.start", width=900, height=640)
         self.mcp.batch({"type": "click", "x": 357, "y": 450, "button": 3},
                        check("context_subject", "Coffee next Thursday?"), shot("inbox-context-compact"),
-                       click(442, 275), check("dialog", "Compose"), check("fields.to", "Sophie Williams <hello2@example.com>"),
-                       check("fields.subject", "Re: Coffee next Thursday?"), shot("context-reply-target"),
+                       click(442, 275), check("composer.visible", True), check("compose_fields.to", "Sophie Williams <hello2@example.com>"),
+                       check("compose_fields.subject", "Re: Coffee next Thursday?"), shot("context-reply-target"),
                        key("Escape"), check("dialog", None),
                        key("ctrl+comma"), check("tab", "Preferences"), shot("contacts-tabs-compact"))
 
@@ -1816,7 +1815,7 @@ class NativeFlows(unittest.TestCase):
     def test_layout_gallery(self):
         self.mcp.batch(shot("compact-mail-header"), key("ctrl+comma"), check("tab", "Preferences"), shot("preferences-general"),
                        click(645, 156), check("settings_tab", "Shortcuts"), shot("shortcuts-layout"),
-                       key("ctrl+1"), check("tab", "Mail"), key("c"), check("dialog", "Compose"), shot("compose-layout"), key("Escape"), check("dialog", None),
+                       key("ctrl+1"), check("tab", "Mail"), key("c"), check("composer.visible", True), shot("compose-layout"), key("Escape"), check("dialog", None),
                        key("m"), check("dialog", "Move"), shot("move-layout"), key("Escape"), check("dialog", None),
                        key("ctrl+2"), check("tab", "Calendar"), click(1340, 45), check("dialog", "Event"), shot("event-layout"), key("Escape"), check("dialog", None),
                        key("ctrl+1"), check("tab", "Mail"), wait(80), key("ctrl+k"), check("focused_input", "search"), type_text("prototype"), check("total", 1), key("Escape"), check("dialog", None),
@@ -2402,51 +2401,148 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+1"), check("tab", "Mail"), check("reader_split", .44, "gte"),
                        shot("latest-resize-preserved"))
 
+    def test_inline_reply_pages_the_original_without_replacing_its_text(self):
+        started = self.mcp.call("desktop.start",conversation_mail=True)
+        print(f"Inline conversation paging: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("Long project review"),
+                       check("total",25),key("Escape"),check("conversation_total",25),check("conversation_offset",20),
+                       key("r"),check("composer.visible",True),check("focused_input","compose-body"),
+                       type_text("Reply while reviewing earlier messages."),shot("inline-thread-paging-controls"),
+                       click(1290,630),check("conversation_offset",0),check("loaded_message_id","preview-work:Projects:long-0"),
+                       check("editor","Reply while reviewing earlier messages.","contains"),
+                       click(1380,630),check("conversation_offset",20),check("loaded_message_id","preview-work:Projects:long-20"),
+                       check("editor","Reply while reviewing earlier messages.","contains"),shot("inline-thread-later-page"))
+
+    def test_inline_reply_find_scroll_and_switch_preserve_draft_focus(self):
+        started = self.mcp.call("desktop.start",html_mail=True)
+        print(f"Inline Find and scrolling: {started['artifacts']}", flush=True)
+        self.mcp.batch(click(400,558),check("selected","Long formatted letter"),check("html_ready",True),
+                       key("r"),check("composer.visible",True),check("focused_input","compose-body"),
+                       type_text("A reply above the long original."), key("ctrl+f"),check("focused_input","find-message"),
+                       type_text("Paragraph"),check("find_count",201),check("find_pending",False),key("Return"),
+                       check("find_active",1),check("html_view_current",True),shot("inline-find-original"),
+                       key("Escape"),check("find_open",False),check("composer.visible",True),
+                       click(350,230),check("composer.visible",False),key("r"),check("composer.visible",True),
+                       check("focused_input","compose-body"),type_text("A second draft starts at its editor."),
+                       check("editor","A second draft starts at its editor.","contains"),shot("inline-switch-resets-reader-scroll"),
+                       click(350,558),check("selected","Long formatted letter"),check("composer.visible",True),
+                       check("editor","A reply above the long original.","contains"),shot("inline-long-reply-restored"))
+
+    def test_inline_composer_send_preparation_allows_another_reply_and_preserves_failure(self):
+        started = self.mcp.call("desktop.start", mail_actions="slow")
+        print(f"Inline send navigation: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("r"),check("composer.visible",True),check("focused_input","compose-body"),
+                       type_text("First reply awaiting send."))
+        first = self.mcp.call("desktop.state")["composer"]["id"]
+        self.mcp.batch(click(675,564),check("busy","send:"+first,"contains"),
+                       click(350,330),check("composer.visible",False),key("r"),
+                       check("composer.visible",True),check("focused_input","compose-body"),
+                       type_text("Second reply stays editable."),check("busy","send:"+first,"contains"),
+                       shot("inline-browsing-during-send"),
+                       check("notice","Sending is disabled in preview","contains"),
+                       check("editor","Second reply stays editable.","contains"),shot("inline-send-failure-keeps-other-reply"),
+                       click(350,230),check("composer.id",first),check("editor","First reply awaiting send.","contains"),
+                       shot("inline-failed-send-draft-reopened"))
+
+    def test_inline_composer_collapse_focus_and_selection_do_not_mutate_mail(self):
+        self.mcp.batch(key("r"), check("composer.visible",True), check("focused_input","compose-body"),
+                       type_text("First line\nSecond line"), key("ctrl+a"), type_text("Replacement reply"),
+                       key("ctrl+d"), key("BackSpace"), check("editor","Replacement repl", "contains"),
+                       check("total",120), check("mail_pending",0), check("mail_selection.mode",False),
+                       click(1324,119), check("composer.minimized",True), check("focused_input",None), shot("inline-collapsed-reply"),
+                       click(1324,119), check("composer.minimized",False), check("focused_input","compose-body"),
+                       key("ctrl+End"), type_text("y retained"), check("editor","Replacement reply retained","contains"),
+                       click(575,155), check("mail_selection.mode",True), check("composer.visible",False),
+                       click(350,230), click(350,330), check("mail_selection.count",2),
+                       shot("inline-draft-parked-for-selection"))
+
+    def test_inline_composer_opens_in_reader_and_reply_keeps_original_below(self):
+        self.mcp.batch(key("c"), check("composer.visible", True), check("dialog", None),
+                       wait(100), shot("inline-new-message"), key("Escape"),
+                       check("composer.visible", False), key("r"), check("composer.visible", True),
+                       check("composer.reply.mail_id", None, "ne"), check("dialog", None),
+                       check("editor", ""), wait(100), shot("inline-reply-original-below"))
+
+    def test_inline_composer_switches_two_replies_with_attachments_and_restarts(self):
+        started = self.mcp.call("desktop.start", persistent=True)
+        print(f"Inline reply sessions: {started['artifacts']}", flush=True)
+        fixture = Path(started["artifacts"]) / "reply attachment.txt"
+        fixture.write_text("Original attachment bytes survive draft switching and restart.")
+        self.mcp.batch(key("r"), check("composer.visible", True), check("focused_input", "compose-body"),
+                       type_text("Reply for the first conversation."),
+                       check("editor", "Reply for the first conversation.", "contains"))
+        first = self.mcp.call("desktop.state")["composer"]["id"]
+        self.mcp.batch(click(350, 330), check("composer.visible", False), key("r"),
+                       check("composer.visible", True), check("focused_input", "compose-body"),
+                       type_text("Reply for the second conversation."),
+                       check("editor", "Reply for the second conversation.", "contains"))
+        second = self.mcp.call("desktop.state")["composer"]["id"]
+        self.assertNotEqual(first, second)
+        self.mcp.batch(click(350, 230), check("composer.id", first),
+                       check("editor", "Reply for the first conversation.", "contains"),
+                       click(350, 330), check("composer.id", second),
+                       check("editor", "Reply for the second conversation.", "contains"),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       key("ctrl+1"), check("tab", "Mail"), check("composer.id", second),
+                       check("editor", "Reply for the second conversation.", "contains"), wait(100),
+                       shot("inline-two-replies-restored"),
+                       click(750, 564), {"type":"choose_file", "path":str(fixture)},
+                       check("draft_io", False), check("draft_attachments.0.name", fixture.name),
+                       click(350, 230), check("composer.id", first),
+                       check("draft_attachments", []), click(350, 330), check("composer.id", second),
+                       check("draft_attachments.0.name", fixture.name), shot("inline-file-retained"))
+        fixture.unlink()
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(check("draft_count", 2), click(350, 330), check("composer.id", second),
+                       check("editor", "Reply for the second conversation.", "contains"),
+                       check("draft_attachments.0.name", fixture.name), shot("inline-reply-after-restart"))
+
     def test_compose_save_and_reopen_draft(self):
-        self.mcp.batch(click(101, 214), check("dialog", "Compose"), shot("compose"))
+        self.mcp.batch(click(101, 214), check("composer.visible", True), shot("compose"))
         # Actual typing, including M, must remain in the input field.
-        self.mcp.batch(click(654, 312), type_text("friend@example.com"),
-                       click(650, 362), type_text("Meet me Monday"), check("dialog", "Compose"),
-                       click(650, 485), type_text("A message written with the mouse and keyboard."),
-                       click(990, 720), check("draft_count", 1), check("dialog", None), shot("saved-draft"),
-                       click(98, 517), check("dialog", "Compose"),
-                       check("fields.to", "friend@example.com"), check("fields.subject", "Meet me Monday"),
+        self.mcp.batch(click(850, 230), type_text("friend@example.com"),
+                       click(850, 279), type_text("Meet me Monday"), check("composer.visible", True),
+                       click(850, 400), type_text("A message written with the mouse and keyboard."),
+                       click(925, 633), check("draft_count", 1), check("composer.visible", True), shot("saved-draft"), key("Escape"), check("composer.visible", False),
+                       click(98, 517), check("composer.visible", True),
+                       check("compose_fields.to", "friend@example.com"), check("compose_fields.subject", "Meet me Monday"),
                        check("editor", "A message written with the mouse and keyboard.", "contains"), shot("reopened-draft"))
 
     def test_compose_session_preserves_fields_through_preferences_and_graceful_restart(self):
         started = self.mcp.call("desktop.start", persistent=True)
         print(f"Composer session restart evidence: {started['artifacts']}", flush=True)
-        self.mcp.batch(key("c"), check("dialog", "Compose"), wait(80),
-                       click(650, 312), type_text("friend@example.test"), click(1003, 312), wait(80),
-                       click(650, 312), type_text("copy@example.test"),
-                       click(650, 361), type_text("private@example.test"),
-                       click(650, 411), type_text("A saved session"),
-                       click(650, 470), type_text("Keep this text through Preferences."),
-                       key("Escape"), check("dialog", None),
+        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+                       click(850, 230), type_text("friend@example.test"), click(1350, 230), wait(80),
+                       click(850, 278), type_text("copy@example.test"),
+                       click(850, 327), type_text("private@example.test"),
+                       click(850, 376), type_text("A saved session"),
+                       click(850, 470), type_text("Keep this text through Preferences."),
+                       key("Escape"), check("composer.visible", False), check("dialog", None),
                        key("ctrl+comma"), check("tab", "Preferences"), check("dialog", None),
-                       check("draft_count", 1), check("compose_fields.bcc", "private@example.test"),
+                       check("draft_count", 1),
                        click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
-                       click(98, 517), check("dialog", "Compose"),
-                       check("fields.to", "friend@example.test"), check("fields.cc", "copy@example.test"),
-                       check("fields.bcc", "private@example.test"), check("fields.subject", "A saved session"),
+                       click(98, 517), check("composer.visible", True),
+                       check("compose_fields.to", "friend@example.test"), check("compose_fields.cc", "copy@example.test"),
+                       check("compose_fields.bcc", "private@example.test"), check("compose_fields.subject", "A saved session"),
                        check("editor", "Keep this text through Preferences.", "contains"),
                        shot("composer-session-after-preferences"),
-                       click(650, 470), key("ctrl+End"), type_text(" Saved before close."))
+                       click(850, 470), key("ctrl+End"), type_text(" Saved before close."))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
         self.mcp.call("desktop.restart")
-        self.mcp.batch(check("draft_count", 1), click(98, 517), check("dialog", "Compose"),
-                       check("fields.to", "friend@example.test"), check("fields.cc", "copy@example.test"),
-                       check("fields.bcc", "private@example.test"), check("fields.subject", "A saved session"),
+        self.mcp.batch(check("draft_count", 1), click(98, 517), check("composer.visible", True),
+                       check("compose_fields.to", "friend@example.test"), check("compose_fields.cc", "copy@example.test"),
+                       check("compose_fields.bcc", "private@example.test"), check("compose_fields.subject", "A saved session"),
                        check("editor", "Saved before close.", "contains"),
                        shot("composer-session-after-restart"))
 
     def test_drafts_collapse_context_cancel_and_discard(self):
-        self.mcp.batch(key("c"), check("dialog", "Compose"), wait(80),
-                       click(650, 362), type_text("First draft to keep"), check("draft_count", 1),
-                       key("Escape"), check("dialog", None),
-                       key("c"), check("dialog", "Compose"), wait(80),
-                       click(650, 362), type_text("Second draft to discard"), check("draft_count", 2),
-                       key("Escape"), check("dialog", None), wait(80), shot("drafts-expanded"),
+        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+                       click(850, 279), type_text("First draft to keep"), check("draft_count", 1),
+                       key("Escape"), check("composer.visible", False), check("dialog", None),
+                       key("c"), check("composer.visible", True), wait(80),
+                       click(850, 279), type_text("Second draft to discard"), check("draft_count", 2),
+                       key("Escape"), check("composer.visible", False), check("dialog", None), wait(80), shot("drafts-expanded"),
                        click(98, 478), check("drafts_collapsed", True), check("saved_drafts_collapsed", True),
                        shot("drafts-collapsed"), key("ctrl+2"), check("tab", "Calendar"),
                        key("ctrl+1"), check("tab", "Mail"), check("drafts_collapsed", True),
@@ -2460,83 +2556,83 @@ class NativeFlows(unittest.TestCase):
                        click(190, 610), check("dialog", "DiscardDraft"), key("Return"),
                        check("dialog", None), check("draft_count", 1),
                        check("draft_rows.0.1", "First draft to keep"), shot("draft-discarded"),
-                       click(98, 517), check("dialog", "Compose"), check("fields.subject", "First draft to keep"))
+                       click(98, 517), check("composer.visible", True), check("compose_fields.subject", "First draft to keep"))
 
     def test_draft_bin_cancel_failure_retry_and_compact_dark_review(self):
         result = self.mcp.call("desktop.start", discard_failure_once=True)
         fixture = Path(result["artifacts"]) / "discard attachment.txt"
         fixture.write_text("Cached bytes to remove with the draft")
-        self.mcp.batch(key("c"), check("dialog", "Compose"), wait(80),
-                       click(650,362), type_text("Draft with an attachment"),
-                       click(650,485), type_text("Do not lose this on a failed discard."),
-                       click(583,720), {"type":"choose_file","path":str(fixture)},
+        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+                       click(850,279), type_text("Draft with an attachment"),
+                       click(850,400), type_text("Do not lose this on a failed discard."),
+                       click(750,633), {"type":"choose_file","path":str(fixture)},
                        check("draft_attachments.0.name", fixture.name), check("draft_io",False), wait(150),
-                       click(916,741), check("dialog","DiscardDraft"), shot("discard-attachment-review"),
-                       key("Escape"), check("dialog","Compose"),
+                       click(820,675), check("dialog","DiscardDraft"), shot("discard-attachment-review"),
+                       key("Escape"), check("composer.visible", True),
                        check("editor","Do not lose this on a failed discard.","contains"),
-                       click(916,741), check("dialog","DiscardDraft"), key("y"),
+                       click(820,675), check("dialog","DiscardDraft"), key("y"),
                        check("notice","Preview storage failure","contains"), check("discard_pending",False),
                        check("draft_count",1), shot("discard-failure-keeps-draft"), key("Escape"),
-                       check("dialog","Compose"), check("draft_attachments.0.name",fixture.name), wait(80),
-                       click(916,716), check("dialog","DiscardDraft"), key("Return"),
+                       check("composer.visible", True), check("draft_attachments.0.name",fixture.name), wait(80),
+                       click(820,675), check("dialog","DiscardDraft"), key("Return"),
                        check("draft_count",0), check("dialog",None), check("draft_attachments",[]))
         self.mcp.call("desktop.start", width=900,height=640)
         self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"), click(563,366),check("dark",True),
-                       key("ctrl+1"),check("tab","Mail"), key("c"),check("dialog","Compose"),wait(80),
-                       click(450,257),type_text("Compact draft"),check("draft_count",1),
-                       click(646,527),check("dialog","DiscardDraft"),shot("discard-review-dark-compact"),
-                       key("Escape"),check("dialog","Compose"),check("fields.subject","Compact draft"))
+                       key("ctrl+1"),check("tab","Mail"), key("c"),check("composer.visible", True),wait(80),
+                       click(680,279),type_text("Compact draft"),check("draft_count",1),
+                       click(729,543),check("dialog","DiscardDraft"),shot("discard-review-dark-compact"),
+                       key("Escape"),check("composer.visible", True),check("compose_fields.subject","Compact draft"))
 
     def test_compose_autosaves_and_move_accepts_typed_folder(self):
-        self.mcp.batch(key("c"), check("dialog", "Compose"),
-                       click(650, 362), type_text("Autosaved thought"),
-                       check("draft_count", 1), key("Escape"), check("dialog", None),
+        self.mcp.batch(key("c"), check("composer.visible", True),
+                       click(850, 279), type_text("Autosaved thought"),
+                       check("draft_count", 1), key("Escape"), check("composer.visible", False), check("dialog", None),
                        key("m"), check("dialog", "Move"), check("focused_input", "folder-search"), type_text("Archive"), key("Return"),
                        check("dialog", None), check("total", 119), shot("keyboard-move-complete"))
 
     def test_compose_recipients_and_native_file_picker(self):
         fixture = self.artifacts / "planning notes.txt"
         fixture.write_text("These exact bytes must survive reopening the draft.")
-        self.mcp.batch(key("c"), check("dialog", "Compose"), wait(80),
-                       click(650, 312), type_text("friend@example.com"), click(1003, 312), wait(80), shot("compose-recipients"),
-                       click(650, 312), type_text("copy@example.com"), click(650, 361), type_text("hidden@example.com"),
-                       click(650, 411), type_text("Planning with attachments"),
-                       click(650, 470), type_text("Please read the attached notes."),
-                       click(583, 769), {"type": "choose_file", "path": str(fixture)},
+        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+                       click(850, 230), type_text("friend@example.com"), click(1350, 230), wait(80), shot("compose-recipients"),
+                       click(850, 278), type_text("copy@example.com"), click(850, 327), type_text("hidden@example.com"),
+                       click(850, 376), type_text("Planning with attachments"),
+                       click(850, 470), type_text("Please read the attached notes."),
+                       click(750, 731), {"type": "choose_file", "path": str(fixture)},
                        check("draft_io", False), check("draft_attachments.0.name", fixture.name), wait(400), shot("compose-attached-file"))
         second = self.artifacts / "review checklist with a long name.txt"
         third = self.artifacts / "project reference materials.bin"
         second.write_text("Second attachment")
         third.write_bytes(bytes([0, 255, 1, 128]))
-        self.mcp.batch(click(583, 790), {"type": "choose_file", "path": str(second)},
+        self.mcp.batch(click(750, 773), {"type": "choose_file", "path": str(second)},
                        check("draft_io", False), check("draft_attachments.1.name", second.name), wait(400),
-                       click(583, 790), {"type": "choose_file", "path": str(third)},
+                       click(750, 773), {"type": "choose_file", "path": str(third)},
                        check("draft_io", False), check("draft_attachments.2.name", third.name), wait(400), shot("compose-wrapped-attachments"))
-        self.mcp.batch(click(575, 726), check("draft_io", False), check("draft_attachments.0.name", second.name),
-                       check("draft_attachments.1.name", third.name), wait(150), click(990, 790), check("dialog", None))
+        self.mcp.batch(click(812, 726), check("draft_io", False), check("draft_attachments.0.name", second.name),
+                       check("draft_attachments.1.name", third.name), wait(150), click(925, 773), key("Escape"), check("composer.visible", False))
         fixture.unlink(); second.unlink(); third.unlink()
-        self.mcp.batch(click(98, 517), check("dialog", "Compose"), check("fields.cc", "copy@example.com"),
-                       check("fields.bcc", "hidden@example.com"), check("draft_attachments.0.name", second.name),
+        self.mcp.batch(click(98, 517), check("composer.visible", True), check("compose_fields.cc", "copy@example.com"),
+                       check("compose_fields.bcc", "hidden@example.com"), check("draft_attachments.0.name", second.name),
                        check("editor", "Please read the attached notes.", "contains"), shot("reopened-attachments"),
-                       click(465, 790), check("notice", "Sending is disabled in preview", "contains"),
-                       check("dialog", "Compose"), check("draft_attachments.1.name", third.name), shot("send-failure-keeps-draft"),
-                       key("Escape"), check("dialog", None), key("ctrl+comma"), check("tab", "Preferences"),
+                       click(680, 773), check("notice", "Sending is disabled in preview", "contains"),
+                       check("composer.visible", True), check("draft_attachments.1.name", third.name), shot("send-failure-keeps-draft"),
+                       key("Escape"), check("composer.visible", False), check("dialog", None), key("ctrl+comma"), check("tab", "Preferences"),
                        click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
-                       click(98, 517), check("dialog", "Compose"), shot("composer-dark-attachments"),
-                       click(583, 790), {"type": "choose_file"}, check("draft_io", False),
-                       check("draft_attachments.1.name", third.name), key("Escape"), check("dialog", None))
+                       click(98, 517), check("composer.visible", True), shot("composer-dark-attachments"),
+                       click(750, 773), {"type": "choose_file"}, check("draft_io", False),
+                       check("draft_attachments.1.name", third.name), key("Escape"), check("composer.visible", False), check("dialog", None))
 
 
     def test_reply_all_mouse_and_remappable_shortcut(self):
         self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prototype"),
-                       check("total", 1), key("Escape"), check("html_ready", True), wait(100), click(766, 784), check("dialog", "Compose"),
-                       check("fields.to", "Daniel Park <team@example.com>, colleague@example.com"),
-                       check("fields.cc", "copy@example.com"), check("fields.bcc", ""),
+                       check("total", 1), key("Escape"), check("html_ready", True), wait(100), click(766, 784), check("composer.visible", True),
+                       check("compose_fields.to", "Daniel Park <team@example.com>, colleague@example.com"),
+                       check("compose_fields.cc", "copy@example.com"), check("compose_fields.bcc", ""),
                        check("draft_in_reply_to", "<prototype@example.com>"), shot("reply-all-mouse"),
-                       key("Escape"), check("dialog", None), key("r"), check("dialog", "Compose"),
-                       check("fields.to", "Daniel Park <team@example.com>"), check("fields.cc", ""),
-                       key("Escape"), check("dialog", None), key("shift+r"), check("dialog", "Compose"),
-                       check("fields.cc", "copy@example.com"), shot("reply-all-keyboard"))
+                       key("Escape"), check("dialog", None), key("r"), check("composer.visible", True),
+                       check("compose_fields.to", "Daniel Park <team@example.com>"), check("compose_fields.cc", ""),
+                       key("Escape"), check("dialog", None), key("shift+r"), check("composer.visible", True),
+                       check("compose_fields.cc", "copy@example.com"), shot("reply-all-keyboard"))
 
     def test_composer_typing_does_not_leave_glyphs_below_editor(self):
         from PIL import Image, ImageChops
@@ -2544,7 +2640,7 @@ class NativeFlows(unittest.TestCase):
             result = self.mcp.call("desktop.start",width=900,height=640)
             if dark:
                 self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(563,366),check("dark",True),key("ctrl+1"))
-            self.mcp.batch(key("r"),check("dialog","Compose"),click(450,370),key("ctrl+a"),
+            self.mcp.batch(key("r"),check("composer.visible", True),click(700,370),key("ctrl+a"),
                            {"type":"paste","text":"Hello,\n\nHere is my reply.\n\n" + "\n".join(f"> Quoted message line {i:02}: keep the editor edge clean." for i in range(40))},
                            key("ctrl+Home"),type_text("My reply"),key("Return"),type_text("Thank you"),key("Return"),
                            key("Return"),key("Return"),wait(100),shot(f"composer-typed-edge-{dark}"),
@@ -2555,22 +2651,26 @@ class NativeFlows(unittest.TestCase):
             before = Image.open(directory/f"composer-typed-edge-{dark}.webp").convert("RGB")
             after = Image.open(directory/f"composer-repainted-edge-{dark}.webp").convert("RGB")
             # Bottom editor padding and the gap above the compose action bar.
-            region = (150,490,740,526)
+            region = (552,488,848,517)
             difference = ImageChops.difference(before.crop(region),after.crop(region))
             changed = sum(max(p)>32 for p in difference.getdata())
             self.assertLess(changed,60,f"Editor left {changed} stale pixels under its text viewport")
-            padding = before.crop((152,504,680,511))
-            background = before.getpixel((700,506))
+            padding = before.crop((567,498,833,505))
+            background = before.getpixel((841,502))
             escaped = sum(max(abs(p[i]-background[i]) for i in range(3))>40 for p in padding.getdata())
             self.assertLess(escaped,8,f"{escaped} glyph pixels escaped into the editor's bottom padding")
 
     def test_compact_composer_layout(self):
-        self.mcp.call("desktop.start", width=900, height=640)
-        self.mcp.batch(key("c"), check("dialog", "Compose"), shot("compose-compact"),
-                       click(450, 207), type_text("friend@example.com"), click(733, 207), wait(80),
-                       click(450, 257), type_text("copy@example.com"), click(450, 306), type_text("hidden@example.com"),
-                       click(450, 355), type_text("Compact composer"), click(450, 400), type_text("Room to write."),
-                       shot("compose-compact-recipients"), click(720, 548), check("dialog", None), check("draft_count", 1))
+        result = self.mcp.call("desktop.start", width=900, height=640)
+        print(f"Compact composer: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"), shot("compose-compact"),
+                       type_text("friend@example.com"), click(820,230), wait(80),
+                       click(680,278), type_text("copy@example.com"), click(680,327), type_text("hidden@example.com"),
+                       click(680,376), type_text("Compact composer"), click(680,445), type_text("Room to write."),
+                       check("compose_fields.to","friend@example.com"), check("compose_fields.cc","copy@example.com"),
+                       check("compose_fields.bcc","hidden@example.com"), check("editor","Room to write.","contains"),
+                       shot("compose-compact-recipients"), {"type":"hover","x":855,"y":510}, {"type":"scroll","amount":5}, wait(100),
+                       shot("compose-compact-actions"), key("Escape"), check("composer.visible",False), check("draft_count",1))
 
     def test_conversation_reader_keeps_messages_separate(self):
         self.mcp.call("desktop.start", conversation_mail=True)
@@ -2578,7 +2678,7 @@ class NativeFlows(unittest.TestCase):
                        check("loaded_message_id", "preview-work:INBOX:launch-2"), wait(150), shot("conversation-overview"),
                        click(800, 344), check("loaded_message_id", "preview-work:Sent:launch-1"),
                        check("selected_id", "preview-work:INBOX:launch-2"), check("attachment_count", 1), shot("conversation-sent-message"),
-                       key("r"), check("dialog", "Compose"), check("fields.to", "maya@example.com"),
+                       key("r"), check("composer.visible", True), check("compose_fields.to", "maya@example.com"),
                        check("draft_in_reply_to", "<launch-1@example.com>"), shot("conversation-reply-target"),
                        key("Escape"), check("dialog", None), click(1366, 343),
                        check("conversation_rows.1.starred", True), check("starred", True),
@@ -2630,8 +2730,8 @@ class NativeFlows(unittest.TestCase):
                        check("outgoing_pending", 1), wait(150), shot("outbox-copy-retry-error"),
                        click(799, 584), check("outgoing_pending", 0), check("outgoing_rows", []),
                        shot("outbox-empty-light"), key("Escape"), check("dialog", None),
-                       click(100, 517), check("dialog", "Compose"),
-                       check("fields.subject", "Delivery needs review"),
+                       click(100, 517), check("composer.visible", True),
+                       check("compose_fields.subject", "Delivery needs review"),
                        check("editor", "A saved message for the outgoing recovery flow.", "contains"),
                        check("draft_count", 1), shot("reviewed-delivery-returned-draft"))
 
@@ -2707,8 +2807,8 @@ class NativeFlows(unittest.TestCase):
                        key("Down"), check("selected", "Your weekly workspace digest"), shot("mail-after-google-disconnect"))
 
     def test_connection_removal_review_and_cancel(self):
-        self.mcp.batch(key("c"), check("dialog", "Compose"),
-                       click(650, 362), type_text("A draft to review before removal"),
+        self.mcp.batch(key("c"), check("composer.visible", True),
+                       click(850, 279), type_text("A draft to review before removal"),
                        check("draft_count", 1), key("Escape"), check("dialog", None),
                        key("ctrl+comma"), check("tab", "Preferences"), click(383, 156),
                        check("settings_tab", "Accounts"), shot("accounts-removal-controls"),
