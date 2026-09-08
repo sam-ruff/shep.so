@@ -459,3 +459,6 @@ R42/R63/R67/R69/R71/R73/R74/R77: browser startup saved-group recovery shipped in
 
 
 desktop-main:R92/R75/R02/R49/R67/R73/R77 continuation: shared profile metadata codec/account mappings and native/WASM fixtures are in verification. The implemented subset is documented in `docs/agents/PROFILE_FORMAT.md`; metadata validation does not establish OAuth, enrollment, conflict resolution, password transfer or database migration. Keep the highest-priority request and all its remaining lifecycle/platform work active.
+
+
+desktop-main:R92/R75/R02/R49/R67/R73/R77: shared profile metadata prerequisite shipped in [`80979d2`](https://github.com/sam-ruff/shep.so/commit/80979d26db8d44e2f9caaed4f02e535807f9b826); exact remote SHA verified. Root/shared hooks pass 390 tests, mobile Rust 67, actual Dart FFI 14 and standalone WASM 23 common fixtures plus malformed-record rejection. Analysis/docs/release-stamping checks pass. OAuth/enrollment/merge, remaining settings/credentials, live platforms and database migration remain active; no request is removed on this foundation alone.
