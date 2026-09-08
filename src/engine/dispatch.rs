@@ -30,6 +30,7 @@ pub struct CommandSender {
     printing: mpsc::Sender<Command>,
     selections: mpsc::Sender<Command>,
     bulk: mpsc::Sender<Command>,
+    database: mpsc::Sender<Command>,
 }
 
 pub(super) struct Inputs {
@@ -41,9 +42,16 @@ pub(super) struct Inputs {
     printing: mpsc::Receiver<Command>,
     selections: mpsc::Receiver<Command>,
     pub(super) bulk: mpsc::Receiver<Command>,
+    database: mpsc::Receiver<Command>,
 }
 
 impl CommandSender {
+    #[cfg(test)]
+    pub(crate) fn database_test_channels()
+    -> (Self, mpsc::Receiver<Command>, mpsc::Receiver<Command>) {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.database, inputs.persistence)
+    }
     #[cfg(test)]
     pub(crate) fn network_test_channel() -> (Self, mpsc::Receiver<Command>) {
         let (sender, inputs) = Self::channel();
@@ -84,6 +92,7 @@ impl CommandSender {
         let (printing, print_input) = mpsc::channel(2);
         let (selections, selection_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (bulk, bulk_input) = mpsc::channel(1);
+        let (database, database_input) = mpsc::channel(1);
         (
             Self {
                 reads,
@@ -94,6 +103,7 @@ impl CommandSender {
                 printing,
                 selections,
                 bulk,
+                database,
             },
             Inputs {
                 reads: read_input,
@@ -104,6 +114,7 @@ impl CommandSender {
                 printing: print_input,
                 selections: selection_input,
                 bulk: bulk_input,
+                database: database_input,
             },
         )
     }
@@ -127,6 +138,7 @@ impl CommandSender {
             };
         }
         let channel = match &command {
+            Command::Database(_) => &self.database,
             Command::Folder(request) => {
                 if request.is_read() {
                     &self.reads
@@ -188,6 +200,8 @@ impl Engine {
             self.clone()
                 .run_persistence(input.persistence, output.clone()),
             self.clone().run_bulk_queue(input.bulk, output.clone()),
+            self.clone()
+                .run_database_transfers(input.database, output.clone()),
             self.run_network(input.network, output),
         );
     }
@@ -327,7 +341,8 @@ mod tests {
 
     #[tokio::test]
     async fn cached_reads_and_ordered_saves_complete_with_all_network_jobs_and_queue_occupied() {
-        let store = Store::memory().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::open(directory.path().join("cache.sqlite")).unwrap();
         let mail = parse_mail("test-account", "1", "INBOX",
             b"From: Test <test@example.com>\r\nTo: reader@example.com\r\nSubject: Still readable\r\n\r\nCached content while the server is unavailable.".to_vec(), true, false).unwrap();
         let id = mail.summary.id.clone();
@@ -519,6 +534,22 @@ mod tests {
         })
         .await
         .expect("Forward waited for blocked provider jobs");
+        let destination = directory.path().join("export.sqlite");
+        sender
+            .try_send(Command::Database(crate::transfer::Request::Export {
+                request: 78,
+                destination: destination.clone(),
+                replace: false,
+            }))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Event::Database(78, crate::transfer::Update::Finished(result)) = events.next().await.unwrap() {
+                    assert!(matches!(result.unwrap(), crate::transfer::Outcome::Saved { path, .. } if path == destination));
+                    break;
+                }
+            }
+        }).await.expect("Database export waited for blocked provider jobs");
         sender
             .try_send(Command::Print(77, id, Default::default()))
             .unwrap();

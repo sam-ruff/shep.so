@@ -4502,6 +4502,7 @@ dependencies = [
  "rfd",
  "roxmltree 0.21.1",
  "rusqlite",
+ "same-file",
  "scraper",
  "secrecy",
  "serde",

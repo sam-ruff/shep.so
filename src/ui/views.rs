@@ -1893,7 +1893,8 @@ impl App {
                 "Restore a copy",
                 "Restoring merges messages and accounts into this device. Existing mail is kept.",
                 copies.into()
-            )
+            ),
+            self.database_transfer_card()
         ]
         .spacing(if self.settings_group.is_some() { 0 } else { 22 })
         .into()

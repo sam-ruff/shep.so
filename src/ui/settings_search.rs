@@ -66,6 +66,11 @@ const SETTINGS: &[Setting] = &[
         keywords: "restore backup recovery import",
     },
     Setting {
+        title: "Database transfer",
+        tab: SettingsTab::Backups,
+        keywords: "database sqlite export migrate computer transfer all emails drafts accounts settings",
+    },
+    Setting {
         title: "Keyboard shortcuts",
         tab: SettingsTab::Shortcuts,
         keywords: "key keys keybind remap primary secondary hotkey archive delete backspace inbox select all selection",

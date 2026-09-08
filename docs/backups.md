@@ -19,6 +19,12 @@ Choose a copy in **Backups** and enter its passphrase. Restore adds missing mail
 
 If password restore fails because the keychain is locked, unlock it and restore the same copy again.
 
+## Export the database
+
+In **Preferences → Backups → Database transfer**, choose **Export database…** and a filename. Shep saves pending settings/drafts, then copies the complete cache in the background. You can keep reading mail or cancel the copy.
+
+The SQLite file includes cached original mail, attachments, drafts, accounts and settings. It is **unencrypted** and excludes OS-keychain passwords and Google sign-in. It has no additional 256 MiB backup limit. In-app database import and cross-device profile sync are still being implemented; this file cannot be restored with **Restore a copy** above.
+
 ## Connect Google (optional)
 
 Google setup currently requires your own Google Cloud project:

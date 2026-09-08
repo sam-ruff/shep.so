@@ -563,3 +563,19 @@ edits a second reply while the first is pending, observes failure and reopens th
 first draft. This does not contact SMTP, access the keychain or prove delivery.
 Typing-artifact checks compare a compact editor before and after resize repaint
 in both themes, sampling its bottom padding as well as the surrounding gap.
+
+
+For complete database export, use `desktop.start(persistent=true)`, search
+Preferences for Database transfer, and click Export database. `choose_file` with
+`save: true` accepts a new filename only inside the owned run directory and
+handles the native replacement confirmation for an existing fixture. The default
+attachment-picker action still requires an existing file. Omit path to cancel.
+
+Keep all three `test_database_export_*` equivalents: saved SQLite contents and
+an unsent reply, compact dark cancellation/protected-cache failure/retry, and
+`held_database_export=true` with mail navigation/draft saving, Cancel and graceful
+restart. The hold owns the real copy connection/file until ordinary cancellation;
+it is unavailable outside test-support demo mode. Assert cleanup only after the
+completion acknowledgment or exit, and inspect exported databases read-only.
+Do not use the state file to finish the hold or access personal data. Review the
+light/dark/pending/error WebPs. Import and Google profile sync remain separate work.

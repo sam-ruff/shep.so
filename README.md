@@ -41,5 +41,6 @@ Fastmail login and Inbox sync have been verified. Live Google, other providers a
 - Gmail needs an app password; Google sign-in does not provide Gmail OAuth.
 - Calendar sync: **90 days back, 365 days ahead**. Edit recurring CalDAV series in your server's calendar UI.
 - The local mail cache is not encrypted at rest.
+- Complete database export is in Preferences. Database import and continuous account/profile sync are still in development.
 
 [Full limits](docs/limits.md) · [Contributing](docs/development.md) · MIT licensed.

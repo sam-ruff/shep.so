@@ -19,6 +19,7 @@ pub mod remote_images;
 pub mod replies;
 pub mod shortcuts;
 pub mod store;
+pub mod transfer;
 pub mod ui;
 
 #[cfg(feature = "test-support")]

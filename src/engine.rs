@@ -5,6 +5,7 @@ mod backups;
 mod backups_tests;
 mod bulk;
 mod calendar_connections;
+mod database_transfers;
 mod dispatch;
 pub mod folders;
 mod google_lifecycle;
@@ -37,6 +38,7 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    Database(crate::transfer::Request),
     Folder(folders::Request),
     MoveRecoveries(u64, Option<String>),
     RecoverMailMove(
@@ -139,6 +141,7 @@ impl Command {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
+    Database(u64, crate::transfer::Update),
     Folder(folders::Event),
     MoveRecoveries(
         u64,
@@ -462,6 +465,7 @@ impl Engine {
         let explicit_draft = matches!(&command, Command::SaveDraft(_));
         let deleting_event = matches!(&command, Command::DeleteEvent(_));
         match command {
+            Command::Database(_) => anyhow::bail!("Database transfer reached the wrong worker"),
             Command::ReviewSelection(serial, id, revision, visible) => {
                 let result = async {
                     let frozen = self.store.freeze_selection(id, revision).await?;
