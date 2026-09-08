@@ -62,8 +62,9 @@ typed email address. An ID token is not a Drive access token. Validate issuer,
 audience/authorized client, expiration and nonce when using OpenID Connect.
 Request identity scopes for sign-in and Drive permission for profile sync;
 Calendar permissions are separate opt-ins. Gmail provider authorization remains
-a separate feature. Existing desktop login currently requests Drive and Calendar
-together; feature-scoped consent still needs implementation.
+a separate feature. Desktop login now has independent Drive and Calendar off/read/edit choices,
+bound to staged retry and activation. Profile identity scopes and equivalent
+mobile/browser provider consent still need implementation.
 
 The current desktop `BackupTarget` also binds an upload to its OAuth client ID.
 Do not reuse that exact key as a shared profile ID: Android, iOS and desktop have

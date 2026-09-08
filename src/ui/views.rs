@@ -1539,19 +1539,21 @@ impl App {
     fn google_settings(&self) -> Element<'_, Message> {
         let busy = self.busy.contains("google") || self.busy.contains("google-disconnect");
         let lifecycle = self.preferences.google_lifecycle;
+        let services = self.preferences.requested_google_services();
         let mut controls = row![
             button(
                 text(if self.google_connected {
                     "Reconnect Google"
                 } else {
-                    "Continue with Google"
+                    "Sign in with Google"
                 })
                 .size(12)
             )
             .padding([12, 18])
             .style(outline)
             .on_press_maybe(
-                (!busy && !lifecycle.cleanup_pending).then_some(Message::GoogleLogin(true))
+                (!busy && !lifecycle.cleanup_pending && services.any())
+                    .then_some(Message::GoogleLogin(true))
             )
         ]
         .spacing(10)
@@ -1593,6 +1595,22 @@ impl App {
                 "google_secret",
                 true
             ),
+            column![
+                text("Permissions for the next sign-in").size(12).font(BOLD),
+                checkbox(services.drive)
+                    .label("Drive backups · private app data")
+                    .on_toggle(Message::GoogleDriveAccess),
+                pick_list(
+                    [GoogleCalendarRequest::Off, GoogleCalendarRequest::ReadOnly, GoogleCalendarRequest::ReadWrite],
+                    Some(services.calendar),
+                    Message::GoogleCalendarAccess,
+                ).text_size(12).padding([10, 12]),
+                muted(if services.any() {
+                    "These choices take effect after sign-in. Your current connection stays available until then."
+                } else {
+                    "Choose Drive backup or Calendar access to sign in."
+                }).size(11),
+            ].spacing(10),
             controls.wrap(),
         ]
         .spacing(16);
@@ -1630,13 +1648,13 @@ impl App {
             body = body.push(
                 button(text("Start a new sign-in").size(12))
                     .style(button::text)
-                    .on_press(Message::GoogleLogin(false)),
+                    .on_press_maybe(services.any().then_some(Message::GoogleLogin(false))),
             );
         }
-        body = body.push(muted("Enable the Drive and Calendar APIs in your Google Cloud project. Sign-in opens your browser; backups stay off until you enable them.").size(11));
+        body = body.push(muted("Enable the selected APIs in your Google Cloud project. Client ID and secret identify your desktop application; no access or refresh token is entered here. Sign-in opens your browser.").size(11));
         self.settings_card(
             "Google connection",
-            "Connect Google Calendar and optionally save encrypted copies to Drive.",
+            "Choose Calendar access, encrypted Drive backups, or both.",
             body.into(),
         )
     }

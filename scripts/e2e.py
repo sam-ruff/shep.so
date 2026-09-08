@@ -1414,6 +1414,49 @@ class NativeFlows(unittest.TestCase):
                        shot("outbox-empty-compact"), key("Escape"), check("dialog", None),
                        click(87, 359), check("folder", "Sent"), check("total", 2), shot("local-sent-copies-compact"))
 
+    def test_google_requested_permissions_are_saved_separately_from_the_active_grant(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(375, 156), check("settings_tab", "Accounts"),
+                       {"type": "hover", "x": 1220, "y": 790}, {"type": "scroll", "amount": 12},
+                       wait(150), check("google_services.drive", False),
+                       check("google_services.calendar", "Off"), shot("google-consent-initial-light"),
+                       click(350, 762), check("busy", []), check("notice", None),
+                       click(288, 646), check("google_services.drive", True), check("saved_google_services.drive", True),
+                       click(365, 684), shot("google-consent-calendar-menu-light"),
+                       click(355, 613), check("google_services.calendar", "ReadOnly"),
+                       check("saved_google_services.calendar", "ReadOnly"),
+                       click(288, 646), check("google_services.drive", False), check("saved_google_services.drive", False),
+                       wait(80), shot("google-consent-readonly-light"), click(350, 762),
+                       check("notice", "Google sign-in is disabled in preview.", "contains"), check("busy", []),
+                       key("ctrl+1"), check("tab", "Mail"), key("Down"), check("selected", "Your weekly workspace digest"),
+                       key("ctrl+comma"), check("tab", "Preferences"), check("google_services.calendar", "ReadOnly"),
+                       check("google_services.drive", False), check("calendar_count", 2),
+                       {"type": "hover", "x": 1220, "y": 790}, {"type": "scroll", "amount": 12}, wait(150),
+                       shot("google-consent-saved-light"))
+
+    def test_google_requested_permissions_compact_dark_keep_existing_readonly_access(self):
+        result = self.mcp.call("desktop.start", width=900, height=640, google_permissions="read-only")
+        print(f"Consent evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       click(375, 156), check("settings_tab", "Accounts"),
+                       {"type": "hover", "x": 760, "y": 550}, {"type": "scroll", "amount": 12}, wait(150),
+                       check("google_services.calendar", "ReadOnly"), check("google_services.drive", False),
+                       check("google_grant.access.calendar_write", False), shot("google-consent-initial-dark"),
+                       click(266, 334), check("google_services.drive", True),
+                       click(340, 374), click(340, 337), check("google_services.calendar", "ReadWrite"),
+                       check("saved_google_services.drive", True), check("saved_google_services.calendar", "ReadWrite"),
+                       check("google_grant.access.calendar_write", False), check("google_grant.access.drive", False),
+                       wait(80), shot("google-consent-requested-both-dark"), key("ctrl+2"), check("tab", "Calendar"),
+                       wait(150), shot("google-consent-compact-calendar"),
+                       click(745, 348), check("dialog", "Event"), check("event_access.update", False),
+                       shot("google-consent-existing-readonly-event"), key("Escape"), check("dialog", None),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       wait(150), click(375, 156), check("settings_tab", "Accounts"),
+                       {"type": "hover", "x": 760, "y": 550}, {"type": "scroll", "amount": 12}, wait(150),
+                       check("google_services.calendar", "ReadWrite"), check("google_services.drive", True),
+                       shot("google-consent-saved-dark"), key("ctrl+1"), check("tab", "Mail"),
+                       key("Down"), check("selected", "Your weekly workspace digest"))
+
     def test_google_partial_permissions(self):
         for mode in ("drive", "calendar", "read-only"):
             self.mcp.call("desktop.start", google_permissions=mode)
@@ -1443,11 +1486,13 @@ class NativeFlows(unittest.TestCase):
     def test_google_disconnect_preserves_cached_calendars(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
                        click(470, 156), check("settings_tab", "Calendars"),
-                       check("google_lifecycle.disconnected", False), check("events", 5), shot("google-connection-light"),
-                       click(502, 850), check("dialog", "GoogleDisconnect"), shot("google-disconnect-review-light"),
+                       check("google_lifecycle.disconnected", False), check("events", 5),
+                       {"type": "hover", "x": 1220, "y": 790}, {"type": "scroll", "amount": 12}, wait(150),
+                       shot("google-connection-light"),
+                       click(490, 762), check("dialog", "GoogleDisconnect"), shot("google-disconnect-review-light"),
                        click(664, 553), check("dialog", None), check("google_lifecycle.disconnected", False),
-                       click(502, 850), check("dialog", "GoogleDisconnect"), key("Escape"), check("dialog", None),
-                       click(502, 850), check("dialog", "GoogleDisconnect"), click(545, 553),
+                       click(490, 762), check("dialog", "GoogleDisconnect"), key("Escape"), check("dialog", None),
+                       click(490, 762), check("dialog", "GoogleDisconnect"), click(545, 553),
                        check("dialog", None), check("google_lifecycle.disconnected", True),
                        check("google_lifecycle.cleanup_pending", False), check("google_connected", False),
                        check("google_archived", "preview-calendar", "contains"), check("calendar_count", 2),

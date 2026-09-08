@@ -253,3 +253,25 @@ fn older_settings_gain_frequent_mail_checks_and_new_values_round_trip() {
     preferences.mail_check_seconds = 0;
     assert!(preferences.validate().is_err());
 }
+#[test]
+fn google_permission_choices_are_opt_in_and_legacy_grants_do_not_override_explicit_choices() {
+    use shep::model::{GoogleAccess, GoogleCalendarRequest, GoogleServices};
+    let mut prefs: Preferences = serde_json::from_str("{}").unwrap();
+    assert!(!prefs.requested_google_services().any());
+    prefs.google_grant.access = GoogleAccess {
+        known: true,
+        drive: false,
+        calendar_read: true,
+        calendar_write: false,
+    };
+    assert_eq!(
+        prefs.requested_google_services().calendar,
+        GoogleCalendarRequest::ReadOnly
+    );
+    assert!(!prefs.requested_google_services().drive);
+    prefs.google_services = Some(GoogleServices::default());
+    let restored: Preferences =
+        serde_json::from_str(&serde_json::to_string(&prefs).unwrap()).unwrap();
+    assert!(!restored.requested_google_services().any());
+    assert_eq!(restored.google_grant, prefs.google_grant);
+}

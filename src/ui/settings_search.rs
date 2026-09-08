@@ -43,7 +43,7 @@ const SETTINGS: &[Setting] = &[
     Setting {
         title: "Google connection",
         tab: SettingsTab::Accounts,
-        keywords: "google login oauth reconnect disconnect permissions drive",
+        keywords: "google sign in login oauth reconnect disconnect permissions consent drive calendar read only",
     },
     Setting {
         title: "Connected calendars",
