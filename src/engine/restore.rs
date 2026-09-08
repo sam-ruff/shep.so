@@ -48,12 +48,12 @@ impl Engine {
         accounts.dedup();
         let mut guards = Vec::new();
         for id in accounts {
-            guards.push(self.account_lock(id).await);
+            guards.push(self.account_access(id).await);
         }
         let mut calendars: Vec<_> = snapshot.calendars.iter().map(|c| c.id.as_str()).collect();
         calendars.sort_unstable();
         for id in calendars {
-            guards.push(self.calendar_lock(id).await);
+            guards.push(self.calendar_access(id).await);
         }
         let restored = self.store.restore_snapshot(snapshot).await?;
         // The SQLite commit is complete even if a keychain prompt fails next.

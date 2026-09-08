@@ -85,7 +85,7 @@ impl Engine {
             "The saved calendar identities conflict. Check the connected calendars before retrying."
         );
         for id in ids {
-            guards.push(self.calendar_lock(&id).await);
+            guards.push(self.calendar_access(&id).await);
             self.store
                 .check_calendar_reconnect(id, observed_revision)
                 .await?;

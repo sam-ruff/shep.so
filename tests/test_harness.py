@@ -41,6 +41,16 @@ class HarnessTests(unittest.TestCase):
         self.assertIn("key_sequence",properties["type"]["enum"])
         self.assertEqual(properties["keys"]["maxItems"],32)
 
+    def test_held_sync_fixture_is_explicit_and_validated_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in ("true", 1, None):
+                with self.assertRaisesRegex(ValueError, "Held account sync fixture"):
+                    desktop.start(held_account_sync=value)
+            launch.assert_not_called()
+        tool = next(tool for tool in harness.TOOLS if tool["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["held_account_sync"], {"type":"boolean", "default":False})
+
     def test_reading_mail_fixture_is_explicit_and_validated_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

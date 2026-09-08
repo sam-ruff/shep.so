@@ -96,7 +96,17 @@ The inbox/reader divider must remain mouse-draggable with saved preferences and 
 
 See `docs/PERFORMANCE.md` for measured results and what the measurements do and do not cover.
 
+## Account synchronization and channel ownership
+
+`engine/account_work.rs` owns account and calendar scheduling in a background coordinator. Its request channel and waiting queue each hold at most 32 entries; one-shot channels grant work, interrupt read-only sync and acknowledge completion. Pending writes retain FIFO order; separate accounts can proceed independently. Abandoned requests must release their place, and a queued sync must yield to writes without starting another download. Do not restore shared account/calendar mutex maps.
+
+`engine/account_sync.rs` keeps an owned task until already-started cache writes settle, even when the containing refresh cycle is cancelled. Interrupt only read-only provider/setup work. Drain received cache items before releasing account ownership; `try_join!` would detach an active SQLite `spawn_blocking` operation on provider error and can let old state overwrite a newer write. An interrupted check is not a complete folder listing or Inbox baseline. Preserve the deterministic held-provider/cache-commit, failure, timeout, cancelled-owner, bounded-queue and ordering regressions.
+
+The saved native held-sync flows use `desktop.start(held_account_sync=true)`. They exercise the production coordinator/download pipeline against an indefinitely held fictional provider, without real network or keychain access. Closing must persist an explicitly selected message's read-on-leave change; flagging must interrupt the read-only provider, and a failed write must restore the flag and allow another attempt. Actual personal-server sync/close diagnosis and temporary close-to-tray remain separate unfinished work.
+
 ## Architecture and data safety
+
+Use bounded channels and state-owning workers for application state coordination, rather than shared lock-managed state. The user explicitly corrected the account scheduling approach during R90: interactive writes must interrupt read-only sync through the coordinator, and durable completion acknowledgments must preserve ordering. Keep UI sends nonblocking, bound queued work, and handle abandoned requests without leaving an account occupied. Audit other application-level coordination when changing those paths.
 
 The full product goal is still active. Keep [docs/COMPLETION.md](docs/COMPLETION.md) current with implemented evidence and remaining work; do not infer feature completeness from a passing fixture suite.
 

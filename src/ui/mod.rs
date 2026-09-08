@@ -305,6 +305,8 @@ pub struct App {
     test_keys: VecDeque<String>,
     #[cfg(feature = "test-support")]
     test_sync_round: u64,
+    #[cfg(feature = "test-support")]
+    test_account_sync_waiting: bool,
     list_revision: u64,
     last_list_query: MailQuery,
     composer: composing::Composer,
@@ -455,6 +457,8 @@ impl App {
                 test_keys: VecDeque::new(),
                 #[cfg(feature = "test-support")]
                 test_sync_round: 0,
+                #[cfg(feature = "test-support")]
+                test_account_sync_waiting: false,
                 list_revision: 0,
                 last_list_query: MailQuery::default(),
                 composer: Default::default(),
@@ -1313,6 +1317,8 @@ impl App {
                 }
                 #[cfg(feature = "test-support")]
                 Event::PreviewSync(round) => self.test_sync_round = round,
+                #[cfg(feature = "test-support")]
+                Event::PreviewAccountSync(waiting) => self.test_account_sync_waiting = waiting,
                 Event::Changed => {
                     self.detail_revision += 1;
                     self.prefetch_page = None;
@@ -3438,6 +3444,7 @@ impl App {
         #[cfg(feature = "test-support")]
         {
             data["sync_round"] = serde_json::json!(self.test_sync_round);
+            data["account_sync_waiting"] = serde_json::json!(self.test_account_sync_waiting);
         }
         data["refreshing"] = serde_json::json!(self.busy.contains("sync"));
         data["refresh_animation"] = serde_json::json!({

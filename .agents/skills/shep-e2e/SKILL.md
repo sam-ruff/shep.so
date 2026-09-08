@@ -531,3 +531,14 @@ personal application. After resizing, await its observed dimensions and allow
 native layout to settle before targeting a changed sidebar row. Review the
 WebP evidence, including the red compact confirmation and preserved cache after
 an unconfirmed move. These are functional tests, not latency or live-server claims.
+
+
+For account scheduling, use `desktop.start(held_account_sync=true)` to hold a
+fictional provider indefinitely on the first Inbox row's account. The fixture
+uses the production channel coordinator and cache-download pipeline; it never
+contacts a server. Observe `account_sync_waiting`. Keep the saved close/read-on-leave,
+flag interruption and failure/retry scenarios. First assert the fixture's actual
+initial flag, click its native button, and check the final flag after `mail_pending`
+returns to zero. `mail_actions="fail"` rejects every attempt, including retries;
+do not describe an optimistic intermediate flag as successful persistence.
+The close flow inspects only the owned fixture database, read-only after exit.

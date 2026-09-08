@@ -59,8 +59,8 @@ impl Engine {
         let mut ids = [mail.account_id.clone(), destination.clone()];
         ids.sort();
         let (_first, _second) = tokio::time::timeout(Duration::from_secs(600), async {
-            let first = self.account_lock(&ids[0]).await;
-            let second = self.account_lock(&ids[1]).await;
+            let first = self.account_access(&ids[0]).await;
+            let second = self.account_access(&ids[1]).await;
             (first, second)
         })
         .await
@@ -114,7 +114,7 @@ impl Engine {
     ) -> anyhow::Result<(Option<Account>, MoveReceipt)> {
         let _guard = tokio::time::timeout(
             Duration::from_secs(600),
-            self.account_lock(&mail.account_id),
+            self.account_access(&mail.account_id),
         )
         .await
         .context("The account is still busy. Try moving again.")?;
@@ -183,7 +183,7 @@ impl Engine {
             accounts.dedup();
             let mut guards = Vec::new();
             for id in &accounts {
-                guards.push(self.account_lock(id).await);
+                guards.push(self.account_access(id).await);
             }
             let Some(saved) = self
                 .store
@@ -301,7 +301,7 @@ impl Engine {
             );
             let _guard = tokio::time::timeout(
                 Duration::from_secs(600),
-                self.account_lock(&receipt.account),
+                self.account_access(&receipt.account),
             )
             .await
             .context("The account is still busy. Retry Undo.")?;
@@ -360,7 +360,7 @@ impl Engine {
         } else {
             let account = self.account(&receipt.account).await?;
             let _guard =
-                tokio::time::timeout(Duration::from_secs(600), self.account_lock(&account.id))
+                tokio::time::timeout(Duration::from_secs(600), self.account_access(&account.id))
                     .await
                     .context("The account is still busy. Retry Undo.")?;
             self.store.ensure_folder_idle(account.id.clone()).await?;
@@ -419,7 +419,7 @@ impl Engine {
     ) -> anyhow::Result<()> {
         let _guard = tokio::time::timeout(
             Duration::from_secs(600),
-            self.account_lock(&mail.account_id),
+            self.account_access(&mail.account_id),
         )
         .await
         .context("The account is still busy. Try the change again.")?;
@@ -435,7 +435,7 @@ impl Engine {
     ) -> anyhow::Result<crate::bulk::Receipt> {
         let _guard = tokio::time::timeout(
             Duration::from_secs(600),
-            self.account_lock(&original.account_id),
+            self.account_access(&original.account_id),
         )
         .await
         .context("The account is still busy. Try the change again.")?;

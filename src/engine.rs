@@ -1,3 +1,5 @@
+mod account_sync;
+mod account_work;
 mod backups;
 #[cfg(test)]
 mod backups_tests;
@@ -200,6 +202,8 @@ pub enum Event {
     ),
     #[cfg(feature = "test-support")]
     PreviewSync(u64),
+    #[cfg(feature = "test-support")]
+    PreviewAccountSync(bool),
     Changed,
     Calendar(u64, Arc<Vec<CalendarEvent>>),
     Backups(u64, BackupTarget, Result<Arc<Vec<BackupCopy>>, String>),
@@ -231,15 +235,13 @@ pub enum Event {
     CalendarEventSaved(String),
     ConnectionTest(ConnectionTarget, Result<String, String>),
 }
-type AccountLocks =
-    Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>>;
 #[derive(Clone)]
 struct Engine {
     store: Store,
     google: providers::google::Google,
     demo: bool,
-    account_locks: AccountLocks,
-    calendar_locks: AccountLocks,
+    account_work: account_work::Accounts,
+    calendar_work: account_work::Accounts,
     calendar_setup_lock: Arc<tokio::sync::Mutex<()>>,
     connection_lifecycle_lock: Arc<tokio::sync::Mutex<()>>,
     secret_remover: Arc<dyn removals::SecretRemover>,
@@ -305,8 +307,8 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             store,
             google: Default::default(),
             demo,
-            account_locks: Default::default(),
-            calendar_locks: Default::default(),
+            account_work: Default::default(),
+            calendar_work: Default::default(),
             calendar_setup_lock: Default::default(),
             connection_lifecycle_lock: Default::default(),
             secret_remover: Arc::new(removals::OsSecretRemover),
@@ -362,25 +364,11 @@ impl Engine {
         Ok(())
     }
 
-    async fn calendar_lock(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
-        let lock = self
-            .calendar_locks
-            .lock()
-            .expect("calendar lock map poisoned")
-            .entry(id.into())
-            .or_default()
-            .clone();
-        lock.lock_owned().await
+    async fn calendar_access(&self, id: &str) -> account_work::Access {
+        self.calendar_work.write(id).await
     }
-    async fn account_lock(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
-        let lock = self
-            .account_locks
-            .lock()
-            .expect("account lock map poisoned")
-            .entry(id.into())
-            .or_default()
-            .clone();
-        lock.lock_owned().await
+    async fn account_access(&self, id: &str) -> account_work::Access {
+        self.account_work.write(id).await
     }
 
     async fn workspace(&self, output: &mut Output) -> anyhow::Result<()> {
@@ -683,7 +671,7 @@ impl Engine {
                 );
                 account.validate()?;
                 let _lifecycle = self.connection_lifecycle_lock.lock().await;
-                let _guard = self.account_lock(&account.id).await;
+                let _guard = self.account_access(&account.id).await;
                 self.store.ensure_folder_idle(account.id.clone()).await?;
                 self.store
                     .check_connection(crate::store::ConnectionRef {
@@ -737,6 +725,9 @@ impl Engine {
                 if self.demo {
                     #[cfg(feature = "test-support")]
                     {
+                        if std::env::args().any(|arg| arg == "--held-account-sync") {
+                            return self.preview_held_account_sync(output).await;
+                        }
                         let (round, arrival) = crate::test_support::sync_mail(&self.store).await?;
                         if let Some(arrival) = arrival {
                             output.send(Event::MailArrived(Arc::new(arrival))).await?;
@@ -1136,7 +1127,7 @@ impl Engine {
                         {
                             continue;
                         }
-                        let _guard = self.calendar_lock(&source.id).await;
+                        let _guard = self.calendar_access(&source.id).await;
                         let Some(source) = self
                             .store
                             .get::<Vec<CalendarSource>>("calendars")
@@ -1174,7 +1165,7 @@ impl Engine {
                     deleting_event || event.end > event.start,
                     "The event must end after it starts."
                 );
-                let _guard = self.calendar_lock(&event.source_id).await;
+                let _guard = self.calendar_access(&event.source_id).await;
                 let source = self
                     .store
                     .get::<Vec<CalendarSource>>("calendars")
@@ -1261,82 +1252,6 @@ impl Engine {
         }
         Ok(())
     }
-    async fn sync_account(&self, account: Account, mut output: Output) -> anyhow::Result<()> {
-        let _guard = self.account_lock(&account.id).await;
-        self.store.ensure_folder_idle(account.id.clone()).await?;
-        let account = self.account(&account.id).await?;
-        let password = providers::read_secret(&account.id).await?;
-        let known = self.store.known(account.id.clone()).await?;
-        let (tx, mut rx) = mpsc::channel(8);
-        let store = self.store.clone();
-        let receive = async {
-            let mut last = Instant::now();
-            let mut skipped = 0;
-            while let Some(mail) = rx.recv().await {
-                if matches!(mail, MailSyncItem::SkippedLarge) {
-                    skipped += 1;
-                }
-                let folders_changed = matches!(&mail, MailSyncItem::Folders(..));
-                match mail {
-                    MailSyncItem::Message(mail) => {
-                        if let Some(arrival) = store.sync_message(mail).await? {
-                            output.send(Event::MailArrived(Arc::new(arrival))).await?;
-                        }
-                    }
-                    mail => store.apply_sync(mail).await?,
-                }
-                if folders_changed {
-                    output
-                        .send(Event::Workspace(Arc::new(store.workspace().await?)))
-                        .await?;
-                }
-                if last.elapsed() > Duration::from_millis(250) {
-                    output.send(Event::Changed).await?;
-                    last = Instant::now();
-                }
-            }
-            if skipped > 0 {
-                output
-                    .send(Event::Notice(format!(
-                        "Skipped {skipped} messages larger than the 25 MiB download limit."
-                    )))
-                    .await?;
-            }
-            Ok::<_, anyhow::Error>(())
-        };
-        let provider = providers::mail::provider(account.protocol);
-        let sync = tokio::time::timeout(
-            Duration::from_secs(480),
-            provider.sync(&account, &password, &known, tx),
-        );
-        let (folders, ()) = tokio::try_join!(
-            async { sync.await.context("Account sync timed out")? },
-            receive
-        )?;
-        self.store
-            .run(move |c| {
-                use rusqlite::OptionalExtension;
-                let old: Option<String> = c
-                    .query_row("SELECT value FROM kv WHERE key='folders'", [], |r| r.get(0))
-                    .optional()?;
-                let mut all: Vec<String> = old
-                    .map(|s| serde_json::from_str(&s))
-                    .transpose()?
-                    .unwrap_or_default();
-                for f in folders {
-                    if !all.contains(&f) {
-                        all.push(f);
-                    }
-                }
-                c.execute(
-                    "INSERT OR REPLACE INTO kv VALUES('folders',?)",
-                    [serde_json::to_string(&all)?],
-                )?;
-                Ok(())
-            })
-            .await?;
-        Ok(())
-    }
 }
 async fn write_new(path: &str, bytes: &[u8]) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
@@ -1360,8 +1275,8 @@ mod calendar_tests {
             store: Store::memory().unwrap(),
             google: Default::default(),
             demo: true,
-            account_locks: Default::default(),
-            calendar_locks: Default::default(),
+            account_work: Default::default(),
+            calendar_work: Default::default(),
             calendar_setup_lock: Default::default(),
             connection_lifecycle_lock: Default::default(),
             secret_remover: Arc::new(removals::OsSecretRemover),
