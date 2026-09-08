@@ -93,7 +93,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R87 | Refresh icon should spin more slowly and clockwise; add to TODO and push | Backlog only; animation behavior unchanged in this documentation commit |
 | R88 | Remove sender icons/avatars for shorter compact email-list rows, retain action buttons; unread highlight, dot and bold subject | Recorded in TODO with the supplied horizontal-row reference described; no UI implementation yet |
 | R89 | Deleting a message should select the next message down and keep the list from snapping to the top | Recorded in TODO; preserve scroll/current ordering and selection through background completion. No behavior change yet |
-| R90 | Sync/close seems excessively slow; investigate and fix any bug | Channel-owned account scheduling interrupts held read-only sync for read/flag writes while preserving cache commits; deterministic/native regressions. Pending-save tray and remaining personal-server diagnosis stay open |
+| R90 | Sync/close seems excessively slow; investigate and fix any bug | `34cfc71`: channel-owned account scheduling interrupts held read-only sync for read/flag writes while preserving cache commits; 528 Rust/adapter, 49 Python and 185/185 native functional tests. Pending-save tray and remaining personal-server diagnosis stay open |
 | R91 | Use channels rather than locks to manage state | Account/calendar coordinator owns scheduling through bounded request and completion channels; remaining lifecycle/Google/storage coordination audit is tracked in TODO |
 
 

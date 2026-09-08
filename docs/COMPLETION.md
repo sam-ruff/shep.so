@@ -23,6 +23,36 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
+## R90/R91 — Channel-owned account scheduling (2026-09-08)
+
+Full account sync previously held the account mutation mutex across the entire
+provider download/cache cycle. A read-on-leave change could wait behind a stalled
+download and keep the window from closing. Commit `34cfc71` replaces account and
+calendar mutex maps with a coordinator that owns its state and receives bounded
+requests. Writes interrupt read-only sync; queued writes retain order, independent
+accounts proceed separately, and abandoned requests release their place.
+
+Sync now drains already-started cache writes before releasing account ownership,
+including after provider error, timeout or cancellation of the refresh owner.
+This also fixes a `try_join!` path that could detach an active SQLite write and
+let stale cache work finish after a newer mail change. An interrupted check is
+not reported as a complete folder listing or Inbox baseline.
+
+Verification: normal hooks passed Clippy, formatting and 528 Rust/adapter test
+executions, including ten new coordinator/download regressions. Python passed
+49/49. The optimized native fixture build and strict Zensical build passed. The
+three new native scenarios cover read-on-leave during graceful close, flagging
+while the provider is held indefinitely, and failure/rollback/retry. The fixture
+rejects every retry in its failure mode; intermediate optimistic state is not a
+successful save. Final WebP captures were reviewed. The complete functional native suite passed
+185/185 on the isolated checkpoint binary (`artifacts/logs/sync-checkpoint-native-full.log`).
+
+This source checkpoint does not install a new production executable or establish
+live-provider/Windows/macOS runtime behavior. No performance measurements were
+run. R86 temporary saving tray, remaining shutdown dependencies, personal-account
+diagnosis and the wider channel-ownership audit remain in TODO. R35 inline
+composer work is preserved separately and is not included in this commit.
+
 ## R85 — Credit-saving handover; R35 state foundation (2026-09-07)
 
 The user stopped feature development and requested a handover, TODO cleanup and
