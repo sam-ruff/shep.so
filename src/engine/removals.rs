@@ -20,13 +20,10 @@ impl SecretRemover for OsSecretRemover {
     }
 }
 impl Engine {
-    pub(super) async fn connection_lock(
-        &self,
-        target: &ConnectionRef,
-    ) -> tokio::sync::OwnedMutexGuard<()> {
+    pub(super) async fn connection_access(&self, target: &ConnectionRef) -> account_work::Access {
         match target.kind {
-            ConnectionKind::Account => self.account_lock(&target.id).await,
-            ConnectionKind::Calendar => self.calendar_lock(&target.id).await,
+            ConnectionKind::Account => self.account_access(&target.id).await,
+            ConnectionKind::Calendar => self.calendar_access(&target.id).await,
         }
     }
     async fn cleanup_owner(&self, target: &ConnectionRef) -> anyhow::Result<usize> {
@@ -53,7 +50,7 @@ impl Engine {
         cancel_transfers: bool,
     ) -> anyhow::Result<usize> {
         let _lifecycle = self.connection_lifecycle_lock.lock().await;
-        let _owner = self.connection_lock(&preview.target).await;
+        let _owner = self.connection_access(&preview.target).await;
         self.store
             .remove_connection(preview.clone(), cancel_transfers)
             .await?;
@@ -80,7 +77,7 @@ impl Engine {
         }
         let mut failed = 0;
         for owner in owners {
-            let _guard = self.connection_lock(&owner).await;
+            let _guard = self.connection_access(&owner).await;
             failed += self.cleanup_owner(&owner).await?;
         }
         Ok(failed)
@@ -117,7 +114,7 @@ impl Engine {
         ids.sort();
         let mut guards = Vec::new();
         for id in ids {
-            guards.push(self.calendar_lock(id).await);
+            guards.push(self.calendar_access(id).await);
             self.store
                 .check_calendar_reconnect(id.to_owned(), observed_revision)
                 .await?;

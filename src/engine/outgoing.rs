@@ -9,7 +9,7 @@ impl Engine {
         Ok(())
     }
     pub(super) async fn send_draft(&self, draft: Draft, output: &mut Output) -> anyhow::Result<()> {
-        let _guard = self.account_lock(&draft.account_id).await;
+        let _guard = self.account_access(&draft.account_id).await;
         self.store
             .ensure_folder_idle(draft.account_id.clone())
             .await?;
@@ -218,7 +218,7 @@ impl Engine {
         output: &mut Output,
     ) -> anyhow::Result<()> {
         let initial = self.store.outgoing_info(attempt.clone()).await?;
-        let _guard = self.account_lock(&initial.account_id).await;
+        let _guard = self.account_access(&initial.account_id).await;
         self.store
             .ensure_folder_idle(initial.account_id.clone())
             .await?;
@@ -330,7 +330,7 @@ impl Engine {
             let page = self.store.outgoing_page(offset).await?;
             for info in page.rows {
                 if info.delivery == DeliveryState::Accepted {
-                    let _guard = self.account_lock(&info.account_id).await;
+                    let _guard = self.account_access(&info.account_id).await;
                     self.store
                         .ensure_folder_idle(info.account_id.clone())
                         .await?;

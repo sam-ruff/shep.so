@@ -27,7 +27,7 @@ impl Engine {
         ids.dedup();
         let mut guards = Vec::new();
         for id in ids {
-            guards.push(self.account_lock(&id).await);
+            guards.push(self.account_access(&id).await);
         }
         let saved = self.store.mail_move(record.token.clone()).await?;
         anyhow::ensure!(

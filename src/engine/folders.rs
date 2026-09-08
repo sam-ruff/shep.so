@@ -253,7 +253,7 @@ impl Engine {
         }
         let permissions = async {
             let slot = self.provider_slots.acquire().await;
-            let account = self.account_lock(&job.review.account).await;
+            let account = self.account_access(&job.review.account).await;
             (slot, account)
         };
         let stop = async {

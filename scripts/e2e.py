@@ -492,6 +492,37 @@ class NativeFlows(unittest.TestCase):
                        check("mail_selection.pending",False),key("Delete"),check("dialog","BulkReview"),
                        key("Return"),check("dialog",None),check("bulk.jobs.0.running",1))
 
+    def test_close_interrupts_readonly_sync_and_commits_read_on_leave(self):
+        started = self.mcp.call("desktop.start", persistent=True, held_account_sync=True)
+        print(f"Close during held sync: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("account_sync_waiting", True), click(350,230),
+                       check("reader_text_ready", True), check("mail_rows.0.unread", True),
+                       shot("close-while-readonly-sync-is-held"))
+        message = self.mcp.call("desktop.state")["selected_id"]
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        database = Path(started["artifacts"]) / "fixture.sqlite"
+        with sqlite3.connect(database.as_uri()+"?mode=ro", uri=True) as cache:
+            self.assertEqual(cache.execute("SELECT unread FROM messages WHERE id=?", (message,)).fetchone(), (0,))
+
+    def test_flag_interrupts_readonly_sync_without_waiting_for_download_timeout(self):
+        started = self.mcp.call("desktop.start", held_account_sync=True)
+        print(f"Interactive flag during held sync: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("account_sync_waiting", True), check("mail_rows.0.starred",True),
+                       click(570,215), check("mail_rows.0.starred",False), check("mail_pending",0),
+                       check("account_sync_waiting",False), shot("flag-after-interrupting-readonly-sync"))
+
+    def test_failed_flag_after_interrupting_sync_restores_state_and_accepts_retry(self):
+        started = self.mcp.call("desktop.start", held_account_sync=True, mail_actions="fail")
+        print(f"Failed flag after interrupting sync: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("account_sync_waiting", True), check("mail_rows.0.starred",True),
+                       click(570,215), check("mail_rows.0.starred",False), check("mail_pending",1),
+                       check("account_sync_waiting",False), check("mail_pending",0),
+                       check("mail_rows.0.starred",True), check("notice","Fixture","contains"),
+                       shot("interrupted-sync-write-failure"), click(570,215),
+                       check("mail_rows.0.starred",False), check("mail_pending",1),
+                       check("mail_pending",0), check("mail_rows.0.starred",True),
+                       check("notice","Fixture","contains"), shot("interrupted-sync-retry-failure"))
+
     def test_bulk_graceful_close_preserves_current_receipt_and_resumes_queued_mail(self):
         started=self.mcp.call("desktop.start",persistent=True,mail_actions="slow")
         print(f"Graceful group restart evidence: {started['artifacts']}",flush=True)
