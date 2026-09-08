@@ -2,6 +2,14 @@
 
 The user stopped feature work to conserve credits and requested this handover, a cleaned TODO and a push. **The full application goal is not complete.** Resume from [TODO.md](TODO.md), preserving the original requirements in [docs/REQUEST_AUDIT.md](docs/REQUEST_AUDIT.md). Read [AGENTS.md](AGENTS.md) for operational rules and [docs/COMPLETION.md](docs/COMPLETION.md) for evidence; do not repeat historical work based only on the latest chat message.
 
+## 8 September continuation: database export
+
+R83 now has a complete SQLite export in **Preferences → Backups → Database transfer**. `transfer.rs` pins a consistent read transaction on a separate connection and copies bounded page batches into a private temporary file before atomic publication. The capacity-one database command worker is independent of provider/read/persistence queues. The UI saves its settings and owned drafts first, reports progress, supports cancellation and waits for cleanup on close. See the latest completion entry for verification and shipping.
+
+**Import is still open.** Preserve the original workspace, validate schema/integrity before activation, isolate imported credential identities and prevent pending sends/moves/folder jobs from replaying on another device. Raw SQLite export deliberately retains that state; it is not the existing encrypted backup format. Account passwords and Google tokens remain in the OS keychain.
+
+OAuth profile implementation stays at the top of TODO, referencing the [Flutter handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md). Keep the outstanding credential-protection choice open. No live Google profile protocol or full database import is claimed by this export checkpoint.
+
 ## 8 September continuation: sync/close and channels
 
 Development resumed. The user requested temporary native tray behavior while

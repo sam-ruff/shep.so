@@ -158,7 +158,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 191 functional flows plus the navigation and HTML pixel performance gates; shipped run evidence belongs in the completion log.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 194 functional flows plus the navigation and HTML pixel performance gates; shipped run evidence belongs in the completion log.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -948,3 +948,31 @@ and the editor from mail shortcuts, preserve text Ctrl+A and ordinary Tab, and
 clear hidden focus when collapsing. Preserve the saved inline switching/restart,
 selection, Find, send-preparation and compact typing scenarios, alongside all
 existing forwarding, recipients, file picker, discard and Outbox flows.
+
+
+## Complete database export
+
+`transfer.rs` copies SQLite pages from a separate read-only connection with a
+pinned read transaction. Never copy the live cache with ordinary filesystem reads
+or hold the mail-cache worker for the full transfer. Keep the private temporary
+file in the selected destination directory, bounded page steps/progress and atomic
+publication. Cancellation before commit must preserve the previous file; a
+post-commit warning must still report a saved copy. Protect active cache, WAL/SHM,
+backup-journal and operation-lock paths, including aliases. On Unix, compare
+metadata/inodes without opening and closing an ordinary descriptor to a live
+SQLite file, which can release process advisory locks.
+
+`engine/database_transfers.rs` owns one active job through a capacity-one command
+channel, independent of provider capacity and mail reads/saves. Progress uses a
+latest-value watch channel; cancellation and completion use one-shot channels.
+The UI waits for its exact preferences acknowledgment and all current/parked
+draft saves/file imports before starting. Keep stale-result rejection, failed-save
+recovery, cancellation under backpressure and close waiting for cleanup.
+
+Preserve `transfer::tests`, UI ordering tests, the dispatcher saturation test and
+all three `test_database_export_*` native flows. The native held-copy fixture
+requires both test-support demo mode and `--hold-database-export`; it waits for
+ordinary Cancel/window-close input, never a state-file mutation. Export keeps all
+database-backed records, including pending-operation history, but excludes OS
+credentials. Full import remains open: validate and isolate it before activation,
+and never replay imported pending provider actions automatically.

@@ -391,6 +391,9 @@ class HarnessTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Unknown Google permissions"):
                 desktop.start(google_permissions="unsupported")
             launch.assert_not_called()
+            with self.assertRaisesRegex(ValueError, "Held database export"):
+                desktop.start(held_database_export="yes")
+            launch.assert_not_called()
 
     def test_native_file_picker_uses_real_input_and_restricts_files_to_the_run(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -417,6 +420,29 @@ class HarnessTests(unittest.TestCase):
             desktop.command.reset_mock()
             with self.assertRaises(ValueError):
                 desktop.choose_file(str(ROOT / "Cargo.toml"))
+            desktop.command.assert_not_called()
+
+    def test_save_picker_accepts_only_new_files_inside_the_owned_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            desktop = harness.Desktop()
+            desktop.directory = Path(directory)
+            desktop.window = "main"
+            target = desktop.directory / "new export.sqlite"
+            # The path is entered through the same native input helper used for
+            # attachments. Save merely permits a not-yet-existing leaf file.
+            with patch.object(desktop, "enter_picker_path") as enter, patch.object(harness.time, "sleep"):
+                windows = iter(["picker", ""])
+                desktop.command = Mock(side_effect=lambda *args: next(windows) if "search" in args else "")
+                self.assertEqual(desktop.choose_file(target, save=True), {"selected": str(target)})
+                enter.assert_called_once_with("picker", target)
+            desktop.command.reset_mock()
+            for path in (Path(directory).parent / "outside.sqlite", Path(directory), target.parent / "missing/file.sqlite"):
+                with self.assertRaises(ValueError):
+                    desktop.choose_file(path, save=True)
+            with self.assertRaises(ValueError):
+                desktop.choose_file(target, save="yes")
+            with self.assertRaises(FileNotFoundError):
+                desktop.choose_file(target)
             desktop.command.assert_not_called()
 
     def test_picker_retries_ignored_input_and_requires_gtk_clipboard_ownership(self):

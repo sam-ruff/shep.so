@@ -361,12 +361,14 @@ impl App {
                 if owned_error {
                     self.composer.close = None;
                     self.fail_removal_draft_wait(&id, &error);
+                    self.fail_database_preparation(&error);
                 }
                 self.notice(error, true);
                 return Task::none();
             }
         }
         self.continue_removal_review();
+        self.advance_database_transfer();
         if let Some(window) = self.composer.close {
             self.flush_draft_saves(true);
             if !self.composer.pending() {

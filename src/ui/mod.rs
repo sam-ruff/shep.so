@@ -7,6 +7,7 @@ mod components;
 mod composing;
 mod context_menu;
 mod conversations;
+mod database_transfers;
 mod drag_mail;
 mod ellipsis;
 mod find_message;
@@ -219,6 +220,9 @@ pub enum Message {
     Dismiss,
     BrowseBackup,
     BrowseExport,
+    DatabaseExport,
+    DatabaseExportPath(u64, Option<std::path::PathBuf>),
+    CancelDatabaseTransfer,
     ChosenPath(&'static str, Option<String>),
     PaneResize(widget::pane_grid::ResizeEvent),
     SaveLayout(u64),
@@ -279,6 +283,7 @@ pub struct App {
     layout_generation: u64,
     pending_preference_save: Option<(u64, Preferences)>,
     pending_close: Option<iced::window::Id>,
+    database_transfer: database_transfers::State,
     confirm_save: Option<u64>,
     saved_toast: Option<Instant>,
     action_toasts: action_toasts::ActionToasts,
@@ -431,6 +436,7 @@ impl App {
                 layout_generation: 0,
                 pending_preference_save: None,
                 pending_close: None,
+                database_transfer: Default::default(),
                 confirm_save: None,
                 saved_toast: None,
                 action_toasts: Default::default(),
@@ -1103,6 +1109,7 @@ impl App {
                     ),
                 },
                 Event::PreferencesSaveFailed(request, error) => {
+                    self.database_preferences_failed(request, &error);
                     if self
                         .pending_google_login
                         .as_ref()
@@ -1122,6 +1129,7 @@ impl App {
                     self.preference_notice = self.notice.as_ref().map(|notice| notice.2);
                 }
                 Event::PreferencesSaved(request, snapshot) => {
+                    self.database_preferences_saved(request);
                     self.preference_sync.acknowledge(
                         request,
                         (*snapshot).clone(),
@@ -1405,6 +1413,7 @@ impl App {
                 Event::DraftSaved(id, revision, result) => {
                     return self.draft_saved(id, revision, result);
                 }
+                Event::Database(request, update) => return self.database_update(request, update),
                 Event::DraftDeleted(id, result) => self.draft_deleted(id, result),
                 Event::ForwardDraft(id, result) => return self.forward_ready(id, result),
                 Event::Print(revision, result) => return self.print_ready(revision, result),
@@ -1416,6 +1425,7 @@ impl App {
                         Ok(state) => self.observe_drafts(&state),
                         Err(error) => {
                             self.fail_removal_draft_wait(&id, &error);
+                            self.fail_database_preparation(&error);
                             self.notice(error, true);
                         }
                     }
@@ -1540,6 +1550,13 @@ impl App {
                 _ => {}
             },
             Message::WindowClose(window) => {
+                if self.database_transfer.pending.is_some() {
+                    self.cancel_database_transfer();
+                    if self.database_transfer.pending.is_some() {
+                        self.pending_close = Some(window);
+                        return Task::none();
+                    }
+                }
                 self.mail_drag.clear();
                 if self.flush_pane_resize() {
                     self.save_preferences();
@@ -1619,6 +1636,7 @@ impl App {
                 }
             }
             Message::Tick => {
+                self.advance_database_transfer();
                 self.pump_selection();
                 self.action_toasts.expire(Instant::now());
                 self.prune_undos();
@@ -2583,6 +2601,9 @@ impl App {
                     |p| Message::ChosenPath("path", p),
                 );
             }
+            Message::DatabaseExport => return self.begin_database_export(),
+            Message::DatabaseExportPath(request, path) => self.database_export_path(request, path),
+            Message::CancelDatabaseTransfer => self.cancel_database_transfer(),
             Message::ChosenPath(key, path) => {
                 if let Some(path) = path {
                     self.fields.insert(key, path);
@@ -3458,6 +3479,7 @@ impl App {
             "reply": self.composer.current.draft.reply_context,
         });
         self.bulk_test_state(&mut data);
+        data["database_transfer"] = self.database_transfer.observation();
         data["mail_drag"] = self.mail_drag.observation();
         #[cfg(feature = "test-support")]
         {

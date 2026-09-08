@@ -1744,6 +1744,82 @@ class NativeFlows(unittest.TestCase):
                        {"type": "click", "x": 403, "y": 450, "button": 3}, check("context_subject", "Coffee next Thursday?"),
                        click(1380, 730), check("context_menu", None))
 
+    def open_database_transfer(self, search_x=1150):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(search_x, 88), type_text("database"),
+                       check("settings_matches", ["Database transfer"]), click(480, 289),
+                       check("settings_group", "Database transfer"), wait(100))
+
+    def test_database_export_native_file_picker_and_complete_snapshot(self):
+        started = self.mcp.call("desktop.start", persistent=True)
+        directory = Path(started["artifacts"])
+        destination = directory / "whole-workspace.sqlite"
+        print(f"Database export evidence: {directory}", flush=True)
+        self.mcp.batch(key("r"), check("composer.visible", True),
+                       check("focused_input", "compose-body"), type_text("Unsent database export draft."),
+                       check("editor", "Unsent database export draft.", "contains"))
+        self.open_database_transfer()
+        self.mcp.batch(shot("database-export-light"), click(379, 433), check("database_transfer.phase", "Choosing"),
+                       {"type": "choose_file", "save": True, "path": str(destination)},
+                       check("database_transfer.saved", str(destination)), check("database_transfer.phase", None),
+                       check("database_transfer.error", None), shot("database-export-saved"))
+        with sqlite3.connect(f"file:{destination}?mode=ro", uri=True) as exported:
+            self.assertEqual(exported.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            self.assertGreaterEqual(exported.execute("SELECT count(*) FROM messages WHERE length(raw)>0").fetchone()[0], 120)
+            accounts = json.loads(exported.execute("SELECT value FROM kv WHERE key='accounts'").fetchone()[0])
+            self.assertEqual(len(accounts), 2)
+            drafts = json.loads(exported.execute("SELECT value FROM kv WHERE key='drafts'").fetchone()[0])
+            self.assertTrue(any("Unsent database export draft." in draft["body"] for draft in drafts))
+        self.assertFalse(Path(str(destination) + "-wal").exists())
+        self.mcp.batch(key("ctrl+1"), check("tab", "Mail"), shot("database-export-mail-continues"))
+
+    def test_database_export_cancel_picker_and_protect_live_database_compact_dark(self):
+        started = self.mcp.call("desktop.start", persistent=True, width=900, height=640)
+        directory = Path(started["artifacts"])
+        print(f"Database export recovery evidence: {directory}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True))
+        self.open_database_transfer(650)
+        self.mcp.batch(shot("database-export-compact-dark"), click(379, 433), check("database_transfer.phase", "Choosing"),
+                       {"type": "choose_file"}, check("database_transfer.phase", None), check("database_transfer.saved", None),
+                       click(379, 433), check("database_transfer.phase", "Choosing"),
+                       {"type": "choose_file", "save": True, "path": str(directory / "fixture.sqlite")},
+                       check("database_transfer.error", "active", "contains"), check("database_transfer.phase", None),
+                       shot("database-export-live-cache-protected"))
+        destination = directory / "retry.sqlite"
+        self.mcp.batch(click(379, 433), check("database_transfer.phase", "Choosing"),
+                       {"type": "choose_file", "save": True, "path": str(destination)},
+                       check("database_transfer.saved", str(destination)), check("database_transfer.error", None),
+                       shot("database-export-retried-dark"), key("ctrl+1"), check("tab", "Mail"), check("total", 120))
+        with sqlite3.connect(f"file:{destination}?mode=ro", uri=True) as exported:
+            preferences = json.loads(exported.execute("SELECT value FROM kv WHERE key='preferences'").fetchone()[0])
+            self.assertEqual(preferences["appearance"], "Dark")
+
+    def test_database_export_cancel_and_close_during_real_copy_keep_mail_usable(self):
+        started = self.mcp.call("desktop.start", persistent=True, held_database_export=True)
+        directory = Path(started["artifacts"])
+        destination = directory / "cancelled.sqlite"
+        print(f"Held database export evidence: {directory}", flush=True)
+        self.open_database_transfer()
+        self.mcp.batch(click(379, 433), check("database_transfer.phase", "Choosing"),
+                       {"type": "choose_file", "save": True, "path": str(destination)},
+                       check("database_transfer.phase", "Copying"), shot("database-export-pending"),
+                       key("ctrl+1"), check("tab", "Mail"), wait(100), click(400, 330), check("selected", "Your weekly workspace digest"),
+                       key("r"), check("composer.visible", True), check("focused_input", "compose-body"),
+                       type_text("Keep editing while exporting."), check("draft_count", 1),
+                       check("database_transfer.phase", "Copying"), shot("database-export-pending-editor"),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(100),
+                       click(449, 436), check("database_transfer.phase", None), check("database_transfer.saved", None),
+                       check("notice", "Database export cancelled"), shot("database-export-cancelled"))
+        self.assertFalse(destination.exists())
+        self.assertEqual(list(directory.glob(".shep-export-*")), [])
+        self.mcp.batch(click(379, 433), check("database_transfer.phase", "Choosing"),
+                       {"type": "choose_file", "save": True, "path": str(destination)},
+                       check("database_transfer.phase", "Copying"), {"type": "restart"},
+                       check("database_transfer.phase", None), check("draft_count", 1),
+                       check("total", 120), shot("database-export-close-restarted"))
+        self.assertFalse(destination.exists())
+        self.assertEqual(list(directory.glob(".shep-export-*")), [])
+
     def test_preferences_search_and_tooltip_options(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(1150, 88), type_text("tooltip"),
                        check("settings_matches", ["Tooltips"]), shot("settings-search-results"),
