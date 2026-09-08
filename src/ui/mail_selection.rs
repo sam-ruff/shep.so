@@ -229,6 +229,7 @@ impl App {
         self.pump_selection();
     }
     pub(super) fn toggle_selection_mode(&mut self) -> Task<Message> {
+        self.close_composer();
         self.focused_input = None;
         self.pending_focus = None;
         self.sidebar_focus = false;
@@ -245,6 +246,7 @@ impl App {
         if self.tab != Tab::Mail || self.full_reader || self.sidebar_focus || !self.list_focus {
             return Task::none();
         }
+        self.close_composer();
         // Another explicit Select All includes new arrivals; an existing
         // selection itself never grows silently during a background refresh.
         let anchor = self.mail_selection.anchor.clone().or_else(|| {
@@ -258,6 +260,7 @@ impl App {
         widget::operation::focus("unfocused")
     }
     pub(super) fn checkbox_mail(&mut self, id: String) -> Task<Message> {
+        self.close_composer();
         if !self.mail_selection.mode {
             self.mail_selection.start(&self.query);
         }
@@ -306,6 +309,7 @@ impl App {
         self.sidebar_focus = false;
         self.list_focus = true;
         if toggle || range {
+            self.close_composer();
             self.last_click = None;
             if !self.mail_selection.mode {
                 self.mail_selection.start(&self.query);

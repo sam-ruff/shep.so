@@ -69,7 +69,7 @@ impl App {
                 | Message::Query(_)
                 | Message::NextPage(_)
                 | Message::Draft(_)
-                | Message::Open(Dialog::Compose)
+                | Message::NewMessage
                 | Message::Reply
                 | Message::ReplyAll
                 | Message::ClosePreview

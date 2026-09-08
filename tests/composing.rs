@@ -517,3 +517,50 @@ async fn failed_forward_file_insert_rolls_back_the_whole_draft_and_retry_is_clea
     let state = store.forward_draft(source, "retry".into()).await.unwrap();
     assert_eq!(state.drafts[0].attachments.len(), 2);
 }
+
+#[tokio::test]
+async fn inline_reply_context_reopens_and_only_includes_original_when_selected() {
+    let store = Store::memory().unwrap();
+    let mut original = draft();
+    original.body = "My new reply.".into();
+    original.in_reply_to = Some("<original@example.test>".into());
+    original.references = vec!["<original@example.test>".into()];
+    original.bcc = "private@example.test".into();
+    original.reply_context = Some(ReplyContext {
+        account_id: "work".into(),
+        mail_id: "cache-hint".into(),
+        quote: "\n\nOn Monday, Friend wrote:\n> Original words.".into(),
+        include_quote: true,
+    });
+    store.save_draft(original.clone()).await.unwrap();
+    let state = store.draft_state().await.unwrap();
+    let saved = state
+        .drafts
+        .iter()
+        .find(|draft| draft.id == original.id)
+        .unwrap();
+    assert_eq!(saved.reply_context, original.reply_context);
+    assert_eq!(saved.body, "My new reply.");
+    let message = compose::build(&account(), saved, vec![]).unwrap();
+    let raw = message.formatted();
+    let mime = mailparse::parse_mail(&raw).unwrap();
+    assert!(mime.get_body().unwrap().contains("> Original words."));
+    assert_eq!(
+        mime.headers.get_first_value("In-Reply-To").as_deref(),
+        Some("<original@example.test>")
+    );
+    assert!(!String::from_utf8_lossy(&raw).contains("private@example.test"));
+    let mut edited = saved.clone();
+    edited.revision += 1;
+    edited.reply_context.as_mut().unwrap().include_quote = false;
+    store.save_draft(edited.clone()).await.unwrap();
+    let message = compose::build(&account(), &edited, vec![]).unwrap();
+    let raw = message.formatted();
+    let mime = mailparse::parse_mail(&raw).unwrap();
+    assert_eq!(mime.get_body().unwrap().trim(), "My new reply.");
+    let mut legacy = serde_json::to_value(&edited).unwrap();
+    legacy.as_object_mut().unwrap().remove("reply_context");
+    let legacy: Draft = serde_json::from_value(legacy).unwrap();
+    assert!(legacy.reply_context.is_none());
+    assert_eq!(legacy.delivery_body(), "My new reply.");
+}

@@ -918,15 +918,31 @@ intentionally omit waits between earlier keys and already-visible later controls
 independent scenarios may still await focus/layout to isolate their own behavior.
 
 
-## Composer state checkpoint
+## Inline composer ownership
 
-`ui/composing::Session` owns recipient/account/subject metadata and the native
-editor separately from generic dialog fields. Use `ComposeField` for those
-controls. Opening another form must not clear dirty draft state. Autosave keeps
-one current-session revision in flight and coalesces newer edits; window close
-must observe it and then save the newest revision, including while another form
-is visible. A failed save cancels close and retains edits. Late file/send/save
-results must preserve unrelated form state and newer draft revisions.
-This ownership checkpoint does not implement R35's inline view/session pool.
-Preserve its controller tests and native Preferences/graceful-restart scenario
-when completing that work; extend native editing-focus guards for inline fields.
+`ui/composing::Session` owns recipient/account/subject metadata, the native editor,
+its pending save revision and UI key. `ui/composing/sessions.rs` parks sessions by
+draft ID when navigating. Generic dialog fields must never hold composer text.
+Keep one save in flight per session, coalesce newer edits and use the bounded
+persistence channel. A manual Save applies to the current session even when its
+previous autosave is pending. Navigation must never wait for its acknowledgment.
+
+`Draft.reply_context` keeps original quoted text separate from the editable reply
+and persists its association. MIME submission uses `delivery_body()` and the
+Include original choice. Legacy drafts still deserialize without this context.
+Do not replace forward HTML handling with the reply quoting path.
+
+Window close must observe every dirty/pending session, then save newer revisions.
+A failed save cancels close and retains text. Background reader results cannot
+restore a composer while close or list selection is pending. Account-removal
+review waits for that account's owned draft saves/file imports; successful removal
+retires only its sessions. Discard must wait for an attachment import to finish.
+Late file/send/save results must preserve unrelated editors and newer revisions.
+
+The draft-keyed reader scroller separates different editors and keeps the same
+editor tree through asynchronous HTML rendering. Find and HTML reflow target
+`compose-reader` while replying. Native focus guards protect To/Cc/Bcc/Subject
+and the editor from mail shortcuts, preserve text Ctrl+A and ordinary Tab, and
+clear hidden focus when collapsing. Preserve the saved inline switching/restart,
+selection, Find, send-preparation and compact typing scenarios, alongside all
+existing forwarding, recipients, file picker, discard and Outbox flows.

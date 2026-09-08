@@ -156,6 +156,7 @@ impl App {
                         }
                     }
                 }
+                self.restore_reply();
                 // Periodic sync/read/flag refreshes update the same thread.
                 // They must not reposition a person already reading further down.
                 if self.conversation_visible()
@@ -179,7 +180,10 @@ impl App {
             && self.conversation.page.total > 1
     }
     pub(super) fn conversation_scroll(&self, generation: u64) -> Task<Message> {
-        if generation != self.conversation.generation || !self.conversation_visible() {
+        if generation != self.conversation.generation
+            || !self.conversation_visible()
+            || self.compose_visible()
+        {
             return Task::none();
         }
         let i = self
@@ -197,15 +201,8 @@ impl App {
             },
         )
     }
-    pub(super) fn conversation_reader(&self) -> Element<'_, Message> {
+    pub(super) fn conversation_cards(&self) -> Element<'_, Message> {
         let page = &self.conversation.page;
-        let title = self
-            .page
-            .rows
-            .iter()
-            .find(|mail| Some(&mail.id) == self.selected.as_ref())
-            .map(|mail| mail.subject.as_str())
-            .unwrap_or("Conversation");
         let mut cards = column![].spacing(10);
         for original in &page.rows {
             let mail = self.mail_actions.effective(original);
@@ -324,7 +321,12 @@ impl App {
                     }),
             ));
         }
-        let controls = row![
+        cards.into()
+    }
+
+    pub(super) fn conversation_controls(&self) -> Element<'_, Message> {
+        let page = &self.conversation.page;
+        row![
             text(format!("{} messages", page.total)).size(12),
             space().width(Length::Fill),
             button(text("Earlier").size(11))
@@ -346,7 +348,20 @@ impl App {
                 )
         ]
         .spacing(6)
-        .align_y(Alignment::Center);
+        .align_y(Alignment::Center)
+        .into()
+    }
+
+    pub(super) fn conversation_reader(&self) -> Element<'_, Message> {
+        let title = self
+            .page
+            .rows
+            .iter()
+            .find(|mail| Some(&mail.id) == self.selected.as_ref())
+            .map(|mail| mail.subject.as_str())
+            .unwrap_or("Conversation");
+        let cards = self.conversation_cards();
+        let controls = self.conversation_controls();
         let toolbar: Element<'_, Message> = match &self.detail {
             Some(detail) => self.reader_toolbar(detail),
             None => container(muted("Opening message…")).height(36).into(),

@@ -652,6 +652,9 @@ impl App {
         .into()
     }
     fn reader(&self) -> Element<'_, Message> {
+        if self.compose_visible() {
+            return self.inline_reader();
+        }
         if self.mail_selection.mode && !self.full_reader {
             return self.group_reader();
         }
@@ -1990,14 +1993,6 @@ impl App {
                 },
                 "Choose a destination folder.",
             ),
-            Dialog::Compose => (
-                if self.composer.current.draft.forward.is_some() {
-                    "Forward message"
-                } else {
-                    "New message"
-                },
-                "",
-            ),
             Dialog::DiscardDraft => ("Discard draft?", ""),
             Dialog::Event => ("Calendar event", "Times use this device's timezone."),
             Dialog::Export => (
@@ -2063,7 +2058,6 @@ impl App {
                     body = body.push(button(row![icon("folder",18.), text(self.move_folder_label(folder).into_owned()).size(13), space().width(Length::Fill), trailing].spacing(12).align_y(Alignment::Center)).padding(13).width(Length::Fill).style(if target { selected } else { outline }).on_press(Message::Move(folder.clone())));
                 }
             }
-            Dialog::Compose => body = body.spacing(14).push(self.compose_form()),
             Dialog::DiscardDraft => body = body.push(self.discard_draft_form()),
             Dialog::Event if self.editing_event.is_some() && !self.event_access().update => body = body.push(self.read_only_event()),
             Dialog::Event=>{
@@ -2091,11 +2085,7 @@ impl App {
                 .height(Length::Shrink),
         )
         .max_height((self.size.height - 65.).max(400.))
-        .width(if dialog == Dialog::Compose {
-            680.
-        } else {
-            570.
-        })
+        .width(570.)
         .style(card)
         .into()
     }

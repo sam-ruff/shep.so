@@ -482,6 +482,8 @@ pub struct Draft {
     #[serde(default)]
     pub in_reply_to: Option<String>,
     #[serde(default)]
+    pub reply_context: Option<ReplyContext>,
+    #[serde(default)]
     pub references: Vec<String>,
     #[serde(default)]
     pub forward: Option<crate::compose::ForwardQuote>,
@@ -489,6 +491,30 @@ pub struct Draft {
     // undo a file import/removal that finished while the user was typing.
     #[serde(default, skip_serializing)]
     pub attachments: Vec<DraftAttachment>,
+}
+
+/// Keep quoted original content outside the inline editor without losing it on
+/// draft save/restart or MIME submission. Mail IDs are hints; Message-ID is the
+/// stable fallback when a provider move rekeys the cached source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplyContext {
+    pub account_id: String,
+    pub mail_id: String,
+    pub quote: String,
+    pub include_quote: bool,
+}
+
+impl Draft {
+    pub fn delivery_body(&self) -> std::borrow::Cow<'_, str> {
+        match self
+            .reply_context
+            .as_ref()
+            .filter(|context| context.include_quote)
+        {
+            Some(context) => std::borrow::Cow::Owned(format!("{}{}", self.body, context.quote)),
+            None => std::borrow::Cow::Borrowed(&self.body),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

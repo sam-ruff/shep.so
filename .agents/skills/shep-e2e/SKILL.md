@@ -542,3 +542,24 @@ initial flag, click its native button, and check the final flag after `mail_pend
 returns to zero. `mail_actions="fail"` rejects every attempt, including retries;
 do not describe an optimistic intermediate flag as successful persistence.
 The close flow inspects only the owned fixture database, read-only after exit.
+
+
+Composition is inline in the reader. Assert `composer.visible` and `dialog == null`,
+use `compose_fields` for recipients/subject and `editor` for the new reply text.
+The original is in `composer.reply.quote`, separate from the editor. Saved drafts
+and parked editors are distinct observations; closing an editor does not prove
+that its latest save has completed. `Save draft` keeps the editor open.
+
+Keep all `test_inline_*` scenarios and the migrated compose/forward/discard/Outbox
+flows. They use real native input and owned fixture files, including restart after
+deleting the original attachment file. At 1440×920 the default reply action row is
+near y=564, new-message actions near y=633; Cc/Bcc and attachments add rows. Compact
+windows scroll the complete form. Review the actual WebPs when changing geometry;
+do not change the state oracle to imitate the previous Compose dialog.
+
+With `mail_actions="slow"`, sending holds fixture preparation for 1.6 seconds,
+then reports the existing preview refusal. The saved send-navigation scenario
+edits a second reply while the first is pending, observes failure and reopens the
+first draft. This does not contact SMTP, access the keychain or prove delivery.
+Typing-artifact checks compare a compact editor before and after resize repaint
+in both themes, sampling its bottom padding as well as the surrounding gap.
