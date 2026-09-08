@@ -1,5 +1,11 @@
 # Completion audit
 
+## 8 September: OAuth/profile implementation handover
+
+Documentation checkpoint [`02c4b32`](https://github.com/sam-ruff/shep.so/commit/02c4b32a6b380c1d5312c20bf187584c683ff10f) is pushed to `feat/mobile-web-clients` and remote equality was verified. [The handover](agents/PROFILE_SYNC_HANDOVER.md) maps existing desktop/Flutter storage and credential lifecycle code, first/new/existing-device flows, configurable profiles, the proposed versioned format, conflicts/removal, outstanding credential protection and required interoperability tests. OAuth implementation now comes first in TODO and the restart notes, as requested. Continuous profile sync and full database transfer remain unimplemented; no live Google or client UI behavior is claimed by this documentation change.
+
+The pinned strict Zensical build passed, all 31 shared scenario entries passed structural validation, and normal hooks passed formatting, Clippy and 381 Rust tests. Logs are under ignored `artifacts/logs/profile-sync-client-*`. This checkpoint changes documentation and an explicitly open scenario contract only; it does not update the phone, desktop installation or deployed service. Main remains separate.
+
 The user requested a complete, polished Rust + iced mail/calendar client. Passing the current suite is evidence for specific behavior, not evidence that the whole goal is complete. This audit records outstanding work; it does not replace or narrow the original specification.
 
 ## Implemented, with local evidence
