@@ -23,6 +23,7 @@ pub struct Operations {
     rendering: Arc<Semaphore>,
     forwarding: Arc<Semaphore>,
     printing: Arc<Semaphore>,
+    profile_records: Arc<Semaphore>,
     accounts: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     pub(crate) outgoing: crate::outgoing::Runtime,
     pub(crate) sent: crate::sent::Runtime,
@@ -44,6 +45,7 @@ impl Operations {
             rendering: Arc::new(Semaphore::new(2)),
             forwarding: Arc::new(Semaphore::new(2)),
             printing: Arc::new(Semaphore::new(2)),
+            profile_records: Arc::new(Semaphore::new(1)),
             accounts: Mutex::new(HashMap::new()),
             outgoing: crate::outgoing::Runtime::default(),
             sent: crate::sent::Runtime::default(),
@@ -96,6 +98,9 @@ impl Operations {
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
     Accounts,
+    ValidateProfileOperation {
+        record: String,
+    },
     Selection {
         command: crate::selection::Command,
         #[serde(default)]
@@ -429,6 +434,17 @@ async fn value<T: serde::Serialize>(result: Result<T>) -> Result<Value> {
 pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
     let db = &profile.database;
     match request {
+        Request::ValidateProfileOperation { record } => {
+            let permit = profile.operations.profile_records.clone().try_acquire_owned()
+                .context("Profile validation is busy. Retry shortly.")?;
+            tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                let operation = shep_mail_core::profiles::codec::Operation::decode(record.as_bytes())?;
+                // Return encoded metadata so Dart need not reserialize unknown
+                // optional values. This path never imports accounts or secrets.
+                Ok(json!({"record":String::from_utf8(operation.encode()?)?}))
+            }).await?
+        }
         Request::FindText{blocks,query,match_case} => {
             let permit=profile.operations.search.clone().try_acquire_owned().context("Find is busy. Retry the search shortly.")?;
             tokio::task::spawn_blocking(move||{

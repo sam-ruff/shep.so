@@ -2433,10 +2433,21 @@ dependencies = [
  "serde_json",
  "sha2",
  "shep-mail-content",
+ "shep-profile-core",
  "tokio",
  "tokio-native-tls",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "shep-profile-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2955,6 +2966,7 @@ checksum = "b5772d71c9be8a8a6ac2117d949c5b224c1b72241bb611d9a3012edcf8af7812"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
+ "serde_core",
  "wasm-bindgen",
 ]
 

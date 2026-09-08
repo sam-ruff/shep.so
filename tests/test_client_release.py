@@ -59,28 +59,30 @@ class ClientRelease(unittest.TestCase):
         version = module('version')
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for folder in ['flutter', 'web', 'website', 'backend', 'shared/mail-core', 'shared/mail-content', 'flutter/rust']:
+            for folder in ['flutter', 'web', 'website', 'backend', 'shared/mail-core', 'shared/mail-content', 'shared/profile-core', 'flutter/rust']:
                 (root / folder).mkdir(parents=True)
             (root / 'flutter/pubspec.yaml').write_text('name: shep\nversion: 0.1.0+1\n')
             for folder in ['web', 'website']:
                 (root / folder / 'package.json').write_text('{"version":"0.1.0"}')
                 (root / folder / 'package-lock.json').write_text('{"version":"0.1.0","packages":{"":{"version":"0.1.0"}}}')
-            for folder in ['backend', 'shared/mail-core', 'shared/mail-content', 'flutter/rust']:
+            for folder in ['backend', 'shared/mail-core', 'shared/mail-content', 'shared/profile-core', 'flutter/rust']:
                 (root / folder / 'Cargo.toml').write_text('[package]\nname = "fixture"\nversion = "0.1.0"\n')
             lock = 'version = 4\n[[package]]\nname = "shep-mail-core"\nversion = "0.1.0"\n[[package]]\nname = "dependency"\nversion = "1.2.3"\nsource = "registry+fixture"\n'
             for p in ['Cargo.lock', 'backend/Cargo.lock', 'flutter/rust/Cargo.lock']:
-                (root / p).write_text(lock + '\n[[package]]\nname = "shep-mail-content"\nversion = "0.1.0"\n')
+                (root / p).write_text(lock + '\n[[package]]\nname = "shep-mail-content"\nversion = "0.1.0"\n[[package]]\nname = "shep-profile-core"\nversion = "0.1.0"\n')
             mobile_lock = root / 'flutter/rust/Cargo.lock'
             mobile_lock.write_text(mobile_lock.read_text() + '\n[[package]]\nname = "shep_mobile_native"\nversion = "0.1.0"\n')
             version.stamp('2.3.4', 29, root)
             self.assertIn('name = "shep_mobile_native"\nversion = "2.3.4"', mobile_lock.read_text())
             self.assertIn('version = "2.3.4"', (root / 'flutter/rust/Cargo.toml').read_text())
             self.assertIn('version = "2.3.4"', (root / 'shared/mail-content/Cargo.toml').read_text())
+            self.assertIn('version = "2.3.4"', (root / 'shared/profile-core/Cargo.toml').read_text())
             self.assertIn('version: 2.3.4+29', (root / 'flutter/pubspec.yaml').read_text())
             for p in ['Cargo.lock', 'backend/Cargo.lock', 'flutter/rust/Cargo.lock']:
                 text = (root / p).read_text()
                 self.assertIn('name = "shep-mail-core"\nversion = "2.3.4"', text)
                 self.assertIn('name = "shep-mail-content"\nversion = "2.3.4"', text)
+                self.assertIn('name = "shep-profile-core"\nversion = "2.3.4"', text)
                 self.assertIn('name = "dependency"\nversion = "1.2.3"', text)
 
     def test_android_apk_requires_native_libraries_permissions_and_fixture_exclusion(self):

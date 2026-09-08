@@ -12,6 +12,7 @@ void main(List<String> args) async {
         'rust/rust-toolchain.toml',
         '../shared/mail-core/Cargo.toml',
         '../shared/mail-content/Cargo.toml',
+        '../shared/profile-core/Cargo.toml',
       ])
         input.packageRoot.resolve(path),
     ]);

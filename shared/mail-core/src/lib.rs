@@ -5,5 +5,6 @@ pub mod compose;
 pub mod mail_actions;
 pub mod model;
 pub mod outgoing;
+pub mod profiles;
 pub mod providers;
 pub mod replies;
