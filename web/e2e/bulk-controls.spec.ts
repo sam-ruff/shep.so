@@ -412,6 +412,10 @@ test("a group captured during an earlier move flags the same full membership at 
       ...args: any[]
     ) {
       calls.push(`${args[0]}:${args[1].folder ?? "flags"}`);
+      if (calls.length === 6)
+        await new Promise<void>((resolve) =>
+          Object.assign(window, { releaseHistoryProgress: resolve }),
+        );
       if (hold) {
         hold = false;
         await new Promise<void>((resolve) =>
@@ -450,13 +454,66 @@ test("a group captured during an earlier move flags the same full membership at 
   await review
     .getByRole("button", { name: "Flag 125 messages", exact: true })
     .click();
+  await page.evaluate(async () => {
+    const path = "/src/mailbox_worker_client.ts",
+      groupsPath = "/src/bulk_client.ts",
+      { MailboxWorkerClient } = await import(path),
+      { BrowserGroups } = await import(groupsPath),
+      query = MailboxWorkerClient.prototype.page;
+    const view = BrowserGroups.prototype.view;
+    let first = true;
+    BrowserGroups.prototype.view = async function (...args: any[]) {
+      if (first) {
+        first = false;
+        await new Promise<void>((resolve) =>
+          Object.assign(window, { releaseInitialHistory: resolve }),
+        );
+      }
+      return view.apply(this, args);
+    };
+    const pending = new Promise<void>((resolve) =>
+      Object.assign(window, { releaseHistoryPreview: resolve }),
+    );
+    MailboxWorkerClient.prototype.page = async function (...args: any[]) {
+      if (args[0].previewOnly) {
+        Object.assign(window, { historyPreviewPending: true });
+        await pending;
+      }
+      return query.apply(this, args);
+    };
+  });
   await page
     .getByRole("button", { name: "Group history", exact: true })
     .click();
   const d = page.getByRole("dialog", { name: "Group history", exact: true });
   // Observe each queued job through the same five-second per-job assertion.
   await d.getByRole("button", { name: /^Archive 125 messages/ }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => typeof (window as any).releaseInitialHistory),
+    )
+    .toBe("function");
+  await expect
+    .poll(() =>
+      page.evaluate(() => typeof (window as any).releaseHistoryProgress),
+    )
+    .toBe("function");
+  await page.evaluate(() => (window as any).releaseHistoryProgress());
+  await expect
+    .poll(() => page.evaluate(() => (window as any).historyPreviewPending))
+    .toBe(true);
   await expect(d.locator(".group-progress")).toContainText("125 changed");
+  await expect(
+    d.getByRole("button", { name: "Undo group", exact: true }),
+  ).toBeDisabled();
+  await page.screenshot({
+    path: "../artifacts/web/bulk-history-pending-preview.png",
+  });
+  await page.evaluate(() => (window as any).releaseHistoryPreview());
+  await page.evaluate(() => (window as any).releaseInitialHistory());
+  await expect(
+    d.getByRole("button", { name: "Undo group", exact: true }),
+  ).toBeEnabled();
   await page.evaluate(async () => {
     const path = "/src/bulk_client.ts",
       { BrowserGroups } = await import(path),
@@ -650,4 +707,56 @@ test("History Undo paints before saving, retains newer flag intent and reports r
   await page.screenshot({
     path: "../artifacts/web/bulk-undo-storage-failure.png",
   });
+});
+
+test("a failed History Undo preview leaves progress usable and retries through Refresh", async ({
+  page,
+}) => {
+  await seed(page);
+  await selectAll(page);
+  await page
+    .getByRole("button", { name: "Archive selected messages", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Review group action", exact: true })
+    .getByRole("button", { name: "Archive 125 messages", exact: true })
+    .click();
+  await expect.poll(() => cached(page)).toEqual({ Archive: 125 });
+  await page.evaluate(async () => {
+    const path = "/src/mailbox_worker_client.ts",
+      { MailboxWorkerClient } = await import(path),
+      query = MailboxWorkerClient.prototype.page;
+    Object.assign(window, { rejectHistoryPreview: true });
+    MailboxWorkerClient.prototype.page = async function (...args: any[]) {
+      if (args[0].previewOnly && (window as any).rejectHistoryPreview)
+        throw Error("The saved Undo preview could not be loaded.");
+      return query.apply(this, args);
+    };
+  });
+  const d = await history(page);
+  await expect(d.locator(".group-progress")).toContainText("125 changed");
+  const error = d
+    .getByRole("alert")
+    .filter({ hasText: "Refresh history to retry Undo" });
+  await expect(error).toBeVisible();
+  await expect(
+    d.getByRole("button", { name: "Undo group", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    d.getByRole("button", { name: "Pause group", exact: true }),
+  ).toBeEnabled();
+  await page.screenshot({
+    path: "../artifacts/web/bulk-history-preview-retry.png",
+  });
+  await page.evaluate(() =>
+    Object.assign(window, { rejectHistoryPreview: false }),
+  );
+  await d.getByRole("button", { name: "Refresh history", exact: true }).click();
+  await expect(error).toBeHidden();
+  await expect(
+    d.getByRole("button", { name: "Undo group", exact: true }),
+  ).toBeEnabled();
+  await d.getByRole("button", { name: "Undo group", exact: true }).click();
+  await expect(d.locator(".group-progress")).toContainText("125 restored");
+  expect(await cached(page)).toEqual({ INBOX: 125 });
 });

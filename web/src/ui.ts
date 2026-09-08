@@ -147,6 +147,9 @@ export function mount(
     fullReader = false,
     searchTimer: ReturnType<typeof setTimeout> | undefined;
   let searchInput: string | undefined;
+  let shortcutCapture:
+    | { key: keyof Preferences["shortcuts"]; conflict: boolean }
+    | undefined;
   const searchWorker = new SearchWorker();
   const find = new MessageFind(searchWorker.search);
   let quoteState: { id: string; mode: string; open: boolean } | undefined;
@@ -2029,7 +2032,10 @@ export function mount(
       ),
     );
     const shortcuts = el("div", "shortcut-list");
-    for (const [key, value] of Object.entries(p.shortcuts)) {
+    for (const key of Object.keys(
+      p.shortcuts,
+    ) as (keyof Preferences["shortcuts"])[]) {
+      const value = p.shortcuts[key];
       const row = el("div", "shortcut");
       row.append(
         el(
@@ -2040,56 +2046,82 @@ export function mount(
             : key[0].toUpperCase() + key.slice(1),
         ),
       );
-      const capture = button(value || "Disabled", () => {
-        capture.textContent = "Press a key…";
-        capture.onkeydown = (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (e.key === "Escape") {
-            capture.textContent = value || "Disabled";
-            capture.onkeydown = null;
-            return;
-          }
-          if (["Control", "Meta", "Shift", "Alt"].includes(e.key)) return;
-          const combo = [
-            e.ctrlKey ? "Control" : e.metaKey ? "Meta" : "",
-            e.altKey ? "Alt" : "",
-            e.shiftKey ? "Shift" : "",
-            e.key.length === 1 ? e.key.toLowerCase() : e.key,
-          ]
-            .filter(Boolean)
-            .join("+");
-          if (
-            Object.entries(p.shortcuts).some(
-              ([k, v]) => k !== key && v === combo,
-            )
-          ) {
-            capture.textContent = "Already assigned";
-            return;
-          }
-          w.savePreferences({
-            ...p,
-            shortcuts: { ...p.shortcuts, [key]: combo },
-          });
-        };
-      });
+      const capturing = shortcutCapture?.key === key;
+      const capture = button(
+        capturing
+          ? shortcutCapture?.conflict
+            ? "Already assigned"
+            : "Press a key…"
+          : value || "Disabled",
+        () => {
+          shortcutCapture = { key, conflict: false };
+          render();
+        },
+      );
+      // Both the button and its ancestors survive provider/query redraws.
+      // The capture itself belongs to the mounted UI, not a disposable node.
+      capture.dataset.stable = `shortcut-capture:${key}`;
       capture.setAttribute(
         "aria-label",
         `Remap ${key === "selectAll" ? "select all messages" : key}`,
       );
-      row.append(
-        capture,
-        button(
-          `Clear ${key === "selectAll" ? "select all messages" : key}`,
-          () =>
-            w.savePreferences({
-              ...p,
-              shortcuts: { ...p.shortcuts, [key]: "" },
-            }),
-          "close",
-          true,
-        ),
+      capture.onkeydown = (e) => {
+        if (shortcutCapture?.key !== key) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === "Escape") {
+          shortcutCapture = undefined;
+          render();
+          return;
+        }
+        if (["Control", "Meta", "Shift", "Alt"].includes(e.key)) return;
+        const combo = [
+          e.ctrlKey ? "Control" : e.metaKey ? "Meta" : "",
+          e.altKey ? "Alt" : "",
+          e.shiftKey ? "Shift" : "",
+          e.key.length === 1 ? e.key.toLowerCase() : e.key,
+        ]
+          .filter(Boolean)
+          .join("+");
+        const latest = w.preferences;
+        if (
+          Object.entries(latest.shortcuts).some(
+            ([k, v]) => k !== key && v === combo,
+          )
+        ) {
+          shortcutCapture = { key, conflict: true };
+          render();
+          return;
+        }
+        shortcutCapture = undefined;
+        w.savePreferences({
+          ...latest,
+          shortcuts: { ...latest.shortcuts, [key]: combo },
+        });
+      };
+      capture.onblur = (e) => {
+        if (shortcutCapture?.key !== key) return;
+        shortcutCapture = undefined;
+        // Do not redraw in the middle of native focus transfer. The retained
+        // listener must address its real target, not the discarded fresh node.
+        (e.currentTarget as HTMLElement).querySelector("span")!.textContent =
+          w.preferences.shortcuts[key] || "Disabled";
+      };
+      const clear = button(
+        `Clear ${key === "selectAll" ? "select all messages" : key}`,
+        () => {
+          shortcutCapture = undefined;
+          const latest = w.preferences;
+          w.savePreferences({
+            ...latest,
+            shortcuts: { ...latest.shortcuts, [key]: "" },
+          });
+        },
+        "close",
+        true,
       );
+      clear.dataset.stable = `shortcut-clear:${key}`;
+      row.append(capture, clear);
       shortcuts.append(row);
     }
     card(

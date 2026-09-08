@@ -1,6 +1,6 @@
 /** Retain same-message reader actions and same-scope row controls, including
  * their structural ancestors. Even momentary detachment cancels a native press.
- * Other controls keep their ordinary construction and captured local state. */
+ * Stable preference controls keep native focus and held presses as well. */
 export function renderReaderTree(root: HTMLElement, next: HTMLElement) {
   const pairs = new Map<Element, Element>(),
     reverse = new Map<Element, Element>();
@@ -78,6 +78,8 @@ export function renderReaderTree(root: HTMLElement, next: HTMLElement) {
     if (old instanceof HTMLElement && fresh instanceof HTMLElement) {
       old.onclick = fresh.onclick;
       old.ondblclick = fresh.ondblclick;
+      old.onkeydown = fresh.onkeydown;
+      old.onblur = fresh.onblur;
     }
     if (old instanceof HTMLButtonElement && fresh instanceof HTMLButtonElement)
       old.disabled = fresh.disabled;
