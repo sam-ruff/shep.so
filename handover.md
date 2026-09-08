@@ -2,6 +2,36 @@
 
 The user stopped feature work to conserve credits and requested this handover, a cleaned TODO and a push. **The full application goal is not complete.** Resume from [TODO.md](TODO.md), preserving the original requirements in [docs/REQUEST_AUDIT.md](docs/REQUEST_AUDIT.md). Read [AGENTS.md](AGENTS.md) for operational rules and [docs/COMPLETION.md](docs/COMPLETION.md) for evidence; do not repeat historical work based only on the latest chat message.
 
+## 8 September continuation: sync/close and channels
+
+Development resumed. The user requested temporary native tray behavior while
+pending saves finish, even with ordinary close-to-tray off, automatic exit after
+saving, a notification, and investigation of slow sync/close. They then explicitly
+required channels rather than shared locks for state coordination. R86, R90 and
+R91 in TODO preserve that scope; the temporary tray is still unimplemented.
+
+The new source checkpoint is `34cfc71` (`fix(sync): prioritize account writes
+through channels`). `engine/account_work.rs` owns account/calendar scheduling
+through bounded requests and completion channels. Read-only sync yields to
+writes; an owned task drains already-started cache writes before acknowledging
+completion, including on timeout or cancelled refresh. See the completion log
+for verification and shipping status (528 Rust/adapter, 49 Python and 185/185
+native functional tests passed). The installed production binary is still
+the baseline below. Remaining investigation includes the bulk worker claiming a
+step before waiting for provider capacity, and close paths that ask for another
+close click after credentials, send, attachment or calendar setup finishes.
+
+Local R35 work was preserved separately while verifying this checkpoint:
+`artifacts/patches/inline-composer-before-sync-checkpoint/` contains the tracked
+patch, `sessions.rs` and SHA-256 manifest. It adds inline composition, parked
+sessions and persistent reply context; two new native flows and focused Rust
+checks passed, but the existing native composer/forward scenarios still need
+migration. Restore that work after the sync checkpoint; do not claim it is in
+published main or install it before completing its tests. Also finish draft-keyed
+scroll/focus, pending-close restore guards, folder/selection navigation, multi-save
+close/failure, account-removal review ordering and compact typing-artifact checks.
+The following foundation notes describe the shipped composer, before those edits.
+
 ## Shipped baseline
 
 - Repository: public `sam-ruff/shep.so`, branch `main`. Direct pushes are authorized.
