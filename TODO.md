@@ -9,6 +9,8 @@ Active unfinished requests. Read [handover.md](handover.md) before resuming. Com
 
 ## Mail, folders and desktop integration
 
+- [ ] **R87 — Refresh animation speed/direction:** make the refresh icon spin more slowly and clockwise. Preserve manual-refresh-only animation and verify its direction and visual pacing when implemented. Backlog only for now.
+
 - [ ] **R86 — Native close-to-tray (backlog only):** closing the main window should hide Shep in the native system tray/menu bar, with Restore/Open and explicit Quit actions. Keep background mail sync and notifications working, provide a preference, and handle desktops without tray support gracefully. Cover Linux/Windows/macOS behavior and preserve pending drafts/operations on actual Quit. User explicitly requested tracking only; do not implement during this handover.
 
 - [ ] **R30 — Folder context menus:** reviewed Move/Delete, nested groups and recovery controls shipped in 3567de2. Finish combined-folder optimistic scopes, aggregate common-folder account choice, history paging/account removal and cache convergence after accepted uncertainty. Keep original mail when an outcome is unconfirmed; acceptance is not server success.
