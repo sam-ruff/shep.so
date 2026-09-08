@@ -90,6 +90,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R84 | Search should search other folders, not just Inbox | Delivered in a81d767, installed/pushed: account-scoped search across cached folders, result locations, matching selection/relevance scopes, and storage/native search/move/bulk/clear/account/compact-layout tests. All 167 native functional scenarios pass. |
 | R85 | Conserve credits: write handover.md, clean TODO and push current project changes | Completed by the handover push; verification and checkpoint identity in COMPLETION.md. Full product remains unfinished |
 | R86 | Native close-to-tray; add to TODO only, do not implement now | Backlog only; no tray behavior implemented in the handover |
+| R87 | Refresh icon should spin more slowly and clockwise; add to TODO and push | Backlog only; animation behavior unchanged in this documentation commit |
 
 
 The main omissions were already present in the completion log but were not an adequate live checklist: faithful HTML, local encryption/large-mail streaming, folder trees/mutations, inline multiple drafts/discard, palette editing, multiple backup targets and continuous settings/account sync. Every request remains traceable above; TODO tracks unfinished work, including the remaining optimistic-state reconciliation and final coverage audit. Passing unrelated tests does not close a request.
