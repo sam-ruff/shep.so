@@ -10,6 +10,8 @@ Verification: **552 Rust + 2 drawing-adapter tests**, **50 Python tests**, and *
 
 Evidence: `artifacts/logs/database-export-*`. Final native executable SHA-256: `d2ca7eaeb38f300a85ba7eab0fbe8ab062eb35ae813e86838430e6b56bb4d96a`. Final export fixtures: `bd6146459f48` (saved SQLite), `28de94cea2bf` (compact/retry), `8fad0f1a664d` (held copy/cancel/close).
 
+Source [`3927053`](https://github.com/sam-ruff/shep.so/commit/3927053f4b97f40caba85429fde1ede5fde249f4) passed the mandatory formatting/Clippy/Rust/adapter commit hooks and was pushed to main; exact remote equality was verified. No production installation was changed. A long pinned snapshot retains SQLite WAL history until completion/cancellation, so disk-space errors must remain visible; it does not retain the full database in application memory.
+
 **R83 remains open for safe import and activation.** The SQLite file is unencrypted, excludes OS-keychain credentials and preserves pending-operation records; importing must isolate credential identities and prevent automatic replay on another device. It is not the existing encrypted backup archive. OAuth/profile implementation remains the top TODO priority with the Flutter handover linked; no working cross-client sync protocol or live Google verification is claimed. Quality/release workflows remain disabled.
 
 ## 8 September: mail-cache channel ownership
