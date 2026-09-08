@@ -453,3 +453,6 @@ R77 checkpoint shipping and R79 phone installation are verified in [`1ea12a6`](h
 
 
 R42/R63/R67/R73 continuation: add browser startup recovery notices for saved failed/unconfirmed/interrupted/cache work, including groups older than the first History page. Indexed bounded observations, current execution boundaries and failed-inspection retention have unit/control evidence in the completion log. Observing a live owner cannot classify its running step as unconfirmed or repeat it. Native parity and all remaining product/deployment requests stay active.
+
+
+R42/R63/R67/R69/R71/R73/R74/R77: browser startup saved-group recovery shipped in [`df4f29c`](https://github.com/sam-ruff/shep.so/commit/df4f29c2e12d21fc71353920696dd4958cde363a), with exact remote verification, 137 Chromium / 127 browser unit / 56 production HTTPS stages and mandatory hooks (381 Rust tests). Compact/expanded synthetic captures are reviewed. Broader group, native, provider and deployment gaps remain in TODO; the handover now resumes with highest-priority OAuth/shared profiles.

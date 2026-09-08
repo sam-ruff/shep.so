@@ -1643,3 +1643,10 @@ During this increment, concurrent documentation commits `02c4b32` and `59578f3` 
 
 
 Production build and all **56 real Rust HTTPS fixture stages** pass for saved-group recovery. Production output excludes the preview entry and injected failure data, retains the SQLite/font licenses and expected shared WASM, and stages with the promo site in ignored `artifacts/site-recovery-20260908/`. The pinned strict documentation build passes. Logs are under `artifacts/logs/browser-recovery-*`; mandatory hooks and verified review-branch shipping follow.
+
+
+### Saved-group recovery shipping record
+
+Committed and pushed as [`df4f29c`](https://github.com/sam-ruff/shep.so/commit/df4f29c2e12d21fc71353920696dd4958cde363a) to `feat/mobile-web-clients`; the exact remote SHA is verified. Mandatory hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Relevant browser evidence passes **137 Chromium scenarios**, **127 unit tests**, **13 focused recovery/group controls**, **56 real Rust HTTPS fixture stages**, **39 Python tests**, **31 parity contracts**, TypeScript, formatting, production build/staging and strict documentation. Synthetic light/dark/compact WebP captures were reviewed; the stale cache-observation failed baseline is retained. No deadline or performance threshold was relaxed.
+
+Only browser startup saved-group discovery/review is delivered in this increment. R42 remains active for remaining Undo lifecycle, review/staging cleanup, cross-account transport, performance and native captured-group execution/controls. Full client parity, Google OAuth/profiles, automatic replies, Apple/live-provider verification and deployment/distribution remain open. Main, the installed desktop and the personal phone remain untouched. Quality/release CI remains disabled; re-enable it when the trusted runners are ready. OAuth/shared profiles are the next priority.
