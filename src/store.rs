@@ -14,6 +14,7 @@ mod google_lifecycle;
 mod outgoing;
 mod restore;
 mod selection;
+mod worker;
 use anyhow::Context;
 pub use bulk::BulkLease;
 pub use conversations::{CONVERSATION_PAGE_SIZE, ConversationPage};
@@ -25,16 +26,10 @@ pub use selection::{
     SelectionSnapshot,
 };
 use serde::{Serialize, de::DeserializeOwned};
-use std::{
-    path::Path,
-    sync::{Arc, Mutex},
-};
+use std::{path::Path, sync::Arc};
 
 #[derive(Clone)]
-pub struct Store(
-    Arc<Mutex<Connection>>,
-    Arc<Mutex<std::collections::HashSet<String>>>,
-);
+pub struct Store(Arc<worker::Worker>);
 
 #[derive(Debug, Clone, Default)]
 pub struct Workspace {
@@ -163,22 +158,14 @@ impl Store {
             tx.pragma_update(None, "user_version", 2)?;
             tx.commit()?;
         }
-        Ok(Self(Arc::new(Mutex::new(conn)), Arc::default()))
+        Ok(Self(Arc::new(worker::Worker::new(conn)?)))
     }
     pub async fn run<T, F>(&self, f: F) -> anyhow::Result<T>
     where
         T: Send + 'static,
         F: FnOnce(&mut Connection) -> anyhow::Result<T> + Send + 'static,
     {
-        let store = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = store
-                .0
-                .lock()
-                .map_err(|_| anyhow::anyhow!("The local database is unavailable."))?;
-            f(&mut conn)
-        })
-        .await?
+        self.0.run(f).await
     }
     pub async fn get<T: DeserializeOwned + Default + Send + 'static>(
         &self,

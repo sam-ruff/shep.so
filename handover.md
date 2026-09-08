@@ -51,23 +51,35 @@ interoperability contract in `../shep-clients` for its Flutter implementation.
 An asynchronous question about Google-only unlocking versus a separate sync
 passphrase is pending; no answer has been recorded. Database work is independent.
 
-The sibling repository is a dirty `feat/mobile-web-clients` worktree with active
-client work. Preserve those edits. Its instructions require client work on that
-review branch, with parity/scenario tracking; only read-only discovery was done
-here. Re-read the relevant instructions before editing. `flutter/rust` has its
-own cache and credential-slot lifecycle, so do not assume desktop SQLite is its
-profile interchange format. Google appDataFolder and native OAuth primary docs
-have been opened; a shared cross-platform OAuth project/namespace needs explicit
-verification and documentation. No Flutter sync document was written yet.
+The [Flutter profile sync handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md)
+records the proposed interchange and first/new/existing-device flows. The user's
+follow-up explicitly keeps OAuth implementation first in the client TODO and
+links to that document. Document delivery does not establish working profile sync.
+
+The sibling repository is the independent `feat/mobile-web-clients` worktree.
+Preserve its client work and use that review branch for handover changes, with
+parity/scenario tracking. `flutter/rust` has its own cache and credential-slot
+lifecycle, so desktop SQLite is not its profile interchange format. Google
+appDataFolder and native/cross-client OAuth primary docs inform the handover;
+actual cross-platform project/namespace access remains a required live check.
 
 R86/R90/R91 remain active after that priority. Read-only inspection confirms bulk
 claims a durable item before waiting for provider capacity (`engine/bulk.rs`),
 and several window-close branches still require another click after other saves.
 Use channel-owned control/cancellation for the remaining work; preserve actual
-in-flight receipts. Storage still owns its connection and in-memory lease set
-through `Arc<Mutex<_>>` (`store.rs`/`store/bulk.rs`); Google/lifecycle coordination
-also remains in the R91 audit. Do not confuse application state coordination
-with required SQLite or independent-process file locking.
+in-flight receipts. `store/worker.rs` now owns the mail-cache connection and local
+leases behind 32 bounded commands; queued writes drain without their observers.
+Its restart test exposed a SQLite 3.51.1 Unix WAL open/close deadlock, confirmed in
+a child-process debugger trace. Updating rusqlite to 0.40.2 / bundled SQLite 3.53.2
+fixes that reproduction. The five worker tests, 546 Rust/adapter executions,
+49 Python tests, Windows cross-compilation and 15 targeted native storage/lifecycle
+flows pass; see the completion log for shipping evidence. Native screenshots
+were reviewed. No performance measurements or production installation were done.
+Google/lifecycle and backup-journal ownership remain in R91. Do not confuse
+application state coordination with required SQLite or independent-process file
+locking. Full database export/import is still to implement; use an independent
+online snapshot connection, bounded copying and cancellation, followed by safe
+import/rebinding rather than replaying another device's pending provider work.
 
 ## Shipped baseline
 
@@ -77,9 +89,9 @@ with required SQLite or independent-process file locking.
 - The latest search request **is delivered** in `a81d767`: search spans all cached folders in the selected accounts, displays result folders, retains read/flag/attachment filters, and returns to the browsing scope when cleared. R84 is complete, not an open TODO.
 - Folder checkpoint evidence: 511 Rust test executions plus two drawing-adapter tests, 48 Python tests, hooks/Clippy, Windows compilation, strict docs and release/installer checks. Its full native run was 180/181; the corrected mail-menu focus assumption and final folder/search fixes passed a subsequent 18/18 targeted run. Do not describe that as a clean full-suite run on the final binary.
 
-## Current source checkpoint: R35 foundation, not inline composition
+## Historical R35 foundation — superseded by e16590c above
 
-The composer **still opens a modal**. Do not claim the inline view or several simultaneously open reply sessions are implemented.
+The following notes describe the earlier foundation checkpoint only. Its modal limitation was subsequently removed by `e16590c`, described above.
 
 Changes included in this handover:
 

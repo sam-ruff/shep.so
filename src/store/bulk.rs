@@ -404,35 +404,12 @@ pub struct BulkLease {
     store: Store,
     id: String,
     _file: Option<std::fs::File>,
-    _local: LocalLease,
-}
-struct LocalLease {
-    store: Store,
-    id: String,
-}
-impl Drop for LocalLease {
-    fn drop(&mut self) {
-        self.store
-            .1
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&self.id);
-    }
+    _local: worker::Lease,
 }
 impl Store {
     pub async fn bulk_lease(&self, id: String) -> anyhow::Result<BulkLease> {
-        anyhow::ensure!(
-            self.1
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(id.clone()),
-            "This mail operation is still running in another window"
-        );
         // Own the claim across awaits; cancellation and disk-lock errors release it.
-        let local = LocalLease {
-            store: self.clone(),
-            id: id.clone(),
-        };
+        let local = self.0.lease(id.clone()).await?;
         let path = self
             .run(|c| {
                 Ok(c.path()
