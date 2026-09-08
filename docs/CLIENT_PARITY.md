@@ -77,3 +77,6 @@ Browser group ordering now retains the reviewed message through acknowledged mov
 
 
 Browser History progress refreshes independently of Undo-preview preparation. Held real-control and failed-preview/Refresh recovery scenarios preserve completed counts and keep other actions usable. Broader group lifecycle and native equivalents remain open.
+
+
+Browser saved-group notices inspect indexed failed/unconfirmed/interrupted/cache state across all History pages and open the affected group directly. They do not classify another tab’s running step as unconfirmed. Coalesced status checks retain known targets on failure and reject observations crossing execution boundaries. Native group recovery and the wider lifecycle audit remain open.

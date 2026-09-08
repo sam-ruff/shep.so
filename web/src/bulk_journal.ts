@@ -83,6 +83,11 @@ export interface BulkAccountReview {
   jobs: number;
   unfinished: number;
 }
+export interface BulkAttention {
+  kind: "failed" | "uncertain" | "cache" | "interrupted";
+  count: number;
+  job: string;
+}
 interface AccountFence {
   id: string;
   token: string;
@@ -799,6 +804,46 @@ export class BulkJournal {
           ),
       ),
     );
+  }
+  /** Count indexed recovery state across all History pages. Retain only one
+   * target per category; this observation never recovers a live owner's step. */
+  attention(): Promise<BulkAttention[]> {
+    return this.transaction("readonly", async (tx) => {
+      const result: BulkAttention[] = [];
+      for (const kind of [
+        "uncertain",
+        "failed",
+        "cache",
+        "interrupted",
+      ] as const) {
+        const index =
+          kind === "interrupted"
+            ? tx.objectStore("jobs").index("state")
+            : tx
+                .objectStore("items")
+                .index(kind === "cache" ? "cache" : "recovery");
+        const range =
+          kind === "cache"
+            ? IDBKeyRange.bound(
+                [1, "", 0],
+                [1, "\uffff", Number.MAX_SAFE_INTEGER],
+              )
+            : IDBKeyRange.only(kind);
+        const count = await request(index.count(range));
+        if (!count) continue;
+        const first = await request(index.openCursor(range));
+        if (!first)
+          throw Error(
+            "Could not read saved group recovery. Retry its status check.",
+          );
+        result.push({
+          kind,
+          count,
+          job: kind === "interrupted" ? first.value.id : first.value.job,
+        });
+      }
+      return result;
+    });
   }
   history(before?: [number, string]): Promise<BulkJob[]> {
     if (before) {

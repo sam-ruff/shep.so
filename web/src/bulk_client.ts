@@ -8,6 +8,7 @@ import {
   type BulkAction,
   type BulkJob,
   type BulkItem,
+  type BulkAttention,
 } from "./bulk_journal";
 import type { GatewayRepository } from "./provider";
 import type { SelectionWorkerClient } from "./selection_worker_client";
@@ -22,6 +23,10 @@ export interface GroupView {
   items: BulkItem[];
   descriptions?: Record<number, string>;
 }
+export interface GroupRecovery {
+  entries: BulkAttention[];
+  error?: string;
+}
 export type GroupDecision = "approve" | "pause" | "resume" | "undo";
 
 /** UI-facing ownership. Preparing another exact review waits for the current
@@ -33,6 +38,10 @@ export class BrowserGroups extends EventTarget {
   private decision?: Promise<unknown>;
   private active?: Promise<void>;
   private started = false;
+  private attentionReading?: Promise<void>;
+  private attentionAgain = false;
+  private lastAttention: BulkAttention[] = [];
+  private executionRevision = 0;
   constructor(
     private repository: GatewayRepository,
     private selection: () => SelectionWorkerClient | undefined,
@@ -43,11 +52,57 @@ export class BrowserGroups extends EventTarget {
       repository,
       (job) => this.progress(job),
       true,
+      () => this.refreshAttention(),
     );
   }
   private progress(job: BulkJob) {
-    if (!this.closed)
+    if (!this.closed) {
       this.dispatchEvent(new CustomEvent("progress", { detail: job }));
+      this.refreshAttention();
+    }
+  }
+  refreshAttention() {
+    if (this.closed) return;
+    this.attentionAgain = true;
+    if (this.attentionReading) return;
+    this.attentionReading = Promise.resolve()
+      .then(async () => {
+        do {
+          this.attentionAgain = false;
+          const execution = this.executionRevision;
+          let detail: GroupRecovery;
+          try {
+            const entries = await BulkJournal.inspect(
+              this.repository.profileId,
+              (j) => j.attention(),
+            );
+            // Ordinary receipt/cache handshakes are still being completed by the
+            // active executor. Report a gap if execution stops before repairing it.
+            detail = {
+              entries: entries.filter(
+                (entry) => entry.kind !== "cache" || !this.active,
+              ),
+            };
+          } catch {
+            detail = {
+              entries: this.lastAttention,
+              error:
+                "Could not check saved group actions. Refresh their status to retry.",
+            };
+          }
+          if (execution !== this.executionRevision) {
+            this.attentionAgain = true;
+            continue;
+          }
+          if (!detail.error) this.lastAttention = detail.entries;
+          if (!this.closed)
+            this.dispatchEvent(new CustomEvent("attention", { detail }));
+        } while (this.attentionAgain && !this.closed);
+      })
+      .finally(() => {
+        this.attentionReading = undefined;
+        if (this.attentionAgain && !this.closed) this.refreshAttention();
+      });
   }
   private check() {
     if (this.closed) throw Error("Group work is closed. Reopen Shep.");
@@ -58,6 +113,7 @@ export class BrowserGroups extends EventTarget {
   start() {
     if (this.started) return;
     this.started = true;
+    this.refreshAttention();
     this.wake();
   }
   stop() {
@@ -66,6 +122,7 @@ export class BrowserGroups extends EventTarget {
   }
   wake() {
     if (this.closed || this.preparing) return;
+    this.executionRevision++;
     const run = this.executor.run().then(
       () => {},
       (error) => {
@@ -82,7 +139,11 @@ export class BrowserGroups extends EventTarget {
     );
     this.active = run;
     void run.finally(() => {
-      if (this.active === run) this.active = undefined;
+      if (this.active === run) {
+        this.active = undefined;
+        this.executionRevision++;
+        this.refreshAttention();
+      }
     });
   }
   async prepare(
