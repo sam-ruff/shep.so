@@ -17,6 +17,7 @@ Read the repository's [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/
 - [Mail](mail.md): navigation, drafts, delivery recovery, Sent copies and reading behavior.
 - [Calendar](calendar.md): discovery, access, write acknowledgments, conflicts and connection removal.
 - [Google and backups](backups.md): authorization, destination identity, scheduling, resumable uploads and additive restore.
+- [Profile sync handover](PROFILE_SYNC_HANDOVER.md): next-priority OAuth, Rust/Flutter enrollment, portable records, conflicts and verification requirements; implementation remains open.
 - [Limits](limits.md): protocol requirements, storage ceilings and unverified behavior.
 
 ## Documentation maintenance

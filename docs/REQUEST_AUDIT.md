@@ -1,5 +1,7 @@
 # Conversation request audit
 
+**2026-09-08 priority update — desktop-main:R92 / R75 / R02 / R49:** the user prioritized full database transfer in Settings and Google account/settings profile sync, including first login from either desktop or Flutter and new/existing-device enrollment. They requested a Flutter implementation handover in this worktree, followed by OAuth implementation as the first TODO item referencing that document. [The handover](agents/PROFILE_SYNC_HANDOVER.md) now records the inspected integration points, proposed format, lifecycle/conflict rules, toggles, credential-protection decision and required tests. Writing it does not deliver OAuth/profile sync; implementation remains open at the top of TODO. Desktop-main:R83 complete database transfer remains separate from this shared profile format.
+
 Audited against the user messages, source, AGENTS.md and completion evidence on 2026-09-07. “Delivered” refers to existing committed behavior, not completion of the entire product. “In progress” includes uncommitted code and does not imply shipping or a full passing test suite. Open items are maintained in [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md); completed evidence stays in [COMPLETION.md](COMPLETION.md).
 
 | ID | Request and subsequent corrections | Status / evidence |

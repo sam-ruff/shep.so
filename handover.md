@@ -4,6 +4,8 @@ This handover records the credit-limited stopping point. The user explicitly res
 
 ## Start here
 
+- **New highest priority:** implement Google OAuth and shared account/settings profiles using [the profile sync handover](docs/agents/PROFILE_SYNC_HANDOVER.md). This supersedes the earlier restart order below. Cover first setup on either desktop or Flutter, new/existing devices and configurable sync. The document is a proposed implementation contract; continuous sync and credential portability remain unfinished. The user explicitly requested this OAuth follow-up at the top of TODO after writing the handover.
+
 - Work in the `shep-clients` worktree on `feat/mobile-web-clients`. All combined Flutter, browser, Rust backend and delegated promo work is on that review branch.
 - Read `AGENTS.md`, `TODO.md`, `docs/CLIENT_PARITY.md`, `shared/client-scenarios.json` and the latest entries in `docs/COMPLETION.md`. `docs/REQUEST_AUDIT.md` preserves request traceability.
 - The root `shep.so` main worktree has independent, actively edited desktop work. Do not commit it, overwrite it, merge clients into main or replace the personal installation. The `shep-website` worktree still has the agent's original uncommitted files; its website source/assets were already copied and committed on the combined branch. Its older README is superseded; do not recopy it.
