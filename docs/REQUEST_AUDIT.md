@@ -462,3 +462,6 @@ desktop-main:R92/R75/R02/R49/R67/R73/R77 continuation: shared profile metadata c
 
 
 desktop-main:R92/R75/R02/R49/R67/R73/R77: shared profile metadata prerequisite shipped in [`80979d2`](https://github.com/sam-ruff/shep.so/commit/80979d26db8d44e2f9caaed4f02e535807f9b826); exact remote SHA verified. Root/shared hooks pass 390 tests, mobile Rust 67, actual Dart FFI 14 and standalone WASM 23 common fixtures plus malformed-record rejection. Analysis/docs/release-stamping checks pass. OAuth/enrollment/merge, remaining settings/credentials, live platforms and database migration remain active; no request is removed on this foundation alone.
+
+
+desktop-main:R92/R75/R02/R49/R63/R67/R73/R77 continuation: desktop explicit next-sign-in service choices and scope-bound candidate/activation semantics are under native verification. Existing tokens stay usable while choices change; mobile/browser consent and the broader OAuth/profile lifecycle remain active parity gaps.

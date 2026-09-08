@@ -83,3 +83,6 @@ Browser saved-group notices inspect indexed failed/unconfirmed/interrupted/cache
 
 
 The profile prerequisite in `shared/profile-core` adds bounded operation metadata, explicit account mapping and native/WASM common fixtures; see [the format subset](agents/PROFILE_FORMAT.md). Native validation is observation-only and keeps provider/credential state untouched. Browser application integration, all enrollment/merge/category lifecycle, remaining portable settings and protected credentials are still open; the standalone Node WASM contract is not browser-control evidence.
+
+
+Desktop scoped-consent continuation adds explicit Drive backup and Calendar off/read/read-write choices for the next sign-in. Requested permissions remain separate from the active grant, survive saves and bind pending-grant retry/activation; a broader returned Google scope does not enable an unselected service. All 118 native functional scenarios and the protocol/lifecycle checks pass; light/dark/compact captures are reviewed. Flutter/browser provider consent, verified profile identity and enrollment remain active R75/R02 gaps; beta login is unchanged.

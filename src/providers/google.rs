@@ -8,6 +8,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 mod callback;
+mod consent;
 mod scopes;
 pub(crate) use scopes::Service;
 #[cfg(test)]
@@ -15,6 +16,7 @@ mod tests;
 mod tokens;
 use tokens::{CredentialStore, OsCredentialStore, State};
 
+#[cfg(test)]
 const SCOPES: &str = "https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly";
 
 #[derive(Clone)]
@@ -74,6 +76,7 @@ impl Google {
             !prefs.google_client_id.trim().is_empty(),
             "Add your Google Desktop OAuth client ID in Preferences first."
         );
+        consent::requested_scopes(prefs)?;
         // Authorization codes are single-use. Finish a pending keychain save
         // without exchanging a received code again or opening another browser.
         if retry && let Some(grant) = self.finish_pending_login(prefs).await? {
@@ -87,25 +90,7 @@ impl Google {
         let verifier = random();
         let state = random();
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-        let mut url = url::Url::parse("https://accounts.google.com/o/oauth2/v2/auth")?;
-        url.query_pairs_mut().extend_pairs([
-            ("client_id", prefs.google_client_id.as_str()),
-            ("redirect_uri", redirect.as_str()),
-            ("response_type", "code"),
-            ("scope", SCOPES),
-            ("code_challenge", challenge.as_str()),
-            ("code_challenge_method", "S256"),
-            ("state", state.as_str()),
-            ("access_type", "offline"),
-            (
-                "prompt",
-                if retry {
-                    "consent"
-                } else {
-                    "consent select_account"
-                },
-            ),
-        ]);
+        let url = consent::authorization_url(prefs, &redirect, &state, &challenge, retry)?;
         let link = url.to_string();
         tokio::task::spawn_blocking(move || webbrowser::open(&link)).await??;
         let code = tokio::time::timeout(
@@ -159,7 +144,7 @@ impl Google {
             "Google access expired or was revoked. Reconnect Google in Preferences."
         );
         if let Some(service) = service {
-            service.check(scopes::access(cached.value.scope.as_deref()))?;
+            service.check(cached.value.access())?;
         }
         // Retry a failed save before using or renewing a rotated credential.
         if cached.pending_save {
@@ -203,7 +188,7 @@ impl Google {
         }
         let cached = &state.grants[index];
         if let Some(service) = service {
-            service.check(scopes::access(cached.value.scope.as_deref()))?;
+            service.check(cached.value.access())?;
         }
         Ok(SecretString::from(cached.value.access_token.clone()))
     }
@@ -232,7 +217,7 @@ impl Google {
                 .iter()
                 .find(|c| c.value.grant_id == authorized.google_grant.id)
                 .context("The staged Google connection is missing. Start a new sign-in.")?;
-            authorized.google_grant.access = scopes::access(cached.value.scope.as_deref());
+            authorized.google_grant.access = cached.value.access();
         }
         let access = authorized.google_grant.access;
         anyhow::ensure!(
@@ -290,7 +275,7 @@ impl Google {
                 .iter()
                 .find(|c| c.value.grant_id == prefs.google_grant.id)
                 .context("Google changed while listing calendars. Try syncing again.")?;
-            scopes::access(cached.value.scope.as_deref())
+            cached.value.access()
         };
         if !prefs.google_grant.access.calendar_write_allowed()
             || !actual_access.calendar_write_allowed()

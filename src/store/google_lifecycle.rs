@@ -33,7 +33,8 @@ impl Store {
             anyhow::ensure!(
                 value.google_lifecycle.revision == expected.google_lifecycle.revision
                     && value.google_client_id == expected.google_client_id
-                    && value.google_client_secret == expected.google_client_secret,
+                    && value.google_client_secret == expected.google_client_secret
+                    && value.google_services == expected.google_services,
                 "Google settings changed during sign-in. Reconnect with the current settings."
             );
             anyhow::ensure!(

@@ -250,6 +250,8 @@ pub struct Preferences {
     pub mail_check_seconds: u64,
     pub google_client_id: String,
     pub google_client_secret: String,
+    /// Desired permissions for the next sign-in, distinct from the active grant.
+    pub google_services: Option<GoogleServices>,
     pub shortcuts: crate::shortcuts::Keymap,
 }
 impl Default for Preferences {
@@ -291,6 +293,7 @@ impl Default for Preferences {
             mail_check_seconds: 15,
             google_client_id: std::env::var("SHEP_GOOGLE_CLIENT_ID").unwrap_or_default(),
             google_client_secret: std::env::var("SHEP_GOOGLE_CLIENT_SECRET").unwrap_or_default(),
+            google_services: None,
             shortcuts: Default::default(),
         }
     }
@@ -314,12 +317,55 @@ pub struct GoogleGrant {
 }
 
 impl Preferences {
+    pub fn requested_google_services(&self) -> GoogleServices {
+        self.google_services.unwrap_or_else(|| {
+            let access = self.google_grant.access;
+            GoogleServices {
+                drive: access.known && access.drive,
+                calendar: if access.known && access.calendar_write {
+                    GoogleCalendarRequest::ReadWrite
+                } else if access.known && access.calendar_read {
+                    GoogleCalendarRequest::ReadOnly
+                } else {
+                    GoogleCalendarRequest::Off
+                },
+            }
+        })
+    }
     pub fn active_google_client(&self) -> &str {
         if self.google_grant.client_id.is_empty() {
             &self.google_client_id
         } else {
             &self.google_grant.client_id
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoogleServices {
+    pub drive: bool,
+    pub calendar: GoogleCalendarRequest,
+}
+impl GoogleServices {
+    pub fn any(self) -> bool {
+        self.drive || self.calendar != GoogleCalendarRequest::Off
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GoogleCalendarRequest {
+    #[default]
+    Off,
+    ReadOnly,
+    ReadWrite,
+}
+impl fmt::Display for GoogleCalendarRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Off => "No Calendar access",
+            Self::ReadOnly => "Read calendars",
+            Self::ReadWrite => "Read and edit calendars",
+        })
     }
 }
 

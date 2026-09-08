@@ -2,6 +2,86 @@ use super::*;
 use crate::store::Store;
 
 #[tokio::test]
+async fn google_login_waits_for_saved_permissions_and_rejects_changed_choices() {
+    for changed in [false, true] {
+        let (mut app, _) = App::new();
+        app.preferences.google_client_id = "fixture-client".into();
+        app.preferences.google_client_secret.clear();
+        app.preferences.google_services = Some(GoogleServices {
+            drive: true,
+            calendar: GoogleCalendarRequest::Off,
+        });
+        app.settings_fields();
+        let (saves, mut saved) = engine::CommandSender::persistence_test_channel();
+        app.tx = Some(saves);
+        let _ = app.handle(Message::GoogleLogin(true));
+        let Command::SavePreferences(request, prefs) = saved.try_recv().unwrap() else {
+            panic!()
+        };
+        assert_eq!(prefs.google_services, app.preferences.google_services);
+        assert!(app.pending_google_login.is_some());
+        if changed {
+            let _ = app.handle(Message::GoogleCalendarAccess(
+                GoogleCalendarRequest::ReadOnly,
+            ));
+            assert!(matches!(
+                saved.try_recv().unwrap(),
+                Command::SavePreferences(..)
+            ));
+        }
+        let (network, mut commands) = engine::CommandSender::network_test_channel();
+        app.tx = Some(network);
+        let _ = app.handle(Message::Backend(Event::PreferencesSaved(
+            request,
+            Arc::new(crate::store::PreferenceSnapshot {
+                revision: 1,
+                value: prefs.clone(),
+            }),
+        )));
+        assert!(app.pending_google_login.is_none());
+        if changed {
+            assert!(commands.try_recv().is_err());
+            assert!(
+                app.notice
+                    .as_ref()
+                    .unwrap()
+                    .0
+                    .contains("Google setup changed")
+            );
+            assert_eq!(
+                app.preferences.requested_google_services().calendar,
+                GoogleCalendarRequest::ReadOnly
+            );
+        } else {
+            let Command::GoogleLogin(actual, true) = commands.try_recv().unwrap() else {
+                panic!()
+            };
+            assert_eq!(actual.google_services, prefs.google_services);
+            assert_eq!(actual.google_grant, prefs.google_grant);
+        }
+    }
+}
+
+#[test]
+fn google_sign_in_with_no_selected_services_never_enters_the_work_queue() {
+    let (mut app, _) = App::new();
+    app.preferences.google_services = Some(GoogleServices::default());
+    app.settings_fields();
+    let (saves, mut saved) = engine::CommandSender::persistence_test_channel();
+    app.tx = Some(saves);
+    let _ = app.handle(Message::GoogleLogin(true));
+    assert!(saved.try_recv().is_err());
+    assert!(app.pending_google_login.is_none());
+    assert!(
+        app.notice
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("Choose Drive backup or Calendar access")
+    );
+}
+
+#[tokio::test]
 async fn old_google_status_and_workspace_cannot_reconnect_or_unlock_archived_calendars() {
     let store = Store::memory().unwrap();
     store

@@ -355,3 +355,37 @@ async fn changed_oauth_settings_reject_staged_activation_without_changing_workin
         edited
     );
 }
+
+#[tokio::test]
+async fn changed_google_permission_choices_reject_late_activation_and_keep_the_active_grant() {
+    use shep::model::{GoogleCalendarRequest, GoogleServices};
+    let store = Store::memory().unwrap();
+    seed(&store).await;
+    let old = connect_google(&store, "fixture-client", "drive:original")
+        .await
+        .unwrap()
+        .value;
+    let mut edited = old.clone();
+    edited.google_services = Some(GoogleServices {
+        drive: false,
+        calendar: GoogleCalendarRequest::ReadOnly,
+    });
+    let edited = store.save_preferences(edited).await.unwrap().value;
+    assert_eq!(edited.google_grant, old.google_grant);
+    assert_eq!(edited.google_lifecycle, old.google_lifecycle);
+    let candidate = GoogleGrant {
+        id: "candidate".into(),
+        ..old.google_grant.clone()
+    };
+    assert!(
+        store
+            .activate_google(old, candidate, Some("drive:other".into()), vec![])
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store.get::<Preferences>("preferences").await.unwrap(),
+        edited
+    );
+    assert!(store.workspace().await.unwrap().google_archived.is_empty());
+}

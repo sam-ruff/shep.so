@@ -93,6 +93,8 @@ pub(super) struct Tokens {
     pub expires_at: i64,
     #[serde(default)]
     pub scope: Option<String>,
+    #[serde(default)]
+    pub requested_scopes: Option<String>,
 }
 
 #[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
@@ -145,6 +147,10 @@ impl Tokens {
             refresh.is_some(),
             "Google did not grant offline access. Reconnect Google and approve access so Shep can stay connected."
         );
+        let requested_scopes = match previous {
+            Some(old) => old.requested_scopes.clone(),
+            None => Some(consent::requested_scopes(prefs)?),
+        };
         Ok(Self {
             grant_id: previous
                 .map(|old| old.grant_id.clone())
@@ -163,8 +169,28 @@ impl Tokens {
                 .scope
                 .take()
                 .or_else(|| previous.and_then(|old| old.scope.clone()))
-                .or_else(|| previous.is_none().then(|| SCOPES.to_string())),
+                .or_else(|| {
+                    if previous.is_none() {
+                        requested_scopes.clone()
+                    } else {
+                        None
+                    }
+                }),
+            requested_scopes,
         })
+    }
+    pub(super) fn access(&self) -> crate::model::GoogleAccess {
+        let mut access = scopes::access(self.scope.as_deref());
+        if let Some(requested) = &self.requested_scopes {
+            let selected = scopes::access(Some(requested));
+            // Google may return an earlier broader grant. The newly activated
+            // connection still enables only the services selected for this login.
+            access.known = true;
+            access.drive &= selected.drive;
+            access.calendar_read &= selected.calendar_read;
+            access.calendar_write &= selected.calendar_write;
+        }
+        access
     }
     fn validate_saved(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
@@ -345,6 +371,7 @@ impl Google {
         redirect: &str,
         verifier: &str,
     ) -> anyhow::Result<crate::model::GoogleGrant> {
+        consent::requested_scopes(prefs)?;
         let mut state = self.state.lock().await;
         self.load_tokens(&mut state).await?;
         let mut form = vec![
@@ -359,7 +386,7 @@ impl Google {
         }
         let reply = self.exchange(&form).await?;
         let candidate = Tokens::from_reply(prefs, reply, None)?;
-        let access = scopes::access(candidate.scope.as_deref());
+        let access = candidate.access();
         anyhow::ensure!(
             access.drive || access.calendar_read,
             "Google did not grant usable Calendar or Drive access. Connect again and approve Calendar (including its list) or Drive backup."
@@ -372,13 +399,13 @@ impl Google {
         &self,
         prefs: &Preferences,
     ) -> anyhow::Result<Option<crate::model::GoogleGrant>> {
+        let requested = consent::requested_scopes(prefs)?;
         let mut state = self.state.lock().await;
         self.load_tokens(&mut state).await?;
-        if state
-            .pending_login
-            .as_ref()
-            .is_some_and(|t| t.client_id == prefs.google_client_id)
-        {
+        if state.pending_login.as_ref().is_some_and(|t| {
+            t.client_id == prefs.google_client_id
+                && t.requested_scopes.as_deref() == Some(requested.as_str())
+        }) {
             return self.stage_login(&mut state, prefs).await.map(Some);
         }
         // A crash before the SQLite activation leaves the candidate available for
@@ -390,12 +417,13 @@ impl Google {
                 state.candidate_id.as_deref() == Some(c.value.grant_id.as_str())
                     && c.value.grant_id != prefs.google_grant.id
                     && c.value.client_id == prefs.google_client_id
+                    && c.value.requested_scopes.as_deref() == Some(requested.as_str())
                     && !c.invalidated
             })
             .map(|c| crate::model::GoogleGrant {
                 id: c.value.grant_id.clone(),
                 client_id: c.value.client_id.clone(),
-                access: scopes::access(c.value.scope.as_deref()),
+                access: c.value.access(),
             }))
     }
 
@@ -420,7 +448,7 @@ impl Google {
         let grant = crate::model::GoogleGrant {
             id: candidate.grant_id.clone(),
             client_id: candidate.client_id.clone(),
-            access: scopes::access(candidate.scope.as_deref()),
+            access: candidate.access(),
         };
         state.candidate_id = Some(grant.id.clone());
         state
