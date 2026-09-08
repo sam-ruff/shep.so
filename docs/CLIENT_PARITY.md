@@ -8,7 +8,7 @@ Every desktop feature/default/provider change must update this matrix and the co
 
 | Behavior | Rust desktop reference | Flutter mobile | Separate browser |
 | --- | --- | --- | --- |
-| OAuth and continuous account/settings profiles | OAuth/Drive backups exist; continuous profiles and full DB transfer open | Next priority: implement first/new/existing-device flows from [the handover](agents/PROFILE_SYNC_HANDOVER.md); credential protection choice and live cross-client app-data access remain open | Identity gate exists; provider consent and profile sync remain open; follow the same versioned contract |
+| OAuth and continuous account/settings profiles | OAuth/Drive backups exist; initial shared metadata codec/account mapping; continuous profiles and full DB transfer open | Next priority: implement first/new/existing-device flows from [the handover](agents/PROFILE_SYNC_HANDOVER.md); credential protection choice and live cross-client app-data access remain open | Identity gate exists; provider consent and profile sync remain open; follow the same versioned contract |
 | Multiple accounts, unified/account folders | Implemented | Native setup/reconnect, atomic credential activation with stale-request binding checks, device credentials and cached folders; reviewed atomic removal with durable credential cleanup and stale-write protection tested; connection editing and Apple lifecycle open | Setup/reconnect, cached folders and unified view; reviewed atomic removal, stale-tab protection and cancellation tested; connection editing and wider lifecycle audit open |
 | IMAP/POP3, TLS/STARTTLS, SMTP | Implemented, remaining live/protocol audit | Shared Rust provider adapter and native bridge implemented; complete device/protocol and live verification open | Shared Rust transport, authenticated VPS endpoints and browser adapter implemented; live verification open |
 | Sender/subject/snippet, unread/flag/attachment indicators | Implemented | Implemented in preview; 0–4 snippet lines, avatars | Implemented in preview; 0–4 snippet lines, avatars |
@@ -80,3 +80,6 @@ Browser History progress refreshes independently of Undo-preview preparation. He
 
 
 Browser saved-group notices inspect indexed failed/unconfirmed/interrupted/cache state across all History pages and open the affected group directly. They do not classify another tab’s running step as unconfirmed. Coalesced status checks retain known targets on failure and reject observations crossing execution boundaries. Native group recovery and the wider lifecycle audit remain open.
+
+
+The profile prerequisite in `shared/profile-core` adds bounded operation metadata, explicit account mapping and native/WASM common fixtures; see [the format subset](agents/PROFILE_FORMAT.md). Native validation is observation-only and keeps provider/credential state untouched. Browser application integration, all enrollment/merge/category lifecycle, remaining portable settings and protected credentials are still open; the standalone Node WASM contract is not browser-control evidence.

@@ -21,7 +21,7 @@ def check(base=None):
             raise ValueError('Expected a commit SHA or HEAD revision')
         changed = set(subprocess.check_output(['git', 'diff', '--name-only', base], cwd=ROOT, text=True).splitlines())
         changed.update(subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], cwd=ROOT, text=True).splitlines())
-        if any(p.startswith(('src/', 'shared/mail-core/', 'shared/mail-content/')) for p in changed) and not changed.intersection(
+        if any(p.startswith(('src/', 'shared/mail-core/', 'shared/mail-content/', 'shared/profile-core/')) for p in changed) and not changed.intersection(
                 {'docs/CLIENT_PARITY.md', 'shared/client-scenarios.json'}):
             raise ValueError('Desktop changed: update docs/CLIENT_PARITY.md and record client behavior/evidence or a TODO gap')
     print(f'Parity review structure valid: {len(ids)} contracts; open gaps are not completion evidence.')

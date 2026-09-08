@@ -19,7 +19,7 @@ def lock_versions(text, version):
     blocks = text.split('[[package]]')
     for i, block in enumerate(blocks[1:], 1):
         name = re.search(r'(?m)^name = "([^"]+)"$', block)
-        if name and name[1] in ('shep-mail-core', 'shep-mail-content', 'shep-beta-server', 'shep_mobile_native') and '\nsource = ' not in block:
+        if name and name[1] in ('shep-mail-core', 'shep-mail-content', 'shep-profile-core', 'shep-beta-server', 'shep_mobile_native') and '\nsource = ' not in block:
             blocks[i] = cargo_version(block, version)
     return '[[package]]'.join(blocks)
 
@@ -29,7 +29,7 @@ def stamp(version, build, root=ROOT):
         raise ValueError('Use a semantic version and a positive mobile build number')
     paths = ['flutter/pubspec.yaml', 'web/package.json', 'web/package-lock.json',
              'website/package.json', 'website/package-lock.json', 'backend/Cargo.toml',
-             'shared/mail-core/Cargo.toml', 'flutter/rust/Cargo.toml', 'shared/mail-content/Cargo.toml',
+             'shared/mail-core/Cargo.toml', 'flutter/rust/Cargo.toml', 'shared/mail-content/Cargo.toml', 'shared/profile-core/Cargo.toml',
              'backend/Cargo.lock', 'Cargo.lock', 'flutter/rust/Cargo.lock']
     original = {p: (root / p).read_text() for p in paths}
     # Prepare and validate every edit before changing a manifest.
@@ -44,9 +44,9 @@ def stamp(version, build, root=ROOT):
         if p.endswith('package-lock.json'):
             data['packages']['']['version'] = version
         updated[p] = json.dumps(data, indent=2) + '\n'
-    for p in paths[5:9]:
+    for p in paths[5:10]:
         updated[p] = cargo_version(original[p], version)
-    for p in paths[9:]:
+    for p in paths[10:]:
         updated[p] = lock_versions(original[p], version)
     for p, text in updated.items():
         (root / p).write_text(text)

@@ -146,6 +146,60 @@ void main() {
   }
 
   test(
+    'profile operation fixtures survive the actual Dart FFI without importing accounts',
+    () async {
+      final credentials = FixtureCredentials()..unavailable = true;
+      final repository = await connection(credentials);
+      final original = await repository.call({'op': 'accounts'});
+      final credentialReads = credentials.reads;
+      final golden = await File(
+        '../shared/profile-operation.json',
+      ).readAsString();
+      final cases =
+          jsonDecode(
+                await File('../shared/profile-cases.json').readAsString(),
+              )['cases']
+              as List;
+      for (final scenario in cases) {
+        final value = jsonDecode(golden);
+        for (final patch in scenario['patches'] as List) {
+          final keys = (patch['path'] as String).substring(1).split('/');
+          dynamic target = value;
+          for (final key in keys.take(keys.length - 1)) {
+            target = target is List ? target[int.parse(key)] : target[key];
+          }
+          if (target is List) {
+            target[int.parse(keys.last)] = patch['value'];
+          } else {
+            target[keys.last] = patch['value'];
+          }
+        }
+        final response = repository.call({
+          'op': 'validate_profile_operation',
+          'record': jsonEncode(value),
+        });
+        if (scenario['error'] == null) {
+          final result = await response as Map;
+          expect(
+            jsonDecode(result['record'] as String),
+            value,
+            reason: scenario['name'] as String,
+          );
+        } else {
+          await expectLater(
+            response,
+            throwsA(
+              predicate((error) => !'$error'.contains('fictional-do-not-log')),
+            ),
+          );
+        }
+      }
+      expect(await repository.call({'op': 'accounts'}), original);
+      expect(credentials.reads, credentialReads);
+    },
+  );
+
+  test(
     'native selection bridge captures, freezes and clears without credentials or read effects',
     () async {
       final credentials = FixtureCredentials()..unavailable = true;

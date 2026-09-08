@@ -4554,10 +4554,21 @@ dependencies = [
  "serde_json",
  "sha2",
  "shep-mail-content",
+ "shep-profile-core",
  "tokio",
  "tokio-native-tls",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "shep-profile-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+ "wasm-bindgen",
 ]
 
 [[package]]

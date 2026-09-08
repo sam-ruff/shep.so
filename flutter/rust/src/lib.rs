@@ -31,3 +31,6 @@ mod paging;
 mod selection;
 #[cfg(test)]
 mod selection_tests;
+
+#[cfg(test)]
+mod profile_tests;

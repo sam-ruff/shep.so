@@ -5,8 +5,8 @@
     {
       "id": "google-cross-device-profiles",
       "contract": "Google OAuth and appDataFolder profiles: first setup from either desktop or Flutter; new/existing-device discovery and enrollment; stable account IDs; category/profile toggles; offline conflicts, removal tombstones, lost-upload recovery and secure local credential activation. Follow docs/agents/PROFILE_SYNC_HANDOVER.md; profile sync must not replay mail provider actions.",
-      "mobile": "OPEN: implement provider OAuth, shared codec, enrollment, protected credentials and actual Settings flows; verify both directions against the desktop and actual registered Google clients.",
-      "browser": "OPEN: existing beta identity gate does not grant Drive access; implement scoped consent, isolated profile state and equivalent lifecycle/control scenarios."
+      "mobile": "Initial shared/profile-core metadata codec and explicit shared/mail-core account mapping; shared/profile-cases.json consumed by native profile_tests and actual Dart FFI. Validation preserves local accounts and does not access credentials; provider capacity may stay held. OPEN: scoped OAuth, enrollment, causal merge/application, remaining settings, protected credentials and Settings controls; live registered-client interoperability.",
+      "browser": "Shared Rust WASM metadata contract via scripts/clients/test_profile_codec.mjs (Node ABI, not browser controls). OPEN: integrate browser provider consent/profile state/Settings with the same codec; beta identity does not grant Drive access. Full lifecycle and live cross-client verification remain open."
     },
     {
       "id": "mail-list",

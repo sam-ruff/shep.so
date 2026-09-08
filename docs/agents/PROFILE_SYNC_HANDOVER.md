@@ -105,8 +105,9 @@ override portable defaults without publishing those overrides back to the profil
 ## Versioned interchange to implement
 
 Do not serialize `Preferences` wholesale or use SQLite as the shared profile.
-Introduce a shared Rust profile codec and fixtures consumed by Flutter's bridge
-and the browser implementation. The following is a design target, **not a shipped
+The initial metadata codec and native/WASM fixtures now live in `shared/profile-core`;
+see [the implemented format subset](PROFILE_FORMAT.md). Production upload, enrollment,
+causal application and the remaining settings/credential format are still open. The following is a design target, **not a shipped
 wire format**; freeze exact field names/enums and crypto parameters together with
 the implementation and golden fixtures before either client writes production
 files.

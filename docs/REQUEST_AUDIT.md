@@ -456,3 +456,6 @@ R42/R63/R67/R73 continuation: add browser startup recovery notices for saved fai
 
 
 R42/R63/R67/R69/R71/R73/R74/R77: browser startup saved-group recovery shipped in [`df4f29c`](https://github.com/sam-ruff/shep.so/commit/df4f29c2e12d21fc71353920696dd4958cde363a), with exact remote verification, 137 Chromium / 127 browser unit / 56 production HTTPS stages and mandatory hooks (381 Rust tests). Compact/expanded synthetic captures are reviewed. Broader group, native, provider and deployment gaps remain in TODO; the handover now resumes with highest-priority OAuth/shared profiles.
+
+
+desktop-main:R92/R75/R02/R49/R67/R73/R77 continuation: shared profile metadata codec/account mappings and native/WASM fixtures are in verification. The implemented subset is documented in `docs/agents/PROFILE_FORMAT.md`; metadata validation does not establish OAuth, enrollment, conflict resolution, password transfer or database migration. Keep the highest-priority request and all its remaining lifecycle/platform work active.

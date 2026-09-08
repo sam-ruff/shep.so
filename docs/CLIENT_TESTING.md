@@ -188,3 +188,10 @@ The successive-group control holds the initial History observation, a provider r
 
 
 `web/e2e/bulk-recovery.spec.ts` seeds historical group journals, holds unrelated provider work and uses actual startup, status-refresh, History/review and cache-retry controls. It covers older groups beyond the first 20 History entries, counts beyond a 50-item page, light/dark layouts, failed observations, acknowledged receipts and live-owner/tab-loss behavior. `bulk_recovery.test.ts` controls read/execution ordering, coalescing, retained status-check failures and disposal. These are synthetic client storage/transport fixtures; live-provider and native equivalents remain separate work.
+
+
+## Shared profile metadata
+
+`cargo test -p shep-profile-core` and `cargo test -p shep-mail-core --test profiles` validate the operation format and explicit account mapping. `shared/profile-cases.json` supplies the same 23 valid/invalid interoperability cases to Rust, `flutter/rust/src/profile_tests.rs`, the actual Dart FFI scenario in `native_repository_test.dart`, and `node scripts/clients/test_profile_codec.mjs`. The WASM script requires the pinned CLI/target above and writes only ignored `artifacts/profile-codec-*`. It runs the WASM ABI in Node, not browser Settings controls.
+
+Cases retain unknown optional fields, reject unsupported versions/capabilities/security, duplicate JSON/targets/parents, malformed identities and known local/secret fields. Additional Rust/WASM checks cover size/depth bounds and output encoding; account mapping tests resolve legacy SMTP defaults and keep unknown connection extensions read-only. Native validation finishes with provider capacity held and preserves the original accounts/mail; actual Dart FFI keeps the credential store untouched. This is metadata validation, not working OAuth, enrollment, causal merge, credential transfer or complete database migration. See [the format subset](agents/PROFILE_FORMAT.md).
