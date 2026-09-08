@@ -2,10 +2,9 @@
 
 Active unfinished requests. Read [handover.md](handover.md) before resuming. Completed behavior and test evidence live in [docs/COMPLETION.md](docs/COMPLETION.md); [docs/REQUEST_AUDIT.md](docs/REQUEST_AUDIT.md) preserves every original request. Add requests immediately, and remove them only after relevant verification and shipping. The full product goal remains unfinished.
 
-## Resume first: composition
+## Next priority — portability and shared profiles
 
-- [ ] **R35 — Inline composer:** replace the reply/new-message popup with an editor in the preview pane, with the conversation below replies. Preserve multiple drafts, recipients and attachments when switching mail; restore the matching reply when returning to a conversation. Autosave while typing, keep navigation immediate during send, and preserve recoverable failures. Current source separates draft/editor state from other forms and coalesces autosaves; the inline view, session switching and native editing-focus guards are still missing. Current work resumes with parked draft sessions, preview-pane composition, reply association and native focus/close/save regressions. The handover describes the preceding checkpoint.
-- [ ] **R77 — Composer typing artifacts:** renderer clipping fix ebddf54 is shipped. Preserve its regression and repeat compact light/dark visual checks after inline integration.
+- [ ] **R92 — Rust/Flutter profile interoperability:** prioritize full database import/export in Settings (R83) and Google OAuth/Drive account/profile sync (R02/R49). Support creating the first profile from either desktop or Flutter, discovering/importing existing profiles on a new device, keeping already connected devices updated, adding/removing accounts and offline/reconnect/conflict handling. All profile/sync choices must be configurable and toggleable. Write the shared format, OAuth/project requirements, credential protection, first-login/new/existing-device flows and compatibility/testing contract in the sibling `shep-clients` repository for its Flutter implementation. Inspect that repository's instructions and existing implementation first. Keep account passwords out of unprotected exports/sync files; confirm the outstanding credential-transfer protection choice.
 
 ## Mail, folders and desktop integration
 

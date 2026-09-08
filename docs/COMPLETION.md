@@ -23,6 +23,42 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
 
+## R35/R77 — Inline replies and independent draft sessions (2026-09-08)
+
+New messages, replies and forwards use the preview pane. Reply editors keep the
+original conversation below, with a saved choice to include quoted text in the
+outgoing message. Switching mail parks its editor; returning restores the matching
+reply. Recipients, newer text and imported attachment copies survive navigation,
+Preferences and a graceful restart. Collapse and close retain the draft. Explicit
+Save leaves the editor open; send releases it after the durable outgoing receipt.
+
+Each session owns its editor and one pending save revision. Background results
+cannot replace another draft, cancel a pending close by reopening a reply, or
+clear list selection. Window close drains every owned draft. Removal reviews wait
+for related draft/file persistence, and discard cannot race an attachment import.
+Find and HTML reflow address the inline scroller. Native editing focus preserves
+text selection and protects text fields from destructive mail shortcuts.
+
+Source commit: `e16590c`. Its normal hooks passed **541 Rust/adapter executions**
+(539 Rust tests and two pixbuf adapter tests); **49 Python tests**, formatting,
+Clippy and strict Zensical also passed. The migrated **188/188 native functional**
+run passed, followed by all six inline scenarios on the final executable. The final
+**191/191 native functional** run passed on the committed source, which was pushed
+to `main` as `e16590c`. Logs: `artifacts/logs/inline-composer-commit.log`,
+`inline-composer-python.log`, `inline-composer-native-final-full.log` and
+`inline-composer-docs.log`. The native binary SHA-256 is
+`d866d418c7ddc0d8125de4c6634e667fc3b082b539a85dc8830713def4d504ca`.
+
+Reviewed evidence includes compact light/dark typing, red discard confirmation,
+reply switching/restart, original-message Find, long-thread paging and a delayed
+fixture send refusal that leaves another reply editable. Functional runs omit
+performance gates as requested; no new latency claim or production installation
+is implied.
+The installed production executable remains the previous baseline. Native tests
+use fictional accounts; live SMTP and Windows/macOS execution are separate work.
+Temporary saving-tray behavior and the wider close-dependency audit remain R86/R90;
+provider rekey/recovery integration remains R73. Message-size ceilings remain R23.
+
 ## R90/R91 — Channel-owned account scheduling (2026-09-08)
 
 Full account sync previously held the account mutation mutex across the entire

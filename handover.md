@@ -1,4 +1,4 @@
-# Shep handover — 2026-09-07
+# Shep handover — 2026-09-08
 
 The user stopped feature work to conserve credits and requested this handover, a cleaned TODO and a push. **The full application goal is not complete.** Resume from [TODO.md](TODO.md), preserving the original requirements in [docs/REQUEST_AUDIT.md](docs/REQUEST_AUDIT.md). Read [AGENTS.md](AGENTS.md) for operational rules and [docs/COMPLETION.md](docs/COMPLETION.md) for evidence; do not repeat historical work based only on the latest chat message.
 
@@ -21,16 +21,53 @@ the baseline below. Remaining investigation includes the bulk worker claiming a
 step before waiting for provider capacity, and close paths that ask for another
 close click after credentials, send, attachment or calendar setup finishes.
 
-Local R35 work was preserved separately while verifying this checkpoint:
-`artifacts/patches/inline-composer-before-sync-checkpoint/` contains the tracked
-patch, `sessions.rs` and SHA-256 manifest. It adds inline composition, parked
-sessions and persistent reply context; two new native flows and focused Rust
-checks passed, but the existing native composer/forward scenarios still need
-migration. Restore that work after the sync checkpoint; do not claim it is in
-published main or install it before completing its tests. Also finish draft-keyed
-scroll/focus, pending-close restore guards, folder/selection navigation, multi-save
-close/failure, account-removal review ordering and compact typing-artifact checks.
-The following foundation notes describe the shipped composer, before those edits.
+## 8 September continuation: inline composition
+
+Source commit `e16590c` adds inline new-message/reply/forward editors and independent
+parked sessions. Returning to mail restores its reply; text, recipients and copied
+attachments survive Preferences and owned-process restart. Reply quotes stay
+outside the editor and are included in MIME only when selected. The editor can
+collapse, supports normal text selection/Tab, and preserves the original below,
+including Find and conversation paging.
+
+Close observes all pending draft revisions. Removal review waits for related
+saves/file imports; discard cannot race an import. Late file/save/send/detail
+results retain unrelated forms and newer edits. Sending still releases the editor
+after its durable outgoing acknowledgment; delayed preparation allows navigation.
+
+The original 188-flow native run passed, then all six inline scenarios passed
+against the final executable. Hooks passed 541 Rust/adapter executions; 49 Python
+tests and strict docs also passed. The final **191/191** native run passed and `e16590c` was pushed to main;
+see `docs/COMPLETION.md`. No production installation was performed.
+The old ignored patch backup is historical and has already been integrated; do
+not restore it over the current source. The foundation notes below describe the
+older installed build.
+
+**Next priority from the latest user message: R83/R02/R49/R92.** Implement full
+database import/export in Settings and configurable Google OAuth/Drive account
+and profile sharing. Cover first setup originating on either Rust or Flutter,
+new-device discovery/enrollment and ongoing sync on existing devices. Write the
+interoperability contract in `../shep-clients` for its Flutter implementation.
+An asynchronous question about Google-only unlocking versus a separate sync
+passphrase is pending; no answer has been recorded. Database work is independent.
+
+The sibling repository is a dirty `feat/mobile-web-clients` worktree with active
+client work. Preserve those edits. Its instructions require client work on that
+review branch, with parity/scenario tracking; only read-only discovery was done
+here. Re-read the relevant instructions before editing. `flutter/rust` has its
+own cache and credential-slot lifecycle, so do not assume desktop SQLite is its
+profile interchange format. Google appDataFolder and native OAuth primary docs
+have been opened; a shared cross-platform OAuth project/namespace needs explicit
+verification and documentation. No Flutter sync document was written yet.
+
+R86/R90/R91 remain active after that priority. Read-only inspection confirms bulk
+claims a durable item before waiting for provider capacity (`engine/bulk.rs`),
+and several window-close branches still require another click after other saves.
+Use channel-owned control/cancellation for the remaining work; preserve actual
+in-flight receipts. Storage still owns its connection and in-memory lease set
+through `Arc<Mutex<_>>` (`store.rs`/`store/bulk.rs`); Google/lifecycle coordination
+also remains in the R91 audit. Do not confuse application state coordination
+with required SQLite or independent-process file locking.
 
 ## Shipped baseline
 
