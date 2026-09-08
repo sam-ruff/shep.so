@@ -11,7 +11,7 @@ tracked separately. Keep the linked entry first in the root TODO until delivery.
 
 | Area | Existing implementation | Integration requirement |
 | --- | --- | --- |
-| Desktop Google authorization | `src/providers/google.rs`, `google/tokens.rs`, `google/scopes.rs` | System browser, PKCE/state, staged grants, refresh and scope checks already exist. Add feature-specific authorization and profile discovery. Do not replace staged activation with a token overwrite. |
+| Desktop Google authorization | `src/providers/google.rs`, `google/tokens.rs`, `google/scopes.rs` | System browser, PKCE/state, explicit Drive/Calendar consent, staged grants, refresh and scope checks exist. Add verified profile identity and discovery. Do not replace staged activation with a token overwrite. |
 | Desktop Google lifecycle | `src/store/google_lifecycle.rs`, `src/engine/google_lifecycle.rs` | Local disconnect, cleanup retries and stale-result protection must also fence profile jobs. |
 | Desktop Drive transport | `src/backup/drive.rs`, `src/backup/journal.rs` | Reuse bounded HTTP, pagination, identity checks and acknowledged-upload recovery. Profile files need their own namespace and retention rules. |
 | Desktop account definitions | `src/model.rs` (`Account`, `Preferences`), `src/store/connections.rs` | Map explicitly to portable fields. SQLite and local credential-slot identifiers are not the sync wire format. |

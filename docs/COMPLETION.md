@@ -1684,3 +1684,10 @@ Initial native verification retained two fixture-coordinate failures: the taller
 
 
 Final desktop consent verification passes **118/118 native functional scenarios**, **398 root/shared Rust tests** (two personal-account diagnostics intentionally ignored), **46 selected Google tests**, **39 Python tests** and **31 parity contracts**. Root Clippy/formatting and pinned strict documentation pass. Light 1440×920 and dark 900×640 captures were reviewed, including requested editing versus an active read-only event. Earlier coordinate failures remain in the ignored logs; assertion deadlines were unchanged. This was a functional run on the development host, with no new latency, live Google or Apple claim. Mandatory-hook and remote shipping evidence follow. Full mobile/browser provider authorization and continuous profiles remain open.
+
+
+### Desktop consent shipping record
+
+Committed and pushed as [`3e1181b`](https://github.com/sam-ruff/shep.so/commit/3e1181ba68692b63104cec4f926f3391ecfab470) to `feat/mobile-web-clients`; the exact remote SHA is verified. Mandatory hooks pass formatting, Clippy and **398 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. All **118 native functional scenarios**, **39 Python tests**, **31 parity contracts** and pinned strict documentation pass; synthetic light/dark/compact captures are reviewed.
+
+Desktop feature-scoped consent is delivered. Full R75 OAuth parity and R02/R49/profile sync remain unfinished: mobile/browser provider grants, verified cross-client identity/app-data visibility, discovery/enrollment, causal merge/application, remaining portable categories and protected credentials are next. No request is removed for this partial delivery. The personal phone, installed desktop and independent main worktree remain untouched. Quality/release CI stays disabled; re-enable when requested and trusted runners are ready.

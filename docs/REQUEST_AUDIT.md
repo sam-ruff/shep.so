@@ -465,3 +465,6 @@ desktop-main:R92/R75/R02/R49/R67/R73/R77: shared profile metadata prerequisite s
 
 
 desktop-main:R92/R75/R02/R49/R63/R67/R73/R77 continuation: desktop explicit next-sign-in service choices and scope-bound candidate/activation semantics are under native verification. Existing tokens stay usable while choices change; mobile/browser consent and the broader OAuth/profile lifecycle remain active parity gaps.
+
+
+desktop-main:R92/R75/R02/R49/R63/R67/R73/R77: desktop feature-scoped consent shipped as [`3e1181b`](https://github.com/sam-ruff/shep.so/commit/3e1181ba68692b63104cec4f926f3391ecfab470); exact remote SHA verified. Mandatory hooks pass 398 Rust tests and all 118 native functional scenarios pass, with reviewed light/dark/compact controls. The full OAuth/profile request remains active for mobile/browser consent, verified cross-client identity, enrollment/merge, remaining settings and protected credentials.
