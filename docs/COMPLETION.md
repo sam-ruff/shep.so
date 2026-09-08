@@ -1,5 +1,21 @@
 # Completion audit
 
+## 8 September: mail-cache channel ownership
+
+`store/worker.rs` replaces the shared connection/local-lease mutexes with one owning thread and a bounded 32-command FIFO. Accepted operations drain even after cancellation of their observer or the last Store handle; requests cancelled before admission never execute. Local leases release by closing a one-shot channel, including when the queue is full or the grant's recipient disappears. SQLite temporary selection tables and external process leases retain their existing behavior. Five deterministic worker tests cover these boundaries and failures.
+
+The existing notification restart test reproduced a deadlock with bundled SQLite 3.51.1. The retained debugger trace shows WAL close waiting for SQLite's global Unix mutex while open waits for the inode mutex. Updating to rusqlite 0.40.2 / bundled SQLite 3.53.2 fixes the same test. This matches SQLite's documented [Unix deadlock correction](https://www.sqlite.org/releaselog/3_51_2.html); the selected version also includes the later [WAL correction](https://www.sqlite.org/releaselog/3_51_3.html). No application lock or registry-cache patch masks the fault. This is an isolated fixture reproduction, not proof of the cause of the personal account's remaining delays.
+
+Verification: 544 Rust tests plus two drawing-adapter tests passed, with three live tests intentionally ignored; 49 Python tests passed. All 15 selected native scenarios passed, covering pending read/flag work, held sync, bulk/folder close and recovery, Undo, selection/paging, independent reply drafts/restart, preferences/resize, backups and removal. Synthetic restart/Preferences screenshots were reviewed. Windows GNU cross-compilation and strict documentation passed; this is not Windows execution or a full 191-scenario rerun. No performance measurements or production installation were performed. Quality/release workflows remain disabled.
+
+Evidence: `artifacts/logs/store-channel-*`, including the failed-before Rust run and debugger trace, the fixed restart test and native run. Native executable SHA-256: `7900c32a5a44db8401059273bf3aa269e1543fe09ca12f3adf4e6a3cd01f6357`. Shipping is recorded after the source commit below. R91 remains open for Google/lifecycle/backup-journal coordination. R83 full export/import and R02/R49/R92 continuous profile sync remain the next feature work; this worker foundation does not implement them.
+
+## 8 September: cross-device profile handover and priority
+
+The requested Flutter implementation handover is written in the sibling client worktree and shipped as [`02c4b32`](https://github.com/sam-ruff/shep.so/commit/02c4b32a6b380c1d5312c20bf187584c683ff10f) on `feat/mobile-web-clients`. [Read the handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md) for existing integration points, first/new/existing-device enrollment, configurable categories, the proposed shared format, conflicts/removal, credential protection and the required verification. Both TODO lists and restart notes now prioritize OAuth implementation and reference it. R83/R02/R49/R92 remain open: a document does not implement database transfer or continuous sync.
+
+The client strict docs build, 31-entry scenario validation and mandatory formatting/Clippy/381-Rust-test hooks passed. The push was verified against the remote branch. Source credentials and personal data were not copied; actual cross-platform Google app-data access and the password-protection decision remain unresolved. No production installation was changed.
+
 The user requested a complete, polished Rust + iced mail/calendar client. Passing the current suite is evidence for specific behavior, not evidence that the whole goal is complete. This audit records outstanding work; it does not replace or narrow the original specification.
 
 ## Implemented, with local evidence
