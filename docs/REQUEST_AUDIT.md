@@ -92,6 +92,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R86 | Native close-to-tray; add to TODO only, do not implement now | Backlog only; no tray behavior implemented in the handover |
 | R87 | Refresh icon should spin more slowly and clockwise; add to TODO and push | Backlog only; animation behavior unchanged in this documentation commit |
 | R88 | Remove sender icons/avatars for shorter compact email-list rows, retain action buttons; unread highlight, dot and bold subject | Recorded in TODO with the supplied horizontal-row reference described; no UI implementation yet |
+| R89 | Deleting a message should select the next message down and keep the list from snapping to the top | Recorded in TODO; preserve scroll/current ordering and selection through background completion. No behavior change yet |
 
 
 The main omissions were already present in the completion log but were not an adequate live checklist: faithful HTML, local encryption/large-mail streaming, folder trees/mutations, inline multiple drafts/discard, palette editing, multiple backup targets and continuous settings/account sync. Every request remains traceable above; TODO tracks unfinished work, including the remaining optimistic-state reconciliation and final coverage audit. Passing unrelated tests does not close a request.

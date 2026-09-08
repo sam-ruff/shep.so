@@ -9,6 +9,8 @@ Active unfinished requests. Read [handover.md](handover.md) before resuming. Com
 
 ## Mail, folders and desktop integration
 
+- [ ] **R89 — Selection after deleting mail:** preserve the email list’s scroll position and select the next message below the deleted message in the current displayed order, instead of snapping back to the top. If there is no next message, select the previous remaining message; clear the preview when the list becomes empty. Keep this selection stable through background save/sync results. Cover mouse/keyboard deletion, repeated deletes and filtered/sorted/paginated lists when implemented. Backlog only for now.
+
 - [ ] **R88 — Compact email list and unread styling:** remove sender avatars/initial icons from the inbox/conversation preview list and reduce each row’s height, following the supplied compact horizontal example (sender, subject, snippet and time). Retain Shep’s action buttons, selection controls and usable mouse targets. Unread mail should have a subtle background highlight, a dot indicator and a bold subject; keep unread styling distinguishable from selected/hovered rows in light and dark themes. Verify compact/resized layouts, row actions and read/unread transitions when implemented. Backlog only for now.
 
 - [ ] **R87 — Refresh animation speed/direction:** make the refresh icon spin more slowly and clockwise. Preserve manual-refresh-only animation and verify its direction and visual pacing when implemented. Backlog only for now.
