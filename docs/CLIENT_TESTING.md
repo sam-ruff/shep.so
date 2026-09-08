@@ -185,3 +185,6 @@ Flutter reader actions use `test/support/reader_actions_scenario.dart` from host
 
 
 The successive-group control holds the initial History observation, a provider result and Undo-preview queries separately. Progress must reach the actual completed count while the preview stays held; Undo activates only after preparation. A rejected-preview scenario retains a persistent error, retries through Refresh history and restores the group. These deterministic fault boundaries reproduce the observed stale History count without relaxing assertion deadlines.
+
+
+`web/e2e/bulk-recovery.spec.ts` seeds historical group journals, holds unrelated provider work and uses actual startup, status-refresh, History/review and cache-retry controls. It covers older groups beyond the first 20 History entries, counts beyond a 50-item page, light/dark layouts, failed observations, acknowledged receipts and live-owner/tab-loss behavior. `bulk_recovery.test.ts` controls read/execution ordering, coalescing, retained status-check failures and disposal. These are synthetic client storage/transport fixtures; live-provider and native equivalents remain separate work.

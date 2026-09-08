@@ -450,3 +450,6 @@ R42/R63 continuation: the resumed full run exposed stale History progress while 
 
 
 R77 checkpoint shipping and R79 phone installation are verified in [`1ea12a6`](https://github.com/sam-ruff/shep.so/commit/1ea12a677829dcd71c4246b87cae46327f9c749f). The completion log records 133/133 Chromium scenarios, 123 browser units, 381 required-hook Rust tests and 56 production HTTPS fixture stages, alongside Python/parity/docs/build checks and reviewed visual evidence. R63’s reproduced shortcut-capture and stale-History defects are fixed; the wider coverage/parity goal remains active. R79 alone is removed from TODO, and the handover resumes with remaining group/native/lifecycle work. Main and the installed desktop are unchanged; site deployment still needs the recorded VPS/OAuth/owner configuration.
+
+
+R42/R63/R67/R73 continuation: add browser startup recovery notices for saved failed/unconfirmed/interrupted/cache work, including groups older than the first History page. Indexed bounded observations, current execution boundaries and failed-inspection retention have unit/control evidence in the completion log. Observing a live owner cannot classify its running step as unconfirmed or repeat it. Native parity and all remaining product/deployment requests stay active.

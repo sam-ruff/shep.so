@@ -2,7 +2,12 @@ import { button, el, modal } from "./ui";
 import type { Workspace } from "./model";
 import type { GatewayRepository } from "./provider";
 import type { BulkAction, BulkItem, BulkJob } from "./bulk_journal";
-import type { GroupDecision, GroupReview, GroupView } from "./bulk_client";
+import type {
+  GroupDecision,
+  GroupReview,
+  GroupView,
+  GroupRecovery,
+} from "./bulk_client";
 export const groupActionName = (action: BulkAction) =>
   action.kind === "move"
     ? action.folder.toLowerCase() === "archive"
@@ -57,19 +62,26 @@ export class GroupUI {
   private historyDialog?: HTMLDialogElement;
   private historyRefresh?: () => void;
   private disposed = false;
+  private recovery: GroupRecovery = { entries: [] };
+  private recoveryExpanded = false;
   error?: string;
   constructor(
     private w: Workspace,
     private gateway: GatewayRepository,
   ) {
     this.groups = gateway.groups;
+    this.groups.addEventListener("attention", (event) => {
+      if (this.disposed) return;
+      const next = (event as CustomEvent<GroupRecovery>).detail;
+      if (JSON.stringify(next) === JSON.stringify(this.recovery)) return;
+      this.recovery = next;
+      this.w.changed();
+    });
     this.groups.addEventListener("progress", (event) => {
       const job = (event as CustomEvent<BulkJob>).detail;
       if (this.disposed) return;
       if (this.current?.id === job.id && job.revision >= this.current.revision)
         this.current = job;
-      if (job.counts.failed || job.counts.uncertain)
-        this.error = `${job.counts.failed} group changes failed; ${job.counts.uncertain} have unconfirmed results. Open History to review the affected messages before retrying.`;
       this.w.groupChanged();
       this.historyRefresh?.();
     });
@@ -317,6 +329,77 @@ export class GroupUI {
       ),
     );
     return error;
+  }
+  recoveryBanner() {
+    if (!this.recovery.entries.length && (this.error || !this.recovery.error))
+      return;
+    const panel = el("section", "error-banner group-recovery");
+    panel.setAttribute("role", "alert");
+    panel.setAttribute("aria-label", "Saved group actions");
+    const heading = el("div", "group-recovery-heading");
+    heading.append(el("strong", "", "Saved group actions need review"));
+    if (this.recovery.entries.length) {
+      heading.append(
+        el(
+          "span",
+          "",
+          this.recovery.entries
+            .map((entry) => {
+              const label = {
+                failed: "failed",
+                uncertain: "unconfirmed",
+                cache: "awaiting local repair",
+                interrupted:
+                  entry.count === 1
+                    ? "interrupted review"
+                    : "interrupted reviews",
+              }[entry.kind];
+              return `${entry.count} ${label}`;
+            })
+            .join(" · "),
+        ),
+      );
+      const toggle = button("Review saved group actions", () => {
+        this.recoveryExpanded = !this.recoveryExpanded;
+        this.w.changed();
+      });
+      toggle.querySelector("span")!.textContent = this.recoveryExpanded
+        ? "Hide details"
+        : "Review";
+      toggle.setAttribute("aria-expanded", String(this.recoveryExpanded));
+      toggle.dataset.stable = "group-recovery:toggle";
+      heading.append(toggle);
+    }
+    panel.append(heading);
+    for (const entry of this.recoveryExpanded ? this.recovery.entries : []) {
+      const n = entry.count;
+      const description =
+        entry.kind === "uncertain"
+          ? `${n} ${n === 1 ? "change has an unconfirmed result" : "changes have unconfirmed results"}. Check the server folders before resolving ${n === 1 ? "it" : "them"}.`
+          : entry.kind === "failed"
+            ? `${n} ${n === 1 ? "change failed" : "changes failed"}. Review the errors before retrying.`
+            : entry.kind === "cache"
+              ? `${n} confirmed ${n === 1 ? "change needs" : "changes need"} local repair.`
+              : `${n} ${n === 1 ? "review ended" : "reviews ended"} before approval. No changes were applied from these reviews.`;
+      const label = {
+        uncertain: "Review unconfirmed group changes",
+        failed: "Review failed group changes",
+        cache: "Review saved group results",
+        interrupted: "Review interrupted group reviews",
+      }[entry.kind];
+      const row = el("div", "group-recovery-row"),
+        open = button(label, () => this.history(entry.job));
+      open.dataset.stable = `group-recovery:${entry.kind}`;
+      row.append(el("span", "", description), open);
+      panel.append(row);
+    }
+    if (this.recovery.error) panel.append(el("span", "", this.recovery.error));
+    const retry = button("Refresh saved group status", () =>
+      this.groups.refreshAttention(),
+    );
+    retry.dataset.stable = "group-recovery:refresh";
+    if (this.recoveryExpanded || this.recovery.error) panel.append(retry);
+    return panel;
   }
   history(selected?: string) {
     this.historyDialog?.close();

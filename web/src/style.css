@@ -645,6 +645,31 @@ select {
 .error-banner > span {
   flex: 1;
 }
+.group-recovery {
+  flex-direction: column;
+  align-items: stretch;
+}
+.group-recovery-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.group-recovery-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.group-recovery-heading > span {
+  flex: 1;
+}
+.group-recovery-row > span {
+  flex: 1 1 240px;
+}
+.group-recovery > button {
+  align-self: flex-start;
+}
 .settings-panel {
   overflow: auto;
   display: grid;

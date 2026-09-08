@@ -47,10 +47,11 @@ Preserve existing mail schema 12/journal schema 6 lineage, canonical-alias proof
 
 ## Restart order
 
-1. Finish browser Undo lifecycle coverage: queued approval, changed scope/page, partial failures, overlapping groups, startup notifications and abandoned review/staging cleanup. Preserve the fixed shortcut/History controls and their failed-before traces in `artifacts/browser-capture-failures/`.
-2. Connect Flutter’s existing native SQLite capture and Dart controller to exact durable group execution, then Select/Done/Clear/all, review, Undo, History and recovery controls. Its current loaded-row actions are **not** full-mailbox parity.
-3. Continue the account/calendar/Google/backup, composition, cache/large-message, remote-image, keymap, lifecycle and platform gaps in TODO. Port later committed desktop work deliberately, preserving both request histories and `desktop-main:` identifier collisions.
-4. Complete Apple/live-provider tests, idle-host performance, deployment and distribution when the required environments/configuration exist. Push verified review-branch checkpoints promptly.
+1. **Highest priority:** implement Google OAuth and shared account/settings profiles using [the interoperability handover](docs/agents/PROFILE_SYNC_HANDOVER.md), as requested in desktop-main:R92/R75/R02/R49. Cover first setup on desktop or Flutter, new/existing devices, configurable sync and scoped authorization. Preserve the pending credential-protection choice and verify complete database transfer independently. The handover is a contract, not working sync.
+2. Finish remaining browser Undo lifecycle and abandoned review/staging cleanup. Saved-group startup notices now have compact light/dark controls, older-group targeting, inspection retry, acknowledged-cache recovery and live-owner/tab-loss evidence. Final production checks and shipping are recorded in the completion log. Preserve `artifacts/browser-recovery-visuals/` and the failed stale-observation unit baseline.
+3. Connect Flutter’s native SQLite capture and Dart controller to exact durable group execution, then Select/Done/Clear/all, review, Undo, History and recovery controls. Current loaded-row actions are **not** full-mailbox parity.
+4. Continue account/calendar/backup, composition, cache/large-message, remote-image, keymap, lifecycle and platform gaps in TODO. Port later committed desktop work deliberately, preserving both request histories and `desktop-main:` identifier collisions.
+5. Complete Apple/live-provider tests, idle-host performance, deployment and distribution when the required environments/configuration exist. Push verified review-branch checkpoints promptly.
 
 ## Verification commands
 

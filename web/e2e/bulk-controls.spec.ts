@@ -219,8 +219,8 @@ test("failed and unconfirmed results remain visible; History retries only a defi
     .getByRole("button", { name: "Archive 125 messages", exact: true })
     .click();
   await expect(
-    page.getByRole("alert", { name: "Group error", exact: true }),
-  ).toContainText("group changes failed");
+    page.getByRole("alert", { name: "Saved group actions", exact: true }),
+  ).toContainText("1 failed");
   const d = await history(page);
   await expect(d.locator(".group-progress")).toContainText("1 unconfirmed");
   const accept = d.getByRole("button", {

@@ -44,6 +44,7 @@ export class BulkExecutor {
     private operations: Operations,
     private changed?: (job: BulkJob) => void,
     private requireEpoch = false,
+    private recovered?: () => void,
   ) {
     if (operations.profileId !== user)
       throw Error(
@@ -111,6 +112,7 @@ export class BulkExecutor {
       );
     this.running = BulkJournal.own(this.user, async (journal) => {
       this.journal = journal;
+      this.recovered?.();
       const total: BulkRun = { steps: 0, repairs: 0 };
       do {
         const wake = this.requested;

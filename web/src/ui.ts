@@ -2138,6 +2138,7 @@ export function mount(
         accountPanel(gateway, (removed) => {
           if (removed) {
             w.accountRemoved(removed);
+            gateway.groups.refreshAttention();
             attachmentState = undefined;
           }
           w.notice = removed
@@ -2294,6 +2295,8 @@ export function mount(
     main.append(header);
     const groupError = groupUI?.errorBanner();
     if (groupError) main.append(groupError);
+    const groupRecovery = groupUI?.recoveryBanner();
+    if (groupRecovery) main.append(groupRecovery);
     if (w.error) {
       const error = el("div", "error-banner");
       error.setAttribute("role", "alert");
