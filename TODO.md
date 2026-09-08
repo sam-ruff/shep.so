@@ -9,6 +9,8 @@ Active unfinished requests. Read [handover.md](handover.md) before resuming. Com
 
 ## Mail, folders and desktop integration
 
+- [ ] **R88 — Compact email list and unread styling:** remove sender avatars/initial icons from the inbox/conversation preview list and reduce each row’s height, following the supplied compact horizontal example (sender, subject, snippet and time). Retain Shep’s action buttons, selection controls and usable mouse targets. Unread mail should have a subtle background highlight, a dot indicator and a bold subject; keep unread styling distinguishable from selected/hovered rows in light and dark themes. Verify compact/resized layouts, row actions and read/unread transitions when implemented. Backlog only for now.
+
 - [ ] **R87 — Refresh animation speed/direction:** make the refresh icon spin more slowly and clockwise. Preserve manual-refresh-only animation and verify its direction and visual pacing when implemented. Backlog only for now.
 
 - [ ] **R86 — Native close-to-tray (backlog only):** closing the main window should hide Shep in the native system tray/menu bar, with Restore/Open and explicit Quit actions. Keep background mail sync and notifications working, provide a preference, and handle desktops without tray support gracefully. Cover Linux/Windows/macOS behavior and preserve pending drafts/operations on actual Quit. User explicitly requested tracking only; do not implement during this handover.
