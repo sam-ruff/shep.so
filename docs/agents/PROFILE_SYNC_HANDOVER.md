@@ -20,7 +20,15 @@ tracked separately. Keep the linked entry first in the root TODO until delivery.
 | Flutter settings | `flutter/lib/data/settings_store.dart`, `flutter/lib/model/preferences.dart` | Portable settings currently differ from desktop fields. Add explicit mappings and preserve unsupported fields. |
 | Browser beta login | `backend/src/google.rs`, `web/src/auth.ts` | Existing identity verification gates backend access. It does not grant Drive, Calendar or Gmail access. |
 
-Desktop `e16590c` and client `1ea12a6` were inspected for this handover. Development
+Desktop `e16590c` and client `1ea12a6` were inspected for the profile mappings. Desktop
+storage foundation `db8c82a` subsequently moved the mail cache/local leases to a
+32-command owning worker and updated rusqlite to 0.40.2 / SQLite 3.53.2 after
+reproducing the old 3.51.1 Unix WAL open/close deadlock. Its 546 Rust/adapter tests,
+49 Python tests, 15 selected native scenarios and Windows cross-check pass;
+see the desktop completion log. Port/review the dependency fix and channel
+ownership deliberately before adding a second snapshot connection to the client
+cache; neither that foundation nor this document implements database transfer.
+Development
 continues on separate worktrees: desktop main and client
 `feat/mobile-web-clients`. Review newer changes before porting; do not merge the
 entire desktop database schema into Flutter.
@@ -56,6 +64,13 @@ Request identity scopes for sign-in and Drive permission for profile sync;
 Calendar permissions are separate opt-ins. Gmail provider authorization remains
 a separate feature. Existing desktop login currently requests Drive and Calendar
 together; feature-scoped consent still needs implementation.
+
+The current desktop `BackupTarget` also binds an upload to its OAuth client ID.
+Do not reuse that exact key as a shared profile ID: Android, iOS and desktop have
+different registered client IDs. Share the configured application namespace and
+verified user/profile identity while retaining client-specific grant binding
+locally. The live cross-client file visibility test above must include ownership
+metadata; a same-name file alone is not proof of compatibility.
 
 Each device obtains and stores its own grant. Refresh tokens, local grant IDs,
 client secrets, credential slot IDs and cleanup journals must never travel in a
@@ -133,6 +148,15 @@ Use a bounded command channel and a worker that owns each enrollment's state.
 Persist local operations and the last applied remote checkpoint transactionally.
 The UI receives small progress/state events; it must not await HTTP, keychain,
 crypto or database work. Speculative discovery cannot fill the interactive queue.
+
+An existing encrypted Drive backup is not an existing continuous profile.
+If discovery finds only legacy backups, offer an explicit password-prompted
+restore/migration using the existing `backup::Snapshot` decoder, then create a
+new profile after review. Preserve its accounts and supported settings through
+the portable mapping and local credential activation. Do not overwrite, rename
+or remove rolling copies during enrollment, or classify a decryption failure as
+an empty Google account. A Flutter legacy-backup decoder/adapter needs shared
+fixtures before that migration can be offered there.
 
 Use immutable change records with unique operation IDs and causal parent/version
 information, plus rebuildable profile discovery metadata. This avoids a single
