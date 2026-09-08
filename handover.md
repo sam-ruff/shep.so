@@ -6,6 +6,8 @@ The user stopped feature work to conserve credits and requested this handover, a
 
 R83 now has a complete SQLite export in **Preferences → Backups → Database transfer**. `transfer.rs` pins a consistent read transaction on a separate connection and copies bounded page batches into a private temporary file before atomic publication. The capacity-one database command worker is independent of provider/read/persistence queues. The UI saves its settings and owned drafts first, reports progress, supports cancellation and waits for cleanup on close. See the latest completion entry for verification and shipping.
 
+Source `3927053` is pushed to main. Verification passed 552 Rust + 2 adapter tests, 50 Python tests, seven selected native flows, Clippy, Windows cross-compilation and strict docs. The production installation remains unchanged; import and profile sync must not be inferred from this checkpoint.
+
 **Import is still open.** Preserve the original workspace, validate schema/integrity before activation, isolate imported credential identities and prevent pending sends/moves/folder jobs from replaying on another device. Raw SQLite export deliberately retains that state; it is not the existing encrypted backup format. Account passwords and Google tokens remain in the OS keychain.
 
 OAuth profile implementation stays at the top of TODO, referencing the [Flutter handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md). Keep the outstanding credential-protection choice open. No live Google profile protocol or full database import is claimed by this export checkpoint.
