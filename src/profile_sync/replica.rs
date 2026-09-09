@@ -45,7 +45,7 @@ impl Replica {
         journal: journal::Journal,
     ) -> anyhow::Result<Self> {
         Binding::new(binding.principal.clone(), binding.namespace.clone())?;
-        let history = Worker::open(path, binding.clone()).await?;
+        let history = Worker::open_with(path, binding.clone(), journal.connections()).await?;
         Ok(Self {
             binding,
             history,

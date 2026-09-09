@@ -140,6 +140,95 @@ class NativeFlows(unittest.TestCase):
             self.assertEqual({mail["subject"] for mail in self.mcp.call("desktop.state")["mail_rows"]},
                              {"Project overview", "Design brief"})
 
+    def combined_delete_setup(self, mode, dark=False):
+        result = self.mcp.call("desktop.start", nested_folders=True, persistent=True, folder_actions=mode)
+        print(f"Combined deletion evidence: {result['artifacts']}", flush=True)
+        if dark:
+            self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                           click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"))
+        self.mcp.batch(click(95, 540), check("selected", "Project overview"),
+                       click(188, 540), check("sidebar_labels", "Design", "contains"),
+                       {**click(95, 584), "modifiers": ["ctrl"]}, check("total", 2),
+                       {**click(95, 278), "modifiers": ["ctrl"]}, check("total", 122))
+        state = self.mcp.call("desktop.state")
+        index, reader = next((index, mail) for index, mail in enumerate(state["mail_rows"])
+                             if mail["folder"] == "INBOX" and not mail["unread"])
+        self.mcp.batch(click(400, mail_row_y(index, state)), check("loaded_message_id", reader["id"]))
+        before = self.mcp.call("desktop.state")
+        self.mcp.batch({**click(95, 540), "button": 3}, check("folder_changes.menu.source", "Projects"),
+                       key("Down"), key("Return"), check("folder_changes.review.folders", 4),
+                       check("folder_changes.review.messages", 4), key("Return"), check("dialog", None),
+                       check("folder_changes.pending", 1), check("total", 120),
+                       check("selected_folders", [{"account": None, "folder": "INBOX", "sent_only": False}]),
+                       check("selected_id", reader["id"]), check("loaded_message_id", reader["id"]),
+                       shot(f"folder-combined-delete-pending-{mode}"))
+        return result, before, reader
+
+    def test_folder_controls_combined_delete_slow_success_restart(self):
+        result, before, reader = self.combined_delete_setup("slow")
+        self.mcp.batch(check("folder_changes.jobs.0.steps.0.status", "Done"),
+                       check("folder_changes.jobs.0.steps.1.status", "Done"),
+                       check("folder_changes.jobs.0.steps.2.status", "Done"),
+                       check("folder_changes.jobs.0.status", "Completed"), check("folder_changes.pending", 0),
+                       check("total", 120), check("selected_id", reader["id"]),
+                       check("loaded_message_id", reader["id"]), shot("folder-combined-delete-confirmed"),
+                       {"type": "restart"}, check("folder_changes.jobs.0.status", "Completed"),
+                       check("total", 120), shot("folder-combined-delete-restarted"))
+        self.assertNotIn("Projects", self.mcp.call("desktop.state")["sidebar_labels"])
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        database = Path(result["artifacts"]) / "fixture.sqlite"
+        with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as cache:
+            self.assertEqual(cache.execute("SELECT count(*) FROM messages WHERE folder LIKE 'Projects%'").fetchone()[0], 0)
+            self.assertEqual(cache.execute("SELECT count(*) FROM messages WHERE folder='INBOX'").fetchone()[0], 120)
+
+    def test_folder_controls_combined_delete_failure_preserves_newer_intent(self):
+        for newer in (False, True):
+            result, before, reader = self.combined_delete_setup("fail", dark=newer)
+            if newer:
+                # Keep the remaining Inbox and explicitly add another folder
+                # while the rejected deletion is still running.
+                self.mcp.batch({**click(95, 362), "modifiers": ["ctrl"]},
+                               check("selected_folders", [
+                                   {"account": None, "folder": "INBOX", "sent_only": False},
+                                   {"account": None, "folder": "Sent", "sent_only": True}]))
+                state = self.mcp.call("desktop.state")
+                index, reader = next((index, mail) for index, mail in enumerate(state["mail_rows"])
+                                     if mail["folder"] == "INBOX" and not mail["unread"] and mail["id"] != reader["id"])
+                self.mcp.batch(click(400, mail_row_y(index, state)), check("loaded_message_id", reader["id"]),
+                               {"type": "assert", "path": "folder_changes.pending", "value": 1})
+                expected = self.mcp.call("desktop.state")
+            else:
+                expected = before
+            self.mcp.batch(check("folder_changes.pending", 0), check("folder_changes.jobs.0.status", "Could not finish"),
+                           check("selected_folders", expected["selected_folders"]), check("total", expected["total"]),
+                           check("page_unread", expected["page_unread"]), check("selected_id", reader["id"]),
+                           check("loaded_message_id", reader["id"]), check("notice", "needs attention", "contains"),
+                           shot(f"folder-combined-delete-restored-{newer}"),
+                           {"type": "restart"}, check("folder_changes.jobs.0.status", "Could not finish"),
+                           click(95, 580), check("folder", "Projects"), check("selected", "Project overview"),
+                           shot(f"folder-combined-delete-rejected-restart-{newer}"))
+
+    def test_folder_controls_combined_delete_uncertainty_keeps_cache_after_acceptance(self):
+        result, before, reader = self.combined_delete_setup("uncertain")
+        self.mcp.batch(check("folder_changes.pending", 0), check("folder_changes.jobs.0.status", "Needs review"),
+                       check("selected_folders", before["selected_folders"]), check("total", 122),
+                       check("page_unread", before["page_unread"]), check("loaded_message_id", reader["id"]),
+                       click(90, 477), check("dialog", "FolderHistory"), check("folder_changes.loading", False),
+                       shot("folder-combined-delete-uncertain-review"), click(610, 563),
+                       check("folder_changes.jobs.0.status", "Needs review"), check("folder_changes.accepted", False),
+                       click(470, 525), check("folder_changes.accepted", True), click(610, 563),
+                       check("folder_changes.jobs.0.status", "Stopped · unconfirmed"),
+                       check("notice", "Unconfirmed cached mail is kept", "contains"), key("Escape"), check("dialog", None),
+                       check("total", 122), check("loaded_message_id", reader["id"]),
+                       shot("folder-combined-delete-accepted-cache-retained"),
+                       {"type": "restart"}, check("folder_changes.jobs.0.status", "Stopped · unconfirmed"),
+                       click(95, 580), check("folder", "Projects"), check("selected", "Project overview"),
+                       shot("folder-combined-delete-accepted-restart"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        database = Path(result["artifacts"]) / "fixture.sqlite"
+        with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as cache:
+            self.assertEqual(cache.execute("SELECT count(*) FROM messages WHERE folder LIKE 'Projects%'").fetchone()[0], 4)
+
     def test_folder_controls_delete_failure_review(self):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True,folder_actions="fail")
         print(f"Folder delete failure evidence: {result['artifacts']}",flush=True)
@@ -1887,6 +1976,15 @@ class NativeFlows(unittest.TestCase):
                        check("selected_id", rows[20]["id"]), key("ctrl+d"),
                        check("selected_id", rows[21]["id"]), key("Down"),
                        check("selected_id", rows[22]["id"]))
+        # The selected ID is projected before iced finishes revealing its row.
+        # Observe that reveal while the write is still pending, then require the
+        # failure rollback to preserve both the newer reader and its position.
+        state = self.mcp.call("desktop.state")
+        index = next(i for i, row in enumerate(state["mail_rows"])
+                     if row["id"] == rows[22]["id"])
+        self.assertGreater(state["inbox_reveal_height"], 0)
+        self.mcp.batch(check("inbox_scroll", max(0, (index + 1) * 60 - state["inbox_reveal_height"] - .01), "gte"),
+                       check("mail_pending", 1, "gte"))
         scroll = self.mcp.call("desktop.state")["inbox_scroll"]
         self.mcp.batch({**check("mail_pending", 0), "timeout_ms": 5000},
                        check("selected_id", rows[22]["id"]), check("total", 120),
@@ -2191,6 +2289,54 @@ class NativeFlows(unittest.TestCase):
                        check("settings_group", "Profiles and sync"),
                        check("profile_sync.loaded", True), wait(100))
 
+    def test_profile_account_review_native_adds_shared_connection_and_preserves_previous_setup(self):
+        started = self.mcp.call("desktop.start", profile_sync="existing-connections", profile_login=True, empty_profile=True)
+        print(f"Account connection review evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("account_count", 1), check("profile_sync.working", False))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
+                       click(375, 665), check("profile_sync.account_reviews.0.name", "Cloud account"), check("profile_sync.working", False),
+                       {"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":8}, wait(100), shot("profile-account-review-choices"),
+                       click(368, 698), check("account_count", 2), check("profile_sync.account_reviews", []),
+                       check("profile_sync.working", False), shot("profile-account-review-added"),
+                       {"type":"restart"}, check("account_count", 2))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_sync.cycle.review", 0), check("profile_sync.cycle.remaining", False), shot("profile-account-review-reopened"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        checkpoint = self.profile_checkpoint(started)
+        with sqlite3.connect((Path(started["artifacts"])/"fixture.sqlite").as_uri()+"?mode=ro", uri=True) as cache:
+            accounts = json.loads(cache.execute("SELECT value FROM kv WHERE key='accounts'").fetchone()[0])
+        previous = next(a for a in accounts if a["name"].endswith("(previous setup)"))
+        current = next(a for a in accounts if a["id"] != previous["id"])
+        self.assertEqual(previous["host"], "imap.example.test")
+        self.assertEqual(current["host"], "incoming-new.example.test")
+        self.assertIn(previous["id"], checkpoint["local_only"])
+        self.assertEqual(list(checkpoint["accounts"]), [current["id"]])
+        self.assertIsNone(checkpoint["pending"])
+
+    def test_profile_account_review_native_keeps_local_connection_in_compact_window(self):
+        started = self.mcp.call("desktop.start", profile_sync="existing-connections", profile_login=True, empty_profile=True)
+        print(f"Compact account connection review evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("account_count", 1), check("profile_sync.working", False))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
+                       click(375, 665), check("profile_sync.account_reviews.0.name", "Cloud account"), check("profile_sync.working", False),
+                       {"type":"resize", "width":900, "height":640}, wait(100),
+                       {"type":"hover", "x":780, "y":500}, {"type":"scroll", "amount":14}, wait(100), shot("profile-account-review-compact-dark"),
+                       {"type":"scroll", "amount":-2}, wait(100), shot("profile-account-review-compact-current"),
+                       click(550, 490), wait(80), shot("profile-account-review-compact-versions"),
+                       click(470, 452), wait(80), shot("profile-account-review-second-version"),
+                       click(365, 445), check("profile_sync.account_reviews", []), check("account_count", 1),
+                       check("profile_sync.working", False), shot("profile-account-review-local-saved"),
+                       {"type":"restart"}, check("account_count", 1))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        checkpoint = self.profile_checkpoint(started)
+        connection = next(value for target, value in checkpoint["fields"].items() if target.endswith(":connection"))
+        self.assertEqual(connection["remote"]["account"]["host"], "imap.example.test")
+        self.assertIsNone(checkpoint["pending"])
+
+
     def test_profile_setting_review_native_chooses_shared_conflict_and_keeps_choice_after_restart(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-conflict", profile_login=True, empty_profile=True)
         print(f"Profile setting review evidence: {started['artifacts']}", flush=True)
@@ -2201,7 +2347,7 @@ class NativeFlows(unittest.TestCase):
                        click(370, 607), check("profile_sync.setting_reviews.0.label", "Appearance"),
                        check("profile_sync.working", False), shot("profile-setting-review-dark"))
         self.mcp.batch({"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":4}, wait(100),
-                       shot("profile-setting-review-choices"), click(355, 700),
+                       shot("profile-setting-review-choices"), click(355, 643),
                        check("profile_sync.setting_reviews", []), check("dark", False),
                        check("profile_sync.working", False), shot("profile-setting-review-saved-light"),
                        {"type":"restart"}, check("dark", False), check("account_count", 1))
@@ -2226,8 +2372,8 @@ class NativeFlows(unittest.TestCase):
                        {"type":"resize", "width":900, "height":640}, wait(100),
                        {"type":"hover", "x":780, "y":500}, {"type":"scroll", "amount":12}, wait(100),
                        shot("profile-setting-review-compact-dark"),
-                       click(530, 375), wait(80), click(510, 337), shot("profile-setting-review-dropdown"),
-                       click(350, 330), check("profile_sync.setting_reviews", []), check("dark", True),
+                       click(530, 317), wait(80), click(510, 243), shot("profile-setting-review-dropdown"),
+                       click(350, 273), check("profile_sync.setting_reviews", []), check("dark", True),
                        check("profile_sync.working", False), shot("profile-setting-review-local-saved"),
                        {"type":"restart"}, check("dark", True))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
@@ -2248,13 +2394,13 @@ class NativeFlows(unittest.TestCase):
         self.open_shared_profiles()
         self.mcp.batch(check("profile_sync.setting_reviews.0.local", "Dark"),
                        {"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":4}, wait(100),
-                       click(355, 700), check("profile_sync.error", None, "ne"), check("profile_sync.working", False),
+                       click(355, 643), check("profile_sync.error", None, "ne"), check("profile_sync.working", False),
                        check("dark", False), check("notice", "This preference changed while the review was open. Refresh it to keep your newer choice."),
                        shot("profile-setting-review-newer-local-kept"))
         self.assertIn("changed while the review was open", self.mcp.call("desktop.state")["profile_sync"]["error"])
-        self.mcp.batch(click(370, 445), check("profile_sync.setting_reviews.0.local", "Light"),
+        self.mcp.batch(click(370, 387), check("profile_sync.setting_reviews.0.local", "Light"),
                        check("profile_sync.working", False), shot("profile-setting-review-refreshed"),
-                       click(355, 700), check("profile_sync.setting_reviews", []),
+                       click(355, 643), check("profile_sync.setting_reviews", []),
                        check("profile_sync.error", None), check("dark", False))
 
     def test_profile_continuous_native_reuses_verified_downloads_after_restart(self):
@@ -2528,7 +2674,7 @@ class NativeFlows(unittest.TestCase):
         self.open_shared_profiles()
         self.mcp.batch(check("profile_sync.enrollment.selection.name","Home"),check("account_count",3),
                        check("account_reconnect_count",1),check("dark",True),shot("profile-existing-reopened"),
-                       click(350,662),check("settings_group","Your accounts"),shot("profile-account-reconnect"),
+                       click(350,720),check("settings_group","Your accounts"),shot("profile-account-reconnect"),
                        click(1065,520),check("dialog","Account"),check("fields.email","cloud@example.test"),
                        check("fields.host","imap.example.test"),check("fields.smtp_host","smtp.example.test"),
                        check("fields.incoming_security","Tls"),check("fields.smtp_security","StartTls"),
@@ -4431,7 +4577,7 @@ class NativeFlows(unittest.TestCase):
         second = list((root / "second").glob("*.shepbackup"))
         self.assertEqual((len(first), len(second)), (1, 1))
         for copy in first + second:
-            self.assertTrue(copy.read_bytes().startswith(b"SHEPBK01"))
+            self.assertTrue(copy.read_bytes().startswith((b"SHEPBK01", b"SHEPBK02")))
             self.assertNotIn(b"A little more room to think", copy.read_bytes())
         self.mcp.batch({"type": "restart"}, check("ready", True),
                        key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
@@ -4535,7 +4681,7 @@ class NativeFlows(unittest.TestCase):
                        click(559, 156), check("settings_tab", "Backups"),
                        click(500, 414), type_text(first), click(1340, 87),
                        check("preferences_saved", True), check("saved_backup_folder", first),
-                       click(375, 825), check("backup_destinations.1.name", "Backup 2"),
+                       click(375, 882), check("backup_destinations.1.name", "Backup 2"),
                        check("preferences_saved", True),
                        check("backup_destinations.0.folder", first),
                        shot("multiple-backup-new-destination"))
@@ -4590,15 +4736,76 @@ class NativeFlows(unittest.TestCase):
                        check("saved_backup_destinations.0.name", "Home safety copy"),
                        shot("multiple-backup-compact-dark-edited"))
 
+    def test_backup_formats_native_options_restore_and_restart(self):
+        result = self.mcp.call("desktop.start", backup_run="ready")
+        print(f"Backup format evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(559, 156), check("settings_tab", "Backups"),
+                       {"type": "hover", "x": 1000, "y": 750}, {"type": "scroll", "amount": 4},
+                       wait(100), shot("backup-format-options"),
+                       click(288, 370), check("backup_accounts", True),
+                       click(432, 336), check("backup_format.protection", "None"),
+                       check("backup_accounts", False), shot("backup-format-unencrypted"),
+                       click(288, 336), check("backup_format.compression", "None"),
+                       click(525, 471), check("notice", "Unencrypted backup saved.", "contains"),
+                       check("saved_backup_format.protection", "None"), check("backup_ready", True),
+                       shot("backup-format-plain-saved"),
+                       click(1130, 724), check("dialog", "Restore"), shot("backup-format-plain-restore"),
+                       click(605, 570), check("dialog", None),
+                       check("notice", "Backup restored:", "contains"), check("account_count", 2),
+                       click(432, 336), check("backup_format.protection", "Passphrase"),
+                       click(288, 336), check("backup_format.compression", "Zstd"),
+                       click(520, 440), type_text("a native format passphrase"),
+                       click(525, 560), check("notice", "Encrypted backup saved.", "contains"),
+                       check("backup_ready", True), shot("backup-format-encrypted-saved"))
+        copies = list((Path(result["artifacts"]) / "backup-targets" / "first").glob("*.shepbackup"))
+        self.assertEqual(len(copies), 2)
+        self.assertEqual({copy.read_bytes()[8] for copy in copies}, {0, 3})
+        oldest_plain = next(copy for copy in copies if copy.read_bytes()[8] == 0)
+        self.mcp.batch(click(1130, 822), check("dialog", "Restore"),
+                       click(520, 460), key("ctrl+a"), type_text("the wrong passphrase"),
+                       click(605, 570), check("dialog", None),
+                       check("notice", "Incorrect passphrase", "contains"),
+                       shot("backup-format-wrong-password"),
+                       click(1130, 822), check("dialog", "Restore"), shot("backup-format-retry-dialog"),
+                       click(520, 434), key("ctrl+a"), type_text("a native format passphrase"),
+                       click(605, 542), check("dialog", None),
+                       check("notice", "Backup restored:", "contains"), check("account_count", 2),
+                       click(432, 336), check("backup_format.protection", "None"),
+                       click(288, 336), check("backup_format.compression", "None"),
+                       click(1340, 87), check("preferences_saved", True), check("backup_ready", False),
+                       click(525, 471), check("notice", "Unencrypted backup saved.", "contains"),
+                       check("backup_ready", True), shot("backup-format-retained-two"))
+        retained = list((Path(result["artifacts"]) / "backup-targets" / "first").glob("*.shepbackup"))
+        self.assertEqual(len(retained), 2)
+        self.assertEqual({copy.read_bytes()[8] for copy in retained}, {0, 3})
+        self.assertFalse(oldest_plain.exists(), "Successful third copy must prune the oldest of two rolling copies")
+        self.mcp.batch({"type": "restart"}, check("ready", True),
+                       check("saved_backup_format.protection", "None"), check("saved_backup_format.compression", "None"),
+                       check("backup_ready", True), check("backup_destinations.1.format.protection", "Passphrase"),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), click(1080, 334),
+                       check("backup_run.0.status", "Saved"), check("backup_run.1.status", "Saved"),
+                       shot("backup-format-mixed-combined"), click(290, 156),
+                       check("settings_tab", "General"), click(690, 366), check("dark", True),
+                       click(559, 156), check("settings_tab", "Backups"),
+                       {"type": "resize", "width": 900, "height": 640},
+                       {"type": "hover", "x": 760, "y": 515}, {"type": "scroll", "amount": 4},
+                       wait(100), shot("backup-format-compact-dark"),
+                       {"type": "scroll", "amount": 1}, wait(100), shot("backup-format-compact-dark-actions"),
+                       click(410, 296), check("backup_format.protection", "Passphrase"),
+                       shot("backup-format-compact-dark-passphrase"),
+                       click(820, 87), check("preferences_saved", True), check("backup_ready", False))
+
     def test_backup_preferences_and_setup(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
                        click(559, 156), check("settings_tab", "Backups"), shot("backup-setup"),
-                       click(525, 744), check("notice", "at least 12 characters", "contains"),
-                       click(520, 642), type_text("a fixture backup passphrase"),
-                       click(500, 414), type_text("relative-folder"), click(525, 744),
+                       click(525, 797), check("notice", "at least 12 characters", "contains"),
+                       click(520, 676), type_text("a fixture backup passphrase"),
+                       click(500, 414), type_text("relative-folder"), click(525, 797),
                        check("notice", "absolute backup folder", "contains"),
                        click(500, 414), key("ctrl+a"), type_text("/tmp/shep-e2e-backup-preview"),
-                       click(400, 494), key("ctrl+a"), type_text("12"), click(525, 744),
+                       click(400, 494), key("ctrl+a"), type_text("12"), click(525, 797),
                        check("notice", "Backup is disabled in preview.", "contains"),
                        check("preferences_saved", True), check("saved_backup_folder", "/tmp/shep-e2e-backup-preview"),
                        check("saved_backup_copies", 12), shot("backup-settings-saved-before-action"),

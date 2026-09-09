@@ -372,3 +372,34 @@ fn ftp_callbacks_bound_data_and_control_and_observe_cancellation() {
     transfer.headers = 128 * 1024;
     assert!(!transfer.header(b"200 More\r\n"));
 }
+
+#[tokio::test]
+async fn ftp_wire_backup_format_options_restore_and_owned_retention() {
+    use crate::backup::format::{self, Protection};
+    let fixture = wire_server::Fixture::start(Security::ExplicitTls).await;
+    let provider = fixture.provider();
+    for protection in [Protection::None, Protection::Passphrase] {
+        let bytes = format::tests::wire_fixture(protection);
+        let mut upload = provider.reserve(NAME, &bytes).await.unwrap();
+        provider
+            .upload_prepared(&mut upload, &bytes, &crate::backup::NoCheckpoint)
+            .await
+            .unwrap();
+        let received = provider.download(NAME).await.unwrap();
+        assert_eq!(received, bytes);
+        let password = secrecy::SecretString::from("a format fixture passphrase");
+        assert_eq!(
+            format::decode(
+                &received,
+                (protection == Protection::Passphrase).then_some(&password)
+            )
+            .unwrap()
+            .created_at,
+            1
+        );
+        assert_eq!(provider.list().await.unwrap().len(), 1);
+        provider.delete(NAME).await.unwrap();
+        assert!(provider.list().await.unwrap().is_empty());
+    }
+    fixture.finish().await;
+}

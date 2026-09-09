@@ -132,11 +132,30 @@ pub struct Catalog {
     root: PathBuf,
     legacy_filename: String,
     worker: Arc<Worker>,
+    key: Option<Arc<crate::cache_cipher::Key>>,
 }
 impl Catalog {
     /// Call on a background worker. Existing legacy installations keep their
     /// cache filename and keychain entries until an explicit profile switch.
     pub fn open(root: &Path, legacy_filename: &str) -> anyhow::Result<Self> {
+        Self::open_with_key(root, legacy_filename, None)
+    }
+
+    /// The owning bootstrap must admit and retain the device key before opening
+    /// any catalog or profile file. This never migrates an existing plain file.
+    pub fn open_encrypted(
+        root: &Path,
+        legacy_filename: &str,
+        key: Arc<crate::cache_cipher::Key>,
+    ) -> anyhow::Result<Self> {
+        Self::open_with_key(root, legacy_filename, Some(key))
+    }
+
+    fn open_with_key(
+        root: &Path,
+        legacy_filename: &str,
+        key: Option<Arc<crate::cache_cipher::Key>>,
+    ) -> anyhow::Result<Self> {
         anyhow::ensure!(
             !legacy_filename.eq_ignore_ascii_case(CATALOG_FILE)
                 && !legacy_filename.eq_ignore_ascii_case("backup-uploads.sqlite"),
@@ -155,7 +174,11 @@ impl Catalog {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
         }
-        let mut connection = Connection::open(root.join(CATALOG_FILE))?;
+        let mut connection = crate::cache_cipher::open(
+            key.as_deref(),
+            &root.join(CATALOG_FILE),
+            rusqlite::OpenFlags::default(),
+        )?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let application: i32 = tx.query_row("PRAGMA application_id", [], |r| r.get(0))?;
@@ -188,6 +211,7 @@ impl Catalog {
             root,
             legacy_filename: legacy_filename.into(),
             worker: Arc::new(Worker::named(connection, "shep-profiles")?),
+            key,
         })
     }
 
@@ -241,16 +265,20 @@ impl Catalog {
         );
         let path = self.path(profile.id);
         let id = profile.id;
+        let key = self.key.clone();
         let store = tokio::task::spawn_blocking(move || {
             if let Id::Imported(id) = id {
-                verify_import_marker(&path, id)?;
+                verify_import_marker(&path, id, key.as_deref())?;
             }
             #[cfg(feature = "test-support")]
             if demo {
                 return crate::test_support::workspace::open(Some(&path));
             }
             let _ = demo;
-            crate::store::Store::open(path)
+            match key {
+                Some(key) => crate::store::Store::open_encrypted(path, key),
+                None => crate::store::Store::open(path),
+            }
         })
         .await??;
         Ok((
@@ -286,7 +314,9 @@ impl Catalog {
     /// marker are durable. It cannot adopt an arbitrary selected database file.
     pub(crate) async fn finish(&self, id: uuid::Uuid) -> anyhow::Result<Profile> {
         let path = self.path(Id::Imported(id));
-        tokio::task::spawn_blocking(move || verify_import_marker(&path, id)).await??;
+        let key = self.key.clone();
+        tokio::task::spawn_blocking(move || verify_import_marker(&path, id, key.as_deref()))
+            .await??;
         self.worker
             .run(move |c| {
                 let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -336,8 +366,9 @@ impl Catalog {
 
     pub async fn activate(&self, id: Id, revision: u64) -> anyhow::Result<()> {
         let path = self.path(id);
+        let key = self.key.clone();
         tokio::task::spawn_blocking(move || match id {
-            Id::Imported(id) => verify_import_marker(&path, id).map(|_| ()),
+            Id::Imported(id) => verify_import_marker(&path, id, key.as_deref()).map(|_| ()),
             Id::Legacy => {
                 anyhow::ensure!(path.is_file(), "The original profile database is missing. Restore it before opening this profile.");
                 Ok(())
@@ -367,6 +398,7 @@ impl Catalog {
     /// record crosses a bounded channel; never collect every database in memory.
     pub async fn recover_imports(&self) -> anyhow::Result<Recovery> {
         let directory = self.root.join("profiles");
+        let key = self.key.clone();
         let (output, mut input) = tokio::sync::mpsc::channel(8);
         let scan = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let entries = match std::fs::read_dir(directory) {
@@ -391,7 +423,7 @@ impl Catalog {
                 if !path.try_exists()? {
                     continue;
                 }
-                let item = verify_import_marker(&path, id)
+                let item = verify_import_marker(&path, id, key.as_deref())
                     .map(|marker| (id, marker.name))
                     .map_err(|error| format!("{}: {error:#}", path.display()));
                 if output.blocking_send(item).is_err() {
@@ -466,7 +498,11 @@ fn profile(c: &Connection, id: Id) -> anyhow::Result<Profile> {
         .context("This profile no longer exists")?;
     Ok(Profile { id, name, ready })
 }
-fn verify_import_marker(path: &Path, id: uuid::Uuid) -> anyhow::Result<ImportMarker> {
+fn verify_import_marker(
+    path: &Path,
+    id: uuid::Uuid,
+    key: Option<&crate::cache_cipher::Key>,
+) -> anyhow::Result<ImportMarker> {
     anyhow::ensure!(
         path.parent()
             .context("The profile has no directory")?
@@ -479,7 +515,8 @@ fn verify_import_marker(path: &Path, id: uuid::Uuid) -> anyhow::Result<ImportMar
         path.symlink_metadata()?.file_type().is_file(),
         "The imported database must be an ordinary file in its profile directory"
     );
-    let connection = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let connection =
+        crate::cache_cipher::open(key, path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     connection.set_db_config(
         rusqlite::config::DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA,
         false,

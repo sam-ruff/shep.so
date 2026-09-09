@@ -8,7 +8,13 @@ impl Engine {
         passphrase: SecretString,
         output: &mut Output,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(!self.demo, "Restore is disabled in preview.");
+        if self.demo {
+            #[cfg(feature = "test-support")]
+            let owned_fixture = crate::test_support::backups::active();
+            #[cfg(not(feature = "test-support"))]
+            let owned_fixture = false;
+            anyhow::ensure!(owned_fixture, "Restore is disabled in preview.");
+        }
         // Local archives may also contain Google sources. Serialize against
         // login/calendar discovery while preserving this device's Google token.
         let _google = self.google_connection_lock.read().await;
@@ -16,8 +22,13 @@ impl Engine {
         Self::check_backup_target(&target, &prefs)?;
         let prefs = backup::config::resolve(&prefs, &target)?;
         let bytes = self.backup_provider(&prefs).await?.download(&id).await?;
-        let snapshot =
-            tokio::task::spawn_blocking(move || backup::decrypt(&bytes, &passphrase)).await??;
+        let snapshot = tokio::task::spawn_blocking(move || {
+            backup::format::decode(
+                &bytes,
+                (!passphrase.expose_secret().is_empty()).then_some(&passphrase),
+            )
+        })
+        .await??;
         self.import_snapshot(snapshot, output).await
     }
 

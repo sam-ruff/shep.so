@@ -18,14 +18,14 @@ scraper = "0.27"
 cssparser = "0.37"
 litehtml = "=0.2.6"
 shep-html-pixbuf = { path = "vendor/shep-html-pixbuf" }
-shep-profile-core = { git = "https://github.com/sam-ruff/shep.so", rev = "43cdcf0f70f7dbff2f80b7828eb7e570d025b09a", features = ["drive"] }
+shep-profile-core = { git = "https://github.com/sam-ruff/shep.so", rev = "e3e69a4ea71baa6bcc6f98f2d567f6b542adc77d", features = ["drive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs"] }
 futures = "0.3"
 async-trait = "0.1"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache", "backup", "hooks", "limits"] }
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled-sqlcipher-vendored-openssl", "cache", "backup", "hooks", "limits"] }
 directories = "6"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
@@ -33,19 +33,19 @@ uuid = { version = "1", features = ["v4", "serde"] }
 async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
 tokio-native-tls = "0.3"
 native-tls = "0.2"
+curl = { version = "0.4.50", features = ["protocol-ftp", "static-curl"] }
+curl-sys = "0.4.89"
 mailparse = "0.16"
 mime_guess = "2"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-native-tls"] }
 rusty-s3 = { version = "0.10.2", default-features = false, features = ["rustcrypto", "xml"] }
 russh = { version = "0.63.2", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "3.0.0"
-curl = { version = "0.4.50", features = ["protocol-ftp", "static-curl"] }
-curl-sys = "0.4.89"
 tokio-util = { version = "0.7", features = ["codec", "io"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 secrecy = { version = "0.10", features = ["serde"] }
-aes-gcm = "0.10"
+aes-gcm = { version = "0.10", features = ["stream"] }
 argon2 = "0.5"
 rand = "0.8"
 sha2 = "0.10"
@@ -91,13 +91,15 @@ same-file = "1"
 rcgen = "0.14.10"
 rand_sftp = { package = "rand", version = "0.10" }
 ab_glyph = "=0.2.32"
-shep-profile-core = { git = "https://github.com/sam-ruff/shep.so", rev = "43cdcf0f70f7dbff2f80b7828eb7e570d025b09a", features = ["test-support"] }
+shep-profile-core = { git = "https://github.com/sam-ruff/shep.so", rev = "e3e69a4ea71baa6bcc6f98f2d567f6b542adc77d", features = ["test-support"] }
 litehtml-sys = { version = "=0.2.5", features = ["shep-test-support"] }
 tokio = { version = "1", features = ["test-util"] }
 iced_tiny_skia = "=0.14.0"
 tiny-skia = "0.11"
 
 [patch.crates-io]
+curl = { path = "vendor/curl" }
+libsqlite3-sys = { path = "vendor/libsqlite3-sys" }
 litehtml-sys = { path = "vendor/litehtml-sys" }
 iced_tiny_skia = { path = "vendor/iced_tiny_skia" }
 

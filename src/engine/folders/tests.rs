@@ -40,6 +40,8 @@ async fn folder_review_and_staging_use_local_dispatch_with_all_provider_slots_oc
         Action::Move {
             parent: Some("Archive".into()),
         },
+        0,
+        Box::default(),
     )))
     .unwrap();
     let preview = tokio::time::timeout(Duration::from_secs(3), async {
@@ -55,6 +57,7 @@ async fn folder_review_and_staging_use_local_dispatch_with_all_provider_slots_oc
     tx.try_send(Command::Folder(Request::Start(
         "queued".into(),
         preview.review.clone(),
+        None,
     )))
     .unwrap();
     tokio::time::timeout(Duration::from_secs(3), async {

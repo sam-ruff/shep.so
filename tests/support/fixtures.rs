@@ -295,10 +295,19 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
     }
     let source = CalendarSource {
         access: Default::default(),
-        id: "preview-calendar".into(),
+        id: if backups::active() {
+            "google:studio@example.test"
+        } else {
+            "preview-calendar"
+        }
+        .into(),
         name: "Studio calendar".into(),
         kind: CalendarKind::Google,
-        url: String::new(),
+        url: if backups::active() {
+            "studio@example.test".into()
+        } else {
+            String::new()
+        },
         username: String::new(),
     };
     store.save_source(source.clone()).await?;
@@ -308,7 +317,17 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
         } else {
             CalendarAccess::default()
         },
-        id: "preview-home-calendar".into(),
+        id: if backups::active() {
+            "google:home@example.test"
+        } else {
+            "preview-home-calendar"
+        }
+        .into(),
+        url: if backups::active() {
+            "home@example.test".into()
+        } else {
+            String::new()
+        },
         name: "Home calendar".into(),
         ..source.clone()
     };

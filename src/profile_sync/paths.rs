@@ -8,6 +8,7 @@ pub(crate) const DIRECTORY: &str = "profile-sync";
 #[derive(Clone)]
 pub(crate) struct Paths {
     root: PathBuf,
+    pub(super) key: Option<std::sync::Arc<crate::cache_cipher::Key>>,
 }
 impl Paths {
     pub fn for_cache(cache: &Path) -> anyhow::Result<Self> {
@@ -16,13 +17,23 @@ impl Paths {
                 .parent()
                 .context("The mail cache needs a workspace directory")?
                 .join(DIRECTORY),
+            key: None,
         })
+    }
+    pub fn with_key(mut self, key: Option<std::sync::Arc<crate::cache_cipher::Key>>) -> Self {
+        self.key = key;
+        self
     }
     pub async fn journal(&self) -> anyhow::Result<super::journal::Journal> {
         let root = self.root.clone();
+        let key = self.key.clone();
         tokio::task::spawn_blocking(move || {
             std::fs::create_dir_all(&root)?;
-            super::journal::Journal::open(Some(&root.join("drive.sqlite")))
+            let path = root.join("drive.sqlite");
+            match key {
+                Some(key) => super::journal::Journal::open_encrypted(&path, key),
+                None => super::journal::Journal::open(Some(&path)),
+            }
         })
         .await?
     }
@@ -88,6 +99,88 @@ pub(crate) fn protect(cache_parent: &Path, target: &Path) -> anyhow::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn cache_key_follows_profile_transport_history_and_discovery_restarts() {
+        use shep_profile_core::{
+            Action, Change, SettingKey,
+            drive::catalog::{Discovery, Scope},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let key = std::sync::Arc::new(crate::cache_cipher::Key::generate().unwrap());
+        let paths = Paths::for_cache(&dir.path().join("cache.sqlite"))
+            .unwrap()
+            .with_key(Some(key.clone()));
+        let journal = paths.journal().await.unwrap();
+        let binding = history::Binding {
+            namespace: "so.shep.fixture".into(),
+            principal: "drive:private-fixture-owner".into(),
+            profile: uuid::Uuid::new_v4(),
+            generation: uuid::Uuid::new_v4(),
+        };
+        let history_path = paths.history(&binding).unwrap();
+        let mut replica = crate::profile_sync::replica::Replica::open(
+            history_path.clone(),
+            binding.clone(),
+            journal.clone(),
+        )
+        .await
+        .unwrap();
+        let state = replica.state().await.unwrap();
+        let state = replica
+            .edit(history::LocalEdit {
+                operation: uuid::Uuid::new_v4(),
+                expected_revision: state.revision,
+                changes: vec![Change {
+                    action: Action::Setting {
+                        key: SettingKey::Appearance,
+                        value: serde_json::json!("Dark"),
+                    },
+                    extra: Default::default(),
+                }],
+                resolutions: vec![],
+            })
+            .await
+            .unwrap();
+        replica.close().await.unwrap();
+        assert!(
+            rusqlite::Connection::open(&history_path)
+                .unwrap()
+                .query_row("SELECT count(*) FROM sqlite_schema", [], |r| r
+                    .get::<_, i64>(0))
+                .is_err()
+        );
+        let reopened =
+            crate::profile_sync::replica::Replica::open(history_path, binding.clone(), journal)
+                .await
+                .unwrap();
+        assert_eq!(reopened.state().await.unwrap().revision, state.revision);
+        reopened.close().await.unwrap();
+        let scope = Scope {
+            namespace: binding.namespace,
+            principal: binding.principal,
+        };
+        let catalog_path = paths.catalog(&scope).unwrap();
+        let connections = crate::cache_cipher::profile_connections(Some(key));
+        let catalog =
+            Discovery::open_with(catalog_path.clone(), scope.clone(), connections.clone())
+                .await
+                .unwrap();
+        let initial = catalog.state().await.unwrap();
+        catalog.close().await.unwrap();
+        let reopened = Discovery::open_with(catalog_path.clone(), scope, connections)
+            .await
+            .unwrap();
+        assert_eq!(reopened.state().await.unwrap().revision, initial.revision);
+        reopened.close().await.unwrap();
+        for path in [paths.root.join("drive.sqlite"), catalog_path] {
+            let c = rusqlite::Connection::open(&path).unwrap();
+            assert!(
+                c.query_row("SELECT count(*) FROM sqlite_schema", [], |r| r
+                    .get::<_, i64>(0))
+                    .is_err()
+            );
+        }
+    }
     async fn denied(store: &crate::store::Store, path: PathBuf) {
         let mut export = crate::transfer::export_database(store.clone(), path, true)
             .await

@@ -278,3 +278,162 @@ fn occupied_catalog_filename_and_unsafe_legacy_paths_are_not_repurposed() {
     );
     assert!(Catalog::open(directory.path(), "../shep.sqlite").is_err());
 }
+
+#[tokio::test]
+async fn encrypted_catalog_and_active_profile_reopen_without_plaintext_fallback() {
+    let directory = tempfile::tempdir().unwrap();
+    let key = Arc::new(crate::cache_cipher::Key::generate().unwrap());
+    let catalog = Catalog::open_encrypted(directory.path(), "shep.sqlite", key.clone()).unwrap();
+    let (store, session) = catalog.clone().open_active(false).await.unwrap();
+    store
+        .put("private-fixture", "Fictional profile value")
+        .await
+        .unwrap();
+    let revision = catalog.page(0).await.unwrap().revision;
+    catalog
+        .rename(
+            Id::Legacy,
+            revision,
+            "Fictional confidential profile".into(),
+        )
+        .await
+        .unwrap();
+    for name in [
+        CATALOG_FILE,
+        "profiles.sqlite-wal",
+        "shep.sqlite",
+        "shep.sqlite-wal",
+    ] {
+        let path = directory.path().join(name);
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(!bytes.starts_with(b"SQLite format 3\0"), "{name}");
+        assert!(
+            !bytes
+                .windows(20)
+                .any(|value| value == b"Fictional confidenti")
+        );
+    }
+    let original = std::fs::read(directory.path().join(CATALOG_FILE)).unwrap();
+    assert!(Catalog::open(directory.path(), "shep.sqlite").is_err());
+    assert!(
+        Catalog::open_encrypted(
+            directory.path(),
+            "shep.sqlite",
+            Arc::new(crate::cache_cipher::Key::generate().unwrap())
+        )
+        .is_err()
+    );
+    assert_eq!(
+        std::fs::read(directory.path().join(CATALOG_FILE)).unwrap(),
+        original
+    );
+    drop(session);
+    drop(store);
+    drop(catalog);
+    let reopened = Catalog::open_encrypted(directory.path(), "shep.sqlite", key).unwrap();
+    assert_eq!(
+        reopened.active().await.unwrap().1.name,
+        "Fictional confidential profile"
+    );
+    let (store, _) = reopened.open_active(false).await.unwrap();
+    assert!(store.connection_key().is_some());
+    assert_eq!(
+        store.get::<String>("private-fixture").await.unwrap(),
+        "Fictional profile value"
+    );
+}
+
+#[tokio::test]
+async fn encrypted_catalog_recovers_only_profiles_with_the_matching_key_and_marker() {
+    let directory = tempfile::tempdir().unwrap();
+    let key = Arc::new(crate::cache_cipher::Key::generate().unwrap());
+    let catalog = Catalog::open_encrypted(directory.path(), "shep.sqlite", key.clone()).unwrap();
+    let good = uuid::Uuid::new_v4();
+    let wrong_key = uuid::Uuid::new_v4();
+    let plaintext = uuid::Uuid::new_v4();
+    for id in [good, wrong_key, plaintext] {
+        let path = catalog.path(Id::Imported(id));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let store = if id == plaintext {
+            crate::store::Store::open(&path).unwrap()
+        } else {
+            let key = if id == good {
+                key.clone()
+            } else {
+                Arc::new(crate::cache_cipher::Key::generate().unwrap())
+            };
+            crate::store::Store::open_encrypted(&path, key).unwrap()
+        };
+        store
+            .put(
+                IMPORT_MARKER_KEY,
+                ImportMarker {
+                    version: 1,
+                    local_profile: id,
+                    name: "Recovered fictional profile".into(),
+                },
+            )
+            .await
+            .unwrap();
+        store.put("recovered-data", id.to_string()).await.unwrap();
+    }
+    let report = catalog.recover_imports().await.unwrap();
+    assert_eq!((report.found, report.warnings), (1, 2));
+    assert!(report.message().unwrap().contains("kept"));
+    let page = catalog.page(0).await.unwrap();
+    assert_eq!(page.total, 2);
+    assert!(
+        page.rows
+            .iter()
+            .any(|row| row.id == Id::Imported(good) && row.ready)
+    );
+    assert!(catalog.path(Id::Imported(wrong_key)).is_file());
+    assert!(catalog.path(Id::Imported(plaintext)).is_file());
+    catalog
+        .activate(Id::Imported(good), page.revision)
+        .await
+        .unwrap();
+    let (store, session) = catalog.clone().open_active(false).await.unwrap();
+    assert_eq!(session.current, Id::Imported(good));
+    assert_eq!(
+        store.get::<String>("recovered-data").await.unwrap(),
+        good.to_string()
+    );
+    drop(session);
+    drop(store);
+    drop(catalog);
+    let reopened = Catalog::open_encrypted(directory.path(), "shep.sqlite", key).unwrap();
+    let (store, session) = reopened.open_active(false).await.unwrap();
+    assert_eq!(session.current, Id::Imported(good));
+    assert_eq!(
+        store.get::<String>("recovered-data").await.unwrap(),
+        good.to_string()
+    );
+}
+
+#[tokio::test]
+async fn encrypted_catalog_rejects_stale_changes_between_owners() {
+    let directory = tempfile::tempdir().unwrap();
+    let key = Arc::new(crate::cache_cipher::Key::generate().unwrap());
+    let first = Catalog::open_encrypted(directory.path(), "shep.sqlite", key.clone()).unwrap();
+    let second = Catalog::open_encrypted(directory.path(), "shep.sqlite", key).unwrap();
+    let original = first.page(0).await.unwrap();
+    first
+        .rename(
+            Id::Legacy,
+            original.revision,
+            "Current encrypted name".into(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        second
+            .rename(Id::Legacy, original.revision, "Obsolete name".into())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        second.page(0).await.unwrap().rows[0].name,
+        "Current encrypted name"
+    );
+}

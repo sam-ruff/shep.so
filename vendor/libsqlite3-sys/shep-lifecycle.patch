@@ -1,0 +1,57 @@
+--- a/sqlcipher/sqlite3.c
++++ b/sqlcipher/sqlite3.c
+@@ -111146,7 +111146,9 @@
+ 
+ static volatile int sqlcipher_init = 0;
+ static volatile int sqlcipher_shutdown = 0;
++#ifndef SQLCIPHER_OMIT_AUTOMATIC_CLEANUP
+ static volatile int sqlcipher_cleanup = 0;
++#endif
+ static int sqlcipher_init_error = SQLITE_ERROR;
+ 
+ static void sqlcipher_internal_free(void *, sqlite_uint64);
+@@ -111194,6 +111196,10 @@
+   return sqlcipher_static_mutex[mutex];
+ }
+ 
++/* Shep static application build: owners drain connections through channels.
++ * Process exit must not free global state beneath surviving worker threads.
++ * Explicit sqlite3_shutdown() still invokes sqlcipher_extra_shutdown(). */
++#ifndef SQLCIPHER_OMIT_AUTOMATIC_CLEANUP
+ static void sqlcipher_atexit(void) {
+   sqlcipher_log(SQLCIPHER_LOG_DEBUG, SQLCIPHER_LOG_CORE, "%s: calling sqlcipher_extra_shutdown()", __func__);
+   sqlcipher_extra_shutdown();
+@@ -111232,6 +111238,7 @@
+ #else
+ static void (*const sqlcipher_fini_func)(void) __attribute__((used, section(".fini_array"))) = sqlcipher_fini;
+ #endif
++#endif /* SQLCIPHER_OMIT_AUTOMATIC_CLEANUP */
+ 
+ static void sqlcipher_exportFunc(sqlite3_context*, int, sqlite3_value**);
+ 
+@@ -111274,11 +111281,13 @@
+     return SQLITE_OK;
+   }
+ 
++#ifndef SQLCIPHER_OMIT_AUTOMATIC_CLEANUP
+   /* only register cleanup handlers once per process */
+   if(!sqlcipher_cleanup) {
+     atexit(sqlcipher_atexit);
+     sqlcipher_cleanup = 1;
+   }
++#endif
+ 
+ #ifndef SQLCIPHER_OMIT_DEFAULT_LOGGING
+   /* when sqlcipher is first activated, set a default log target and level of WARN if the
+@@ -115831,6 +115840,11 @@
+ }
+ 
+ int sqlcipher_openssl_setup(sqlcipher_provider *p) {
++#ifdef SQLCIPHER_OMIT_AUTOMATIC_CLEANUP
++  /* Match Rust OpenSSL's existing process-lifetime policy before SQLCipher's
++   * initialization RNG can implicitly register global crypto exit cleanup. */
++  if(OPENSSL_init_crypto(OPENSSL_INIT_NO_ATEXIT, NULL) != 1) return SQLITE_ERROR;
++#endif
+   p->init = NULL;
+   p->shutdown = NULL;
+   p->get_provider_name = sqlcipher_openssl_get_provider_name;

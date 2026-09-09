@@ -196,9 +196,8 @@ folder contents before deletion, preserving folders with unrelated files.
 Protocol tests use an object-scoped loopback peer with a bounded file-state owner
 and generated fixture certificates. Native preview continues to reject FTP
 connections and cloud writes. Live FTP/FTPS servers, real OS-keychain sessions and
-Windows/macOS execution remain separate from these checks. Optional compression,
-unencrypted archives, Back up all and richer per-destination history remain R32
-follow-ups.
+Windows/macOS execution remain separate from these checks. Combined runs and
+optional formats are described below; richer persistent history remains R32 work.
 
 The release archive includes the upstream libcurl and curl-rust license notices
 under `licenses/`. This addition does not enable the dormant release workflow.
@@ -229,8 +228,8 @@ Each named destination has an **Include** checkbox for **Back up all**. This
 selection is independent of its automatic schedule and is saved on this device.
 Existing destinations are included when migrating; excluding one keeps its
 settings, individual controls and schedule intact. A destination needs its first
-successful password-protected copy and saved OS-keychain passphrase before it
-can join a combined run. **Setup** opens an unfinished destination's own form.
+successful copy with the chosen format before it can join a combined run.
+Encrypted copies also require the saved OS-keychain passphrase. **Setup** opens an unfinished destination's own form.
 
 The action waits for settings persistence, then admits at most 32 independent
 jobs to the existing bounded provider queue. The eight provider slots remain
@@ -250,8 +249,7 @@ Back up now and Restore controls remain available.
 Run results remain visible for this session. Last successful backup, inclusion,
 schedules and unresolved upload journals survive restart; a persistent multi-run
 failure history is a separate follow-up. Snapshots are prepared independently per
-destination and may reflect mail arriving between their capture times. Compression
-and encryption formats are unchanged.
+destination and may reflect mail arriving between their capture times. Optional compression and encryption are described below.
 
 
 The combined-run correctness suite covers independent actual encrypted local
@@ -264,3 +262,70 @@ retry and restart, saved inclusion choices, Setup, navigation during upload and
 close waiting until both copies and metadata are durable. Light progress/error
 and compact dark controls are reviewed. These are fixture correctness checks,
 not live provider or performance measurements.
+
+
+## Optional archive formats
+
+`backup::format::Options` is shared by every destination: Zstd or no compression,
+and passphrase encryption or no encryption. Existing settings default to both
+compression and encryption. Password export is rejected unless encrypted; restore
+also rejects credential entries in unencrypted copies, even with a valid checksum.
+Provider login credentials remain in the OS keychain independently of archive
+protection. The native form hides its passphrase/password controls when protection
+is disabled and explains the resulting file access exposure.
+
+The shared writer emits `SHEPBK02`; the reader retains `SHEPBK01` compatibility.
+V2 starts with a 40-byte header: magic (8), flags (1: compression bit 0, encryption
+bit 1), reserved zeros (7), random Argon2id salt (16), random STREAM nonce (7), and
+one reserved zero. Unsupported flags/reserved bytes fail. Encrypted records use
+RustCrypto `aead` 0.5.2 `EncryptorBE32`/`DecryptorBE32` with AES-256-GCM, a fresh
+Argon2id-derived key (version 0x13, 19 MiB memory, two iterations, one lane,
+32-byte output), and the library-owned record counter/final marker. See the
+[RustCrypto STREAM API](https://docs.rs/aead/0.5.2/aead/stream/index.html).
+
+Each record has a four-byte big-endian length whose high bit marks the final
+record. Nonfinal plaintext is exactly 64 KiB; the final record is at most 64 KiB and
+may be empty. Encrypted lengths include the 16-byte tag. The complete header and
+record prefix are authenticated as AAD. Restore requires the final record and
+EOF, rejecting reordered/spliced records, truncation, malformed lengths and
+trailing bytes. Unencrypted files instead end with a SHA-256 checksum over the
+header, prefixes and payload; this detects corruption but provides no authenticity
+or confidentiality. Zstd precedes framing/encryption. Bounded writer/reader frames
+prepare for R23, but the surrounding snapshot/journal still retains its existing
+Vec-based 256 MiB raw-mail / 768 MiB decoded-snapshot limits. This is not completion of
+large-mail streaming.
+
+A pending journal row owns its original options and bytes. Reopening setup and
+changing the format never re-encrypts that upload or overwrites its saved key.
+Encrypted pending copies require the original typed/saved passphrase, even when
+the edited form now disables encryption. Plain pending copies never request or
+save a passphrase, even if the new form enables it. A late receipt updates history
+but only acknowledges readiness for the format actually uploaded. A subsequent
+new-format first copy enables that format's automatic/combined use. Unencrypted
+manual, combined and automatic copies do not access the backup-passphrase store.
+The old saved passphrase is retained for recovery of existing encrypted copies.
+
+Native format/restore scenarios use only `backup_run` owned fixture folders and
+its isolated credential worker. Their calendar identifiers are valid fictional
+Google identities so production import validation remains intact. Ordinary preview
+still rejects restores and cloud writes. The saved options flow checks account
+password exclusion, independent settings, actual plaintext/encrypted copies,
+wrong-passphrase recovery, restore, restart and compact dark controls.
+
+The fixed V2 compatibility fixture is generated independently by
+`scripts/backup_format_vector.py` with libargon2 and Python AES-GCM. Rust tests
+consume its committed hex without additional runtime or CI dependencies.
+
+
+Format checkpoint verification: 98 backup-filter Rust checks pass, followed by
+13 final format-specific checks including the independent compatibility vector.
+All twelve selected native backup/provider/setup/compact flows pass in 63.782 seconds.
+Final format WebPs under ignored `artifacts/e2e/d6bc3f77c0f8` were reviewed,
+including light restore/password recovery and compact dark controls with visible
+save actions. Binary SHA-256:
+`337404cbbf769a3a417b284bc20c545b848cfa159a9761eba00473178c331f7f`.
+Full Windows GNU all-target/all-feature checking passes, Python runs 81 tests
+with 74 passing and seven platform skips, and strict documentation builds pass.
+Logs use `artifacts/logs/backup-formats-*`. Mandatory hooks and root integration
+are the final shipping receipts. Persistent destination failure history, complete
+large-snapshot streaming and actual provider/platform execution remain open.

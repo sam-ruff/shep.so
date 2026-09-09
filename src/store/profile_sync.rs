@@ -47,6 +47,7 @@ fn review_matches(c: &Connection, expected: &Snapshot) -> anyhow::Result<Enrollm
     Ok(now.enrollment)
 }
 
+mod account_reviews;
 mod continuous;
 pub(super) mod join;
 mod reviews;

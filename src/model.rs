@@ -273,6 +273,9 @@ pub struct MailQuery {
     pub observe: Vec<String>,
     pub observe_bulk: Vec<String>,
     pub folders: Option<Vec<FolderSelection>>,
+    /// Concrete folders temporarily excluded by a reviewed pending deletion.
+    #[serde(default)]
+    pub exclude_folders: Vec<FolderSelection>,
     pub sent_only: bool,
     pub account: Option<String>,
     pub folder: String,
@@ -356,6 +359,8 @@ pub struct MailPage {
     pub rows: Vec<Mail>,
     pub total: usize,
     pub unread: usize,
+    /// One reviewed deletion scope; ordinary pages carry no folder summary.
+    pub folder_count: Option<(usize, usize)>,
     pub inbox_unread: std::collections::BTreeMap<String, usize>,
     pub observed: std::collections::HashMap<String, Option<MailMembership>>,
 }
@@ -657,6 +662,7 @@ pub struct Preferences {
     pub backup_sftp: crate::backup::sftp::Settings,
     pub backup_ftp: crate::backup::ftp::Settings,
     pub backup_folder: String,
+    pub backup_format: crate::backup::format::Options,
     pub backup_copies: usize,
     pub backup_hours: u64,
     pub backup_accounts: bool,
@@ -707,6 +713,7 @@ impl Default for Preferences {
             backup_sftp: Default::default(),
             backup_ftp: Default::default(),
             backup_folder: String::new(),
+            backup_format: Default::default(),
             backup_copies: 7,
             backup_hours: 24,
             backup_accounts: false,

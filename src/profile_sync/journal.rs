@@ -12,6 +12,7 @@ const APPLICATION_ID: i32 = 0x5348_5055;
 #[derive(Clone)]
 pub struct Journal {
     worker: Arc<Worker>,
+    key: Option<Arc<crate::cache_cipher::Key>>,
 }
 
 /// Minted only after the exact reservation and bytes commit in SQLite. Private
@@ -33,10 +34,22 @@ impl DurableUpload {
 impl Journal {
     /// Open off the UI thread. None is truly in-memory and creates no lock files.
     pub fn open(path: Option<&Path>) -> anyhow::Result<Self> {
-        let mut c = match path {
+        let c = match path {
             Some(path) => Connection::open(path)?,
             None => Connection::open_in_memory()?,
         };
+        Self::from_connection(c, None)
+    }
+    pub fn open_encrypted(path: &Path, key: Arc<crate::cache_cipher::Key>) -> anyhow::Result<Self> {
+        Self::from_connection(key.open(path, rusqlite::OpenFlags::default())?, Some(key))
+    }
+    pub(crate) fn connections(&self) -> shep_profile_core::history::ConnectionFactory {
+        crate::cache_cipher::profile_connections(self.key.clone())
+    }
+    fn from_connection(
+        mut c: Connection,
+        key: Option<Arc<crate::cache_cipher::Key>>,
+    ) -> anyhow::Result<Self> {
         c.busy_timeout(std::time::Duration::from_secs(5))?;
         let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let version: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -69,6 +82,7 @@ impl Journal {
         )?;
         Ok(Self {
             worker: Arc::new(Worker::named(c, "shep-profile-drive")?),
+            key,
         })
     }
 

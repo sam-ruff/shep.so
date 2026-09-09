@@ -1,6 +1,7 @@
 pub mod appearance;
 pub mod backup;
 pub mod bulk;
+pub mod cache_cipher;
 pub mod compose;
 pub mod credentials;
 pub mod desktop_badge;

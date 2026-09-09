@@ -439,7 +439,7 @@ impl Manifest {
     }
     fn verify(&self, bytes: &[u8]) -> anyhow::Result<()> {
         anyhow::ensure!(
-            bytes.starts_with(MAGIC)
+            super::format::recognized_prefix(bytes)
                 && bytes.len() as u64 == self.size
                 && format!("{:x}", Sha256::digest(bytes)) == self.sha256,
             "The FTP copy has unexpected contents. It was kept unchanged."
@@ -541,7 +541,7 @@ impl FtpBackup {
 impl BackupProvider for FtpBackup {
     async fn reserve(&self, name: &str, data: &[u8]) -> anyhow::Result<PreparedUpload> {
         anyhow::ensure!(
-            valid_name(name) && data.starts_with(MAGIC),
+            valid_name(name) && super::format::recognized_prefix(data),
             "Invalid FTP backup reservation."
         );
         Ok(PreparedUpload::new(name.into(), name.into(), data))
@@ -560,7 +560,7 @@ impl BackupProvider for FtpBackup {
     ) -> anyhow::Result<()> {
         upload.verify(data)?;
         anyhow::ensure!(
-            upload.id == upload.name && data.starts_with(MAGIC),
+            upload.id == upload.name && super::format::recognized_prefix(data),
             "Invalid FTP backup reservation."
         );
         let encoded = serde_json::to_vec(&Manifest::from_upload(upload))?;

@@ -580,7 +580,7 @@ async fn explicit_arrival_selection_preserves_choices_and_frozen_review() {
     let captures = store
         .run(|c| {
             Ok(
-                c.query_row("SELECT COUNT(*) FROM temp.mail_selections", [], |r| {
+                c.query_row("SELECT COUNT(*) FROM scratch.mail_selections", [], |r| {
                     r.get::<_, i64>(0)
                 })?,
             )

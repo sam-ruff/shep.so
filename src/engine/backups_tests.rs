@@ -1022,3 +1022,213 @@ async fn backup_all_exclusion_while_keychain_waits_prevents_a_late_upload() {
     );
     assert!(!directory.path().join("first").exists());
 }
+
+#[tokio::test]
+async fn backup_format_plain_copies_and_schedules_never_need_a_keychain() {
+    struct Unavailable;
+    #[async_trait]
+    impl backup::PassphraseStore for Unavailable {
+        async fn read(&self, _: &BackupTarget) -> anyhow::Result<SecretString> {
+            panic!("Unencrypted backups must not read a passphrase")
+        }
+        async fn write(&self, _: &BackupTarget, _: SecretString) -> anyhow::Result<()> {
+            panic!("Unencrypted backups must not write a passphrase")
+        }
+    }
+    let mut engine = engine(Arc::new(Secrets::default()));
+    engine.passphrases = Arc::new(Unavailable);
+    let directory = tempfile::tempdir().unwrap();
+    let prefs = Preferences {
+        backup_folder: directory.path().to_string_lossy().into(),
+        auto_backup: true,
+        backup_format: backup::format::Options {
+            compression: backup::format::Compression::None,
+            protection: backup::format::Protection::None,
+        },
+        ..Default::default()
+    };
+    let target = BackupTarget::from_preferences(&prefs);
+    engine.store.save_preferences(prefs).await.unwrap();
+    let (mut output, events) = futures::channel::mpsc::channel(32);
+    let observed = tokio::spawn(async move { events.collect::<Vec<_>>().await });
+    engine
+        .run_backup(target.clone(), Some("".into()), &mut output)
+        .await
+        .unwrap();
+    let saved: Preferences = engine.store.get("preferences").await.unwrap();
+    assert!(saved.backup_ready && saved.auto_backup);
+    engine.run_backup(target, None, &mut output).await.unwrap();
+    drop(output);
+    assert!(
+        observed
+            .await
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, Event::Notice(message) if message == "Unencrypted backup saved."))
+    );
+    let provider = backup::LocalBackup {
+        directory: directory.path().into(),
+    };
+    let copies = provider.list().await.unwrap();
+    assert_eq!(copies.len(), 2);
+    let bytes = provider.download(&copies[0].id).await.unwrap();
+    let restored = backup::format::decode(&bytes, None).unwrap();
+    assert!(restored.credentials.is_empty());
+    assert!(!backup::format::options(&bytes).unwrap().encrypted());
+}
+
+#[tokio::test]
+async fn backup_format_pending_plain_bytes_cannot_be_relabelled_encrypted_by_later_settings() {
+    let secrets = Arc::new(Secrets::default());
+    let engine = engine(secrets.clone());
+    let directory = tempfile::tempdir().unwrap();
+    let format = backup::format::Options {
+        compression: backup::format::Compression::None,
+        protection: backup::format::Protection::None,
+    };
+    let mut prefs = Preferences {
+        backup_folder: directory.path().to_string_lossy().into(),
+        backup_format: format,
+        ..Default::default()
+    };
+    let target = BackupTarget::from_preferences(&prefs);
+    engine.store.save_preferences(prefs.clone()).await.unwrap();
+    let provider = backup::LocalBackup {
+        directory: directory.path().into(),
+    };
+    let name = format!("shep-20260909T120000Z-{}.shepbackup", uuid::Uuid::new_v4());
+    let snapshot = Snapshot {
+        version: 1,
+        created_at: 1,
+        messages: vec![],
+        accounts: vec![],
+        calendars: vec![],
+        preferences: prefs.clone(),
+        credentials: vec![],
+    };
+    let original = backup::format::encode(&snapshot, format, None).unwrap();
+    let journal = engine.backup_journal().await.unwrap();
+    journal
+        .prepare(
+            &target,
+            provider.reserve(&name, &original).await.unwrap(),
+            original.clone(),
+        )
+        .await
+        .unwrap();
+    prefs.backup_format = Default::default();
+    engine.store.save_preferences(prefs).await.unwrap();
+    let (mut output, events) = futures::channel::mpsc::channel(32);
+    let observed = tokio::spawn(async move { events.collect::<Vec<_>>().await });
+    engine
+        .run_backup(target.clone(), Some(passphrase()), &mut output)
+        .await
+        .unwrap();
+    assert_eq!(provider.download(&name).await.unwrap(), original);
+    assert!(secrets.entries.lock().unwrap().is_empty());
+    let saved: Preferences = engine.store.get("preferences").await.unwrap();
+    assert_eq!(saved.backup_format, backup::format::Options::default());
+    assert!(
+        !saved.backup_ready,
+        "the old plaintext receipt must not authorize encrypted schedules"
+    );
+    engine
+        .run_backup(target, Some(passphrase()), &mut output)
+        .await
+        .unwrap();
+    drop(output);
+    observed.await.unwrap();
+    assert!(
+        engine
+            .store
+            .get::<Preferences>("preferences")
+            .await
+            .unwrap()
+            .backup_ready
+    );
+    assert_eq!(provider.list().await.unwrap().len(), 2);
+    assert_eq!(provider.download(&name).await.unwrap(), original);
+}
+
+#[tokio::test]
+async fn backup_format_pending_encrypted_copy_uses_original_key_after_encryption_disabled() {
+    let secrets = Arc::new(Secrets::default());
+    let engine = engine(secrets.clone());
+    let directory = tempfile::tempdir().unwrap();
+    let mut prefs = Preferences {
+        backup_folder: directory.path().to_string_lossy().into(),
+        ..Default::default()
+    };
+    let target = BackupTarget::from_preferences(&prefs);
+    engine.store.save_preferences(prefs.clone()).await.unwrap();
+    let provider = backup::LocalBackup {
+        directory: directory.path().into(),
+    };
+    let name = format!("shep-20260909T120000Z-{}.shepbackup", uuid::Uuid::new_v4());
+    let snapshot = Snapshot {
+        version: 1,
+        created_at: 1,
+        messages: vec![],
+        accounts: vec![],
+        calendars: vec![],
+        preferences: prefs.clone(),
+        credentials: vec![],
+    };
+    let original =
+        backup::format::encode(&snapshot, prefs.backup_format, Some(&passphrase())).unwrap();
+    engine
+        .backup_journal()
+        .await
+        .unwrap()
+        .prepare(
+            &target,
+            provider.reserve(&name, &original).await.unwrap(),
+            original.clone(),
+        )
+        .await
+        .unwrap();
+    prefs.backup_format.protection = backup::format::Protection::None;
+    engine.store.save_preferences(prefs).await.unwrap();
+    let (mut output, events) = futures::channel::mpsc::channel(32);
+    let observed = tokio::spawn(async move { events.collect::<Vec<_>>().await });
+    // Missing original key is a recoverable error, never a new plaintext upload.
+    assert!(
+        engine
+            .run_backup(target.clone(), Some("".into()), &mut output)
+            .await
+            .is_err()
+    );
+    assert!(provider.list().await.unwrap().is_empty());
+    backup::PassphraseStore::write(secrets.as_ref(), &target, passphrase())
+        .await
+        .unwrap();
+    engine
+        .run_backup(target.clone(), Some("".into()), &mut output)
+        .await
+        .unwrap();
+    assert_eq!(provider.download(&name).await.unwrap(), original);
+    assert!(
+        !engine
+            .store
+            .get::<Preferences>("preferences")
+            .await
+            .unwrap()
+            .backup_ready
+    );
+    engine
+        .run_backup(target, Some("".into()), &mut output)
+        .await
+        .unwrap();
+    assert!(
+        engine
+            .store
+            .get::<Preferences>("preferences")
+            .await
+            .unwrap()
+            .backup_ready
+    );
+    assert_eq!(provider.list().await.unwrap().len(), 2);
+    assert_eq!(provider.download(&name).await.unwrap(), original);
+    drop(output);
+    observed.await.unwrap();
+}
