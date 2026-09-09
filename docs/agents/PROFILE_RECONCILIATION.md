@@ -66,21 +66,26 @@ conflicts must still be shown. It is not proof of full convergence.
 
 ## Required next integration
 
-1. Derive subscriptions only from completed backend reviews, preserving selected
+1. Verify partial catalog loss with retained observation histories and missing
+   remote ancestry before enabling automatic uploads. The current rebuild test
+   removes the whole observation directory while all remote originals remain
+   available. A rebuilt catalog must not imply that previously acknowledged
+   ancestry is still present remotely.
+2. Derive subscriptions only from completed backend reviews, preserving selected
    fields and their original changes. Offer explicit enablement and stable saved
    choices. Do not accept UI-supplied baselines or bind an arbitrary Google identity.
-2. Drive bounded steps from the existing profile engine owner outside Preferences.
+3. Drive bounded steps from the existing profile engine owner outside Preferences.
    Serialize its local history with publication/enrollment, suspend while a frozen
    review is active, and recheck the active grant/namespace before each step.
    Acquire provider capacity before the Google lifecycle read lock. Keep cached
    mail, drafts and preference saves on their independent queues; retry with backoff.
-3. Deliver canonical small preference snapshots through existing UI generations.
+4. Deliver canonical small preference snapshots through existing UI generations.
    Preserve newer native edits, including reverted intent, while results are pending.
    Apply normal appearance/query/reader effects without stealing focus.
-4. Connect master/field switches, Sync now, pending/error progress and checked,
+5. Connect master/field switches, Sync now, pending/error progress and checked,
    paged conflict resolution. Preserve unresolved requests until review commits.
    Add saved native flows and reviewed light/dark/compact captures.
-5. Extend Flutter through its own SQLite/SDK lifecycle and add Android/Playwright
+6. Extend Flutter through its own SQLite/SDK lifecycle and add Android/Playwright
    equivalents. Continue accounts/categories, switching, restoration and browser
    integration under the full [profile contract](PROFILE_SYNC_HANDOVER.md).
 
