@@ -4,13 +4,14 @@ The user stopped feature work to conserve credits and requested this handover, a
 
 ## Final profile-controls failure-path review
 
-Unreadable local enrollment now disables its controls and shows recovery advice.
+Follow-up `6860f50` is pushed. Unreadable local enrollment now disables its controls and shows recovery advice.
 Failed writes/status reloads retain newer choices for explicit retry, without
 trapping later close or launching another save against stale settings. Native
 invalid-state restart/navigation and controller ordering regressions pass.
 Eighteen affected native scenarios passed after the functional fix; all six
-profile flows passed again after final error-copy review. See the newest
-completion entry for final hooks and shipping. OAuth remains first in TODO;
+profile flows passed again after final error-copy review. Hooks passed 623 Rust, two renderer and 34 shared tests; 54 Python tests, strict
+docs and warning-free Windows GNU cross-compilation passed. See the newest
+completion entry for exact source/binary evidence. OAuth remains first in TODO;
 existing-device enrollment and continuous updates are the next implementation.
 
 ## 9 September continuation: native initial-profile controls
