@@ -32,7 +32,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R19 | Double-click mail opens full-window reader; Esc/close button with remapping | Delivered |
 | R20 | Configurable collapsed replies/history instead of one continuous body; configurable separate-message conversation cards | Delivered and tested |
 | R21 | Compact inbox header rather than an excessively thick top bar | Delivered; refresh-icon replacement is R53 |
-| R22 | Encrypt local SQLite mail cache at rest | Open; keychain/backup protection is separate |
+| R22 | Encrypt local SQLite mail cache at rest | Open; shared history/discovery initializer checkpoint has 57 passing contract tests; desktop encryption/migration/recovery remains separate |
 | R23 | Arbitrary email length/size; remove 25 MiB incoming, 256 MiB snapshot and 32k preview limits; background large downloads so other mail proceeds | Open; no higher-cap workaround is considered completion |
 | R24 | Sidebar fits horizontally; sidebar/inbox/reader widths draggable; window dimensions persist across sessions | Delivered; long labels ellipsize and drag/layout state persists |
 | R25 | Flagged outline red and entire UI palette configurable in Preferences | Red outline delivered; palette editor open |
