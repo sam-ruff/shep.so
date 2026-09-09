@@ -1,0 +1,3 @@
+# Shared protocol fixtures are hashed as exact bytes on every platform.
+tests/support/profile-operation.json -text
+tests/support/profile-drive-file.json -text

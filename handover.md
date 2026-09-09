@@ -2,6 +2,28 @@
 
 The user stopped feature work to conserve credits and requested this handover, a cleaned TODO and a push. **The full application goal is not complete.** Resume from [TODO.md](TODO.md), preserving the original requirements in [docs/REQUEST_AUDIT.md](docs/REQUEST_AUDIT.md). Read [AGENTS.md](AGENTS.md) for operational rules and [docs/COMPLETION.md](docs/COMPLETION.md) for evidence; do not repeat historical work based only on the latest chat message.
 
+## 9 September continuation: causal profile bridge
+
+The latest backend work uses the published shared history worker for verified
+Drive pull/publish. It retains exact reservations across both journals, refuses
+stale/foreign proofs and ambiguous duplicate IDs, and preserves conflicts/removal
+markers. Two isolated devices exercise the real HTTP/SQLite path. The desktop
+file convention now matches the client branch's committed metadata fixture.
+Read the newest completion entry for final verification and shipping.
+
+Cargo pins `9289f53`; `python3 scripts/test_profile_core.py` runs all 34 shared
+codec/history/Drive tests from an isolated copy with a committed test lock.
+Ordinary hooks use locked mode. After reviewing a pin/dependency change, use
+`--update-lock` to refresh that isolated test lock. Python 3.11+ is required.
+
+Next implement durable enrollment and real account/settings application, then
+native controls, profile/category/lifecycle fencing and incremental polling.
+Current full-history pulls are not the final continuous scheduler. Protect the
+chosen production journal paths during database transfer. Actual Google
+cross-client access and the credential-protection choice remain unresolved.
+OAuth stays first in TODO, using the linked Flutter handover. Keep the sibling
+client thread's work intact; no personal installation was changed.
+
 ## 9 September continuation: shared profile transport
 
 Source `bb87ac2` is pushed with verified Drive profile discovery and immutable

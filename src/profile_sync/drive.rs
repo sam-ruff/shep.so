@@ -11,7 +11,7 @@ use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
-const FIELDS: &str = "id,name,trashed,spaces,mimeType,ownedByMe,properties,size,sha256Checksum";
+const FIELDS: &str = "id,name,trashed,spaces,mimeType,ownedByMe,appProperties,size,sha256Checksum";
 const PAGE_SIZE: usize = 100;
 const TOKEN_LIMIT: usize = 4096;
 
@@ -65,7 +65,10 @@ impl Session {
         Ok(self.base.join(path)?)
     }
     fn file_url(&self, id: &str) -> anyhow::Result<url::Url> {
-        anyhow::ensure!(valid_id(id), "Invalid Drive profile file ID.");
+        anyhow::ensure!(
+            valid_id(id) && id.len() <= 200,
+            "Invalid Drive profile file ID."
+        );
         self.url(&format!("/drive/v3/files/{id}"))
     }
     async fn verify_identity(&self) -> anyhow::Result<()> {
@@ -101,16 +104,15 @@ impl Session {
         if let Some(cursor) = cursor {
             check_token(cursor)?;
         }
-        let mut query = format!(
-            "trashed = false and properties has {{ key='shepProfile' and value='1' }} and properties has {{ key='shepNamespace' and value='{}' }}",
-            self.binding.namespace_hash()
-        );
+        let mut query =
+            "trashed = false and appProperties has { key='shepType' and value='profile' }"
+                .to_string();
         if let Some((profile, generation)) = profile {
             anyhow::ensure!(
                 !profile.is_nil() && !generation.is_nil(),
                 "Choose a valid profile generation."
             );
-            query.push_str(&format!(" and properties has {{ key='shepProfileId' and value='{profile}' }} and properties has {{ key='shepGeneration' and value='{generation}' }}"));
+            query.push_str(&format!(" and appProperties has {{ key='shepProfile' and value='{profile}' }} and appProperties has {{ key='shepGeneration' and value='{generation}' }}"));
         }
         let value = response_json(
             self.http
@@ -187,7 +189,7 @@ impl Session {
     }
 
     fn parse_file(&self, file: &Value) -> anyhow::Result<RemoteRecord> {
-        let properties = &file["properties"];
+        let properties = &file["appProperties"];
         anyhow::ensure!(
             file["trashed"] == false
                 && file["ownedByMe"] == true
@@ -195,12 +197,16 @@ impl Session {
                 && file["spaces"]
                     .as_array()
                     .is_some_and(|spaces| spaces.len() == 1 && spaces[0] == "appDataFolder")
-                && properties["shepProfile"] == "1"
+                && properties["shepType"] == "profile"
                 && properties["shepNamespace"] == self.binding.namespace_hash(),
             "This Drive file is not a Shep profile in the selected application namespace. It was kept unchanged."
         );
+        anyhow::ensure!(
+            properties["shepFormat"] == "operation-v1",
+            shep_profile_core::Error::Upgrade
+        );
         let key = Key {
-            profile: canonical_uuid(properties["shepProfileId"].as_str())?,
+            profile: canonical_uuid(properties["shepProfile"].as_str())?,
             generation: canonical_uuid(properties["shepGeneration"].as_str())?,
             operation: canonical_uuid(properties["shepOperation"].as_str())?,
         };
@@ -313,7 +319,7 @@ impl Session {
         );
         let id = ids[0]
             .as_str()
-            .filter(|id| valid_id(id))
+            .filter(|id| valid_id(id) && id.len() <= 200)
             .context("Google reserved an invalid profile record ID")?;
         Ok(ReservedUpload {
             binding: self.binding.clone(),
@@ -359,7 +365,7 @@ impl Session {
         let boundary = format!("shep-profile-{}", Uuid::new_v4());
         let key = upload.remote.key;
         let metadata = json!({"id":upload.remote.id,"name":key.filename(),"mimeType":"application/json","parents":["appDataFolder"],
-            "properties":{"shepProfile":"1","shepNamespace":self.binding.namespace_hash(),"shepProfileId":key.profile.to_string(),"shepGeneration":key.generation.to_string(),"shepOperation":key.operation.to_string(),"shepSha256":upload.remote.sha256}});
+            "appProperties":{"shepType":"profile","shepFormat":"operation-v1","shepNamespace":self.binding.namespace_hash(),"shepProfile":key.profile.to_string(),"shepGeneration":key.generation.to_string(),"shepOperation":key.operation.to_string(),"shepSha256":upload.remote.sha256}});
         let mut body = format!("--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{metadata}\r\n--{boundary}\r\nContent-Type: application/json\r\n\r\n").into_bytes();
         body.extend_from_slice(upload.record.bytes());
         body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());

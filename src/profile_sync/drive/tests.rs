@@ -24,18 +24,56 @@ pub(in crate::profile_sync) fn reserved() -> ReservedUpload {
         record,
     }
 }
-fn file(upload: &ReservedUpload) -> Value {
+pub(in crate::profile_sync) fn file(upload: &ReservedUpload) -> Value {
     let key = upload.remote.key;
     json!({"id":upload.remote.id,"name":key.filename(),"trashed":false,"ownedByMe":true,"spaces":["appDataFolder"],"mimeType":"application/json","size":upload.remote.size.to_string(),"sha256Checksum":upload.remote.sha256,
-        "properties":{"shepProfile":"1","shepNamespace":upload.binding.namespace_hash(),"shepProfileId":key.profile.to_string(),"shepGeneration":key.generation.to_string(),"shepOperation":key.operation.to_string(),"shepSha256":upload.remote.sha256}})
+        "appProperties":{"shepType":"profile","shepFormat":"operation-v1","shepNamespace":upload.binding.namespace_hash(),"shepProfile":key.profile.to_string(),"shepGeneration":key.generation.to_string(),"shepOperation":key.operation.to_string(),"shepSha256":upload.remote.sha256}})
 }
-fn session(server: &Server) -> Session {
+pub(in crate::profile_sync) fn session(server: &Server) -> Session {
     Session {
         http: test_http::client(),
         base: server.url.clone(),
         token: SecretString::from("fixture-profile-token"),
         binding: binding(),
     }
+}
+
+#[tokio::test]
+async fn profile_drive_reads_shared_client_metadata_fixture_without_rewriting_bytes() {
+    let metadata: Value = serde_json::from_slice(include_bytes!(
+        "../../../tests/support/profile-drive-file.json"
+    ))
+    .unwrap();
+    let mut server = Server::start(vec![
+        Reply::new(
+            200,
+            json!({"files":[metadata.clone()],"incompleteSearch":false}).to_string(),
+        ),
+        Reply::new(200, metadata.to_string()),
+        Reply::binary(200, fixture().bytes().to_vec()),
+    ])
+    .await;
+    let session = session(&server);
+    let page = session.list_page(None, None).await.unwrap();
+    let decoded = session.download(&page.records[0]).await.unwrap();
+    assert_eq!(decoded.bytes(), fixture().bytes());
+    let upload = ReservedUpload {
+        binding: binding(),
+        remote: page.records[0].clone(),
+        record: decoded,
+    };
+    let mut emitted = file(&upload);
+    emitted.as_object_mut().unwrap().remove("sha256Checksum");
+    assert_eq!(emitted, metadata);
+    server.finish().await;
+    let requests = server.requests();
+    let url = url::Url::parse(&format!("https://fixture.test{}", requests[0].target)).unwrap();
+    let query: std::collections::HashMap<_, _> = url.query_pairs().collect();
+    assert!(query["q"].contains("appProperties has { key='shepType' and value='profile' }"));
+    assert!(
+        !query["q"].contains("shepNamespace"),
+        "Visible namespace mismatches must fail explicitly, not disappear from discovery"
+    );
 }
 
 #[tokio::test]
@@ -154,7 +192,7 @@ async fn profile_drive_pages_and_downloads_exact_shared_client_bytes_including_e
         url::Url::parse(&format!("http://fixture{}", server.requests()[0].target)).unwrap();
     let query: std::collections::HashMap<_, _> = request.query_pairs().into_owned().collect();
     assert_eq!(query["spaces"], "appDataFolder");
-    assert!(query["q"].contains("properties has { key='shepProfile'"));
+    assert!(query["q"].contains("appProperties has { key='shepType'"));
     assert!(!query["q"].contains("shepBackup"));
 }
 
@@ -162,13 +200,13 @@ async fn profile_drive_pages_and_downloads_exact_shared_client_bytes_including_e
 async fn profile_drive_rejects_incomplete_repeated_duplicate_foreign_or_missing_lists() {
     let upload = reserved();
     let mut other_generation = file(&upload);
-    other_generation["properties"]["shepGeneration"] = Uuid::new_v4().to_string().into();
+    other_generation["appProperties"]["shepGeneration"] = Uuid::new_v4().to_string().into();
     let mut other_namespace = file(&upload);
-    other_namespace["properties"]["shepNamespace"] = "0".repeat(64).into();
+    other_namespace["appProperties"]["shepNamespace"] = "0".repeat(64).into();
     let mut duplicate_operation = file(&upload);
     duplicate_operation["id"] = "another-file-id".into();
     let mut backup = file(&upload);
-    backup["properties"] = json!({"shepBackup":"1"});
+    backup["appProperties"] = json!({"shepBackup":"1"});
     for value in [
         json!({}),
         json!({"files":null}),
@@ -238,8 +276,8 @@ async fn profile_drive_reserves_before_journaling_and_uploads_exact_immutable_mu
         serde_json::from_str(parts[1].split_once("\r\n\r\n").unwrap().1.trim()).unwrap();
     assert_eq!(metadata["id"], "reserved-profile");
     assert_eq!(metadata["parents"], json!(["appDataFolder"]));
-    assert!(metadata.get("appProperties").is_none());
-    for (key, value) in metadata["properties"].as_object().unwrap() {
+    assert!(metadata.get("properties").is_none());
+    for (key, value) in metadata["appProperties"].as_object().unwrap() {
         assert!(key.len() + value.as_str().unwrap().len() <= 124);
     }
     let exact = parts[2]
@@ -411,7 +449,7 @@ async fn profile_drive_rejects_mutated_content_ownership_versions_and_bounded_re
     let mut metadata = file(&upload);
     metadata["size"] = remote.size.to_string().into();
     metadata["sha256Checksum"] = remote.sha256.clone().into();
-    metadata["properties"]["shepSha256"] = remote.sha256.clone().into();
+    metadata["appProperties"]["shepSha256"] = remote.sha256.clone().into();
     let mut server = Server::start(vec![
         Reply::new(200, metadata.to_string()),
         Reply::binary(200, bytes),
