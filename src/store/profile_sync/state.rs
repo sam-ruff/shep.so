@@ -4,7 +4,66 @@ use shep_profile_core::history;
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-fn read(c: &Connection, binding: &history::Binding) -> anyhow::Result<State> {
+pub(in crate::store) fn record_native_account_name(
+    c: &Connection,
+    account: &Account,
+    previous: Option<&str>,
+) -> anyhow::Result<()> {
+    if previous != Some(account.name.as_str()) {
+        let mut revisions: BTreeMap<String, u64> = get(c, state::NATIVE_EDITS_KEY)?;
+        revisions.insert(
+            format!("local-account-name:{}", account.id),
+            get(c, "connections_revision")?,
+        );
+        put(c, state::NATIVE_EDITS_KEY, &revisions)?;
+    }
+    Ok(())
+}
+
+pub(super) fn native_revisions(
+    c: &Connection,
+    state: &State,
+) -> anyhow::Result<BTreeMap<String, u64>> {
+    let mut revisions: BTreeMap<String, u64> = get(c, state::NATIVE_EDITS_KEY)?;
+    for (local, shared) in &state.accounts {
+        if let Some(revision) = revisions.remove(&format!("local-account-name:{local}")) {
+            revisions.insert(
+                history::target(&shep_profile_core::Action::AccountName {
+                    id: *shared,
+                    name: String::new(),
+                }),
+                revision,
+            );
+        }
+    }
+    Ok(revisions)
+}
+
+/// Track native changes independently of enrollment, so a reversion remains an
+/// edit and even malformed profile state cannot prevent local preference saves.
+pub(in crate::store) fn record_native_preferences(
+    c: &Connection,
+    before: &Preferences,
+    after: &Preferences,
+    revision: u64,
+) -> anyhow::Result<()> {
+    use crate::profile_sync::metadata;
+    let mut revisions: BTreeMap<String, u64> = get(c, state::NATIVE_EDITS_KEY)?;
+    let mut changed = false;
+    for &key in metadata::SETTINGS {
+        if metadata::setting_value(key, before) != metadata::setting_value(key, after) {
+            let target = history::target(&shep_profile_core::Action::SettingRemoved { key });
+            revisions.insert(target, revision);
+            changed = true;
+        }
+    }
+    if changed {
+        put(c, state::NATIVE_EDITS_KEY, &revisions)?;
+    }
+    Ok(())
+}
+
+pub(super) fn read(c: &Connection, binding: &history::Binding) -> anyhow::Result<State> {
     let value: Option<State> = get(c, state::STORAGE_KEY)?;
     let state =
         value.context("Finish this profile's sync setup before applying ongoing changes.")?;
@@ -15,7 +74,7 @@ fn read(c: &Connection, binding: &history::Binding) -> anyhow::Result<State> {
     );
     Ok(state)
 }
-fn selected(c: &Connection) -> anyhow::Result<(Enrollment, Selection)> {
+pub(super) fn selected(c: &Connection) -> anyhow::Result<(Enrollment, Selection)> {
     let value = current(c)?;
     let selection = value
         .selection
@@ -67,7 +126,7 @@ impl Store {
                 );
                 return Ok(existing);
             }
-            let state = State::new(
+            let mut state = State::new(
                 selection.binding,
                 revision,
                 &get::<Vec<Account>>(&tx, "accounts")?,
@@ -75,6 +134,9 @@ impl Store {
                 mapping,
                 common,
             )?;
+            // review_matches fences the current native revisions as well as
+            // values; a changed/reverted form cannot silently become this basis.
+            state.baseline_native(&native_revisions(&tx, &state)?);
             put(&tx, state::STORAGE_KEY, &state)?;
             tx.commit()?;
             Ok(state)
@@ -85,18 +147,42 @@ impl Store {
     /// Capture and reserve the exact intent atomically, before contacting Drive.
     /// Existing preferences/accounts are already durable even before this pass.
     pub async fn capture_profile_change(&self) -> anyhow::Result<Option<Pending>> {
-        self.run(|c| {
+        self.capture_profile_change_except(Default::default()).await
+    }
+    pub(crate) async fn capture_profile_change_except(
+        &self,
+        excluded: std::collections::BTreeSet<String>,
+    ) -> anyhow::Result<Option<Pending>> {
+        self.run(move |c| {
             let tx = c.transaction()?;
             let (enrollment, selection) = selected(&tx)?;
             let mut state = read(&tx, &selection.binding)?;
-            let pending = state.capture(
+            let revisions = native_revisions(&tx, &state)?;
+            let pending = state.capture_except(
                 &get::<Vec<Account>>(&tx, "accounts")?,
                 &get(&tx, "preferences")?,
                 enrollment.options,
+                &excluded,
+                &revisions,
             )?;
             put(&tx, state::STORAGE_KEY, &state)?;
             tx.commit()?;
             Ok(pending)
+        })
+        .await
+    }
+    pub(crate) async fn defer_profile_change(
+        &self,
+        binding: history::Binding,
+        pending: Pending,
+    ) -> anyhow::Result<()> {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            let mut state = read(&tx, &binding)?;
+            state.defer(pending)?;
+            put(&tx, state::STORAGE_KEY, &state)?;
+            tx.commit()?;
+            Ok(())
         })
         .await
     }

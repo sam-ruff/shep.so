@@ -10,7 +10,7 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
-MODES = ("empty", "fail-once", "hold-list", "slow-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single")
+MODES = ("empty", "fail-once", "hold-list", "slow-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single", "existing-updates", "existing-update-failure", "existing-upload-failure")
 
 
 class ProfileDriveFixture:
@@ -22,6 +22,8 @@ class ProfileDriveFixture:
         self.next_id = 0
         self.changes = []
         self.failed = False
+        self.scoped_lists = 0
+        self.updated = False
         self.release = threading.Event()
         if mode.startswith("existing"):
             self.seed_existing()
@@ -75,8 +77,15 @@ class ProfileDriveFixture:
                     if owner.mode == "fail-once" and not owner.failed:
                         owner.failed = True
                         return self.reply(503, {"error": "Fixture offline; retry discovery."})
-                    rows = [entry[0] for entry in owner.files.values()]
                     q = query.get("q", [""])[0]
+                    if "shepProfile" in q and owner.mode in ("existing-updates", "existing-update-failure", "existing-upload-failure"):
+                        owner.scoped_lists += 1
+                        if owner.scoped_lists >= 2 and not owner.updated:
+                            if owner.mode == "existing-update-failure" and not owner.failed:
+                                owner.failed = True
+                                return self.reply(503, {"error":"Fixture is offline during a continuous check."})
+                            owner.seed_update()
+                    rows = [entry[0] for entry in owner.files.values()]
                     for key in ("shepProfile", "shepGeneration"):
                         match = re.search("key='" + key + r"' and value='([^']+)'", q)
                         if match:
@@ -112,6 +121,8 @@ class ProfileDriveFixture:
                 record = parts[1].get_payload(decode=True)
                 json.loads(record)
                 identity = metadata["id"]
+                if owner.mode == "existing-upload-failure":
+                    return self.reply(503, {"error":"Fixture upload is unavailable."})
                 if identity in owner.files:
                     return self.reply(409, {})
                 metadata.update(ownedByMe=True, trashed=False, spaces=["appDataFolder"],
@@ -135,7 +146,7 @@ class ProfileDriveFixture:
         account["email"] = account["username"] = account["smtp_username"] = "cloud@example.test"
         if self.mode == "existing-unsupported":
             account["future_tls_requirement"] = True
-        names = ("Home",) if self.mode == "existing-single" else ("Home", "Work")
+        names = ("Home",) if self.mode in ("existing-single", "existing-updates", "existing-update-failure", "existing-upload-failure") else ("Home", "Work")
         for number, name in enumerate(names, start=1):
             operation = dict(original)
             for field, prefix in (("profile","1"),("generation","2"),("device","3"),("operation","4")):
@@ -172,6 +183,29 @@ class ProfileDriveFixture:
                         "shepGeneration":record["generation"],"shepOperation":record["operation"],"shepSha256":digest}}
                 self.files[identity] = (metadata, raw)
                 self.changes.append(identity)
+
+    def seed_update(self):
+        original = json.loads(self.files["existing-profile-1"][1])
+        account = next(c["account"] for c in original["changes"] if c["kind"] == "account_connection").copy()
+        account["id"] = "80000000-0000-4000-8000-000000000001"
+        account["email"] = account["username"] = account["smtp_username"] = "second@example.test"
+        record = dict(original, device="90000000-0000-4000-8000-000000000001",
+            operation="50000000-0000-4000-8000-000000000001",
+            parents=["70000000-0000-4000-8000-000000000001"],
+            changes=[{"kind":"setting", "key":"tooltips", "value":True},
+                {"kind":"account_connection", "account":account},
+                {"kind":"account_name", "id":account["id"], "name":"Second cloud account"}])
+        raw = json.dumps(record, ensure_ascii=False).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        identity = "existing-profile-1-update"
+        metadata = {"id":identity,"name":f"shep-profile-{record['operation']}.json","ownedByMe":True,
+            "trashed":False,"spaces":["appDataFolder"],"mimeType":"application/json","size":str(len(raw)),
+            "sha256Checksum":digest,"appProperties":{"shepType":"profile","shepFormat":"operation-v1",
+                "shepNamespace":hashlib.sha256(b"so.shep").hexdigest(),"shepProfile":record["profile"],
+                "shepGeneration":record["generation"],"shepOperation":record["operation"],"shepSha256":digest}}
+        self.files[identity] = (metadata,raw)
+        self.changes.append(identity)
+        self.updated = True
 
     def close(self):
         self.release.set()

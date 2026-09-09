@@ -1,5 +1,15 @@
 # Conversation request audit
 
+9 September continuous profile checkpoint (R02/R49/R92): background receipt, local
+publication and native field-generation reconciliation now have source/tests.
+Shipping and remaining interoperability/review work are recorded in the completion
+log and TODO; this is not full OAuth/profile completion.
+
+9 September parallel delivery request (R93): independent agents now own isolated
+worktrees, with the primary agent responsible for tested integration into main.
+The full TODO goal remains active; parallelism does not waive native verification
+or make partially implemented features complete.
+
 9 September continuation: R02/R49/R92 connects after-login discovery, a persistent
 opt-out, optional first-device setup and single-profile automatic import into an
 untouched workspace. Multiple profiles and populated workspaces retain review;

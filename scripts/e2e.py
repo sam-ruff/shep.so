@@ -1751,6 +1751,76 @@ class NativeFlows(unittest.TestCase):
                        check("settings_group", "Profiles and sync"),
                        check("profile_sync.loaded", True), wait(100))
 
+    def test_profile_continuous_native_receives_new_account_and_preferences_in_background(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-updates",profile_login=True,empty_profile=True)
+        print(f"Continuous remote evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready",True),check("dark",True),
+                       check("account_count",1),check("tab","Mail"),shot("profile-continuous-before"))
+        self.open_shared_profiles()
+        self.mcp.batch(shot("profile-continuous-controls"),key("ctrl+1"),check("tab","Mail"),
+                       {**check("account_count",2),"timeout_ms":5000},check("account_reconnect_count",2),check("tooltips",True),
+                       check("profile_sync.working",False),check("profile_sync.error",None),
+                       check("profile_sync.cycle.review",0),check("tab","Mail"),shot("profile-continuous-received"),{"type":"restart"})
+        self.open_shared_profiles()
+        self.mcp.batch(check("account_count",2),check("tooltips",True),shot("profile-continuous-reopened"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
+        checkpoint=self.profile_checkpoint(started)
+        self.assertEqual(len(checkpoint["accounts"]),2)
+        self.assertEqual(checkpoint["fields"]["setting:tooltips"]["remote"]["value"],True)
+
+    def test_profile_continuous_native_publishes_local_settings_and_retains_them_on_restart(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-single",profile_login=True,empty_profile=True)
+        print(f"Continuous local evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready",True),check("tooltips",False),
+                       key("ctrl+comma"),check("tab","Preferences"),wait(80),click(1150,88),
+                       type_text("tooltip"),check("settings_matches",["Tooltips"]),click(500,289),
+                       check("settings_group","Tooltips"),wait(100),click(288,342),
+                       check("tooltips",True),check("preferences_saved",True))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340,548),check("profile_sync.cycle.published",1),
+                       check("profile_sync.working",False),check("profile_sync.cycle.review",0),
+                       shot("profile-continuous-local-published"),{"type":"restart"},check("tooltips",True))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
+        checkpoint=self.profile_checkpoint(started)
+        self.assertEqual(checkpoint["fields"]["setting:tooltips"]["remote"]["value"],True)
+        self.assertIsNone(checkpoint["pending"])
+        self.assertEqual(checkpoint["deferred"],{})
+
+    def test_profile_continuous_native_received_changes_remain_visible_when_local_upload_fails(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-upload-failure",profile_login=True,empty_profile=True)
+        print(f"Continuous partial-failure evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready",True),key("ctrl+comma"),
+                       check("tab","Preferences"),wait(80),click(1150,88),type_text("tooltip"),
+                       check("settings_matches",["Tooltips"]),click(500,289),check("settings_group","Tooltips"),
+                       wait(100),click(288,342),check("tooltips",True),check("preferences_saved",True))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340,548),check("profile_sync.error",None,"ne"),
+                       check("profile_sync.working",False),check("account_count",2),
+                       check("account_reconnect_count",2),shot("profile-continuous-partial-failure"),
+                       key("ctrl+1"),check("tab","Mail"),check("account_count",2),{"type":"restart"},
+                       check("account_count",2),check("tooltips",True))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
+        checkpoint=self.profile_checkpoint(started)
+        self.assertEqual(len(checkpoint["accounts"]),2)
+        self.assertIsNone(checkpoint["pending"])
+        histories=[p for p in (Path(started["artifacts"])/"profile-sync").glob("*.sqlite") if len(p.stem)==64]
+        self.assertEqual(len(histories),1)
+        with sqlite3.connect(histories[0].as_uri()+"?mode=ro",uri=True) as history:
+            self.assertEqual(history.execute("SELECT queued FROM state").fetchone()[0],1)
+
+    def test_profile_continuous_native_offline_check_can_retry_without_losing_local_accounts(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-update-failure",profile_login=True,empty_profile=True)
+        print(f"Continuous retry evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready",True),check("account_count",1))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340,548),check("profile_sync.working",False))
+        self.mcp.batch(shot("profile-continuous-offline"),check("account_count",1))
+        self.assertIsNotNone(self.mcp.call("desktop.state")["profile_sync"]["error"])
+        self.mcp.batch(key("ctrl+1"),check("tab","Mail"))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340,548),check("profile_sync.error",None),check("account_count",2),
+                       check("profile_sync.working",False),shot("profile-continuous-retry"))
+
     def test_profile_login_native_new_device_automatically_imports_one_complete_profile(self):
         started=self.mcp.call("desktop.start",profile_sync="existing-single",profile_login=True,empty_profile=True)
         print(f"Automatic profile evidence: {started['artifacts']}",flush=True)
@@ -1846,7 +1916,7 @@ class NativeFlows(unittest.TestCase):
         self.open_shared_profiles()
         self.mcp.batch(check("profile_sync.enrollment.selection.name","Home"),check("account_count",3),
                        check("account_reconnect_count",1),check("dark",True),shot("profile-existing-reopened"),
-                       click(350,550),check("settings_group","Your accounts"),shot("profile-account-reconnect"),
+                       click(350,606),check("settings_group","Your accounts"),shot("profile-account-reconnect"),
                        click(1065,520),check("dialog","Account"),check("fields.email","cloud@example.test"),
                        check("fields.host","imap.example.test"),check("fields.smtp_host","smtp.example.test"),
                        check("fields.incoming_security","Tls"),check("fields.smtp_security","StartTls"),

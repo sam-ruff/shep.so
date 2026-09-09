@@ -287,7 +287,7 @@ pub struct App {
     panes: widget::pane_grid::State<MailPane>,
     reader_split: widget::pane_grid::Split,
     layout_generation: u64,
-    pending_preference_save: Option<(u64, Preferences)>,
+    pending_preference_save: Option<(u64, crate::preference_edits::Write)>,
     pending_close: Option<iced::window::Id>,
     database_transfer: database_transfers::State,
     database_import: database_import::State,
@@ -1681,14 +1681,17 @@ impl App {
             }
             Message::Tick => {
                 self.advance_profile_login();
+                self.advance_profile_cycle();
                 self.advance_database_import();
                 self.advance_database_transfer();
                 self.pump_selection();
                 self.action_toasts.expire(Instant::now());
                 self.prune_undos();
                 self.dispatch_undos();
-                if let Some((request, prefs)) = self.pending_preference_save.take() {
-                    self.persist_preferences(request, prefs);
+                if let Some((request, prefs)) = self.pending_preference_save.take()
+                    && !self.try_command(Command::SavePreferences(request, prefs.clone()))
+                {
+                    self.pending_preference_save = Some((request, prefs));
                 }
                 if self.saved_toast.is_some_and(|t| t.elapsed().as_secs() >= 4) {
                     self.saved_toast = None;
@@ -2398,9 +2401,7 @@ impl App {
                 } else {
                     let request = self.preference_sync.changed();
                     self.pending_google_login = Some((request, self.preferences.clone(), retry));
-                    if !self
-                        .try_command(Command::SavePreferences(request, self.preferences.clone()))
-                    {
+                    if !self.queue_preference_write(request, self.preferences.clone()) {
                         self.pending_google_login = None;
                     }
                 }

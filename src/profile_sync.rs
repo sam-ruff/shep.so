@@ -2,6 +2,7 @@
 //! as Flutter. Enrollment/merge owns application decisions; transport never
 //! applies account settings, credentials or mail actions by itself.
 pub mod commands;
+pub mod continuous;
 pub mod control;
 pub mod drive;
 pub mod enrollment;

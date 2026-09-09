@@ -158,10 +158,7 @@ impl App {
                     return Task::none();
                 }
                 let generation = self.preference_sync.changed();
-                if self.try_command(Command::SavePreferences(
-                    generation,
-                    self.preferences.clone(),
-                )) {
+                if self.queue_preference_write(generation, self.preferences.clone()) {
                     self.database_import.pending.as_mut().unwrap().save = Some(generation);
                     self.database_import.error = None;
                 } else {

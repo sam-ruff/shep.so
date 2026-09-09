@@ -2,6 +2,28 @@ use super::*;
 use iced::widget::column;
 
 impl App {
+    pub(in crate::ui) fn advance_profile_cycle(&mut self) {
+        let state = &mut self.profile_sync;
+        if self.pending_close.is_some()
+            || state.pending()
+            || state.loading.is_some()
+            || state.cycle_paused
+            || self.preference_sync.dirty()
+            || !state.snapshot.as_ref().is_some_and(|s| {
+                s.available
+                    && s.enrollment.options.enabled
+                    && s.enrollment.selection.as_ref().is_some_and(|v| v.ready)
+            })
+        {
+            return;
+        }
+        let next = state
+            .next_sync
+            .get_or_insert_with(|| Instant::now() + Duration::from_secs(2));
+        if Instant::now() >= *next {
+            self.shared_profile_action(Action::Sync);
+        }
+    }
     pub(in crate::ui) fn profile_google_status(&mut self, revision: u64, connected: bool) {
         let state = &mut self.profile_sync;
         if !connected {

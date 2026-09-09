@@ -90,9 +90,10 @@ impl Store {
             put(&tx,STORAGE_KEY,&enrollment)?;
             // The common values and native import commit together. A crash or
             // later edit cannot turn acceptance into a new baseline snapshot.
-            let replication = crate::profile_sync::state::State::new(
+            let mut replication = crate::profile_sync::state::State::new(
                 review.selection.binding.clone(),review.revision,&accounts,&prefs,
                 mapping.iter().map(|(shared,local)|(local.clone(),*shared)).collect(),common)?;
+            replication.baseline_native(&state::native_revisions(&tx,&replication)?);
             anyhow::ensure!(get::<Option<crate::profile_sync::state::State>>(&tx,crate::profile_sync::state::STORAGE_KEY)?.is_none(),
                 "This workspace already has a profile checkpoint. Review its existing setup.");
             put(&tx,crate::profile_sync::state::STORAGE_KEY,&replication)?;

@@ -1,5 +1,38 @@
 # Completion audit
 
+## 9 September: ongoing profile updates and parallel feature delivery
+
+R02/R49/R92 now runs ongoing profile checks through the bounded coordinator,
+with immediate manual retry and separate account/settings toggles. It publishes
+local changes and applies received preferences, account names and new account
+definitions without switching tabs. A later upload failure still refreshes
+already committed received changes. New definitions require Reconnect; existing
+endpoint changes, removals and conflicts retain local data for review.
+
+Exact deferred edits retain their operation UUID and causal basis. Native
+preference writes merge only edited shared fields. Durable per-field generations
+also protect a setting or account name that is changed and then reverted during
+a pull or acknowledgment; database imports archive source-device generations.
+The targeted profile suite passes 76 tests with one personal diagnostic ignored.
+Required hook checks pass 711 executions with three personal diagnostics ignored;
+Python passes 55. No performance budgets were measured or changed.
+
+The ongoing-update UI and protocol checkpoint passed 34 native scenarios,
+including four new automatic-receipt, publication/restart, offline-retry and
+partial-upload-failure paths. Reviewed WebPs include `8a68015b56c6` (received
+accounts while Mail remains open) and `184fead95e69` (received accounts alongside
+an explicit upload error). Final native verification after generation tracking
+and source integration is pending; this entry is not yet a shipping receipt.
+
+R93 assigns three isolated worktree lanes to compact mail/deletion/refresh,
+multiple backups and shutdown/tray, with the primary agent integrating tested
+commits. Agent refresh checkpoint `f111282` passed seven native scenarios and
+renderer-direction checks; integration is pending. All existing TODOs remain
+tracked. Incremental history pulls, account linking, conflict/removal/endpoint
+reviews, remaining portable settings, credential transfer and real cross-client
+Google access remain unfinished. Personal mail, OS credentials and the installed
+production app were untouched. Quality/release CI stays disabled.
+
 ## 9 September: profile discovery and enrollment after Google sign-in
 
 R02/R49/R92 now connects verified Google connection status to background profile

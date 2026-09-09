@@ -40,13 +40,22 @@ impl App {
         self.preference_sync.changed();
         true
     }
+    pub(super) fn queue_preference_write(
+        &mut self,
+        request: u64,
+        preferences: Preferences,
+    ) -> bool {
+        let write = self.preference_sync.write(preferences);
+        self.try_command(Command::SavePreferences(request, write))
+    }
     pub(super) fn persist_preferences(&mut self, request: u64, preferences: Preferences) {
         // One coalesced retry slot prevents lost settings on a full queue without
         // accumulating an unbounded backlog while the disk is busy.
-        if self.try_command(Command::SavePreferences(request, preferences.clone())) {
+        let write = self.preference_sync.write(preferences.clone());
+        if self.try_command(Command::SavePreferences(request, write.clone())) {
             self.pending_preference_save = None;
         } else {
-            self.pending_preference_save = Some((request, preferences));
+            self.pending_preference_save = Some((request, write));
         }
     }
 }
@@ -180,7 +189,7 @@ mod tests {
             request,
             Arc::new(PreferenceSnapshot {
                 revision: 1,
-                value: saved,
+                value: saved.value,
             }),
         )));
         assert!(app.preference_sync.dirty());
@@ -232,7 +241,7 @@ mod tests {
         let (mut app, _) = App::new();
         let (sender, mut receiver) = engine::CommandSender::persistence_test_channel();
         while sender
-            .try_send(Command::SavePreferences(0, Preferences::default()))
+            .try_send(Command::SavePreferences(0, Preferences::default().into()))
             .is_ok()
         {}
         app.tx = Some(sender);

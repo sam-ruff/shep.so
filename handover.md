@@ -6,6 +6,20 @@ start of each turn. [AGENTS.md](AGENTS.md) owns operational instructions;
 [the completion log](docs/COMPLETION.md) records shipped behavior and evidence.
 Historical implementation notes belong there, rather than becoming new TODOs.
 
+## Parallel work in progress
+
+The user now explicitly requests independent agents/worktrees and primary-agent
+integration into main. Active lanes live under ignored `artifacts/worktrees/`:
+`compact-mail` (refresh, compact rows, delete selection), `multiple-backups`
+(Local/Drive first, then remote providers), and `native-tray` (close lifecycle
+first, then platform trays). Keep each Cargo target separate. Coordinate quiet
+native windows; coding continues while builds are paused.
+
+The primary workspace connects continuous profile publication/application and
+per-field preference merging. Its native and shipping checks are underway;
+conflict/removal/endpoint controls, account linking, incremental pulls and
+credential protection still remain. Do not discard any lane's uncommitted work.
+
 ## Current source checkpoint
 
 `acb4969` is pushed to main and connects post-login discovery/enrollment. A single

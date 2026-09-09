@@ -8,6 +8,17 @@ Do not remove an entry because code exists, a plan was proposed, or unrelated te
 
 The current stopping point and restart order are in [handover.md](handover.md). Keep TODO authoritative; a pushed handover is not completion of the full product goal.
 
+## Parallel delivery
+
+The user explicitly requests parallel agents in isolated Git worktrees to finish
+the entire TODO list. Assign independent feature lanes, with the primary agent
+owning integration and pushes to `main`. Each lane must add relevant tests,
+review native visual evidence where applicable, and report exact commits,
+verification and remaining limitations before integration. Keep each worktree's
+Cargo target separate, preserve sibling work, and coordinate native E2E windows
+so builds do not run during native tests. Parallel coding can continue during
+those windows. Do not bypass hooks or mark work complete before verified shipping.
+
 ## Product direction
 
 Keep README and human documentation short, concise and easy to read. The Zensical home page links to a separate `docs/agents/` section for detailed behavior and implementation reference. Keep operational agent instructions in this file, and link to it from the agent docs rather than maintaining a second copy.
@@ -1050,8 +1061,8 @@ atomically. Only a completed scan exposes metadata pages for application, at mos
 50 at a time; no whole-history collection/page ceiling. Scan replacement must
 preserve uploads and merge history. Keep the protocol/journal/scan regressions
 and existing Drive backup tests. Run JSON/hash/SQL/network work only in backend
-workers. Ongoing account application/linking and continuous polling must still be
-implemented and tested before claiming continuous profile sync.
+workers. Ongoing polling/application now has a bounded coordinator; account
+linking, conflict/removal reviews and incremental pulls remain TODO.
 
 The pre-commit hook, full check script and disabled quality workflow also run
 `python3 scripts/test_profile_core.py`. Keep the immutable Git revision in Cargo.lock
@@ -1072,8 +1083,8 @@ The shared Drive metadata fixture now fixes appProperties/category/file naming
 across implementations; preserve exact bytes with the repository Git attributes.
 The earlier bb87ac2 desktop prototype had a different unconnected wire convention.
 Real same-project cross-client visibility remains unverified. The kernel still
-needs ongoing account updates/linking, remaining settings and incremental pulls; do not call it working
-continuous sync based on two-store HTTP fixtures alone.
+needs account linking/reviews, remaining settings and incremental pulls. Native
+continuous-update fixtures do not prove actual cross-client Google delivery.
 
 The shared Git crate now has dev-dependencies, so Cargo cannot test it directly
 with `cargo test -p`. `scripts/test_profile_core.py` locates the exact locked Git
@@ -1113,8 +1124,8 @@ hashed-binding history databases and their sidecars/ownership files. Protect all
 members and hard-link/symlink aliases during database export/import. New desktop
 profiles use namespace `so.shep`; existing bindings retain their namespace. Keep
 this value aligned with the participating clients and the live OAuth project.
-Initial publication/import is explicitly labeled; do not claim continuous updates
-until those TODO paths are implemented.
+Initial publication/import is explicitly labeled; ongoing cycles have their own
+status and controls. Do not imply unfinished conflict/recovery paths are delivered.
 The new native fixture modes/scenarios are documented in the E2E skill.
 
 Profile controls remain disabled until their local enrollment snapshot loads.
@@ -1142,7 +1153,7 @@ lookup until SaveAccount has persisted their device credentials. Preserve this
 marker in newer workspace snapshots; remove it on explicit account removal.
 Keep catalog restart/change-token/ownership, join category/stale/rollback/tombstone,
 unknown-connection and native review/import/restart regressions. Joining is an
-initial import; continuous polling, existing-device changes and credential
+initial import; account linking, conflict/removal/endpoint reviews and credential
 transfer remain TODO work. The protection choice is still
 unanswered. Follow the shared handover before extending the format.
 
@@ -1163,7 +1174,7 @@ Existing unmapped accounts stay local; local removal records suppression, not a
 profile-wide tombstone. Keep restart, category pause, concurrent successor/conflict,
 seed, native enrollment and import-fence tests when connecting the continuous loop.
 
-Continuous polling/application and conflict controls remain TODO. Capture/admit
+The continuous loop connects safe polling/application; conflict controls remain TODO. Capture/admit
 pending local changes before pulling remote records, and preserve per-field common
 revisions when local edits race remote application. Dirty UI preferences also need
 per-field merging so a later whole-form save cannot erase untouched remote changes.
@@ -1190,4 +1201,27 @@ single complete profile in an untouched workspace can import automatically;
 Existing local choices or multiple profiles require the ordinary picker/review.
 Keep stale Google/generation guards, reconnect-only account staging, atomic joins,
 failed/held discovery and native login flows. Prompt completion must not steal
-focus or switch tabs. Continuous profile changes remain a separate TODO.
+focus or switch tabs. Ongoing sync has separate receipt/application guards.
+
+
+Continuous profile cycles use the existing owning coordinator and check local
+intent before pulling. `profile_replication_v1.deferred` retains exact requests
+when a category pauses or a field needs review, allowing unrelated fields to
+progress. Only the history owner constructs `continuous::Observed`; cache
+application checks current binding/consent/field values atomically. Never advance
+an edited field's basis past an unseen remote change. New remote accounts get
+fresh local credential identities and Reconnect markers; changed existing
+endpoints/removals are retained for explicit review, not automatically applied.
+
+Native preference writes carry typed portable edits via `preference_edits::Write`.
+Use `queue_preference_write` or `persist_preferences` in UI paths, not a full
+`Preferences.into()` edit. The latter is reserved for deliberate whole-value store
+callers/fixtures. Per-field generations preserve reversions and queued retries;
+untouched remote fields merge both on the cache owner and into a dirty UI form.
+`profile_native_edits_v1` records native preference/account-name generations in
+the same cache transaction as their writes. Initial reviews fence those baselines;
+an acknowledgment records only its captured generation. Remote applies never
+record themselves as native edits. Database import archives source generations.
+Keep the race, restart, category, deferred-conflict and native continuous-update
+regressions. Polling currently downloads full history; incremental pulls and
+conflict/link/removal controls remain TODO. Do not claim those are finished.

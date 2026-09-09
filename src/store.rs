@@ -204,8 +204,9 @@ impl Store {
     }
     pub async fn save_preferences(
         &self,
-        requested: Preferences,
+        requested: impl Into<crate::preference_edits::Write>,
     ) -> anyhow::Result<PreferenceSnapshot> {
+        let requested = requested.into();
         self.update_preferences(move |current| {
             let last_backup = current.last_backup;
             let backup_ready = current.backup_ready;
@@ -213,7 +214,7 @@ impl Store {
             let connection = current.google_connection_id.clone();
             let lifecycle = current.google_lifecycle;
             let grant = current.google_grant.clone();
-            *current = requested;
+            *current = requested.merge(current);
             // These are backend-owned metadata, not user preferences.
             current.google_connection_id = connection;
             current.google_lifecycle = lifecycle;
@@ -261,10 +262,12 @@ impl Store {
         self.run(move |c| {
             let tx = c.transaction()?;
             let mut value: Preferences = get(&tx, "preferences")?;
+            let before = value.clone();
             update(&mut value)?;
             value.validate()?;
             put(&tx, "preferences", &value)?;
             let revision = get(&tx, "preferences_revision")?;
+            profile_sync::state::record_native_preferences(&tx, &before, &value, revision)?;
             tx.commit()?;
             Ok(PreferenceSnapshot { revision, value })
         })
@@ -556,13 +559,15 @@ impl Store {
             connections::allow(c, ConnectionKind::Account, &account.id)?;
             folder_actions::idle(c, &account.id)?;
             let mut accounts: Vec<Account> = get(c, "accounts")?;
+            let previous_name = accounts.iter().find(|a| a.id == account.id).map(|a| a.name.clone());
             accounts.retain(|a| a.id != account.id);
             if !account.sent_folder.is_empty() {c.execute("INSERT INTO sent_folders(account,folder) VALUES(?,?) ON CONFLICT(account) DO UPDATE SET folder=excluded.folder",params![account.id,account.sent_folder])?;}
             else {c.execute("DELETE FROM sent_folders WHERE account=?",[&account.id])?;}
             profile_sync::join::reconnected(c, &account.id)?;
-            accounts.push(account);
+            accounts.push(account.clone());
             put(c, "accounts", &accounts)?;
             connections::changed(c)?;
+            profile_sync::state::record_native_account_name(c, &account, previous_name.as_deref())?;
             tx.commit()?;
             Ok(())
         })
