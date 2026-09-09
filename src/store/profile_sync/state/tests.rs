@@ -1163,3 +1163,115 @@ async fn profile_setting_review_acknowledgment_preserves_later_native_intent() {
     assert!(next.native_revision > pending.native_revision);
     replica.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn profile_native_connection_reversions_remain_pending_through_restart() {
+    for field in ["incoming", "smtp", "authentication", "sent-copy"] {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, mut replica, _, _) = fixture(dir.path()).await;
+        let operation = shep_profile_core::Operation::decode(include_bytes!(
+            "../../../../tests/support/profile-operation.json"
+        ))
+        .unwrap();
+        let Action::AccountConnection { account: wire } = &operation.changes[0].action else {
+            panic!("account")
+        };
+        edit_remote(
+            &mut replica,
+            vec![
+                operation.changes[0].clone(),
+                Change {
+                    action: Action::AccountName {
+                        id: wire.id,
+                        name: "Original".into(),
+                    },
+                    extra: Default::default(),
+                },
+            ],
+        )
+        .await;
+        apply_observed(&store, &replica).await;
+        let original = store
+            .get::<Vec<Account>>("accounts")
+            .await
+            .unwrap()
+            .remove(0);
+        let mut edited = original.clone();
+        match field {
+            "incoming" => edited.host = "temporary.imap.example.test".into(),
+            "smtp" => edited.smtp_host = "temporary.smtp.example.test".into(),
+            "authentication" => edited.smtp_separate_password = !edited.smtp_separate_password,
+            "sent-copy" => edited.sent_folder = "Temporary Sent".into(),
+            _ => unreachable!(),
+        }
+        store.save_account(edited).await.unwrap();
+        store.save_account(original.clone()).await.unwrap();
+        drop(store);
+        let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+        let pending = store
+            .capture_profile_change()
+            .await
+            .unwrap()
+            .expect("Reverting a connection is still explicit local intent");
+        let Action::AccountConnection { account } = &pending.local.action else {
+            panic!("connection intent")
+        };
+        assert_eq!(account.id, wire.id);
+        assert_eq!(account.host, wire.host);
+        assert_eq!(account.smtp_host, wire.smtp_host);
+        assert_eq!(account.smtp_separate_password, wire.smtp_separate_password);
+        assert_eq!(account.sent_folder, wire.sent_folder);
+        assert!(pending.native_revision > 0);
+        assert_eq!(
+            store.get::<Vec<Account>>("accounts").await.unwrap(),
+            vec![original]
+        );
+        replica.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn profile_native_rename_and_unchanged_save_do_not_create_connection_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, mut replica, binding, _) = fixture(dir.path()).await;
+    let operation = shep_profile_core::Operation::decode(include_bytes!(
+        "../../../../tests/support/profile-operation.json"
+    ))
+    .unwrap();
+    let Action::AccountConnection { account: wire } = &operation.changes[0].action else {
+        panic!("account")
+    };
+    edit_remote(
+        &mut replica,
+        vec![
+            operation.changes[0].clone(),
+            Change {
+                action: Action::AccountName {
+                    id: wire.id,
+                    name: "Original".into(),
+                },
+                extra: Default::default(),
+            },
+        ],
+    )
+    .await;
+    apply_observed(&store, &replica).await;
+    let mut account = store
+        .get::<Vec<Account>>("accounts")
+        .await
+        .unwrap()
+        .remove(0);
+    store.save_account(account.clone()).await.unwrap();
+    assert!(store.capture_profile_change().await.unwrap().is_none());
+    account.name = "Renamed".into();
+    store.save_account(account).await.unwrap();
+    let pending = store.capture_profile_change().await.unwrap().unwrap();
+    assert!(matches!(pending.local.action, Action::AccountName { .. }));
+    let checkpoint = store.profile_replication(binding).await.unwrap();
+    assert!(
+        !checkpoint
+            .deferred
+            .contains_key(&format!("account:{}:connection", wire.id))
+    );
+    replica.close().await.unwrap();
+}

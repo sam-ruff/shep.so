@@ -1,5 +1,19 @@
 # Completion audit
 
+## Account connection reversions — review groundwork
+
+Native incoming/SMTP connection changes now have independent durable intent
+generations, alongside account-name generations. Reverting an endpoint,
+authentication or sent-copy choice before the next pull remains a local edit
+after restart; a rename or unchanged save cannot invent a connection change.
+This uses the existing Store owner and profile checkpoint, with no added lock.
+Two new SQLite/history regressions cover four connection-field reversions and
+rename/no-op isolation; all 102 matching profile tests pass (one personal
+diagnostic ignored). Log: `artifacts/logs/profile-account-reversions-all-tests.log`.
+Mandatory hooks and root integration remain pending. Shared endpoint/removal
+review controls and credential retargeting protection are separate unfinished
+R02/R49 work; this checkpoint never applies a remote endpoint.
+
 
 ## Explicit account links during profile import — integration pending
 
