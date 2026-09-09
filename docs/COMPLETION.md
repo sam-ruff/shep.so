@@ -2286,3 +2286,14 @@ compilation was requested; it is not timing evidence. Run the unchanged storage
 benchmark after these jobs settle, and keep the prior native/combined performance
 gate failure active. Functional/protocol/control results above do not imply a new
 latency result or full performance completion.
+
+
+Enrollment code [`9d6a6c6`](https://github.com/sam-ruff/shep.so/commit/9d6a6c6df644d340c1192ba13215c298ce8ac8b0) is **pushed to `feat/mobile-web-clients`**, with exact
+remote verification and a clean worktree at the code checkpoint. Mandatory hooks
+pass formatting, Clippy and **448 root/shared Rust tests**, with two personal-account
+diagnostics intentionally ignored. No hooks were skipped. Shipping logs are
+`profile-enroll-commit.log` and `profile-enroll-push.log`; the verification record is
+ignored `artifacts/profile-enrollment-shipping.json`. Benchmark compilation also
+finished successfully; timing remains deferred because unrelated compiler jobs are
+still active. A final documentation checkpoint follows in branch history. Full
+parity, continuous synchronization and all 40 active requests remain unfinished.

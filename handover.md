@@ -58,6 +58,9 @@ preference revisions and UI generations preserve newer edits. See the
 [publication contract](docs/agents/PROFILE_PUBLICATION.md) and
 [enrollment contract](docs/agents/PROFILE_ENROLLMENT.md).
 
+Enrollment code [`9d6a6c6`](https://github.com/sam-ruff/shep.so/commit/9d6a6c6df644d340c1192ba13215c298ce8ac8b0) is pushed with exact remote verification.
+Mandatory hooks pass 448 root/shared Rust tests.
+
 The enrollment checkpoint passes 126 Flutter host tests, 79 mobile Rust tests,
 54 shared-profile tests, the configured SDK fixture, 28 WASM cases, 41 Python
 checks and 37 parity contracts. Final controls pass five named Android scenarios
@@ -70,7 +73,7 @@ Apple, continuous sync or fully authenticated cross-client interchange is implie
 The production ARM64 APK passes scoped fixture/library/package inspection. It is
 unsigned, has no registered Google project and was not installed on the phone.
 New storage timing is deferred while unrelated compilations saturate the host;
-benchmark compilation alone is not timing evidence. Rerun it after the host settles.
+the benchmark compiled successfully, which is not timing evidence. Rerun it after the host settles.
 
 The earlier native navigation and combined performance gate still fail at
 154.81–162.33 ms against 150 ms. Do not weaken that budget or claim a storage
