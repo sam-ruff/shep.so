@@ -640,3 +640,8 @@ Desktop enrollment final validation: 470 Rust tests (two opt-in personal live
 checks ignored), 125 native functional flows, 41 Python checks, 37 parity
 contracts, production compilation, Clippy and strict docs pass. Reviewed final
 compact/reopen captures and the shipping receipt are in the completion log.
+
+R02/R49/R75/desktop-main:R92 shipping: desktop enrollment [`8f969cd`](https://github.com/sam-ruff/shep.so/commit/8f969cd91d45ac2e4a821c927c360a86e64569cd)
+is pushed and remotely verified. Normal hooks pass 470 Rust tests (two personal
+live checks ignored), alongside 125 native flows, 41 Python checks, 37 parity
+contracts, production compilation and strict docs. All 40 active requests remain.
