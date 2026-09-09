@@ -17,6 +17,7 @@ tracked separately. Keep the linked entry first in the root TODO until delivery.
 | Desktop account definitions | `src/model.rs` (`Account`, `Preferences`), `src/store/connections.rs` | Map explicitly to portable fields. SQLite and local credential-slot identifiers are not the sync wire format. |
 | Flutter accounts | `flutter/lib/data/accounts.dart`, `native_repository.dart`, `flutter/rust/src/accounts.rs` | Retain stable account IDs across clients; use native lifecycle operations when applying changes. |
 | Flutter credentials | `flutter/lib/data/credentials.dart`, `flutter/rust/src/connections.rs` | Stage a complete incoming/SMTP pair in secure storage, then activate its local slot atomically. Never copy another device's slot ID. |
+| Flutter Google connection | `flutter/lib/model/google_connection.dart`, `flutter/lib/data/google_native.dart` | Native SDK consent and durable local metadata/cleanup pass host/Android/Appium/offline-preview checks; see [configuration and limits](GOOGLE_MOBILE.md). Automatic restore, safe switching and real profile/provider integration remain open. |
 | Flutter settings | `flutter/lib/data/settings_store.dart`, `flutter/lib/model/preferences.dart` | Portable settings currently differ from desktop fields. Add explicit mappings and preserve unsupported fields. |
 | Browser beta login | `backend/src/google.rs`, `web/src/auth.ts` | Existing identity verification gates backend access. It does not grant Drive, Calendar or Gmail access. |
 

@@ -1,0 +1,4 @@
+// Set the registered iOS client's REVERSED_CLIENT_ID in Google.local.xcconfig.
+// This fallback cannot receive a real Google authorization callback.
+SHEP_GOOGLE_IOS_URL_SCHEME = so.shep.google-unconfigured
+#include? "Google.local.xcconfig"

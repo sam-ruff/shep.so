@@ -49,3 +49,4 @@ app.*.map.json
 /rust/target/
 
 /android/.kotlin/
+/ios/Flutter/Google.local.xcconfig

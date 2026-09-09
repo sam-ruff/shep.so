@@ -15,6 +15,18 @@ const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 412, height: 892 } });
 const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
+const externalRequests = [];
+await page.route("**/*", async (route) => {
+  const url = new URL(route.request().url());
+  if (
+    ["http:", "https:"].includes(url.protocol) &&
+    !["127.0.0.1", "localhost"].includes(url.hostname)
+  ) {
+    externalRequests.push(url.origin + url.pathname);
+    return route.abort();
+  }
+  return route.continue();
+});
 async function labels() {
   return page.locator("flt-semantics").allTextContents();
 }
@@ -28,7 +40,7 @@ async function clickText(text) {
 }
 async function openDropdown(label) {
   const box = await page
-    .getByRole("button", { name: new RegExp(`^${label}`) })
+    .getByRole("button", { name: new RegExp(label) })
     .boundingBox();
   await page.mouse.click(box.x + box.width - 36, box.y + box.height / 2);
 }
@@ -60,6 +72,18 @@ async function enterFind(value) {
   await page.mouse.click(close.x / 2, close.y + close.height / 2);
   await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.type(value);
+}
+async function scrollToGoogle(control) {
+  for (let i = 0; i < 12; i++) {
+    if (await control.count()) {
+      const box = await control.boundingBox();
+      if (box && box.y > 100 && box.y + box.height < 720) return;
+    }
+    await page.mouse.move(210, 430);
+    await page.mouse.wheel(0, 340);
+    await page.waitForTimeout(80); // Let the real scroll paint its lazy children.
+  }
+  throw new Error("Google control did not become visible");
 }
 try {
   await page.goto(process.env.SHEP_FLUTTER_URL ?? "http://127.0.0.1:5181");
@@ -107,7 +131,42 @@ try {
   await clickText("Calendar");
   await waitText("September 2026");
   await page.screenshot({ path: path.join(out, "calendar-dark.png") });
+  await clickText("Preferences");
+  const googleCalendar = page.getByRole("button", { name: /Calendar access/ });
+  await scrollToGoogle(googleCalendar);
+  await openDropdown("Calendar access");
+  await clickText("Read calendars");
+  await scrollToGoogle(
+    page.getByRole("button", { name: "Sign in with Google", exact: true }),
+  );
+  await clickText("Sign in with Google");
+  await waitText("Google connection saved on this device.");
+  await scrollToGoogle(googleCalendar);
+  await openDropdown("Calendar access");
+  await clickText("Read and edit calendars");
+  await scrollToGoogle(
+    page.getByRole("button", { name: "Reconnect Google", exact: true }),
+  );
+  await clickText("Reconnect Google");
+  await waitText("Google sign-in was cancelled.");
+  await waitText("Saved access: Drive off · Calendar read only");
+  await page.mouse.move(210, 430);
+  await page.mouse.wheel(0, 400);
+  await page.waitForTimeout(80); // Frame settling for the visible error capture.
+  await page.screenshot({ path: path.join(out, "google-cancelled-dark.png") });
+  await clickText("Reconnect Google");
+  await waitText("Calendar read and edit");
+  await clickText("Disconnect…");
+  await clickText("Cancel");
+  await clickText("Disconnect…");
+  await clickText("Disconnect");
+  await waitText("Google disconnected on this device.");
   assert.deepEqual(errors, []);
+  assert.deepEqual(
+    externalRequests,
+    [],
+    "The fictional Flutter preview must not contact outside services",
+  );
   await writeFile(
     path.join(out, "result.json"),
     JSON.stringify(
@@ -120,6 +179,7 @@ try {
           "appearance",
           "calendar",
           "Find-dark-case",
+          "Google-consent-cancel-retry-disconnect",
         ],
         errors,
       },

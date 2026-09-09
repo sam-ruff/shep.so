@@ -9,16 +9,19 @@ import '../data/printing.dart';
 import 'mail.dart';
 import 'move_feedback.dart';
 import 'preferences.dart';
+import 'google_connection.dart';
 
 class Workspace extends ChangeNotifier {
   Workspace(
     this.repository,
     this.settings, {
     this.printer = const SystemMessagePrinter(),
+    this.google,
   }) : _mail = List.of(repository.cached),
        _confirmed = {for (final mail in repository.cached) mail.id: mail},
        events = List.of(repository.events);
   final MessagePrinter printer;
+  final GoogleConnection? google;
   final MailRepository repository;
   final SettingsStore settings;
   List<Mail> _mail;
@@ -299,6 +302,9 @@ class Workspace extends ChangeNotifier {
   }
 
   Future<void> initialize() async {
+    if (google case final GoogleConnection connection) {
+      unawaited(connection.load());
+    }
     final revision = _settingsRevision;
     try {
       final saved = await settings.read();
@@ -1050,6 +1056,7 @@ class Workspace extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    google?.dispose();
     moves.dispose();
     _searchTimer?.cancel();
     _syncTimer?.cancel();

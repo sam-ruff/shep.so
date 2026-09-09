@@ -19,6 +19,9 @@ dependencies:
   webview_flutter_wkwebview: ^3.26.1
   url_launcher: ^6.3.2
   web: ^1.1.1
+  google_sign_in_android: 7.2.17
+  google_sign_in_ios: 6.3.3
+  google_sign_in_platform_interface: 3.1.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -28,9 +31,15 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/FONT-LICENSE.txt
+    - assets/Roboto-LICENSE.txt
     - assets/logo-light.webp
     - assets/logo-dark.webp
   fonts:
+    # CanvasKit otherwise downloads its default fallback even with Noto Sans UI.
+    - family: Roboto
+      fonts:
+        - asset: assets/Roboto-Regular.ttf
     - family: NotoSans
       fonts:
         - asset: assets/NotoSans-Regular.ttf

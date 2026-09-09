@@ -6,6 +6,7 @@ import 'theme.dart';
 import 'account_setup.dart';
 import 'sent_preferences.dart';
 import '../data/accounts.dart';
+import 'google_connection.dart';
 
 class PreferencesView extends StatelessWidget {
   const PreferencesView({super.key, required this.workspace});
@@ -62,6 +63,7 @@ class PreferencesView extends StatelessWidget {
       ),
     );
     return ListView(
+      key: const ValueKey('preferences-list'),
       padding: const EdgeInsets.all(18),
       children: [
         section('Appearance', [
@@ -243,13 +245,16 @@ class PreferencesView extends StatelessWidget {
                 'Account setup is available in the installed client.',
               ),
             ),
-          const ListTile(
-            leading: Icon(Icons.cloud_outlined),
-            title: Text('Google and backups'),
-            subtitle: Text(
-              'Google Calendar, Drive and encrypted restore remain in the parity checklist.',
+          if (workspace.google case final connection?)
+            GoogleConnectionCard(connection: connection)
+          else
+            const ListTile(
+              leading: Icon(Icons.cloud_outlined),
+              title: Text('Google and backups'),
+              subtitle: Text(
+                'Google Calendar, Drive and encrypted restore remain in the parity checklist.',
+              ),
             ),
-          ),
         ]),
         if (workspace.savingPreferences) const Text('Saving preferences…'),
         const SizedBox(height: 24),
