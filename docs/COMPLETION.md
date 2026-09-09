@@ -27,8 +27,7 @@ and wide horizontal rows; `2f8cd446e903` records actual row controls.
 Native binary SHA-256:
 `03417e33e3cade88ad6108144f74946ca9dfee051a20816cc3759c046f3be854`.
 These are selected Linux fixture checks, not full-suite, live-provider or latency
-claims. Primary-agent integration, broader merged mail/HTML coordinate migration
-and push remain pending. Keep R88 in TODO until that shipping step is complete.
+claims. Primary-agent integration and publication are recorded below.
 
 ### Integrated compact inbox, icons and conversation refresh
 
@@ -68,10 +67,40 @@ compact scaled reveal (`3fb5b229091e`), deletion across a page boundary
 (`a6de9837219d`). Logs: `artifacts/logs/compact-icons-final-native.log`,
 `compact-final-boundary-reveal.log`, `compact-cairo-picker-native.log`,
 `compact-final-python.log`, `compact-icons-final-windows.log` and the targeted
-navigation/reveal logs. Normal hooks, strict documentation and main publication
-are the remaining checkpoint steps. Production installation and actual desktop
+navigation/reveal logs. Normal hooks pass **769 executions** (three personal diagnostics ignored),
+strict Zensical passes, and source is pushed as **`15a4a3c`** with exact remote
+equality verified. R88 is removed from TODO after this source publication. Production installation and actual desktop
 shell/platform review remain R64/R08 work; no personal data was changed.
 Performance measurements remain deferred while parallel builds run.
+
+
+## Explicit account links during profile import — integration pending
+
+A reviewed shared account can reuse an existing native account only when every
+portable incoming/SMTP connection field matches. The choice preserves native
+identity, cached mail, its credential slot, local display-name intent and any
+existing reconnect requirement. Unlinked imports retain fresh local IDs and
+Reconnect. One local account cannot serve two shared IDs. Reviews render eight
+accounts per page, preserve choices across pages and freeze the exact choices in
+the acceptance receipt. Changed/reverted connections, stale controls and a
+lost-acknowledgment retry with different choices are rejected.
+
+All 100 matching profile tests pass (one personal diagnostic ignored), including
+link/restart, connection changes and reversions, reconnect preservation, bounded
+pages/duplicate choices and native control-generation contracts. Clippy passes.
+Four saved native paths cover reuse/restart, explicit Add new, compact dark
+choices and a twelve-account paged import with the original local account kept.
+Reviewed WebPs include `1d578884f9f6`, `aac242c963f8`, `aa23fde24ad1`.
+Native binary SHA-256:
+`c6f19a26b45797e821203d90885bc3d8b005400990abb7b4af4c55b0f5c02ef6`.
+Logs use `artifacts/logs/profile-links-*` in the isolated profile-cache worktree.
+All 30 profile native paths were exercised: 29 passed together; the existing
+first-device slow-upload completion timed out once and passed unchanged on rerun
+(`75ec92a70a21` / `a3349d5457bf`). No assertion, timeout or artificial server delay
+was weakened. This fixture readiness follow-up remains R63. Mandatory checks and
+root integration/shipping are pending.
+Post-enrollment linking/suppression, endpoint/removal reviews, credential transfer
+and actual cross-client Google verification remain R02/R49/R92 work.
 
 ## Portable preference reviews — verified integration
 
@@ -151,6 +180,43 @@ and failed-archive recovery (`96a237e88cf1`) WebPs. Native SHA-256:
 `aa9145b440fa98d69b9d69fa93d95fe92882c7e19374961e8df38d6755ae9b22`.
 Logs: `artifacts/logs/badge-main-*`. Actual Windows/macOS rendering and shell
 execution remain R70 verification work; production installation is unchanged.
+## Configurable color palettes — R25 lane checkpoint
+
+The model now stores independent light/dark RGB palettes for fourteen semantic
+roles. The searchable Colors editor supports hex input, swatches, a sample,
+Apply, Undo changes and per-theme Reset. Invalid values stay out of preferences;
+low-contrast combinations show a warning while the editor retains readable
+controls. Applying is immediate and uses the existing ordered preference save.
+The UI owns a small theme cache and retains untouched colors if preferences
+change during an edit. Existing installations get the original default palettes.
+
+The lane rebased onto main `22a3af5`, preserving its profile reviews, tray safety
+and multiple-backup work. Typed preference saves now carry fixed-size per-theme,
+per-role color intent, preserving unrelated colors through queued writes, old
+acknowledgments, explicit reversions and stale-save retries. All twelve targeted
+palette model/controller/store tests pass, including semantic mapping of every
+role and System appearance. All 81 Python tests pass.
+
+All ten selected native scenarios pass on the final binary in 42.659 seconds:
+the five palette flows plus default appearance/calendar, persisted resizing,
+filtered Preferences clipping, tooltip/search and continuous-profile receipt.
+The compact footer keeps Apply clear of the save toast. Both Apply colors and
+the global Save changes button consume staged colors; invalid input retains the
+previous saved value, explains the Colors error and clears old success feedback.
+Reviewed WebPs are under `artifacts/e2e/1181ed2a3a3f`, `bb598d186559`,
+`3208afaa547a`, `c9978f1dfd9c`, `7fe3cefac699` and `d40509ed976a` in the
+isolated lane. Native binary SHA-256:
+`66f740bde3fc4bc39e1604de7ee833077cc893065f4851fb13fde73877c9122b`.
+Logs use `artifacts/logs/r25-*`. Full Windows GNU all-target/all-feature checking
+and strict pinned Zensical pass. The typed-save commit `4727fb7` passes 774 normal-hook executions (three personal
+diagnostics ignored); the final header-save follow-up is gated by the same hooks.
+Root integration/shipping remains the authorized next step.
+
+Palette values are included in local preferences and database transfer. The
+current cross-client codec has no palette setting key, so custom-color Drive
+replication remains part of R02/R49 and is not claimed by this checkpoint. No
+personal installation, live-provider or Windows/macOS runtime test was performed.
+Root integration/shipping is pending; R25 stays in TODO.
 
 ## Transparent native Shepherd icons — R64 checkpoint
 

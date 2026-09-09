@@ -530,6 +530,83 @@ class NativeFlows(unittest.TestCase):
                        check("mail_pending",0), check("mail_rows.0.starred",True),
                        check("notice","Fixture","contains"), shot("interrupted-sync-retry-failure"))
 
+    def open_color_preferences(self, compact=False):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(650 if compact else 1150,88), key("ctrl+a"), type_text("palette"),
+                       check("settings_matches", ["Colors"]), click(450,289), check("settings_group", "Colors"))
+
+    def test_palette_native_light_edit_validation_and_restart(self):
+        started = self.mcp.call("desktop.start", persistent=True)
+        print(f"Palette light evidence: {started['artifacts']}", flush=True)
+        self.open_color_preferences()
+        self.mcp.batch(check("palettes.light.primary", "#7356BD"), shot("palette-light-before-edit"),
+                       click(1100,436), key("ctrl+a"), type_text("#notrgb"),
+                       check("palette_editor.error", "Use six hex digits, for example #7356BD."),
+                       click(1120,779), check("palettes.light.primary", "#7356BD"), shot("palette-invalid"),
+                       click(385,491), check("palette_editor.draft.light.primary", "#007F73"),
+                       click(1120,779), check("saved_palettes.light.primary", "#007F73"), check("saved_toast", True),
+                       click(600,436), shot("palette-role-picker"), click(450,600),
+                       check("palette_editor.role", "Background"), click(1100,436), key("ctrl+a"), type_text("#EFF6F2"),
+                       check("palette_editor.draft.light.background", "#EFF6F2"), check("palettes.light.background", "#F7F7F9"),
+                       click(1120,779), check("saved_palettes.light.background", "#EFF6F2"), shot("palette-applied-light"),
+                       key("ctrl+1"), check("tab", "Mail"), shot("palette-custom-inbox"),
+                       {"type":"restart"}, check("palettes.light.primary", "#007F73"), check("palettes.light.background", "#EFF6F2"),
+                       check("palettes.dark.primary", "#7356BD"))
+        self.open_color_preferences()
+        self.mcp.batch(check("palette_editor.role", "Primary · buttons"), shot("palette-light-restarted"))
+
+    def test_palette_native_dark_compact_reset_and_undo(self):
+        started = self.mcp.call("desktop.start", persistent=True, width=900, height=640)
+        print(f"Palette dark evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563,366), check("dark", True))
+        self.open_color_preferences(compact=True)
+        self.mcp.batch(click(442,382), check("palette_editor.dark", True), shot("palette-compact-dark"),
+                       click(365,491), check("palette_editor.draft.dark.primary", "#007F73"),
+                       {"type":"hover","x":720,"y":530}, {"type":"scroll","amount":20}, shot("palette-compact-actions"),
+                       click(552,570), check("saved_palettes.dark.primary", "#007F73"), check("saved_palettes.light.primary", "#7356BD"),
+                       check("preferences_saved", True), shot("palette-dark-applied"), {"type":"restart"}, check("dark", True),
+                       check("palettes.dark.primary", "#007F73"))
+        self.open_color_preferences(compact=True)
+        self.mcp.batch(click(442,382), check("palette_editor.dark", True),
+                       {"type":"hover","x":720,"y":530}, {"type":"scroll","amount":20},
+                       click(310,570), check("palette_editor.draft.dark.primary", "#7356BD"),
+                       click(432,570), check("palette_editor.draft", None), check("palettes.dark.primary", "#007F73"),
+                       click(310,570), click(552,570), check("saved_palettes.dark.primary", "#7356BD"),
+                       shot("palette-dark-reset"), {"type":"restart"}, check("dark", True), check("palettes.dark.primary", "#7356BD"))
+
+    def test_palette_native_save_and_navigation_while_provider_is_held(self):
+        started = self.mcp.call("desktop.start", held_account_sync=True)
+        print(f"Palette held-provider evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("account_sync_waiting", True))
+        self.open_color_preferences()
+        self.mcp.batch(click(343,491), check("palette_editor.draft.light.primary", "#2563EB"),
+                       click(1120,779), check("saved_palettes.light.primary", "#2563EB"),
+                       check("preferences_saved", True), check("account_sync_waiting", True), shot("palette-save-during-sync"),
+                       key("ctrl+2"), check("tab", "Calendar"), shot("palette-calendar-during-sync"),
+                       key("ctrl+1"), check("tab", "Mail"), check("account_sync_waiting", True))
+
+    def test_palette_native_header_save_applies_staged_colors_and_rejects_invalid_input(self):
+        self.open_color_preferences()
+        self.mcp.batch(click(1100,436), key("ctrl+a"), type_text("#007F73"),
+                       check("palette_editor.draft.light.primary", "#007F73"),
+                       click(1350,88), check("saved_palettes.light.primary", "#007F73"), check("saved_toast", True),
+                       check("palette_editor.draft", None), shot("palette-header-saved"),
+                       click(1100,436), key("ctrl+a"), type_text("#bad-input"), click(1350,88),
+                       check("notice", "Use six hex digits", "contains"), check("saved_toast", False), check("saved_palettes.light.primary", "#007F73"),
+                       shot("palette-header-invalid"))
+        # Recover through the actual color control and the same global save button.
+        self.mcp.batch(click(1100,436), key("ctrl+a"), type_text("#2563EB"), click(1350,88),
+                       check("saved_palettes.light.primary", "#2563EB"), check("notice", None), shot("palette-header-recovered"))
+
+    def test_palette_native_low_contrast_warning_keeps_reset_readable(self):
+        self.open_color_preferences()
+        self.mcp.batch(click(600,436), click(450,682), check("palette_editor.role", "Text"),
+                       click(1100,436), key("ctrl+a"), type_text("#FFFFFF"),
+                       check("palette_editor.draft.light.text", "#FFFFFF"), shot("palette-low-contrast-preview"),
+                       click(1120,779), check("saved_palettes.light.text", "#FFFFFF"), shot("palette-low-contrast-reset-visible"),
+                       click(330,779), check("palette_editor.draft.light.text", "#292830"), click(1120,779),
+                       check("saved_palettes.light.text", "#292830"), shot("palette-low-contrast-restored"))
+
     def open_tray_preferences(self, compact=False):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
                        click(650 if compact else 1150,88), type_text("system tray"), check("settings_matches", ["System tray"]),
@@ -2319,6 +2396,90 @@ class NativeFlows(unittest.TestCase):
                        check("selected","Your weekly workspace digest"),shot("profile-login-held-navigation"))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
 
+    def test_profile_join_link_native_reuses_existing_account_and_survives_restart(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-matching")
+        print(f"Profile account linking evidence: {started['artifacts']}",flush=True)
+        self.open_shared_profiles()
+        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
+                       click(1130,494),check("profile_sync.join_review.name","Home"),
+                       check("profile_sync.join_review.page.0.matches.0.id","preview-work"),
+                       check("account_count",2),shot("profile-account-link-review"),
+                       click(580,558),wait(80),shot("profile-account-link-options"),click(580,520),
+                       check("profile_sync.join_review.links.50000000-0000-4000-8000-000000000001","preview-work"),
+                       shot("profile-account-link-chosen"),click(340,664),
+                       check("profile_sync.enrollment.selection.ready",True),check("account_count",2),
+                       check("account_reconnect_count",0),check("profile_sync.error",None),
+                       check("dark",True),key("ctrl+1"),check("tab","Mail"),
+                       check("total",120),shot("profile-account-link-keeps-mail"),{"type":"restart"})
+        self.open_shared_profiles()
+        self.mcp.batch(check("profile_sync.enrollment.selection.name","Home"),check("account_count",2),
+                       check("account_reconnect_count",0),shot("profile-account-link-restarted"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
+        checkpoint=self.profile_checkpoint(started)
+        self.assertEqual(checkpoint["accounts"],{"preview-work":"50000000-0000-4000-8000-000000000001"})
+        self.assertEqual(checkpoint["local_only"],["preview-personal"])
+
+    def test_profile_join_link_native_matching_account_can_be_added_separately(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-matching")
+        print(f"Separate matching account evidence: {started['artifacts']}",flush=True)
+        self.open_shared_profiles()
+        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
+                       click(1130,494),check("profile_sync.join_review.page.0.matches.0.id","preview-work"),
+                       check("profile_sync.join_review.links",{}),shot("profile-matching-add-separately"),
+                       click(340,664),check("profile_sync.enrollment.selection.ready",True),
+                       check("account_count",3),check("account_reconnect_count",1),
+                       check("profile_sync.error",None),{"type":"restart"},check("account_count",3),
+                       check("account_reconnect_count",1))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
+        checkpoint=self.profile_checkpoint(started)
+        self.assertEqual(len(checkpoint["accounts"]),1)
+        self.assertNotIn("preview-work",checkpoint["accounts"])
+        self.assertEqual(checkpoint["local_only"],["preview-personal","preview-work"])
+
+    def test_profile_join_link_native_compact_dark_choices(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-matching",width=900,height=640)
+        print(f"Compact account linking evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),click(563,366),
+                       check("dark",True),check("preferences_saved",True))
+        self.open_shared_profiles(search_x=650)
+        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
+                       click(800,494),check("profile_sync.join_review.name","Home"),
+                       {"type":"hover","x":780,"y":500},{"type":"scroll","amount":12},wait(100),
+                       shot("profile-account-link-compact-dark"),click(580,414),wait(80),
+                       shot("profile-account-link-compact-options"),click(580,376),
+                       check("profile_sync.join_review.links.50000000-0000-4000-8000-000000000001","preview-work"),
+                       wait(80),shot("profile-account-link-compact-chosen"),click(310,518),
+                       check("profile_sync.enrollment.selection.ready",True),check("account_count",2),
+                       check("account_reconnect_count",0),check("profile_sync.error",None),
+                       shot("profile-account-link-compact-applied"))
+
+    def test_profile_join_link_native_account_pages_keep_reviewed_choices(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-many")
+        print(f"Account review pages evidence: {started['artifacts']}",flush=True)
+        self.open_shared_profiles()
+        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
+                       click(1130,494),check("profile_sync.join_review.accounts",12),
+                       click(580,558),wait(80),click(580,520),
+                       check("profile_sync.join_review.links.50000000-0000-4000-8000-000000000001","preview-work"),
+                       {"type":"hover","x":1050,"y":780},{"type":"scroll","amount":24},wait(100),
+                       shot("profile-account-pages-first"),click(550,729),
+                       check("profile_sync.join_review.offset",8),
+                       check("profile_sync.join_review.page.0.name","Shared account 09"),
+                       check("profile_sync.join_review.links.50000000-0000-4000-8000-000000000001","preview-work"),
+                       wait(100),shot("profile-account-pages-next"),click(350,711),
+                       check("profile_sync.join_review.offset",0),check("profile_sync.join_review.page.0.name","Cloud account"),
+                       check("profile_sync.join_review.links.50000000-0000-4000-8000-000000000001","preview-work"),
+                       {"type":"hover","x":1050,"y":780},{"type":"scroll","amount":24},wait(100),
+                       shot("profile-account-pages-choice-retained"),click(340,814),
+                       check("profile_sync.enrollment.selection.ready",True),check("account_count",13),
+                       check("account_reconnect_count",11),check("profile_sync.error",None),{"type":"restart"},
+                       check("account_count",13),check("account_reconnect_count",11))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
+        checkpoint=self.profile_checkpoint(started)
+        self.assertEqual(len(checkpoint["accounts"]),12)
+        self.assertEqual(checkpoint["accounts"]["preview-work"],"50000000-0000-4000-8000-000000000001")
+        self.assertEqual(checkpoint["local_only"],["preview-personal"])
+
     def test_profile_sync_native_existing_profile_review_import_and_restart(self):
         started=self.mcp.call("desktop.start",profile_sync="existing")
         print(f"Existing profile evidence: {started['artifacts']}",flush=True)
@@ -4058,6 +4219,63 @@ class NativeFlows(unittest.TestCase):
                            shot(f"compact-header-syncing-{appearance}"),
                            click(87, 159), check("tab", "Calendar"),
                            shot(f"responsive-during-sync-{appearance}"), check("busy", []))
+
+    def test_s3_backup_setup_native_validation_and_saved_target(self):
+        result = self.mcp.call("desktop.start", persistent=True)
+        print(f"S3 backup evidence: {result['artifacts']}", flush=True)
+        # Cross-lane save regression: backup setup must keep the palette saved
+        # through the global header, including after the failed fixture test.
+        self.open_color_preferences()
+        self.mcp.batch(click(1100,436), key("ctrl+a"), type_text("#007F73"),
+                       click(1350,88), check("saved_palettes.light.primary", "#007F73"),
+                       click(1150,88), key("ctrl+a"), key("BackSpace"), check("settings_search", ""))
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(559, 156), check("settings_tab", "Backups"),
+                       click(1100, 339), wait(80), shot("s3-backup-provider-menu"),
+                       click(1080, 445), check("backup_destination", "S3"),
+                       click(375, 744), check("notice", "valid S3 bucket", "contains"),
+                       click(430, 494), type_text("shep-fixture-bucket"),
+                       click(500, 414), key("ctrl+a"), type_text("http://s3.example.test"),
+                       click(375, 744), check("notice", "HTTPS", "contains"),
+                       click(500, 414), key("ctrl+a"), type_text("https://s3.example.test"),
+                       click(500, 574), key("ctrl+a"), type_text("desktop/backups/"),
+                       click(288, 619), click(420, 689), type_text("fixture-access-key"),
+                       click(375, 744), check("notice", "Enter both", "contains"),
+                       click(900, 689), type_text("fixture-secret-key"),
+                       shot("s3-backup-setup"), click(375, 744),
+                       check("s3_connection.error", "disabled in preview", "contains"),
+                       check("s3_connection.pending", False), check("preferences_saved", True),
+                       check("notice", None),
+                       check("saved_backup_s3.bucket", "shep-fixture-bucket"),
+                       check("saved_backup_s3.endpoint", "https://s3.example.test"),
+                       check("saved_backup_s3.prefix", "desktop/backups/"),
+                       check("saved_backup_s3.path_style", False), shot("s3-backup-test-recovery"))
+        # Secrets are never exposed through the observation-only MCP state.
+        encoded = json.dumps(self.mcp.call("desktop.state"))
+        self.assertNotIn("fixture-access-key", encoded)
+        self.assertNotIn("fixture-secret-key", encoded)
+        self.mcp.batch({"type": "restart"}, check("ready", True),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       click(559, 156), check("settings_tab", "Backups"),
+                       check("backup_destination", "S3"),
+                       check("saved_backup_s3.bucket", "shep-fixture-bucket"),
+                       check("saved_backup_s3.prefix", "desktop/backups/"),
+                       check("saved_backup_s3.path_style", False),
+                       check("palettes.light.primary", "#007F73"),
+                       check("saved_palettes.light.primary", "#007F73"),
+                       check("s3_connection", None), shot("s3-backup-reopened"),
+                       click(290, 156), check("settings_tab", "General"),
+                       click(690, 366), check("dark", True),
+                       click(559, 156), check("settings_tab", "Backups"),
+                       {"type": "resize", "width": 900, "height": 640}, wait(150),
+                       shot("s3-backup-compact-dark"),
+                       {"type": "hover", "x": 780, "y": 510}, {"type": "scroll", "amount": 3},
+                       wait(100), shot("s3-backup-compact-dark-credentials"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        with sqlite3.connect(f"file:{Path(result['artifacts']) / 'fixture.sqlite'}?mode=ro", uri=True) as saved:
+            values = " ".join(str(row) for row in saved.execute("SELECT value FROM kv"))
+            self.assertNotIn("fixture-access-key", values)
+            self.assertNotIn("fixture-secret-key", values)
 
     def test_multiple_backup_destinations_setup_and_restart(self):
         result = self.mcp.call("desktop.start", persistent=True)

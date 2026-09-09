@@ -1356,3 +1356,26 @@ use `mail_row_y` and await the layout observation before comparing scroll after
 deleting the last visible row. The isolated Xvfb harness uses GTK's Cairo picker
 renderer; clipboard ownership and exact path validation remain mandatory. This
 setting does not alter production rendering.
+
+## Color palette persistence
+
+Preferences → Colors has independent light/dark RGB roles. `appearance::edits`
+tracks each role with fixed-size edit generations; `preference_edits` merges those
+intents with current stored preferences before saving. Preserve untouched roles,
+explicit reversions and newer edits through old acknowledgments. The editor
+projects staged changes onto current palettes, and the UI owns its small iced
+theme cache without a shared lock. Keep native palette invalid-input, light/dark
+restart, compact Reset/Undo, low-contrast recovery and held-provider save flows.
+Custom palettes are exported with the local database; cross-client color sync
+still needs a shared-codec key and interoperability tests.
+
+
+Shared-profile import can explicitly link an exactly matching native account.
+Compare the complete portable incoming/SMTP connection, preserve its local ID,
+mail, keychain slot, local-name intent and any existing reconnect marker. Never
+send an existing credential to a changed downloaded endpoint. Reviews render
+eight accounts per page and prohibit reusing one local account twice. Both the
+live control and durable join receipt retain the exact chosen links; stale events
+and a lost-acknowledgment retry with other choices are rejected. Preserve
+`profile_join_*` storage/controller tests and all `test_profile_join_link_native_*`
+scenarios. This does not implement post-enrollment linking or password transfer.

@@ -1,3 +1,4 @@
+pub mod appearance;
 pub mod backup;
 pub mod bulk;
 pub mod compose;

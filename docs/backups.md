@@ -1,15 +1,27 @@
 # Backups and Google
 
-Google is optional. Mail, CalDAV and local backups work without it.
+Google is optional. Mail, CalDAV, local backups and S3 backups work without it.
 
 ## Make a backup
 
 1. Open **Preferences → Backups**.
-2. Choose **Local folder** or **Google Drive**.
+2. Choose **Local folder**, **Google Drive** or **S3-compatible storage**.
 3. Set how many copies to keep and enter a passphrase of at least 12 characters.
 4. Choose **Back up now**. After your first copy succeeds, enable automatic backups if wanted.
 
 Keep a separate copy of your passphrase. Shep saves it in the OS keychain for scheduled backups.
+
+Use **Add destination** to keep multiple copies in different places. Each destination
+has its own name, schedule, passphrase and number of copies to keep. Select its
+row to edit it. Removing a destination keeps its existing backup files.
+
+For S3, enter the HTTPS endpoint, bucket, signing region and folder prefix, then
+choose **Test and save connection** with your access key and secret key. Keys stay
+in your OS keychain. The test checks read access; your first backup checks upload
+permissions. A compatible service must support conditional object writes and
+deletes. Existing snapshot limits also apply to S3; versioned buckets may retain
+older object versions under their own lifecycle rules.
+
 
 Backups include downloaded original mail, account and calendar settings, and preferences. Account passwords are optional; Google tokens are never included. Calendar events download again from their providers. Backups are limited to **256 MiB of original mail**.
 

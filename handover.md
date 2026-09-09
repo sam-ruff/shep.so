@@ -25,7 +25,23 @@ readiness issue are in the newest completion entry;
 conflict/removal/endpoint controls, account linking, incremental pulls and
 credential protection still remain. Do not discard any lane's uncommitted work.
 
+The isolated `profile-cache` / `codex/profile-links` lane adds explicit matching
+account reuse during import. Tests and remaining shipping work are recorded in
+COMPLETION; preserve its separate commits when integrating the inbox/icon lane.
+It does not complete post-enrollment linking or protected password transfer.
+
 ## Current source checkpoint
+
+Compact rows, actual-layout keyboard reveal, conversation-anchor refresh and
+transparent icons are pushed as `15a4a3c`; R88 is complete. The 248 native paths
+have passing coverage across the full run and corrected setup reruns, with 769
+hook executions, 81 Python tests and strict docs passing. Production remains on
+the earlier installed build. Palette/S3/account-import links are being integrated.
+
+The encrypted-storage lane may consume shared initializer API
+`8588c21b4785cca6951bdc335ca938580ae60f1e`, published separately on
+`codex/profile-core-encrypted-open`. Existing client WIP was preserved; this
+backward-compatible API does not by itself enable encrypted startup.
 
 Portable preference reviews from `713f96e` are integrated: six targeted
 regressions, 86 matching profile tests, 81 Python tests and all 25 integrated native

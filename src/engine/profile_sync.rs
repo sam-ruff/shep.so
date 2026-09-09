@@ -124,9 +124,15 @@ impl Engine {
             .as_ref()
             .context("Profile sync needs a saved local workspace.")?;
         let paths = sync::paths::Paths::for_cache(&local.catalog.path(local.current))?;
-        if let Request::JoinAccept { review, .. } = &action {
-            let saved =
-                sync::join::accept(&self.store, &paths, (**review).clone(), &control).await?;
+        if let Request::JoinAccept { review, links, .. } = &action {
+            let saved = sync::join::accept_linked(
+                &self.store,
+                &paths,
+                (**review).clone(),
+                links.clone(),
+                &control,
+            )
+            .await?;
             self.workspace(&mut output).await.context(
                 "The profile was joined, but the view could not reload. Reopen Preferences.",
             )?;

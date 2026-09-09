@@ -600,12 +600,14 @@ pub enum BackupDestination {
     #[default]
     Local,
     GoogleDrive,
+    S3,
 }
 impl fmt::Display for BackupDestination {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Local => "Local folder",
             Self::GoogleDrive => "Google Drive",
+            Self::S3 => "S3-compatible storage",
         })
     }
 }
@@ -620,6 +622,7 @@ pub struct WindowSize {
 #[serde(default)]
 pub struct Preferences {
     pub appearance: Appearance,
+    pub palettes: crate::appearance::Palettes,
     pub reader_split: f32,
     pub sidebar_width: Option<f32>,
     pub window_size: Option<WindowSize>,
@@ -646,6 +649,7 @@ pub struct Preferences {
     pub backup_destinations: Vec<crate::backup::config::Destination>,
     pub backup_selected: Option<String>,
     pub backup_destination: BackupDestination,
+    pub backup_s3: crate::backup::s3::Settings,
     pub backup_folder: String,
     pub backup_copies: usize,
     pub backup_hours: u64,
@@ -666,6 +670,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             appearance: Appearance::System,
+            palettes: Default::default(),
             reader_split: 0.315,
             sidebar_width: None,
             window_size: None,
@@ -692,6 +697,7 @@ impl Default for Preferences {
             backup_destinations: Vec::new(),
             backup_selected: None,
             backup_destination: BackupDestination::Local,
+            backup_s3: Default::default(),
             backup_folder: String::new(),
             backup_copies: 7,
             backup_hours: 24,

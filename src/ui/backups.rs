@@ -1,8 +1,11 @@
 use super::*;
 use secrecy::{ExposeSecret, SecretString};
 
+pub(super) type ConnectionCheck = (u64, BackupTarget, Option<Result<(), String>>);
+
 pub(super) enum BackupAction {
     Save(SecretString),
+    ConnectS3(Option<(SecretString, SecretString)>),
     List,
     Restore(String, SecretString),
 }
@@ -13,9 +16,14 @@ pub(super) struct PendingBackup {
     action: BackupAction,
 }
 impl App {
+    pub(super) fn backup_validation_error(&mut self, error: impl Into<String>) {
+        self.notice(error, true);
+        self.preference_notice = self.notice.as_ref().map(|notice| notice.2);
+    }
+
     pub(super) fn change_backup_destination(&mut self, id: Option<String>) {
         if let Err(error) = self.read_preferences() {
-            self.notice(error.to_string(), true);
+            self.backup_validation_error(error.to_string());
             return;
         }
         let result = match id {
@@ -26,6 +34,9 @@ impl App {
             Ok(()) => {
                 self.settings_fields();
                 self.fields.remove("passphrase");
+                self.fields.remove("s3_access_secret");
+                self.fields.remove("s3_key_secret");
+                self.s3_connection = None;
                 self.backups_generation += 1;
                 self.save_preferences();
             }
@@ -38,7 +49,23 @@ impl App {
             .contains(&self.configured_backup_target().work_key())
     }
 
+    pub(super) fn s3_form_settings(&self) -> crate::backup::s3::Settings {
+        let mut settings = self.preferences.backup_s3.clone();
+        if self.fields.contains_key("s3_endpoint") {
+            settings.endpoint = self.field("s3_endpoint").trim().into();
+            settings.region = self.field("s3_region").trim().into();
+            settings.bucket = self.field("s3_bucket").trim().into();
+            settings.prefix = self.field("s3_prefix").trim().into();
+        }
+        settings
+    }
+
     pub(super) fn configured_backup_target(&self) -> BackupTarget {
+        if self.preferences.backup_destination == BackupDestination::S3
+            && self.tab == Tab::Preferences
+        {
+            return BackupTarget::S3(self.s3_form_settings().identity());
+        }
         if self.preferences.backup_destination == BackupDestination::Local
             && self.tab == Tab::Preferences
             && self.fields.contains_key("backup_folder")
@@ -66,34 +93,43 @@ impl App {
         if let BackupAction::Save(secret) = &action
             && secret.expose_secret().chars().count() < 12
         {
-            self.notice("Use a backup passphrase of at least 12 characters.", true);
+            self.backup_validation_error("Use a backup passphrase of at least 12 characters.");
             return;
         }
         if let Err(error) = self.read_preferences() {
-            self.notice(error.to_string(), true);
+            self.backup_validation_error(error.to_string());
             return;
         }
         let target = self.configured_backup_target();
+        if matches!(&target, BackupTarget::S3(_))
+            && let Err(error) = self.preferences.backup_s3.validate()
+        {
+            self.backup_validation_error(error.to_string());
+            return;
+        }
         if matches!(target, BackupTarget::GoogleDrive { .. })
             && (self.preferences.google_lifecycle.disconnected
                 || !self.preferences.google_grant.access.drive_allowed())
         {
-            self.notice(
+            self.backup_validation_error(
                 "Reconnect Google and approve Drive backup access before accessing copies.",
-                true,
             );
             return;
         }
         if let BackupTarget::Local(path) = &target
             && !std::path::Path::new(path).is_absolute()
         {
-            self.notice(
-                "Choose an absolute backup folder path in Preferences.",
-                true,
-            );
+            self.backup_validation_error("Choose an absolute backup folder path in Preferences.");
             return;
         }
         let request = self.preference_sync.changed();
+        if self
+            .preference_notice
+            .take()
+            .is_some_and(|at| self.notice.as_ref().is_some_and(|notice| notice.2 == at))
+        {
+            self.notice = None;
+        }
         self.pending_backup = Some(PendingBackup {
             request,
             target,
@@ -133,6 +169,12 @@ impl App {
             return;
         }
         match pending.action {
+            BackupAction::ConnectS3(secret) => {
+                self.s3_connection = Some((request, pending.target.clone(), None));
+                if !self.try_command(Command::ConnectS3(request, pending.target, secret)) {
+                    self.s3_connection = None;
+                }
+            }
             BackupAction::Save(secret) => self.send(Command::Backup(pending.target, secret)),
             BackupAction::List => self.request_backup_copies(pending.target),
             BackupAction::Restore(id, secret) => {
@@ -157,6 +199,67 @@ mod tests {
             name: id.into(),
             created_at: String::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn s3_setup_save_preserves_shared_settings_and_a_concurrent_backup_receipt() {
+        let store = crate::store::Store::memory().unwrap();
+        let (mut app, _) = App::new();
+        app.tab = Tab::Preferences;
+        app.preferences.backup_destination = BackupDestination::S3;
+        app.preferences.backup_s3.bucket = "fixture-backups".into();
+        let initial = store
+            .save_preferences(app.preferences.clone())
+            .await
+            .unwrap();
+        app.preference_sync = super::preference_sync::PreferenceSync::new(initial);
+        app.settings_fields();
+        let target = app.configured_backup_target();
+        let (sender, mut saves) = engine::CommandSender::persistence_test_channel();
+        app.tx = Some(sender);
+        app.fields.insert("copies", "13".into());
+        app.begin_backup_request(BackupAction::ConnectS3(None));
+        let Command::SavePreferences(_, write) = saves.try_recv().unwrap() else {
+            panic!("S3 setup must queue its preferences before testing the connection");
+        };
+        assert!(write.portable.tooltips.is_none());
+        store
+            .update_preferences(|p| p.tooltips = false)
+            .await
+            .unwrap();
+        store
+            .record_backup(target.clone(), 4567, true)
+            .await
+            .unwrap();
+        let saved = store.save_preferences(write).await.unwrap().value;
+        assert!(!saved.tooltips);
+        assert_eq!(saved.backup_copies, 13);
+        assert_eq!(saved.last_backup, Some(4567));
+        assert!(saved.backup_ready);
+        assert_eq!(BackupTarget::from_preferences(&saved), target);
+    }
+
+    #[test]
+    fn s3_endpoint_changes_clear_unsaved_keys_and_old_connection_results() {
+        let (mut app, _) = App::new();
+        app.tab = Tab::Preferences;
+        app.preferences.backup_destination = BackupDestination::S3;
+        app.preferences.backup_s3.bucket = "fixture-backups".into();
+        app.settings_fields();
+        let target = app.configured_backup_target();
+        app.fields.insert("s3_access_secret", "old-key".into());
+        app.fields.insert("s3_key_secret", "old-secret".into());
+        app.s3_connection = Some((1, target.clone(), None));
+        let _ = app.handle(Message::Field(
+            "s3_endpoint",
+            "https://another.example.test".into(),
+        ));
+        assert!(app.field("s3_access_secret").is_empty() && app.field("s3_key_secret").is_empty());
+        assert!(app.s3_connection.is_none());
+        app.fields.insert("s3_key_secret", "new-secret".into());
+        let _ = app.handle(Message::Backend(Event::S3Connection(1, target, Ok(()))));
+        assert!(app.s3_connection.is_none());
+        assert_eq!(app.field("s3_key_secret"), "new-secret");
     }
 
     #[test]

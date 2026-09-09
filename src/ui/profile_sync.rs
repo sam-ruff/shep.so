@@ -1,3 +1,4 @@
+mod join;
 mod onboarding;
 mod reviews;
 use super::*;
@@ -34,7 +35,16 @@ pub enum Action {
     Create,
     Page(Option<String>),
     Choose(String),
-    AcceptJoin,
+    AcceptJoin(
+        Arc<crate::profile_sync::join::Review>,
+        crate::profile_sync::join::links::Links,
+    ),
+    JoinLink(
+        Arc<crate::profile_sync::join::Review>,
+        uuid::Uuid,
+        Option<String>,
+    ),
+    JoinPage(Arc<crate::profile_sync::join::Review>, usize),
     Resume,
     Stop,
     Enabled(bool),
@@ -60,6 +70,8 @@ pub(super) struct State {
     serial: u64,
     review: Option<Arc<Discovery>>,
     join_review: Option<Arc<crate::profile_sync::join::Review>>,
+    join_links: crate::profile_sync::join::links::Links,
+    join_offset: usize,
     setting_reviews: Option<Vec<Arc<crate::profile_sync::reviews::Review>>>,
     setting_choices: std::collections::BTreeMap<shep_profile_core::SettingKey, reviews::Candidate>,
     name: String,
@@ -109,7 +121,7 @@ impl State {
             "setting_reviews": self.setting_reviews.as_ref().map(|r|r.iter().map(|r|serde_json::json!({"label":r.label(),"local":r.local(),"versions":r.versions().iter().map(|v|&v.value).collect::<Vec<_>>()})).collect::<Vec<_>>()),
             "review":self.review.as_ref().map(|r|r.records()),
             "profiles":self.review.as_ref().map(|r|r.profiles()),
-            "join_review":self.join_review.as_ref().map(|r|serde_json::json!({"name":r.name(),"accounts":r.accounts,"settings":r.settings})),"name":self.name,"error":self.error,
+            "join_review":self.join_review.as_ref().map(|r|serde_json::json!({"name":r.name(),"accounts":r.accounts,"settings":r.settings,"offset":self.join_offset,"links":self.join_links,"page":r.account_page(self.join_offset).iter().map(|o|serde_json::json!({"shared":o.shared,"name":o.name,"email":o.email,"matches":o.matches.iter().map(|m|serde_json::json!({"id":m.id,"name":m.name})).collect::<Vec<_>>()})).collect::<Vec<_>>()})),"name":self.name,"error":self.error,
             "cycle":self.cycle.as_ref().map(|r|serde_json::json!({"applied":r.applied,"review":r.review,"published":r.published,"remaining":r.remaining})),
             "enrollment":self.snapshot.as_ref().map(|s|&s.enrollment)})
     }
@@ -117,6 +129,40 @@ impl State {
 impl App {
     pub(super) fn shared_profile_action(&mut self, action: Action) {
         match action {
+            Action::JoinLink(review, shared, local) => {
+                if self.profile_sync.job.is_none()
+                    && self
+                        .profile_sync
+                        .join_review
+                        .as_ref()
+                        .is_some_and(|r| Arc::ptr_eq(r, &review))
+                {
+                    let mut links = self.profile_sync.join_links.clone();
+                    if let Some(local) = local {
+                        links.insert(shared, local);
+                    } else {
+                        links.remove(&shared);
+                    }
+                    match review.validate_links(&links) {
+                        Ok(()) => self.profile_sync.join_links = links,
+                        Err(error) => self.notice(error.to_string(), true),
+                    }
+                }
+                return;
+            }
+            Action::JoinPage(review, offset) => {
+                if self.profile_sync.job.is_none()
+                    && self
+                        .profile_sync
+                        .join_review
+                        .as_ref()
+                        .is_some_and(|r| Arc::ptr_eq(r, &review))
+                    && offset < review.accounts
+                {
+                    self.profile_sync.join_offset = offset;
+                }
+                return;
+            }
             Action::SettingCandidate(review, candidate) => {
                 if self.profile_sync.accepts_setting_review(&review) {
                     self.profile_sync
@@ -211,7 +257,7 @@ impl App {
             | Action::Resume
             | Action::Page(_)
             | Action::Choose(_)
-            | Action::AcceptJoin => {
+            | Action::AcceptJoin(..) => {
                 if self.profile_sync.job.is_some()
                     || self.profile_sync.saving.is_some()
                     || !self.profile_sync.desired.empty()
@@ -273,13 +319,21 @@ impl App {
                             cursor,
                         }
                     }
-                    Action::AcceptJoin => {
-                        let Some(review) = self.profile_sync.join_review.clone() else {
+                    Action::AcceptJoin(review, links) => {
+                        if !self
+                            .profile_sync
+                            .join_review
+                            .as_ref()
+                            .is_some_and(|r| Arc::ptr_eq(r, &review))
+                            || links != self.profile_sync.join_links
+                            || review.validate_links(&links).is_err()
+                        {
                             return;
-                        };
+                        }
                         Request::JoinAccept {
                             request: id,
                             review,
+                            links,
                         }
                     }
                     _ => {
@@ -518,6 +572,8 @@ impl App {
                 {
                     state.snapshot = Some(Arc::new(review.local().clone()));
                     state.join_review = Some(review);
+                    state.join_links.clear();
+                    state.join_offset = 0;
                 } else {
                     refresh = true;
                 }
@@ -678,27 +734,29 @@ impl App {
                     )
                     .push(
                         muted(format!(
-                            "Add {} · apply {}",
-                            counted(review.accounts as u64, "account"),
+                            "{} · apply {}",
+                            if state.join_links.is_empty() {
+                                format!("Add {}", counted(review.accounts as u64, "account"))
+                            } else {
+                                format!(
+                                    "Link {} · add {}",
+                                    counted(state.join_links.len() as u64, "account"),
+                                    counted(
+                                        review.accounts.saturating_sub(state.join_links.len())
+                                            as u64,
+                                        "account"
+                                    )
+                                )
+                            },
                             counted(review.settings as u64, "preference")
                         ))
                         .size(13),
                     );
-                for (name, email) in &review.account_preview {
-                    body =
-                        body.push(column![text(name).size(13), muted(email).size(12)].spacing(4));
+                if review.accounts > 0 {
+                    body = body.push(self.shared_join_accounts(review, idle));
                 }
-                if review.accounts > review.account_preview.len() {
-                    body = body.push(
-                        muted(format!(
-                            "And {} more accounts",
-                            review.accounts - review.account_preview.len()
-                        ))
-                        .size(12),
-                    );
-                }
-                body = body.push(muted(if review.accounts == 0 { "Shared preferences replace matching local choices. Your accounts and mail are kept." } else if review.settings == 0 { "Your existing accounts, mail and preferences are kept. Reconnect imported accounts with their passwords here." } else { "Your existing accounts and mail are kept. Reconnect imported accounts here; shared preferences replace matching local choices." }).size(12))
-                    .push(row![button(text("Import profile").size(13)).padding([12,16]).style(components::primary).on_press_maybe(idle.then(||msg(Action::AcceptJoin))),
+                body = body.push(muted(if review.accounts > 0 && state.join_links.len() == review.accounts { "Existing accounts keep their mail and sign-in. Shared preferences replace matching local choices." } else if review.accounts == 0 { "Shared preferences replace matching local choices. Your accounts and mail are kept." } else if review.settings == 0 { "Your existing accounts, mail and preferences are kept. Reconnect imported accounts with their passwords here." } else { "Your existing accounts and mail are kept. Reconnect imported accounts here; shared preferences replace matching local choices." }).size(12))
+                    .push(row![button(text("Import profile").size(13)).padding([12,16]).style(components::primary).on_press_maybe(idle.then(||msg(Action::AcceptJoin(review.clone(), state.join_links.clone())))),
                         action("Cancel",msg(Action::CancelReview))].spacing(10));
             } else if let Some(review) = &state.review {
                 if review.profile_count() > 0 {
@@ -966,6 +1024,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn profile_join_link_controls_reject_stale_reviews_and_older_import_choices() {
+        use crate::profile_sync::join::{
+            Review,
+            links::{AccountOffer, Links, LocalAccount},
+        };
+        let (mut app, mut queue, original) = app().await;
+        let shared = uuid::Uuid::new_v4();
+        let review = Arc::new(Review {
+            id: uuid::Uuid::new_v4(),
+            automatic: false,
+            local: (*original).clone(),
+            selection: crate::profile_sync::enrollment::Selection {
+                binding: shep_profile_core::history::Binding {
+                    namespace: "so.shep".into(),
+                    principal: "drive:fixture".into(),
+                    profile: uuid::Uuid::new_v4(),
+                    generation: uuid::Uuid::new_v4(),
+                },
+                name: "Home".into(),
+                origin: crate::profile_sync::enrollment::Origin::Join,
+                ready: true,
+            },
+            revision: 1,
+            device: uuid::Uuid::new_v4(),
+            accounts: 1,
+            settings: 0,
+            account_offers: vec![AccountOffer {
+                shared,
+                name: "Shared".into(),
+                email: "a@example.test".into(),
+                matches: vec![LocalAccount {
+                    id: "native".into(),
+                    name: "Existing".into(),
+                }],
+            }],
+        });
+        app.profile_sync.join_review = Some(review.clone());
+        app.shared_profile_action(Action::JoinLink(
+            review.clone(),
+            shared,
+            Some("native".into()),
+        ));
+        let chosen = Links::from([(shared, "native".into())]);
+        assert_eq!(app.profile_sync.join_links, chosen);
+        // The import button from the earlier frame still means Add new. It
+        // must not override the newer explicit reuse choice.
+        app.shared_profile_action(Action::AcceptJoin(review.clone(), Links::new()));
+        assert!(queue.try_recv().is_err());
+        assert!(app.profile_sync.job.is_none());
+        let replacement = Arc::new((*review).clone());
+        app.profile_sync.join_review = Some(replacement.clone());
+        app.shared_profile_action(Action::JoinLink(review.clone(), shared, None));
+        app.shared_profile_action(Action::AcceptJoin(review, chosen.clone()));
+        assert_eq!(app.profile_sync.join_links, chosen);
+        assert!(queue.try_recv().is_err());
+        app.shared_profile_action(Action::AcceptJoin(replacement.clone(), chosen.clone()));
+        let Command::ProfileSync(Request::JoinAccept {
+            review: actual,
+            links,
+            ..
+        }) = queue.try_recv().unwrap()
+        else {
+            panic!("expected exact current import");
+        };
+        assert!(Arc::ptr_eq(&actual, &replacement));
+        assert_eq!(links, chosen);
+        // Further edits cannot mutate the choices while that import is pending.
+        app.shared_profile_action(Action::JoinLink(replacement, shared, None));
+        assert_eq!(app.profile_sync.join_links, chosen);
+    }
+
+    #[tokio::test]
     async fn profile_join_review_cannot_restore_older_category_choices_after_a_save() {
         let (mut app, mut queue, original) = app().await;
         let mut newer = (*original).clone();
@@ -992,7 +1122,7 @@ mod tests {
             device: uuid::Uuid::new_v4(),
             accounts: 1,
             settings: 1,
-            account_preview: vec![],
+            account_offers: vec![],
         };
         let _ = app.shared_profile_update(55, Update::JoinReview(Arc::new(review)));
         assert!(app.profile_sync.join_review.is_none());
