@@ -24,7 +24,19 @@ retry/opt-out, category changes/held-read close, compact dark rapid gestures, an
 close during upload followed by Resume and disabling/re-enabling. Reviewed WebPs:
 `a26c2d013572` compact dark/review, `c883eeb38c8d` initial saved copy,
 `b7c46dd88d3f` failed discovery and `c47727d6fb24` resume after close.
-Final verification and shipping are recorded below when complete.
+Source [`488a9ec`](https://github.com/sam-ruff/shep.so/commit/488a9ec4f2e8c197b8bd27299dd10961f750b2a3)
+was pushed to main with exact remote equality verified. Mandatory hooks passed
+**622 Rust + two renderer + 34 shared tests (658 executions)**, formatting and
+all-target/all-feature Clippy. Three personal diagnostics remain explicitly
+ignored. All **54 Python tests** and **17 selected native scenarios** passed
+(the five new flows plus 12 affected database import/export and Google controls).
+Windows GNU all-target/all-feature cross-compilation is warning-free; strict
+Zensical passed. The tested native executable SHA-256 was
+`5b7466cfcd418d56d487069521b67b79d093e5636f01e91d540b781c8efdbf65`.
+The Windows warning correction changed only a `cfg(test)` local name after the
+native run. No root runtime artifacts remain.
+[Source documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34310152847)
+passed build and Pages deployment.
 
 This checkpoint provides initial setup, not continuous sync. Joining existing
 profiles, actual account application/reconnection, conflicts, local edit capture,
