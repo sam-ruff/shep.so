@@ -989,10 +989,12 @@ impl App {
             Message::Folders(message) => {
                 let focus = matches!(
                     message,
-                    folder_controls::Message::Choose(0) | folder_controls::Message::Back
+                    folder_controls::Message::Choose(0)
+                        | folder_controls::Message::Back
+                        | folder_controls::Message::SelectAccount(_)
                 );
                 self.handle_folders(message);
-                if focus && self.dialog == Some(Dialog::FolderChange) {
+                if focus && self.folder_parent_visible() {
                     return focus_after_layout("folder-parent-search");
                 }
             }
@@ -2154,7 +2156,7 @@ impl App {
                         self.find_message.open && self.tab == Tab::Mail && self.dialog.is_none()
                     }
                     "folder-search" => self.dialog == Some(Dialog::Move),
-                    "folder-parent-search" => self.dialog == Some(Dialog::FolderChange),
+                    "folder-parent-search" => self.folder_parent_visible(),
                     "event-title" => self.dialog == Some(Dialog::Event),
                     "to" | "compose-body" => {
                         self.compose_visible()
@@ -3581,6 +3583,34 @@ impl App {
             return Task::none();
         }
         if self.dialog == Some(Dialog::FolderChange) && modifiers.is_empty() && !captured {
+            if self.folder_controls.choosing_account
+                && (matches!(
+                    key,
+                    Key::Named(
+                        keyboard::key::Named::ArrowDown
+                            | keyboard::key::Named::ArrowUp
+                            | keyboard::key::Named::Enter
+                    )
+                ) || matches!(&key, Key::Character(value) if value.eq_ignore_ascii_case("y")))
+            {
+                match key {
+                    Key::Named(keyboard::key::Named::ArrowDown) => {
+                        return self.move_folder_account_choice(1);
+                    }
+                    Key::Named(keyboard::key::Named::ArrowUp) => {
+                        return self.move_folder_account_choice(-1);
+                    }
+                    Key::Named(keyboard::key::Named::Enter) => {
+                        self.choose_focused_folder_account();
+                        if self.folder_parent_visible() {
+                            return focus_after_layout("folder-parent-search");
+                        }
+                    }
+                    Key::Character(ref value) if value.eq_ignore_ascii_case("y") => {}
+                    _ => {}
+                }
+                return Task::none();
+            }
             match &key {
                 Key::Named(keyboard::key::Named::Enter) => {
                     self.handle_folders(folder_controls::Message::Submit);
@@ -3705,11 +3735,10 @@ impl App {
             && key == Key::Named(keyboard::key::Named::F10)
         {
             if let Some(item) = self.sidebar_items().get(self.sidebar_index)
-                && let Some((account, path)) = self.sidebar_folder_context(&item.action)
+                && let Some(target) = self.sidebar_folder_context(&item.action)
             {
                 self.handle_folders(folder_controls::Message::Context(
-                    account.clone(),
-                    path.clone(),
+                    target,
                     iced::Point::new(40., 220.),
                 ));
             }
