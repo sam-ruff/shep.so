@@ -179,7 +179,10 @@ Preserve the four saved `test_desktop_badge_*` scenarios: read and leave the fol
 background arrival and failure, archive/delete/move with Undo, and the preference.
 Search Preferences for badge, open Mail & performance, then click the actual
 checkbox near x=340,y=431 in the standard fixture. Wait for the private-bus zero
-and hidden signal when disabling. The badge count always spans all mail accounts.
+and hidden signal when disabling. The badge count always spans all mail accounts. When re-enabling it after mail
+navigation, compare the bus signal with the current unread total: read-on-leave
+can legitimately change the initial count. Preserve zero/hidden, saved preference
+and account-scope assertions; never retain a stale baseline across reading.
 Review the preference/mail WebP captures; the private-bus observer does not render
 a desktop dock, and its results must not be described as a GNOME visual test.
 
@@ -240,3 +243,17 @@ Keep consecutive checkbox clicks in the bulk scenarios. Their separate motion
 events must target separate rows even when processed together; do not add sleeps
 between clicks to mask cursor-batching defects. The root input wrapper has a
 widget-level regression for that sequence.
+
+
+For desktop profile pages, use `desktop.start(profile_pages=true,
+google_permissions="drive")`. It provides 51 synthetic cloud profiles plus 75
+local and 75 offered accounts through the loopback fixture. It never authenticates
+to Google or accesses personal credentials. Keep the three saved
+`test_desktop_profile_*large_pages*` scenarios alongside the existing small
+publication/enrollment flows. Observe discovery progress in bounded increments;
+do not lengthen the harness deadlines for a large scan. Use actual wheel input
+and First/Next/More controls. Enrollment choices and recoverable failures must
+retain the current page; row positions and page cursors are observations, not
+interchangeable zero-based indexes. Review connection details, deselected imports,
+reconnect counts and light/dark/compact captures. Switching Preferences categories
+can retain scroll position: scroll General to its top before choosing appearance.

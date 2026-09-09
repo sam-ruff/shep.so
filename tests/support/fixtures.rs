@@ -37,9 +37,22 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
             id: "preview-personal".into(),
             name: "Personal".into(),
             email: "alex@example.com".into(),
-            ..account
+            ..account.clone()
         })
         .await?;
+    if std::env::args().any(|arg| arg == "--profile-pages") {
+        for index in 2..75 {
+            store
+                .save_account(Account {
+                    id: format!("preview-paged-{index:02}"),
+                    name: format!("Local account {index:02}"),
+                    email: format!("local-{index}@example.test"),
+                    username: format!("local-{index}"),
+                    ..account.clone()
+                })
+                .await?;
+        }
+    }
     let entries = [
         (
             "Maya Chen",

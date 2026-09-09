@@ -283,7 +283,7 @@ impl App {
                     }
                     "review" => format!("Review {} items before applying", review.rows),
                     "complete" => format!(
-                        "Profile applied · {} {} applied · {} kept",
+                        "Profile applied · {} {} applied · {} skipped",
                         review.applied,
                         if review.applied == 1 {
                             "account"
@@ -294,7 +294,7 @@ impl App {
                     ),
                     "cancelled" => "Review cancelled".into(),
                     _ => format!(
-                        "Applying · {} {} applied · {} kept",
+                        "Applying · {} {} applied · {} skipped",
                         review.applied,
                         if review.applied == 1 {
                             "account"
@@ -387,6 +387,8 @@ impl App {
                     item = item.push(
                         muted(if receipt == "applied" {
                             "Applied"
+                        } else if r.new_account {
+                            "Not imported"
                         } else {
                             "Kept on this device"
                         })

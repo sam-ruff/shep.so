@@ -71,7 +71,7 @@ Store/protocol tests exercise changed reviews, 75-account paging, exact staging
 recovery, mail database reopen after a lost Drive confirmation and an independent
 catalog reading the completed profile. Native control results and shipping belong
 in the completion log. This is an initial publication, not ongoing reconciliation
-for enrolled devices. Native large-page controls, complete settings/categories,
+for enrolled devices. Complete settings/categories,
 credential protection, Apple/live Google and authenticated cross-client access
 remain active work.
 
@@ -86,7 +86,8 @@ must still match before approval. Unsupported or conflicting fields stay visible
 and unavailable, with their original records retained.
 
 Reviews expose at most 50 account/preference rows, category choices and individual
-selections. Details show incoming/SMTP endpoints, TLS/authentication, usernames
+selections. Changing a selection or encountering a recoverable error retains the
+current page of the same review. Details show incoming/SMTP endpoints, TLS/authentication, usernames
 and Sent policy. Matching shared identities preserve all local metadata, mail,
 drafts and credentials. Differing connections or locally removed accounts start
 unselected and require explicit approval to add a separate connection. Email
@@ -120,5 +121,17 @@ See the completion log for final runs and shipping.
 
 This is reviewed initial enrollment. Automatic first setup, continuous
 reconciliation, shared removal/conflict resolution, remaining categories/settings,
-protected credential transfer, native large-page controls and live Google/Apple
+protected credential transfer and live Google/Apple
 verification remain active work.
+
+
+## Large lists
+
+The saved native page scenarios use 51 synthetic profiles, 75 local accounts and
+75 offered accounts. Discovery exercises First/Next in light and compact dark.
+Publication reviews 50/25 account rows and connection details before cancellation.
+Enrollment reviews 50/26 account/preference rows, toggles a second-page choice,
+returns between pages and applies the selected accounts with reconnect guards.
+Skipped new connections say **Not imported**. Final execution, reviewed captures
+and shipping are recorded in the completion log. This is isolated protocol/native
+coverage; live Google, continuous synchronization and Apple remain separate work.

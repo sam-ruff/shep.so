@@ -15,6 +15,16 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_profile_pages_requires_a_boolean_before_launch(self):
+        for value in (1, "true", None, {}):
+            desktop = harness.Desktop()
+            with patch.object(harness.subprocess, "Popen") as launch:
+                with self.assertRaisesRegex(ValueError, "Profile page fixture"):
+                    desktop.start(profile_pages=value)
+                launch.assert_not_called()
+        start = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        self.assertEqual(start["inputSchema"]["properties"]["profile_pages"]["type"], "boolean")
+
     def test_badge_fixture_requires_a_boolean_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

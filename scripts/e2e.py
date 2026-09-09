@@ -540,14 +540,19 @@ class NativeFlows(unittest.TestCase):
     def test_desktop_badge_preference_clears_and_restores_the_native_count(self):
         self.mcp.call("desktop.start", desktop_badges=True)
         self.mcp.batch(check("desktop_badge.visible",True))
-        count = self.mcp.call("desktop.state")["desktop_badge"]["count"]
         self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),click(1150,88),type_text("badge"),
                        check("settings_matches",["Mail & performance"]),click(500,289),
                        check("settings_group","Mail & performance"), shot("badge-preference"),
                        click(340,431),check("desktop_badge.count",0),check("desktop_badge.visible",False),
-                       check("preferences_saved",True),key("ctrl+1"),key("ctrl+comma"),
-                       click(1150,88),type_text("badge"),click(500,289),wait(),click(340,431),
-                       check("desktop_badge.count",count),check("desktop_badge.visible",True),
+                       check("preferences_saved",True),key("ctrl+1"),check("tab","Mail"),
+                       key("ctrl+comma"),check("tab","Preferences"),check("mail_pending",0),
+                       click(1150,88),type_text("badge"),check("settings_matches",["Mail & performance"]),
+                       click(500,289),check("settings_group","Mail & performance"),wait())
+        # Returning from Mail can mark the opened message read. Re-enabling
+        # badges must publish the current global unread total, not the old one.
+        count = sum(self.mcp.call("desktop.state")["inbox_unread"].values())
+        self.assertGreater(count, 0)
+        self.mcp.batch(click(340,431),check("desktop_badge.count",count),check("desktop_badge.visible",True),
                        click(300,239),check("settings_group",None),click(286,737),check("unified",False),
                        key("ctrl+1"),check("account","preview-work"),check("desktop_badge.count",count),
                        shot("badge-count-spans-account-inboxes"))
@@ -1413,6 +1418,121 @@ class NativeFlows(unittest.TestCase):
                        click(529, 474), check("outgoing_pending", 0), check("outgoing_rows", []),
                        shot("outbox-empty-compact"), key("Escape"), check("dialog", None),
                        click(87, 359), check("folder", "Sent"), check("total", 2), shot("local-sent-copies-compact"))
+
+    def open_paged_profiles(self):
+        result = self.mcp.call("desktop.start", google_permissions="drive", profile_pages=True)
+        print(f"Paged profile evidence: {result['artifacts']}", flush=True)
+        self.artifacts = Path(result["artifacts"])
+        self.mcp.batch(key("ctrl+comma"), check("tab","Preferences"),
+                       click(956,156), check("settings_tab","Profiles"), check("profiles.loaded",True),
+                       wait(150), click(600,390), type_text("so.shep.fixture"), click(342,441),
+                       check("profiles.error",None,"ne"), check("profiles.pending",False),
+                       click(344,601))
+        # Observe bounded progress, never sleep through a larger discovery or
+        # weaken the harness's per-transition timeout.
+        for count in range(5, 51, 5):
+            self.mcp.batch(check("profiles.discovery.state.profiles",count,"gte"))
+        self.mcp.batch(check("profiles.discovery.state.phase","complete"),
+                       check("profiles.pending",False), check("profiles.error",None),
+                       check("profiles.discovery.state.profiles",51), check("account_count",75),
+                       check("profiles.discovery.rows.0.name","Work"),
+                       check("profiles.discovery.rows.0.accounts",75), wait(150))
+        self.assertEqual(len(self.mcp.call("desktop.state")["profiles"]["discovery"]["rows"]),50)
+
+    def profiles_scroll_end(self, down=True):
+        self.mcp.batch({"type":"hover","x":800,"y":600},
+                       *[{"type":"scroll","amount":30 if down else -30} for _ in range(5)],
+                       wait(150))
+
+    def test_desktop_profile_discovery_large_pages(self):
+        self.open_paged_profiles()
+        self.mcp.batch(shot("profile-pages-first-light"))
+        self.profiles_scroll_end()
+        self.mcp.batch(shot("profile-pages-first-footer-light"), click(420,797),
+                       check("profiles.pending",False), check("profiles.discovery.rows.0.name","Personal 50"),
+                       wait(150), shot("profile-pages-last-light"))
+        self.assertEqual(len(self.mcp.call("desktop.state")["profiles"]["discovery"]["rows"]),1)
+        self.mcp.batch(click(324,597), check("profiles.discovery.after",None),
+                       check("profiles.discovery.rows.0.name","Work"), check("profiles.pending",False),
+                       click(292,156), check("settings_tab","General"))
+        self.profiles_scroll_end(False)
+        self.mcp.batch(click(725,366), check("dark",True), click(956,156), check("settings_tab","Profiles"),
+                       {"type":"resize","width":900,"height":640}, check("window_size",[900,640]))
+        self.profiles_scroll_end()
+        self.mcp.batch(shot("profile-pages-first-footer-compact-dark"), click(398,516),
+                       check("profiles.discovery.rows.0.name","Personal 50"), check("profiles.pending",False),
+                       wait(150), shot("profile-pages-last-compact-dark"), click(300,516),
+                       check("profiles.discovery.after",None), check("profiles.discovery.rows.0.name","Work"),
+                       check("profiles.pending",False), key("ctrl+1"), check("tab","Mail"))
+
+    def test_desktop_profile_enrollment_large_pages_keep_selection(self):
+        self.open_paged_profiles()
+        self.mcp.batch(click(500,534), check("profiles.enrollment_visible",True),
+                       check("profiles.discovery.enrollment.review.phase","review"),
+                       check("profiles.pending",False), check("profiles.discovery.enrollment.review.rows",76),
+                       wait(150), shot("enrollment-pages-first-light"))
+        self.assertEqual(len(self.mcp.call("desktop.state")["profiles"]["discovery"]["enrollment"]["rows"]),50)
+        self.profiles_scroll_end()
+        self.mcp.batch(shot("enrollment-pages-first-footer-light"), click(420,848),
+                       check("profiles.discovery.enrollment.after",50), check("profiles.pending",False))
+        self.assertEqual(len(self.mcp.call("desktop.state")["profiles"]["discovery"]["enrollment"]["rows"]),26)
+        self.profiles_scroll_end(False)
+        for selected in (False, True, False):
+            self.mcp.batch(click(288,594), check("profiles.pending",False),
+                           check("profiles.discovery.enrollment.after",50),
+                           check("profiles.discovery.enrollment.rows.0.position",51),
+                           check("profiles.discovery.enrollment.rows.0.selected",selected))
+        self.mcp.batch(click(723,603), wait(150), shot("enrollment-pages-last-details-light"),
+                       click(723,603))
+        self.profiles_scroll_end()
+        self.mcp.batch(shot("enrollment-pages-last-footer-light"), click(324,848),
+                       check("profiles.discovery.enrollment.after",0), check("profiles.pending",False))
+        self.profiles_scroll_end()
+        self.mcp.batch(click(420,848), check("profiles.discovery.enrollment.after",50),
+                       check("profiles.pending",False), check("profiles.discovery.enrollment.rows.0.selected",False))
+        self.profiles_scroll_end(False)
+        self.mcp.batch(click(351,543))
+        for count in range(10, 71, 10):
+            self.mcp.batch(check("profiles.discovery.enrollment.review.applied",count,"gte"))
+        self.mcp.batch(check("profiles.discovery.enrollment.review.phase","complete"),
+                       check("profiles.pending",False), check("profiles.error",None),
+                       check("profiles.discovery.enrollment.review.applied",74),
+                       check("profiles.discovery.enrollment.review.kept",1),
+                       check("profiles.discovery.enrollment.after",50),
+                       check("profiles.discovery.enrollment.rows.0.receipt","kept"),
+                       check("profiles.discovery.enrollment.rows.1.receipt","applied"),
+                       check("account_count",149), check("reconnect_required_count",74), check("dark",True),
+                       wait(150), shot("enrollment-pages-complete-dark"),
+                       {"type":"resize","width":900,"height":640}, check("window_size",[900,640]))
+        self.profiles_scroll_end()
+        self.mcp.batch(shot("enrollment-pages-complete-footer-compact-dark"))
+
+    def test_desktop_profile_publication_large_pages(self):
+        self.open_paged_profiles()
+        self.profiles_scroll_end()
+        self.mcp.batch(click(370,848), check("profiles.publication_visible",True),
+                       check("profiles.pending",False))
+        self.profiles_scroll_end()
+        self.mcp.batch(click(335,847), check("profiles.discovery.publication.review.phase","review"),
+                       check("profiles.pending",False), check("profiles.discovery.publication.review.accounts",75))
+        self.profiles_scroll_end(False)
+        self.mcp.batch(shot("publication-pages-first-light"))
+        self.assertEqual(len(self.mcp.call("desktop.state")["profiles"]["discovery"]["publication"]["rows"]),50)
+        self.profiles_scroll_end()
+        self.mcp.batch(shot("publication-pages-first-footer-light"), click(455,821),
+                       check("profiles.discovery.publication.after",51), check("profiles.pending",False),
+                       check("profiles.discovery.publication.rows.0.account.name","Local account 50"))
+        self.assertEqual(len(self.mcp.call("desktop.state")["profiles"]["discovery"]["publication"]["rows"]),25)
+        self.profiles_scroll_end(False)
+        self.mcp.batch(click(1100,766), wait(150), shot("publication-pages-last-details-light"))
+        self.profiles_scroll_end()
+        self.mcp.batch(shot("publication-pages-last-footer-light"), click(335,821),
+                       check("profiles.discovery.publication.after",0), check("profiles.pending",False),
+                       check("profiles.discovery.publication.rows.0.account.name","Design studio"))
+        self.profiles_scroll_end(False)
+        self.mcp.batch(click(510,493), check("profiles.discovery.publication.review.phase","cancelled"),
+                       check("profiles.pending",False), check("profiles.error",None), check("account_count",75),
+                       check("reconnect_required_count",0), shot("publication-pages-cancelled-light"))
 
     def test_desktop_profile_enrollment_review_apply_reconnect(self):
         result = self.mcp.call("desktop.start", google_permissions="drive", profile_discovery=True)

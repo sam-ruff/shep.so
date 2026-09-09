@@ -21,24 +21,90 @@ impl Drop for Fixture {
     }
 }
 impl Fixture {
-    pub async fn start(
+    pub async fn start(count: usize, fail_once: bool, delay: std::time::Duration) -> Result<Self> {
+        Self::start_with_accounts(count, 1, fail_once, delay).await
+    }
+    pub async fn start_paged(fail_once: bool, delay: std::time::Duration) -> Result<Self> {
+        Self::start_with_accounts(51, 75, fail_once, delay).await
+    }
+    async fn start_with_accounts(
         count: usize,
+        first_accounts: usize,
         mut fail_once: bool,
         delay: std::time::Duration,
     ) -> Result<Self> {
-        anyhow::ensure!(count <= 60, "fixture bound");
+        anyhow::ensure!(
+            count <= 60 && (1..=75).contains(&first_accounts),
+            "fixture bound"
+        );
         let root = tempfile::tempdir()?;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let url = url::Url::parse(&format!("http://{}/", listener.local_addr()?))?;
         let mut records = Vec::new();
         for n in 0..count {
-            for phase in 0..3 {
-                let id = 10_000 + n as u128 * 3 + phase;
+            let accounts = if n == 0 { first_accounts } else { 1 };
+            let pages = accounts.div_ceil(30);
+            for phase in 0..pages + 2 {
+                // Independent immutable IDs remain deterministic across fixture reopen.
+                let id = if first_accounts == 1 {
+                    10_000 + n as u128 * 3 + phase as u128
+                } else {
+                    1_000_000 + n as u128 * 100 + phase as u128
+                };
+                let mut actions = Vec::new();
+                if phase == 0 {
+                    actions.push(Action::ProfileSetup { complete: false });
+                } else if phase == pages + 1 {
+                    actions.push(Action::ProfileSetup { complete: true });
+                } else {
+                    for index in ((phase - 1) * 30)..(phase * 30).min(accounts) {
+                        let suffix = if index == 0 {
+                            n.to_string()
+                        } else {
+                            format!("{n}-{index}")
+                        };
+                        let name = if index == 0 {
+                            format!("Shared account {n}")
+                        } else {
+                            format!("Shared account {n} / {index:02}")
+                        };
+                        let account: crate::model::Account = serde_json::from_value(
+                            json!({"id":format!("fixture-account-{suffix}"),"name":name,"email":format!("shared-{suffix}@example.test"),"protocol":"Imap","host":"imap.example.test","port":993,"username":format!("shared-{suffix}"),"smtp_host":"smtp.example.test","smtp_port":465}),
+                        )?;
+                        let shared = if index == 0 {
+                            10000 + n as u128
+                        } else {
+                            20000 + index as u128
+                        };
+                        actions.extend(
+                            shep_mail_core::profiles::export_account(
+                                &account,
+                                Uuid::from_u128(shared),
+                            )?
+                            .into_iter()
+                            .map(|c| c.action),
+                        );
+                    }
+                    if phase == 1 {
+                        actions.push(Action::ProfileName {
+                            name: if n == 0 {
+                                "Work".into()
+                            } else {
+                                format!("Personal {n:02}")
+                            },
+                        });
+                        actions.push(Action::Setting {
+                            key: SettingKey::Appearance,
+                            value: json!("Dark"),
+                        });
+                    }
+                }
                 let operation = Operation {
                     format: shep_profile_core::FORMAT.into(),
                     major: 1,
                     minor: 0,
-                    requires: vec!["accounts-v1".into(),
+                    requires: vec![
+                        "accounts-v1".into(),
                         "causal-v1".into(),
                         "settings-v1".into(),
                         "initialization-v1".into(),
@@ -53,34 +119,13 @@ impl Fixture {
                     } else {
                         vec![Uuid::from_u128(id - 1)]
                     },
-                    changes: (if phase == 0 {
-                        vec![Action::ProfileSetup { complete: false }]
-                    } else if phase == 1 {
-                        let account:crate::model::Account=serde_json::from_value(json!({"id":format!("fixture-account-{n}"),"name":format!("Shared account {n}"),"email":format!("shared-{n}@example.test"),"protocol":"Imap","host":"imap.example.test","port":993,"username":format!("shared-{n}"),"smtp_host":"smtp.example.test","smtp_port":465}))?;
-                        let mut actions:Vec<_>=shep_mail_core::profiles::export_account(&account,Uuid::from_u128(10000+n as u128))?.into_iter().map(|c|c.action).collect();
-                        actions.extend([
-                            Action::ProfileName {
-                                name: if n == 0 {
-                                    "Work".into()
-                                } else {
-                                    format!("Personal {n:02}")
-                                },
-                            },
-                            Action::Setting {
-                                key: SettingKey::Appearance,
-                                value: json!("Dark"),
-                            },
-                        ]);
-                        actions
-                    } else {
-                        vec![Action::ProfileSetup { complete: true }]
-                    })
-                    .into_iter()
-                    .map(|action| Change {
-                        action,
-                        extra: Default::default(),
-                    })
-                    .collect(),
+                    changes: actions
+                        .into_iter()
+                        .map(|action| Change {
+                            action,
+                            extra: Default::default(),
+                        })
+                        .collect(),
                     extra: Default::default(),
                 };
                 let bytes = operation.encode()?;
@@ -300,4 +345,51 @@ fn upload_record(body: &[u8]) -> Result<(Value, Vec<u8>)> {
     meta["spaces"] = json!(["appDataFolder"]);
     meta["size"] = json!(record.len().to_string());
     Ok((meta, record))
+}
+
+#[cfg(test)]
+mod page_tests {
+    use super::*;
+    use shep_profile_core::drive::catalog::{Discovery, Phase, Scope};
+    #[tokio::test]
+    async fn paged_fixture_uses_valid_bounded_records_and_seventy_five_accounts() {
+        let fixture = Fixture::start_paged(false, std::time::Duration::ZERO)
+            .await
+            .unwrap();
+        let drive = fixture
+            .connect(NAMESPACE.into(), "drive:fixture")
+            .await
+            .unwrap();
+        let catalog = Discovery::open(
+            fixture.root.path().join("page-catalog.sqlite"),
+            Scope {
+                namespace: NAMESPACE.into(),
+                principal: "drive:fixture".into(),
+            },
+        )
+        .await
+        .unwrap();
+        for _ in 0..1500 {
+            if catalog.state().await.unwrap().phase == Phase::Complete {
+                break;
+            }
+            catalog.advance(&drive).await.unwrap();
+        }
+        let state = catalog.state().await.unwrap();
+        assert_eq!(state.phase, Phase::Complete);
+        assert!(state.error.is_none());
+        assert_eq!(state.profiles, 51);
+        let first = catalog.profiles(None).await.unwrap();
+        assert_eq!(first.len(), 50);
+        assert_eq!(first[0].accounts, 75);
+        assert_eq!(first[0].operations, 5);
+        assert!(first.iter().all(|p| p.initialized && p.conflicts == 0));
+        let second = catalog
+            .profiles(Some(first.last().unwrap().cursor()))
+            .await
+            .unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].name.as_deref(), Some("Personal 50"));
+        catalog.close().await.unwrap();
+    }
 }

@@ -49,33 +49,28 @@ store submissions in TODO.
 
 ## Current continuation
 
-Desktop **Profiles and sync** now binds read-only discovery to the active Google
-grant and shared durable catalog. Pause/retry, saved progress, reopening, rescan,
-compact dark recovery and permission refusal have real iced controls; all **121
-native functional flows pass**. The horizontal tab strip preserves existing compact
-control positions. See [the desktop contract](docs/agents/PROFILE_DESKTOP.md) and
-the completion log for shipping. Code [`9e666a5`](https://github.com/sam-ruff/shep.so/commit/9e666a55582746fa59a1849ecc2d870a4c9d4b3c) is pushed and remotely verified;
-mandatory hooks pass 454 Rust tests. Desktop publication now connects saved accounts/preferences to a frozen review,
-exact staging and tracked Drive uploads. All **123 native functional flows pass**,
-including compact dark review, changed preferences/cancel, pause/browse,
-retry/reopen and account exclusion. Code [`35f11ba`](https://github.com/sam-ruff/shep.so/commit/35f11ba0627621624659455dfebf6f341ea18893) is pushed and remotely verified; normal hooks pass 459 Rust tests.
-See the completion log for evidence and remaining limits.
+Desktop **Profiles and sync** now connects durable discovery, reviewed publication
+and account/preferences enrollment through actual iced controls. It retains
+independent histories, upload identities, frozen reviews, durable receipts,
+reconnect guards and newer local account/preference intent. The previous enrolled
+source checkpoint is [`8f969cd`](https://github.com/sam-ruff/shep.so/commit/8f969cd91d45ac2e4a821c927c360a86e64569cd);
+full evidence and current shipping are in [completion](docs/COMPLETION.md).
 
-Desktop reviewed enrollment is now connected through actual iced controls. It
-copies original records into independently owned history, reviews 50-row pages
-and applies chosen accounts/preferences with durable receipts. Imported accounts
-require reconnect; matching accounts preserve their mail, drafts and passwords.
-Newer local edits/removal win. Backups and credential fallback preserve the guard.
-The current source passes **470 Rust tests**, Clippy, production compilation,
-41 Python checks, 37 parity contracts, strict documentation and all **125 native
-functional flows** (477.553 seconds). Code [`8f969cd`](https://github.com/sam-ruff/shep.so/commit/8f969cd91d45ac2e4a821c927c360a86e64569cd)
-is pushed with exact remote verification; mandatory hooks pass all 470 Rust
-tests. Reviewed captures and shipping evidence are in the completion log and
-`artifacts/desktop-enrollment-shipping.json`.
+The page continuation fixes choices/errors returning a review to page one. Actual
+controls cover 51 profiles and 75 accounts, First/Next/More, second-page exclusion,
+74 guarded imports, details, cancellation and light/compact dark layouts. **128
+native functional scenarios pass across the full run and focused badge rerun**:
+the full run passed 127; the badge test had retained an initial count despite
+read-on-leave changing it. Its corrected current-count check and all four badge
+flows pass. The failed evidence, exact durations and reviewed captures remain in
+completion and `artifacts/logs/profile-pages-*`. Python's 42 checks and the 37
+parity contracts pass; final mandatory hooks and shipping are recorded there.
 
-Next: native large-page controls, then ongoing Flutter/desktop reconciliation,
-automatic first setup, complete portable settings/categories and authenticated
-cross-client access. Credential protection remains an unanswered product choice.
+Next: ongoing Flutter/desktop reconciliation, automatic restoration and first
+setup, complete portable settings/categories and authenticated cross-client
+access. Credential protection remains an unanswered product choice. Keep all 40
+active requests, the earlier performance failure and missing deployment/platform
+configuration visible; this checkpoint does not finish the full product goal.
 
 Flutter profile publication and **Use profile on this device** now have a frozen,
 paged account/settings review, original-record transfer and durable application
