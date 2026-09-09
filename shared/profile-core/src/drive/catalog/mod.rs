@@ -1,5 +1,7 @@
 //! Durable remote discovery, separate from an enrolled device's local history.
+mod export;
 mod progress;
+pub use export::Snapshot;
 mod storage;
 mod worker;
 pub use worker::Discovery;
@@ -111,7 +113,7 @@ pub struct State {
 
 /// Counts cover remote definitions and setting intents, including resets. This does not establish local account
 /// activation, credential availability, enrollment or provider login success.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Profile {
     pub profile: Uuid,
     pub generation: Uuid,

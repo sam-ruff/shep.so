@@ -2,7 +2,8 @@
 /// credential availability and applying a profile to local accounts/settings.
 class DiscoveredProfile {
   DiscoveredProfile.fromJson(Map<String, dynamic> data)
-    : profile = data['profile'] as String,
+    : revision = data['revision'] as int? ?? 0,
+      profile = data['profile'] as String,
       generation = data['generation'] as String,
       name = data['name'] as String?,
       nameConflict = data['name_conflict'] as bool,
@@ -16,7 +17,7 @@ class DiscoveredProfile {
   final String profile, generation;
   final String? name;
   final bool nameConflict, removed, initialized;
-  final int accounts, settings, waiting, ready, conflicts;
+  final int revision, accounts, settings, waiting, ready, conflicts;
   String get cursor => '$profile:$generation';
 }
 

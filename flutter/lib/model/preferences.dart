@@ -51,6 +51,60 @@ class Preferences {
     'tooltips': tooltips,
   };
 
+  /// Apply only explicitly reviewed portable fields. Null is an explicit reset.
+  Preferences applyProfile(Map<String, Object?> changes) {
+    final values = profileSettings();
+    final defaults = const Preferences().profileSettings();
+    for (final entry in changes.entries) {
+      if (!values.containsKey(entry.key)) {
+        throw const FormatException(
+          'This setting needs a newer version of Shep.',
+        );
+      }
+      values[entry.key] = entry.value ?? defaults[entry.key];
+    }
+    T pick<T>(Map<Object?, T> choices, String key) {
+      final value = choices[values[key]];
+      if (value == null) throw FormatException('Invalid profile setting: $key');
+      return value;
+    }
+
+    bool flag(String key) {
+      final value = values[key];
+      if (value is! bool) {
+        throw FormatException('Invalid profile setting: $key');
+      }
+      return value;
+    }
+
+    final lines = values['preview_lines'];
+    if (lines is! int || lines < 0 || lines > 4) {
+      throw const FormatException('Invalid profile preview lines.');
+    }
+    return Preferences(
+      appearance: pick({
+        'Light': ThemeMode.light,
+        'Dark': ThemeMode.dark,
+        'System': ThemeMode.system,
+      }, 'appearance'),
+      leftSwipe: pick({
+        for (final action in MailAction.values) action.name: action,
+      }, 'left_swipe'),
+      rightSwipe: pick({
+        for (final action in MailAction.values) action.name: action,
+      }, 'right_swipe'),
+      previewLines: lines,
+      avatars: flag('sender_pictures'),
+      unified: flag('unified_inbox'),
+      quoteMode: pick({
+        'Collapsed': 'Collapsed',
+        'Expanded': 'Expanded',
+        'LatestOnly': 'Latest only',
+      }, 'reply_display'),
+      tooltips: flag('tooltips'),
+    );
+  }
+
   String encode() => jsonEncode({
     'version': 1,
     'appearance': appearance.name,

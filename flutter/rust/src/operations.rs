@@ -115,6 +115,10 @@ pub enum Request {
         session: uuid::Uuid,
         command: crate::profile_discovery::creation::Command,
     },
+    ProfileEnrollment {
+        session: uuid::Uuid,
+        command: crate::profile_discovery::enrollment::Command,
+    },
     CloseProfileDiscovery {
         session: uuid::Uuid,
     },
@@ -466,6 +470,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             Ok(serde_json::to_value(profile.operations.profile_discovery.open(&db.path,session,access_token,namespace,expected_principal).await?)?)
         }
         Request::ProfileDiscovery { session, command } => profile.operations.profile_discovery.run(session,command).await,
+        Request::ProfileEnrollment { session, command } => profile.operations.profile_discovery.enrollment(profile,session,command).await,
         Request::ProfileCreation { session, command } => profile.operations.profile_discovery.creation(db,session,command).await,
         Request::CloseProfileDiscovery { session } => {
             profile.operations.profile_discovery.close(session).await?;
@@ -523,7 +528,8 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             let accounts=accounts.into_iter().map(|s|serde_json::from_str::<Account>(&s)).collect::<std::result::Result<Vec<_>,_>>()?;
             let mut folders=db.prepare("SELECT account_id,names FROM folders")?;
             let folders=folders.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?.into_iter().map(|(id,s)|Ok((id,serde_json::from_str::<Vec<String>>(&s)?))).collect::<Result<HashMap<_,_>>>()?;
-            Ok(json!({"accounts":accounts,"folders":folders}))
+            let reconnect = db.prepare("SELECT account_id FROM profile_reconnect ORDER BY account_id")?.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(json!({"accounts":accounts,"folders":folders,"reconnect":reconnect}))
         }).await).await,
         Request::SaveSentPreferences{id,policy,folder} => {
             let _guard=profile.operations.account(&id).await;

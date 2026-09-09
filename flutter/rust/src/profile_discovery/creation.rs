@@ -91,7 +91,7 @@ fn write(db: &Connection, review: &Review) -> Result<()> {
     )?;
     Ok(())
 }
-fn account_fingerprint(db: &Connection) -> Result<String> {
+pub(super) fn account_fingerprint(db: &Connection) -> Result<String> {
     let mut digest = Sha256::new();
     let mut statement = db.prepare("SELECT id,settings FROM accounts ORDER BY id")?;
     let mut rows = statement.query([])?;

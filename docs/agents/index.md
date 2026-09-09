@@ -23,6 +23,7 @@ Read the repository's [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/
 - [Durable profile discovery](PROFILE_DISCOVERY.md): saved scans, change replay and isolated remote summaries; client enrollment remains unfinished.
 - [Flutter profile discovery](PROFILE_MOBILE.md): saved Google binding, native session ownership and real discovery controls; enrollment remains open.
 - [Flutter profile publication](PROFILE_PUBLICATION.md): frozen reviews, initialized setup, immutable upload receipts and pause/retry controls.
+- [Flutter profile enrollment](PROFILE_ENROLLMENT.md): independent device history, reviewed account/preferences application and credential reconnect boundaries.
 - [Profile sync handover](PROFILE_SYNC_HANDOVER.md): next-priority OAuth, Rust/Flutter enrollment, portable records, conflicts and verification requirements; implementation remains open.
 - [Limits](limits.md): protocol requirements, storage ceilings and unverified behavior.
 

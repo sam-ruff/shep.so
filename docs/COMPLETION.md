@@ -2181,3 +2181,108 @@ diagnostics intentionally ignored. No hooks were skipped. Shipping logs are
 record is ignored `artifacts/profile-publication-shipping.json`. A documentation
 checkpoint follows in branch history. TODO and handover retain all 40 active
 requests, with enrollment and actual account/preferences application next.
+
+
+## 2026-09-09 — Reviewed Flutter profile enrollment
+
+Flutter can now open an initialized discovered profile, review account connections
+and eight portable preferences, and apply the selected changes on this device.
+Review pages contain at most 50 items; connection details, category switches and
+individual choices remain visible. Pause/Resume and lost-reply recovery retain the
+same account IDs and settings receipt. See [the enrollment contract](agents/PROFILE_ENROLLMENT.md).
+This advances actual client application; continuous synchronization and complete
+cross-client parity remain unfinished.
+
+Shared catalog export returns one original immutable operation, fenced by source
+revision and scope. Native schema 11 copies those records into an independently
+owned editable journal, without cloning device identity or upload queues. Approval
+checks the source, local history revision and frozen account fingerprint. Each
+account application atomically records its connection, independent empty credential
+slot, shared mapping, Reconnect marker and receipt. Existing matching accounts keep
+their credentials and cached mail; changed endpoints require an explicitly selected
+separate account. Newer local changes and removed mappings remain protected.
+
+Imported accounts refuse credential lookup/provider work until reviewed credential
+activation, and remain removable before reconnecting. Preference writes retain
+per-field revisions and the application receipt together. Delta saves and UI edit
+generations preserve unrelated changes, including edits made while a write is held
+or changed away and back. Two actual preference controls tapped before the next
+repaint now merge current state; the saved regression failed before the callback
+fix. Metadata refresh preserves the reader, cached messages and unsaved drafts.
+
+Verification passes 79 mobile Rust tests, 54 shared profile tests, native Clippy,
+125 initial Flutter host tests, clean analysis, the configured Google SDK fixture, 28 WASM
+codec cases with malformed-record rejection, 41 Python tests and 37 parity
+contracts. Native enrollment tests use original production history records and the
+real SQLite application path; control providers are isolated fixtures. These layers
+do not establish fully authenticated Google-to-Flutter interchange, live provider
+success or Apple execution. Final control, packaging and shipping results follow
+below after verification.
+
+Retained failures under ignored `artifacts/profile-enrollment-failures/` include
+old schema expectations and the removal-before-reconnect defect, widget cleanup
+and independent storage ownership, offscreen/ambiguous control locators, rapid
+preference overwrites and the browser completion accessibility omission. The latter
+was painted but missing from the accessibility tree; explicit live-region semantics
+now expose the same visible summary. A final Android rerun was canceled before
+building because Flutter discovery blocked on a stale wireless debugging transport;
+it is not a pass. The host transport was detached and testing resumed on the
+isolated emulator. No phone installation or personal-data automation occurred.
+
+All 40 active requests remain in TODO, including provider OAuth, grouped scheduled
+automatic replies and Linux store submissions. Desktop/browser publication and
+enrollment, ongoing reconciliation, all portable categories, credentials, automatic
+SDK restoration, same-project interchange, Apple/live-provider evidence, VPS
+configuration/deployment and full feature parity remain open. The prior native
+navigation gate still fails at 154.81–162.33 ms against 150 ms; this increment does
+not resolve it. Quality/release definitions remain disabled, documentation CI
+remains enabled, and main and the installed desktop remain separate.
+
+
+Android enrollment passes both named scenarios and four Appium flows; publication
+regressions also pass both named scenarios and four Appium flows. The rapid preference regression failed before the fix and passes through
+real host and Android controls. Review then added a device-inset test: existing
+footer spacing passed a small inset but failed a 60-logical-pixel inset. The new
+SafeArea uses the actual device inset. All 126 final host tests pass, including the larger-inset regression. Its initial
+run also exposed a saved test scroll direction that could not reach an earlier row
+after paging; the helper now scrolls toward that row through real input. Native
+and browser verification follow below. This is not a claim that every navigation
+mode has been run.
+
+
+Final Android verification passes **five named scenarios**: two enrollment, two
+publication and one actual two-store native history/restart scenario. Enrollment
+and publication each pass four Appium flows, **eight total**, with no recorded
+external requests or runtime errors. The final enrollment controls also assert
+footer clearance and both saved rapid preference changes. Android reports are in
+ignored `artifacts/flutter/native/integration-{enrollment,creation,profiles}-result.json`;
+Appium reports are under `artifacts/flutter/{enrollment,creation}-native/`.
+The dedicated emulator was stopped after these runs.
+
+
+Final Flutter Playwright verification passes **eight flows**: four enrollment and
+four publication, with empty runtime-error and external-request reports. All
+preview servers stopped normally. These are Flutter automation surfaces, not a
+claim about the separate hosted browser client's provider parity. Reviewed WebP
+captures under ignored `artifacts/profile-enrollment-reviewed/final/` cover
+light/dark reviews, current/profile values, details, paging/footer controls,
+application retry, paused progress, completion, reconnect status and preserved mail.
+
+
+The production ARM64 release APK builds and passes scoped inspection for the Rust
+and Flutter libraries, bundled fonts/licenses, production package, Internet
+permission and absence of fixture markers. Its digest and checks are in ignored
+`artifacts/profile-enrollment-apk.json`. It is **unsigned**, has no registered Google
+project configuration and was not installed on the phone. All-architecture signed
+distribution and Apple execution remain open. Final Dart/Rust formatting, clean
+Flutter analysis and pinned strict Zensical pass; later shipping documentation is
+built again before pushing.
+
+
+New storage timing is **deferred** because unrelated compilations saturated the
+host during finalization, as required by AGENTS.md. Host observations are saved in
+ignored `artifacts/logs/profile-enroll-bench-host-before.json`. Only benchmark
+compilation was requested; it is not timing evidence. Run the unchanged storage
+benchmark after these jobs settle, and keep the prior native/combined performance
+gate failure active. Functional/protocol/control results above do not imply a new
+latency result or full performance completion.

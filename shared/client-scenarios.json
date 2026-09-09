@@ -217,6 +217,12 @@
       "contract": "An exact short-body match ranks before weaker/newer typo alternatives; retain Unicode, literal query safety, folder/flag scopes and stable 50-row paging. Captured selection uses the same order. Compute exact FTS ranking once per query, with SQLite owning intermediate rows instead of UI arrays. Global unread-account counts should use a covering index without loading mail rows or sorting account groups.",
       "mobile": "OPEN: full desktop fuzzy/relevance behavior and bounded cache/performance parity. Current native prefix FTS/paging remains covered by Rust cache tests; desktop query-plan guard, tests/search.rs, tests/selections.rs and native search/sort controls cover the reference.",
       "browser": "OPEN: full fuzzy/relevance parity. Keep current worker query/paging and captured-selection controls; the native SQLite materialization change does not implement browser ranking."
+    },
+    {
+      "id": "reviewed-profile-enrollment",
+      "contract": "Copy original authenticated profile records into independent device history; freeze bounded account/settings reviews; keep local mail, drafts, newer edits and removed-account intent; changed endpoints require a separate connection. Imported accounts require device credential activation. Persist account receipts and per-field preference revisions so pause, disconnect, restart and lost replies cannot repeat imports or overwrite newer intent.",
+      "mobile": "Native schema11 enrollment/source/account/reconnect tests; profile_settings_test.dart and profile_application_test.dart persistence/ABA/lost receipt; profile_enrollment_test.dart controller generations/category choices; profile_enrollment_controls_test.dart and profile_enrollment_android_test.dart real review/paging/retry/pause/reconnect controls; profile_enrollment.mjs Playwright/Appium. Execution and shipping are recorded separately in COMPLETION. OPEN: complete authenticated FFI/Google interchange, automatic enrollment, continuous reconciliation, conflicts/shared removal, all portable categories, protected credentials and Apple/live verification.",
+      "browser": "OPEN: desktop and browser enrollment/application. Preserve shared original-record export, codec/history and existing protected browser beta; preview controls do not establish hosted-client parity."
     }
   ]
 }

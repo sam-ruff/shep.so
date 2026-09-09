@@ -13,6 +13,7 @@ import 'accounts.dart';
 import 'credentials.dart';
 import 'drafts.dart';
 import 'outgoing.dart';
+import 'profile_enrollment.dart';
 
 Map<String, dynamic> _decode(String data) =>
     jsonDecode(data) as Map<String, dynamic>;
@@ -23,6 +24,7 @@ class NativeRepository
         SelectionRepository,
         MailRepository,
         AccountRepository,
+        ProfileAccountRepository,
         DraftRepository,
         ForwardRepository,
         OutgoingRepository,
@@ -121,7 +123,9 @@ class NativeRepository
           .toList();
 
   @override
-  Future<void> initialize() async {
+  Set<String> reconnectAccounts = {};
+  @override
+  Future<void> refreshProfileAccounts() async {
     final state = await call({'op': 'accounts'}) as Map<String, dynamic>;
     mailAccounts = (state['accounts'] as List)
         .map((a) => MailAccount.fromJson(a))
@@ -129,6 +133,14 @@ class NativeRepository
     folderNames = (state['folders'] as Map<String, dynamic>).map(
       (k, v) => MapEntry(k, (v as List).cast<String>()),
     );
+    reconnectAccounts = (state['reconnect'] as List? ?? const [])
+        .cast<String>()
+        .toSet();
+  }
+
+  @override
+  Future<void> initialize() async {
+    await refreshProfileAccounts();
     pendingCredentialCleanup =
         (await call({'op': 'credential_cleanup'}) as List).length;
     savedDrafts = (await call({'op': 'drafts'}) as List)
@@ -147,6 +159,9 @@ class NativeRepository
     );
     return result;
   }
+
+  Future<dynamic> profileEnrollment(Map<String, Object?> command) =>
+      _accountWrite(() => callBackground(command));
 
   @override
   int pendingCredentialCleanup = 0;

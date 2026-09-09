@@ -7,7 +7,7 @@ from pathlib import Path
 import zipfile
 
 ABIS = ('arm64-v8a', 'armeabi-v7a', 'x86_64')
-MARKERS = (b'FixtureProfileCreation', b'profile_creation_main.dart', b'FixtureProfileDiscovery', b'drive:fixture-owner', b'profile_discovery_main.dart', b'ReaderActionsRepository', b'Synthetic preparation failure. Retry Forward.', b'delayed-reader', b'ForwardFixtureRepository', b'Synthetic lost forward acknowledgment', b'END OF COMPLETE ORIGINAL', b'SHEP-FIXTURE-GENERATION', b'Shep formatted reader fixture', b'Synthetic first preparation failure', b'OBSOLETE-MIME-ALTERNATIVE', b'Find fixture sentinel.', b'ConnectionFixtureRepository', b'Synthetic activation failure',
+MARKERS = (b'FixtureProfileEnrollment', b'profile_enrollment_main.dart', b'EnrollmentPreferences', b'FixtureProfileCreation', b'profile_creation_main.dart', b'FixtureProfileDiscovery', b'drive:fixture-owner', b'profile_discovery_main.dart', b'ReaderActionsRepository', b'Synthetic preparation failure. Retry Forward.', b'delayed-reader', b'ForwardFixtureRepository', b'Synthetic lost forward acknowledgment', b'END OF COMPLETE ORIGINAL', b'SHEP-FIXTURE-GENERATION', b'Shep formatted reader fixture', b'Synthetic first preparation failure', b'OBSOLETE-MIME-ALTERNATIVE', b'Find fixture sentinel.', b'ConnectionFixtureRepository', b'Synthetic activation failure',
            b'Synthetic lost credential save acknowledgment', b'A little room for good ideas', b'Native durable draft',
            b'fixture-only-not-a-real-password', b'test/support/preview_repository.dart',
            b'shep-e2e-first.txt', b'Pending text survives removing a file.',

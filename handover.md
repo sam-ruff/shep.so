@@ -49,40 +49,40 @@ store submissions in TODO.
 
 ## Current continuation
 
-Flutter **Profiles and sync → Create profile** now prepares a frozen account and
-settings review, pages account details, and publishes initialized immutable history
-to private Google storage. Pause/retry/close retain exact requests and file IDs;
-tracked own-upload receipts commit before the local queue confirms. The shared
-initialization marker prevents a partial setup being presented as ready. See
-[the publication contract](docs/agents/PROFILE_PUBLICATION.md).
+Flutter profile publication and **Use profile on this device** now have a frozen,
+paged account/settings review, original-record transfer and durable application
+receipts. Imported accounts receive independent credential slots and show
+**Reconnect required**; matching accounts preserve their credentials, mail and
+drafts. Changed endpoints require an explicitly selected separate account. Device
+preference revisions and UI generations preserve newer edits. See the
+[publication contract](docs/agents/PROFILE_PUBLICATION.md) and
+[enrollment contract](docs/agents/PROFILE_ENROLLMENT.md).
 
-Publication code [`184b98a`](https://github.com/sam-ruff/shep.so/commit/184b98afafcf53bc3fd7c32a497fad04746304bf) is **pushed** with exact remote verification.
-Mandatory hooks pass 446 root/shared Rust tests; 52 core, 74 mobile Rust,
-111 Flutter host, the configured SDK fixture, 28 WASM cases, 41 Python checks,
-36 parity contracts and strict docs pass. Seven named Android scenarios cover
-publication, discovery, consent and real native history. Eight Appium and eight
-Flutter Playwright flows cover publication/discovery. The unsigned production
-ARM64 APK passes scoped inspection; it has no registered Google project and was
-not installed on the phone. Detailed evidence and retained failures are in the
-latest completion entry. The dedicated emulator and preview servers are stopped.
+The enrollment checkpoint passes 126 Flutter host tests, 79 mobile Rust tests,
+54 shared-profile tests, the configured SDK fixture, 28 WASM cases, 41 Python
+checks and 37 parity contracts. Final controls pass five named Android scenarios
+(enrollment, publication and actual native history/restart), eight Appium flows
+and eight Flutter Playwright flows. The emulator and preview servers are stopped.
+The completion log records reviewed captures, retained failures, packaging and
+shipping evidence. All providers in control fixtures are isolated. No live Google,
+Apple, continuous sync or fully authenticated cross-client interchange is implied.
 
-All providers in control fixtures are isolated. No live Google, Apple,
-enrollment or continuous sync success is implied. Continue actual enrollment and
-account/preferences application next; a pushed publication checkpoint does not
-complete the full product goal.
+The production ARM64 APK passes scoped fixture/library/package inspection. It is
+unsigned, has no registered Google project and was not installed on the phone.
+New storage timing is deferred while unrelated compilations saturate the host;
+benchmark compilation alone is not timing evidence. Rerun it after the host settles.
 
-The current unchanged 100,000-message storage benchmark passes (Inbox p95 6.28 ms;
-search p95 36.10 ms), but the earlier native
-navigation and combined performance gate still fail at 154.81–162.33 ms against
-150 ms. Do not weaken that budget, call the host idle or claim this increment fixes
-it. Earlier native input failures during concurrent compilation also remain R63.
+The earlier native navigation and combined performance gate still fail at
+154.81–162.33 ms against 150 ms. Do not weaken that budget or claim a storage
+benchmark fixes it. Earlier native input failures during concurrent compilation
+also remain R63.
 
 ## Restart order
 
 1. **Highest priority:** continue [OAuth and shared profiles](docs/agents/PROFILE_SYNC_HANDOVER.md).
-   Connect bounded reviewed enrollment and real account/preferences application on
-   Flutter, plus desktop publication/enrollment, then complete
-   category controls and ongoing reconciliation. Preserve tracked own-upload identities and the causal completion barrier for
+   Continue desktop publication/enrollment and Flutter ongoing reconciliation,
+   category controls and automatic restoration. Close the authenticated-source to
+   actual Flutter FFI integration gap without adding a production login bypass. Preserve tracked own-upload identities and the causal completion barrier for
    multi-record setup.
    Copy original records into independently owned device history, never clone a
    remote observation database/device UUID. Account application preserves mail and
@@ -107,7 +107,9 @@ it. Earlier native input failures during concurrent compilation also remain R63.
 ## Verification and artifacts
 
 Run relevant saved scenarios from [client testing](docs/CLIENT_TESTING.md); never
-substitute direct controller calls for real UI controls. Publication checks are
+substitute direct controller calls for real UI controls. Enrollment checks are
+`python3 scripts/clients/android_e2e.py --device emulator-5554 --enrollment-only`
+and `python3 scripts/clients/flutter_web_e2e.py --enrollment`. Publication checks are
 `python3 scripts/clients/android_e2e.py --device emulator-5554 --creation-only` and
 `python3 scripts/clients/flutter_web_e2e.py --creation`. Discovery checks are
 `python3 scripts/clients/android_e2e.py --device emulator-5554 --discovery-only` and

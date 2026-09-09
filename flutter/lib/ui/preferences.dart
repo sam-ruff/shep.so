@@ -42,7 +42,9 @@ class PreferencesView extends StatelessWidget {
         onChanged: (v) {
           if (v != null) {
             workspace.savePreferences(
-              left ? p.copy(leftSwipe: v) : p.copy(rightSwipe: v),
+              left
+                  ? workspace.preferences.copy(leftSwipe: v)
+                  : workspace.preferences.copy(rightSwipe: v),
             );
           }
         },
@@ -75,7 +77,11 @@ class PreferencesView extends StatelessWidget {
               value: p.appearance,
               underline: const SizedBox(),
               onChanged: (v) {
-                if (v != null) workspace.savePreferences(p.copy(appearance: v));
+                if (v != null) {
+                  workspace.savePreferences(
+                    workspace.preferences.copy(appearance: v),
+                  );
+                }
               },
               items: ThemeMode.values
                   .map(
@@ -111,7 +117,9 @@ class PreferencesView extends StatelessWidget {
               underline: const SizedBox(),
               onChanged: (v) {
                 if (v != null) {
-                  workspace.savePreferences(p.copy(previewLines: v));
+                  workspace.savePreferences(
+                    workspace.preferences.copy(previewLines: v),
+                  );
                 }
               },
               items: List.generate(
@@ -123,13 +131,15 @@ class PreferencesView extends StatelessWidget {
           SwitchListTile(
             title: const Text('Sender pictures'),
             value: p.avatars,
-            onChanged: (v) => workspace.savePreferences(p.copy(avatars: v)),
+            onChanged: (v) => workspace.savePreferences(
+              workspace.preferences.copy(avatars: v),
+            ),
           ),
           SwitchListTile(
             title: const Text('Unified inbox'),
             value: p.unified,
             onChanged: (v) {
-              workspace.savePreferences(p.copy(unified: v));
+              workspace.savePreferences(workspace.preferences.copy(unified: v));
               workspace.navigate(
                 'Inbox',
                 inAccount: v ? null : workspace.accounts.firstOrNull,
@@ -144,7 +154,11 @@ class PreferencesView extends StatelessWidget {
               value: p.quoteMode,
               underline: const SizedBox(),
               onChanged: (v) {
-                if (v != null) workspace.savePreferences(p.copy(quoteMode: v));
+                if (v != null) {
+                  workspace.savePreferences(
+                    workspace.preferences.copy(quoteMode: v),
+                  );
+                }
               },
               items: [
                 'Collapsed',
@@ -166,7 +180,11 @@ class PreferencesView extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.mail_outline),
                 title: Text(account.name),
-                subtitle: Text(account.email),
+                subtitle: Text(
+                  workspace.needsReconnect(account.id)
+                      ? '${account.email} · Reconnect required'
+                      : account.email,
+                ),
                 trailing: workspace.repository is SentPreferencesRepository
                     ? TextButton(
                         onPressed: () => Navigator.push(
@@ -270,6 +288,7 @@ class PreferencesView extends StatelessWidget {
                   builder: (_) => ProfileDiscoveryScreen(
                     discovery: discovery,
                     preferences: () => workspace.preferences,
+                    device: workspace.profileApplication,
                   ),
                 ),
               ),
