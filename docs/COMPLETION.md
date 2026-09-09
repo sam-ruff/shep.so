@@ -32,9 +32,22 @@ The combined pre-push gate on `c0ebf3f` passes: **84 Python tests** (seven
 skipped), the strict documentation build, and **18 native scenarios** in 86 s
 covering backup history/all/formats, removal and connection reviews,
 duplicate-address labels and sidebar flows (`artifacts/logs/e2e-main-c0ebf3f.log`).
+Sam confirmed the push at 22:00; source `c414227` (the docs receipt commit on
+top of `c0ebf3f`) is on `origin/main` with remote equality verified.
 Limitations: removal rows lack light and compact-dark captures,
 duplicates with identical or empty names stay indistinguishable, and
 lifecycle/Google channel ownership remains under audit.
+
+The aggregate folder account chooser lane (`1abc4b9`, integrated by an agent
+as `fd67cae` with 937 hook executions, 86 folder tests, 84 Python tests and 14
+native folder-control scenarios in `2f98b1c42870`, `4af813da2222`,
+`41f3623adc32`, reviewed light and compact-dark pickers) is merged into `main`
+as `d99b111` with **944 hook executions** passing on the merged tree. The
+merged sidebar now carries both the duplicate-address labels and the
+`FolderSelection` context; on `d99b111` 84 Python tests and **19 native
+folder-control, duplicate-address and sidebar scenarios** pass in 106 s
+(`artifacts/logs/e2e-main-d99b111.log`). The push is held while the mobile
+session merges `c414227` into its branch.
 
 ## Backup history, encrypted export and ranked scratch — consolidation checkpoint
 
