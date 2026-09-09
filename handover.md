@@ -12,8 +12,10 @@ The user now explicitly requests independent agents/worktrees and primary-agent
 integration into main. Active lanes live under ignored `artifacts/worktrees/`:
 `compact-mail` (refresh, compact rows, delete selection), `multiple-backups`
 (Local/Drive first, then remote providers), and `native-tray` (close lifecycle
-first, then platform trays). Keep each Cargo target separate. Coordinate quiet
-native windows; coding continues while builds are paused.
+first, then platform trays). Keep each Cargo target separate and builds capped at
+four jobs. Isolated correctness-only native flows can run alongside unrelated
+builds; latency and renderer pixel measurements need a quiet window. Never relax
+budgets to accommodate host load.
 
 The primary workspace connects continuous profile publication/application and
 per-field preference merging, shipped in `bd50c52`. Refresh lane `f111282` was

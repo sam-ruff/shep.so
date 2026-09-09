@@ -15,9 +15,12 @@ the entire TODO list. Assign independent feature lanes, with the primary agent
 owning integration and pushes to `main`. Each lane must add relevant tests,
 review native visual evidence where applicable, and report exact commits,
 verification and remaining limitations before integration. Keep each worktree's
-Cargo target separate, preserve sibling work, and coordinate native E2E windows
-so builds do not run during native tests. Parallel coding can continue during
-those windows. Do not bypass hooks or mark work complete before verified shipping.
+Cargo target separate and cap its builds at four jobs. Isolated correctness-only
+native flows may run alongside unrelated capped builds; every harness owns its
+display, credentials fixture and files. Reserve quiet windows for latency or
+renderer pixel measurements, and never relax a timeout or budget because a host
+is busy. Parallel coding continues throughout. Do not bypass hooks or mark work
+complete before verified shipping.
 
 ## Product direction
 
