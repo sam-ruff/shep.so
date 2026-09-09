@@ -2334,3 +2334,11 @@ that still called all Flutter enrollment unfinished were corrected. All 40 activ
 requests remain in TODO. Native performance measurements were omitted on the busy
 host; the earlier 150 ms navigation gate still fails. No phone installation, main
 merge, VPS deployment or quality/release CI enablement is part of this checkpoint.
+
+
+Desktop discovery code [`9e666a5`](https://github.com/sam-ruff/shep.so/commit/9e666a55582746fa59a1849ecc2d870a4c9d4b3c) is pushed to `feat/mobile-web-clients`; exact remote
+verification matched that commit. Normal hooks pass formatting, Clippy and **454
+Rust tests**, with only two opt-in personal-account diagnostics ignored. The
+production configuration also passes `cargo check --lib` without test-support.
+Shipping and gate logs are under `artifacts/logs/desktop-profile-*`. This receipt
+delivers the discovery increment, not full profile sync or product parity.

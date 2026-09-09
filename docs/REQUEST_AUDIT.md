@@ -601,3 +601,9 @@ and the completion log. Desktop publication/enrollment/application, native
 large-page controls, continuous sync and all previously recorded parity gaps stay
 active. The corrected Flutter enrollment statuses preserve remaining lifecycle,
 authenticated interchange and credential gaps. Shipping is recorded separately.
+
+
+R08/R10/R75/R02/R49/desktop-main:R92 shipping: desktop discovery [`9e666a5`](https://github.com/sam-ruff/shep.so/commit/9e666a55582746fa59a1849ecc2d870a4c9d4b3c) is pushed
+and remotely verified. Mandatory hooks pass 454 Rust tests (two personal live
+checks ignored), alongside the recorded 121 native flows, 41 Python checks,
+37 parity contracts and strict docs build. All 40 active requests remain.
