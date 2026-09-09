@@ -49,14 +49,23 @@ store submissions in TODO.
 
 ## Current continuation
 
-The desktop ongoing-sync engine is now implemented as a **prerequisite**, with
-12 new storage/provider regressions. Code [`ecd98c5`](https://github.com/sam-ruff/shep.so/commit/ecd98c59254d59b270ec0ef521aa6e70fff29bd6) is pushed with exact remote verification; normal hooks pass 483 Rust tests. It is not connected to automatic scheduling,
-subscription creation or Preferences controls. See
-[reconciliation](docs/agents/PROFILE_RECONCILIATION.md) for its receipt/cursor
-contracts, concrete next wiring steps and validation. The profile-focused run
-passes 41 checks; all 10 existing native profile flows pass, with reviewed captures. Final shipping verification is recorded in completion. Keep all
-40 requests active. Do not present this engine checkpoint as continuous sync.
+The current working tree connects reviewed desktop ongoing preference sync:
+completed publication/enrollment offers **Sync these preferences**, explicit
+master/field controls, background scheduling outside Preferences, status and
+retry. Native controls verify a remote change while searching Mail, local edits
+with a field paused, lost-upload recovery and compact layouts. A seven-preference
+publication has its own real controls. The surrounding 22 profile/Google/
+Preferences flows pass (221.987 seconds), and both final wording/control flows
+pass (39.962 seconds). Mandatory gates and shipping are pending; see [completion](docs/COMPLETION.md) for the final receipts.
 
+Recovery now proves acknowledged originals after partial catalog loss, with a
+full inventory scan whenever an owner opens/reconnects. A changed Google project's
+empty inventory cannot authorize upload from old cached proof. Tests preserve
+reverted edits, queued identities, provider saturation and Pause during Google
+lifecycle changes. See [the contract](docs/agents/PROFILE_RECONCILIATION.md).
+All 40 requests remain active. Checked conflict resolution, complete fields/
+categories/accounts, ongoing Flutter/browser integration and automatic setup/
+restoration are still unfinished.
 
 Desktop **Profiles and sync** now connects durable discovery, reviewed publication
 and account/preferences enrollment through actual iced controls. It retains
@@ -115,17 +124,15 @@ also remain R63.
 
 ## Restart order
 
-1. **Highest priority:** continue [OAuth and shared profiles](docs/agents/PROFILE_SYNC_HANDOVER.md).
-   Verify partial catalog-loss/missing-remote-ancestry recovery before enabling
-   automatic work. The existing rebuild regression deletes the whole observation
-   directory while remote originals remain available. Then connect the verified
-   reconciliation runner to reviewed subscription creation,
-   authenticated background scheduling and Preferences pause/field/retry/conflict
-   controls; preserve shared ownership with publication/enrollment. Cover newer
-   native preference edits during remote application and add saved native flows.
-   Then connect Flutter reconciliation, category controls and automatic restoration. Close the authenticated-source to
-   actual Flutter FFI integration gap without adding a production login bypass. Preserve tracked own-upload identities and the causal completion barrier for
-   multi-record setup.
+1. **Highest priority:** finish recording and pushing the current verified
+   ongoing-sync controls, then continue [OAuth/shared profiles](docs/agents/PROFILE_SYNC_HANDOVER.md).
+   Implement checked, paged conflict resolution with durable exact requests and
+   newer local intent protection; extend Flutter reconciliation with native and
+   Playwright controls. Continue automatic restoration/first setup, complete
+   portable settings/categories, account lifecycle and authenticated interchange.
+   Do not turn a missing remote original or another project's empty app-data
+   space into successful setup. Preserve full rescan on owner reopen, known
+   original verification, active-grant ownership and shared review serialization.
    Copy original records into independently owned device history, never clone a
    remote observation database/device UUID. Account application preserves mail and
    drafts, uses explicit mappings and requires reviewed credential activation when

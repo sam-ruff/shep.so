@@ -1,9 +1,10 @@
 //! Persistent device synchronization state. Local edits and remote application
 //! receipts stay in the mail database; immutable operations stay in history.
+pub mod control;
 pub mod runner;
 use serde::{Deserialize, Serialize};
 use shep_profile_core::{Change, SettingKey, history::Binding};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -28,6 +29,12 @@ pub struct Seed {
     pub device: Uuid,
     pub name: String,
     pub history_revision: u64,
+    /// Revisions captured by the completed review; checked atomically at setup.
+    #[serde(default)]
+    pub baseline: Option<BTreeMap<SettingKey, u64>>,
+    /// Explicit newer/kept local intent, including a reverted value.
+    #[serde(default)]
+    pub local_intent: BTreeSet<SettingKey>,
     /// Only preferences accepted in the completed publication/enrollment review.
     /// None represents a field absent from that known history.
     pub fields: BTreeMap<SettingKey, Option<Change>>,

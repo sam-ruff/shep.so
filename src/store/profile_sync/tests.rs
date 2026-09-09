@@ -48,6 +48,8 @@ fn shared(b: &Binding) -> Journal {
 }
 async fn subscribe(db: &Store, b: &Binding, j: &Journal) -> Subscription {
     let seed = Seed {
+        baseline: None,
+        local_intent: Default::default(),
         binding: b.clone(),
         device: j.state().unwrap().device,
         name: "Work".into(),
@@ -345,6 +347,8 @@ async fn different_principals_cannot_share_the_active_subscription_or_pending_re
     subscribe(&db, &first, &history).await;
     let other = db
         .profile_sync_seed(Seed {
+            baseline: None,
+            local_intent: Default::default(),
             binding: second.clone(),
             device: Uuid::new_v4(),
             name: "Other".into(),
@@ -439,6 +443,8 @@ async fn pausing_a_profile_does_not_authorize_switching_its_workspace() {
     let second = binding();
     let other = db
         .profile_sync_seed(Seed {
+            baseline: None,
+            local_intent: Default::default(),
             binding: second.clone(),
             device: Uuid::new_v4(),
             name: "Other setup".into(),
@@ -462,4 +468,53 @@ async fn pausing_a_profile_does_not_authorize_switching_its_workspace() {
     db.profile_sync_enable(first.storage_key().unwrap(), paused.revision, true)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn reviewed_setup_captures_reverted_intent_atomically_and_preserves_saved_choices() {
+    let db = Store::memory().unwrap();
+    let b = binding();
+    let history = shared(&b);
+    let baseline = db
+        .run(|db| Ok(profile_preferences::state(db)?.revisions))
+        .await
+        .unwrap();
+    appearance(&db, Appearance::Dark).await;
+    appearance(&db, Appearance::System).await;
+    let seed = Seed {
+        binding: b.clone(),
+        device: history.state().unwrap().device,
+        name: "Reviewed".into(),
+        history_revision: history.state().unwrap().revision,
+        baseline: Some(baseline),
+        local_intent: Default::default(),
+        fields: BTreeMap::from([(
+            SettingKey::Appearance,
+            Some(change(SettingKey::Appearance, "System")),
+        )]),
+    };
+    let subscription = db.profile_sync_seed(seed.clone()).await.unwrap();
+    assert!(!subscription.enabled);
+    assert_eq!(subscription.pending, 1);
+    let key = b.storage_key().unwrap();
+    let enabled = db
+        .profile_sync_enable(key.clone(), subscription.revision, true)
+        .await
+        .unwrap();
+    let queued = db
+        .profile_sync_prepare_edit(key.clone(), SettingKey::Appearance)
+        .await
+        .unwrap()
+        .unwrap();
+    let reseeded = db.profile_sync_seed(seed).await.unwrap();
+    assert_eq!(reseeded.revision, enabled.revision);
+    assert!(reseeded.enabled);
+    assert_eq!(
+        db.profile_sync_prepare_edit(key, SettingKey::Appearance)
+            .await
+            .unwrap()
+            .unwrap()
+            .operation,
+        queued.operation
+    );
 }

@@ -1053,6 +1053,7 @@ impl App {
                     self.cancel_backup_save(request);
                     self.publication_save_failed(request);
                     self.enrollment_save_failed(request);
+                    self.sync_save_failed(request);
                     if self.confirm_save == Some(request) {
                         self.confirm_save = None;
                     }
@@ -1090,6 +1091,7 @@ impl App {
                     self.continue_backup_request(request);
                     self.publication_saved(request);
                     self.enrollment_saved(request);
+                    self.sync_saved(request);
                     if self
                         .pending_google_login
                         .as_ref()
@@ -1271,6 +1273,9 @@ impl App {
                 Event::Error(text) => {
                     self.notice(text, true);
                     self.pending_details.clear();
+                }
+                Event::ProfileSync(grant, observation, snapshot) => {
+                    self.sync_background(grant, observation, snapshot)
                 }
                 Event::Profiles(panel, serial, result) => {
                     self.profile_result(panel, serial, result)

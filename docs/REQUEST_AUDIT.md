@@ -679,3 +679,13 @@ contracts, production compilation and strict docs pass. Partial catalog-loss and
 missing-remote-ancestry recovery need additional coverage before automatic sync
 is exposed; the existing full observation-directory rebuild test retains all
 remote originals. Full scheduling/control/client integration remains open.
+
+
+2026-09-09 connected ongoing-profile continuation (R02/R49/R75/desktop-main:R92,
+R63/R73): completed desktop reviews now create paused sync choices; explicit
+master/field controls drive an authenticated background owner outside Preferences.
+Recovery covers partial inventory loss and a changed Google project. Native
+controls cover background application, local edits, pause/resume, lost-upload
+retry and published seven-field choices. The completion entry records final
+checks/shipping. Conflict resolution, remaining categories/settings/accounts and
+Flutter/browser equivalents stay open. No active request is removed.

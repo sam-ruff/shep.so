@@ -1,5 +1,6 @@
 pub mod enrollment;
 pub mod publication;
+pub mod sync;
 use super::*;
 use crate::profiles::discovery::{Action as ProfileAction, Grant, Observation, Request};
 use iced::{
@@ -11,6 +12,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Sync(sync::Message),
     Publication(publication::Message),
     Enrollment(enrollment::Message),
     Namespace(String),
@@ -24,6 +26,7 @@ pub enum Message {
 }
 
 pub(super) struct Profiles {
+    sync: sync::Sync,
     publication: publication::Publication,
     enrollment: enrollment::Enrollment,
     panel: Uuid,
@@ -43,6 +46,7 @@ impl Default for Profiles {
         // randomness and other credential/crypto work out of iced updates.
         static NEXT_PANEL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
+            sync: Default::default(),
             publication: Default::default(),
             enrollment: Default::default(),
             panel: Uuid::from_u128(
@@ -122,6 +126,7 @@ impl App {
     pub(super) fn profile_message(&mut self, message: Message) {
         self.profile_grant_changed();
         match message {
+            Message::Sync(message) => self.sync_message(message),
             Message::Enrollment(message) => self.enrollment_message(message),
             Message::Publication(message) => self.publication_message(message),
             Message::Namespace(value) => {
@@ -205,8 +210,15 @@ impl App {
             return;
         }
         let (_, action) = self.profiles.pending.take().unwrap();
+        if let ProfileAction::Sync(command) = action {
+            self.sync_result(command, result);
+            return;
+        }
         match result {
             Ok(observation) => {
+                if let Some(sync) = &observation.sync {
+                    self.profiles.sync.observe(Arc::new(sync.clone()));
+                }
                 if matches!(action, ProfileAction::Load) {
                     if !self.profiles.edited {
                         self.profiles.namespace = observation.namespace.clone();
@@ -244,6 +256,7 @@ impl App {
                 self.profile_pump();
                 self.publication_pump();
                 self.enrollment_pump();
+                self.sync_pump();
             }
             Err(error) => {
                 self.profiles.error = Some(error);
@@ -252,6 +265,9 @@ impl App {
         }
     }
     pub(super) fn profile_settings(&self) -> Element<'_, super::Message> {
+        if self.profiles.sync.visible {
+            return self.sync_view();
+        }
         if self.profiles.enrollment.visible {
             return self.enrollment_view();
         }
@@ -261,6 +277,11 @@ impl App {
         let p = &self.profiles;
         let busy = p.pending.is_some();
         let open = p.observation.state.is_some();
+        let finished = p
+            .observation
+            .state
+            .as_ref()
+            .is_some_and(|s| s.phase == Phase::Complete && s.error.is_none());
         let control = |label: &'static str, action, enabled: bool| {
             button(text(label).size(12))
                 .padding([12, 16])
@@ -293,13 +314,17 @@ impl App {
                             SettingsTab::Accounts,
                             "Google connection"
                         )),
+                    control(
+                        "Ongoing preference sync",
+                        Message::Sync(sync::Message::Open),
+                        !busy
+                    ),
                 ]
                 .spacing(8)
                 .wrap(),
             );
         } else {
             let state = p.observation.state.as_ref().unwrap();
-            let finished = state.phase == Phase::Complete && state.error.is_none();
             body = body.push(
                 row![
                     control(
@@ -393,27 +418,44 @@ impl App {
                     ),
                 );
             }
-            body = body.push(
-                row![
-                    control(
-                        "First page",
-                        Message::Page(true),
-                        !busy && p.observation.after.is_some()
-                    ),
-                    control(
-                        "Next page",
-                        Message::Page(false),
-                        !busy && p.observation.rows.len() == 50
-                    ),
-                ]
-                .spacing(8),
-            );
-            if finished {
-                body = body.push(control(
-                    "Publish this device's setup",
-                    Message::Publication(publication::Message::Open),
+            let mut pages = row![
+                control(
+                    "First page",
+                    Message::Page(true),
+                    !busy && p.observation.after.is_some()
+                ),
+                control(
+                    "Next page",
+                    Message::Page(false),
+                    !busy && p.observation.rows.len() == 50
+                ),
+            ]
+            .spacing(8);
+            if !finished && p.error.is_none() {
+                pages = pages.push(control(
+                    "Ongoing preference sync",
+                    Message::Sync(sync::Message::Open),
                     !busy,
                 ));
+            }
+            body = body.push(pages.wrap());
+            if finished {
+                body = body.push(
+                    row![
+                        control(
+                            "Publish this device's setup",
+                            Message::Publication(publication::Message::Open),
+                            !busy
+                        ),
+                        control(
+                            "Ongoing preference sync",
+                            Message::Sync(sync::Message::Open),
+                            !busy
+                        ),
+                    ]
+                    .spacing(8)
+                    .wrap(),
+                );
             }
             if p.observation.enrollment.review.is_some() {
                 body = body.push(control(
@@ -424,11 +466,15 @@ impl App {
             }
         }
         if let Some(error) = &p.error {
-            body = body.push(text(error).size(12)).push(control(
-                "Retry discovery",
-                Message::Retry,
-                !busy,
-            ));
+            let mut retry = row![control("Retry discovery", Message::Retry, !busy)].spacing(8);
+            if open && !finished {
+                retry = retry.push(control(
+                    "Ongoing preference sync",
+                    Message::Sync(sync::Message::Open),
+                    !busy,
+                ));
+            }
+            body = body.push(text(error).size(12)).push(retry.wrap());
         }
         self.settings_card(
             "Profiles and sync",
@@ -439,14 +485,14 @@ impl App {
     pub(super) fn profile_observation(&self) -> serde_json::Value {
         serde_json::json!({"pending":self.profiles.pending.is_some(), "running":self.profiles.running,
             "enrollment_running":self.profiles.enrollment.running,"enrollment_visible":self.profiles.enrollment.visible,"publication_running":self.profiles.publication.running, "publication_visible":self.publication_visible(), "loaded":self.profiles.loaded, "namespace":self.profiles.namespace,
-            "error":self.profiles.error, "discovery":*self.profiles.observation})
+            "sync":*self.profiles.sync.observation,"sync_visible":self.profiles.sync.visible,"sync_master":self.profiles.sync.master,"sync_fields":self.profiles.sync.fields,"sync_error":self.profiles.sync.error, "error":self.profiles.error, "discovery":*self.profiles.observation})
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn app() -> (App, tokio::sync::mpsc::Receiver<Command>) {
+    pub(super) fn app() -> (App, tokio::sync::mpsc::Receiver<Command>) {
         let (mut app, _) = App::new();
         let (tx, rx) = engine::CommandSender::profile_test_channel();
         app.tx = Some(tx);

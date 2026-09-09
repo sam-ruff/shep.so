@@ -120,7 +120,7 @@ impl Store {
             ensure!(tx.query_row("SELECT json_type(source_accounts)='array' FROM profile_publications WHERE id=?",[id.to_string()],|r|r.get::<_,bool>(0))?,"The saved account list cannot be read. Repair the local configuration before publishing.");
             let accounts: u64 = tx.query_row("SELECT json_array_length(source_accounts) FROM profile_publications WHERE id=?", [id.to_string()], |r|r.get::<_,i64>(0))?.try_into()?;
             let review = Review { id, binding: Binding { namespace: scope.namespace, principal: scope.principal, profile: id, generation: Uuid::new_v4() }, name: spec.name,
-                accounts, prepared: 0, settings: spec.settings, total: accounts.checked_add(3).context("Too many profile records")?, staged:0, uploaded:0, phase:Phase::Preparing, error:None };
+                accounts, prepared: 0, settings: spec.settings, preference_revisions:Default::default(), total: accounts.checked_add(3).context("Too many profile records")?, staged:0, uploaded:0, phase:Phase::Preparing, error:None };
             insert(&tx,id,0,vec![change(Action::ProfileSetup { complete:false })],None)?;
             insert(&tx,id,1,changes,None)?;
             write(&tx,&review)?;
@@ -190,6 +190,7 @@ impl Store {
             settings_match(&tx,&spec)?;
             ensure!(!spec.include_accounts || tx.query_row("SELECT source_accounts=COALESCE((SELECT value FROM kv WHERE key='accounts'),'[]') FROM profile_publications WHERE id=?",[id.to_string()],|r|r.get::<_,bool>(0))?, "Accounts changed. Cancel this review and prepare another with the current accounts.");
             tx.execute("INSERT INTO profile_account_mappings(profile,local_id,shared_id) SELECT ?,local_id,shared_id FROM profile_publication_rows WHERE publication=? AND local_id IS NOT NULL",params![review.binding.storage_key()?,id.to_string()])?;
+            review.preference_revisions=profile_preferences::state(&tx)?.revisions;
             review.phase = Phase::Staging;
             write(&tx,&review)?;
             tx.commit()?;

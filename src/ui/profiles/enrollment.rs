@@ -306,6 +306,11 @@ impl App {
                 })
                 .size(13),
             );
+            if review.phase == "complete" && review.include_settings {
+                body = body.push(self.sync_prepare_button(
+                    crate::profiles::sync::control::Source::Enrollment(review.id),
+                ));
+            }
             if reviewing {
                 body =
                     body.push(checkbox(e.accounts).label("Accounts").on_toggle_maybe(

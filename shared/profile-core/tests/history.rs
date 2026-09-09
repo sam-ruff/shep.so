@@ -669,3 +669,96 @@ fn independent_process_and_path_alias_cannot_own_the_same_journal() {
         ));
     }
 }
+
+#[test]
+fn acknowledged_export_omits_pending_local_records_and_tracks_confirmation() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("history.sqlite");
+    let mut history = Journal::open(&path, binding()).unwrap();
+    // The export boundary requires a complete setup, even for this queue test.
+    let mut source = Journal::memory(binding()).unwrap();
+    for (number, complete) in [(690, false), (691, true)] {
+        source
+            .edit(edit(
+                &source,
+                number,
+                vec![change(Action::ProfileSetup { complete })],
+            ))
+            .unwrap();
+    }
+    let source_revision = source.state().unwrap().revision;
+    let mut baseline = 0;
+    while let Some(record) = source.export_record(source_revision, baseline).unwrap() {
+        baseline = record.position;
+        history.import(record.record.as_bytes()).unwrap();
+    }
+    history
+        .edit(edit(&history, 700, vec![setting("Dark")]))
+        .unwrap();
+    let original = op(
+        701,
+        &[700],
+        vec![change(Action::Setting {
+            key: SettingKey::Tooltips,
+            value: json!(false),
+        })],
+    );
+    import(&mut history, &original);
+    let before = history.state().unwrap();
+    let imported = history
+        .export_acknowledged_record(before.revision, baseline)
+        .unwrap()
+        .unwrap();
+    assert_eq!(imported.operation, id(701));
+    assert_eq!(imported.record.as_bytes(), original.encode().unwrap());
+    assert!(
+        history
+            .export_acknowledged_record(before.revision, imported.position)
+            .unwrap()
+            .is_none()
+    );
+    let upload = history.next_upload().unwrap().unwrap();
+    history
+        .reserve(upload.operation, "fixture-confirmed-file")
+        .unwrap();
+    assert!(matches!(
+        history.export_acknowledged_record(before.revision, baseline),
+        Err(Error::Changed)
+    ));
+    history
+        .confirm(upload.operation, "fixture-confirmed-file", &upload.sha256)
+        .unwrap();
+    drop(history);
+    let history = Journal::open(&path, binding()).unwrap();
+    let revision = history.state().unwrap().revision;
+    let first = history
+        .export_acknowledged_record(revision, baseline)
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.operation, id(700));
+    assert_eq!(first.record, upload.record);
+    let second = history
+        .export_acknowledged_record(revision, first.position)
+        .unwrap()
+        .unwrap();
+    assert_eq!(second.operation, id(701));
+    assert!(
+        history
+            .export_acknowledged_record(revision, second.position)
+            .unwrap()
+            .is_none()
+    );
+    assert!(matches!(
+        history.export_acknowledged_record(revision, u64::MAX),
+        Err(Error::Changed)
+    ));
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let plans:Vec<String>=db.prepare("EXPLAIN QUERY PLAN SELECT seq,id,raw FROM operations WHERE seq>? AND (local=0 OR uploaded=1) ORDER BY seq LIMIT 1").unwrap().query_map([0],|row|row.get(3)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+    assert!(
+        plans
+            .iter()
+            .any(|plan| plan.contains("acknowledged_operations")),
+        "{plans:?}"
+    );
+    assert!(!plans.iter().any(|plan| plan.contains("SCAN")), "{plans:?}");
+}

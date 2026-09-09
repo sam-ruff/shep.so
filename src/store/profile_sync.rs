@@ -35,7 +35,7 @@ fn integer(value: u64) -> anyhow::Result<i64> {
         .try_into()
         .context("Profile revision is invalid. Reopen sync settings.")
 }
-fn read(db: &Connection, profile: &str) -> anyhow::Result<Subscription> {
+pub(crate) fn read(db: &Connection, profile: &str) -> anyhow::Result<Subscription> {
     let (binding,name,enabled,revision,history_revision,error,remote_cursor,last_synced,device,remote_device) = db.query_row(
         "SELECT binding,name,enabled,revision,history_revision,error,remote_cursor,last_synced,device,remote_device FROM profile_sync WHERE profile=?",
         [profile], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,bool>(2)?,r.get::<_,i64>(3)?,r.get::<_,i64>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,i64>(6)?,r.get::<_,Option<i64>>(7)?,r.get::<_,String>(8)?,r.get::<_,Option<String>>(9)?)))
@@ -147,13 +147,14 @@ impl Store {
         profile: String,
         before: u64,
         after: u64,
+        history_revision: u64,
     ) -> anyhow::Result<()> {
         ensure!(after > before, "The remote history cursor did not advance.");
         self.run(move |db| {
             ensure!(
                 db.execute(
-                    "UPDATE profile_sync SET remote_cursor=? WHERE profile=? AND remote_cursor=?",
-                    params![integer(after)?, profile, integer(before)?]
+                    "UPDATE profile_sync SET remote_cursor=?,history_revision=max(history_revision,?) WHERE profile=? AND remote_cursor=?",
+                    params![integer(after)?,integer(history_revision)?, profile, integer(before)?]
                 )? == 1,
                 "Profile copy progress changed. Reopen its saved state."
             );
@@ -161,11 +162,15 @@ impl Store {
         })
         .await
     }
-    pub async fn profile_sync_completed(&self, profile: String) -> anyhow::Result<()> {
+    pub async fn profile_sync_completed(
+        &self,
+        profile: String,
+        history_revision: u64,
+    ) -> anyhow::Result<()> {
         self.run(move |db| {
             db.execute(
-                "UPDATE profile_sync SET last_synced=?,error=NULL WHERE profile=?",
-                params![chrono::Utc::now().timestamp(), profile],
+                "UPDATE profile_sync SET last_synced=?,history_revision=max(history_revision,?),error=NULL WHERE profile=?",
+                params![chrono::Utc::now().timestamp(),integer(history_revision)?, profile],
             )?;
             Ok(())
         })
@@ -209,7 +214,7 @@ impl Store {
                     Some(Action::SettingRemoved {..})=>apply(&mut saved,key,None)?,
                     _=>{},
                 }
-                let dirty=shared.is_none() || export(&saved)?[&key]!=local.values[&key];
+                let dirty=seed.local_intent.contains(&key) || seed.baseline.as_ref().is_some_and(|baseline| baseline.get(&key)!=local.revisions.get(&key)) || shared.is_none() || export(&saved)?[&key]!=local.values[&key];
                 tx.execute("INSERT INTO profile_sync_fields(profile,field,shared,shared_revision,local_revision,dirty) VALUES(?,?,?,?,?,?)",
                     params![profile,field_name(key)?,shared.map(|c|serde_json::to_string(&c)).transpose()?,integer(seed.history_revision)?,integer(local.revisions[&key])?,dirty])?;
             }
@@ -393,3 +398,50 @@ impl Store {
 
 #[cfg(test)]
 mod tests;
+
+impl Store {
+    pub async fn profile_sync_current(&self) -> anyhow::Result<Option<Subscription>> {
+        self.run(|db| {
+            let selection: String = get(db, "profile_sync_selection")?;
+            let context: String = get(db, "profile_sync_context")?;
+            let key = if selection.is_empty() {
+                context
+            } else {
+                selection
+            };
+            if key.is_empty() {
+                Ok(None)
+            } else {
+                crate::store::profile_sync::read(db, &key).map(Some)
+            }
+        })
+        .await
+    }
+    pub async fn profile_sync_observe(
+        &self,
+        profile: Option<String>,
+    ) -> anyhow::Result<crate::profiles::sync::control::Observation> {
+        let subscription = if let Some(key) = profile {
+            Some(self.profile_sync_subscription(key).await?)
+        } else {
+            self.profile_sync_current().await?
+        };
+        let fields = if let Some(s) = &subscription {
+            self.profile_sync_fields(s.binding.storage_key()?).await?
+        } else {
+            vec![]
+        };
+        Ok(crate::profiles::sync::control::Observation {
+            profile: subscription
+                .as_ref()
+                .map(|s| s.binding.storage_key())
+                .transpose()?,
+            subscription,
+            fields,
+            ..Default::default()
+        })
+    }
+    pub async fn profile_sync_review_pending(&self) -> anyhow::Result<bool> {
+        self.run(|db| Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM profile_enrollments WHERE phase NOT IN ('complete','cancelled')) OR EXISTS(SELECT 1 FROM profile_publications WHERE phase NOT IN ('complete','cancelled'))",[],|row|row.get(0))?)).await
+    }
+}

@@ -396,6 +396,66 @@ async fn approved_publication_reopens_after_lost_drive_receipt_without_duplicate
         .unwrap()
         .unwrap();
     assert_eq!((complete.phase, complete.uploaded), (Phase::Complete, 5));
+    // Setup is derived from the completed backend review. Reverted intent
+    // after approval remains pending even if the value equals the published one.
+    let mut current: Preferences = store.get("preferences").await.unwrap();
+    current.appearance = Appearance::Dark;
+    store
+        .save_profile_preferences(
+            current.clone(),
+            std::collections::BTreeSet::from([SettingKey::Appearance]),
+        )
+        .await
+        .unwrap();
+    current.appearance = Appearance::Light;
+    store
+        .save_profile_preferences(
+            current,
+            std::collections::BTreeSet::from([SettingKey::Appearance]),
+        )
+        .await
+        .unwrap();
+    let subscription = crate::profiles::sync::control::prepare(
+        &store,
+        &root,
+        scope(),
+        crate::profiles::sync::control::Source::Publication(id),
+    )
+    .await
+    .unwrap();
+    assert!(!subscription.enabled);
+    assert_eq!(subscription.pending, 1);
+    let fields = store
+        .profile_sync_fields(subscription.binding.storage_key().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(fields.len(), 2);
+    assert!(
+        fields
+            .iter()
+            .find(|f| f.key == SettingKey::Appearance)
+            .unwrap()
+            .pending
+    );
+    assert!(
+        !fields
+            .iter()
+            .find(|f| f.key == SettingKey::Tooltips)
+            .unwrap()
+            .pending
+    );
+    let mut other = scope();
+    other.principal = "drive:another".into();
+    assert!(
+        crate::profiles::sync::control::prepare(
+            &store,
+            &root,
+            other,
+            crate::profiles::sync::control::Source::Publication(id)
+        )
+        .await
+        .is_err()
+    );
     let attempts = fixture.attempts.lock().unwrap().clone();
     assert_eq!(attempts.len(), 5);
     assert_eq!(

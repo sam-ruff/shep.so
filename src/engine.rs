@@ -131,6 +131,11 @@ impl Command {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
+    ProfileSync(
+        Option<crate::profiles::discovery::Grant>,
+        Arc<crate::profiles::sync::control::Observation>,
+        Option<Arc<crate::store::PreferenceSnapshot>>,
+    ),
     Profiles(
         uuid::Uuid,
         u64,

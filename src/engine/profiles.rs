@@ -1,12 +1,18 @@
+mod background;
 use super::*;
 use crate::profiles::discovery::{Action, Observation, Session};
 
 impl Engine {
     pub(super) async fn run_profiles(self, mut input: mpsc::Receiver<Command>, mut output: Output) {
         let mut session: Option<Session> = None;
+        let mut background = background::Background::default();
         #[cfg(feature = "test-support")]
         let fixture = if self.demo && std::env::args().any(|arg| arg == "--profile-discovery") {
-            if std::env::args().any(|arg| arg == "--profile-pages") {
+            if std::env::args().any(|arg| arg == "--profile-sync") {
+                crate::profiles::fixture::Fixture::start_sync(Duration::from_millis(600))
+                    .await
+                    .ok()
+            } else if std::env::args().any(|arg| arg == "--profile-pages") {
                 crate::profiles::fixture::Fixture::start_paged(true, Duration::from_millis(600))
                     .await
                     .ok()
@@ -18,11 +24,24 @@ impl Engine {
         } else {
             None
         };
-        while let Some(command) = input.recv().await {
+        loop {
+            let command = tokio::select! {
+                biased;
+                command=input.recv()=>match command {Some(command)=>command,None=>break},
+                _=tokio::time::sleep_until(background.deadline)=>{
+                    background.tick(&self,&mut output,#[cfg(feature="test-support")] fixture.as_ref()).await;
+                    continue;
+                }
+            };
             let Command::Profiles(request) = command else {
                 continue;
             };
             let result = async {
+                if let Action::Sync(command) = &request.action {
+                    return background
+                        .command(&self, &request, session.as_ref(), command)
+                        .await;
+                }
                 if matches!(request.action, Action::Close) {
                     if session.as_ref().is_some_and(|s| s.panel == request.panel) {
                         session.take().unwrap().close().await?;
@@ -32,6 +51,7 @@ impl Engine {
                 if matches!(request.action, Action::Load) {
                     return Ok(Observation {
                         namespace: self.store.get("profile_namespace").await?,
+                        sync: Some(self.store.profile_sync_observe(None).await?),
                         ..Default::default()
                     });
                 }
@@ -217,6 +237,7 @@ impl Engine {
                 ))
                 .await;
         }
+        let _ = background.close().await;
         if let Some(active) = session {
             let _ = active.close().await;
         }

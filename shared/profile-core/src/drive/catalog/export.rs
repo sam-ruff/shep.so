@@ -70,6 +70,37 @@ impl Catalog {
         Ok(self.journal(current.binding)?.state()?.device)
     }
 
+    // A surviving observation history is not proof that its originals remain
+    // in the current verified provider inventory after catalog recovery.
+    fn require_original(&self, binding: &Binding, record: &history::Record) -> Result<()> {
+        let digest: Option<String> = self.db.query_row(
+            "SELECT sha256 FROM files WHERE profile=? AND generation=? AND operation=? AND verified=1",
+            params![binding.profile.to_string(),binding.generation.to_string(),record.operation.to_string()],
+            |r|r.get(0)).optional()?;
+        let digest = digest.ok_or(Error::Missing)?;
+        if record.record.len() > crate::MAX_RECORD_BYTES
+            || wire::sha256(record.record.as_bytes()) != digest
+        {
+            return Err(Error::Integrity);
+        }
+        Ok(())
+    }
+    pub(super) fn verify_original(
+        &mut self,
+        source: Snapshot,
+        record: history::Record,
+    ) -> Result<()> {
+        let current = self.snapshot(
+            source.profile.profile,
+            source.profile.generation,
+            source.profile.revision,
+        )?;
+        if current.binding != source.binding || current.profile != source.profile {
+            return Err(Error::Changed);
+        }
+        self.require_original(&source.binding, &record)
+    }
+
     pub(super) fn export_record(
         &mut self,
         source: Snapshot,
@@ -89,8 +120,12 @@ impl Catalog {
         if current.profile != source.profile {
             return Err(Error::Changed);
         }
-        Ok(self
+        let record = self
             .journal(expected)?
-            .export_record(source.profile.revision, after)?)
+            .export_record(source.profile.revision, after)?;
+        if let Some(record) = &record {
+            self.require_original(&source.binding, record)?;
+        }
+        Ok(record)
     }
 }

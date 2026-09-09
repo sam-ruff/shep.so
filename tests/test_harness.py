@@ -15,6 +15,12 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_profile_sync_requires_a_boolean_before_launch(self):
+        desktop = harness.Desktop()
+        for value in (1, "true", None):
+            with self.assertRaises(ValueError):
+                desktop.start(profile_sync=value)
+
     def test_profile_pages_requires_a_boolean_before_launch(self):
         for value in (1, "true", None, {}):
             desktop = harness.Desktop()

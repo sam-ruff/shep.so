@@ -53,6 +53,7 @@ impl Grant {
 
 #[derive(Clone, Debug)]
 pub enum Action {
+    Sync(super::sync::control::Command),
     Load,
     Open { namespace: String },
     Page { after: Option<String> },
@@ -72,6 +73,7 @@ pub struct Request {
 }
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Observation {
+    pub sync: Option<super::sync::control::Observation>,
     pub namespace: String,
     pub state: Option<State>,
     pub rows: Vec<Profile>,
@@ -120,6 +122,7 @@ impl Session {
     }
     pub async fn observe(&self, error: Option<String>) -> Result<Observation> {
         Ok(Observation {
+            sync: None,
             namespace: self.namespace.clone(),
             state: Some(self.catalog.state().await?),
             rows: self.catalog.profiles(self.after.clone()).await?,
@@ -159,6 +162,9 @@ impl Session {
         .await;
         self.observe(result.err().map(|error| error.to_string()))
             .await
+    }
+    pub fn root(&self) -> &std::path::Path {
+        self.history_root.parent().expect("history root has parent")
     }
     pub fn scope(&self) -> Scope {
         Scope {
