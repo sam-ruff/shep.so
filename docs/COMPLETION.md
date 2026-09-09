@@ -1759,7 +1759,8 @@ emulator: two stores exchange synthetic account/settings records, retain/resolve
 a conflict and reopen queued work without accessing credentials. Its completion
 marker is required by the wrapper; it is backend integration, not a new Settings
 control E2E. Production ARM64 APK builds successfully with the native library;
-it remains development-signed. Final root hooks, performance and shipping evidence
+this new artifact is unsigned. The earlier installed phone checkpoint was
+development-signed. Final root hooks, performance and shipping evidence
 follow below.
 
 Retained failed-before evidence under ignored `artifacts/logs/profile-history-*`:
@@ -1769,9 +1770,10 @@ Clippy style findings; the first Dart fixture's missing import; and two Android
 runs failing temporary-directory setup before opening history. Corrected ownership,
 tombstone/index logic and fixture setup pass the corresponding unchanged contracts.
 The full Android setup failure log is retained separately. No interrupted or failed
-run counts as a pass. No product UI changed, so unchanged desktop/Appium/Playwright
-control suites were not rerun for this backend increment. Earlier control evidence
-remains separately recorded.
+run counts as a pass. The history-only code did not change product UI. The subsequent required storage
+benchmark exposed the search query issue below and extended desktop verification.
+Unchanged Appium/Playwright control suites were not rerun for the metadata bridge;
+earlier control evidence remains separately recorded.
 
 **Remaining:** authenticated Google identity/owned-file transport, complete
 creation/discovery/enrollment checkpoints, category/profile switches, actual
@@ -1782,3 +1784,23 @@ complete cloud listing. Large-history/compaction, device-ID rebinding during ful
 transfer, encrypted local SQLite, Apple and genuine cross-client Google access
 remain open. The full product goal stays active; personal phone/main/installed
 desktop were untouched and quality/release CI stays disabled.
+
+
+## 2026-09-09 — Search plan correction during storage verification
+
+The required 100,000-message benchmark passed page budgets but spent several
+minutes in search. It was stopped for diagnosis; that incomplete run is not a
+search p95 or a passing benchmark. The original plan used a virtual-table LEFT
+JOIN, repeating literal FTS filtering/ranking for each fuzzy candidate. A preserved
+synthetic database and the pinned SQLite plan comparison reproduce that expensive
+plan; an attempted debugger attachment was unavailable and provides no profiling
+evidence. Logs stay under ignored `artifacts/logs/profile-history-*`.
+
+`store/mail_query.rs` now materializes exact-match rowids/ranks once in SQLite and
+joins the indexed relation. It preserves short exact-body priority, exact-versus-
+fuzzy scores, Unicode, filters and shared list/selection ordering. The new planner
+regression rejects a virtual-table LEFT JOIN for both ordinary and combined folder
+scopes. Existing search/selection/bulk tests pass (21 tests), plus the plan guard.
+Mobile/browser fuzzy-ranking parity remains explicitly open in TODO and the shared
+scenario matrix. Final native controls and unchanged performance budgets are
+verified below before shipping.
