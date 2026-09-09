@@ -1,5 +1,15 @@
 # Completion audit
 
+## First-profile native fixture synchronization
+
+The first-device scenario now waits for a loopback upload to be held, navigates
+the real Mail controls while it stays pending, then releases the response. It
+keeps the existing completion deadline instead of accumulating one-second delays
+for every setup record. The held mode and release action control only the owned
+fictional server; shutdown also releases pending responses. Three actual HTTP /
+batch isolation / cleanup tests pass. Main native integration and shipping remain
+pending. Log: `artifacts/logs/profile-held-upload-fixture.log`.
+
 ## Shared account reconnection credential guard
 
 Connection tests and saves refuse old keychain credentials while an imported or
