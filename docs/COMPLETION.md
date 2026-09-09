@@ -2388,3 +2388,14 @@ remain open. Fixture HTTP/SQLite/native success does not establish live Google.
 Performance measurements remain deferred on the busy host; the earlier navigation
 gate still fails. Quality/release CI remains disabled. No phone reinstall, main
 merge or VPS deployment accompanies this worktree increment.
+
+
+Desktop publication code [`35f11ba`](https://github.com/sam-ruff/shep.so/commit/35f11ba0627621624659455dfebf6f341ea18893) is pushed to
+`feat/mobile-web-clients`; the exact remote SHA matches the source commit and the
+worktree was clean after shipping. Mandatory hooks pass formatting, Clippy and
+**459 Rust tests**, with only the two opt-in personal-account diagnostics ignored.
+`cargo check --lib` also passes without test-support. The 123 native functional
+flows, 41 Python checks, 37 parity contracts and strict docs build are recorded
+above. Shipping evidence is `artifacts/desktop-publication-shipping.json`; logs
+remain under `artifacts/logs/desktop-publication-*`. This completes the publication
+increment, not desktop enrollment, continuous sync, live Google or full parity.
