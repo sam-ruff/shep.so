@@ -1,5 +1,43 @@
 # Completion audit
 
+## Backup history, encrypted export and ranked scratch — consolidation checkpoint
+
+The session restart on 9 September 2026 resolved the interrupted cherry-pick on
+`main` and committed `c35e2b5`, which integrates persistent per-destination
+backup history (`895fe2d`), keyed raw SQLite export (`f0ff98a`) and indexed
+encrypted conversation ranking (`8d45a9e`). The `store.rs` resolution keeps the
+lane's version 4 bump and the encrypted initialiser's bare connection return;
+the interrupted `codex/encrypted-cache` rebase was aborted because every code
+file it would have produced is byte-identical to the committed index. Normal
+startup remains plaintext; no personal database or installed process changed.
+
+Verification on `c35e2b5`: the mandatory pre-commit hooks (format, Clippy,
+`cargo test --all-features`, renderer cache tests and the shared profile-core
+script) passed at commit time; the full execution count was not captured by
+the truncated log and is re-established by the pre-push gate run recorded in
+the next entry. **84 Python tests** pass (seven skipped, including actual
+PowerShell execution), the pinned strict documentation build reports no issues,
+and **31 selected native scenarios** pass in 189 s: backup history, formats and
+Back up all, database export/import, conversation reading and ranked search.
+Logs are `artifacts/logs/python-main-c35e2b5.log`, `docs-main-c35e2b5.log`
+and `e2e-main-c35e2b5.log`; evidence directories are listed in that log.
+
+Lane consolidation: three read-only classification passes compared every
+`codex/*` branch with `main` by code and tests. `profile-links`,
+`profile-reviews`, `profile-cache`, `profile-account-reviews`,
+`bounded-folder-delete`, `aggregate-folder-choice`, `combined-folder-delete`,
+`folder-convergence`, `compact-mail`, `backup-history`, `backup-formats`,
+`backup-all`, `ftp-backups`, `sftp-backups`, `multiple-backups`,
+`encrypted-cache`, `native-tray`, `s3-before-main-adaptation` and
+`native-palette-before-rebase-1854c62` were byte-identical or strict subsets
+of `main` and were deleted with their worktrees. Unique work remains on
+`codex/backup-journal-owner` (`d36dca8`), `codex/aggregate-folder-choice-v2`
+(`1abc4b9`), `codex/profile-account-removals` (`ede75aa`, the previously
+uncommitted removal-review work, 782 hook executions passing on the lane) and
+`codex/sidebar-account-labels` (`d5c7683`, the previously uncommitted
+duplicate-address labels, 916 hook executions passing on the lane). This is a
+local checkpoint; the push receipt follows in the next entry.
+
 ## Shared account reviews, backup formats and bounded folder deletion — integrated verification
 
 The current integration combines `18413e7` (safe shared connection choices),
