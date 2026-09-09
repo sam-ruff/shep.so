@@ -2,6 +2,27 @@
 
 The user stopped feature work to conserve credits and requested this handover, a cleaned TODO and a push. **The full application goal is not complete.** Resume from [TODO.md](TODO.md), preserving the original requirements in [docs/REQUEST_AUDIT.md](docs/REQUEST_AUDIT.md). Read [AGENTS.md](AGENTS.md) for operational rules and [docs/COMPLETION.md](docs/COMPLETION.md) for evidence; do not repeat historical work based only on the latest chat message.
 
+## 9 September continuation: existing-profile import
+
+The current source checkpoint adds shared-catalog discovery and native reviewed
+import of an existing profile. Existing accounts/mail stay intact; imported
+accounts receive fresh local IDs and require Reconnect before provider use.
+Supported preferences apply atomically with enrollment. Lost-acknowledgment retry,
+stale reviews, category choices, cancellation, unsupported fields and restart have
+backend/native regressions. See the newest completion entry for source shipping
+and test evidence. The active sibling client worktree was left untouched; desktop
+now pins shared catalog/Drive/history plus its harness seam at `33d222d7`.
+
+**Next implement ongoing sync and automatic post-login enrollment**, including
+local changes, incremental enrolled-history pulls, account linking/suppression,
+conflicts/removals and remaining portable preferences. The saved join map is
+shared UUID → fresh local UUID; first-device seeds have their existing local →
+shared map. Preserve both when generating future edits. Imported account markers
+must continue to block provider use until device credentials are saved. Keep the
+unanswered password-protection choice and actual cross-client Google checks open.
+OAuth remains first in TODO with the Flutter handover reference. This checkpoint
+is not a new personal installation or a completed application.
+
 ## Final profile-controls failure-path review
 
 Follow-up `6860f50` is pushed. Unreadable local enrollment now disables its controls and shows recovery advice.

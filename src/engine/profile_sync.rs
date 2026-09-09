@@ -51,6 +51,10 @@ impl Engine {
                             let update=self.store.change_profile_sync_options(changes).await.map(|s|Update::Status(Arc::new(s))).unwrap_or_else(|e|Update::Failed(format!("{e:#}")));
                             let _=output.send(Event::ProfileSync(id,update)).await;
                         }
+                        Request::Page {review,after,..}=> {
+                            let update=review.page(&self.store,after).await.map(|r|Update::Review(Arc::new(r))).unwrap_or_else(|e|Update::Failed(format!("{e:#}")));
+                            let _=output.send(Event::ProfileSync(id,update)).await;
+                        }
                         Request::Status(_)=> {
                             let update=self.store.profile_enrollment().await.map(|s|Update::Status(Arc::new(s))).unwrap_or_else(|e|Update::Failed(format!("{e:#}")));
                             if !matches!(&update,Update::Status(s) if s.available) && let Some(active)=&active {active.stop.send_replace(true);}
@@ -114,6 +118,14 @@ impl Engine {
             .as_ref()
             .context("Profile sync needs a saved local workspace.")?;
         let paths = sync::paths::Paths::for_cache(&local.catalog.path(local.current))?;
+        if let Request::JoinAccept { review, .. } = &action {
+            let saved =
+                sync::join::accept(&self.store, &paths, (**review).clone(), &control).await?;
+            self.workspace(&mut output).await.context(
+                "The profile was joined, but the view could not reload. Reopen Preferences.",
+            )?;
+            return Ok(Update::Joined(Arc::new(saved)));
+        }
         let journal = paths.journal().await?;
         let _slot = control
             .read(async { Ok(self.provider_slots.acquire().await) })
@@ -140,7 +152,21 @@ impl Engine {
             .await?;
         match action {
             Request::Discover(_) => Ok(Update::Review(Arc::new(
-                sync::setup::discover_controlled(&self.store, &session, &journal, &control).await?,
+                sync::setup::Discovery::from_catalog(
+                    sync::catalog::discover(&self.store, &session, &paths, &control).await?,
+                ),
+            ))),
+            Request::JoinReview { review, cursor, .. } => Ok(Update::JoinReview(Arc::new(
+                sync::join::prepare(
+                    &self.store,
+                    &session,
+                    &paths,
+                    journal,
+                    &review,
+                    &cursor,
+                    &control,
+                )
+                .await?,
             ))),
             Request::Create {
                 review,

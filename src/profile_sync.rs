@@ -5,6 +5,7 @@ pub mod commands;
 pub mod control;
 pub mod drive;
 pub mod enrollment;
+pub mod join;
 pub mod journal;
 pub mod metadata;
 pub(crate) mod paths;
@@ -204,3 +205,5 @@ fn canonical_uuid(value: Option<&str>) -> anyhow::Result<Uuid> {
     );
     Ok(id)
 }
+
+pub mod catalog;

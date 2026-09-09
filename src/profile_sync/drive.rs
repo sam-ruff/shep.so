@@ -78,6 +78,23 @@ impl Session {
         session.verify_identity().await?;
         Ok(session)
     }
+    pub(super) async fn catalog_drive(&self) -> anyhow::Result<shep_profile_core::drive::Drive> {
+        #[cfg(any(test, feature = "test-support"))]
+        if self.base.scheme() == "http" {
+            return Ok(shep_profile_core::drive::Drive::connect_fixture(
+                self.base.join("/")?,
+                self.binding.namespace().into(),
+                Some(self.binding.identity()),
+            )
+            .await?);
+        }
+        Ok(shep_profile_core::drive::Drive::connect(
+            self.token.clone(),
+            self.binding.namespace().into(),
+            Some(self.binding.identity()),
+        )
+        .await?)
+    }
     pub fn binding(&self) -> &Binding {
         &self.binding
     }

@@ -11,6 +11,20 @@ pub enum Request {
         changes: super::enrollment::Changes,
     },
     Status(u64),
+    Page {
+        request: u64,
+        review: Arc<Discovery>,
+        after: Option<String>,
+    },
+    JoinReview {
+        request: u64,
+        review: Arc<Discovery>,
+        cursor: String,
+    },
+    JoinAccept {
+        request: u64,
+        review: Arc<super::join::Review>,
+    },
     Options {
         request: u64,
         revision: u64,
@@ -30,7 +44,10 @@ impl Request {
     pub fn id(&self) -> u64 {
         match self {
             Self::Status(id) | Self::Discover(id) | Self::Resume(id) | Self::Stop(id) => *id,
-            Self::Options { request, .. }
+            Self::JoinReview { request, .. }
+            | Self::JoinAccept { request, .. }
+            | Self::Page { request, .. }
+            | Self::Options { request, .. }
             | Self::Create { request, .. }
             | Self::Change { request, .. } => *request,
         }
@@ -42,6 +59,8 @@ pub enum Update {
     Status(Arc<Snapshot>),
     Review(Arc<Discovery>),
     Published(Arc<Snapshot>),
+    JoinReview(Arc<super::join::Review>),
+    Joined(Arc<Snapshot>),
     Failed(String),
     Stopped,
 }

@@ -1050,6 +1050,7 @@ impl App {
                     let mut workspace = (*workspace).clone();
                     if workspace.connections_revision < self.workspace.connections_revision {
                         workspace.accounts = self.workspace.accounts.clone();
+                        workspace.account_reconnect = self.workspace.account_reconnect.clone();
                         workspace.calendars = self.workspace.calendars.clone();
                         workspace.account_folders = self.workspace.account_folders.clone();
                         workspace.folder_trees = self.workspace.folder_trees.clone();
@@ -3635,6 +3636,7 @@ impl App {
         data["removal_error"] = serde_json::json!(self.removal.error);
         data["removing"] = serde_json::json!(self.removal.removing.is_some());
         data["removal_cancel_transfers"] = serde_json::json!(self.removal.cancel_transfers);
+        data["account_reconnect_count"] = serde_json::json!(self.workspace.account_reconnect.len());
         data["account_count"] = serde_json::json!(self.workspace.accounts.len());
         data["calendar_count"] = serde_json::json!(self.workspace.calendars.len());
         data["removed_google_calendars"] =

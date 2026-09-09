@@ -219,6 +219,7 @@ impl Store {
                 ConnectionKind::Account => {
                     let mut accounts: Vec<Account> = get(&tx, "accounts")?;
                     accounts.retain(|a| a.id != target.id);
+                    super::profile_sync::join::reconnected(&tx, &target.id)?;
                     put(&tx, "accounts", &accounts)?;
                     keys.extend([target.id.clone(),format!("{}:smtp",target.id)]);
                     for (key,_) in transfers(&tx, &target.id)? { tx.execute("DELETE FROM kv WHERE key=?", [key])?; }

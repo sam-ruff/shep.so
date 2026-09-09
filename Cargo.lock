@@ -4550,10 +4550,12 @@ dependencies = [
 [[package]]
 name = "shep-profile-core"
 version = "0.1.0"
-source = "git+https://github.com/sam-ruff/shep.so?rev=9289f5327b71bb6aaff463ee965eab48c13df85a#9289f5327b71bb6aaff463ee965eab48c13df85a"
+source = "git+https://github.com/sam-ruff/shep.so?rev=33d222d7550d8c4bcd000cd31c9eb029886f398a#33d222d7550d8c4bcd000cd31c9eb029886f398a"
 dependencies = [
  "fs2",
+ "reqwest",
  "rusqlite",
+ "secrecy",
  "serde",
  "serde_json",
  "sha2",
