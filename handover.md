@@ -26,14 +26,19 @@ credential protection still remain. Do not discard any lane's uncommitted work.
 
 ## Current source checkpoint
 
+Portable preference reviews from `713f96e` are integrated: six targeted
+regressions, 86 matching profile tests, 81 Python tests and all 25 integrated native
+profile flows pass on the final control-identity guard. Root hooks/push follow.
+Account linking/removal/endpoint reviews remain separate work.
+
 `2b87db4` is pushed: multiple Local/Drive destinations, 756 hook executions and
 21 integrated native backup/preferences/profile/import scenarios pass. The merge
 preserves typed preference intent and per-destination metadata, including a new
 remote-setting/upload-receipt race regression. The backup lane continues S3.
 Linux raw installer is pushed as `3676dad`, with 68 Python tests and mandatory
 hooks passing. macOS wrapper is pushed as `0f2af1f`, with 74 Python tests, mandatory hooks and
-green docs CI. Windows `ccbc1e0` is being integrated; the agent continues the
-transparent themed launcher (R64). Actual published assets and platform execution
+green docs CI. Windows is pushed as `ce4a2a6`, with 81 Python tests, mandatory hooks and green
+docs CI. The agent continues the transparent themed launcher (R64). Actual published assets and platform execution
 remain open.
 
 `1595fb3` is pushed: Windows/macOS badge adapters, 751 hook executions, 12 native

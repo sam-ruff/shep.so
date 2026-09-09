@@ -1,5 +1,12 @@
 # Conversation request audit
 
+R02/R49/R92 continuation: portable preference resolution now has bounded native
+review controls and durable shared-history admission. Six store/history/controller
+regressions and 86 matching profile tests pass. All 25 native profile flows pass;
+the integrated binary repeats all 25 successfully after the control-identity guard,
+with 81 Python tests and reviewed light/dark/error WebPs. Root hooks/push remain.
+Account linking, endpoint/removal reviews and live cross-client checks remain open.
+
 R02/R49 follow-up: verified immutable profile records now survive polling and
 restart without repeated downloads. Current complete discovery remains required.
 Source `e77eabc` is pushed with 729 integrated hook executions and nine native

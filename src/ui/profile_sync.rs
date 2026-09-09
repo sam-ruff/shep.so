@@ -1,4 +1,5 @@
 mod onboarding;
+mod reviews;
 use super::*;
 use crate::profile_sync::{
     commands::{Request, Update},
@@ -15,6 +16,16 @@ use std::time::Duration;
 pub enum Action {
     Refresh,
     Sync,
+    SettingReviews,
+    ResolveSetting(
+        Arc<crate::profile_sync::reviews::Review>,
+        crate::profile_sync::reviews::Choice,
+    ),
+    SettingCandidate(
+        Arc<crate::profile_sync::reviews::Review>,
+        reviews::Candidate,
+    ),
+    CloseSettingReviews,
     AfterLogin,
     AutoJoin,
     Automatic(bool),
@@ -49,6 +60,8 @@ pub(super) struct State {
     serial: u64,
     review: Option<Arc<Discovery>>,
     join_review: Option<Arc<crate::profile_sync::join::Review>>,
+    setting_reviews: Option<Vec<Arc<crate::profile_sync::reviews::Review>>>,
+    setting_choices: std::collections::BTreeMap<shep_profile_core::SettingKey, reviews::Candidate>,
     name: String,
     error: Option<String>,
     next_sync: Option<Instant>,
@@ -56,6 +69,11 @@ pub(super) struct State {
     cycle: Option<crate::profile_sync::continuous::Report>,
 }
 impl State {
+    fn accepts_setting_review(&self, review: &Arc<crate::profile_sync::reviews::Review>) -> bool {
+        self.setting_reviews
+            .as_ref()
+            .is_some_and(|current| current.iter().any(|r| Arc::ptr_eq(r, review)))
+    }
     fn next(&mut self) -> u64 {
         self.serial += 1;
         self.serial
@@ -88,6 +106,7 @@ impl State {
     pub fn observation(&self) -> serde_json::Value {
         serde_json::json!({"loaded":self.snapshot.is_some(),"available":self.snapshot.as_ref().is_some_and(|s|s.available),"empty_workspace":self.snapshot.as_ref().is_some_and(|s|s.empty_workspace),
             "options":self.options(),"offer":self.offer,"login_pending":self.login_pending.is_some(),"saving":self.saving.is_some(),"working":self.job.is_some(),"stopping":self.stopping.is_some(),
+            "setting_reviews": self.setting_reviews.as_ref().map(|r|r.iter().map(|r|serde_json::json!({"label":r.label(),"local":r.local(),"versions":r.versions().iter().map(|v|&v.value).collect::<Vec<_>>()})).collect::<Vec<_>>()),
             "review":self.review.as_ref().map(|r|r.records()),
             "profiles":self.review.as_ref().map(|r|r.profiles()),
             "join_review":self.join_review.as_ref().map(|r|serde_json::json!({"name":r.name(),"accounts":r.accounts,"settings":r.settings})),"name":self.name,"error":self.error,
@@ -98,6 +117,19 @@ impl State {
 impl App {
     pub(super) fn shared_profile_action(&mut self, action: Action) {
         match action {
+            Action::SettingCandidate(review, candidate) => {
+                if self.profile_sync.accepts_setting_review(&review) {
+                    self.profile_sync
+                        .setting_choices
+                        .insert(review.key(), candidate);
+                }
+                return;
+            }
+            Action::CloseSettingReviews => {
+                self.profile_sync.setting_reviews = None;
+                self.profile_sync.setting_choices.clear();
+                return;
+            }
             Action::Name(name) => {
                 self.profile_sync.name = name;
                 return;
@@ -144,6 +176,8 @@ impl App {
                     self.profile_sync.login_pending =
                         Some(self.preferences.google_lifecycle.revision);
                 }
+                self.profile_sync.setting_reviews = None;
+                self.profile_sync.setting_choices.clear();
                 self.profile_sync.desired = changes;
                 self.profile_sync.review = None;
                 self.profile_sync.join_review = None;
@@ -169,6 +203,8 @@ impl App {
             }
             Action::Discover
             | Action::Sync
+            | Action::SettingReviews
+            | Action::ResolveSetting(..)
             | Action::AfterLogin
             | Action::AutoJoin
             | Action::Create
@@ -184,6 +220,17 @@ impl App {
                     return;
                 }
                 match action {
+                    Action::SettingReviews => Request::SettingReviews(id),
+                    Action::ResolveSetting(review, choice) => {
+                        if !self.profile_sync.accepts_setting_review(&review) {
+                            return;
+                        }
+                        Request::ResolveSetting {
+                            request: id,
+                            review,
+                            choice,
+                        }
+                    }
                     Action::Sync => {
                         self.profile_sync.cycle_paused = false;
                         self.profile_sync.next_sync =
@@ -375,6 +422,26 @@ impl App {
         }
         let mut refresh = false;
         match update {
+            Update::SettingReviews {
+                snapshot,
+                reviews,
+                saved,
+            } => {
+                if state.accepts_snapshot(&snapshot)
+                    && state.desired.empty()
+                    && state.saving.is_none()
+                {
+                    state.snapshot = Some(snapshot);
+                    state.setting_reviews = Some(reviews);
+                    state.setting_choices.clear();
+                    if saved {
+                        state.next_sync = Some(Instant::now() + Duration::from_secs(2));
+                        self.notice("Preference choice saved · waiting to sync", false);
+                    }
+                } else {
+                    refresh = true;
+                }
+            }
             Update::Synced { snapshot, report } => {
                 if state.accepts_snapshot(&snapshot) {
                     state.snapshot = Some(snapshot);
@@ -457,9 +524,14 @@ impl App {
             }
             Update::Failed(error) => {
                 state.next_sync = Some(Instant::now() + Duration::from_secs(60));
-                state.error = Some(error);
+                state.error = Some(error.clone());
                 if automatic {
                     state.offer = true;
+                }
+                // A review may be scrolled below the inline error. A rejected
+                // choice must remain visible at the current viewport as well.
+                if job && state.setting_reviews.is_some() {
+                    self.notice(error, true);
                 }
                 self.pending_close = None;
                 refresh = !loading;
@@ -547,6 +619,20 @@ impl App {
                             (idle && available && options.enabled).then(|| msg(Action::Sync)),
                         ),
                 );
+                if options.settings {
+                    body = body.push(
+                        button(text("Review shared preferences").size(13))
+                            .padding([12, 16])
+                            .style(outline)
+                            .on_press_maybe(
+                                (idle && available && options.enabled)
+                                    .then(|| msg(Action::SettingReviews)),
+                            ),
+                    );
+                    if state.setting_reviews.is_some() {
+                        body = body.push(self.shared_setting_reviews(idle));
+                    }
+                }
                 if !self.workspace.account_reconnect.is_empty() {
                     body = body.push(action(
                         "Reconnect accounts",
@@ -787,6 +873,50 @@ mod tests {
         app.tx = Some(sender);
         app.profile_sync.snapshot = Some(original.clone());
         (app, queue, original)
+    }
+
+    #[tokio::test]
+    async fn profile_setting_review_events_keep_identity_when_an_earlier_row_disappears() {
+        use crate::profile_sync::reviews::{Choice, Review};
+        use shep_profile_core::SettingKey;
+        let (mut app, mut queue, _) = app().await;
+        let earlier = Arc::new(Review::fixture(
+            SettingKey::Appearance,
+            serde_json::json!("Dark"),
+        ));
+        let later = Arc::new(Review::fixture(
+            SettingKey::Tooltips,
+            serde_json::json!(true),
+        ));
+        app.profile_sync.setting_reviews = Some(vec![earlier.clone(), later.clone()]);
+        let old_click = Action::ResolveSetting(earlier.clone(), Choice::Local);
+        let old_menu = Action::SettingCandidate(
+            earlier.clone(),
+            reviews::Candidate::fixture(earlier.versions()[0].operation),
+        );
+        // A completed earlier choice removes row zero before an old native
+        // event is delivered. That event must not be retargeted to Tooltips.
+        app.profile_sync.setting_reviews = Some(vec![later.clone()]);
+        app.shared_profile_action(old_menu);
+        app.shared_profile_action(old_click);
+        assert!(queue.try_recv().is_err());
+        assert!(app.profile_sync.setting_choices.is_empty());
+        app.shared_profile_action(Action::SettingCandidate(
+            later.clone(),
+            reviews::Candidate::fixture(later.versions()[0].operation),
+        ));
+        assert!(
+            app.profile_sync
+                .setting_choices
+                .contains_key(&SettingKey::Tooltips)
+        );
+        app.shared_profile_action(Action::ResolveSetting(later.clone(), Choice::Local));
+        let Command::ProfileSync(Request::ResolveSetting { review, .. }) =
+            queue.try_recv().unwrap()
+        else {
+            panic!("expected the exact displayed review")
+        };
+        assert!(Arc::ptr_eq(&review, &later));
     }
 
     #[tokio::test]

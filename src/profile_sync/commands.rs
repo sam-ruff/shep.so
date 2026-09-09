@@ -33,6 +33,12 @@ pub enum Request {
     Discover(u64),
     AfterLogin(u64),
     Sync(u64),
+    SettingReviews(u64),
+    ResolveSetting {
+        request: u64,
+        review: Arc<super::reviews::Review>,
+        choice: super::reviews::Choice,
+    },
     AutoJoin {
         request: u64,
         review: Arc<Discovery>,
@@ -53,9 +59,11 @@ impl Request {
             | Self::Discover(id)
             | Self::AfterLogin(id)
             | Self::Sync(id)
+            | Self::SettingReviews(id)
             | Self::Resume(id)
             | Self::Stop(id) => *id,
-            Self::AutoJoin { request, .. }
+            Self::ResolveSetting { request, .. }
+            | Self::AutoJoin { request, .. }
             | Self::JoinReview { request, .. }
             | Self::JoinAccept { request, .. }
             | Self::Page { request, .. }
@@ -80,6 +88,11 @@ pub enum Update {
     Published(Arc<Snapshot>),
     JoinReview(Arc<super::join::Review>),
     Joined(Arc<Snapshot>),
+    SettingReviews {
+        snapshot: Arc<Snapshot>,
+        reviews: Vec<Arc<super::reviews::Review>>,
+        saved: bool,
+    },
     Synced {
         snapshot: Arc<Snapshot>,
         report: super::continuous::Report,

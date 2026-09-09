@@ -49,6 +49,7 @@ fn review_matches(c: &Connection, expected: &Snapshot) -> anyhow::Result<Enrollm
 
 mod continuous;
 pub(super) mod join;
+mod reviews;
 pub(super) mod state;
 
 impl Store {

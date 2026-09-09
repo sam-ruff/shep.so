@@ -1318,3 +1318,20 @@ folders, loopback downloads and explicit COM/UAC/environment boundary fixtures;
 set `SHEP_POWERSHELL` to an existing PowerShell binary for Linux contract execution.
 Do not install a runtime or invoke real UAC on the developer's desktop for tests.
 Actual Windows PowerShell 5.1/COM/UAC execution remains distinct from Linux fixtures.
+
+Portable-setting reviews live in `profile_sync/reviews.rs` and the corresponding
+store/UI modules. Keep their scalar payloads bounded by the supported setting
+list and shared version limit. The history owner rereads the selected immutable
+change, preserves opaque extensions and reserves one exact operation before
+admission. Persist reviewed concurrent UUIDs with that request; restart must not
+regenerate them. Native setting generations, enrollment/Google lifecycle and
+history revisions reject stale reviews, including change-and-revert input.
+Unrelated settings and newer edits after reservation must survive acknowledgments.
+Native actions retain the exact displayed review identity; removing an earlier
+row must never retarget an already queued button or dropdown event.
+Reviewing uses cached history, without waiting for credentials or a provider slot.
+A choice is locally saved before background publication; never describe that as
+confirmed Google success. Preserve the `profile_setting_review_*` Rust and saved
+native scenarios, including compact dropdown/mouse choices, restart and stale
+native preference recovery. Account endpoint/removal/linking reviews remain
+separate unfinished work.
