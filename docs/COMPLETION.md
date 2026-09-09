@@ -2110,7 +2110,7 @@ Rust WASM, including additional duplicate/size/depth rejection. Native tests exe
 lost cross-database receipts and close/reopen while an upload and mail capacity are
 held. They preserve cached accounts and credential slots. **41 Python tests** and
 **36 parity contracts** pass. Final Android regressions, strict docs, production APK
-and mandatory shipping hooks are recorded below once verified.
+and mandatory shipping hooks are recorded below.
 
 The two saved publication scenarios pass on Android, and four matching publication
 flows pass through **Appium/UiAutomator2 and Flutter Playwright**. They cover entered
@@ -2171,3 +2171,13 @@ before measurement; host observations are retained in `profile-publish-bench-hos
 without claiming an otherwise idle host. This is a storage regression check, not
 native input-to-pixel evidence or a fix for the prior combined-gate failure.
 Strict pinned Zensical, Rust/Dart formatting and diff checks also pass.
+
+
+Publication code [`184b98a`](https://github.com/sam-ruff/shep.so/commit/184b98afafcf53bc3fd7c32a497fad04746304bf) is **pushed to `feat/mobile-web-clients`**, with exact
+remote verification and a clean worktree at the code checkpoint. Mandatory hooks
+pass formatting, Clippy and **446 root/shared Rust tests**, with two personal-account
+diagnostics intentionally ignored. No hooks were skipped. Shipping logs are
+`profile-publish-commit.log` and `profile-publish-push.log`; the machine-readable
+record is ignored `artifacts/profile-publication-shipping.json`. A documentation
+checkpoint follows in branch history. TODO and handover retain all 40 active
+requests, with enrollment and actual account/preferences application next.

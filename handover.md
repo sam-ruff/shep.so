@@ -56,17 +56,20 @@ tracked own-upload receipts commit before the local queue confirms. The shared
 initialization marker prevents a partial setup being presented as ready. See
 [the publication contract](docs/agents/PROFILE_PUBLICATION.md).
 
-Final verification and prompt review-branch shipping are in progress. Core 52,
-mobile Rust 74, Flutter host 111, configured SDK, Python 41, parity 36 and strict
-docs checks pass. The two Android publication scenarios and four Appium/four
-Flutter Playwright publication flows pass, including accessible selectable account
-details and browsing mail during a paused step. The earlier Google/history/discovery
-regressions also pass: seven named Android, eight Appium and eight Flutter
-Playwright flows in total. The unsigned production ARM64 APK passes scoped fixture-isolation inspection.
-Mandatory hooks and shipping are being completed;
-use the latest completion entry for final evidence rather than inferring a pass.
-All providers in the control fixtures are isolated. No live Google, Apple,
-enrollment or continuous sync success is implied.
+Publication code [`184b98a`](https://github.com/sam-ruff/shep.so/commit/184b98afafcf53bc3fd7c32a497fad04746304bf) is **pushed** with exact remote verification.
+Mandatory hooks pass 446 root/shared Rust tests; 52 core, 74 mobile Rust,
+111 Flutter host, the configured SDK fixture, 28 WASM cases, 41 Python checks,
+36 parity contracts and strict docs pass. Seven named Android scenarios cover
+publication, discovery, consent and real native history. Eight Appium and eight
+Flutter Playwright flows cover publication/discovery. The unsigned production
+ARM64 APK passes scoped inspection; it has no registered Google project and was
+not installed on the phone. Detailed evidence and retained failures are in the
+latest completion entry. The dedicated emulator and preview servers are stopped.
+
+All providers in control fixtures are isolated. No live Google, Apple,
+enrollment or continuous sync success is implied. Continue actual enrollment and
+account/preferences application next; a pushed publication checkpoint does not
+complete the full product goal.
 
 The current unchanged 100,000-message storage benchmark passes (Inbox p95 6.28 ms;
 search p95 36.10 ms), but the earlier native

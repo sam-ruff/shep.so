@@ -565,3 +565,10 @@ native, host, Android, Appium and Flutter Playwright evidence and retained failu
 are in the latest completion entry. This advances first setup; enrollment, actual
 account/preferences application, credentials and ongoing sync remain active. All
 40 TODO entries are retained; final review-branch shipping is recorded below.
+
+
+R77/R75/R02/R49/desktop-main:R92 shipping: Flutter publication code [`184b98a`](https://github.com/sam-ruff/shep.so/commit/184b98afafcf53bc3fd7c32a497fad04746304bf) is
+pushed on the review branch with exact remote verification. Mandatory hooks pass
+446 root/shared Rust tests; the scoped native/Flutter/Android/Appium/Playwright,
+production ARM64 and documentation evidence is in completion. All 40 active
+requests remain; enrollment, real client application and full parity continue.
