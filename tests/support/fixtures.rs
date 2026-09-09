@@ -376,6 +376,24 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
             )
             .await?;
     }
+    if std::env::args().any(|a| a.starts_with("--profile-drive-url=")) {
+        store
+            .update_preferences(|p| {
+                p.google_client_id = "fixture-profile-client".into();
+                p.google_connection_id = "drive:fixture".into();
+                p.google_grant = GoogleGrant {
+                    id: "fixture-profile-grant".into(),
+                    client_id: "fixture-profile-client".into(),
+                    access: GoogleAccess {
+                        known: true,
+                        drive: true,
+                        calendar_read: true,
+                        calendar_write: true,
+                    },
+                };
+            })
+            .await?;
+    }
     Ok(())
 }
 

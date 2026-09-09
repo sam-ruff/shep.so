@@ -31,6 +31,7 @@ pub struct CommandSender {
     selections: mpsc::Sender<Command>,
     bulk: mpsc::Sender<Command>,
     database: mpsc::Sender<Command>,
+    profiles: mpsc::Sender<Command>,
 }
 
 pub(super) struct Inputs {
@@ -43,9 +44,15 @@ pub(super) struct Inputs {
     selections: mpsc::Receiver<Command>,
     pub(super) bulk: mpsc::Receiver<Command>,
     database: mpsc::Receiver<Command>,
+    profiles: mpsc::Receiver<Command>,
 }
 
 impl CommandSender {
+    #[cfg(test)]
+    pub(crate) fn profile_test_channel() -> (Self, mpsc::Receiver<Command>) {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.profiles)
+    }
     #[cfg(test)]
     pub(crate) fn database_test_channels()
     -> (Self, mpsc::Receiver<Command>, mpsc::Receiver<Command>) {
@@ -93,6 +100,7 @@ impl CommandSender {
         let (selections, selection_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (bulk, bulk_input) = mpsc::channel(1);
         let (database, database_input) = mpsc::channel(1);
+        let (profiles, profile_input) = mpsc::channel(CHANNEL_CAPACITY);
         (
             Self {
                 reads,
@@ -104,6 +112,7 @@ impl CommandSender {
                 selections,
                 bulk,
                 database,
+                profiles,
             },
             Inputs {
                 reads: read_input,
@@ -115,6 +124,7 @@ impl CommandSender {
                 selections: selection_input,
                 bulk: bulk_input,
                 database: database_input,
+                profiles: profile_input,
             },
         )
     }
@@ -138,6 +148,7 @@ impl CommandSender {
             };
         }
         let channel = match &command {
+            Command::ProfileSync(..) => &self.profiles,
             Command::Database(_) => &self.database,
             Command::Folder(request) => {
                 if request.is_read() {
@@ -203,6 +214,8 @@ impl Engine {
             self.clone().run_bulk_queue(input.bulk, output.clone()),
             self.clone()
                 .run_database_transfers(input.database, output.clone()),
+            self.clone()
+                .run_profile_sync(input.profiles, output.clone()),
             self.run_network(input.network, output),
         );
     }
@@ -398,6 +411,17 @@ mod tests {
             Err(error) if matches!(*error, mpsc::error::TrySendError::Full(_))
         ));
         sender
+            .try_send(Command::ProfileSync(
+                crate::profile_sync::commands::Request::Change {
+                    request: 79,
+                    changes: crate::profile_sync::enrollment::Changes {
+                        accounts: Some(false),
+                        ..Default::default()
+                    },
+                },
+            ))
+            .unwrap();
+        sender
             .try_send(Command::Query(42, MailQuery::default(), false))
             .unwrap();
         sender
@@ -462,10 +486,21 @@ mod tests {
             ))
             .unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
-            let (mut page, mut detail, mut saved, mut conversation, mut selected) =
-                (false, false, false, false, false);
-            while !(page && detail && saved && conversation && selected) {
+            let (mut page, mut detail, mut saved, mut conversation, mut selected, mut profile) =
+                (false, false, false, false, false, false);
+            while !(page && detail && saved && conversation && selected && profile) {
                 match events.next().await.expect("Dispatcher stopped") {
+                    Event::ProfileSync(
+                        79,
+                        crate::profile_sync::commands::Update::Status(snapshot),
+                    ) => {
+                        assert!(!snapshot.enrollment.options.accounts);
+                        assert!(!snapshot.enrollment.options.enabled);
+                        profile = true;
+                    }
+                    Event::ProfileSync(_, crate::profile_sync::commands::Update::Failed(error)) => {
+                        panic!("Profile control failed: {error}")
+                    }
                     Event::Selection(45, result) => {
                         let snapshot = result.unwrap().unwrap();
                         assert_eq!(snapshot.selected, 1);

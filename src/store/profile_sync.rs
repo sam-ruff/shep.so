@@ -34,6 +34,33 @@ fn review_matches(c: &Connection, expected: &Snapshot) -> anyhow::Result<Enrollm
 }
 
 impl Store {
+    pub async fn change_profile_sync_options(
+        &self,
+        changes: enrollment::Changes,
+    ) -> anyhow::Result<Snapshot> {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            let mut value = current(&tx)?;
+            let next = changes.apply(value.options);
+            next.validate()?;
+            if changes.enabled == Some(true) {
+                let selected = value
+                    .selection
+                    .as_ref()
+                    .context("Choose a shared profile before enabling sync.")?;
+                enrollment::check_google(&get(&tx, "preferences")?, selected)?;
+            }
+            if next != value.options {
+                value.options = next;
+                value.advance()?;
+                put(&tx, STORAGE_KEY, &value)?;
+            }
+            let result = snapshot(&tx)?;
+            tx.commit()?;
+            Ok(result)
+        })
+        .await
+    }
     pub async fn check_profile_review(&self, expected: Snapshot) -> anyhow::Result<()> {
         self.run(move |c| {
             let tx = c.transaction()?;

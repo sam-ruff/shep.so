@@ -598,3 +598,20 @@ Import completion publishes a new profile, not a hot engine switch. At 900×640,
 scroll the Preferences panel to reach the name/review controls and inspect WebPs
 before assuming coordinates. Search `database transfer` or `profiles` to target
 the intended card; the broader `database` query legitimately finds both.
+
+
+For shared-profile setup, `desktop.start(profile_sync="empty")` owns a loopback
+Drive HTTP server and isolated persistent workspace. Modes `fail-once`,
+`hold-list` and `slow-upload` exercise retry, cancellation and navigation during
+upload. The fake token/endpoint exist only in the test-support preview; neither
+fixture nor harness reads real Google credentials. Restart preserves the owned
+server/files; Stop releases held requests and closes the fixture.
+
+Search Preferences for "shared profile" to find **Profiles and sync**; search
+"profile workspace" for the separate local **Profiles** catalog. Observe
+`profile_sync` loading/options/saving/working/review/enrollment/error state, while
+using real controls for every action. Pending enrollment is not upload completion.
+Keep saved `test_profile_sync_native_*` scenarios for first-device review/create,
+restart, errors/retry/opt-out, option changes during held reads, close and compact
+dark rapid gestures. Review their WebP evidence. Joining other devices and live
+cross-client Google access remain separate unfinished paths.

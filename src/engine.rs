@@ -13,6 +13,7 @@ mod mail_actions;
 mod mail_sync;
 mod move_recovery;
 mod outgoing;
+mod profile_sync;
 mod profiles;
 mod removals;
 mod restore;
@@ -39,6 +40,7 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    ProfileSync(crate::profile_sync::commands::Request),
     Profiles(u64, crate::profiles::Request),
     Database(crate::transfer::Request),
     Folder(folders::Request),
@@ -143,6 +145,7 @@ impl Command {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
+    ProfileSync(u64, crate::profile_sync::commands::Update),
     Profiles(u64, Result<Arc<crate::profiles::Snapshot>, String>),
     Database(u64, crate::transfer::Update),
     Folder(folders::Event),
@@ -462,6 +465,7 @@ impl Engine {
         let explicit_draft = matches!(&command, Command::SaveDraft(_));
         let deleting_event = matches!(&command, Command::DeleteEvent(_));
         match command {
+            Command::ProfileSync(_) => anyhow::bail!("Profile sync reached the wrong worker"),
             Command::Database(_) => anyhow::bail!("Database transfer reached the wrong worker"),
             Command::Profiles(request, action) => {
                 return self.profiles_command(request, action, output).await;

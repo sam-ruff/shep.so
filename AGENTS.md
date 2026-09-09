@@ -1096,8 +1096,26 @@ persists all seed UUIDs/account mappings, and checkpoints the exact expected
 history revision before each edit. Retry that original request, never resnapshot
 its values or assign another UUID. Keep an admitted upload owned through both
 journal receipts even after stop; subsequent requests must observe newer intent.
-Actual account application, native controls, incremental polling and production
-journal path protection remain open. Metadata review alone must not connect a
+Actual account application, existing-device enrollment and incremental polling remain open. Metadata review alone must not connect a
 remote-specified server using existing credentials. See the profile reference
 and TODO for supported settings and remaining behavior; preserve held-response,
 restart, malformed seed, settings rollback and import-fence tests.
+
+
+Profile setup now has a dedicated bounded 32-command engine owner and native
+Accounts → Profiles and sync controls. Keep category saves as touched-field
+patches; an old full-options snapshot must not disable a newly created profile
+or re-enable a disconnected one. UI pending gestures remain separate from the
+single admitted save, including repeated values after an older failure.
+Read-only HTTP/provider-slot waits cancel on Stop/close; admitted uploads and
+cache/history writes keep their receipts before ownership is released. Pending
+setup progress must not retire the job or let shutdown skip its final receipt.
+
+Per-workspace sync files live in `profile-sync/` beside the cache: `drive.sqlite`,
+hashed-binding history databases and their sidecars/ownership files. Protect all
+members and hard-link/symlink aliases during database export/import. New desktop
+profiles use namespace `so.shep`; existing bindings retain their namespace. Keep
+this value aligned with the participating clients and the live OAuth project.
+Initial publication is explicitly labeled; do not claim continuous updates or
+existing-device account application until those TODO paths are implemented.
+The new native fixture modes/scenarios are documented in the E2E skill.

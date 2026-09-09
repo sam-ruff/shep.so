@@ -1,6 +1,6 @@
 # Profile records on Google Drive
 
-`profile_sync` implements transport, causal history and first-device enrollment primitives for the [shared profile format](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_FORMAT.md). Native enrollment, account application and continuous sync remain open in [TODO](https://github.com/sam-ruff/shep.so/blob/main/TODO.md). This backend alone does not provide continuous account sync.
+`profile_sync` implements transport, causal history and first-device enrollment primitives for the [shared profile format](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_FORMAT.md). Existing-profile enrollment, account application and continuous sync remain open in [TODO](https://github.com/sam-ruff/shep.so/blob/main/TODO.md). Preferences exposes initial profile creation, category choices and recovery; this does not yet provide continuous account sync.
 
 ## Shared codec
 
@@ -59,11 +59,9 @@ Deletion markers remain authoritative through stale/offline edits. Conflicts
 retain both values until a revision-checked explicit resolution arrives.
 
 This is a backend kernel. Enrollment must still finish local suppression and
-account application. Its coordinator must fence
-Google lifecycle changes, retain an upload task through durable acknowledgment,
-and observe stop/category changes between writes. Current pulls re-read full
+account application. Its bounded coordinator fences Google lifecycle changes, retains an upload task through durable acknowledgment, and observes stop/category changes between writes. Current pulls re-read full
 history: incremental polling/caching remains required before continuous operation
-is finished. History and Drive journal paths still need production transfer guards.
+is finished. The per-workspace provider directory is protected by database-transfer guards.
 
 ## Enrollment and initial publication
 
@@ -99,11 +97,43 @@ and unread badges. Device fields and backend metadata stay unchanged. Shared
 preview-line values/extensions remain in history; other portable settings still
 need shared-contract support and native implementation.
 
-First/new/existing-device native controls, account reconnection/removal reviews,
+Existing-device enrollment, account reconnection/removal reviews,
 ongoing local change capture, conflict resolution and incremental polling are
 not connected yet. A successful initial seed is not proof that later local edits
 have synced. Password transfer still requires the outstanding protection choice.
 
 ## Verification boundary
 
-Run `cargo test --all-features profile_`, `python3 scripts/test_profile_core.py` and `cargo test --all-features backup::drive`. The Python runner tests a disposable copy of the exact locked Git crate with its own committed test lock, leaving dependency/client checkouts untouched. `--update-lock` is only for a reviewed dependency update. Tests use production HTTP parsing against the scripted loopback server and real isolated SQLite files. They cover Unicode/extension preservation, restart/lost replies, metadata/content corruption, scope/identity rejection, pagination/revision failures, bounded reads and cancellation after queue admission. Two independent device stores exercise actual HTTP pull/publish, offline conflicts/resolution, account/profile removal, lost upload replies, both local acknowledgment gaps, stale/foreign discovery and more than 100 reverse-ordered ancestors. Existing Drive backup protocol tests protect the shared HTTP helper. This is protocol evidence; real Google enrollment and cross-client/native UI behavior remain unverified here.
+Run `cargo test --all-features profile_`, `python3 scripts/test_profile_core.py` and `cargo test --all-features backup::drive`. The Python runner tests a disposable copy of the exact locked Git crate with its own committed test lock, leaving dependency/client checkouts untouched. `--update-lock` is only for a reviewed dependency update. Tests use production HTTP parsing against the scripted loopback server and real isolated SQLite files. They cover Unicode/extension preservation, restart/lost replies, metadata/content corruption, scope/identity rejection, pagination/revision failures, bounded reads and cancellation after queue admission. Two independent device stores exercise actual HTTP pull/publish, offline conflicts/resolution, account/profile removal, lost upload replies, both local acknowledgment gaps, stale/foreign discovery and more than 100 reverse-ordered ancestors. Existing Drive backup protocol tests protect the shared HTTP helper. This is protocol evidence; real Google enrollment and cross-client behavior remain unverified. Native fixture evidence is described below.
+
+## Native controls and ownership
+
+**Preferences → Accounts → Profiles and sync** discovers app-data records and
+reviews an explicitly named first-device profile before uploading. Account and
+settings choices save independently of provider work. Initial completion is
+labeled as an initial copy: joining existing profiles, ongoing local edits and
+conflict reviews remain unfinished. Setup failure retains the original seed and
+offers Resume; it must never create a replacement operation to hide a failed save.
+
+The owning profile coordinator receives at most 32 commands, separate from the
+provider queue. Local category patches contain only touched fields, so a stale
+screen cannot replace a newly created enrollment or re-enable a disconnected
+device. The UI keeps later gestures separate from its single in-flight save.
+Read-only HTTP and provider-slot waits can be cancelled; accepted history/cache
+writes and admitted uploads retain ownership until their receipts settle.
+Stop/close interrupts reads and checks between upload steps.
+
+Production creation uses application namespace `so.shep`; an existing selection
+retains its saved namespace. All participating clients must use the same exact
+namespace and the verified Google project described in the handover. The chosen
+journal directory is `profile-sync/` beside each workspace cache. It contains
+`drive.sqlite` and one history file per shared binding hash, plus SQLite sidecars
+and ownership files. Export rejects destinations inside this directory and
+hard-link/symlink aliases to existing members. Another workspace has its own
+journals even when it selects the same shared profile.
+
+The MCP fixture uses an owned loopback Drive server and fake token only in the
+nondefault test-support preview. Saved scenarios cover initial review/publication,
+failure/retry/opt-out, local choices while a read is held, close/restart and compact
+dark controls. These are native-control and protocol tests, not genuine Google
+login or cross-client access evidence. Never point the harness at personal data.

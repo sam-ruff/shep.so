@@ -494,3 +494,99 @@ async fn profile_setup_keeps_inflight_receipt_but_never_reenables_a_disabled_or_
         replica.close().await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn profile_control_interrupts_a_held_read_but_waits_for_an_admitted_upload_receipt() {
+    use crate::profile_sync::control::{Control, Stopped};
+    let dir = tempfile::tempdir().unwrap();
+    let store = local(dir.path()).await;
+    let journal = journal::Journal::open(None).unwrap();
+    let (reply, received, release) = Reply::new(200, r#"{"files":[]}"#).held();
+    let mut server = Server::start(vec![reply]).await;
+    let (stop, control) = Control::channel();
+    let read_store = store.clone();
+    let read_journal = journal.clone();
+    let read_session = session(&server);
+    let read = tokio::spawn(async move {
+        discover_controlled(&read_store, &read_session, &read_journal, &control).await
+    });
+    received.await.unwrap();
+    stop.send_replace(true);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), read)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err()
+            .is::<Stopped>()
+    );
+    assert!(
+        store
+            .profile_enrollment()
+            .await
+            .unwrap()
+            .enrollment
+            .selection
+            .is_none()
+    );
+    release.send(()).unwrap();
+    server.finish().await;
+
+    let pending = initial(&store, &journal).await;
+    let mut replica = open(dir.path(), &pending, &journal).await;
+    prepare(&store, &mut replica, &pending).await.unwrap();
+    replica.close().await.unwrap();
+    let saved = upload(dir.path(), &pending).await;
+    let mut replica = open(dir.path(), &pending, &journal).await;
+    let (reply, received, release) = Reply::new(201, file(&saved).to_string()).held();
+    let mut server = Server::start(vec![
+        Reply::new(200, r#"{"files":[]}"#),
+        Reply::new(200, r#"{"ids":["seed-file"],"space":"appDataFolder"}"#),
+        Reply::new(404, ""),
+        reply,
+    ])
+    .await;
+    let (stop, control) = Control::channel();
+    let write_store = store.clone();
+    let write_session = session(&server);
+    let write = tokio::spawn(async move {
+        let result = publish_controlled(
+            &write_store,
+            &mut replica,
+            &write_session,
+            pending,
+            123,
+            &control,
+        )
+        .await;
+        (replica, result)
+    });
+    received.await.unwrap();
+    stop.send_replace(true);
+    assert!(!write.is_finished());
+    store.put("other-local-work", true).await.unwrap();
+    assert!(store.get::<bool>("other-local-work").await.unwrap());
+    release.send(()).unwrap();
+    let (replica, result) = write.await.unwrap();
+    assert!(result.unwrap_err().is::<Stopped>());
+    assert_eq!(replica.state().await.unwrap().queued, 0);
+    assert!(
+        journal
+            .load(&binding(), saved.remote.key)
+            .await
+            .unwrap()
+            .unwrap()
+            .acknowledged()
+    );
+    assert!(
+        store
+            .profile_enrollment()
+            .await
+            .unwrap()
+            .enrollment
+            .last_success
+            .is_none()
+    );
+    replica.close().await.unwrap();
+    server.finish().await;
+}
