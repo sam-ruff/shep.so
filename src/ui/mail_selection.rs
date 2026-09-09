@@ -521,6 +521,43 @@ mod tests {
         app.selection_finished(serial, result);
     }
     #[tokio::test]
+    async fn selected_move_search_uses_membership_account_instead_of_unrelated_reader() {
+        let (mut app, store, mut commands) = fixture().await;
+        let first = app.page.rows[0].id.clone();
+        let _ = app.checkbox_mail(first);
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        let raw = "Projects/&ZeVnLIqe-";
+        let mut mailbox = crate::folders::Mailbox::flat(raw.into());
+        mailbox.delimiter = Some('/');
+        mailbox.encoding = crate::folders::NameEncoding::ImapUtf7;
+        let workspace = Arc::make_mut(&mut app.workspace);
+        workspace
+            .account_folders
+            .insert("fixture".into(), vec![raw.into()]);
+        workspace.folder_trees.insert(
+            "fixture".into(),
+            crate::folders::Tree::new(&[mailbox]).into(),
+        );
+        let mut reader = app.page.rows[0].clone();
+        reader.id = "other:INBOX:1".into();
+        reader.account_id = "other".into();
+        app.selected = Some(reader.id.clone());
+        Arc::make_mut(&mut app.page).rows.push(reader);
+        assert_eq!(app.action_mail().unwrap().account_id, "other");
+        app.fields.insert("folder_search", "日本語".into());
+        assert_eq!(app.move_folder_label(raw), "Projects/日本語");
+        assert_eq!(app.ranked_move_folders(), vec![raw.to_owned()]);
+        // Explicit destination choice takes precedence over selected membership.
+        app.fields.insert("move_account", "other".into());
+        assert_eq!(app.move_folder_label(raw), raw);
+        app.fields.remove("move_account");
+        app.mail_selection.mode = false;
+        assert_eq!(app.move_folder_label(raw), raw);
+    }
+
+    #[tokio::test]
     async fn selection_mode_rows_toggle_and_ranges_preserve_other_pages_before_ack() {
         let (mut app, store, mut commands) = fixture().await;
         let first = app.page.rows[0].id.clone();

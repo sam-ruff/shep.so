@@ -584,10 +584,18 @@ impl App {
 
 impl App {
     pub(super) fn move_folder_label<'a>(&'a self, folder: &'a str) -> std::borrow::Cow<'a, str> {
-        let account = if self.field("move_account").is_empty() {
-            self.action_mail().map(|mail| mail.account_id.as_str())
-        } else {
+        let account = if !self.field("move_account").is_empty() {
             Some(self.field("move_account"))
+        } else if self.mail_selection.mode {
+            // The reader may belong to another account after a move. Match
+            // the selected membership used by move_folders, including encoding.
+            self.mail_selection
+                .snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.accounts.keys().next())
+                .map(String::as_str)
+        } else {
+            self.action_mail().map(|mail| mail.account_id.as_str())
         };
         self.workspace.folder_label(account, folder)
     }
