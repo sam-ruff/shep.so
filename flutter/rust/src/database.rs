@@ -16,6 +16,7 @@ use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 static PROFILES: OnceLock<Mutex<HashMap<PathBuf, Weak<Database>>>> = OnceLock::new();
 
 pub struct Database {
+    pub(crate) path: PathBuf,
     pub operations: Arc<crate::operations::Operations>,
     readers: [Arc<Mutex<Connection>>; 2],
     writer: Arc<Mutex<Connection>>,
@@ -134,6 +135,7 @@ impl Database {
                 crate::selection::schema(&db)?;
             }
             let profile = Arc::new(Self {
+                path: path.clone(),
                 operations: Arc::new(crate::operations::Operations::new()),
                 readers: [reader()?, reader()?],
                 writer: Arc::new(Mutex::new(writer)),

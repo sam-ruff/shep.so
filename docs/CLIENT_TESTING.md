@@ -34,6 +34,22 @@ python3 scripts/clients/android_e2e.py --device emulator-5554
 
 The runner refuses personal devices, runs preview and actual native-bridge integration tests sequentially, rebuilds the isolated preview APK, then runs Appium. Never run the two native drivers against the same emulator concurrently, or run competing Flutter builds/tests in one checkout; generated shader assets and plugin registrants are shared. Only `so.shep.shep_mobile.preview` is reset. Native bridge scenarios save/reopen/edit/discard a draft through controls, reject an isolated loopback account probe roundtrip test-only credential pairs, and open the real production entry in this isolated preview package. Rust profiles use fresh temporary directories; credential entries use unique fixture identifiers and are removed afterward. No production app/account data is touched. The `test_driver/native_driver.dart` host callback saves captures from `flutter drive`; Flutter test cleanup can uninstall its test package, so screenshots must be collected before cleanup. Screenshots are in `artifacts/flutter/`; convert review copies to WebP with a standard lossless image converter.
 
+The profile-history scenario runs the production Rust bridge and SQLite in two
+isolated Android stores, with the fixture credential store locked. It exercises
+metadata exchange, conflict review/resolution and reopening queued edits; the
+same scenario runs in the host FFI suite. It does not drive Settings enrollment
+or authenticate Google. Run only that backend integration with:
+
+```sh
+python3 scripts/clients/android_e2e.py --device emulator-5554 --profiles-only
+cargo test -p shep-profile-core --features history
+```
+
+The wrapper deletes the previous report and requires the exact completion marker;
+a driver exit without the scenario result fails. Keep provider transcript tests,
+actual Settings controls and Apple/live execution separate. See
+[the journal contract](agents/PROFILE_HISTORY.md).
+
 The Android runner also pairs `attachments_android_test.dart` with `android_compose_fixture.py`. The host hands over a generated SQLite mailbox before the app opens it, then uses actual DocumentsUI input to cancel one picker and select two files. Flutter controls exercise cached Reply all, save/reopen, file removal, pending text saves and send refusal without credentials. `--compose-only` reruns just this scenario while developing; it is not the full Android suite. The helper accepts only the dedicated emulator and preview package. Apple file-picker coverage remains open.
 
 The incoming-file scenario pairs `incoming_android_test.dart` with `android_incoming_fixture.py`. It seeds an isolated cached MIME profile before opening it, drives the actual Android save picker through cancellation and a successful save, and reads the selected file back to verify binary bytes. Reader controls move the message, refresh with locked credentials and retain the open message after its Inbox row disappears. `--incoming-only` reruns this scenario. Host tests also cover save errors, stale attachment identities and corrupt-file metadata without hiding the cached body. Apple export is implemented but uncompiled/unexecuted on this Linux host; simulator and interrupted-save cleanup coverage remain open.

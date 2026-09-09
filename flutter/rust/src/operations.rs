@@ -17,6 +17,7 @@ use std::{
 use tokio::sync::{Mutex, Semaphore, mpsc};
 
 pub struct Operations {
+    profile_history: crate::profile_history::Runtime,
     admitted: Arc<Semaphore>,
     slots: Arc<Semaphore>,
     search: Arc<Semaphore>,
@@ -39,6 +40,7 @@ impl Operations {
     }
     pub fn new() -> Self {
         Self {
+            profile_history: crate::profile_history::Runtime::default(),
             admitted: Arc::new(Semaphore::new(40)),
             slots: Arc::new(Semaphore::new(8)),
             search: Arc::new(Semaphore::new(1)),
@@ -97,6 +99,13 @@ impl Operations {
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
+    ProfileHistory {
+        binding: shep_profile_core::history::Binding,
+        command: Box<shep_profile_core::history::Command>,
+    },
+    CloseProfileHistory {
+        binding: shep_profile_core::history::Binding,
+    },
     Accounts,
     ValidateProfileOperation {
         record: String,
@@ -434,6 +443,13 @@ async fn value<T: serde::Serialize>(result: Result<T>) -> Result<Value> {
 pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
     let db = &profile.database;
     match request {
+        Request::ProfileHistory { binding,command } => {
+            profile.operations.profile_history.run(&db.path,binding,*command).await
+        }
+        Request::CloseProfileHistory { binding } => {
+            profile.operations.profile_history.close(binding).await?;
+            Ok(json!({"closed":true}))
+        }
         Request::ValidateProfileOperation { record } => {
             let permit = profile.operations.profile_records.clone().try_acquire_owned()
                 .context("Profile validation is busy. Retry shortly.")?;

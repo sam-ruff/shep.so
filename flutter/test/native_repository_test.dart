@@ -7,6 +7,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:shep_mobile/src/rust/frb_generated.dart';
 import 'package:shep_mobile/data/credentials.dart';
 import 'package:shep_mobile/data/native_repository.dart';
+import 'support/profile_history_scenario.dart';
 import 'package:shep_mobile/data/outgoing.dart';
 import 'package:shep_mobile/model/mail.dart';
 import 'package:shep_mobile/model/mail_selection.dart';
@@ -196,6 +197,19 @@ void main() {
       }
       expect(await repository.call({'op': 'accounts'}), original);
       expect(credentials.reads, credentialReads);
+    },
+  );
+
+  test(
+    'profile history preserves two-device conflicts and queued edits through actual FFI',
+    () async {
+      final firstCredentials = FixtureCredentials()..unavailable = true;
+      final secondCredentials = FixtureCredentials()..unavailable = true;
+      final first = await connection(firstCredentials);
+      final second = await connection(secondCredentials);
+      final reads = secondCredentials.reads;
+      await exerciseProfileHistory(first, second);
+      expect(secondCredentials.reads, reads);
     },
   );
 

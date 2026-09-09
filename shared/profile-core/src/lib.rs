@@ -1,7 +1,10 @@
-//! Portable profile metadata. No network, storage, credential or mail-action API.
+//! Portable profile metadata with an optional native causal-history worker.
+//! No network, credential or mail-action API.
 //! Decoding is only structural validation: enrollment must separately verify the
 //! Google identity/namespace, causal ancestry, immutable IDs and local revisions.
 pub mod account;
+#[cfg(all(feature = "history", not(target_arch = "wasm32")))]
+pub mod history;
 mod json;
 
 use serde::{Deserialize, Serialize};

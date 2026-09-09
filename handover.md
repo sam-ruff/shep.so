@@ -29,6 +29,24 @@ The user resumed development after the credit-limited handover. R79 then authori
 
 R63 now has two deterministic failed-before regressions for shortcut capture/held presses interrupted by background mail completion. Mounted capture state and retained controls fix the failures, with an additional saved cancellation/current-setting scenario. Final Chromium regression passes 133/133 scenarios, all 123 unit tests and 15 targeted History/Find/Preferences controls pass, and light/dark/History WebP captures are reviewed. All 56 production HTTPS fixture stages, strict documentation and mandatory hooks (381 Rust tests) pass. Shipping is verified in [`1ea12a6`](https://github.com/sam-ruff/shep.so/commit/1ea12a677829dcd71c4246b87cae46327f9c749f); see the completion log. The full run also exposed History waiting for Undo preview preparation after the durable group had completed. Independent preparation tokens and persistent Refresh recovery now pass deterministic held-result and failed-preview controls. Keep the earlier failing evidence below as historical evidence.
 
+## Current profile history checkpoint
+
+The native [profile history](docs/agents/PROFILE_HISTORY.md) now implements durable
+immutable operations, causal field merge, explicit conflict reviews, account/profile
+tombstones and reserved upload identities. One background connection owns each
+journal; the Flutter production bridge and shared host/Android FFI scenario exercise
+two isolated stores without credentials. Root/native SQLite is updated to 3.53.2;
+main's separate mail-cache worker migration is not included. Final checks, retained
+failures and checkpoint shipping belong in the completion log.
+
+Restart with verified Google identity/owned-file transport and durable
+creation/discovery/enrollment, then category controls and actual account/settings
+application. Received ancestry is not a complete cloud listing. Keep upload bytes
+and reserved IDs, stale-review checks and device-local journal identity through
+retries; full database import needs explicit device/ownership rebinding. No profile
+UI, Google upload or password sync is delivered by this metadata increment. Live
+Google/project setup, Apple and the credential-protection decision remain open.
+
 ## Flutter native Google consent checkpoint
 
 Shipped and verified as [`6c4bb65`](https://github.com/sam-ruff/shep.so/commit/6c4bb65fbc02c96dd258ed9942e64e6282bca181). Mandatory hooks pass formatting, Clippy and 398 root/shared Rust tests (two personal diagnostics intentionally ignored).
@@ -69,7 +87,7 @@ Preserve existing mail schema 12/journal schema 6 lineage, canonical-alias proof
 
 ## Restart order
 
-1. **Highest priority:** implement Google OAuth and shared account/settings profiles using [the interoperability handover](docs/agents/PROFILE_SYNC_HANDOVER.md), as requested in desktop-main:R92/R75/R02/R49. Cover first setup on desktop or Flutter, new/existing devices, configurable sync and scoped authorization. Preserve the pending credential-protection choice and verify complete database transfer independently. The handover is the full contract. The initial shared metadata codec/account mappings and native/Dart/WASM fixtures are documented in [the format subset](docs/agents/PROFILE_FORMAT.md); they do not implement enrollment or causal sync. Next add scoped authorization/identity and durable enrollment/merge, preserving the original operation bytes and all remaining settings/credential requirements.
+1. **Highest priority:** implement Google OAuth and shared account/settings profiles using [the interoperability handover](docs/agents/PROFILE_SYNC_HANDOVER.md), as requested in desktop-main:R92/R75/R02/R49. Cover first setup on desktop or Flutter, new/existing devices, configurable sync and scoped authorization. Preserve the pending credential-protection choice and verify complete database transfer independently. The handover is the full contract. The initial shared metadata codec/account mappings and native/Dart/WASM fixtures are documented in [the format subset](docs/agents/PROFILE_FORMAT.md); they do not implement enrollment or causal sync. Scoped desktop/Flutter consent and native causal history are now implemented prerequisites. Next add verified identity/provider transport, durable discovery/enrollment and actual account/preferences application, preserving the original operation bytes and all remaining settings/credential requirements.
 2. Finish remaining browser Undo lifecycle and abandoned review/staging cleanup. Saved-group startup notices now have compact light/dark controls, older-group targeting, inspection retry, acknowledged-cache recovery and live-owner/tab-loss evidence. All 137 Chromium scenarios, 127 units and 56 production HTTPS stages pass; shipping is verified in [`df4f29c`](https://github.com/sam-ruff/shep.so/commit/df4f29c2e12d21fc71353920696dd4958cde363a). Preserve `artifacts/browser-recovery-visuals/` and the failed stale-observation unit baseline.
 3. Connect Flutter’s native SQLite capture and Dart controller to exact durable group execution, then Select/Done/Clear/all, review, Undo, History and recovery controls. Current loaded-row actions are **not** full-mailbox parity.
 4. Continue account/calendar/backup, composition, cache/large-message, remote-image, keymap, lifecycle and platform gaps in TODO. Port later committed desktop work deliberately, preserving both request histories and `desktop-main:` identifier collisions.

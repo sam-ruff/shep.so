@@ -16,6 +16,7 @@ import 'outgoing.dart';
 
 Map<String, dynamic> _decode(String data) =>
     jsonDecode(data) as Map<String, dynamic>;
+String _encode(Map<String, Object?> data) => jsonEncode(data);
 
 class NativeRepository
     implements
@@ -56,10 +57,18 @@ class NativeRepository
     return NativeRepository(await MobileProfile.open(path: path), credentials);
   }
 
-  Future<dynamic> call(Map<String, Object?> request) async {
+  Future<dynamic> call(Map<String, Object?> request) async =>
+      _send(jsonEncode(request));
+
+  /// Profile records may contain substantial metadata. Encode them outside the
+  /// UI isolate; their controller must still serialize dependent requests.
+  Future<dynamic> callBackground(Map<String, Object?> request) async =>
+      _send(await compute(_encode, request));
+
+  Future<dynamic> _send(String encoded) async {
     final response = await compute(
       _decode,
-      await profile.request(json: jsonEncode(request)),
+      await profile.request(json: encoded),
     );
     if (response['error'] case final String error) {
       throw MailOperationFailure(error);
