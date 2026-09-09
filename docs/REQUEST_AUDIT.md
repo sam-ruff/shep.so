@@ -489,3 +489,10 @@ item is removed: authenticated discovery/enrollment/category controls, real
 account/preferences application, credentials, browser history and Apple/live
 verification remain active. The R75 Google replacement and R76 grouped scheduled
 automatic-replies TODOs are retained, as are deployment and Linux store work.
+
+R03/R09/R18/R44/R42/R67/R73 continuation: storage verification exposed repeated
+literal FTS work in the desktop relevance query. The query now computes that
+relation once while retaining exact-body priority and the common selection order.
+The new planner guard and existing search/selection/bulk contracts pass; native
+controls, measured budgets and shipping follow in the completion log. Mobile and
+browser fuzzy-ranking parity stay open. No benchmark threshold is changed.
