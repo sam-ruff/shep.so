@@ -279,11 +279,15 @@ impl App {
                 )
                 .padding([11, 18])
                 .style(primary)
-                .on_press(if step == 2 {
-                    Message::SaveAccount
-                } else {
-                    Message::Field("setup_step", (step + 1).to_string())
-                }),
+                .on_press_maybe(
+                    (!self.busy.contains(&format!("account:{}", self.field("id")))).then(|| {
+                        if step == 2 {
+                            Message::SaveAccount
+                        } else {
+                            Message::Field("setup_step", (step + 1).to_string())
+                        }
+                    })
+                ),
             ]
             .spacing(8),
         )

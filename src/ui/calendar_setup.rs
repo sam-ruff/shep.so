@@ -110,6 +110,8 @@ impl App {
                 self.send(Command::SyncCalendar);
             }
             Err(error) => {
+                self.pending_close = None;
+                self.composer.close = None;
                 if current {
                     self.calendar_setup.error = Some(error);
                 } else {

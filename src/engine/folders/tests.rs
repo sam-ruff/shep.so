@@ -106,7 +106,7 @@ async fn folder_worker_resumes_durable_jobs_and_close_stops_before_starting_anot
         .start_folder_change("move".into(), (*preview.review).clone())
         .await
         .unwrap();
-    engine.bulk_control.stopping.store(true, SeqCst);
+    engine.bulk_control.stopping.set(true);
     let (output, mut events) = futures::channel::mpsc::channel(32);
     engine
         .execute_folder_job("move".into(), output.clone())
@@ -119,12 +119,12 @@ async fn folder_worker_resumes_durable_jobs_and_close_stops_before_starting_anot
         engine.store.folder_job("move".into()).await.unwrap().steps[0].status,
         Status::Queued
     );
-    engine.bulk_control.stopping.store(false, SeqCst);
+    engine.bulk_control.stopping.set(false);
     engine.drain_folder_jobs(output.clone()).await;
     let done = engine.store.folder_job("move".into()).await.unwrap();
     assert!(done.closed);
     assert_eq!(done.steps[0].status, Status::Done);
-    assert!(!engine.bulk_control.active.load(SeqCst));
+    assert!(!engine.bulk_control.active.get());
     assert_eq!(
         engine
             .store
@@ -178,8 +178,8 @@ async fn closing_a_folder_job_waiting_for_capacity_keeps_it_queued_without_waiti
         events.next().await,
         Some(super::super::Event::Folder(Event::Update(_)))
     ));
-    assert!(engine.bulk_control.active.load(SeqCst));
-    engine.bulk_control.stopping.store(true, SeqCst);
+    assert!(engine.bulk_control.active.get());
+    engine.bulk_control.stopping.set(true);
     tokio::time::timeout(Duration::from_secs(3), worker)
         .await
         .unwrap()
@@ -191,6 +191,6 @@ async fn closing_a_folder_job_waiting_for_capacity_keeps_it_queued_without_waiti
     );
     let job = engine.store.folder_job("waiting".into()).await.unwrap();
     assert!(job.steps.iter().all(|step| step.status == Status::Queued));
-    assert!(!engine.bulk_control.active.load(SeqCst));
-    assert!(engine.bulk_control.stopping.load(SeqCst));
+    assert!(!engine.bulk_control.active.get());
+    assert!(engine.bulk_control.stopping.get());
 }

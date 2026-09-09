@@ -638,7 +638,7 @@ struct Server {
     fail_call: Option<(usize, Outcome)>,
     fail_next_list: bool,
     fail_list_after_write: bool,
-    stop_after_write: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    stop_after_write: Option<std::sync::Arc<shep::lifecycle::Signal>>,
 }
 #[async_trait::async_trait]
 impl shep::folder_actions::Connection for Server {
@@ -658,7 +658,7 @@ impl shep::folder_actions::Connection for Server {
         self.catalog = self.plan.project(&self.catalog, std::slice::from_ref(step));
         self.fail_next_list = std::mem::take(&mut self.fail_list_after_write);
         if let Some(stopping) = &self.stop_after_write {
-            stopping.store(true, std::sync::atomic::Ordering::SeqCst);
+            stopping.set(true);
         }
         Outcome::Applied
     }
@@ -678,13 +678,13 @@ fn server(job: &shep::folder_actions::Job) -> Server {
 #[tokio::test]
 async fn folder_runner_handles_partial_rejection_retry_and_server_refresh_failure_without_replay() {
     use shep::folder_actions::runner::run;
-    use std::sync::atomic::AtomicBool;
+    use shep::lifecycle::Signal;
     let store = Store::memory().unwrap();
     seed(&store).await;
     let lease = start(&store, "runner", Action::Delete).await;
     let mut server = server(&store.folder_job("runner".into()).await.unwrap());
     server.fail_call = Some((2, Outcome::Rejected("Denied".into())));
-    let stopping = AtomicBool::new(false);
+    let stopping = Signal::default();
     let job = run(&store, &lease, Some(&mut server), &stopping, None)
         .await
         .unwrap();
@@ -731,15 +731,13 @@ async fn folder_runner_handles_partial_rejection_retry_and_server_refresh_failur
 #[tokio::test]
 async fn folder_runner_stops_between_durable_receipts_and_rechecks_new_descendants() {
     use shep::folder_actions::runner::run;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
+    use shep::lifecycle::Signal;
+    use std::sync::Arc;
     let store = Store::memory().unwrap();
     seed(&store).await;
     let lease = start(&store, "stop", Action::Delete).await;
     let mut server = server(&store.folder_job("stop".into()).await.unwrap());
-    let stopping = Arc::new(AtomicBool::new(false));
+    let stopping = Arc::new(Signal::default());
     server.stop_after_write = Some(stopping.clone());
     let (progress, receiver) = tokio::sync::watch::channel(std::sync::Arc::new(
         store.folder_job("stop".into()).await.unwrap(),
@@ -756,7 +754,7 @@ async fn folder_runner_stops_between_durable_receipts_and_rechecks_new_descendan
     assert!(!job.closed);
     assert_eq!(server.calls.len(), 1);
     assert_eq!(receiver.borrow().steps[0].status, Status::Done);
-    stopping.store(false, Ordering::SeqCst);
+    stopping.set(false);
     server.catalog.push(Mailbox {
         delimiter: Some('/'),
         encoding: NameEncoding::ImapUtf7,
@@ -777,12 +775,12 @@ async fn folder_runner_stops_between_durable_receipts_and_rechecks_new_descendan
 #[tokio::test]
 async fn runner_refuses_imap_without_provider_and_pop3_crash_can_resume_local_work() {
     use shep::folder_actions::runner::run;
-    use std::sync::atomic::AtomicBool;
+    use shep::lifecycle::Signal;
     let store = Store::memory().unwrap();
     seed(&store).await;
     let lease = start(&store, "imap", move_to_storage()).await;
     assert!(
-        run(&store, &lease, None, &AtomicBool::new(false), None)
+        run(&store, &lease, None, &Signal::default(), None)
             .await
             .is_err()
     );
@@ -793,7 +791,7 @@ async fn runner_refuses_imap_without_provider_and_pop3_crash_can_resume_local_wo
     let lease = start(&store, "pop", move_to_storage()).await;
     store.claim_folder_step(&lease).await.unwrap().unwrap();
     assert!(
-        run(&store, &lease, None, &AtomicBool::new(false), None)
+        run(&store, &lease, None, &Signal::default(), None)
             .await
             .unwrap()
             .closed

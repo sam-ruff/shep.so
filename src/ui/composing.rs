@@ -103,6 +103,8 @@ impl App {
                 self.notice("Forward saved in Drafts.", false);
             }
             Err(error) => {
+                self.pending_close = None;
+                self.composer.close = None;
                 self.composer.forward_error = Some(error.clone());
                 self.notice(error, true);
             }
@@ -159,6 +161,7 @@ impl App {
             .discard
             .as_ref()
             .is_some_and(|draft| draft.id == id);
+        let owned_dependency = current && self.composer.discard_pending;
         if current {
             self.composer.discard_pending = false;
         }
@@ -175,7 +178,13 @@ impl App {
                 }
                 self.notice("Draft discarded.", false);
             }
-            Err(error) => self.notice(error, true),
+            Err(error) => {
+                if owned_dependency {
+                    self.pending_close = None;
+                    self.composer.close = None;
+                }
+                self.notice(error, true);
+            }
         }
     }
 

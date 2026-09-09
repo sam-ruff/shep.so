@@ -3,6 +3,7 @@ mod action_toasts;
 mod backups;
 mod bulk;
 mod calendar_setup;
+mod closing;
 mod components;
 mod composing;
 mod context_menu;
@@ -650,6 +651,21 @@ impl App {
         self.try_command(command);
     }
     fn try_command(&mut self, command: Command) -> bool {
+        // Admission already owns a durable write, even before a provider slot
+        // starts it. Close must not race the worker's later Busy notification.
+        let close_key = match &command {
+            Command::SaveAccount(..)
+            | Command::SaveEvent(..)
+            | Command::DeleteEvent(..)
+            | Command::GoogleLogin(..) => command.key(),
+            _ => None,
+        };
+        if close_key
+            .as_ref()
+            .is_some_and(|key| self.busy.contains(key))
+        {
+            return false;
+        }
         let preferences_request = if let Command::SavePreferences(request, _) = &command {
             Some(*request)
         } else {
@@ -674,6 +690,9 @@ impl App {
         } else {
             self.notice("Opening your local workspace…", false);
             return false;
+        }
+        if let Some(key) = close_key {
+            self.busy.insert(key);
         }
         if preferences_request.is_some_and(|request| {
             self.pending_preference_save
@@ -855,10 +874,12 @@ impl App {
         let start = Instant::now();
         let task = self.handle(message);
         self.pump_bulk();
+        let close = self.continue_pending_close();
         self.update_desktop_badge();
         self.update_notification_settings();
         let task = Task::batch([
             task,
+            close,
             self.prepare_reader_selection(),
             self.prepare_html(),
             self.prepare_find(),
@@ -1381,6 +1402,8 @@ impl App {
                 }
                 Event::Notice(text) => self.notice(text, false),
                 Event::Error(text) => {
+                    self.pending_close = None;
+                    self.composer.close = None;
                     self.notice(text, true);
                     self.pending_details.clear();
                 }
@@ -1446,12 +1469,17 @@ impl App {
                 Event::ForwardDraft(id, result) => return self.forward_ready(id, result),
                 Event::Print(revision, result) => return self.print_ready(revision, result),
                 Event::DraftFiles(id, result) => {
-                    if self.composer.io.as_deref() == Some(&id) {
+                    let current = self.composer.io.as_deref() == Some(&id);
+                    if current {
                         self.composer.io = None;
                     }
                     match result {
                         Ok(state) => self.observe_drafts(&state),
                         Err(error) => {
+                            if current {
+                                self.pending_close = None;
+                                self.composer.close = None;
+                            }
                             self.fail_removal_draft_wait(&id, &error);
                             self.fail_database_preparation(&error);
                             self.notice(error, true);
@@ -1578,6 +1606,7 @@ impl App {
                 _ => {}
             },
             Message::WindowClose(window) => {
+                self.pending_close = Some(window);
                 if self.profile_sync.pending() {
                     self.pending_close = Some(window);
                     self.shared_profile_action(profile_sync::Action::Stop);
@@ -1630,51 +1659,38 @@ impl App {
                 } else if self.removal.removing.is_some()
                     || self.busy.contains("credential-cleanup")
                 {
-                    self.notice(
-                        "Wait for credential cleanup to finish before closing.",
-                        true,
-                    );
+                    self.notice("Finishing credential cleanup before closing…", false);
                 } else if self.busy.contains("google-disconnect") || self.busy.contains("google") {
                     self.notice(
-                        "Wait for the Google connection change to finish before closing.",
-                        true,
+                        "Finishing the Google connection change before closing…",
+                        false,
                     );
                 } else if self.busy.iter().any(|key| key.starts_with("outgoing:")) {
-                    self.notice(
-                        "Wait for Sent-copy recovery to finish before closing.",
-                        true,
-                    );
+                    self.notice("Finishing Sent-copy recovery before closing…", false);
                 } else if self.calendar_setup.saving.is_some() {
-                    self.notice(
-                        "Wait for the calendar connection to finish saving before closing.",
-                        true,
-                    );
-                } else if self.busy.iter().any(|key| key.starts_with("send:")) {
-                    self.notice(
-                        "A message is being sent. Wait for delivery to finish before closing.",
-                        true,
-                    );
+                    self.notice("Saving the calendar connection before closing…", false);
+                } else if self.busy.iter().any(|key| {
+                    key.starts_with("send:")
+                        || key.starts_with("event:")
+                        || key.starts_with("account:")
+                }) {
+                    self.notice("Finishing your changes before closing…", false);
                 } else if self.composer.discard_pending {
-                    self.notice(
-                        "Wait for the draft to finish discarding before closing.",
-                        true,
-                    );
+                    self.notice("Finishing the draft change before closing…", false);
                 } else if self.composer.forward_pending.is_some() {
                     self.notice(
                         "Wait for the forward to finish preparing before closing.",
                         false,
                     );
                 } else if self.composer.io.is_some() {
-                    self.notice(
-                        "Wait for the selected files to finish attaching before closing.",
-                        true,
-                    );
+                    self.notice("Saving the selected attachments before closing…", false);
                 } else {
                     self.flush_pane_resize();
                     if self.preference_sync.dirty() {
                         self.pending_close = Some(window);
                         self.save_preferences();
                     } else if !self.defer_draft_exit(composing::Exit::Window(window)) {
+                        self.pending_close = None;
                         return iced::window::close(window);
                     }
                 }
@@ -3575,6 +3591,8 @@ impl App {
                 .collect::<Vec<_>>()
         );
         data["inbox_unread"] = serde_json::json!(self.page.inbox_unread);
+        data["close_pending"] =
+            serde_json::json!(self.pending_close.is_some() || self.composer.close.is_some());
         data["unread_badge"] = serde_json::json!(self.preferences.unread_badge);
         #[cfg(feature = "test-support")]
         {

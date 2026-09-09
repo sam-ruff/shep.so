@@ -359,6 +359,7 @@ impl App {
             Ok(state) => self.observe_drafts(&state),
             Err(error) => {
                 if owned_error {
+                    self.pending_close = None;
                     self.composer.close = None;
                     self.fail_removal_draft_wait(&id, &error);
                     self.fail_database_preparation(&error);

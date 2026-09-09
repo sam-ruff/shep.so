@@ -1,17 +1,14 @@
-//! Serial execution within an account's mutation lock. Provider timeouts live in
+//! Serial execution under the account coordinator. Provider timeouts live in
 //! the adapter; a database commit is always observed through completion.
 use super::*;
 use crate::store::{FolderLease, Store};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
 pub async fn run(
     store: &Store,
     lease: &FolderLease,
     mut connection: Option<&mut dyn Connection>,
-    stopping: &AtomicBool,
+    stopping: &crate::lifecycle::Signal,
     progress: Option<&tokio::sync::watch::Sender<Arc<Job>>>,
 ) -> anyhow::Result<Job> {
     let mut current = store.recover_folder_change(lease).await?;
@@ -38,7 +35,7 @@ pub async fn run(
     }
     loop {
         if current.closed
-            || stopping.load(Ordering::SeqCst)
+            || stopping.get()
             || current
                 .steps
                 .iter()

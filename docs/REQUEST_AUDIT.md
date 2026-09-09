@@ -126,7 +126,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R87 | Refresh icon should spin more slowly and clockwise; add to TODO and push | Delivered in `d29ce06`: 2.4-second clockwise turn; renderer and seven native scenarios pass; see completion log. |
 | R88 | Remove sender icons/avatars for shorter compact email-list rows, retain action buttons; unread highlight, dot and bold subject | Recorded in TODO with the supplied horizontal-row reference described; no UI implementation yet |
 | R89 | Deleting a message should select the next message down and keep the list from snapping to the top | Recorded in TODO; preserve scroll/current ordering and selection through background completion. No behavior change yet |
-| R90 | Sync/close seems excessively slow; investigate and fix any bug | `34cfc71`: channel-owned account scheduling interrupts held read-only sync for read/flag writes while preserving cache commits; 528 Rust/adapter, 49 Python and 185/185 native functional tests. Pending-save tray and remaining personal-server diagnosis stay open |
+| R90 | Sync/close seems excessively slow; investigate and fix any bug | `34cfc71`: channel-owned account scheduling interrupts held read-only sync for read/flag writes while preserving cache commits; 528 Rust/adapter, 49 Python and 185/185 native functional tests. Additional close continuation/capacity-wait checkpoint passes 29 targeted Rust, 57 Python and 15 selected native scenarios; integration/shipping is pending. Pending-save tray and remaining personal-server diagnosis stay open |
 | R91 | Use channels rather than locks to manage state | Account/calendar scheduling, mail-cache connection/local leases, credential operations and profile catalog use bounded owning workers. Long database copying has its own connection/controller and does not hold the cache worker. Cache/credential cancellation/draining and profile/restart tests pass. Remaining Google lifecycle and backup-journal coordination stay in TODO; see completion/shipping evidence. |
 | R92 | Next priority: full DB import/export in Settings; Google OAuth/Drive account/profile sharing; first login on either client, new/existing devices, configurable toggles; Flutter interoperability document in shep-clients; follow-up: put OAuth implementation referencing that handover at the top of TODO | Handover, parity/scenario gaps and top-priority client TODO shipped in client-branch `02c4b32`, with verified audit `59578f3`. Database transfer/local profiles are covered by R83. Native first-device creation/recovery and category controls ship in `488a9ec`, with failed-settings/close recovery in `6860f50` and isolated MCP/protocol coverage; see the newest completion entry. Existing-profile discovery/import ships in `071c6b0`, with 22 affected native scenarios. OAuth/profile implementation remains explicitly first in TODO, linking the Flutter handover; after-login discovery/enrollment ships in `acb4969`, while continuous changes, live interoperability and the credential-protection choice remain open. |
 
@@ -141,3 +141,10 @@ completion entry records 22 native scenarios and backend coverage. Continuous
 updates, automatic login prompts, credential protection and real cross-client
 Google verification remain open. R92's OAuth/handover follow-up remains first in
 TODO. Source `071c6b0` is pushed; mandatory hooks passed 683 test executions. See the newest completion entry.
+
+R90 shutdown review follow-up: matching attachment/discard/forward failures cancel
+pending close; obsolete results retain newer dependencies. Three App::update tests
+cover both result identities and late BulkStopped. Nine selected native scenarios
+pass, including three saved failure/close/retry flows with reviewed WebPs. The
+close filter passes 32 Rust tests; Python passes 57. Awaiting mandatory hooks and
+root integration/shipping; native tray and personal-server diagnosis remain open.

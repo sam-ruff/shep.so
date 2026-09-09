@@ -116,8 +116,9 @@ pub enum Command {
     },
 }
 impl Command {
-    fn key(&self) -> Option<String> {
+    pub(crate) fn key(&self) -> Option<String> {
         match self {
+            Self::SaveAccount(account, ..) => Some(format!("account:{}", account.id)),
             Self::RecoverMailMove(request, record, ..) => {
                 Some(format!("move-recovery:{}:{request}", record.token))
             }
@@ -318,6 +319,18 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             printing: Default::default(),
             bulk_control: Default::default(),
         };
+        // An owned fixture can keep all network capacity occupied indefinitely.
+        // It proves close/read/persistence behavior without a real provider.
+        #[cfg(feature = "test-support")]
+        let _held_provider_slots = {
+            let mut slots = Vec::new();
+            if demo && std::env::args().any(|a| a == "--held-provider-slots") {
+                for _ in 0..8 {
+                    slots.push(engine.provider_slots.acquire().await);
+                }
+            }
+            slots
+        };
         let workspace = match engine.store.workspace().await {
             Ok(w) => w,
             Err(e) => {
@@ -343,8 +356,13 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             let _ = tx.try_send(Command::CheckGoogleConnection);
         }
         let _ = tx.try_send(Command::IndexConversations);
-        let _ = tx.try_send(Command::CleanupCredentials);
-        let _ = tx.try_send(Command::RepairOutgoing);
+        let held_capacity_fixture = demo
+            && cfg!(feature = "test-support")
+            && std::env::args().any(|a| a == "--held-provider-slots");
+        if !held_capacity_fixture {
+            let _ = tx.try_send(Command::CleanupCredentials);
+            let _ = tx.try_send(Command::RepairOutgoing);
+        }
         if engine.profiles.is_some() {
             let _ = tx.try_send(Command::Profiles(
                 0,
@@ -509,15 +527,12 @@ impl Engine {
                 if !id.is_empty() {
                     self.store.continue_bulk(id.clone()).await?;
                 }
-                self.bulk_control
-                    .stopping
-                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                self.bulk_control.stopping.set(false);
                 output.send(Event::BulkResumed(id)).await?;
             }
             Command::BulkStop => {
-                use std::sync::atomic::Ordering::SeqCst;
-                self.bulk_control.stopping.store(true, SeqCst);
-                if !self.bulk_control.active.load(SeqCst) {
+                self.bulk_control.stopping.set(true);
+                if !self.bulk_control.active.get() {
                     output.send(Event::BulkStopped).await?;
                 }
             }
@@ -933,6 +948,7 @@ impl Engine {
                         && !self.store.get::<bool>("preview_discard_failed").await?
                     {
                         self.store.put("preview_discard_failed", true).await?;
+                        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
                         anyhow::bail!("Preview storage failure. Your draft is intact; try again.");
                     }
                     self.store.delete_draft(id.clone()).await
@@ -954,7 +970,14 @@ impl Engine {
             }
             Command::AddDraftFiles(draft, paths) => {
                 let id = draft.id.clone();
-                let result = self.store.add_draft_files(draft, paths).await;
+                let result = async {
+                    #[cfg(feature = "test-support")]
+                    if self.demo {
+                        crate::test_support::attachment_delay(&self.store).await?;
+                    }
+                    self.store.add_draft_files(draft, paths).await
+                }
+                .await;
                 output
                     .send(Event::DraftFiles(
                         id,

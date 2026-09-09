@@ -9,6 +9,7 @@ pub mod folder_actions;
 pub mod folders;
 pub mod fuzzy;
 pub mod html_render;
+pub mod lifecycle;
 pub mod mail_actions;
 pub mod message_find;
 pub mod model;
