@@ -647,3 +647,19 @@ verify local accounts/settings remain intact, then review/import Work normally.
 Home in the normal existing fixture also imports the portable tooltip preference.
 Creation/restart tests read the owned SQLite checkpoint after graceful close.
 Partial first uploads must retain their receipt and leave later records queued.
+
+
+Use `profile_login=true` with an owned `profile_sync` fixture to exercise the
+after-sign-in path. It supplies a fictional committed Drive grant and the normal
+connection-status event; it never runs real OAuth or accesses the keychain.
+`empty_profile=true` starts a new workspace with no accounts, mail or preferences
+customization. Both flags require the isolated Drive server. `existing-single`
+has one complete Home profile; the ordinary `existing` mode has Home and Work.
+
+Preserve `test_profile_login_native_*`: one-profile automatic import/restart with
+Reconnect, first-device offer/Not now and re-enable, multi-profile choice, existing
+workspace review, failed discovery/retry, compact dark prompt dismissal and close during a held read. Observe
+`profile_sync.offer`, `login_pending`, `empty_workspace` and
+`options.discover_on_login` through state; all actions use real controls. An
+automatic result must not change the active tab. Review prompt and import WebPs.
+These are after-sign-in fixture tests, not live Google or cross-client evidence.

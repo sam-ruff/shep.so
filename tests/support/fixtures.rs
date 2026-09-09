@@ -37,6 +37,11 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
 }
 
 async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
+    if std::env::args().any(|a| a == "--profile-empty-workspace")
+        && std::env::args().any(|a| a.starts_with("--profile-drive-url="))
+    {
+        return seed_profile_google(store).await;
+    }
     store
         .put(
             "preferences",
@@ -385,22 +390,7 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
             .await?;
     }
     if std::env::args().any(|a| a.starts_with("--profile-drive-url=")) {
-        store
-            .update_preferences(|p| {
-                p.google_client_id = "fixture-profile-client".into();
-                p.google_connection_id = "drive:fixture".into();
-                p.google_grant = GoogleGrant {
-                    id: "fixture-profile-grant".into(),
-                    client_id: "fixture-profile-client".into(),
-                    access: GoogleAccess {
-                        known: true,
-                        drive: true,
-                        calendar_read: true,
-                        calendar_write: true,
-                    },
-                };
-            })
-            .await?;
+        seed_profile_google(store).await?;
     }
     Ok(())
 }
@@ -750,5 +740,25 @@ pub async fn notification_delivery(attempt: u64) -> anyhow::Result<()> {
             "Fixture notification service unavailable. Check desktop permissions, then try Test notification again."
         );
     }
+    Ok(())
+}
+
+async fn seed_profile_google(store: &Store) -> anyhow::Result<()> {
+    store
+        .update_preferences(|p| {
+            p.google_client_id = "fixture-profile-client".into();
+            p.google_connection_id = "drive:fixture".into();
+            p.google_grant = GoogleGrant {
+                id: "fixture-profile-grant".into(),
+                client_id: "fixture-profile-client".into(),
+                access: GoogleAccess {
+                    known: true,
+                    drive: true,
+                    calendar_read: true,
+                    calendar_write: true,
+                },
+            };
+        })
+        .await?;
     Ok(())
 }

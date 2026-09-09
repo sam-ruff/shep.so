@@ -1751,6 +1751,85 @@ class NativeFlows(unittest.TestCase):
                        check("settings_group", "Profiles and sync"),
                        check("profile_sync.loaded", True), wait(100))
 
+    def test_profile_login_native_new_device_automatically_imports_one_complete_profile(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-single",profile_login=True,empty_profile=True)
+        print(f"Automatic profile evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.name","Home"),
+                       check("profile_sync.enrollment.selection.ready",True),check("profile_sync.working",False),
+                       check("account_count",1),check("account_reconnect_count",1),check("dark",True),
+                       check("tab","Mail"),check("notice","Home imported · 1 account · 2 preferences · reconnect accounts in Preferences"),
+                       shot("profile-login-auto-imported"),{"type":"restart"})
+        self.open_shared_profiles()
+        self.mcp.batch(check("profile_sync.enrollment.selection.name","Home"),
+                       check("account_count",1),check("account_reconnect_count",1),
+                       check("profile_sync.offer",False),check("profile_sync.working",False),
+                       shot("profile-login-auto-reopened"))
+
+    def test_profile_login_native_first_setup_can_be_declined_and_enabled_later(self):
+        started=self.mcp.call("desktop.start",profile_sync="empty",profile_login=True)
+        print(f"Profile login opt-out evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("profile_sync.offer",True),check("profile_sync.review",0),
+                       check("tab","Mail"),shot("profile-login-offer"))
+        self.mcp.batch(click(1104,866),check("tab","Preferences"),check("settings_group","Profiles and sync"),wait(100))
+        self.mcp.batch(check("profile_sync.review",0),click(490,570),
+                       check("profile_sync.options.discover_on_login",False),check("profile_sync.saving",False),
+                       check("profile_sync.offer",False),shot("profile-login-declined"),{"type":"restart"},
+                       check("profile_sync.loaded",True),check("profile_sync.login_pending",False),
+                       check("profile_sync.working",False),check("profile_sync.offer",False))
+        self.open_shared_profiles()
+        self.mcp.batch(check("profile_sync.options.discover_on_login",False),
+                       click(289,494),check("profile_sync.options.discover_on_login",True),
+                       check("profile_sync.review",0),shot("profile-login-enabled-again"))
+
+    def test_profile_login_native_multiple_profiles_require_a_choice_on_empty_device(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing",profile_login=True,empty_profile=True)
+        print(f"Profile login picker evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("profile_sync.offer",True),check("profile_sync.profiles.1.name","Work"),
+                       check("profile_sync.enrollment.selection",None),check("account_count",0),
+                       check("tab","Mail"),shot("profile-login-multiple-offer"))
+        self.mcp.batch(click(1240,866),check("tab","Preferences"),check("settings_group","Profiles and sync"),wait(100))
+        self.mcp.batch(click(1130,545),check("profile_sync.join_review.name","Work"),
+                       shot("profile-login-choice-review"),click(340,566),
+                       check("profile_sync.enrollment.selection.name","Work"),
+                       check("profile_sync.enrollment.selection.ready",True),check("profile_sync.offer",False))
+
+    def test_profile_login_native_existing_workspace_keeps_accounts_until_review(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-single",profile_login=True)
+        print(f"Populated profile login evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("profile_sync.offer",True),check("profile_sync.profiles.0.name","Home"),
+                       check("profile_sync.enrollment.selection",None),check("account_count",2),
+                       check("dark",False),check("tab","Mail"),shot("profile-login-existing-workspace"))
+        self.open_shared_profiles()
+        self.mcp.batch(click(1130,494),check("profile_sync.join_review.name","Home"),
+                       click(340,606),check("profile_sync.enrollment.selection.ready",True),
+                       check("account_count",3),check("account_reconnect_count",1),
+                       shot("profile-login-reviewed-import"))
+
+    def test_profile_login_native_compact_dark_prompt_dismissal_does_not_interrupt_mail(self):
+        started=self.mcp.call("desktop.start",profile_sync="empty",profile_login=True,width=900,height=640)
+        print(f"Compact login evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("profile_sync.offer",True),key("ctrl+comma"),check("tab","Preferences"),
+                       click(563,366),check("dark",True),check("preferences_saved",True),
+                       key("ctrl+1"),check("tab","Mail"),shot("profile-login-compact-dark"),
+                       click(668,586),check("profile_sync.offer",False),
+                       check("profile_sync.options.discover_on_login",False),check("profile_sync.saving",False),
+                       click(380,330),check("selected","Your weekly workspace digest"),
+                       shot("profile-login-compact-dismissed"))
+
+    def test_profile_login_native_failure_retry_and_close_during_discovery(self):
+        self.mcp.call("desktop.start",profile_sync="fail-once",profile_login=True)
+        self.mcp.batch(check("profile_sync.error","503","contains"),check("profile_sync.working",False),
+                       check("profile_sync.offer",True),check("profile_sync.enrollment.selection",None),
+                       shot("profile-login-failed"))
+        self.open_shared_profiles()
+        self.mcp.batch(click(370,442),check("profile_sync.review",0),check("profile_sync.error",None),
+                       shot("profile-login-retried"))
+        started=self.mcp.call("desktop.start",profile_sync="hold-list",profile_login=True)
+        print(f"Held login discovery evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(check("profile_sync.working",True),click(400,330),
+                       check("selected","Your weekly workspace digest"),shot("profile-login-held-navigation"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
+
     def test_profile_sync_native_existing_profile_review_import_and_restart(self):
         started=self.mcp.call("desktop.start",profile_sync="existing")
         print(f"Existing profile evidence: {started['artifacts']}",flush=True)

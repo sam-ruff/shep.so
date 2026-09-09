@@ -1,5 +1,47 @@
 # Completion audit
 
+## 9 September: profile discovery and enrollment after Google sign-in
+
+R02/R49/R92 now connects verified Google connection status to background profile
+discovery. No existing profiles produces an optional setup prompt; multiple
+profiles or existing local data/settings use the picker and review. A single
+complete profile imports automatically into an untouched workspace. Imported
+account definitions use fresh local IDs and require Reconnect; the completion
+message includes the profile and applied counts without switching tabs.
+
+Not now persists discovery opt-out before any enrollment, across restart and
+reconnection. Preferences can enable it again. Discovery waits for pending
+preferences, coalesces repeated status events and preserves close cancellation.
+The acceptance transaction rechecks opt-out and newly created local data; stale
+reviews cannot apply. Errors show a recovery prompt, never an empty-cloud success.
+Existing profile publication, initialization barriers and retry receipts remain.
+
+Four new Rust regressions cover persisted opt-out/reconnection, settings/draft
+eligibility, automatic acceptance with late local changes and idempotent retry,
+and UI status coalescing/save/error/decline/close ordering. The targeted profile
+run passes 69 tests, with one personal diagnostic explicitly ignored. **30 native
+scenarios pass**: six new login flows, 11 existing profile flows, eight database
+transfers, four Google-connection flows and tooltip preferences. Actual buttons
+exercise setup, profile choice, Not now and re-enable. Reviewed final WebPs include
+`147f41edd4cf` (compact dark prompt), `a83dba5f2152` (automatic import/notice),
+and `28d56de408ca` (light setup after re-enable). Native executable SHA-256:
+`1d6cbaec9815937101de0c07489eebc36e2a5a946e2021149b317aa053585611`.
+
+Python passes 55 tests and Windows GNU all-target/all-feature cross-compilation
+passes. Strict Zensical passed; mandatory hook and shipping receipts follow the
+source commit. The first native attempt identified a missing preview status-event
+fixture; it was connected to the normal command path. A checkbox-edge coordinate
+was corrected before the complete passing run. No test or budget was weakened.
+
+The owned login fixture supplies a synthetic committed grant and uses real
+catalog/history HTTP and native controls. It does not prove actual browser OAuth,
+Google cross-client visibility or password transfer. Continuous local/remote
+updates, account linking/conflict/removal controls, legacy recovery/migration,
+remaining portable settings and credential protection remain in TODO. No personal
+mail, keychain, cloud data or production installation changed. Performance remains
+deferred; quality/release CI remains disabled and documentation publishing enabled.
+The full goal and OAuth handover priority remain active.
+
 ## 9 September: shared setup completion before native import
 
 R02/R49/R92 now uses Flutter publication's `initialization-v1` protocol. The pinned

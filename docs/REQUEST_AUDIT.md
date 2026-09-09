@@ -1,5 +1,11 @@
 # Conversation request audit
 
+9 September continuation: R02/R49/R92 connects after-login discovery, a persistent
+opt-out, optional first-device setup and single-profile automatic import into an
+untouched workspace. Multiple profiles and populated workspaces retain review;
+continuous updates and protected credentials remain open. Verification/shipping
+are recorded in the newest completion entry.
+
 9 September continuation: R02/R49/R92 adopts the published shared initialization
 barrier through `43cdcf0f`, including native incomplete/legacy import guards,
 multi-record creation/retry, safe unstarted-seed upgrade and portable Tooltips.

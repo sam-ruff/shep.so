@@ -150,6 +150,81 @@ async fn reviewed(store: &Store, paths: &Paths, record: &ReservedUpload) -> Revi
 }
 
 #[tokio::test]
+async fn profile_login_automatic_join_rechecks_blank_workspace_and_saved_opt_out_atomically() {
+    for change in ["none", "draft", "opt-out"] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = local(dir.path()).await;
+        store
+            .update_preferences(|p| p.appearance = Appearance::System)
+            .await
+            .unwrap();
+        let paths = Paths::for_cache(&dir.path().join("cache.sqlite")).unwrap();
+        let mut review = reviewed(&store, &paths, &record()).await;
+        assert!(review.local.empty_workspace);
+        review.automatic = true;
+        match change {
+            "draft" => store.put("drafts_revision", 1_u64).await.unwrap(),
+            "opt-out" => {
+                store
+                    .change_profile_sync_options(Changes {
+                        discover_on_login: Some(false),
+                        ..Default::default()
+                    })
+                    .await
+                    .unwrap();
+            }
+            _ => {}
+        }
+        let result = accept(&store, &paths, review.clone(), &Control::default()).await;
+        if change == "none" {
+            assert!(result.unwrap().enrollment.selection.unwrap().ready);
+            assert_eq!(
+                store.get::<Vec<Account>>("accounts").await.unwrap().len(),
+                1
+            );
+            assert_eq!(
+                store.get::<Reconnect>(RECONNECT_KEY).await.unwrap().len(),
+                1
+            );
+            accept(&store, &paths, review, &Control::default())
+                .await
+                .unwrap();
+            assert_eq!(
+                store.get::<Vec<Account>>("accounts").await.unwrap().len(),
+                1
+            );
+        } else {
+            assert!(result.is_err());
+            assert!(
+                store
+                    .get::<Vec<Account>>("accounts")
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                store
+                    .profile_enrollment()
+                    .await
+                    .unwrap()
+                    .enrollment
+                    .selection
+                    .is_none()
+            );
+            assert!(
+                store
+                    .get::<Option<crate::profile_sync::state::State>>(
+                        crate::profile_sync::state::STORAGE_KEY
+                    )
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn profile_join_requires_completion_even_when_listing_contains_a_name_and_all_visible_settings()
  {
     for mode in ["legacy", "preparing", "missing-middle"] {
@@ -428,6 +503,7 @@ async fn profile_join_categories_stale_local_or_google_intent_and_stop_prevent_p
                 accounts: Some(accounts),
                 settings: Some(!accounts),
                 enabled: None,
+                ..Default::default()
             })
             .await
             .unwrap();

@@ -4,6 +4,64 @@ use serde_json::json;
 use shep_profile_core::{Action, Change, SettingKey, history};
 use uuid::Uuid;
 
+#[tokio::test]
+async fn profile_login_opt_out_is_durable_before_enrollment_and_survives_reconnection() {
+    let legacy: Options =
+        serde_json::from_value(json!({"enabled":false,"accounts":true,"settings":true})).unwrap();
+    assert!(legacy.discover_on_login);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cache.sqlite");
+    let store = Store::open(&path).unwrap();
+    connected(&store).await;
+    let first = store.profile_enrollment().await.unwrap();
+    assert!(first.empty_workspace && crate::profile_sync::onboarding::eligible(&first));
+    let declined = store
+        .change_profile_sync_options(enrollment::Changes {
+            discover_on_login: Some(false),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(declined.enrollment.revision > first.enrollment.revision);
+    assert!(!crate::profile_sync::onboarding::eligible(&declined));
+    drop(store);
+    let reopened = Store::open(&path).unwrap();
+    connected(&reopened).await;
+    let saved = reopened.profile_enrollment().await.unwrap();
+    assert!(!saved.enrollment.options.discover_on_login && saved.enrollment.selection.is_none());
+    let accepted = reopened
+        .change_profile_sync_options(enrollment::Changes {
+            discover_on_login: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(crate::profile_sync::onboarding::eligible(&accepted));
+    assert!(accepted.enrollment.selection.is_none());
+}
+
+#[tokio::test]
+async fn profile_login_checks_local_settings_and_draft_intent_before_automatic_import() {
+    let store = Store::memory().unwrap();
+    connected(&store).await;
+    assert!(store.profile_enrollment().await.unwrap().empty_workspace);
+    store
+        .update_preferences(|p| p.appearance = Appearance::Dark)
+        .await
+        .unwrap();
+    assert!(!store.profile_enrollment().await.unwrap().empty_workspace);
+    let accounts_only = store
+        .change_profile_sync_options(enrollment::Changes {
+            settings: Some(false),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(accounts_only.empty_workspace);
+    store.put("drafts_revision", 1_u64).await.unwrap();
+    assert!(!store.profile_enrollment().await.unwrap().empty_workspace);
+}
+
 pub(super) async fn connected(store: &Store) {
     store
         .update_preferences(|p| {
@@ -121,6 +179,7 @@ async fn profile_controls_and_google_disconnect_fence_late_results_without_netwo
                 enabled: false,
                 accounts: false,
                 settings: true,
+                ..Default::default()
             },
         )
         .await
@@ -283,6 +342,7 @@ async fn profile_settings_apply_atomically_preserve_device_fields_and_refuse_new
                 enabled: true,
                 accounts: true,
                 settings: false,
+                ..Default::default()
             },
         )
         .await

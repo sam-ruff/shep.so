@@ -1050,7 +1050,7 @@ atomically. Only a completed scan exposes metadata pages for application, at mos
 50 at a time; no whole-history collection/page ceiling. Scan replacement must
 preserve uploads and merge history. Keep the protocol/journal/scan regressions
 and existing Drive backup tests. Run JSON/hash/SQL/network work only in backend
-workers. Existing-device enrollment, account application and continuous polling must still be
+workers. Ongoing account application/linking and continuous polling must still be
 implemented and tested before claiming continuous profile sync.
 
 The pre-commit hook, full check script and disabled quality workflow also run
@@ -1072,8 +1072,7 @@ The shared Drive metadata fixture now fixes appProperties/category/file naming
 across implementations; preserve exact bytes with the repository Git attributes.
 The earlier bb87ac2 desktop prototype had a different unconnected wire convention.
 Real same-project cross-client visibility remains unverified. The kernel still
-needs existing-device controls, actual account application and remaining settings,
-and incremental pulls; do not call it working
+needs ongoing account updates/linking, remaining settings and incremental pulls; do not call it working
 continuous sync based on two-store HTTP fixtures alone.
 
 The shared Git crate now has dev-dependencies, so Cargo cannot test it directly
@@ -1094,7 +1093,7 @@ persists all seed UUIDs/account mappings, and checkpoints the exact expected
 history revision before each edit. Retry that original request, never resnapshot
 its values or assign another UUID. Keep an admitted upload owned through both
 journal receipts even after stop; subsequent requests must observe newer intent.
-Actual account application, existing-device enrollment and incremental polling remain open. Metadata review alone must not connect a
+Ongoing account application/linking and incremental polling remain open. Metadata review alone must not connect a
 remote-specified server using existing credentials. See the profile reference
 and TODO for supported settings and remaining behavior; preserve held-response,
 restart, malformed seed, settings rollback and import-fence tests.
@@ -1114,8 +1113,8 @@ hashed-binding history databases and their sidecars/ownership files. Protect all
 members and hard-link/symlink aliases during database export/import. New desktop
 profiles use namespace `so.shep`; existing bindings retain their namespace. Keep
 this value aligned with the participating clients and the live OAuth project.
-Initial publication is explicitly labeled; do not claim continuous updates or
-existing-device account application until those TODO paths are implemented.
+Initial publication/import is explicitly labeled; do not claim continuous updates
+until those TODO paths are implemented.
 The new native fixture modes/scenarios are documented in the E2E skill.
 
 Profile controls remain disabled until their local enrollment snapshot loads.
@@ -1143,8 +1142,8 @@ lookup until SaveAccount has persisted their device credentials. Preserve this
 marker in newer workspace snapshots; remove it on explicit account removal.
 Keep catalog restart/change-token/ownership, join category/stale/rollback/tombstone,
 unknown-connection and native review/import/restart regressions. Joining is an
-initial import; continuous polling, existing-device changes, automatic login
-prompts and credential transfer remain TODO work. The protection choice is still
+initial import; continuous polling, existing-device changes and credential
+transfer remain TODO work. The protection choice is still
 unanswered. Follow the shared handover before extending the format.
 
 Enrollment saves `profile_replication_v1` on the cache owner. First-device setup
@@ -1179,3 +1178,16 @@ Preserve incomplete/legacy/out-of-order and native alternative-profile tests.
 Tooltips is the eighth supported portable setting; unsupported touch-only fields
 stay in shared history. Preserve active sibling work; no shared target directory
 across differing vendor worktrees.
+
+
+After verified Google connection status, `ui/profile_sync/onboarding.rs` coalesces
+one discovery request per connection/session and waits for saved preferences.
+Local `Options.discover_on_login` defaults on; Not now persists off even without
+an enrollment and never re-enables on reconnect. The Google grant remains local.
+The background coordinator owns catalog reads and automatic joining. Only a
+single complete profile in an untouched workspace can import automatically;
+`Review.automatic` rechecks that condition and opt-out in the acceptance transaction.
+Existing local choices or multiple profiles require the ordinary picker/review.
+Keep stale Google/generation guards, reconnect-only account staging, atomic joins,
+failed/held discovery and native login flows. Prompt completion must not steal
+focus or switch tabs. Continuous profile changes remain a separate TODO.

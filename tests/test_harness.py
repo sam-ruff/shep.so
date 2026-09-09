@@ -24,6 +24,17 @@ class HarnessTests(unittest.TestCase):
             launch.assert_not_called()
         tool=next(t for t in harness.TOOLS if t["name"]=="desktop.start")
         self.assertEqual(tuple(tool["inputSchema"]["properties"]["profile_sync"]["enum"]),harness._profile_fixture.MODES)
+    def test_profile_login_fixture_cannot_use_real_google_or_nonboolean_flags(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for name in ("profile_login", "empty_profile"):
+                for value in ("true", 1, None):
+                    with self.assertRaisesRegex(ValueError, "must be booleans"):
+                        desktop.start(**{name:value})
+                with self.assertRaisesRegex(ValueError, "owned Drive server"):
+                    desktop.start(**{name:True})
+            launch.assert_not_called()
+
     def test_held_database_import_fixture_is_validated_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

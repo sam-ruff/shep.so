@@ -11,6 +11,7 @@ pub(crate) const RECONNECT_KEY: &str = "profile_reconnect_v1";
 #[derive(Clone, Debug)]
 pub struct Review {
     pub(crate) id: Uuid,
+    pub(crate) automatic: bool,
     pub(crate) local: Snapshot,
     pub(crate) selection: Selection,
     pub(crate) revision: u64,
@@ -217,6 +218,7 @@ pub(crate) async fn prepare(
         control.check()?;
         Ok(Review {
             id: Uuid::new_v4(),
+            automatic: false,
             local: discovery.local().clone(),
             selection,
             revision: pulled.state().revision,

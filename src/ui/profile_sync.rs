@@ -1,3 +1,4 @@
+mod onboarding;
 use super::*;
 use crate::profile_sync::{
     commands::{Request, Update},
@@ -12,6 +13,10 @@ use iced::{
 #[derive(Clone, Debug)]
 pub enum Action {
     Refresh,
+    AfterLogin,
+    AutoJoin,
+    Automatic(bool),
+    NotNow,
     Discover,
     Create,
     Page(Option<String>),
@@ -28,6 +33,11 @@ pub enum Action {
 #[derive(Default)]
 pub(super) struct State {
     snapshot: Option<Arc<Snapshot>>,
+    login_pending: Option<u64>,
+    login_seen: Option<u64>,
+    automatic_generation: Option<u64>,
+    automatic_job: Option<u64>,
+    offer: bool,
     desired: Changes,
     sent: Option<Changes>,
     saving: Option<u64>,
@@ -71,8 +81,8 @@ impl State {
     }
     #[cfg(any(test, feature = "test-support"))]
     pub fn observation(&self) -> serde_json::Value {
-        serde_json::json!({"loaded":self.snapshot.is_some(),"available":self.snapshot.as_ref().is_some_and(|s|s.available),
-            "options":self.options(),"saving":self.saving.is_some(),"working":self.job.is_some(),"stopping":self.stopping.is_some(),
+        serde_json::json!({"loaded":self.snapshot.is_some(),"available":self.snapshot.as_ref().is_some_and(|s|s.available),"empty_workspace":self.snapshot.as_ref().is_some_and(|s|s.empty_workspace),
+            "options":self.options(),"offer":self.offer,"login_pending":self.login_pending.is_some(),"saving":self.saving.is_some(),"working":self.job.is_some(),"stopping":self.stopping.is_some(),
             "review":self.review.as_ref().map(|r|r.records()),
             "profiles":self.review.as_ref().map(|r|r.profiles()),
             "join_review":self.join_review.as_ref().map(|r|serde_json::json!({"name":r.name(),"accounts":r.accounts,"settings":r.settings})),"name":self.name,"error":self.error,
@@ -86,12 +96,20 @@ impl App {
                 self.profile_sync.name = name;
                 return;
             }
+            Action::NotNow => {
+                self.profile_sync.offer = false;
+                self.shared_profile_action(Action::Automatic(false));
+                return;
+            }
             Action::CancelReview => {
                 self.profile_sync.review = None;
                 self.profile_sync.join_review = None;
                 return;
             }
-            Action::Enabled(value) | Action::Accounts(value) | Action::Settings(value) => {
+            Action::Enabled(value)
+            | Action::Accounts(value)
+            | Action::Settings(value)
+            | Action::Automatic(value) => {
                 if self.profile_sync.snapshot.is_none() {
                     self.profile_sync.error = Some(
                         "Load the saved profile choices before changing them. Try Refresh status."
@@ -103,12 +121,21 @@ impl App {
                 match action {
                     Action::Enabled(_) => changes.enabled = Some(value),
                     Action::Accounts(_) => changes.accounts = Some(value),
+                    Action::Automatic(_) => changes.discover_on_login = Some(value),
                     _ => changes.settings = Some(value),
                 }
                 let options = changes.apply(self.profile_sync.options());
                 if let Err(error) = options.validate() {
                     self.profile_sync.error = Some(error.to_string());
                     return;
+                }
+                if matches!(action, Action::Automatic(false)) {
+                    self.profile_sync.offer = false;
+                    self.profile_sync.login_pending = None;
+                }
+                if matches!(action, Action::Automatic(true)) && self.google_connected {
+                    self.profile_sync.login_pending =
+                        Some(self.preferences.google_lifecycle.revision);
                 }
                 self.profile_sync.desired = changes;
                 self.profile_sync.review = None;
@@ -133,6 +160,8 @@ impl App {
                 Request::Stop(id)
             }
             Action::Discover
+            | Action::AfterLogin
+            | Action::AutoJoin
             | Action::Create
             | Action::Resume
             | Action::Page(_)
@@ -146,7 +175,21 @@ impl App {
                     return;
                 }
                 match action {
-                    Action::Discover => Request::Discover(id),
+                    Action::Discover => {
+                        self.profile_sync.login_pending = None;
+                        self.profile_sync.offer = false;
+                        Request::Discover(id)
+                    }
+                    Action::AfterLogin => Request::AfterLogin(id),
+                    Action::AutoJoin => {
+                        let Some(review) = self.profile_sync.review.clone() else {
+                            return;
+                        };
+                        Request::AutoJoin {
+                            request: id,
+                            review,
+                        }
+                    }
                     Action::Resume => Request::Resume(id),
                     Action::Page(after) => {
                         let Some(review) = self.profile_sync.review.clone() else {
@@ -203,6 +246,12 @@ impl App {
         };
         if self.try_command(Command::ProfileSync(request.clone())) {
             let state = &mut self.profile_sync;
+            if matches!(request, Request::AfterLogin(_) | Request::AutoJoin { .. }) {
+                state.automatic_job = Some(id);
+            }
+            if matches!(request, Request::AfterLogin(_)) {
+                state.automatic_generation = Some(self.preference_sync.generation());
+            }
             if !matches!(request, Request::Status(_)) {
                 state.error = None;
             }
@@ -213,7 +262,8 @@ impl App {
                     state.job = Some(id);
                     if !matches!(
                         request,
-                        Request::Page { .. }
+                        Request::AutoJoin { .. }
+                            | Request::Page { .. }
                             | Request::JoinReview { .. }
                             | Request::JoinAccept { .. }
                     ) {
@@ -266,9 +316,34 @@ impl App {
         if !saving && !loading && !job && !stopping {
             return Task::none();
         }
+        let automatic = state.automatic_job == Some(id);
         let pending = matches!(update, Update::Pending(_));
+        if automatic && !pending {
+            state.automatic_job = None;
+        }
         let published = matches!(update, Update::Published(_));
-        let joined = matches!(update, Update::Joined(_));
+        let joined = matches!(update, Update::Joined(_) | Update::AutoJoined { .. });
+        let login_review = matches!(update, Update::LoginReview(_));
+        let auto_message = if let Update::AutoJoined {
+            name,
+            accounts,
+            settings,
+            ..
+        } = &update
+        {
+            Some(format!(
+                "{name} imported · {} · {}{}",
+                counted(*accounts as u64, "account"),
+                counted(*settings as u64, "preference"),
+                if *accounts > 0 {
+                    " · reconnect accounts in Preferences"
+                } else {
+                    ""
+                }
+            ))
+        } else {
+            None
+        };
         let failed = matches!(update, Update::Failed(_));
         if saving {
             state.saving = None;
@@ -288,25 +363,50 @@ impl App {
             Update::Status(snapshot)
             | Update::Published(snapshot)
             | Update::Pending(snapshot)
-            | Update::Joined(snapshot) => {
+            | Update::Joined(snapshot)
+            | Update::AutoJoined { snapshot, .. } => {
                 if state.accepts_snapshot(&snapshot) {
+                    if state
+                        .review
+                        .as_ref()
+                        .is_some_and(|r| r.local() != &*snapshot)
+                    {
+                        state.review = None;
+                    }
+                    if state
+                        .join_review
+                        .as_ref()
+                        .is_some_and(|r| r.local() != &*snapshot)
+                    {
+                        state.join_review = None;
+                    }
                     state.snapshot = Some(snapshot);
                 }
                 if job && joined {
                     state.review = None;
                     state.join_review = None;
-                    self.notice("Shared profile imported", false);
+                    state.offer = false;
+                    self.notice(
+                        auto_message.unwrap_or_else(|| "Shared profile imported".into()),
+                        false,
+                    );
                 }
                 if job && published {
                     self.notice("Profile created on Google Drive", false);
                 }
             }
-            Update::Review(review) => {
-                if state.desired.empty()
+            Update::Review(review) | Update::LoginReview(review) => {
+                if (!login_review
+                    || (self.google_connected
+                        && review.local().google_revision
+                            == self.preferences.google_lifecycle.revision
+                        && review.local().google_identity == self.preferences.google_connection_id))
+                    && state.desired.empty()
                     && state.saving.is_none()
                     && state.accepts_snapshot(review.local())
                 {
                     state.snapshot = Some(Arc::new(review.local().clone()));
+                    state.offer = login_review;
                     state.review = Some(review);
                     if state.name.is_empty() {
                         state.name = "Personal".into();
@@ -328,12 +428,19 @@ impl App {
             }
             Update::Failed(error) => {
                 state.error = Some(error);
+                if automatic {
+                    state.offer = true;
+                }
                 self.pending_close = None;
                 refresh = !loading;
             }
             Update::Stopped => {
                 refresh = true;
             }
+        }
+        if login_review && self.can_auto_enroll() {
+            self.profile_sync.offer = false;
+            self.shared_profile_action(Action::AutoJoin);
         }
         if refresh {
             self.shared_profile_action(Action::Refresh);
@@ -560,7 +667,7 @@ impl App {
                                         && (options.accounts || options.settings))
                                         .then(|| msg(Action::Create))
                                 ),
-                            action("Not now", msg(Action::CancelReview))
+                            action("Not now", msg(Action::NotNow))
                         ]
                         .spacing(10),
                     );
@@ -572,6 +679,14 @@ impl App {
                         .on_press_maybe(idle.then(|| msg(Action::Discover))),
                 );
             }
+        }
+        if selected.is_none() && state.snapshot.is_some() {
+            body = body.push(
+                checkbox(options.discover_on_login)
+                    .label("Check for shared profiles after Google sign-in")
+                    .on_toggle(move |v| msg(Action::Automatic(v)))
+                    .text_size(12),
+            );
         }
         if state.job.is_some() {
             body = body.push(
@@ -630,6 +745,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn profile_login_coalesces_status_waits_for_saves_and_respects_decline_and_close() {
+        let (mut app, mut queue, original) = app().await;
+        let mut saved = (*original).clone();
+        saved.available = true;
+        app.profile_sync.snapshot = Some(Arc::new(saved.clone()));
+        app.google_connected = true;
+        app.profile_google_status(0, true);
+        app.preference_sync.changed();
+        app.advance_profile_login();
+        assert!(queue.try_recv().is_err());
+        app.preference_sync = Default::default();
+        app.advance_profile_login();
+        let Some(Command::ProfileSync(Request::AfterLogin(id))) = queue.recv().await else {
+            panic!("expected automatic discovery");
+        };
+        app.profile_google_status(0, true);
+        app.advance_profile_login();
+        assert!(queue.try_recv().is_err());
+        let _ =
+            app.shared_profile_update(id, Update::Failed("Offline; try discovery again.".into()));
+        assert!(app.profile_sync.offer);
+        let Some(Command::ProfileSync(Request::Status(status))) = queue.recv().await else {
+            panic!("expected status refresh");
+        };
+        let _ = app.shared_profile_update(status, Update::Status(Arc::new(saved.clone())));
+        app.advance_profile_login();
+        assert!(queue.try_recv().is_err());
+        app.shared_profile_action(Action::NotNow);
+        assert!(!app.profile_sync.offer && !app.profile_sync.options().discover_on_login);
+        let Some(Command::ProfileSync(Request::Change { request, .. })) = queue.recv().await else {
+            panic!("expected durable opt-out");
+        };
+        saved.enrollment.revision += 1;
+        saved.enrollment.options.discover_on_login = false;
+        let _ = app.shared_profile_update(request, Update::Status(Arc::new(saved)));
+        app.profile_google_status(1, true);
+        app.profile_google_status(1, false);
+        app.advance_profile_login();
+        assert!(queue.try_recv().is_err());
+        app.profile_sync.login_pending = Some(0);
+        app.pending_close = Some(iced::window::Id::unique());
+        app.advance_profile_login();
+        assert!(app.profile_sync.login_pending.is_none() && queue.try_recv().is_err());
+    }
+
+    #[tokio::test]
     async fn profile_join_review_cannot_restore_older_category_choices_after_a_save() {
         let (mut app, mut queue, original) = app().await;
         let mut newer = (*original).clone();
@@ -638,6 +799,7 @@ mod tests {
         app.profile_sync.snapshot = Some(Arc::new(newer));
         app.profile_sync.job = Some(55);
         let review = crate::profile_sync::join::Review {
+            automatic: false,
             id: uuid::Uuid::new_v4(),
             local: (*original).clone(),
             selection: crate::profile_sync::enrollment::Selection {

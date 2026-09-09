@@ -8,6 +8,13 @@ Historical implementation notes belong there, rather than becoming new TODOs.
 
 ## Current source checkpoint
 
+The current continuation connects post-login discovery and enrollment. A single
+complete profile imports automatically into an untouched workspace; first setup,
+multiple profiles and existing local data have native prompts/reviews. Not now
+persists an opt-out and Preferences can re-enable discovery. Final verification
+and the shipping receipt belong in the newest completion entry. Continuous
+publication/application is still the next functional priority.
+
 `9158b50` is pushed to main and adopts the shared `initialization-v1` barrier from
 Flutter publication. Desktop creation writes stable start/data/completion records;
 import requires the shared worker to verify completion. Unstarted legacy seeds
@@ -47,17 +54,19 @@ on next launch; they do not hot-swap an engine or replay another device's sends.
 
 ## Next work
 
-1. Add automatic post-login discovery/enrollment prompts and ongoing local/remote
-   profile updates. Support first setup from either desktop or Flutter, new devices
-   and already-populated workspaces, with saved enable/category choices. Keep local
-   capture/admission ahead of remote pulls and implement per-field application.
+1. Connect ongoing local/remote profile updates, including existing populated
+   workspaces and saved category choices. Keep local capture/admission ahead of
+   remote pulls and implement per-field application plus dirty-UI preference merges.
+   Preserve the new after-login native prompts, automatic single-profile import,
+   saved opt-out/re-enable, retry/navigation/close and independent-device tests.
 2. Preserve the shared initialization barrier: stable start/data/end requests,
    partial upload receipts/retry, out-of-order histories, independent device identity,
    disabled incomplete-profile reviews and usable alternatives. Already-admitted
    legacy profiles still need explicit recovery/migration; never insert new ancestry
    into immutable uploaded records. Unstarted legacy seeds can upgrade in place.
 3. Connect account linking/suppression, conflict/removal reviews, offline recovery,
-   incremental enrolled-history pulls and the remaining portable preferences.
+   incremental enrolled-history pulls, password-prompted legacy encrypted-backup
+   migration and the remaining portable preferences.
    Current enrolled-history pulls still read full history. The catalog's change
    stream does not by itself implement continuous account synchronization.
 4. Preserve the identity maps: first-device seeds map local IDs to shared UUIDs;

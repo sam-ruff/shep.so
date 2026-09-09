@@ -1388,6 +1388,7 @@ impl App {
                     if revision == self.preferences.google_lifecycle.revision {
                         self.google_connected =
                             connected && !self.preferences.google_lifecycle.disconnected;
+                        self.profile_google_status(revision, self.google_connected);
                         self.shared_profile_action(profile_sync::Action::Refresh);
                     }
                 }
@@ -1679,6 +1680,7 @@ impl App {
                 }
             }
             Message::Tick => {
+                self.advance_profile_login();
                 self.advance_database_import();
                 self.advance_database_transfer();
                 self.pump_selection();

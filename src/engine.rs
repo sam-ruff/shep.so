@@ -335,6 +335,13 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             // workspace immediately and check Google from the provider worker.
             let _ = tx.try_send(Command::CheckGoogleConnection);
         }
+        #[cfg(feature = "test-support")]
+        if demo
+            && std::env::args().any(|a| a == "--profile-login")
+            && std::env::args().any(|a| a.starts_with("--profile-drive-url="))
+        {
+            let _ = tx.try_send(Command::CheckGoogleConnection);
+        }
         let _ = tx.try_send(Command::IndexConversations);
         let _ = tx.try_send(Command::CleanupCredentials);
         let _ = tx.try_send(Command::RepairOutgoing);
@@ -558,6 +565,11 @@ impl Engine {
                 let _guard = self.google_connection_lock.read().await;
                 let prefs: Preferences = self.store.get("preferences").await?;
                 let connected = !self.demo && self.google.connected(&prefs).await?;
+                #[cfg(feature = "test-support")]
+                let connected = connected
+                    || (self.demo
+                        && std::env::args().any(|a| a == "--profile-login")
+                        && std::env::args().any(|a| a.starts_with("--profile-drive-url=")));
                 output
                     .send(Event::GoogleStatus(
                         prefs.google_lifecycle.revision,

@@ -8,6 +8,7 @@ pub mod enrollment;
 pub mod join;
 pub mod journal;
 pub mod metadata;
+pub(crate) mod onboarding;
 pub(crate) mod paths;
 pub mod replica;
 pub mod setup;

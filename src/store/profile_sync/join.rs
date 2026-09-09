@@ -28,6 +28,10 @@ impl Store {
             let applied: Option<Applied> = get(&tx,join::STORAGE_KEY)?;
             if applied.as_ref().is_some_and(|a|a.review == review.id) { return snapshot(&tx); }
             let mut enrollment = review_matches(&tx,&review.local)?;
+            if review.automatic {
+                anyhow::ensure!(snapshot(&tx)?.empty_workspace && enrollment.options.discover_on_login,
+                    "This workspace changed during sign-in. Review the shared profile before importing it.");
+            }
             anyhow::ensure!(enrollment.selection.is_none() && applied.is_none(),
                 "This workspace already has a shared profile. Use another local workspace to keep both profiles separate.");
             let mut prefs: Preferences = get(&tx,"preferences")?;
