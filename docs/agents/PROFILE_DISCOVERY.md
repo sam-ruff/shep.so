@@ -99,3 +99,10 @@ device-specific credential slot. Keep explicit reconnect state, local suppressio
 category toggles, conflict review, protected credential choice, live same-project
 visibility and browser/Apple execution open. An empty catalog alone does not
 complete the separate legacy-backup migration probe.
+
+
+Desktop native harness integration can enable the nondefault `test-support`
+feature and call `Drive::connect_fixture` with its owned loopback server. It uses
+a fixed fake token and rejects non-loopback origins, credentials and URL suffixes.
+Production connection remains HTTPS-only with no endpoint override. This testing
+entry point does not enroll a client or verify actual Google access.
