@@ -42,6 +42,30 @@ and failed-archive recovery (`96a237e88cf1`) WebPs. Native SHA-256:
 Logs: `artifacts/logs/badge-main-*`. Actual Windows/macOS rendering and shell
 execution remain R70 verification work; production installation is unchanged.
 
+## Native-tool macOS raw installer — R61 checkpoint
+
+The raw macOS entry point prepares `~/Applications/Shep.app` with the approved
+launcher icon and native application identity using built-in macOS tools only.
+The [bundle structure and property keys](https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFBundles/BundleTypes.html)
+follow Apple's application-bundle contract. The script selects a matching
+published architecture, verifies SHA-256, streams only exact unique regular install
+members, stages an application bundle and replaces it with rollback. Explicit
+all-user installs elevate only the prepared final copy; cancellation leaves the
+old application intact. Gatekeeper, running processes and user data are preserved.
+
+Six isolated shell contract tests pass, covering install/update/identity/icon,
+checksum and link rejection, failed replacement rollback, missing architecture
+and release, refusal to replace another application, conflicting scope flags,
+terminal cancellation before network work and cancelled administrator elevation.
+They run actual Bash, tar, checksums and temporary filesystem operations with
+loopback release downloads and test doubles for JXA/Foundation, plutil, icon tools
+and sudo. The embedded JSON selector executes in Node; a poisoned `python3` on
+PATH proves that the installer does not invoke a Python runtime. This is Linux
+fixture evidence, not actual macOS execution or icon/Launchpad verification.
+All 74 Python tests pass; Bash syntax, strict documentation and mandatory hooks
+are recorded with this checkpoint. Windows PowerShell implementation, actual
+macOS desktop execution, notarization/distribution and published release assets
+remain open. No installed user application was changed and no release was created.
 
 
 ## Raw Linux release installer — R61 checkpoint
@@ -61,7 +85,9 @@ checksum/asset/archive rejection, scope/sudo cancellation, interrupted downloads
 unsafe paths/links, raw-wrapper argument quoting and staging cleanup. All 68 Python
 tests pass; Bash syntax and strict pinned documentation checking pass. No native
 UI changed. Mandatory hook results and source shipping are recorded during root
-integration. No release was published and no developer installation was changed.
+integration. Root merged and pushed Linux source as `3676dad`, with exact remote
+equality verified, 756 hook executions (three personal diagnostics ignored),
+68 Python tests, Bash syntax and strict Zensical passing. No release was published and no developer installation was changed.
 
 A read-only public release API check returned no published releases. The README
 and installer explain that state without claiming a working public binary download;

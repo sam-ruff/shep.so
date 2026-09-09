@@ -30,8 +30,9 @@ credential protection still remain. Do not discard any lane's uncommitted work.
 21 integrated native backup/preferences/profile/import scenarios pass. The merge
 preserves typed preference intent and per-destination metadata, including a new
 remote-setting/upload-receipt race regression. The backup lane continues S3.
-Linux raw installer `f3785ec` is being integrated while its agent adds native
-macOS/Windows wrappers.
+Linux raw installer is pushed as `3676dad`, with 68 Python tests and mandatory
+hooks passing. macOS wrapper `d52f54b` is being integrated; the agent continues
+Windows PowerShell. Actual published assets and platform execution remain open.
 
 `1595fb3` is pushed: Windows/macOS badge adapters, 751 hook executions, 12 native
 Linux scenarios, full merged Windows checking and exact macOS adapter checking.

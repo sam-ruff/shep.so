@@ -17,7 +17,7 @@ The installer never stops an open Shep window; reopen it after an update.
 Release CI is currently paused and no binary releases are published yet. The
 installer reports missing releases or platform assets without changing installed
 files. Use the source instructions below until an archive is available;
-Windows/macOS download installers and release packaging remain in development.
+Windows download installation and macOS/Windows release packaging remain in development.
 
 For a particular release, a prompt-free user install or optional GNOME pinning:
 
@@ -29,6 +29,26 @@ Replace `1.2.3` with an actually published version. `--system` explicitly select
 all users; `--yes` uses the user default without prompting. Custom user locations
 use `--prefix PATH` and `--data-dir PATH`. No Rust checkout is required for a
 published archive.
+
+### macOS
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sam-ruff/shep.so/main/scripts/install-release-macos.sh | bash
+```
+
+Uses built-in macOS tools; no Python or Homebrew is needed. The default is
+`~/Applications/Shep.app`, including its native icon and application identity.
+The terminal prompt offers your user, all users, or cancel. For explicit all-user
+installation, append `bash -s -- --system` instead of `bash`; only the final staged
+copy to `/Applications` requests administrator access. `--version`, `--user`,
+`--yes` and `--prefix APPLICATIONS_FOLDER` are also available.
+
+Checksums and exact regular archive members are validated before an installed app
+changes. Failed replacement restores the previous app. Open Shep from Applications
+and reopen after updates. No running process is stopped, user data is kept, and
+Gatekeeper settings are preserved. This does not create a signed or notarized app.
+The shell and isolated native-tool contracts are tested on Linux; actual macOS
+execution and published macOS assets remain pending.
 
 ## Run from source
 
