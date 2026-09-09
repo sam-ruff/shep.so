@@ -186,3 +186,8 @@ R02/R49 reconnection follow-up: tests and saves reject saved credentials while a
 shared account requires reconnection; fresh input, separate/no-auth SMTP, cache
 preservation, failed-write restart and normal local reuse have four passing
 engine regressions. Mandatory hooks and integrated shipping remain pending.
+
+R63 first-profile fixture follow-up: explicit held upload and batch release
+replace stacked record delays while preserving pending-navigation assertions
+and completion timeout. Three HTTP/isolation/cleanup tests pass; native
+integration remains pending.

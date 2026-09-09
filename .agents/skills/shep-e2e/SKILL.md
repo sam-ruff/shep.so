@@ -759,3 +759,11 @@ imports twelve shared accounts while reusing one existing native account.
 `profile_sync.join_review.page`, `links` and `offset` only observe the review;
 never use them to operate it. Preserve local mail, pending Reconnect state and
 stale-review rejection tests. These fixtures do not use live Google or keychains.
+
+The first-device profile scenario uses `profile_sync="held-upload"`. Its owned
+loopback server holds a committed upload response until the batch action
+`release_profile_upload`. Wait for `profile_upload_held`, exercise native
+navigation while work is pending, assert it is still held, then release it.
+This only controls the fictional transport; it cannot mutate application state
+or contact Google. Keep the existing completion deadline and saved automated
+first-device scenario. Fixture shutdown also releases the response.

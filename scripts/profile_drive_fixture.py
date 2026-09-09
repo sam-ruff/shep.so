@@ -10,7 +10,7 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
-MODES = ("empty", "fail-once", "hold-list", "slow-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-updates", "existing-update-failure", "existing-upload-failure")
+MODES = ("empty", "fail-once", "hold-list", "slow-upload", "held-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-updates", "existing-update-failure", "existing-upload-failure")
 
 
 class ProfileDriveFixture:
@@ -26,6 +26,7 @@ class ProfileDriveFixture:
         self.requests = {"lists": 0, "scoped_lists": 0, "metadata": 0, "media": 0}
         self.updated = False
         self.release = threading.Event()
+        self.upload_held = threading.Event()
         if mode.startswith("existing"):
             self.seed_existing()
         owner = self
@@ -138,6 +139,9 @@ class ProfileDriveFixture:
                                 sha256Checksum=hashlib.sha256(record).hexdigest())
                 owner.files[identity] = (metadata, record)
                 owner.changes.append(identity)
+                if owner.mode == "held-upload" and not owner.release.is_set():
+                    owner.upload_held.set()
+                    owner.release.wait()
                 if owner.mode == "slow-upload":
                     time.sleep(1)
                 self.reply(201, metadata)
