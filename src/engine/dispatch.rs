@@ -85,6 +85,13 @@ impl CommandSender {
     }
 
     #[cfg(test)]
+    pub(crate) fn close_test_channels() -> (Self, mpsc::Receiver<Command>, mpsc::Receiver<Command>)
+    {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.selections, inputs.network)
+    }
+
+    #[cfg(test)]
     pub(crate) fn selection_test_channel() -> (Self, mpsc::Receiver<Command>) {
         let (sender, inputs) = Self::channel();
         (sender, inputs.selections)
@@ -271,8 +278,10 @@ impl Engine {
                 biased;
                 result=jobs.join_next(),if !jobs.is_empty()=>{
                     if let Some(Ok((key,result)))=result{
-                        if let Some(key)=key{busy.remove(&key);let _=output.send(Event::Busy(key,false)).await;}
+                        // Failure must reach the UI before releasing its close
+                        // dependency; otherwise it may quit on Busy(false).
                         if let Err(e)=result{let _=output.send(Event::Error(format!("{e:#}"))).await;}
+                        if let Some(key)=key{busy.remove(&key);let _=output.send(Event::Busy(key,false)).await;}
                     }
                 }
                 command=input.recv(),if jobs.len()<NETWORK_CONCURRENCY=>{
@@ -326,6 +335,42 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn failed_write_reports_error_before_releasing_its_close_dependency() {
+        let engine = super::super::calendar_tests::engine();
+        let account: Account = serde_json::from_value(serde_json::json!({
+            "id":"close-fixture", "name":"Fixture", "email":"fixture@example.test",
+            "protocol":"Imap", "host":"imap.example.test", "port":993,
+            "username":"fixture", "smtp_host":"smtp.example.test", "smtp_port":465
+        }))
+        .unwrap();
+        let (commands, input) = mpsc::channel(1);
+        let (output, mut events) = futures::channel::mpsc::channel(8);
+        let worker = Running(tokio::spawn(engine.run_network(input, output)));
+        commands
+            .send(Command::SaveAccount(account, "".into(), "".into()))
+            .await
+            .unwrap();
+        let events = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut received = Vec::new();
+            while let Some(event) = events.next().await {
+                let done =
+                    matches!(&event, Event::Busy(key, false) if key == "account:close-fixture");
+                received.push(event);
+                if done {
+                    return received;
+                }
+            }
+            panic!("Worker ended before releasing the close dependency");
+        })
+        .await
+        .unwrap();
+        assert!(matches!(&events[0], Event::Busy(key, true) if key == "account:close-fixture"));
+        assert!(matches!(&events[1], Event::Error(error) if error.contains("preview")));
+        assert!(matches!(&events[2], Event::Busy(key, false) if key == "account:close-fixture"));
+        drop(worker);
+    }
 
     #[tokio::test]
     async fn manual_refresh_has_a_coalescing_queue_independent_of_provider_backpressure() {

@@ -35,6 +35,31 @@ class HarnessTests(unittest.TestCase):
                     desktop.start(**{name:True})
             launch.assert_not_called()
 
+    def test_nonblocking_close_uses_only_owned_native_window(self):
+        desktop = harness.Desktop()
+        desktop.app = Mock()
+        desktop.app.poll.return_value = None
+        desktop.window = "12345"
+        desktop.env["DISPLAY"] = ":owned"
+        desktop.state = Mock(return_value={})
+        try:
+            with tempfile.TemporaryDirectory() as directory, patch.object(harness, "request_window_close") as close:
+                desktop.directory = Path(directory)
+                desktop.batch([{"type":"close_request"}])
+                close.assert_called_once_with(":owned", "12345")
+        finally:
+            desktop.app = None
+
+    def test_held_provider_slots_fixture_is_validated_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in ("true", 1, None):
+                with self.assertRaisesRegex(ValueError, "Held provider slots fixture"):
+                    desktop.start(held_provider_slots=value)
+            launch.assert_not_called()
+        tool = next(tool for tool in harness.TOOLS if tool["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["held_provider_slots"], {"type":"boolean", "default":False})
+
     def test_held_database_import_fixture_is_validated_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

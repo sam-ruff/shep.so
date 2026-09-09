@@ -1,5 +1,58 @@
 # Completion audit
 
+## 9 September: shutdown failure ownership
+
+Attachment storage, draft discard and forward preparation cancel automatic close
+only when their failed result owns the current pending operation. Late results
+for another draft/request keep newer shutdown dependencies intact. Errors stay
+visible; discard retains the review and original draft for retry. Three production
+`App::update` regressions cover current/old IDs and late stop acknowledgments.
+The close-filter Rust run passes 32 tests; all 57 Python tests and nine selected
+native scenarios pass, including the three new close/failure/retry flows. Reviewed
+WebPs: `artifacts/e2e/effa8bf75b5b/close-attachment-failure.webp`,
+`artifacts/e2e/563bb8045bcf/close-discard-failure.webp` and
+`artifacts/e2e/73046dc11efc/close-forward-failure.webp`. They retain the composer,
+red discard control and visible recovery errors. Native binary SHA-256:
+`20d1be5a8a8df061b8ef92afb39cf281d23397be82ba05d4f901ca76f079c0c8`.
+These are fixture correctness checks, not live server or timing measurements.
+Agent commits `9c2e84c` and `e30c174` pass all mandatory hooks (711 and 714
+executions respectively, with three personal diagnostics ignored). The root
+reviewed the failure WebPs and integrated both checkpoints together; combined
+checks and shipping are recorded below when complete. All injected delays and
+failures require the isolated preview feature.
+
+## 9 September: close continuation and interruptible provider waits
+
+The R90/R91 shutdown checkpoint keeps close intent through account/calendar,
+Google, outgoing, attachment and draft saves, then continues automatically once
+all required acknowledgments arrive. Account and calendar writes record their
+busy dependency when admitted, before provider capacity becomes available.
+Errors reach the UI before that dependency is released; current failures cancel
+close while obsolete draft failures preserve newer saves. A failed calendar
+connection remains editable with its inline error.
+
+Bulk execution now waits for provider capacity before claiming a journal item.
+A close interrupts that wait through a capacity-one lifecycle channel, preserving
+unstarted work for the next launch. Already claimed work still records its actual
+receipt. Folder cancellation uses the same signal instead of polling. Production
+shutdown still waits for durable writes; optional read-only sync is not a close
+dependency.
+
+Targeted Rust checks pass 29 tests, and all 57 Python tests pass. **15 selected
+native scenarios pass**, including two new flows: closing with all eight provider
+slots held preserves queued journal steps, and closing during rejected send
+preparation cancels close and retains the reply through restart. Existing group,
+folder, read-on-leave, recovery, inline draft, account/calendar, profile upload
+and database-transfer close scenarios also pass. Reviewed WebPs are in
+`94e04def5ba4` (pending send, visible error and reopened draft) and `35aaa8f6ef81`
+(optimistic group before close). Native binary SHA-256:
+`8eb9fafec14de5bde0338967b6c7cdd42bfc7389feb7e3aecc07e795cd42eafe`.
+These are fictional native/protocol fixtures; no personal account, credentials
+or installed executable changed. Native tray integration and live personal-server
+close diagnosis remain open. Integration, mandatory hooks and shipping evidence
+will be recorded with the accepted commit; this checkpoint does not finish R86
+or the full product goal.
+
 ## 9 September: ongoing profile updates and parallel feature delivery
 
 R02/R49/R92 now runs ongoing profile checks through the bounded coordinator,

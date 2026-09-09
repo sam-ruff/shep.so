@@ -523,6 +523,40 @@ class NativeFlows(unittest.TestCase):
                        check("mail_pending",0), check("mail_rows.0.starred",True),
                        check("notice","Fixture","contains"), shot("interrupted-sync-retry-failure"))
 
+    def test_close_during_send_failure_reopens_work_without_losing_the_reply(self):
+        started = self.mcp.call("desktop.start", persistent=True, mail_actions="slow")
+        print(f"Close during rejected send: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("r"), check("composer.visible",True), check("focused_input","compose-body"),
+                       type_text("Preserve this reply after failed delivery."))
+        draft = self.mcp.call("desktop.state")["composer"]["id"]
+        self.mcp.batch(click(675,564), check("busy","send:"+draft,"contains"),
+                       {"type":"close_request"}, check("close_pending",True),
+                       shot("close-waits-for-send"),
+                       check("notice","Sending is disabled in preview","contains"),
+                       check("close_pending",False), check("editor","Preserve this reply","contains"),
+                       shot("close-cancelled-after-send-failure"),
+                       click(350,330), check("composer.visible",False), click(350,230),
+                       check("composer.id",draft), check("editor","Preserve this reply","contains"))
+        restarted = self.mcp.call("desktop.restart")
+        self.assertNotEqual(started["pid"], restarted["pid"])
+        self.mcp.batch(key("r"), check("composer.id",draft),
+                       check("editor","Preserve this reply","contains"), shot("failed-send-reply-after-restart"))
+
+    def test_close_with_all_provider_slots_held_preserves_unstarted_group(self):
+        started = self.mcp.call("desktop.start", persistent=True, held_provider_slots=True)
+        print(f"Close with occupied provider capacity: {started['artifacts']}", flush=True)
+        self.mcp.batch(click(584,164), check("mail_selection.mode",True), check("mail_selection.drawn",True),
+                       click(274,218), click(274,322), check("mail_selection.count",2),
+                       check("mail_selection.pending",False), key("Delete"), check("dialog","BulkReview"),
+                       key("Return"), check("dialog",None), check("bulk.jobs.0.remaining",2),
+                       check("bulk.jobs.0.running",0), shot("provider-capacity-before-close"))
+        closed = self.mcp.call("desktop.close")
+        self.assertEqual(closed["returncode"], 0)
+        database = Path(started["artifacts"]) / "fixture.sqlite"
+        with sqlite3.connect(database.as_uri()+"?mode=ro", uri=True) as cache:
+            self.assertEqual(cache.execute("SELECT status FROM bulk_items ORDER BY position").fetchall(), [("queued",),("queued",)])
+            self.assertEqual(cache.execute("SELECT count(*) FROM messages WHERE folder='Archive'").fetchone()[0], 0)
+
     def test_bulk_graceful_close_preserves_current_receipt_and_resumes_queued_mail(self):
         started=self.mcp.call("desktop.start",persistent=True,mail_actions="slow")
         print(f"Graceful group restart evidence: {started['artifacts']}",flush=True)
@@ -1076,6 +1110,46 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+1"), check("tab", "Mail"), {"type":"resize", "width":900, "height":640}, wait(150),
                        click(98,517), check("composer.visible", True), check("draft_forward", True),
                        check("compose_fields.to", ""), shot("forward-dark-compact"))
+
+    def test_close_during_forward_failure_keeps_retry_available(self):
+        self.mcp.call("desktop.start", mail_actions="fail")
+        self.mcp.batch(key("f"), check("forward_pending", True),
+                       {"type":"close_request"}, check("close_pending", True),
+                       {**check("forward_pending", False), "timeout_ms":5000},
+                       check("close_pending", False), check("notice", "Try Forward again", "contains"),
+                       check("draft_count", 0), shot("close-forward-failure"),
+                       key("f"), check("forward_pending", True),
+                       {**check("composer.visible", True), "timeout_ms":5000},
+                       check("draft_count", 1), shot("close-forward-retried"))
+
+    def test_close_during_attachment_failure_keeps_draft_and_retry_available(self):
+        result = self.mcp.call("desktop.start", mail_actions="fail")
+        fixture = Path(result["artifacts"]) / "close attachment.txt"
+        fixture.write_text("Owned attachment for close failure recovery")
+        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+                       click(850,279), type_text("Keep attachment draft"),
+                       click(750,633), {"type":"choose_file", "path":str(fixture)},
+                       check("draft_io", True), {"type":"close_request"}, check("close_pending", True),
+                       {**check("draft_io", False), "timeout_ms":5000},
+                       check("close_pending", False), check("notice", "Choose the attachment again", "contains"),
+                       check("compose_fields.subject", "Keep attachment draft"), shot("close-attachment-failure"),
+                       click(750,633), {"type":"choose_file", "path":str(fixture)},
+                       check("draft_io", False), check("draft_attachments.0.name", fixture.name),
+                       shot("close-attachment-retried"))
+
+    def test_close_during_discard_failure_keeps_review_and_draft(self):
+        self.mcp.call("desktop.start", discard_failure_once=True)
+        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+                       click(850,279), type_text("Keep failed discard"), check("draft_count", 1),
+                       click(820,633), check("dialog", "DiscardDraft"), key("y"),
+                       check("discard_pending", True), {"type":"close_request"}, check("close_pending", True),
+                       {**check("discard_pending", False), "timeout_ms":5000},
+                       check("close_pending", False), check("dialog", "DiscardDraft"),
+                       check("notice", "Preview storage failure", "contains"),
+                       check("draft_count", 1), shot("close-discard-failure"), key("n"),
+                       check("composer.visible", True), check("compose_fields.subject", "Keep failed discard"),
+                       click(820,633), check("dialog", "DiscardDraft"), key("y"),
+                       check("draft_count", 0), check("dialog", None), shot("close-discard-retried"))
 
     def test_forward_targets_the_expanded_message_in_a_conversation(self):
         self.mcp.call("desktop.start", conversation_mail=True)

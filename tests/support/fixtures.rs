@@ -595,6 +595,18 @@ pub async fn forward_delay(store: &Store) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Attachment storage fails once under the same isolated delayed-failure mode.
+pub async fn attachment_delay(store: &Store) -> anyhow::Result<()> {
+    if std::env::args().any(|arg| arg == "--mail-actions=fail")
+        && !store.get::<bool>("preview-attachment-failed").await?
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+        store.put("preview-attachment-failed", true).await?;
+        anyhow::bail!("Fixture storage failure. Choose the attachment again.");
+    }
+    Ok(())
+}
+
 /// A new arrival proves that an automatic cycle reaches the ordinary cache/UI.
 pub async fn sync_mail(
     store: &Store,

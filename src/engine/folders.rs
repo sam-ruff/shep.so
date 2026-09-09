@@ -6,7 +6,6 @@ use crate::{
     folders::Tree,
 };
 use std::collections::HashMap;
-use std::sync::atomic::Ordering::SeqCst;
 
 #[derive(Debug, Clone)]
 pub enum Request {
@@ -113,7 +112,7 @@ impl Engine {
                     .map(Arc::new)
                     .map_err(|e| format!("{e:#}"));
                 if result.is_ok() {
-                    self.bulk_control.stopping.store(false, SeqCst);
+                    self.bulk_control.stopping.set(false);
                 }
                 Event::Started(id, result)
             }
@@ -135,7 +134,7 @@ impl Engine {
                     } else {
                         self.store.retry_folder_change(&lease).await?
                     };
-                    self.bulk_control.stopping.store(false, SeqCst);
+                    self.bulk_control.stopping.set(false);
                     Ok::<_, anyhow::Error>(job)
                 }
                 .await
@@ -190,7 +189,7 @@ impl Engine {
 
     pub(super) async fn drain_folder_jobs(&self, mut output: Output) {
         let mut after = String::new();
-        while !self.bulk_control.stopping.load(SeqCst) {
+        while !self.bulk_control.stopping.get() {
             match self.store.next_pending_folder(after.clone()).await {
                 Ok(Some(id)) => {
                     after = id.clone();
@@ -208,9 +207,9 @@ impl Engine {
     }
 
     async fn execute_folder_job(&self, id: String, mut output: Output) {
-        self.bulk_control.active.store(true, SeqCst);
-        if self.bulk_control.stopping.load(SeqCst) {
-            self.bulk_control.active.store(false, SeqCst);
+        self.bulk_control.active.set(true);
+        if self.bulk_control.stopping.get() {
+            self.bulk_control.active.set(false);
             let _ = output.send(super::Event::BulkStopped).await;
             return;
         }
@@ -229,10 +228,10 @@ impl Engine {
         let _ = output
             .send(super::Event::Folder(Event::Finished(id, result)))
             .await;
-        self.bulk_control.active.store(false, SeqCst);
+        self.bulk_control.active.set(false);
         if failed {
-            self.bulk_control.stopping.store(false, SeqCst);
-        } else if self.bulk_control.stopping.load(SeqCst) {
+            self.bulk_control.stopping.set(false);
+        } else if self.bulk_control.stopping.get() {
             let _ = output.send(super::Event::BulkStopped).await;
         }
     }
@@ -256,11 +255,7 @@ impl Engine {
             let account = self.account_access(&job.review.account).await;
             (slot, account)
         };
-        let stop = async {
-            while !self.bulk_control.stopping.load(SeqCst) {
-                tokio::time::sleep(Duration::from_millis(32)).await;
-            }
-        };
+        let stop = self.bulk_control.stopping.requested();
         let (_slot, _account_lock) = tokio::select! {
             biased;
             _ = stop => return Ok(job),

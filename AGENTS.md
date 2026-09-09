@@ -142,6 +142,20 @@ A capacity-one wake channel coalesces requests; queued job IDs remain durable in
 
 Undo cancels unsent steps and reverses acknowledged steps using their actual receipt identities, including when a forward write is still running. Preserve newer unrelated flag intent. Definite inverse failures may retry; ambiguous outcomes need explicit acceptance after checking folders. Query snapshots observe forward/Undo phase alongside counts, preventing double projection when a page arrives before its acknowledgment. Temporary restored rows cannot issue body/provider requests with obsolete IDs. Bulk toasts carry weighted group counts and adjust after failures.
 
+
+Close intent must survive independent draft, account/calendar, Google and mail
+save acknowledgments, in either order with the bulk stop barrier. A failed
+current write cancels close before the busy dependency is released; an obsolete
+draft error must not cancel a newer pending save. Track write admission before
+provider capacity is available. Bulk work acquires interruptible capacity before
+claiming a journal item, while an already claimed step retains its receipt.
+`lifecycle::Signal` uses a capacity-one watch channel for stop/activity state;
+folder preflight cancellation must not restore a polling loop.
+The native `held_provider_slots=true` fixture owns all eight provider permits,
+skips unrelated fixture startup cleanup, and checks that closing preserves
+unstarted group steps. `close_request` sends WM_DELETE_WINDOW to the owned window
+without waiting, so pending/failure UI can be exercised in a batch.
+
 Closing requests the bulk worker to stop after its current receipt is durable; remaining queued work resumes with a fresh engine. An error cancels pending close. An explicitly resumed/new group can continue after another close dependency failed. Account-removal reviews include related group state and history; changed reviews are rejected, unfinished changes require the existing cancellation checkbox, and removal deletes only affected account entries/receipts. Preserve the independent-process lock test, query/receipt/restart/close/account-removal tests and all saved `test_bulk_*` native scenarios.
 
 Passwords and Google refresh tokens belong in the operating system keychain, never SQLite. Google login uses system browser + loopback callback, PKCE and state validation. Drive is opt-in and uses the app-private `appDataFolder` scope. Encrypted backups use Argon2id + AES-256-GCM, fresh salt/nonce, authenticated version header, and compress-before-encrypt. Retention runs only after a successful new upload. Never remove unrelated files. Restore validates/decrypts first and merges downloaded messages.

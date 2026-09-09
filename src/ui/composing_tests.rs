@@ -738,3 +738,102 @@ fn select_all_from_the_list_parks_its_reply_but_rejected_focus_keeps_the_editor(
         "Keep my words"
     );
 }
+
+#[test]
+fn close_after_attachment_failure_stays_open_but_old_result_keeps_newer_dependency() {
+    for current in [false, true] {
+        let (mut app, _) = App::new();
+        let (sender, _selection, _network) = engine::CommandSender::close_test_channels();
+        app.tx = Some(sender);
+        let window = iced::window::Id::unique();
+        app.pending_close = Some(window);
+        app.composer.close = Some(window);
+        app.composer.io = Some("newer".into());
+        let _ = app.update(Message::Backend(Event::DraftFiles(
+            if current { "newer" } else { "older" }.into(),
+            Err("Attachment unavailable; choose it again.".into()),
+        )));
+        assert_eq!(app.pending_close, (!current).then_some(window));
+        assert_eq!(app.composer.close, (!current).then_some(window));
+        assert_eq!(app.composer.io.as_deref(), (!current).then_some("newer"));
+        assert!(
+            app.notice
+                .as_ref()
+                .unwrap()
+                .0
+                .contains("Attachment unavailable")
+        );
+        let _ = app.update(Message::Backend(Event::BulkStopped));
+        assert_eq!(app.pending_close, (!current).then_some(window));
+    }
+}
+
+#[test]
+fn close_after_discard_failure_stays_open_but_old_result_keeps_newer_dependency() {
+    for current in [false, true] {
+        let (mut app, _) = App::new();
+        let (sender, _selection, _network) = engine::CommandSender::close_test_channels();
+        app.tx = Some(sender);
+        let window = iced::window::Id::unique();
+        app.load_draft(draft("newer"));
+        app.composer.current.dirty = None;
+        app.review_discard_draft("newer".into());
+        app.composer.discard_pending = true;
+        app.pending_close = Some(window);
+        app.composer.close = Some(window);
+        let _ = app.update(Message::Backend(Event::DraftDeleted(
+            if current { "newer" } else { "older" }.into(),
+            Err("Draft could not be discarded; retry.".into()),
+        )));
+        assert_eq!(app.pending_close, (!current).then_some(window));
+        assert_eq!(app.composer.close, (!current).then_some(window));
+        assert_eq!(app.composer.discard_pending, !current);
+        assert_eq!(app.dialog, Some(Dialog::DiscardDraft));
+        assert_eq!(app.current_draft().body.trim(), "Keep my words");
+        assert!(
+            app.notice
+                .as_ref()
+                .unwrap()
+                .0
+                .contains("could not be discarded")
+        );
+        let _ = app.update(Message::Backend(Event::BulkStopped));
+        assert_eq!(app.pending_close, (!current).then_some(window));
+    }
+}
+
+#[test]
+fn close_after_forward_failure_stays_open_but_old_result_keeps_newer_dependency() {
+    for current in [false, true] {
+        let (mut app, _) = App::new();
+        let (sender, _selection, _network) = engine::CommandSender::close_test_channels();
+        app.tx = Some(sender);
+        let window = iced::window::Id::unique();
+        app.pending_close = Some(window);
+        app.composer.close = Some(window);
+        app.composer.forward_pending = Some(("newer".into(), "source".into(), 1));
+        let _ = app.update(Message::Backend(Event::ForwardDraft(
+            if current { "newer" } else { "older" }.into(),
+            Err("Forward could not be saved; retry.".into()),
+        )));
+        assert_eq!(app.pending_close, (!current).then_some(window));
+        assert_eq!(app.composer.close, (!current).then_some(window));
+        assert_eq!(app.composer.forward_pending.is_some(), !current);
+        if current {
+            assert!(
+                app.notice
+                    .as_ref()
+                    .unwrap()
+                    .0
+                    .contains("could not be saved")
+            );
+        } else {
+            assert!(
+                app.notice.is_none(),
+                "Obsolete failure must not replace newer intent"
+            );
+        }
+        let _ = app.update(Message::Backend(Event::BulkStopped));
+        assert_eq!(app.pending_close, (!current).then_some(window));
+    }
+}

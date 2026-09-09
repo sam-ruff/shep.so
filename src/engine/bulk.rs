@@ -2,12 +2,11 @@
 //! commands, reads, sync, and Undo intent continue on their independent queues.
 use super::*;
 use crate::bulk::{Action, Item, Job, Receipt};
-use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 
 #[derive(Default)]
 pub(super) struct Control {
-    pub stopping: AtomicBool,
-    pub active: AtomicBool,
+    pub stopping: crate::lifecycle::Signal,
+    pub active: crate::lifecycle::Signal,
 }
 
 impl Engine {
@@ -34,7 +33,7 @@ impl Engine {
     async fn drain_bulk_jobs(&self, output: Output) {
         let mut after = String::new();
         loop {
-            if self.bulk_control.stopping.load(SeqCst) {
+            if self.bulk_control.stopping.get() {
                 break;
             }
             match self.store.next_pending_bulk(after.clone()).await {
@@ -59,9 +58,9 @@ impl Engine {
     async fn execute_bulk_job(&self, id: String, mut output: Output) {
         // Publish activity before checking close intent. A close sees either
         // this guard or the worker observes stopping before touching storage.
-        self.bulk_control.active.store(true, SeqCst);
-        if self.bulk_control.stopping.load(SeqCst) {
-            self.bulk_control.active.store(false, SeqCst);
+        self.bulk_control.active.set(true);
+        if self.bulk_control.stopping.get() {
+            self.bulk_control.active.set(false);
             // Stop may have observed active=true and delegated its acknowledgment
             // to us. Even when no item started, the closing window must hear it.
             let _ = output.send(Event::BulkStopped).await;
@@ -74,11 +73,11 @@ impl Engine {
             .map_err(|e| format!("{e:#}"));
         let failed = result.is_err();
         let _ = output.send(Event::BulkFinished(id, result)).await;
-        self.bulk_control.active.store(false, SeqCst);
+        self.bulk_control.active.set(false);
         if failed {
             // A visible error cancels pending close and leaves recovery usable.
-            self.bulk_control.stopping.store(false, SeqCst);
-        } else if self.bulk_control.stopping.load(SeqCst) {
+            self.bulk_control.stopping.set(false);
+        } else if self.bulk_control.stopping.get() {
             let _ = output.send(Event::BulkStopped).await;
         }
     }
@@ -90,7 +89,17 @@ impl Engine {
             .await?;
         let mut last_progress = None::<std::time::Instant>;
         loop {
-            if self.bulk_control.stopping.load(SeqCst) {
+            if self.bulk_control.stopping.get() {
+                break;
+            }
+            // Waiting for provider capacity has not changed any server state.
+            // A close may abandon this wait without claiming a journal step.
+            let _slot = tokio::select! {
+                biased;
+                _ = self.bulk_control.stopping.requested() => break,
+                slot = self.provider_slots.acquire() => slot,
+            };
+            if self.bulk_control.stopping.get() {
                 break;
             }
             let Some(item) = self.store.claim_bulk_item(id.to_owned()).await? else {
@@ -103,7 +112,6 @@ impl Engine {
                     .await?;
                 last_progress = Some(std::time::Instant::now());
             }
-            let _slot = self.provider_slots.acquire().await;
             // Errors before touching the provider are definite rejections.
             let preflight=async {
                 let original=item.original.as_ref().context("This message is no longer available")?;
@@ -265,6 +273,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn close_abandons_provider_capacity_wait_without_claiming_or_touching_mail() {
+        let engine = fixture(2).await;
+        start(
+            &engine,
+            "capacity-close",
+            MailQuery::default(),
+            movement("Archive"),
+        )
+        .await;
+        let mut slots = Vec::new();
+        for _ in 0..8 {
+            slots.push(engine.provider_slots.acquire().await);
+        }
+        let (output, mut events) = futures::channel::mpsc::channel(8);
+        let worker = tokio::spawn({
+            let engine = engine.clone();
+            let output = output.clone();
+            async move {
+                engine
+                    .execute_bulk_job("capacity-close".into(), output)
+                    .await
+            }
+        });
+        let initial = tokio::time::timeout(Duration::from_secs(5), events.next())
+            .await
+            .unwrap();
+        assert!(
+            matches!(initial, Some(Event::BulkUpdate(ref job)) if job.remaining == 2 && job.running == 0)
+        );
+        engine.execute(Command::BulkStop, output).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), worker)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut acknowledged = false;
+        while let Some(event) = events.next().await {
+            if matches!(event, Event::BulkStopped) {
+                acknowledged = true;
+                break;
+            }
+        }
+        assert!(acknowledged);
+        let job = engine
+            .store
+            .bulk_job("capacity-close".into())
+            .await
+            .unwrap();
+        assert_eq!(
+            (job.remaining, job.running, job.completed, job.uncertain),
+            (2, 0, 0, 0)
+        );
+        let items = engine
+            .store
+            .bulk_items("capacity-close".into(), None)
+            .await
+            .unwrap();
+        assert!(
+            items
+                .iter()
+                .all(|item| item.status == "queued" && item.receipt.is_none())
+        );
+        // Capacity remains held until after close was acknowledged.
+        assert_eq!(slots.len(), 8);
+        drop(slots);
+        engine.bulk_control.stopping.set(false);
+        let completed = execute(&engine, "capacity-close").await;
+        assert_eq!((completed.completed, completed.uncertain), (2, 0));
+    }
+
+    #[tokio::test]
     async fn stop_at_worker_entry_acknowledges_close_without_claiming_mail() {
         let engine = fixture(2).await;
         start(
@@ -274,11 +352,11 @@ mod tests {
             movement("Archive"),
         )
         .await;
-        engine.bulk_control.stopping.store(true, SeqCst);
+        engine.bulk_control.stopping.set(true);
         let (output, mut input) = futures::channel::mpsc::channel(2);
         engine.execute_bulk_job("closing".into(), output).await;
         assert!(matches!(input.next().await, Some(Event::BulkStopped)));
-        assert!(!engine.bulk_control.active.load(SeqCst));
+        assert!(!engine.bulk_control.active.get());
         let job = engine.store.bulk_job("closing".into()).await.unwrap();
         assert_eq!((job.remaining, job.running, job.completed), (2, 0, 0));
         assert_eq!(
@@ -516,7 +594,7 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        engine.bulk_control.stopping.store(true, SeqCst);
+        engine.bulk_control.stopping.set(true);
         let (output, mut input) = futures::channel::mpsc::channel(2);
         engine
             .execute(Command::BulkResume("paused".into()), output)
@@ -532,7 +610,7 @@ mod tests {
                 .as_deref(),
             Some("paused")
         );
-        assert!(!engine.bulk_control.stopping.load(SeqCst));
+        assert!(!engine.bulk_control.stopping.get());
         let job = execute(&engine, "paused").await;
         assert_eq!(job.completed, 2);
         assert_eq!(
@@ -655,10 +733,9 @@ mod tests {
     async fn closing_finishes_the_current_receipt_and_leaves_unsent_work_for_next_launch() {
         let engine = fixture(8).await;
         start(&engine, "close", MailQuery::default(), movement("Archive")).await;
-        let mut permits = Vec::new();
-        for _ in 0..8 {
-            permits.push(engine.provider_slots.acquire().await);
-        }
+        // Hold account ownership after a provider slot and journal claim.
+        // Once admitted, the operation must retain its eventual receipt.
+        let account = engine.account_access("fixture").await;
         let (output, mut events) = futures::channel::mpsc::channel(8);
         let running = tokio::spawn({
             let engine = engine.clone();
@@ -680,8 +757,8 @@ mod tests {
             .execute(Command::BulkStop, output.clone())
             .await
             .unwrap();
-        assert!(engine.bulk_control.active.load(SeqCst));
-        permits.clear();
+        assert!(engine.bulk_control.active.get());
+        drop(account);
         let job = tokio::time::timeout(Duration::from_secs(5), async {
             let mut saved = None;
             while let Some(event) = events.next().await {
