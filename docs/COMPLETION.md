@@ -16,7 +16,7 @@ Final native executable SHA-256: `eeb91c17a19e8542c11cb60ffd7bab19a666c6e76e8c84
 
 Evidence is under ignored `artifacts/logs/database-import-*` and the native run directories. Performance measurements, live provider verification and production installation remain deferred. SQLite transfer is unencrypted, excludes keychain secrets and external backup-upload journals, and requires disk space for its private copy/WAL history. Imported accounts require reconnection. Continuous OAuth/Drive profile synchronization is still the top TODO priority, linked to the [Flutter handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md). Local profiles do not establish that protocol. Quality/release workflows remain disabled.
 
-Shipping: awaiting the verified source commit and main push; the full product goal remains unfinished.
+Source [`93d4289`](https://github.com/sam-ruff/shep.so/commit/93d42895a9cb3820efeabc710e110a5e82522db6) passed mandatory formatting, Clippy with warnings denied, **580 Rust + 2 drawing-adapter tests**, and Conventional Commit hooks. It was pushed to main and exact remote equality was verified; its [documentation build/deployment](https://github.com/sam-ruff/shep.so/actions/runs/34297303930) succeeded. No production installation changed. The database-transfer R83 entry is retired; encrypted local storage, large-mail streaming, protected credential sharing and continuous profiles remain separately tracked. The full product goal remains unfinished.
 
 ## 8 September: complete database export in Preferences
 
