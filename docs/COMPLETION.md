@@ -35,6 +35,16 @@ Passwords are outside this metadata format; the credential-protection choice is
 still unanswered. See [the transport contract](agents/profile-drive.md). Evidence:
 ignored `artifacts/logs/profile-sync-*`. Quality/release workflows stay disabled.
 
+Source [`bb87ac2`](https://github.com/sam-ruff/shep.so/commit/bb87ac2e215bf0c7e798a76ec0acae1bdc12a9b9)
+was pushed to main. Mandatory formatting/Clippy/test hooks passed **596 Rust tests,
+two drawing-adapter tests and six shared-codec tests**; three personal-data
+diagnostics remain explicitly ignored. The strict docs build passed, followed by
+[successful documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34301648758).
+The Linux app was not installed or exercised through native controls for this
+backend-only checkpoint. The independently developing client transport must be
+consolidated with this wire contract before any cross-client sync claim; the
+codec alone is already shared, not the live Drive file protocol.
+
 ## 9 September: complete database import and local profiles
 
 R83 adds **Backups → Database transfer → Import database** and **Accounts → Profiles**. A private staged copy is checked against supported v2/v3 schema, SQLite integrity/foreign keys and portable connection identities before account/count review. Confirmation consumes that exact copy, archives changed pending-operation metadata and publishes without overwriting the original workspace. Imports retain cached MIME/attachments, drafts, account/calendar definitions, cached events and portable settings. Pending sends, Sent uploads and bulk/folder changes become explicit review work; imported credential cleanup cannot delete local secrets. Notification setup stays quiet, and Google/automatic-backup state requires new-device setup.
