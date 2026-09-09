@@ -2289,6 +2289,24 @@ class NativeFlows(unittest.TestCase):
                        check("settings_group", "Profiles and sync"),
                        check("profile_sync.loaded", True), wait(100))
 
+    def duplicate_address_account_setup(self):
+        started = self.mcp.call("desktop.start", profile_sync="existing-connections", profile_login=True, empty_profile=True)
+        print(f"Duplicate-address sidebar evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("account_count", 1), check("profile_sync.working", False))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
+                       click(375, 665), check("profile_sync.account_reviews.0.name", "Cloud account"), check("profile_sync.working", False),
+                       {"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":8}, wait(100),
+                       click(368, 698), check("account_count", 2), check("profile_sync.account_reviews", []),
+                       check("profile_sync.working", False), key("ctrl+1"), check("tab", "Mail"),
+                       check("sidebar_labels", "Cloud account (previous setup)", "contains"),
+                       check("sidebar_labels", "Cloud account", "contains"), wait(100))
+        return started
+
+    def test_sidebar_duplicate_addresses_distinguish_saved_names_and_controls(self):
+        self.duplicate_address_account_setup()
+        self.mcp.batch(shot("duplicate-address-account-headings"), click(185, 278), wait(100), shot("duplicate-address-expanded-inboxes"))
+
     def test_profile_account_review_native_adds_shared_connection_and_preserves_previous_setup(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-connections", profile_login=True, empty_profile=True)
         print(f"Account connection review evidence: {started['artifacts']}", flush=True)
