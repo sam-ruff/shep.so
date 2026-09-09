@@ -28,7 +28,13 @@ flows reject unfinished/legacy Home while allowing complete Work. Reviewed WebPs
 `ab3e7ba843e3` (import/reconnect). Native executable SHA-256:
 `709eff8bba2e270f5cb51152989e8cc4890f8d887226f2cd9a5ce266f8e1c6c4`.
 Python passes 54 tests; Windows GNU all-target/all-feature cross-compilation
-passes. Mandatory hook results and source shipping are recorded after commit.
+passes. Mandatory formatting/Clippy hooks passed **643 root Rust + two renderer +
+53 shared tests (698 executions)**; three personal diagnostics remain explicitly
+ignored. Strict Zensical passed. Source
+[`9158b50`](https://github.com/sam-ruff/shep.so/commit/9158b502bddb7ae6cae9937db9d0965ad938cd8f)
+is pushed to main; exact remote equality was verified. [Source documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34320559268)
+passed its strict build and Pages deployment. The initial hook's redundant test
+closure was corrected before this successful commit; no hook or gate was bypassed.
 
 Automatic login discovery/enrollment, continuous local/remote updates,
 conflict/removal controls, admitted legacy migration and protected credentials
