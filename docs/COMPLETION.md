@@ -1,5 +1,21 @@
 # Completion audit
 
+## 9 September: bounded profile ancestry scratch
+
+The shared history implementation now keeps ancestry in an indexed internal
+main-database table, cleared in the same transaction before committed boundaries.
+It replaces recursive UNION visited sets with a 128-ID frontier and reads child
+updates one at a time. A keyed connection therefore protects this scratch,
+without putting the complete history into SQLite memory TEMP storage. Existing
+v1 journals add the private table without changing the portable operation format.
+
+All 60 isolated shared tests and all-target Clippy pass, including the final
+child-cursor refinement. Normal hooks and parent publication remain pending.
+New cases cover 10,000 ancestors, duplicate paths, cycles, rollback, old-schema
+reopening and indexed frontier plans. Other shared ordered reads use an index
+or bounded page/codec limits; no recursive SQL or data-bearing TEMP table remains.
+This does not complete desktop encrypted startup or migration.
+
 ## 9 September: injectable shared database connections for cache encryption
 
 `history::ConnectionFactory`, `Journal::open_with`, `Worker::open_with` and

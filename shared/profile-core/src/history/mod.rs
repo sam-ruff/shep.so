@@ -251,7 +251,6 @@ impl Journal {
             "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;",
         )?;
         let device = schema::initialize(&mut db, &binding)?;
-        db.execute_batch("CREATE TEMP TABLE history_ancestors(id TEXT PRIMARY KEY);")?;
         Ok(Self {
             db,
             binding,
