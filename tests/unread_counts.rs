@@ -4,6 +4,31 @@ use shep::{
 };
 
 #[tokio::test]
+async fn reopened_cache_counts_unread_accounts_without_mail_row_reads_or_sorting() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cache.sqlite");
+    let store = Store::open(&path).unwrap();
+    // Model the earlier cache schema; reopening must add the covering index.
+    store
+        .run(|c| {
+            c.execute_batch("DROP INDEX mail_inbox_badge_counts")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    drop(store);
+    let store = Store::open(&path).unwrap();
+    store.run(|c| {
+        let steps = c.prepare("EXPLAIN QUERY PLAN SELECT account,COUNT(*) FROM messages WHERE folder='INBOX' AND unread=1 GROUP BY account")?
+            .query_map([],|r|r.get::<_,String>(3))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        assert!(steps.iter().any(|s|s.contains("COVERING INDEX")),"{steps:?}");
+        assert!(!steps.iter().any(|s|s.contains("TEMP B-TREE")),"{steps:?}");
+        Ok(())
+    }).await.unwrap();
+}
+
+#[tokio::test]
 async fn global_counts_observe_pending_mail_outside_the_filtered_page_and_after_rekey() {
     let store = Store::memory().unwrap();
     let first = parse_mail(

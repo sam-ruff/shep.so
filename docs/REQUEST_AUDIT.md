@@ -496,3 +496,9 @@ relation once while retaining exact-body priority and the common selection order
 The new planner guard and existing search/selection/bulk contracts pass; native
 controls, measured budgets and shipping follow in the completion log. Mobile and
 browser fuzzy-ranking parity stay open. No benchmark threshold is changed.
+
+R03/R09/desktop-main:R70 follow-up: the first complete materialized-search benchmark
+failed at 68.94 ms. A covering unread-account index removes per-page mail-row
+lookups/sorting; reopen/projection and native badge verification accompany the
+final performance gate. Full timing evidence and shipping remain explicit in the
+completion log; no threshold or scope entry was removed.
