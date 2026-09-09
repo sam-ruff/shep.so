@@ -1,6 +1,6 @@
 # Completion audit
 
-## FTP/FTPS and shared credential guards — integration in progress
+## FTP/FTPS and shared credential guards — shipped checkpoint
 
 FTP/FTPS checkpoint `17de158` uses verified TLS by default, clearly selectable
 plain FTP, per-destination keychain setup and owned resumable uploads/retention.
@@ -16,8 +16,26 @@ all-feature checking, and strict Zensical. Root reviewed FTP’s plain-connectio
 warning and compact credentials WebPs in `artifacts/e2e/3baf8f15714b`.
 Final native SHA-256:
 `ccb2b2672ded47898d260cd93104546f09df834fbfe48816024f6065c9201d29`.
-Logs use `artifacts/logs/ftp-credentials-main-*`. Normal hooks and publication
-are the remaining checkpoint steps.
+Logs use `artifacts/logs/ftp-credentials-main-*`. Source **`13f9c36`** is pushed
+to main with exact remote equality verified. All **834 normal hook executions**
+pass (three personal diagnostics ignored). Documentation CI **34362323848**
+is green. This source checkpoint is not a new production installation.
+
+## First-profile native fixture synchronization
+
+The first-device scenario now waits for a loopback upload to be held, navigates
+the real Mail controls while it stays pending, then releases the response. It
+keeps the existing completion deadline instead of accumulating one-second delays
+for every setup record. The held mode and release action control only the owned
+fictional server; shutdown also releases pending responses. Three actual HTTP /
+batch isolation / cleanup tests pass. All **eight integrated native scenarios**
+pass in 43.079 seconds, covering held navigation, interrupted setup/restart and
+post-login profile choices. All **84 Python tests** pass, including actual
+PowerShell execution. Root reviewed the saved/reopened profile WebP in
+`artifacts/e2e/7299297b2b38`. The native binary remains the verified
+`ccb2b2672ded47898d260cd93104546f09df834fbfe48816024f6065c9201d29`.
+Logs use `artifacts/logs/profile-held-upload-main-*`; normal hooks and publication
+remain the checkpoint steps. The broader functionality audit stays open.
 
 ## Shared account reconnection credential guard
 
@@ -32,7 +50,7 @@ Four targeted tests pass through actual engine commands and an owned fake
 credential worker, covering incoming/shared/separate SMTP, failed writes and
 SQLite restart, preserved cached mail, explicit probes, and ordinary saved-secret
 reuse. No network or OS credential access is used in these fixtures. All **773 lane hook executions** pass (three personal diagnostics ignored).
-Root integration/shipping remain pending; endpoint/removal review UI
+Integrated source is pushed as `13f9c36`; endpoint/removal review UI
 is still open. Logs: `artifacts/logs/profile-account-credential-guards.log`.
 
 

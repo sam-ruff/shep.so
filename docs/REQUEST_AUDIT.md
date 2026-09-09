@@ -190,5 +190,15 @@ provider, shared palette, endpoint/removal and credential work stays in TODO.
 
 R30/R50 folder selection and filtered-header fixes are pushed as `97c9a9a`,
 with 818 hook executions, 81 Python and 19 integrated native scenarios passing.
-FTP/FTPS `17de158` and shared account credential guards `442b45b` are being
-integrated; remaining backend/options and account review work stays in TODO.
+FTP/FTPS and shared account credential guards are pushed as `13f9c36`
+with 834 hook executions and 13 selected native scenarios passing; remaining backend/options and account review work stays in TODO.
+
+R02/R49 reconnection follow-up: tests and saves reject saved credentials while a
+shared account requires reconnection; fresh input, separate/no-auth SMTP, cache
+preservation, failed-write restart and normal local reuse have four passing
+engine regressions. They are integrated and pushed as `13f9c36`.
+
+R63 first-profile fixture follow-up: explicit held upload and batch release
+replace stacked record delays while preserving pending-navigation assertions
+and completion timeout. Three HTTP/isolation/cleanup tests, all 84 Python tests
+and eight integrated native scenarios pass; mandatory hooks/publication remain.
