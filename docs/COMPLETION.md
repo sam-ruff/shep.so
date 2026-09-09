@@ -2652,3 +2652,16 @@ publication and compact pages). Counters use clear labels, unchecked uploads
 remain distinct from zero, and values reuse the existing human-readable formatter.
 Mandatory hooks, production compilation, strict docs and exact remote shipping
 are recorded next; this is not yet a shipping receipt.
+
+
+Connected desktop sync code [`13e056d`](https://github.com/sam-ruff/shep.so/commit/13e056dcc836fbf41e418de220085540fe174dbc) is pushed to
+`feat/mobile-web-clients`, and its exact remote SHA matches. Normal hooks pass
+formatting, Clippy and **490 Rust tests**, with two opt-in personal live diagnostics
+ignored. Production compilation without test-support and pinned strict Zensical
+pass. The 43 Python checks, 37 parity contracts, 16 Flutter Rust bridge checks,
+22 native regressions and two final wording/control flows above also pass.
+The source worktree was clean after shipping. The final receipt is
+`artifacts/profile-sync-connected-shipping.json`. No full native suite or new
+performance measurement is claimed for this increment. All 40 active requests
+remain; next is checked conflict resolution and ongoing Flutter integration,
+followed by the remaining profile/product scope.
