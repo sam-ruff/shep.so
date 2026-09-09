@@ -4,8 +4,8 @@
 enrollment, exact local change capture and verified history acknowledgments.
 The upcoming continuous loop remains unfinished. The current Flutter initialization
 barrier (`184b98a`) also needs adoption; desktop remains pinned to `33d222d7`.
-Fourteen affected native scenarios pass; verification and shipping are recorded
-in the newest completion entry. OAuth and the shared handover remain first in TODO.
+Source `5c0e9f0` is pushed with 14 affected native scenarios and 692 mandatory
+hook test executions passing; see the newest completion entry. OAuth and the shared handover remain first in TODO.
 
 Audited against the user messages, source, AGENTS.md and completion evidence on 2026-09-06. “Delivered” refers to existing committed behavior, not completion of the entire product. “In progress” includes uncommitted code and does not imply shipping or a full passing test suite. Open items are maintained in [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md); completed evidence stays in [COMPLETION.md](COMPLETION.md).
 
