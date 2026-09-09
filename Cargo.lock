@@ -4509,6 +4509,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "shep-html-pixbuf",
+ "shep-profile-core",
  "tempfile",
  "tiny-skia",
  "tokio",
@@ -4533,6 +4534,17 @@ dependencies = [
  "image",
  "litehtml",
  "tiny-skia",
+]
+
+[[package]]
+name = "shep-profile-core"
+version = "0.1.0"
+source = "git+https://github.com/sam-ruff/shep.so?rev=bae0d86949a0138b90e71348cef0ab434d022dc6#bae0d86949a0138b90e71348cef0ab434d022dc6"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+ "wasm-bindgen",
 ]
 
 [[package]]

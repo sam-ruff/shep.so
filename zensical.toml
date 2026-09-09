@@ -24,6 +24,7 @@ nav = [
     { "Calendar contracts" = "agents/calendar.md" },
     { "Google and backup contracts" = "agents/backups.md" },
     { "Database transfer and profiles" = "agents/profiles.md" },
+    { "Profile Drive records" = "agents/profile-drive.md" },
     { "Detailed limits" = "agents/limits.md" },
     { "Performance evidence" = "PERFORMANCE.md" },
     { "Completion audit" = "COMPLETION.md" },

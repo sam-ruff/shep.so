@@ -18,6 +18,7 @@ Read the repository's [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/
 - [Calendar](calendar.md): discovery, access, write acknowledgments, conflicts and connection removal.
 - [Google and backups](backups.md): authorization, destination identity, scheduling, resumable uploads and additive restore.
 - [Database transfer and profiles](profiles.md): staged import, local profile selection, credential isolation and the Flutter sync handover.
+- [Profile Drive records](profile-drive.md): shared metadata transport, durable pagination and immutable upload recovery.
 - [Limits](limits.md): protocol requirements, storage ceilings and unverified behavior.
 
 ## Documentation maintenance
