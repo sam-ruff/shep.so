@@ -11,6 +11,7 @@ pub mod message_find;
 pub mod model;
 pub mod outgoing;
 pub mod printing;
+pub mod profiles;
 pub mod providers;
 pub mod remote_images;
 pub mod replies;

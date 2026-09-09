@@ -18,6 +18,7 @@ mod mail_selection;
 mod outgoing;
 mod preference_sync;
 mod printing;
+mod profiles;
 mod read_tracking;
 mod reading;
 #[cfg(test)]
@@ -63,6 +64,7 @@ pub enum SettingsTab {
     Shortcuts,
     Privacy,
     Contacts,
+    Profiles,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
@@ -95,6 +97,7 @@ pub enum Message {
     Find(find_message::Message),
     HtmlScaleRequest(iced::window::Id),
     Backend(Event),
+    Profiles(profiles::Message),
     Bulk(bulk::Message),
     Tick,
     Noop,
@@ -308,6 +311,7 @@ pub struct App {
     pending_backup: Option<backups::PendingBackup>,
     tab: Tab,
     settings_tab: SettingsTab,
+    profiles: profiles::Profiles,
     settings_search: String,
     settings_group: Option<&'static str>,
     dialog: Option<Dialog>,
@@ -452,6 +456,7 @@ impl App {
                 pending_backup: None,
                 tab: Tab::Mail,
                 settings_tab: SettingsTab::General,
+                profiles: Default::default(),
                 settings_search: String::new(),
                 settings_group: None,
                 dialog: None,
@@ -944,6 +949,7 @@ impl App {
                         },
                         &mut self.preferences,
                     );
+                    self.profile_grant_changed();
                     if self.preferences.google_lifecycle.disconnected {
                         self.google_connected = false;
                         self.pending_google_login = None;
@@ -1242,6 +1248,9 @@ impl App {
                     self.notice(text, true);
                     self.pending_details.clear();
                 }
+                Event::Profiles(panel, serial, result) => {
+                    self.profile_result(panel, serial, result)
+                }
                 Event::GoogleStatus(revision, connected) => {
                     if revision == self.preferences.google_lifecycle.revision {
                         self.google_connected =
@@ -1507,6 +1516,11 @@ impl App {
                 }
             }
             Message::Tab(tab) => {
+                if tab != Tab::Preferences {
+                    self.pause_profiles();
+                } else if self.settings_tab == SettingsTab::Profiles {
+                    self.load_profiles();
+                }
                 if self.defer_draft_exit(composing::Exit::Tab(tab)) {
                     return Task::none();
                 }
@@ -1529,8 +1543,20 @@ impl App {
                 if tab == Tab::Preferences {
                     self.fields.clear();
                     self.settings_fields();
+                    return widget::operation::snap_to(
+                        "settings-tabs",
+                        widget::scrollable::RelativeOffset {
+                            x: if self.settings_tab == SettingsTab::Profiles {
+                                1.
+                            } else {
+                                0.
+                            },
+                            y: 0.,
+                        },
+                    );
                 }
             }
+            Message::Profiles(message) => self.profile_message(message),
             Message::SettingsSearch(query) => {
                 self.settings_search = query;
                 self.settings_group = None;
@@ -1557,8 +1583,20 @@ impl App {
                 self.settings_group = None;
                 self.tab = Tab::Preferences;
                 self.settings_tab = tab;
+                if tab == SettingsTab::Profiles {
+                    self.load_profiles();
+                } else {
+                    self.pause_profiles();
+                }
                 self.fields.clear();
                 self.settings_fields();
+                return widget::operation::snap_to(
+                    "settings-tabs",
+                    widget::scrollable::RelativeOffset {
+                        x: if tab == SettingsTab::Profiles { 1. } else { 0. },
+                        y: 0.,
+                    },
+                );
             }
             Message::Open(dialog) => {
                 self.open(dialog);
@@ -3247,6 +3285,7 @@ impl App {
         });
         data["tooltips"] = serde_json::json!(self.preferences.tooltips);
         data["shortcut_tooltips"] = serde_json::json!(self.preferences.shortcut_tooltips);
+        data["profiles"] = self.profile_observation();
         data["settings_search"] = serde_json::json!(self.settings_search);
         data["settings_group"] = serde_json::json!(self.settings_group);
         data["settings_matches"] = serde_json::json!(

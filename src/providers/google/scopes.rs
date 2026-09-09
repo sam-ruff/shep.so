@@ -32,7 +32,7 @@ pub(crate) enum Service {
 impl Service {
     pub(super) fn check(self, access: GoogleAccess) -> anyhow::Result<()> {
         let (allowed, name) = match self {
-            Self::Drive => (access.drive_allowed(), "Drive backup"),
+            Self::Drive => (access.drive_allowed(), "Drive backups and profiles"),
             Self::CalendarRead => (access.calendar_allowed(), "Calendar sync"),
             Self::CalendarWrite => (access.calendar_write_allowed(), "Calendar editing"),
         };

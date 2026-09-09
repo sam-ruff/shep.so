@@ -590,3 +590,14 @@ root/shared Rust tests; mobile, Android, browser, APK and visual evidence is in
 [the completion log](COMPLETION.md). R77 prompt shipping is fulfilled for this
 increment. New timing is deferred on the saturated host; the earlier performance
 failure, continuous synchronization and full platform/product parity remain active.
+
+
+R75/R02/R49/desktop-main:R92/R63/R73/R77 continuation: desktop Preferences now
+connects the active saved Google grant to durable read-only profile discovery.
+Grant/request fences, 51-profile protocol recovery and actual iced pause/browse,
+retry/reopen/rescan, compact dark recovery and permission refusal have evidence;
+all 121 native functional flows pass. See [the contract](agents/PROFILE_DESKTOP.md)
+and the completion log. Desktop publication/enrollment/application, native
+large-page controls, continuous sync and all previously recorded parity gaps stay
+active. The corrected Flutter enrollment statuses preserve remaining lifecycle,
+authenticated interchange and credential gaps. Shipping is recorded separately.

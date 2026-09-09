@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [features]
 history = ["dep:rusqlite", "dep:tokio", "dep:fs2", "dep:sha2", "dep:thiserror", "uuid/v4"]
 drive = ["history", "dep:reqwest", "dep:secrecy"]
+test-support = ["drive"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

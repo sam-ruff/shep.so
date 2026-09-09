@@ -1262,6 +1262,7 @@ impl App {
             (SettingsTab::Shortcuts, "Shortcuts"),
             (SettingsTab::Privacy, "Privacy"),
             (SettingsTab::Contacts, "Contacts"),
+            (SettingsTab::Profiles, "Profiles and sync"),
         ] {
             tabs = tabs.push(
                 button(text(label).size(12))
@@ -1285,6 +1286,7 @@ impl App {
                 SettingsTab::Shortcuts => self.shortcut_settings(),
                 SettingsTab::Privacy => self.privacy_settings(),
                 SettingsTab::Contacts => self.contacts_settings(),
+                SettingsTab::Profiles => self.profile_settings(),
             }
         };
         let content: Element<'_, Message> = if self.settings_group.is_some() {
@@ -1298,7 +1300,12 @@ impl App {
             column![
                 muted("WORKSPACE  /  PREFERENCES").size(10).font(BOLD),
                 header,
-                tabs.wrap(),
+                scrollable(tabs)
+                    .id("settings-tabs")
+                    .direction(scrollable::Direction::Horizontal(
+                        scrollable::Scrollbar::new().width(3.).scroller_width(3.)
+                    ))
+                    .height(Length::Shrink),
                 line(),
                 scrollable(container(content).max_width(940).width(Length::Fill))
                     .height(Length::Fill)
@@ -1598,7 +1605,7 @@ impl App {
             column![
                 text("Permissions for the next sign-in").size(12).font(BOLD),
                 checkbox(services.drive)
-                    .label("Drive backups · private app data")
+                    .label("Drive backups and profiles · private app data")
                     .on_toggle(Message::GoogleDriveAccess),
                 pick_list(
                     [GoogleCalendarRequest::Off, GoogleCalendarRequest::ReadOnly, GoogleCalendarRequest::ReadWrite],
@@ -1634,9 +1641,9 @@ impl App {
                     })
                     .size(12),
                     text(if access.drive {
-                        "Drive backup · granted"
+                        "Drive backups and profiles · granted"
                     } else {
-                        "Drive backup · not granted"
+                        "Drive backups and profiles · not granted"
                     })
                     .size(12),
                 ]
@@ -2051,7 +2058,7 @@ impl App {
     }
 }
 impl App {
-    fn settings_card<'a>(
+    pub(super) fn settings_card<'a>(
         &self,
         title: &'a str,
         description: &'a str,

@@ -30,6 +30,7 @@ pub struct CommandSender {
     printing: mpsc::Sender<Command>,
     selections: mpsc::Sender<Command>,
     bulk: mpsc::Sender<Command>,
+    profiles: mpsc::Sender<Command>,
 }
 
 pub(super) struct Inputs {
@@ -41,9 +42,16 @@ pub(super) struct Inputs {
     printing: mpsc::Receiver<Command>,
     selections: mpsc::Receiver<Command>,
     pub(super) bulk: mpsc::Receiver<Command>,
+    profiles: mpsc::Receiver<Command>,
 }
 
 impl CommandSender {
+    #[cfg(test)]
+    pub(crate) fn profile_test_channel() -> (Self, mpsc::Receiver<Command>) {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.profiles)
+    }
+
     #[cfg(test)]
     pub(crate) fn network_test_channel() -> (Self, mpsc::Receiver<Command>) {
         let (sender, inputs) = Self::channel();
@@ -71,6 +79,7 @@ impl CommandSender {
         let (printing, print_input) = mpsc::channel(2);
         let (selections, selection_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (bulk, bulk_input) = mpsc::channel(1);
+        let (profiles, profile_input) = mpsc::channel(CHANNEL_CAPACITY);
         (
             Self {
                 reads,
@@ -81,6 +90,7 @@ impl CommandSender {
                 printing,
                 selections,
                 bulk,
+                profiles,
             },
             Inputs {
                 reads: read_input,
@@ -91,6 +101,7 @@ impl CommandSender {
                 printing: print_input,
                 selections: selection_input,
                 bulk: bulk_input,
+                profiles: profile_input,
             },
         )
     }
@@ -114,6 +125,7 @@ impl CommandSender {
             };
         }
         let channel = match &command {
+            Command::Profiles(_) => &self.profiles,
             Command::Print(..) => &self.printing,
             Command::Selection(..)
             | Command::ReviewSelection(..)
@@ -157,6 +169,7 @@ impl Engine {
             }
         };
         tokio::join!(
+            self.clone().run_profiles(input.profiles, output.clone()),
             self.clone()
                 .run_mail_sync(input.sync, output.clone(), background),
             self.clone().run_reads(input.reads, output.clone(), 2),

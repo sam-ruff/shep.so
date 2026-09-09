@@ -19,9 +19,10 @@ Read the repository's [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/
 - [Google and backups](backups.md): authorization, destination identity, scheduling, resumable uploads and additive restore.
 - [Profile metadata format and current limits](PROFILE_FORMAT.md).
 - [Local profile history](PROFILE_HISTORY.md): causal merge, durable upload identities, native worker/bridge and remaining enrollment work.
-- [Google profile files](PROFILE_DRIVE.md): verified identity, bounded file pages and immutable upload recovery; client enrollment remains unfinished.
-- [Durable profile discovery](PROFILE_DISCOVERY.md): saved scans, change replay and isolated remote summaries; client enrollment remains unfinished.
-- [Flutter profile discovery](PROFILE_MOBILE.md): saved Google binding, native session ownership and real discovery controls; enrollment remains open.
+- [Google profile files](PROFILE_DRIVE.md): verified identity, bounded file pages and immutable upload recovery; desktop/browser enrollment remains unfinished.
+- [Durable profile discovery](PROFILE_DISCOVERY.md): saved scans, change replay and isolated remote summaries; desktop/browser enrollment remains unfinished.
+- [Desktop profile discovery](PROFILE_DESKTOP.md): active Google grant, durable scans and read-only iced controls; publication/import remain open.
+- [Flutter profile discovery](PROFILE_MOBILE.md): saved Google binding, native session ownership and real discovery controls; reviewed Flutter enrollment is connected.
 - [Flutter profile publication](PROFILE_PUBLICATION.md): frozen reviews, initialized setup, immutable upload receipts and pause/retry controls.
 - [Flutter profile enrollment](PROFILE_ENROLLMENT.md): independent device history, reviewed account/preferences application and credential reconnect boundaries.
 - [Profile sync handover](PROFILE_SYNC_HANDOVER.md): next-priority OAuth, Rust/Flutter enrollment, portable records, conflicts and verification requirements; implementation remains open.

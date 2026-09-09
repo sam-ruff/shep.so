@@ -2297,3 +2297,40 @@ ignored `artifacts/profile-enrollment-shipping.json`. Benchmark compilation also
 finished successfully; timing remains deferred because unrelated compiler jobs are
 still active. A final documentation checkpoint follows in branch history. Full
 parity, continuous synchronization and all 40 active requests remain unfinished.
+
+
+## 9 September: desktop Google profile discovery
+
+Preferences → Profiles and sync now uses the saved active Google grant and the
+shared Drive catalog. Verified principal, OAuth client/lifecycle revision and local
+request generations fence old data and errors. The separate bounded queue keeps
+cached mail and ordered local saves independent. Pause stops subsequent steps;
+retry, reopening and rescan retain original history and saved progress. Reopening
+a completed catalog checks changes again. Profile pages contain at most 50 rows.
+
+The initial compact layout test exposed a wrapped tab row that shifted existing
+controls. A horizontal strip now retains their positions and brings the selected
+tab into view. The native controls cover light/compact dark discovery, failed scan,
+pause/browse/resume, completion, close/reopen, incremental/full refresh and refusal
+without active Drive permission. The full **121-flow native functional suite passes**
+(`artifacts/logs/desktop-profile-native-full.log`, 474.582 s). Reviewed captures are
+in `artifacts/e2e/54d226133fd6`, `767783b22836` and `ad5d2e748927`; the initial compact
+failure remains in `dd3e9c0180a8/failure-8.webp`.
+
+Five targeted desktop/controller tests pass, including real shared HTTP/SQLite
+recovery across 51 profiles and a new catalog owner, invalid-page retention,
+foreign-principal refusal, grant replacement and namespace edits. The fixture
+transport is available only with nondefault test-support and cannot target remote
+hosts or accept real tokens. **41 Python checks**, **37 parity contracts** and the
+pinned strict Zensical build pass. The mandatory commit hook runs formatting,
+Clippy and the full Rust suite; its result is recorded with the shipping receipt.
+
+This is read-only desktop discovery. The eight desktop preference mappings are
+preparation for reviewed application. Desktop/browser publication and enrollment,
+native large-page controls, automatic restoration, continuous reconciliation,
+remaining portable categories/settings, protected credentials, Apple/live Google
+and fully authenticated cross-client interchange remain open. Stale parity notes
+that still called all Flutter enrollment unfinished were corrected. All 40 active
+requests remain in TODO. Native performance measurements were omitted on the busy
+host; the earlier 150 ms navigation gate still fails. No phone installation, main
+merge, VPS deployment or quality/release CI enablement is part of this checkpoint.

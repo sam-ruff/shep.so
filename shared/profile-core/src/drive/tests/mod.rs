@@ -8,6 +8,27 @@ use server::{Response as TestResponse, *};
 const NAMESPACE: &str = "so.shep.fixture";
 const PRINCIPAL: &str = "drive:fixture-owner";
 const FILE_ID: &str = "reserved-fixture-file";
+
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn fixture_transport_rejects_non_loopback_and_ambiguous_endpoints_before_connecting() {
+    for endpoint in [
+        "https://127.0.0.1/",
+        "http://localhost/",
+        "http://192.0.2.1/",
+        "http://127.0.0.1@192.0.2.1/",
+        "http://user@127.0.0.1/",
+        "http://127.0.0.1/path",
+        "http://127.0.0.1/?x",
+        "http://127.0.0.1/#x",
+    ] {
+        assert!(matches!(
+            Drive::connect_fixture(Url::parse(endpoint).unwrap(), NAMESPACE.into(), PRINCIPAL)
+                .await,
+            Err(Error::Invalid)
+        ));
+    }
+}
 fn identity() -> Step {
     value(json!({"user":{"permissionId":"fixture-owner"}}))
 }

@@ -8,6 +8,7 @@ mod google_lifecycle;
 mod mail_actions;
 mod mail_sync;
 mod outgoing;
+mod profiles;
 mod removals;
 mod restore;
 #[cfg(test)]
@@ -33,6 +34,7 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    Profiles(crate::profiles::discovery::Request),
     Query(u64, MailQuery, bool),
     Selection(u64, selections::Request, Vec<String>),
     ReviewSelection(u64, crate::store::MailSelectionId, u64, Vec<String>),
@@ -124,6 +126,11 @@ impl Command {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
+    Profiles(
+        uuid::Uuid,
+        u64,
+        Result<Arc<crate::profiles::discovery::Observation>, String>,
+    ),
     Ready(CommandSender, Arc<Workspace>, bool),
     Selection(
         u64,
@@ -446,6 +453,7 @@ impl Engine {
         let explicit_draft = matches!(&command, Command::SaveDraft(_));
         let deleting_event = matches!(&command, Command::DeleteEvent(_));
         match command {
+            Command::Profiles(_) => anyhow::bail!("Profile work requires its dedicated queue."),
             Command::ReviewSelection(serial, id, revision, visible) => {
                 let result = async {
                     let frozen = self.store.freeze_selection(id, revision).await?;
