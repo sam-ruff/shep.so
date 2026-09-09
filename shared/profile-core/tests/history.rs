@@ -669,3 +669,49 @@ fn independent_process_and_path_alias_cannot_own_the_same_journal() {
         ));
     }
 }
+
+#[test]
+fn ancestry_scratch_clears_after_apply_rejection_upgrade_and_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.sqlite");
+    let mut journal = Journal::open(&path, binding()).unwrap();
+    import(&mut journal, &op(10, &[], vec![setting("Light")]));
+    import(&mut journal, &op(11, &[10], vec![setting("Dark")]));
+    let reader = rusqlite::Connection::open(&path).unwrap();
+    let remaining = || {
+        reader
+            .query_row("SELECT count(*) FROM history_ancestors", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap()
+    };
+    assert_eq!(remaining(), 0);
+    import(&mut journal, &op(30, &[31], vec![setting("System")]));
+    assert!(matches!(
+        journal.import(&op(31, &[30], vec![setting("Dark")]).encode().unwrap()),
+        Err(Error::Cycle)
+    ));
+    assert_eq!(remaining(), 0);
+    let saved = journal.state().unwrap();
+    drop(journal);
+    // A v1 journal from the previous implementation has no persisted scratch.
+    reader.execute("DROP TABLE history_ancestors", []).unwrap();
+    let mut journal = Journal::open(&path, binding()).unwrap();
+    assert_eq!(journal.state().unwrap().revision, saved.revision);
+    assert_eq!(journal.state().unwrap().operations, saved.operations);
+    assert_eq!(journal.state().unwrap().waiting, saved.waiting);
+    journal.drain().unwrap();
+    assert_eq!(remaining(), 0);
+    drop(journal);
+    reader
+        .execute(
+            "INSERT INTO history_ancestors(id) VALUES('stale fixture')",
+            [],
+        )
+        .unwrap();
+    let journal = Journal::open(&path, binding()).unwrap();
+    assert_eq!(journal.state().unwrap().revision, saved.revision);
+    assert_eq!(journal.state().unwrap().operations, saved.operations);
+    assert_eq!(journal.state().unwrap().waiting, saved.waiting);
+    assert_eq!(remaining(), 0);
+}
