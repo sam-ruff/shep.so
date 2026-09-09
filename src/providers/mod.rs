@@ -54,22 +54,13 @@ pub trait CalendarProvider: Send + Sync {
     ) -> anyhow::Result<()>;
 }
 
+/// Legacy-workspace compatibility for explicit account diagnostics. Application
+/// providers use the Engine's shared, profile-scoped credential worker instead.
 pub async fn read_secret(id: &str) -> anyhow::Result<SecretString> {
-    let id = id.to_string();
-    tokio::task::spawn_blocking(move || {
-        keyring::Entry::new("so.shep.desktop", &id)?
-            .get_password()
-            .map(SecretString::from)
-            .map_err(anyhow::Error::from)
-    })
-    .await?
+    crate::credentials::Credentials::default().read(id).await
 }
 pub async fn write_secret(id: &str, secret: SecretString) -> anyhow::Result<()> {
-    use secrecy::ExposeSecret;
-    let id = id.to_string();
-    tokio::task::spawn_blocking(move || {
-        keyring::Entry::new("so.shep.desktop", &id)?.set_password(secret.expose_secret())?;
-        Ok(())
-    })
-    .await?
+    crate::credentials::Credentials::default()
+        .write(id, secret)
+        .await
 }

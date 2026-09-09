@@ -55,10 +55,10 @@ impl Engine {
             anyhow::bail!("Move recovery needs a connected account.");
         }
         let source = self.account(&record.original.account_id).await?;
-        let source_secret = providers::read_secret(&source.id).await?;
+        let source_secret = self.credentials.read(&source.id).await?;
         let destination = if source.id != record.receipt.account {
             let account = self.account(&record.receipt.account).await?;
-            let secret = providers::read_secret(&account.id).await?;
+            let secret = self.credentials.read(&account.id).await?;
             Some((account, secret))
         } else {
             None

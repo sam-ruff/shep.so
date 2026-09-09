@@ -19,11 +19,19 @@ Choose a copy in **Backups** and enter its passphrase. Restore adds missing mail
 
 If password restore fails because the keychain is locked, unlock it and restore the same copy again.
 
-## Export the database
+## Move to another computer
 
-In **Preferences → Backups → Database transfer**, choose **Export database…** and a filename. Shep saves pending settings/drafts, then copies the complete cache in the background. You can keep reading mail or cancel the copy.
+1. On the original computer, open **Preferences → Backups → Database transfer**, choose **Export database…** and save the file. Shep saves pending settings/drafts before copying in the background.
+2. Transfer the file to the other computer. In the same Preferences section, choose **Import database…**.
+3. Review its accounts, mail and any unfinished actions, name the new profile, then import. Your existing profile is kept.
+4. Open **Preferences → Accounts → Profiles**, choose **Use on next launch**, then close and reopen Shep.
+5. Re-enter account/calendar passwords and reconnect Google in the imported profile.
 
-The SQLite file includes cached original mail, attachments, drafts, accounts and settings. It is **unencrypted** and excludes OS-keychain passwords and Google sign-in. It has no additional 256 MiB backup limit. In-app database import and cross-device profile sync are still being implemented; this file cannot be restored with **Restore a copy** above.
+The SQLite file includes cached original mail, attachments, drafts, accounts, calendars and settings. It is **unencrypted** and excludes OS-keychain passwords and Google sign-in. It has no additional 256 MiB backup limit. Use **Import database…** for this file; **Restore a copy** accepts encrypted backup archives.
+
+You can keep reading mail or cancel while copying. Import checks the database before making it available and pauses unfinished provider changes for review. Check their status on the original device/server before retrying. Automatic backups start disabled in the imported profile.
+
+Profiles can be renamed or selected for the next launch in Accounts. This is a one-time transfer; continuous Google account/profile sync is still being implemented.
 
 ## Connect Google (optional)
 

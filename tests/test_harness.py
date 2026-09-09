@@ -15,6 +15,16 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_held_database_import_fixture_is_validated_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in ("true", 1, None):
+                with self.assertRaisesRegex(ValueError, "Held database import fixture"):
+                    desktop.start(held_database_import=value)
+            launch.assert_not_called()
+        tool = next(tool for tool in harness.TOOLS if tool["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["held_database_import"], {"type":"boolean", "default":False})
+
     def test_key_sequence_is_bounded_and_sends_distinct_native_arguments(self):
         desktop=harness.Desktop()
         desktop.command,desktop.screenshot=Mock(),Mock()

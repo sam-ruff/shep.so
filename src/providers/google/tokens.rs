@@ -13,56 +13,19 @@ pub(super) trait CredentialStore: Send + Sync {
 }
 #[derive(Default)]
 pub(super) struct OsCredentialStore {
-    writes: WriteQueue,
+    pub(super) credentials: crate::credentials::Credentials,
 }
 
-/// The blocking credential operation owns this FIFO guard. Cancelling the
-/// caller cannot release it while the OS is still applying an older write.
-#[derive(Default, Clone)]
-pub(super) struct WriteQueue(Arc<Mutex<()>>);
-impl WriteQueue {
-    pub(super) async fn run(
-        &self,
-        operation: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
-    ) -> anyhow::Result<()> {
-        let guard = self.0.clone().lock_owned().await;
-        tokio::task::spawn_blocking(move || {
-            let _guard = guard;
-            operation()
-        })
-        .await?
-    }
-}
 #[async_trait]
 impl CredentialStore for OsCredentialStore {
     async fn read(&self) -> anyhow::Result<Option<SecretString>> {
-        tokio::task::spawn_blocking(|| {
-            match keyring::Entry::new("so.shep.desktop", "google-oauth")?.get_password() {
-                Ok(value) => Ok(Some(SecretString::from(value))),
-                Err(keyring::Error::NoEntry) => Ok(None),
-                Err(error) => Err(error.into()),
-            }
-        })
-        .await?
+        self.credentials.read_optional("google-oauth").await
     }
     async fn write(&self, secret: SecretString) -> anyhow::Result<()> {
-        self.writes
-            .run(move || {
-                keyring::Entry::new("so.shep.desktop", "google-oauth")?
-                    .set_password(secret.expose_secret())?;
-                Ok(())
-            })
-            .await
+        self.credentials.write("google-oauth", secret).await
     }
     async fn delete(&self) -> anyhow::Result<()> {
-        self.writes
-            .run(|| {
-                match keyring::Entry::new("so.shep.desktop", "google-oauth")?.delete_credential() {
-                    Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-                    Err(error) => Err(error.into()),
-                }
-            })
-            .await
+        self.credentials.delete("google-oauth").await
     }
 }
 

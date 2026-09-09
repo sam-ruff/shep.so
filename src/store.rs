@@ -14,7 +14,7 @@ mod google_lifecycle;
 mod outgoing;
 mod restore;
 mod selection;
-mod worker;
+pub(crate) mod worker;
 use anyhow::Context;
 pub use bulk::BulkLease;
 pub use conversations::{CONVERSATION_PAGE_SIZE, ConversationPage};
@@ -30,6 +30,8 @@ use std::{path::Path, sync::Arc};
 
 #[derive(Clone)]
 pub struct Store(Arc<worker::Worker>);
+
+pub(crate) const DATABASE_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Default)]
 pub struct Workspace {
@@ -90,6 +92,11 @@ impl Store {
     }
     fn from_connection(mut conn: Connection) -> anyhow::Result<Self> {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        anyhow::ensure!(
+            version <= DATABASE_VERSION,
+            "This database was created by a newer Shep version. Update Shep before opening it."
+        );
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
             CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS messages (
@@ -135,7 +142,6 @@ impl Store {
         move_journal::schema(&conn)?;
         read_moves::schema(&conn)?;
         folder_actions::schema(&conn)?;
-        let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 2 {
             let tx = conn.transaction()?;
             let events = tx
@@ -156,6 +162,12 @@ impl Store {
                 )?;
             }
             tx.pragma_update(None, "user_version", 2)?;
+            tx.commit()?;
+        }
+        if version < 3 {
+            let tx = conn.transaction()?;
+            import_archive_schema(&tx)?;
+            tx.pragma_update(None, "user_version", DATABASE_VERSION)?;
             tx.commit()?;
         }
         Ok(Self(Arc::new(worker::Worker::new(conn)?)))
@@ -848,6 +860,15 @@ impl Store {
                 .map(|r|{let(data,raw,text,folder,unread,starred)=r?;let mut summary:Mail=serde_json::from_str(&data)?;summary.folder=folder;summary.unread=unread;summary.starred=starred;Ok(StoredMail{summary,raw,text})}).collect()
         }).await
     }
+}
+
+pub(crate) fn import_archive_schema(c: &Connection) -> anyhow::Result<()> {
+    c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS imported_operations(
+        import_id TEXT NOT NULL,kind TEXT NOT NULL,identity TEXT NOT NULL,data TEXT NOT NULL,
+        PRIMARY KEY(import_id,kind,identity));",
+    )?;
+    Ok(())
 }
 
 fn get<T: DeserializeOwned + Default>(c: &Connection, key: &str) -> anyhow::Result<T> {

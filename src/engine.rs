@@ -13,6 +13,7 @@ mod mail_actions;
 mod mail_sync;
 mod move_recovery;
 mod outgoing;
+mod profiles;
 mod removals;
 mod restore;
 #[cfg(test)]
@@ -38,6 +39,7 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    Profiles(u64, crate::profiles::Request),
     Database(crate::transfer::Request),
     Folder(folders::Request),
     MoveRecoveries(u64, Option<String>),
@@ -141,6 +143,7 @@ impl Command {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
+    Profiles(u64, Result<Arc<crate::profiles::Snapshot>, String>),
     Database(u64, crate::transfer::Update),
     Folder(folders::Event),
     MoveRecoveries(
@@ -240,6 +243,8 @@ pub enum Event {
 }
 #[derive(Clone)]
 struct Engine {
+    profiles: Option<crate::profiles::Session>,
+    credentials: crate::credentials::Credentials,
     store: Store,
     google: providers::google::Google,
     demo: bool,
@@ -264,38 +269,13 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
     let demo = *demo;
     iced::stream::channel(CHANNEL_CAPACITY, move |mut output: Output| async move {
         let (tx, input) = CommandSender::channel();
-        let store = tokio::task::spawn_blocking(move || {
-            if demo {
-                #[cfg(feature = "test-support")]
-                return crate::test_support::workspace::from_arguments();
-                #[cfg(not(feature = "test-support"))]
-                Store::memory()
-            } else {
-                let path = directories::ProjectDirs::from("so", "shep", "Shep")
-                    .context("Could not locate the app data directory")?
-                    .data_local_dir()
-                    .to_path_buf();
-                std::fs::create_dir_all(&path)?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
-                }
-                Store::open(path.join("shep.sqlite"))
-            }
-        })
-        .await;
-        let store = match store {
-            Ok(Ok(s)) => s,
-            other => {
+        let (store, profiles) = match profiles::open_workspace(demo).await {
+            Ok(opened) => opened,
+            Err(error) => {
                 let _ = output
                     .send(Event::Error(format!(
                         "Could not open local storage: {}",
-                        match other {
-                            Ok(Err(e)) => e.to_string(),
-                            Err(e) => e.to_string(),
-                            _ => String::new(),
-                        }
+                        error
                     )))
                     .await;
                 futures::future::pending::<()>().await;
@@ -306,19 +286,29 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
         if demo && let Err(e) = crate::test_support::seed_demo(&store).await {
             let _ = output.send(Event::Error(e.to_string())).await;
         }
+        let credentials = crate::credentials::Credentials::new(
+            profiles
+                .as_ref()
+                .map(|p| p.current.scope())
+                .unwrap_or_default(),
+        );
         let engine = Engine {
+            profiles,
+            credentials: credentials.clone(),
             store,
-            google: Default::default(),
+            google: providers::google::Google::with_credentials(credentials.clone()),
             demo,
             account_work: Default::default(),
             calendar_work: Default::default(),
             calendar_setup_lock: Default::default(),
             connection_lifecycle_lock: Default::default(),
-            secret_remover: Arc::new(removals::OsSecretRemover),
-            outbound: Arc::new(providers::outgoing::Servers),
+            secret_remover: Arc::new(removals::OsSecretRemover(credentials.clone())),
+            outbound: Arc::new(providers::outgoing::Servers {
+                credentials: credentials.clone(),
+            }),
             google_connection_lock: Default::default(),
-            passphrases: Arc::new(backup::OsPassphraseStore),
-            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
+            passphrases: Arc::new(backup::OsPassphraseStore(credentials.clone())),
+            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer(credentials)),
             backup_uploads: Default::default(),
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),
@@ -345,6 +335,12 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
         let _ = tx.try_send(Command::IndexConversations);
         let _ = tx.try_send(Command::CleanupCredentials);
         let _ = tx.try_send(Command::RepairOutgoing);
+        if engine.profiles.is_some() {
+            let _ = tx.try_send(Command::Profiles(
+                0,
+                crate::profiles::Request::List { offset: 0 },
+            ));
+        }
         let preview_google = demo && workspace.preferences.google_grant.access.known;
         let _ = output
             .send(Event::Ready(tx, Arc::new(workspace), preview_google))
@@ -398,6 +394,7 @@ impl Engine {
                 preferences: self.store.get("preferences").await?,
             }),
             CalendarKind::CalDav => Box::new(providers::calendar::CalDav {
+                credentials: self.credentials.clone(),
                 http: self.google.http.clone(),
             }),
         })
@@ -466,6 +463,9 @@ impl Engine {
         let deleting_event = matches!(&command, Command::DeleteEvent(_));
         match command {
             Command::Database(_) => anyhow::bail!("Database transfer reached the wrong worker"),
+            Command::Profiles(request, action) => {
+                return self.profiles_command(request, action, output).await;
+            }
             Command::ReviewSelection(serial, id, revision, visible) => {
                 let result = async {
                     let frozen = self.store.freeze_selection(id, revision).await?;
@@ -657,8 +657,8 @@ impl Engine {
                     anyhow::ensure!(!self.demo, "Connection tests require a real account. Test workspaces do not connect to mail servers.");
                     let secret = if target == ConnectionTarget::Smtp && account.smtp_auth == SmtpAuth::None { SecretString::from("") }
                     else if target == ConnectionTarget::Smtp && account.smtp_separate_password {
-                        if smtp_password.expose_secret().is_empty() { providers::read_secret(&format!("{}:smtp", account.id)).await? } else { smtp_password }
-                    } else if password.expose_secret().is_empty() { providers::read_secret(&account.id).await.context("Enter a password before testing a new account")? } else { password };
+                        if smtp_password.expose_secret().is_empty() { self.credentials.read(&format!("{}:smtp", account.id)).await? } else { smtp_password }
+                    } else if password.expose_secret().is_empty() { self.credentials.read(&account.id).await.context("Enter a password before testing a new account")? } else { password };
                     match target { ConnectionTarget::Incoming => providers::mail::test_incoming(&account, &secret).await, ConnectionTarget::Smtp => providers::mail::test_smtp(&account, &secret).await }
                 }.await;
                 output
@@ -685,7 +685,8 @@ impl Engine {
                     .await?;
                 let saved_id = account.id.clone();
                 let password = if password.expose_secret().is_empty() {
-                    providers::read_secret(&account.id)
+                    self.credentials
+                        .read(&account.id)
                         .await
                         .context("Enter an account password or app password")?
                 } else {
@@ -694,15 +695,17 @@ impl Engine {
                 if account.smtp_separate_password {
                     let smtp_id = format!("{}:smtp", account.id);
                     let smtp_password = if smtp_password.expose_secret().is_empty() {
-                        providers::read_secret(&smtp_id)
+                        self.credentials
+                            .read(&smtp_id)
                             .await
                             .context("Enter the separate SMTP password")?
                     } else {
                         smtp_password
                     };
-                    providers::write_secret(&smtp_id, smtp_password).await?;
+                    self.credentials.write(&smtp_id, smtp_password).await?;
                 }
-                providers::write_secret(&account.id, password)
+                self.credentials
+                    .write(&account.id, password)
                     .await
                     .context("Could not save the account credential")?;
                 self.store.save_account(account).await?;
@@ -1276,6 +1279,8 @@ mod calendar_tests {
 
     pub(super) fn engine() -> Engine {
         Engine {
+            profiles: None,
+            credentials: Default::default(),
             store: Store::memory().unwrap(),
             google: Default::default(),
             demo: true,
@@ -1283,11 +1288,11 @@ mod calendar_tests {
             calendar_work: Default::default(),
             calendar_setup_lock: Default::default(),
             connection_lifecycle_lock: Default::default(),
-            secret_remover: Arc::new(removals::OsSecretRemover),
-            outbound: Arc::new(providers::outgoing::Servers),
+            secret_remover: Arc::new(removals::OsSecretRemover::default()),
+            outbound: Arc::new(providers::outgoing::Servers::default()),
             google_connection_lock: Default::default(),
-            passphrases: Arc::new(backup::OsPassphraseStore),
-            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
+            passphrases: Arc::new(backup::OsPassphraseStore::default()),
+            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer::default()),
             backup_uploads: Default::default(),
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),

@@ -72,14 +72,15 @@ pub(crate) trait PassphraseStore: Send + Sync {
     async fn read(&self, target: &BackupTarget) -> anyhow::Result<SecretString>;
     async fn write(&self, target: &BackupTarget, secret: SecretString) -> anyhow::Result<()>;
 }
-pub(crate) struct OsPassphraseStore;
+#[derive(Default)]
+pub(crate) struct OsPassphraseStore(pub crate::credentials::Credentials);
 #[async_trait]
 impl PassphraseStore for OsPassphraseStore {
     async fn read(&self, target: &BackupTarget) -> anyhow::Result<SecretString> {
-        crate::providers::read_secret(&target.secret_id()).await
+        self.0.read(&target.secret_id()).await
     }
     async fn write(&self, target: &BackupTarget, secret: SecretString) -> anyhow::Result<()> {
-        crate::providers::write_secret(&target.secret_id(), secret).await
+        self.0.write(&target.secret_id(), secret).await
     }
 }
 

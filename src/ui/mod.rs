@@ -7,6 +7,7 @@ mod components;
 mod composing;
 mod context_menu;
 mod conversations;
+mod database_import;
 mod database_transfers;
 mod drag_mail;
 mod ellipsis;
@@ -25,6 +26,7 @@ mod outgoing;
 mod pointer;
 mod preference_sync;
 mod printing;
+mod profiles;
 mod read_tracking;
 mod reading;
 #[cfg(test)]
@@ -221,6 +223,8 @@ pub enum Message {
     BrowseBackup,
     BrowseExport,
     DatabaseExport,
+    DatabaseImport(database_import::Action),
+    Profiles(profiles::Action),
     DatabaseExportPath(u64, Option<std::path::PathBuf>),
     CancelDatabaseTransfer,
     ChosenPath(&'static str, Option<String>),
@@ -284,6 +288,8 @@ pub struct App {
     pending_preference_save: Option<(u64, Preferences)>,
     pending_close: Option<iced::window::Id>,
     database_transfer: database_transfers::State,
+    database_import: database_import::State,
+    profiles: profiles::State,
     confirm_save: Option<u64>,
     saved_toast: Option<Instant>,
     action_toasts: action_toasts::ActionToasts,
@@ -437,6 +443,8 @@ impl App {
                 pending_preference_save: None,
                 pending_close: None,
                 database_transfer: Default::default(),
+                database_import: Default::default(),
+                profiles: Default::default(),
                 confirm_save: None,
                 saved_toast: None,
                 action_toasts: Default::default(),
@@ -1413,7 +1421,16 @@ impl App {
                 Event::DraftSaved(id, revision, result) => {
                     return self.draft_saved(id, revision, result);
                 }
-                Event::Database(request, update) => return self.database_update(request, update),
+                Event::Database(request, update) => {
+                    return match update {
+                        update @ (crate::transfer::Update::Progress(_)
+                        | crate::transfer::Update::Finished(_)) => {
+                            self.database_update(request, update)
+                        }
+                        update => self.database_import_update(request, update),
+                    };
+                }
+                Event::Profiles(request, result) => return self.profiles_update(request, result),
                 Event::DraftDeleted(id, result) => self.draft_deleted(id, result),
                 Event::ForwardDraft(id, result) => return self.forward_ready(id, result),
                 Event::Print(revision, result) => return self.print_ready(revision, result),
@@ -1550,6 +1567,17 @@ impl App {
                 _ => {}
             },
             Message::WindowClose(window) => {
+                if self.profiles.changing() {
+                    self.pending_close = Some(window);
+                    return Task::none();
+                }
+                if self.database_import.pending() {
+                    let _ = self.database_import_action(database_import::Action::Cancel);
+                    if self.database_import.pending() {
+                        self.pending_close = Some(window);
+                        return Task::none();
+                    }
+                }
                 if self.database_transfer.pending.is_some() {
                     self.cancel_database_transfer();
                     if self.database_transfer.pending.is_some() {
@@ -1636,6 +1664,7 @@ impl App {
                 }
             }
             Message::Tick => {
+                self.advance_database_import();
                 self.advance_database_transfer();
                 self.pump_selection();
                 self.action_toasts.expire(Instant::now());
@@ -1704,6 +1733,9 @@ impl App {
                 self.settings_group = None;
             }
             Message::FindSetting(tab, group) => {
+                if group == "Profiles" {
+                    self.profile_action(profiles::Action::Refresh);
+                }
                 let task = self.handle(Message::SettingsTab(tab));
                 self.settings_group = Some(group);
                 return task;
@@ -2602,6 +2634,8 @@ impl App {
                 );
             }
             Message::DatabaseExport => return self.begin_database_export(),
+            Message::DatabaseImport(action) => return self.database_import_action(action),
+            Message::Profiles(action) => self.profile_action(action),
             Message::DatabaseExportPath(request, path) => self.database_export_path(request, path),
             Message::CancelDatabaseTransfer => self.cancel_database_transfer(),
             Message::ChosenPath(key, path) => {
@@ -3480,6 +3514,8 @@ impl App {
         });
         self.bulk_test_state(&mut data);
         data["database_transfer"] = self.database_transfer.observation();
+        data["database_import"] = self.database_import.observation();
+        data["profiles"] = self.profiles.observation();
         data["mail_drag"] = self.mail_drag.observation();
         #[cfg(feature = "test-support")]
         {

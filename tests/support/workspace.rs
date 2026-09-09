@@ -36,9 +36,13 @@ pub fn open(path: Option<&Path>) -> anyhow::Result<Store> {
 }
 
 pub fn from_arguments() -> anyhow::Result<Store> {
+    open(path_from_arguments()?.as_deref())
+}
+
+pub fn path_from_arguments() -> anyhow::Result<Option<std::path::PathBuf>> {
     let arguments: Vec<_> = std::env::args_os().collect();
     if !arguments.iter().any(|a| a == "--persist-demo") {
-        return open(None);
+        return Ok(None);
     }
     let state = arguments
         .windows(2)
@@ -48,7 +52,7 @@ pub fn from_arguments() -> anyhow::Result<Store> {
     let directory = state
         .parent()
         .context("The fixture state needs a parent directory")?;
-    open(Some(&directory.join("fixture.sqlite")))
+    Ok(Some(directory.join("fixture.sqlite")))
 }
 
 #[cfg(test)]

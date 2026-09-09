@@ -34,6 +34,8 @@ impl backup::PassphraseStore for Secrets {
 }
 fn engine(secrets: Arc<Secrets>) -> Engine {
     Engine {
+        profiles: None,
+        credentials: Default::default(),
         store: Store::memory().unwrap(),
         google: Default::default(),
         demo: false,
@@ -41,11 +43,11 @@ fn engine(secrets: Arc<Secrets>) -> Engine {
         calendar_work: Default::default(),
         calendar_setup_lock: Default::default(),
         connection_lifecycle_lock: Default::default(),
-        secret_remover: Arc::new(removals::OsSecretRemover),
-        outbound: Arc::new(providers::outgoing::Servers),
+        secret_remover: Arc::new(removals::OsSecretRemover::default()),
+        outbound: Arc::new(providers::outgoing::Servers::default()),
         google_connection_lock: Default::default(),
         passphrases: secrets,
-        restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
+        restore_credentials: Arc::new(backup::restore::OsCredentialRestorer::default()),
         backup_uploads: Default::default(),
         mail_sync_settings: Default::default(),
         provider_slots: Default::default(),

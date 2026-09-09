@@ -158,7 +158,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 194 functional flows plus the navigation and HTML pixel performance gates; shipped run evidence belongs in the completion log.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 199 functional flows plus the navigation and HTML pixel performance gates; distinguish selected reruns from full-suite evidence in the completion log.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -974,5 +974,55 @@ all three `test_database_export_*` native flows. The native held-copy fixture
 requires both test-support demo mode and `--hold-database-export`; it waits for
 ordinary Cancel/window-close input, never a state-file mutation. Export keeps all
 database-backed records, including pending-operation history, but excludes OS
-credentials. Full import remains open: validate and isolate it before activation,
-and never replay imported pending provider actions automatically.
+credentials. The import path below consumes this format; encrypted backup Restore
+is a separate operation.
+
+## Database import and local profiles
+
+`transfer/import.rs` stages a private copy before review. Derive the accepted
+schema from an independent Store, validate supported v2/v3 schema, integrity,
+foreign keys and credential-owning identifiers, and reject foreign/newer schemas
+or triggers. SQLite validation/copying runs off the UI/cache worker with bounded
+progress and cancellation. Never add a raw-mail payload ceiling to this format.
+Consume the exact reviewed copy on confirmation; never reopen its source path.
+
+`transfer/import/fences.rs` archives changed metadata in `imported_operations`
+and prevents imported pending sends, Sent uploads, bulk/folder changes and
+credential cleanup from replaying. Keep original MIME and acknowledged recovery
+identities. Pending work needs native review. Preserve quiet notification setup,
+device-specific window/backup paths and disconnected Google/automatic-backup
+state. An import is not a server acknowledgment or a successful credential import.
+
+`transfer/import/install.rs` closes SQLite before no-overwrite file publication.
+Publication is the commit boundary: later cancellation or catalog/flush errors
+must preserve the copy and report saved-with-warning. Recovery adopts its marker
+and same file, rather than creating a duplicate. Never recursively delete a
+profile folder on cleanup. Malformed unselected profiles must not hide valid ones.
+
+`profiles.sqlite` uses its own bounded 32-command worker and revision-checked
+rename/selection. Keep lists at 50 rows. The running `profiles::Session` retains
+its Store/credential scope; selection applies on next launch after normal close
+saves. Imported paths/namespaces come from a fresh device-owned UUID, never data
+inside the import or a shared Google profile ID. Preserve legacy paths/keys.
+Export must protect the registry and every profile's cache/journal/operation files.
+
+`credentials.rs` owns the engine's OS-keychain operations on one bounded
+32-command FIFO thread. Account, SMTP, calendar, Google, backup and removal
+adapters share it. Accepted writes finish even if their observer disappears;
+RestoreMissing checks/writes in that FIFO. Imported profiles never fall back to
+legacy/other-profile credentials. Validate portable account/CalDAV identifiers
+against reserved/SMTP keys and case-insensitive collisions before accepting an
+import or encrypted backup. Preserve discovered `caldav:<64 hex digits>` IDs.
+
+Keep import validation/cancel/version tests, fences/rollback tests, installation
+commit/recovery tests, catalog pagination/CAS/isolation tests, credential FIFO
+tests, and the saturated-provider dispatcher test. Preserve all five
+`test_database_import_*` native scenarios, all three export scenarios and affected
+backup/Google/draft/restart flows. See the repository E2E skill for owned fixtures.
+Live diagnostics remain explicitly ignored; `SHEP_LIVE_PROFILE_ID` optionally
+selects a canonical local profile UUID alongside the required authorized
+`SHEP_LIVE_ACCOUNT_ID`. Without it, diagnostics retain legacy-profile semantics.
+
+OAuth cross-client profile implementation remains the top TODO priority. Use the
+[Flutter handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md)
+and shared format; do not present local database transfer as continuous sync.

@@ -1,8 +1,5 @@
 use super::{response_text, validate_caldav_url};
-use crate::{
-    model::*,
-    providers::{self, CalendarProvider},
-};
+use crate::{model::*, providers::CalendarProvider};
 use anyhow::Context;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -10,6 +7,7 @@ use secrecy::ExposeSecret;
 
 pub struct CalDav {
     pub http: reqwest::Client,
+    pub credentials: crate::credentials::Credentials,
 }
 
 impl CalDav {
@@ -209,7 +207,7 @@ impl CalendarProvider for CalDav {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> anyhow::Result<Vec<CalendarEvent>> {
-        let secret = providers::read_secret(&source.id).await?;
+        let secret = self.credentials.read(&source.id).await?;
         self.fetch(source, start, end, secret.expose_secret()).await
     }
     async fn save_event(
@@ -217,7 +215,7 @@ impl CalendarProvider for CalDav {
         source: &CalendarSource,
         event: &CalendarEvent,
     ) -> anyhow::Result<CalendarEvent> {
-        let secret = providers::read_secret(&source.id).await?;
+        let secret = self.credentials.read(&source.id).await?;
         self.save(source, event, secret.expose_secret()).await
     }
     async fn delete_event(
@@ -225,7 +223,7 @@ impl CalendarProvider for CalDav {
         source: &CalendarSource,
         event: &CalendarEvent,
     ) -> anyhow::Result<()> {
-        let secret = providers::read_secret(&source.id).await?;
+        let secret = self.credentials.read(&source.id).await?;
         self.delete(source, event, secret.expose_secret()).await
     }
 }
@@ -253,6 +251,7 @@ mod tests {
         ])
         .await;
         let provider = CalDav {
+            credentials: Default::default(),
             http: test_server::client(),
         };
         let source = test_server::source(&server.url);
@@ -298,6 +297,7 @@ mod tests {
     async fn caldav_missing_put_etag_is_saved_and_requires_sync_before_editing() {
         let mut server = Server::start(vec![Reply::new(201, "")]).await;
         let provider = CalDav {
+            credentials: Default::default(),
             http: test_server::client(),
         };
         let source = test_server::source(&server.url);
@@ -326,6 +326,7 @@ mod tests {
         ])
         .await;
         let provider = CalDav {
+            credentials: Default::default(),
             http: test_server::client(),
         };
         let source = test_server::source(&server.url);
@@ -349,6 +350,7 @@ mod tests {
         ])
         .await;
         let provider = CalDav {
+            credentials: Default::default(),
             http: test_server::client(),
         };
         let source = test_server::source(&server.url);
@@ -381,6 +383,7 @@ mod tests {
         ])
         .await;
         let provider = CalDav {
+            credentials: Default::default(),
             http: test_server::client(),
         };
         let source = test_server::source(&server.url);
@@ -414,6 +417,7 @@ mod tests {
         ])
         .await;
         let provider = CalDav {
+            credentials: Default::default(),
             http: test_server::client(),
         };
         let source = test_server::source(&server.url);

@@ -51,6 +51,11 @@ const SETTINGS: &[Setting] = &[
         keywords: "google login oauth reconnect disconnect permissions drive",
     },
     Setting {
+        title: "Profiles",
+        tab: SettingsTab::Accounts,
+        keywords: "profile workspace database import device computer switch rename launch",
+    },
+    Setting {
         title: "Connected calendars",
         tab: SettingsTab::Calendars,
         keywords: "calendar caldav homeserver ical dav add connect remove",
@@ -68,7 +73,7 @@ const SETTINGS: &[Setting] = &[
     Setting {
         title: "Database transfer",
         tab: SettingsTab::Backups,
-        keywords: "database sqlite export migrate computer transfer all emails drafts accounts settings",
+        keywords: "database sqlite import export migrate computer transfer all emails drafts accounts settings",
     },
     Setting {
         title: "Keyboard shortcuts",

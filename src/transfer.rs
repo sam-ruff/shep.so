@@ -12,6 +12,8 @@ use std::{
 };
 use tokio::sync::{oneshot, watch};
 
+pub mod import;
+
 const PAGES_PER_STEP: i32 = 128;
 const BUSY_LIMIT: Duration = Duration::from_secs(5);
 
@@ -42,6 +44,14 @@ pub enum Outcome {
 
 #[derive(Debug, Clone)]
 pub enum Request {
+    Import {
+        request: u64,
+        source: PathBuf,
+    },
+    Install {
+        request: u64,
+        name: String,
+    },
     Export {
         request: u64,
         destination: PathBuf,
@@ -52,6 +62,11 @@ pub enum Request {
 
 #[derive(Debug, Clone)]
 pub enum Update {
+    ImportProgress(import::Progress),
+    Review(std::sync::Arc<import::Review>),
+    ReviewError(String),
+    Installing(import::InstallPhase),
+    ImportFinished(Result<Option<import::Installed>, String>),
     Progress(Progress),
     Finished(Result<Outcome, String>),
 }
@@ -306,7 +321,7 @@ fn checked_destination(source: &Path, destination: &Path) -> anyhow::Result<(Pat
     Ok((source, destination))
 }
 
-fn same_path(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
     #[cfg(windows)]
     {
         a.as_os_str()
@@ -319,7 +334,7 @@ fn same_path(a: &Path, b: &Path) -> bool {
     }
 }
 
-fn same_file(a: &Path, b: &Path) -> anyhow::Result<bool> {
+pub(crate) fn same_file(a: &Path, b: &Path) -> anyhow::Result<bool> {
     if !a.try_exists()? || !b.try_exists()? {
         return Ok(false);
     }

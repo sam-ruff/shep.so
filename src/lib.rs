@@ -1,6 +1,7 @@
 pub mod backup;
 pub mod bulk;
 pub mod compose;
+pub mod credentials;
 pub mod desktop_badge;
 pub mod email_content;
 pub mod engine;
@@ -14,6 +15,7 @@ pub mod model;
 pub mod notifications;
 pub mod outgoing;
 pub mod printing;
+pub mod profiles;
 pub mod providers;
 pub mod remote_images;
 pub mod replies;

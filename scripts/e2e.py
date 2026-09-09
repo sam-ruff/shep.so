@@ -1746,9 +1746,156 @@ class NativeFlows(unittest.TestCase):
 
     def open_database_transfer(self, search_x=1150):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
-                       click(search_x, 88), type_text("database"),
+                       click(search_x, 88), type_text("database transfer"),
                        check("settings_matches", ["Database transfer"]), click(480, 289),
                        check("settings_group", "Database transfer"), wait(100))
+
+    def exported_database_fixture(self, directory):
+        destination = directory / "import-source.sqlite"
+        self.mcp.batch(click(379, 433), check("database_transfer.phase", "Choosing"),
+                       {"type": "choose_file", "save": True, "path": str(destination)},
+                       check("database_transfer.saved", str(destination)), check("database_transfer.phase", None))
+        return destination
+
+    def open_profiles(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(1150, 88), key("ctrl+a"), type_text("profiles"),
+                       check("settings_matches", ["Profiles"]), click(480, 289),
+                       check("settings_group", "Profiles"), check("profiles.busy", False), wait(100))
+
+    def test_database_import_profile_review_rename_and_restart_preserve_both_workspaces(self):
+        started = self.mcp.call("desktop.start", persistent=True)
+        directory = Path(started["artifacts"])
+        print(f"Database import profile evidence: {directory}", flush=True)
+        self.open_database_transfer()
+        source = self.exported_database_fixture(directory)
+        self.mcp.batch(key("ctrl+1"), check("tab", "Mail"), key("r"), check("composer.visible", True),
+                       check("focused_input", "compose-body"), type_text("Only in the original profile."),
+                       check("draft_count", 1), key("ctrl+comma"), check("tab", "Preferences"), wait(100),
+                       click(373, 527), check("database_import.phase", "Choosing"),
+                       {"type":"choose_file", "path":str(source)}, check("database_import.phase", "Review"),
+                       shot("database-import-review-light"), click(560, 600), key("ctrl+a"), type_text("Work copy"),
+                       check("database_import.name", "Work copy"), key("Return"),
+                       check("database_import.phase", None), check("database_import.registered", True),
+                       check("database_import.error", None), check("profiles.total", 2), shot("database-import-saved"))
+        imported = self.mcp.call("desktop.state")["database_import"]["saved"]
+        imported_path = directory / "profiles" / imported / "shep.sqlite"
+        with sqlite3.connect(f"file:{imported_path}?mode=ro", uri=True) as copied:
+            self.assertEqual(copied.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            drafts_row = copied.execute("SELECT value FROM kv WHERE key='drafts'").fetchone()
+            drafts = json.loads(drafts_row[0]) if drafts_row else []
+            self.assertFalse(any("Only in the original profile." in draft["body"] for draft in drafts))
+        self.open_profiles()
+        state = self.mcp.call("desktop.state")
+        index = next(i for i, profile in enumerate(state["profiles"]["rows"]) if profile["id"] == imported)
+        self.mcp.batch(shot("database-profiles-before-switch"), click(465, 437 + index * 78),
+                       check("profiles.editing.name", "Work copy"), wait(80), shot("database-profile-rename-editor"), click(570, 412 + index * 78),
+                       key("ctrl+a"), type_text("Renamed copy"), check("profiles.editing.name", "Renamed copy"),
+                       key("Return"), check("profiles.editing", None), check("profiles.busy", False))
+        state = self.mcp.call("desktop.state")
+        index = next(i for i, profile in enumerate(state["profiles"]["rows"]) if profile["id"] == imported)
+        self.mcp.batch(click(360, 437 + index * 78), check("profiles.next", imported),
+                       check("profiles.current", "legacy"), shot("database-profile-next-launch"),
+                       {"type":"restart"}, check("profiles.current", imported), check("draft_count", 0),
+                       check("total", 120), shot("database-import-reopened"))
+        self.open_profiles()
+        state = self.mcp.call("desktop.state")
+        index = next(i for i, profile in enumerate(state["profiles"]["rows"]) if profile["id"] == "legacy")
+        self.mcp.batch(click(360, 437 + index * 78), check("profiles.next", "legacy"),
+                       {"type":"restart"}, check("profiles.current", "legacy"), check("draft_count", 1),
+                       check("draft_body", "Only in the original profile.", "contains"), shot("database-original-profile-preserved"))
+
+    def test_database_import_cancel_invalid_file_and_review_cleanup(self):
+        started = self.mcp.call("desktop.start", persistent=True)
+        directory = Path(started["artifacts"])
+        print(f"Database import recovery evidence: {directory}", flush=True)
+        self.open_database_transfer()
+        source = self.exported_database_fixture(directory)
+        broken = directory / "broken.sqlite"
+        broken.write_bytes(b"This is not a SQLite database.")
+        reserved = directory / "reserved-credential.sqlite"
+        with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as original, sqlite3.connect(reserved) as invalid:
+            original.backup(invalid)
+            invalid.execute("UPDATE kv SET value=json_set(value,'$[0].id','google-oauth') WHERE key='accounts'")
+        self.mcp.batch(click(373, 527), check("database_import.phase", "Choosing"),
+                       {"type":"choose_file"}, check("database_import.phase", None),
+                       click(373, 527), check("database_import.phase", "Choosing"),
+                       {"type":"choose_file", "path":str(broken)}, check("database_import.phase", None),
+                       check("database_import.error", "readable SQLite", "contains"), shot("database-import-invalid-file"),
+                       click(373, 527), check("database_import.phase", "Choosing"),
+                       {"type":"choose_file", "path":str(reserved)}, check("database_import.phase", None),
+                       check("database_import.error", "reserved credential identifier", "contains"),
+                       check("profiles.total", 1), shot("database-import-reserved-credential-rejected"),
+                       click(373, 527), check("database_import.phase", "Choosing"),
+                       {"type":"choose_file", "path":str(source)}, check("database_import.phase", "Review"),
+                       shot("database-import-retry-review"), click(453, 730), check("database_import.phase", None),
+                       check("profiles.total", 1), shot("database-import-review-cancelled"))
+        self.assertEqual(list(directory.glob(".shep-import-*")), [])
+        self.assertEqual(broken.read_bytes(), b"This is not a SQLite database.")
+        self.assertTrue(source.exists())
+
+    def test_database_import_pending_delivery_requires_review_and_never_sends_it(self):
+        started = self.mcp.call("desktop.start", persistent=True, outgoing_mail=True)
+        directory = Path(started["artifacts"])
+        print(f"Database import pending actions evidence: {directory}", flush=True)
+        self.open_database_transfer()
+        source = self.exported_database_fixture(directory)
+        self.mcp.batch(click(373, 527), check("database_import.phase", "Choosing"),
+                       {"type":"choose_file", "path":str(source)}, check("database_import.phase", "Review"),
+                       shot("database-import-pending-review"), click(560, 600), key("Return"),
+                       check("database_import.phase", "Review"), check("database_import.reviewed", False),
+                       click(326, 771), check("database_import.phase", "Review"),
+                       click(310, 738), check("database_import.reviewed", True),
+                       click(360, 771), check("database_import.phase", None), check("database_import.registered", True),
+                       shot("database-import-pending-kept"))
+        identity = self.mcp.call("desktop.state")["database_import"]["saved"]
+        with sqlite3.connect(f"file:{directory / 'profiles' / identity / 'shep.sqlite'}?mode=ro", uri=True) as copied:
+            records = [json.loads(row[0]) for row in copied.execute("SELECT data FROM outgoing")]
+            self.assertTrue(any(record["delivery"] == "Uncertain" for record in records))
+            self.assertFalse(any(record["delivery"] == "Submitting" for record in records))
+            self.assertGreater(copied.execute("SELECT count(*) FROM imported_operations WHERE kind='outgoing'").fetchone()[0], 0)
+
+    def test_database_import_held_copy_keeps_mail_usable_and_cleans_up_on_close(self):
+        started = self.mcp.call("desktop.start", persistent=True, held_database_import=True)
+        directory = Path(started["artifacts"])
+        print(f"Database import held-copy evidence: {directory}", flush=True)
+        self.open_database_transfer()
+        source = self.exported_database_fixture(directory)
+        self.mcp.batch(click(373, 527), check("database_import.phase", "Choosing"),
+                       {"type":"choose_file", "path":str(source)}, check("database_import.phase", "Copying"),
+                       shot("database-import-copying"), key("ctrl+1"), check("tab", "Mail"), wait(100),
+                       click(400, 330), check("selected", "Your weekly workspace digest"), key("r"),
+                       check("composer.visible", True), check("focused_input", "compose-body"),
+                       type_text("Keep editing while importing."), check("draft_count", 1),
+                       check("database_import.phase", "Copying"), shot("database-import-pending-editor"),
+                       {"type":"restart"}, check("database_import.phase", None), check("draft_count", 1),
+                       check("profiles.total", 1), check("profiles.current", "legacy"), shot("database-import-close-restarted"))
+        self.assertEqual(list(directory.glob(".shep-import-*")), [])
+        self.assertTrue(source.exists())
+
+    def test_database_import_compact_dark_review_and_catalog_export_protection(self):
+        started = self.mcp.call("desktop.start", persistent=True, width=900, height=640)
+        directory = Path(started["artifacts"])
+        print(f"Database import compact evidence: {directory}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366),
+                       check("dark", True), check("preferences_saved", True))
+        self.open_database_transfer(650)
+        source = self.exported_database_fixture(directory)
+        self.mcp.batch(shot("database-import-compact-before"), click(373, 544),
+                       check("database_import.phase", "Choosing"), {"type":"choose_file", "path":str(source)},
+                       check("database_import.phase", "Review"), shot("database-import-compact-review-top"),
+                       {"type":"hover", "x":800, "y":520}, {"type":"scroll", "amount":6}, wait(100),
+                       shot("database-import-compact-review-bottom"), click(500, 387), key("ctrl+a"),
+                       type_text("Portable dark"), check("database_import.name", "Portable dark"), key("Return"),
+                       check("database_import.phase", None), check("database_import.registered", True),
+                       check("profiles.total", 2), shot("database-import-compact-saved"),
+                       {"type":"hover", "x":800, "y":480}, {"type":"scroll", "amount":-12}, wait(100),
+                       click(373, 445), check("database_transfer.phase", "Choosing"),
+                       {"type":"choose_file", "save":True, "path":str(directory / "profiles.sqlite")},
+                       check("database_transfer.phase", None), check("database_transfer.error", "profile catalog", "contains"),
+                       shot("database-import-catalog-protected-dark"))
+        with sqlite3.connect(f"file:{directory / 'profiles.sqlite'}?mode=ro", uri=True) as catalog:
+            self.assertEqual(catalog.execute("SELECT count(*) FROM profiles WHERE ready=1").fetchone()[0], 2)
 
     def test_database_export_native_file_picker_and_complete_snapshot(self):
         started = self.mcp.call("desktop.start", persistent=True)
@@ -1783,7 +1930,7 @@ class NativeFlows(unittest.TestCase):
                        {"type": "choose_file"}, check("database_transfer.phase", None), check("database_transfer.saved", None),
                        click(379, 433), check("database_transfer.phase", "Choosing"),
                        {"type": "choose_file", "save": True, "path": str(directory / "fixture.sqlite")},
-                       check("database_transfer.error", "active", "contains"), check("database_transfer.phase", None),
+                       check("database_transfer.error", "caches", "contains"), check("database_transfer.phase", None),
                        shot("database-export-live-cache-protected"))
         destination = directory / "retry.sqlite"
         self.mcp.batch(click(379, 433), check("database_transfer.phase", "Choosing"),

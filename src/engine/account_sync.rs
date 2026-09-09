@@ -62,7 +62,7 @@ impl Engine {
         let setup = async {
             self.store.ensure_folder_idle(account.id.clone()).await?;
             let account = self.account(&account.id).await?;
-            let password = providers::read_secret(&account.id).await?;
+            let password = self.credentials.read(&account.id).await?;
             let known = self.store.known(account.id.clone()).await?;
             Ok::<_, anyhow::Error>((account, password, known))
         };

@@ -1592,7 +1592,8 @@ impl App {
                 "Use IMAP or POP3 with an app password. Add as many accounts as you need.",
                 accounts.into()
             ),
-            self.google_settings()
+            self.google_settings(),
+            self.profiles_card()
         ]
         .spacing(if self.settings_group.is_some() { 0 } else { 22 })
         .into()
