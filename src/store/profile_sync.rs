@@ -10,14 +10,28 @@ fn current(c: &Connection) -> anyhow::Result<Enrollment> {
 }
 fn snapshot(c: &Connection) -> anyhow::Result<Snapshot> {
     let prefs: Preferences = get(c, "preferences")?;
+    let enrollment = current(c)?;
+    let defaults = Preferences::default();
+    let accounts: Vec<Account> = get(c, "accounts")?;
+    let empty_workspace = accounts.is_empty()
+        && get::<u64>(c, "drafts_revision")? == 0
+        && !c.query_row("SELECT EXISTS(SELECT 1 FROM messages LIMIT 1)", [], |r| {
+            r.get::<_, bool>(0)
+        })?
+        && (!enrollment.options.settings
+            || crate::profile_sync::metadata::SETTINGS.iter().all(|key| {
+                crate::profile_sync::metadata::setting_value(*key, &prefs)
+                    == crate::profile_sync::metadata::setting_value(*key, &defaults)
+            }));
     Ok(Snapshot {
-        enrollment: current(c)?,
+        enrollment,
         preferences_revision: get(c, "preferences_revision")?,
         connections_revision: get(c, "connections_revision")?,
         google_revision: prefs.google_lifecycle.revision,
         google_identity: prefs.google_connection_id.clone(),
         available: enrollment::google_available(&prefs),
-        accounts: get::<Vec<Account>>(c, "accounts")?.len(),
+        accounts: accounts.len(),
+        empty_workspace,
     })
 }
 fn review_matches(c: &Connection, expected: &Snapshot) -> anyhow::Result<Enrollment> {

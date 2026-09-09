@@ -129,6 +129,11 @@ impl App {
                 });
             }
             let mut toasts = column![].spacing(8).align_x(Alignment::End);
+            let profile_offer = self.shared_profile_offer();
+            let show_profile_offer = profile_offer.is_some();
+            if let Some(offer) = profile_offer {
+                toasts = toasts.push(opaque(offer));
+            }
             if let Some(toast) = &self.action_toasts.current {
                 toasts = toasts.push(opaque(
                     container(
@@ -196,7 +201,8 @@ impl App {
                     .style(card),
                 ));
             }
-            if self.saved_toast.is_some()
+            if show_profile_offer
+                || self.saved_toast.is_some()
                 || self.action_toasts.current.is_some()
                 || !self.mail_actions.undo_failures().is_empty()
             {

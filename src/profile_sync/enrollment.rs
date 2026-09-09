@@ -234,6 +234,11 @@ pub struct Options {
     pub enabled: bool,
     pub accounts: bool,
     pub settings: bool,
+    #[serde(default = "discover_by_default")]
+    pub discover_on_login: bool,
+}
+fn discover_by_default() -> bool {
+    true
 }
 impl Default for Options {
     fn default() -> Self {
@@ -241,6 +246,7 @@ impl Default for Options {
             enabled: false,
             accounts: true,
             settings: true,
+            discover_on_login: true,
         }
     }
 }
@@ -261,6 +267,7 @@ pub struct Changes {
     pub enabled: Option<bool>,
     pub accounts: Option<bool>,
     pub settings: Option<bool>,
+    pub discover_on_login: Option<bool>,
 }
 impl Changes {
     pub fn apply(self, mut options: Options) -> Options {
@@ -272,6 +279,9 @@ impl Changes {
         }
         if let Some(v) = self.settings {
             options.settings = v;
+        }
+        if let Some(v) = self.discover_on_login {
+            options.discover_on_login = v;
         }
         options
     }
@@ -347,7 +357,7 @@ impl Enrollment {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub enrollment: Enrollment,
     pub preferences_revision: u64,
@@ -356,6 +366,7 @@ pub struct Snapshot {
     pub google_identity: String,
     pub available: bool,
     pub accounts: usize,
+    pub empty_workspace: bool,
 }
 
 pub(crate) fn google_available(preferences: &Preferences) -> bool {

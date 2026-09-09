@@ -101,6 +101,12 @@ impl Engine {
         mut output: Output,
     ) -> anyhow::Result<Update> {
         let request = action.id();
+        if matches!(action, Request::AfterLogin(_)) {
+            let snapshot = self.store.profile_enrollment().await?;
+            if !sync::onboarding::eligible(&snapshot) {
+                return Ok(Update::Status(Arc::new(snapshot)));
+            }
+        }
         #[cfg(feature = "test-support")]
         let fixture = if self.demo {
             std::env::args().find_map(|a| a.strip_prefix("--profile-drive-url=").map(str::to_owned))
@@ -151,11 +157,28 @@ impl Engine {
             })
             .await?;
         match action {
-            Request::Discover(_) => Ok(Update::Review(Arc::new(
-                sync::setup::Discovery::from_catalog(
+            Request::Discover(_) | Request::AfterLogin(_) => {
+                let review = Arc::new(sync::setup::Discovery::from_catalog(
                     sync::catalog::discover(&self.store, &session, &paths, &control).await?,
-                ),
-            ))),
+                ));
+                Ok(if matches!(action, Request::AfterLogin(_)) {
+                    if !sync::onboarding::eligible(review.local()) {
+                        return Ok(Update::Status(Arc::new(review.local().clone())));
+                    }
+                    Update::LoginReview(review)
+                } else {
+                    Update::Review(review)
+                })
+            }
+            Request::AutoJoin { review, .. } => {
+                let saved =
+                    sync::onboarding::join(&self.store, &session, &paths, &review, &control)
+                        .await?;
+                self.workspace(&mut output).await.context(
+                    "The shared profile was imported. Reopen Preferences to refresh its view.",
+                )?;
+                Ok(saved)
+            }
             Request::JoinReview { review, cursor, .. } => Ok(Update::JoinReview(Arc::new(
                 sync::join::prepare(
                     &self.store,

@@ -31,6 +31,11 @@ pub enum Request {
         options: Options,
     },
     Discover(u64),
+    AfterLogin(u64),
+    AutoJoin {
+        request: u64,
+        review: Arc<Discovery>,
+    },
     Create {
         request: u64,
         review: Arc<Discovery>,
@@ -43,8 +48,13 @@ pub enum Request {
 impl Request {
     pub fn id(&self) -> u64 {
         match self {
-            Self::Status(id) | Self::Discover(id) | Self::Resume(id) | Self::Stop(id) => *id,
-            Self::JoinReview { request, .. }
+            Self::Status(id)
+            | Self::Discover(id)
+            | Self::AfterLogin(id)
+            | Self::Resume(id)
+            | Self::Stop(id) => *id,
+            Self::AutoJoin { request, .. }
+            | Self::JoinReview { request, .. }
             | Self::JoinAccept { request, .. }
             | Self::Page { request, .. }
             | Self::Options { request, .. }
@@ -58,6 +68,13 @@ pub enum Update {
     Pending(Arc<Snapshot>),
     Status(Arc<Snapshot>),
     Review(Arc<Discovery>),
+    LoginReview(Arc<Discovery>),
+    AutoJoined {
+        snapshot: Arc<Snapshot>,
+        name: String,
+        accounts: usize,
+        settings: usize,
+    },
     Published(Arc<Snapshot>),
     JoinReview(Arc<super::join::Review>),
     Joined(Arc<Snapshot>),

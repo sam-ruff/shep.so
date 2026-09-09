@@ -145,6 +145,21 @@ trap a later window close. Actual admitted work still drains. The `invalid-local
 native fixture checks the error screen, disabled controls and graceful restart.
 
 
+## After sign-in
+
+A verified Google connection schedules one background discovery per session.
+A saved **Check for shared profiles after Google sign-in** choice controls it.
+**Not now** persists an opt-out; it can be enabled again in Profiles and sync.
+Discovery errors keep a retry path and never appear as an empty Drive account.
+
+No existing profiles produces an optional setup prompt. Multiple profiles or a
+populated/customized workspace use the picker and import review. One complete
+profile can enroll an untouched workspace automatically, with an atomic final
+check for new local data or opt-out. Imported accounts still require Reconnect.
+The result shows the profile and applied counts without switching the active tab.
+The native fixture covers the post-login path, not actual browser OAuth consent.
+Ongoing publication/application and genuine Google interoperability remain open.
+
 ## Existing-device discovery and import
 
 The shared catalog owns its separate SQLite connection and observation journals.
@@ -174,7 +189,7 @@ reconnect marker; database import archives the source-device join mapping.
 A saved review UUID makes retry after a lost acceptance acknowledgment idempotent.
 Newer local preferences/categories or Google lifecycle reject unapplied reviews.
 Read cancellation remains interruptible; admitted application commits drain before
-close. Continuous updates, automatic enrollment prompts after login, account linking
+close. Continuous updates, account linking
 between already-populated devices, conflict/removal controls and protected password
 transfer still need implementation. Real cross-client Google visibility is unverified.
 

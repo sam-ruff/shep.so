@@ -10,7 +10,7 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
-MODES = ("empty", "fail-once", "hold-list", "slow-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy")
+MODES = ("empty", "fail-once", "hold-list", "slow-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single")
 
 
 class ProfileDriveFixture:
@@ -135,7 +135,8 @@ class ProfileDriveFixture:
         account["email"] = account["username"] = account["smtp_username"] = "cloud@example.test"
         if self.mode == "existing-unsupported":
             account["future_tls_requirement"] = True
-        for number, name in enumerate(("Home", "Work"), start=1):
+        names = ("Home",) if self.mode == "existing-single" else ("Home", "Work")
+        for number, name in enumerate(names, start=1):
             operation = dict(original)
             for field, prefix in (("profile","1"),("generation","2"),("device","3"),("operation","4")):
                 operation[field] = f"{prefix}0000000-0000-4000-8000-{number:012d}"
