@@ -4,6 +4,7 @@ use super::*;
 use crate::store::worker::Worker;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
+mod cache;
 mod scans;
 pub use scans::{Scan, ScanEntry};
 
@@ -59,6 +60,7 @@ impl Journal {
             UNIQUE(identity,namespace,drive_id));
             CREATE INDEX IF NOT EXISTS pending_uploads ON uploads(identity,namespace,acknowledged,profile,generation,operation);")?;
         scans::schema(&tx)?;
+        cache::schema(&tx)?;
         tx.pragma_update(None, "application_id", APPLICATION_ID)?;
         tx.pragma_update(None, "user_version", 1)?;
         tx.commit()?;

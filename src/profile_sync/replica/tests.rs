@@ -13,6 +13,103 @@ fn history_binding() -> history::Binding {
         generation: key.generation,
     }
 }
+
+#[tokio::test]
+async fn profile_replica_reopened_poll_downloads_only_new_records_and_still_checks_drive() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = open(dir.path()).await;
+    let mut original = crate::profile_sync::drive::tests::reserved();
+    // The codec fixture deliberately references an absent parent. This wire
+    // scenario needs a complete initial history, independent of that fixture.
+    let mut initial = original.record.operation().clone();
+    initial.parents.clear();
+    original.record = Record::decode(binding().namespace(), initial.encode().unwrap()).unwrap();
+    original.remote.size = original.record.bytes().len() as u64;
+    original.remote.sha256 = original.record.sha256.clone();
+    let mut first = Server::start(pull_replies(std::slice::from_ref(&original))).await;
+    assert_eq!(
+        replica
+            .pull(&session(&first))
+            .await
+            .unwrap()
+            .state()
+            .operations,
+        1
+    );
+    first.finish().await;
+    assert_eq!(first.requests().len(), 3);
+    replica.close().await.unwrap();
+
+    let mut replica = open(dir.path()).await;
+    // This transcript intentionally provides no metadata/content download reply.
+    let mut unchanged = Server::start(list_replies(std::slice::from_ref(&original))).await;
+    assert_eq!(
+        replica
+            .pull(&session(&unchanged))
+            .await
+            .unwrap()
+            .state()
+            .operations,
+        1
+    );
+    unchanged.finish().await;
+    assert_eq!(unchanged.requests().len(), 1);
+
+    let mut operation = original.record.operation().clone();
+    operation.parents = vec![operation.operation];
+    operation.operation = Uuid::new_v4();
+    operation.changes = vec![change(Action::ProfileName {
+        name: "Changed on another device".into(),
+    })];
+    let record = Record::decode(binding().namespace(), operation.encode().unwrap()).unwrap();
+    let next = ReservedUpload {
+        binding: binding(),
+        remote: RemoteRecord {
+            id: "next-operation".into(),
+            key: record.key(),
+            size: record.bytes().len() as u64,
+            sha256: record.sha256.clone(),
+        },
+        record,
+    };
+    let mut replies = list_replies(&[original, next.clone()]);
+    replies.push(HttpReply::new(200, file(&next).to_string()));
+    replies.push(HttpReply::binary(200, next.record.bytes().to_vec()));
+    let mut changed = Server::start(replies).await;
+    assert_eq!(
+        replica
+            .pull(&session(&changed))
+            .await
+            .unwrap()
+            .state()
+            .operations,
+        2
+    );
+    changed.finish().await;
+    assert_eq!(changed.requests().len(), 3);
+    assert!(
+        changed.requests()[1..]
+            .iter()
+            .all(|r| r.target.contains("next-operation"))
+    );
+
+    let mut unavailable = Server::start(vec![HttpReply::new(503, "offline")]).await;
+    assert!(replica.pull(&session(&unavailable)).await.is_err());
+    unavailable.finish().await;
+    assert_eq!(replica.state().await.unwrap().operations, 2);
+    let mut removed = Server::start(list_replies(&[])).await;
+    assert_eq!(
+        replica
+            .pull(&session(&removed))
+            .await
+            .unwrap()
+            .remote_records(),
+        0
+    );
+    removed.finish().await;
+    assert_eq!(replica.state().await.unwrap().operations, 2);
+    replica.close().await.unwrap();
+}
 async fn open(path: &std::path::Path) -> Replica {
     Replica::open(
         path.join("history.sqlite"),
@@ -62,7 +159,7 @@ async fn pending(replica: &Replica, id: &str) -> ReservedUpload {
         record,
     }
 }
-fn pull_replies(records: &[ReservedUpload]) -> Vec<HttpReply> {
+fn list_replies(records: &[ReservedUpload]) -> Vec<HttpReply> {
     let mut replies = vec![];
     if records.is_empty() {
         replies.push(HttpReply::new(200, r#"{"files":[]}"#));
@@ -74,6 +171,10 @@ fn pull_replies(records: &[ReservedUpload]) -> Vec<HttpReply> {
         }
         replies.push(HttpReply::new(200, result.to_string()));
     }
+    replies
+}
+fn pull_replies(records: &[ReservedUpload]) -> Vec<HttpReply> {
+    let mut replies = list_replies(records);
     for record in records {
         replies.push(HttpReply::new(200, file(record).to_string()));
         replies.push(HttpReply::binary(200, record.record.bytes().to_vec()));
@@ -81,7 +182,18 @@ fn pull_replies(records: &[ReservedUpload]) -> Vec<HttpReply> {
     replies
 }
 async fn pull(replica: &mut Replica, records: &[ReservedUpload]) -> Pulled {
-    let mut server = Server::start(pull_replies(records)).await;
+    let mut replies = list_replies(records);
+    for record in records {
+        if !replica
+            .journal
+            .fixture_cached_download(&binding(), &record.remote)
+            .await
+        {
+            replies.push(HttpReply::new(200, file(record).to_string()));
+            replies.push(HttpReply::binary(200, record.record.bytes().to_vec()));
+        }
+    }
+    let mut server = Server::start(replies).await;
     let pulled = replica.pull(&session(&server)).await.unwrap();
     server.finish().await;
     assert!(server.requests().iter().all(|r| r.method == "GET"));

@@ -496,6 +496,8 @@ class Desktop:
             raise RuntimeError("Call desktop.start first.")
         state = json.loads((self.directory / "state.json").read_text())
         state["desktop_badge"] = self.badge_state()
+        if self.profile_drive:
+            state["profile_drive_requests"] = dict(self.profile_drive.requests)
         return state
 
     def screenshot(self, name="screenshot"):
