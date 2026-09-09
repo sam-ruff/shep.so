@@ -4,13 +4,15 @@ The user stopped feature work to conserve credits and requested this handover, a
 
 ## 9 September continuation: persisted enrollment
 
-The backend now saves profile/category choices and exact initial seeds, performs
+Source `6e2880b` is pushed. The backend saves profile/category choices and exact initial seeds, performs
 reviewed first-device publication through the shared history and Drive journals,
 and applies seven supported settings with local revision checks. Restart, lost
 responses and disabling/disconnecting during an upload have isolated regressions.
 Database import archives/removes the source-device enrollment and seed. Account
 metadata conversion produces review candidates; it does not activate credentials.
-See the newest completion entry for final verification and shipping evidence.
+Mandatory hooks passed 617 Rust, two renderer and 34 shared tests. All 53 Python
+tests, seven selected native import/Google-disconnect flows, Windows GNU
+cross-compilation and strict docs passed; see the newest completion entry.
 
 **Next connect this to the engine and native Preferences.** Use an owning bounded
 channel coordinator, preserve Google/profile/category lifecycle and keep uploads
