@@ -1,0 +1,496 @@
+use super::*;
+use crate::profile_sync::drive::tests::{binding, file, fixture, session};
+use crate::{
+    model::*,
+    providers::test_http::{Reply, Server},
+};
+use serde_json::json;
+use shep_profile_core::history::{Command, Reply as HistoryReply, Worker};
+
+async fn local(path: &std::path::Path) -> Store {
+    let store = Store::open(path.join("cache.sqlite")).unwrap();
+    store
+        .update_preferences(|p| {
+            p.google_client_id = "fixture-client".into();
+            p.google_connection_id = binding().identity().into();
+            p.google_grant = GoogleGrant {
+                id: "fixture-grant".into(),
+                client_id: "fixture-client".into(),
+                access: GoogleAccess {
+                    known: true,
+                    drive: true,
+                    calendar_read: false,
+                    calendar_write: false,
+                },
+            };
+            p.appearance = Appearance::Dark;
+            p.backup_folder = "/device/path-does-not-travel".into();
+        })
+        .await
+        .unwrap();
+    store
+}
+fn options() -> Options {
+    Options {
+        enabled: true,
+        ..Default::default()
+    }
+}
+async fn initial(store: &Store, journal: &journal::Journal) -> Snapshot {
+    let mut server = Server::start(vec![Reply::new(200, r#"{"files":[]}"#)]).await;
+    let session = session(&server);
+    let review = discover(store, &session, journal).await.unwrap();
+    assert_eq!(review.records(), 0);
+    let result = create(
+        store,
+        &session,
+        journal,
+        review,
+        "Personal".into(),
+        options(),
+    )
+    .await
+    .unwrap();
+    server.finish().await;
+    assert_eq!(
+        server.requests().len(),
+        1,
+        "Creating local intent must not upload before journaling."
+    );
+    result
+}
+async fn open(path: &std::path::Path, pending: &Snapshot, journal: &journal::Journal) -> Replica {
+    Replica::open(
+        path.join("history.sqlite"),
+        pending
+            .enrollment
+            .selection
+            .as_ref()
+            .unwrap()
+            .binding
+            .clone(),
+        journal.clone(),
+    )
+    .await
+    .unwrap()
+}
+async fn upload(path: &std::path::Path, pending: &Snapshot) -> ReservedUpload {
+    let worker = Worker::open(
+        path.join("history.sqlite"),
+        pending
+            .enrollment
+            .selection
+            .as_ref()
+            .unwrap()
+            .binding
+            .clone(),
+    )
+    .await
+    .unwrap();
+    let HistoryReply::Upload(Some(pending)) = worker.request(Command::NextUpload).await.unwrap()
+    else {
+        panic!("No seed");
+    };
+    worker.close().await.unwrap();
+    let record = Record::decode(binding().namespace(), pending.record.into_bytes()).unwrap();
+    ReservedUpload {
+        binding: binding(),
+        remote: RemoteRecord {
+            id: "seed-file".into(),
+            key: record.key(),
+            size: record.bytes().len() as u64,
+            sha256: record.sha256.clone(),
+        },
+        record,
+    }
+}
+
+#[tokio::test]
+async fn profile_setup_publishes_reviewed_seed_after_restart_and_other_device_reads_exact_settings()
+{
+    let dir = tempfile::tempdir().unwrap();
+    let store = local(dir.path()).await;
+    let journal = journal::Journal::open(Some(&dir.path().join("drive.sqlite"))).unwrap();
+    let pending = initial(&store, &journal).await;
+    let mut replica = open(dir.path(), &pending, &journal).await;
+    prepare(&store, &mut replica, &pending).await.unwrap();
+    let before = replica.state().await.unwrap();
+    prepare(&store, &mut replica, &pending).await.unwrap();
+    assert_eq!(replica.state().await.unwrap().revision, before.revision);
+    replica.close().await.unwrap();
+    let saved = upload(dir.path(), &pending).await;
+    assert!(!String::from_utf8_lossy(saved.record.bytes()).contains("path-does-not-travel"));
+    drop(store);
+    let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    let mut replica = open(dir.path(), &pending, &journal).await;
+    let mut server = Server::start(vec![
+        Reply::new(200, r#"{"files":[]}"#),
+        Reply::new(200, r#"{"ids":["seed-file"],"space":"appDataFolder"}"#),
+        Reply::new(404, ""),
+        Reply::new(201, file(&saved).to_string()),
+    ])
+    .await;
+    let done = publish(
+        &store,
+        &mut replica,
+        &session(&server),
+        pending.clone(),
+        123,
+    )
+    .await
+    .unwrap();
+    server.finish().await;
+    assert!(done.enrollment.selection.as_ref().unwrap().ready);
+    assert_eq!(done.enrollment.last_success, Some(123));
+    assert_eq!(replica.state().await.unwrap().queued, 0);
+    assert_eq!(
+        server
+            .requests()
+            .iter()
+            .filter(|r| r.method == "POST")
+            .count(),
+        1
+    );
+    replica.close().await.unwrap();
+
+    let other = tempfile::tempdir().unwrap();
+    let other_store = local(other.path()).await;
+    other_store
+        .update_preferences(|p| {
+            p.appearance = Appearance::Light;
+            p.backup_folder = "/other-device/keep-this".into();
+        })
+        .await
+        .unwrap();
+    let mut selection = pending.enrollment.selection.unwrap();
+    selection.origin = Origin::Join;
+    let joined = other_store
+        .begin_profile_enrollment(
+            other_store.profile_enrollment().await.unwrap(),
+            selection,
+            options(),
+        )
+        .await
+        .unwrap();
+    let other_journal = journal::Journal::open(None).unwrap();
+    let mut other_replica = open(other.path(), &joined, &other_journal).await;
+    let mut server = Server::start(vec![
+        Reply::new(200, json!({"files":[file(&saved)]}).to_string()),
+        Reply::new(200, file(&saved).to_string()),
+        Reply::binary(200, saved.record.bytes().to_vec()),
+    ])
+    .await;
+    other_replica.pull(&session(&server)).await.unwrap();
+    let versions = other_replica
+        .versions("setting:appearance".into(), None)
+        .await
+        .unwrap();
+    let change = other_replica
+        .value("setting:appearance".into(), versions[0].operation)
+        .await
+        .unwrap();
+    let (_, applied) = other_store
+        .apply_profile_settings(joined, vec![change])
+        .await
+        .unwrap();
+    assert_eq!(applied.value.appearance, Appearance::Dark);
+    assert_eq!(applied.value.backup_folder, "/other-device/keep-this");
+    server.finish().await;
+    assert!(server.requests().iter().all(|r| r.method == "GET"));
+    other_replica.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn profile_setup_lost_upload_response_reopens_original_operation_and_finishes_without_posting_again()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let store = local(dir.path()).await;
+    let path = dir.path().join("drive.sqlite");
+    let journal = journal::Journal::open(Some(&path)).unwrap();
+    let pending = initial(&store, &journal).await;
+    let mut replica = open(dir.path(), &pending, &journal).await;
+    prepare(&store, &mut replica, &pending).await.unwrap();
+    replica.close().await.unwrap();
+    let saved = upload(dir.path(), &pending).await;
+    let mut replica = open(dir.path(), &pending, &journal).await;
+    let mut first = Server::start(vec![
+        Reply::new(200, r#"{"files":[]}"#),
+        Reply::new(200, r#"{"ids":["seed-file"],"space":"appDataFolder"}"#),
+        Reply::new(404, ""),
+        Reply::disconnect(),
+        Reply::new(503, "retry later"),
+    ])
+    .await;
+    assert!(
+        publish(&store, &mut replica, &session(&first), pending.clone(), 123)
+            .await
+            .is_err()
+    );
+    first.finish().await;
+    assert!(
+        store
+            .profile_enrollment()
+            .await
+            .unwrap()
+            .enrollment
+            .last_success
+            .is_none()
+    );
+    replica.close().await.unwrap();
+    drop(journal);
+    let journal = journal::Journal::open(Some(&path)).unwrap();
+    let mut replica = open(dir.path(), &pending, &journal).await;
+    let mut second = Server::start(vec![
+        Reply::new(200, json!({"files":[file(&saved)]}).to_string()),
+        Reply::new(200, file(&saved).to_string()),
+        Reply::binary(200, saved.record.bytes().to_vec()),
+        Reply::new(200, file(&saved).to_string()),
+    ])
+    .await;
+    publish(&store, &mut replica, &session(&second), pending, 124)
+        .await
+        .unwrap();
+    second.finish().await;
+    assert!(second.requests().iter().all(|r| r.method == "GET"));
+    assert_eq!(
+        journal
+            .load(&binding(), saved.remote.key)
+            .await
+            .unwrap()
+            .unwrap()
+            .upload()
+            .record
+            .bytes(),
+        saved.record.bytes()
+    );
+    replica.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn profile_setup_rejects_stale_discovery_and_never_converts_visible_existing_records_to_empty()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let store = local(dir.path()).await;
+    let journal = journal::Journal::open(None).unwrap();
+    let remote = ReservedUpload {
+        binding: binding(),
+        remote: RemoteRecord {
+            id: "existing".into(),
+            key: fixture().key(),
+            size: fixture().bytes().len() as u64,
+            sha256: fixture().sha256,
+        },
+        record: fixture(),
+    };
+    let mut server = Server::start(vec![
+        Reply::new(200, json!({"files":[],"nextPageToken":"more"}).to_string()),
+        Reply::new(200, json!({"files":[file(&remote)]}).to_string()),
+        Reply::new(200, json!({"files":[]}).to_string()),
+    ])
+    .await;
+    let session = session(&server);
+    let review = discover(&store, &session, &journal).await.unwrap();
+    assert_eq!(review.records(), 1);
+    let current = discover(&store, &session, &journal).await.unwrap();
+    assert!(
+        create(&store, &session, &journal, review, "Old".into(), options())
+            .await
+            .is_err()
+    );
+    store
+        .update_preferences(|p| p.appearance = Appearance::Light)
+        .await
+        .unwrap();
+    assert!(
+        create(
+            &store,
+            &session,
+            &journal,
+            current,
+            "Stale".into(),
+            options()
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        store
+            .profile_enrollment()
+            .await
+            .unwrap()
+            .enrollment
+            .selection
+            .is_none()
+    );
+    server.finish().await;
+    assert!(server.requests().iter().all(|r| r.method == "GET"));
+}
+
+#[tokio::test]
+async fn profile_setup_disabled_categories_and_newer_local_edits_stop_before_network_without_losing_seed()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let store = local(dir.path()).await;
+    let journal = journal::Journal::open(None).unwrap();
+    let pending = initial(&store, &journal).await;
+    let seed = store.profile_seed(pending.clone()).await.unwrap();
+    let mut replica = open(dir.path(), &pending, &journal).await;
+    let mut server = Server::start(vec![]).await;
+    let disabled = store
+        .set_profile_sync_options(
+            pending.enrollment.revision,
+            Options {
+                enabled: false,
+                ..options()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        publish(&store, &mut replica, &session(&server), pending, 123)
+            .await
+            .is_err()
+    );
+    assert_eq!(replica.state().await.unwrap().operations, 0);
+    let missing = store
+        .set_profile_sync_options(
+            disabled.enrollment.revision,
+            Options {
+                settings: false,
+                ..options()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        publish(
+            &store,
+            &mut replica,
+            &session(&server),
+            missing.clone(),
+            123
+        )
+        .await
+        .is_err()
+    );
+    let enabled = store
+        .set_profile_sync_options(missing.enrollment.revision, options())
+        .await
+        .unwrap();
+    store
+        .update_preferences(|p| p.appearance = Appearance::Light)
+        .await
+        .unwrap();
+    assert!(
+        publish(&store, &mut replica, &session(&server), enabled, 123)
+            .await
+            .is_err()
+    );
+    let now = store.profile_enrollment().await.unwrap();
+    assert!(now.enrollment.last_success.is_none());
+    assert_eq!(
+        store.profile_seed(now).await.unwrap().chunks[0].operation,
+        seed.chunks[0].operation
+    );
+    assert_eq!(
+        store
+            .get::<Preferences>("preferences")
+            .await
+            .unwrap()
+            .appearance,
+        Appearance::Light
+    );
+    server.finish().await;
+    assert!(server.requests().is_empty());
+    replica.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn profile_setup_keeps_inflight_receipt_but_never_reenables_a_disabled_or_disconnected_profile()
+ {
+    for disconnect in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = local(dir.path()).await;
+        let journal = journal::Journal::open(Some(&dir.path().join("drive.sqlite"))).unwrap();
+        let pending = initial(&store, &journal).await;
+        let mut replica = open(dir.path(), &pending, &journal).await;
+        prepare(&store, &mut replica, &pending).await.unwrap();
+        replica.close().await.unwrap();
+        let saved = upload(dir.path(), &pending).await;
+        let mut replica = open(dir.path(), &pending, &journal).await;
+        let (reply, observed, release) = Reply::new(201, file(&saved).to_string()).held();
+        let mut server = Server::start(vec![
+            Reply::new(200, r#"{"files":[]}"#),
+            Reply::new(200, r#"{"ids":["seed-file"],"space":"appDataFolder"}"#),
+            Reply::new(404, ""),
+            reply,
+        ])
+        .await;
+        let session = session(&server);
+        let writer = store.clone();
+        let reviewed = pending.clone();
+        let task = tokio::spawn(async move {
+            let result = publish(&writer, &mut replica, &session, reviewed, 123).await;
+            (replica, result)
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), observed)
+            .await
+            .unwrap()
+            .unwrap();
+        // Actual cache writes/reads complete while the provider is indefinitely
+        // held. These must not require the network task to release a state lock.
+        if disconnect {
+            store
+                .disconnect_google(pending.google_revision)
+                .await
+                .unwrap();
+        } else {
+            store
+                .set_profile_sync_options(
+                    pending.enrollment.revision,
+                    Options {
+                        enabled: false,
+                        ..options()
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        store
+            .update_preferences(|p| p.appearance = Appearance::Light)
+            .await
+            .unwrap();
+        let paused = store.profile_enrollment().await.unwrap();
+        assert!(!paused.enrollment.options.enabled);
+        assert!(!task.is_finished());
+        release.send(()).unwrap();
+        let (replica, result) = task.await.unwrap();
+        assert!(format!("{:#}", result.unwrap_err()).contains("upload was saved to Drive"));
+        server.finish().await;
+        assert_eq!(
+            replica.state().await.unwrap().queued,
+            0,
+            "The committed receipt must survive the stop request."
+        );
+        assert!(
+            journal
+                .load(&binding(), saved.remote.key)
+                .await
+                .unwrap()
+                .unwrap()
+                .acknowledged()
+        );
+        let after = store.profile_enrollment().await.unwrap();
+        assert_eq!(after.enrollment, paused.enrollment);
+        assert!(after.enrollment.last_success.is_none());
+        assert_eq!(
+            store
+                .get::<Preferences>("preferences")
+                .await
+                .unwrap()
+                .appearance,
+            Appearance::Light
+        );
+        replica.close().await.unwrap();
+    }
+}

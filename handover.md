@@ -2,6 +2,26 @@
 
 The user stopped feature work to conserve credits and requested this handover, a cleaned TODO and a push. **The full application goal is not complete.** Resume from [TODO.md](TODO.md), preserving the original requirements in [docs/REQUEST_AUDIT.md](docs/REQUEST_AUDIT.md). Read [AGENTS.md](AGENTS.md) for operational rules and [docs/COMPLETION.md](docs/COMPLETION.md) for evidence; do not repeat historical work based only on the latest chat message.
 
+## 9 September continuation: persisted enrollment
+
+The backend now saves profile/category choices and exact initial seeds, performs
+reviewed first-device publication through the shared history and Drive journals,
+and applies seven supported settings with local revision checks. Restart, lost
+responses and disabling/disconnecting during an upload have isolated regressions.
+Database import archives/removes the source-device enrollment and seed. Account
+metadata conversion produces review candidates; it does not activate credentials.
+See the newest completion entry for final verification and shipping evidence.
+
+**Next connect this to the engine and native Preferences.** Use an owning bounded
+channel coordinator, preserve Google/profile/category lifecycle and keep uploads
+owned until receipts are durable. Choose/protect production journal paths first.
+Complete existing-device discovery/application, account reconnection/suppression,
+local changes/conflict reviews and incremental polling. Do not expose an initial
+copy as working continuous sync or assume later edits have been published.
+The OAuth implementation stays at the top of TODO with the Flutter handover linked.
+No native UI or personal installation changed in this checkpoint. Keep the sibling
+client work intact; credential-transfer protection and live Google parity remain open.
+
 ## 9 September continuation: causal profile bridge
 
 Source `ace653b` is pushed and uses the published shared history worker for verified

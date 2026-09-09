@@ -101,6 +101,7 @@ impl Store {
                 prefs.auto_backup = false;
                 prefs.backup_ready = false;
             }
+            profile_sync::pause(&tx)?;
             let mut sources: Vec<CalendarSource> = get(&tx, "calendars")?;
             let mut archived: HashSet<String> = get(&tx, "google_archived")?;
             for source in &mut sources {

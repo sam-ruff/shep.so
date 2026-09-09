@@ -8,6 +8,72 @@ use crate::{
 };
 
 #[tokio::test]
+async fn profile_enrollment_is_archived_on_database_import_without_replaying_device_sync() {
+    use crate::profile_sync::enrollment::{Enrollment, SEED_KEY, STORAGE_KEY};
+    let original = tempfile::tempdir().unwrap();
+    let local = tempfile::tempdir().unwrap();
+    let path = original.path().join("source.sqlite");
+    let source = super::super::tests::workspace(&path).await;
+    // Keep future/opaque device state too; it cannot be interpreted as a new
+    // target-device enrollment or require its external history to exist here.
+    let value = serde_json::json!({"revision":99,"future_saved_choice":true});
+    source.put(STORAGE_KEY, value.clone()).await.unwrap();
+    source.put(SEED_KEY, value.clone()).await.unwrap();
+    let destination = Store::open(local.path().join("shep.sqlite")).unwrap();
+    let catalog = crate::profiles::Catalog::open(local.path(), "shep.sqlite").unwrap();
+    let prepared = stage(destination, path)
+        .await
+        .unwrap()
+        .finish()
+        .await
+        .unwrap()
+        .unwrap();
+    let saved = prepared
+        .install(catalog, "Another device".into(), Preferences::default())
+        .unwrap()
+        .finish()
+        .await
+        .unwrap()
+        .unwrap();
+    let imported = Store::open(saved.path).unwrap();
+    assert_eq!(
+        imported.profile_enrollment().await.unwrap().enrollment,
+        Enrollment::default()
+    );
+    assert!(
+        imported
+            .get::<Preferences>("preferences")
+            .await
+            .unwrap()
+            .google_lifecycle
+            .disconnected
+    );
+    for key in [STORAGE_KEY, SEED_KEY] {
+        let archived: String = imported
+            .run(move |c| {
+                Ok(c.query_row(
+            "SELECT data FROM imported_operations WHERE kind='profile-enrollment' AND identity=?",
+            [key], |r| r.get(0))?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&archived).unwrap(),
+            value
+        );
+        assert_eq!(source.get::<serde_json::Value>(key).await.unwrap(), value);
+        assert!(
+            imported
+                .get::<Option<serde_json::Value>>(key)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+    assert_eq!(imported.query(Default::default()).await.unwrap().total, 1);
+}
+
+#[tokio::test]
 async fn import_preserves_mail_and_receipts_but_requires_review_of_other_device_pending_work() {
     let original = tempfile::tempdir().unwrap();
     let local = tempfile::tempdir().unwrap();

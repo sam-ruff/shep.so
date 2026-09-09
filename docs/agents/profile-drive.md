@@ -1,6 +1,6 @@
 # Profile records on Google Drive
 
-`profile_sync` implements transport, durable discovery/upload preparation and a bridge to causal history for the [shared profile format](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_FORMAT.md). Enrollment, applying changes and native sync controls remain open in [TODO](https://github.com/sam-ruff/shep.so/blob/main/TODO.md). This backend alone does not provide continuous account sync.
+`profile_sync` implements transport, causal history and first-device enrollment primitives for the [shared profile format](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_FORMAT.md). Native enrollment, account application and continuous sync remain open in [TODO](https://github.com/sam-ruff/shep.so/blob/main/TODO.md). This backend alone does not provide continuous account sync.
 
 ## Shared codec
 
@@ -58,12 +58,51 @@ edits may finish on the same pass; another pass discovers those confirmed files.
 Deletion markers remain authoritative through stale/offline edits. Conflicts
 retain both values until a revision-checked explicit resolution arrives.
 
-This is a backend kernel. Enrollment must still persist consent, profile/category
-choices, local suppression and application mappings. Its coordinator must fence
+This is a backend kernel. Enrollment must still finish local suppression and
+account application. Its coordinator must fence
 Google lifecycle changes, retain an upload task through durable acknowledgment,
 and observe stop/category changes between writes. Current pulls re-read full
 history: incremental polling/caching remains required before continuous operation
 is finished. History and Drive journal paths still need production transfer guards.
+
+## Enrollment and initial publication
+
+Device-local enrollment stores the verified principal/namespace/profile/generation,
+Create/Join origin, enabled/category choices, a revision and initial completion
+state. Changes use the mail-cache owning worker. Options can be saved without
+network/keychain access; enabling requires the appropriate saved Google grant.
+Google disconnect pauses enrollment in the same transaction. Late results cannot
+re-enable it. Database import archives enrollment and its seed, then requires new
+device discovery rather than replaying the source's choices or history pointers.
+
+`setup::discover` returns a private completed-scan/local-revision proof. Explicit
+Create consumes that review and atomically persists all initial values, account
+ID mappings and operation UUIDs. Legacy account IDs receive one saved shared UUID.
+Before each history edit, save its original expected revision; retry the exact
+request across restart. Seeds use the shared codec and split at its per-record
+change bound. Missing/corrupt records are errors, never a fresh setup.
+
+`setup::publish` replays that seed, pulls verified history, and finishes one
+durable upload at a time. It checks local intent between writes. An in-flight
+write still reaches both journal acknowledgments after a stop/disconnect; setup
+stays pending and reports that an upload was saved. Conflicts, removals, stale
+reviews and missing existing generations cannot become a completed first setup.
+The future engine coordinator must retain ownership through these acknowledgments.
+
+The explicit metadata adapter preserves IMAP/POP3 and independent SMTP security,
+authentication and Sent options, but returns an account review candidate only.
+It does not connect an account or import a password. Settings application commits
+a bounded conflict-free page atomically against local preferences/connection/
+Google/enrollment revisions. It currently implements appearance, quoted replies,
+external-image policy, unified inbox, cross-account moves, conversation grouping
+and unread badges. Device fields and backend metadata stay unchanged. Shared
+preview-line values/extensions remain in history; other portable settings still
+need shared-contract support and native implementation.
+
+First/new/existing-device native controls, account reconnection/removal reviews,
+ongoing local change capture, conflict resolution and incremental polling are
+not connected yet. A successful initial seed is not proof that later local edits
+have synced. Password transfer still requires the outstanding protection choice.
 
 ## Verification boundary
 

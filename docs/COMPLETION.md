@@ -1,5 +1,48 @@
 # Completion audit
 
+## 9 September: persisted profile enrollment and first-device publication
+
+R02/R49/R92 now have backend enrollment/category revisions and a durable initial
+seed. A complete verified discovery review precedes explicit creation. The seed
+freezes account mappings, values and operation IDs; each exact history request is
+checkpointed before admission. Restart and lost acknowledgments reuse those IDs
+and bytes. Initial publication uses the shared worker and both Drive journals.
+A stop or Google disconnect during upload keeps its receipt, leaves setup pending
+and reports that a copy was saved. Cache reads/edits remain available while the
+fixture holds the provider response indefinitely.
+
+Seven supported portable settings apply atomically against current local
+preferences, account, Google and enrollment revisions. Invalid/conflicting pages
+roll back; newer local edits and device-only fields remain intact. The explicit
+account adapter maps security/authentication/Sent metadata for review only.
+Database import archives source enrollment and seed data, including opaque future
+records, and requires fresh device setup. A corrupt enrollment cannot prevent
+Google disconnection or silently become an empty setup.
+
+Isolated tests cover two-device settings transfer through actual HTTP and SQLite,
+restart/repeated seed preparation, lost upload replies, complete/stale discovery,
+stop/disconnect during a held upload, category changes, 70 legacy account mappings
+across chunks, malformed seeds, atomic settings application and database-import
+fences. Shared test HTTP responses now have a one-shot hold/release for causal
+race checks. No production state locks were added; tests access no real cloud or
+personal data.
+The full Rust suite passed **617 tests** with three explicitly ignored personal
+checks; 53 Python tests, Windows GNU cross-compilation and strict Zensical passed.
+Seven existing native import/Google-disconnect scenarios passed against a freshly
+built test executable. Reviewed WebPs include light import and restart
+(`652e495620ae`), pending-action review (`86763300d459`), compact dark import
+(`56996185079e`) and disconnected cached calendars (`917c9f116652`). These protect
+existing controls; they are not native profile-enrollment or live Google evidence.
+Final hooks and shipping are recorded below when complete.
+
+This remains backend work. Native first/new/existing-device controls, actual
+account application/re-authentication, local change capture, conflict/removal
+reviews, remaining portable settings, production journal guards and incremental
+polling remain in TODO. No engine/native entry point activates this setup yet.
+The OAuth handover stays first in TODO. Password protection has no recorded
+choice, and real cross-client Google access is unverified. No personal installation
+or performance measurement was changed. Logs: ignored `artifacts/logs/profile-enrollment-*`.
+
 ## 9 September: shared causal pull/publish bridge
 
 R02/R49/R92 now connect the verified desktop Drive transport to the published
