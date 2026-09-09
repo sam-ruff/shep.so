@@ -3,8 +3,8 @@
 9 September continuation: R02/R49/R92 adopts the published shared initialization
 barrier through `43cdcf0f`, including native incomplete/legacy import guards,
 multi-record creation/retry, safe unstarted-seed upgrade and portable Tooltips.
-Seventeen selected native scenarios pass. See the newest completion entry for
-verification and shipping; continuous changes, automatic login enrollment and
+Source `9158b50` is pushed with 17 native scenarios and 698 mandatory hook test
+executions passing. See the newest completion entry; continuous changes, automatic login enrollment and
 admitted legacy recovery remain in TODO.
 
 9 September continuation: R02/R49/R92 adds durable common values at native

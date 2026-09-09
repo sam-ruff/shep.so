@@ -8,7 +8,7 @@ Historical implementation notes belong there, rather than becoming new TODOs.
 
 ## Current source checkpoint
 
-The current continuation adopts the shared `initialization-v1` setup barrier from
+`9158b50` is pushed to main and adopts the shared `initialization-v1` barrier from
 Flutter publication. Desktop creation writes stable start/data/completion records;
 import requires the shared worker to verify completion. Unstarted legacy seeds
 upgrade without changing their metadata/UUIDs; already-admitted legacy records
@@ -47,14 +47,15 @@ on next launch; they do not hot-swap an engine or replay another device's sends.
 
 ## Next work
 
-1. Finish explicit recovery/migration for already-admitted legacy profiles;
-   never insert new ancestry into immutable uploaded records. Fresh setups now
-   use the shared initialization barrier and incomplete profiles cannot be imported.
-   Preserve its start/data/end, partial upload/retry, out-of-order, independent
-   device identity, native disabled-review and valid-alternative scenarios.
-2. Add automatic post-login discovery/enrollment prompts, then ongoing local and
-   remote profile updates. Support first setup from either desktop or Flutter,
-   new devices and already-populated workspaces, with saved enable/category choices.
+1. Add automatic post-login discovery/enrollment prompts and ongoing local/remote
+   profile updates. Support first setup from either desktop or Flutter, new devices
+   and already-populated workspaces, with saved enable/category choices. Keep local
+   capture/admission ahead of remote pulls and implement per-field application.
+2. Preserve the shared initialization barrier: stable start/data/end requests,
+   partial upload receipts/retry, out-of-order histories, independent device identity,
+   disabled incomplete-profile reviews and usable alternatives. Already-admitted
+   legacy profiles still need explicit recovery/migration; never insert new ancestry
+   into immutable uploaded records. Unstarted legacy seeds can upgrade in place.
 3. Connect account linking/suppression, conflict/removal reviews, offline recovery,
    incremental enrolled-history pulls and the remaining portable preferences.
    Current enrolled-history pulls still read full history. The catalog's change
@@ -91,16 +92,15 @@ completion paths need automatic continuation. Preserve durable in-flight receipt
 
 ## Verification and installation
 
-The latest source commit's mandatory hooks passed **640 Rust + two renderer +
-50 shared tests (692 executions)**; three personal diagnostics remain explicitly
-ignored. **54 Python tests and 14 selected native scenarios passed**, including
-nine profile flows and five database imports. Native enrollment also verifies its
-saved checkpoint in the owned database after graceful close. Light/dark/compact
+The latest source commit's mandatory hooks passed **643 Rust + two renderer +
+53 shared tests (698 executions)**; three personal diagnostics remain explicitly
+ignored. **54 Python tests and 17 selected native scenarios passed**, including
+11 profile flows, five database imports and tooltip preferences. Light/dark/compact
 WebPs were reviewed. Windows GNU cross-compilation and strict Zensical passed.
 See the completion log for exact artifacts and documentation CI shipping evidence.
 
 Native test executable SHA-256:
-`be29388aaf1579dc24d60d8789c6e5e35e726d05972465b9df8777cddeba8097`.
+`709eff8bba2e270f5cb51152989e8cc4890f8d887226f2cd9a5ce266f8e1c6c4`.
 This is an isolated test-support executable, not an installed production release.
 The personal Linux installation remains source `3567de2`, SHA-256
 `06c0cccb3d3cc6703b143f8e7fa019c1be7032533ae6d4e776a81cc6f91ef34a`.
