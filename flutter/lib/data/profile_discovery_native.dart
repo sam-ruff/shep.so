@@ -2,9 +2,29 @@ import 'native_repository.dart';
 import 'accounts.dart';
 import 'profile_discovery.dart';
 import 'profile_creation.dart';
+import 'profile_enrollment.dart';
 
 class NativeProfileDiscovery
-    implements ProfileDiscoveryRepository, ProfileCreationRepository {
+    implements
+        ProfileDiscoveryRepository,
+        ProfileCreationRepository,
+        ProfileEnrollmentRepository {
+  @override
+  Future<dynamic> enrollment(
+    String session,
+    Map<String, Object?> command,
+  ) async {
+    try {
+      return await repository.profileEnrollment({
+        'op': 'profile_enrollment',
+        'session': session,
+        'command': command,
+      });
+    } on MailOperationFailure catch (error) {
+      throw DiscoveryFailure(error.message);
+    }
+  }
+
   @override
   Future<dynamic> creation(String session, Map<String, Object?> command) =>
       _call({'op': 'profile_creation', 'session': session, 'command': command});

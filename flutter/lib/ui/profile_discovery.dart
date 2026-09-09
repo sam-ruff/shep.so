@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../model/profile_discovery.dart';
 import 'google_connection.dart';
 import 'profile_creation.dart';
+import 'profile_enrollment.dart';
+import '../data/profile_enrollment.dart';
 import '../model/preferences.dart';
 
 String _count(int n, String noun) => '$n $noun${n == 1 ? '' : 's'}';
@@ -11,8 +13,10 @@ class ProfileDiscoveryScreen extends StatelessWidget {
     super.key,
     required this.discovery,
     this.preferences,
+    this.device,
   });
   final ProfileDiscovery discovery;
+  final ProfileEnrollmentDevice? device;
   final Preferences Function()? preferences;
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -34,8 +38,29 @@ class ProfileDiscoveryScreen extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Find account and settings profiles saved with Google. Applying a profile and continuous sync are not available in this build yet.',
+              'Find and review account and settings profiles saved with Google. Continuous background profile sync is still being built.',
             ),
+            if (d.supportsEnrollment && device != null && d.enrollment != null)
+              Card(
+                child: ListTile(
+                  title: Text(d.enrollment!.name ?? 'Saved enrollment'),
+                  subtitle: Text(
+                    d.enrollment!.complete
+                        ? 'Profile applied on this device'
+                        : 'Resume profile review and application',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => ProfileEnrollmentScreen(
+                        discovery: d,
+                        device: device!,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             if (d.supportsCreation && preferences != null) ...[
               const SizedBox(height: 12),
               if (d.creation case final creation?)
@@ -112,7 +137,7 @@ class ProfileDiscoveryScreen extends StatelessWidget {
                         : 'Resume discovery',
                   ),
                 ),
-                if (d.busy && !d.publishing)
+                if (d.busy && !d.publishing && !d.enrolling)
                   OutlinedButton(
                     onPressed: d.paused ? null : d.pause,
                     child: Text(d.paused ? 'Pausing…' : 'Pause discovery'),
@@ -172,6 +197,25 @@ class ProfileDiscoveryScreen extends StatelessWidget {
                 Card(
                   key: ValueKey('discovered-${profile.cursor}'),
                   child: ListTile(
+                    onTap:
+                        device != null &&
+                            d.canEnroll &&
+                            !profile.removed &&
+                            profile.initialized &&
+                            profile.waiting == 0 &&
+                            profile.ready == 0 &&
+                            (d.enrollment == null || d.enrollment!.complete)
+                        ? () => Navigator.push(
+                            context,
+                            MaterialPageRoute<void>(
+                              builder: (_) => ProfileEnrollmentScreen(
+                                discovery: d,
+                                device: device!,
+                                profile: profile,
+                              ),
+                            ),
+                          )
+                        : null,
                     leading: Icon(
                       profile.removed
                           ? Icons.delete_outline

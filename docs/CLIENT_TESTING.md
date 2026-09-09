@@ -275,3 +275,30 @@ appearance and pause/browse/resume controls. Native Rust tests separately execut
 the real SQLite publication path, receipt recovery and session retirement. See
 [the publication contract](agents/PROFILE_PUBLICATION.md) and completion evidence;
 these checks do not establish live Google, enrollment or continuous sync.
+
+
+## Reviewed Flutter enrollment
+
+Run `python3 scripts/clients/android_e2e.py --device emulator-5554 --enrollment-only`
+for the two saved native review/application and pause/browse/resume scenarios, including
+two Preferences taps before the next repaint, then
+the four shared Appium flows. The wrapper requires the exact two completion names
+in `integration-enrollment-result.json`; teardown callbacks and an interrupted
+driver are not additional passes. Run
+`python3 scripts/clients/flutter_web_e2e.py --enrollment` for the matching four
+Playwright flows. Both use an isolated profile source and the real Flutter controls.
+
+`profile_settings_test.dart` and `profile_application_test.dart` use production
+preference persistence over object-scoped storage, with failed/lost writes, queued
+edits, explicit resets and field revisions. `profile_enrollment_test.dart` covers
+paged choices, category selection, lost account/settings replies and Google
+disconnect while one accepted step is pending. Native Rust tests copy original
+records into independent journals, review 75 accounts in bounded pages, apply
+credentialless accounts, preserve mail/drafts and newer local metadata, reopen
+receipts, activate Reconnect credentials and keep local removal suppression.
+
+The authenticated catalog export has separate scripted protocol tests. These
+combined tests do not establish fully authenticated Google-to-Flutter interchange
+or live provider login. Apple execution, automatic enrollment and continuous
+reconciliation remain open. Record actual results, reviewed WebP captures and the
+shipping commit in the completion log.

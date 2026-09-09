@@ -35,7 +35,7 @@ pub fn preview(db: &Connection, id: &str) -> Result<Removal> {
     let account = crate::operations::stored_account(db, id)?;
     let mut digest = Sha256::new();
     digest.update(serde_json::to_vec(&account)?);
-    digest.update(crate::connections::target(db, account.clone())?);
+    digest.update(crate::connections::stored_slot(db, id)?);
     // Hash bounded metadata one row at a time. Mail/attachment bytes are not
     // loaded into the review, and draft-file revisions capture changed content.
     for query in [

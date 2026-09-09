@@ -608,3 +608,140 @@ async fn a_cancelled_read_can_retry_but_a_foreign_google_session_cannot_start_di
     server.finish().await;
     discovery.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn initialized_discovery_exports_exact_records_without_cloning_device_or_upload_state() {
+    let mut records = Vec::new();
+    let mut parent = Vec::new();
+    for (n, action) in [
+        Action::ProfileSetup { complete: false },
+        Action::ProfileName {
+            name: "Portable review".into(),
+        },
+        Action::ProfileSetup { complete: true },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let operation = Operation {
+            format: crate::FORMAT.into(),
+            major: 1,
+            minor: 0,
+            requires: vec!["causal-v1".into(), "initialization-v1".into()],
+            namespace: NAMESPACE.into(),
+            profile: binding().profile,
+            generation: binding().generation,
+            device: Uuid::from_u128(600),
+            operation: Uuid::from_u128(700 + n as u128),
+            parents: parent,
+            changes: vec![Change {
+                action,
+                extra: Default::default(),
+            }],
+            extra: Default::default(),
+        };
+        parent = vec![operation.operation];
+        // Whitespace belongs to immutable original media and must survive copy.
+        let bytes = serde_json::to_vec_pretty(&operation).unwrap();
+        Operation::decode(&bytes).unwrap();
+        let mut meta = metadata(&history::Upload {
+            operation: operation.operation,
+            sha256: wire::sha256(&bytes),
+            record: String::from_utf8(bytes.clone()).unwrap(),
+            file_id: None,
+        });
+        meta["id"] = json!(format!("export-file-{n}"));
+        records.push(Record {
+            metadata: meta,
+            bytes,
+        });
+    }
+    let mut steps = vec![
+        identity(),
+        start(),
+        files(&records.iter().collect::<Vec<_>>(), None),
+    ];
+    for record in &records {
+        steps.extend(downloads(record));
+    }
+    steps.push(caught_up("after-export"));
+    let server = Server::start(steps).await;
+    let drive = server.connect(None).await.unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("catalog.sqlite");
+    let catalog = Discovery::open(path.clone(), scope()).await.unwrap();
+    assert!(
+        catalog
+            .snapshot(binding().profile, binding().generation, 0)
+            .await
+            .is_err()
+    );
+    finish(&catalog, &drive).await;
+    let profile = catalog.profiles(None).await.unwrap().remove(0);
+    assert!(profile.initialized);
+    let source = catalog
+        .snapshot(profile.profile, profile.generation, profile.revision)
+        .await
+        .unwrap();
+    assert!(
+        catalog
+            .snapshot(profile.profile, profile.generation, profile.revision + 1)
+            .await
+            .is_err()
+    );
+    let target = Worker::open(
+        directory.path().join("device.sqlite"),
+        source.binding.clone(),
+    )
+    .await
+    .unwrap();
+    let device = state(&target).await.device;
+    let mut cursor = 0;
+    for original in &records {
+        let exported = catalog
+            .export_record(source.clone(), cursor)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(exported.record.as_bytes(), original.bytes);
+        cursor = exported.position;
+        target
+            .request(Command::Import {
+                record: exported.record,
+            })
+            .await
+            .unwrap();
+    }
+    assert!(
+        catalog
+            .export_record(source.clone(), cursor)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(state(&target).await.initialized);
+    assert_eq!(state(&target).await.device, device);
+    assert_ne!(device, Uuid::from_u128(600));
+    assert_eq!(state(&target).await.queued, 0);
+    let mut foreign = source.clone();
+    foreign.binding.principal = "drive:other-owner".into();
+    assert!(matches!(
+        catalog.export_record(foreign, 0).await,
+        Err(DiscoveryError::Binding)
+    ));
+    catalog.close().await.unwrap();
+    let catalog = Discovery::open(path, scope()).await.unwrap();
+    assert!(
+        catalog
+            .export_record(source.clone(), 0)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let revision = catalog.state().await.unwrap().revision;
+    catalog.refresh(revision, true).await.unwrap();
+    assert!(catalog.export_record(source, 0).await.is_err());
+    catalog.close().await.unwrap();
+    target.close().await.unwrap();
+    server.finish().await;
+}

@@ -11,6 +11,10 @@ import 'move_feedback.dart';
 import 'preferences.dart';
 import 'google_connection.dart';
 import 'profile_discovery.dart';
+import '../data/profile_settings.dart';
+import '../data/profile_enrollment.dart';
+import '../data/profile_discovery.dart';
+part 'profile_application.dart';
 
 class Workspace extends ChangeNotifier {
   Workspace(
@@ -124,6 +128,17 @@ class Workspace extends ChangeNotifier {
   VoidCallback? retry;
   int _revision = 0, _settingsRevision = 0, limit = 50;
   Future<void> _settingsQueue = Future.value();
+  final Map<String, int> _preferenceFields = {};
+  final Set<String> _unsavedPreferences = {};
+  late final ProfileEnrollmentDevice _profileApplication =
+      WorkspaceProfileApplication(this);
+  ProfileEnrollmentDevice? get profileApplication =>
+      settings is ProfileSettingsStore && repository is ProfileAccountRepository
+      ? _profileApplication
+      : null;
+  bool needsReconnect(String id) =>
+      repository is ProfileAccountRepository &&
+      (repository as ProfileAccountRepository).reconnectAccounts.contains(id);
   Timer? _searchTimer;
   Timer? _syncTimer;
   int _pageRevision = 0, total = 0, _unread = 0;
@@ -520,13 +535,34 @@ class Workspace extends ChangeNotifier {
   }
 
   Future<void> savePreferences(Preferences value) async {
+    final before = preferences.profileSettings(),
+        after = value.profileSettings();
+    final changes = <String, Object?>{};
+    for (final key in before.keys) {
+      if (before[key] != after[key]) {
+        _unsavedPreferences.add(key);
+        _preferenceFields[key] = (_preferenceFields[key] ?? 0) + 1;
+      }
+    }
+    for (final key in _unsavedPreferences) {
+      changes[key] = after[key];
+    }
     preferences = value;
+    final generations = Map<String, int>.of(_preferenceFields);
     final revision = ++_settingsRevision;
     savingPreferences = true;
     _changed();
     _settingsQueue = _settingsQueue.then((_) async {
       try {
-        await settings.write(value);
+        if (settings case final ProfileSettingsStore profileStore) {
+          final saved = await profileStore.saveLocal(changes);
+          _mergeProfilePreferences(saved, generations);
+        } else {
+          await settings.write(value);
+        }
+        _unsavedPreferences.removeWhere(
+          (key) => (_preferenceFields[key] ?? 0) == (generations[key] ?? 0),
+        );
         if (revision == _settingsRevision) {
           notice = 'Preferences saved';
           error = null;

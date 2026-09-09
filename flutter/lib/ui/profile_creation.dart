@@ -243,7 +243,7 @@ class _ProfileCreationScreenState extends State<ProfileCreationScreen> {
                 ),
               const SizedBox(height: 16),
               const Text(
-                'Applying a saved profile and continuous sync are not available yet. Publication does not connect or change your local accounts.',
+                'Open a saved profile in Profiles and sync to apply its reviewed accounts and preferences. Continuous background sync is not available yet.',
               ),
               const SizedBox(height: 24),
             ],

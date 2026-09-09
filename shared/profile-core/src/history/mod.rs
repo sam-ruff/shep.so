@@ -1,7 +1,9 @@
 //! Device-local causal history. The caller must authenticate the provider and
 //! verify cloud file ownership before importing records. This journal does not
 //! authenticate Google, apply accounts, or acknowledge a network upload itself.
+mod export;
 mod merge;
+pub use export::Record;
 mod schema;
 mod worker;
 pub use worker::Worker;
@@ -134,6 +136,10 @@ pub enum Command {
         target: String,
         operation: Uuid,
     },
+    ExportRecord {
+        expected_revision: u64,
+        after: u64,
+    },
     NextUpload,
     Reserve {
         operation: Uuid,
@@ -199,6 +205,7 @@ pub enum Reply {
     Versions(Vec<Version>),
     Value(Change),
     Upload(Option<Upload>),
+    Record(Option<Record>),
 }
 
 /// Synchronous implementation for an owning background thread, never a UI
@@ -261,6 +268,12 @@ impl Journal {
             Command::Value { target, operation } => {
                 self.value(&target, operation).map(Reply::Value)
             }
+            Command::ExportRecord {
+                expected_revision,
+                after,
+            } => self
+                .export_record(expected_revision, after)
+                .map(Reply::Record),
             Command::NextUpload => self.next_upload().map(Reply::Upload),
             Command::Reserve { operation, file_id } => {
                 self.reserve(operation, &file_id).map(Reply::State)

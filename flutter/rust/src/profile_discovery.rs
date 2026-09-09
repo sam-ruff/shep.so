@@ -1,6 +1,7 @@
 //! Device-local discovery sessions. Only the verified Google transport can open
 //! a production session; reviewed publication retains that same identity.
 pub(crate) mod creation;
+pub(crate) mod enrollment;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use secrecy::SecretString;
@@ -238,6 +239,29 @@ impl Runtime {
             command,
         )
         .await;
+        self.session(id).await?;
+        result
+    }
+    pub async fn enrollment(
+        &self,
+        profile: &crate::api::MobileProfile,
+        id: Uuid,
+        command: enrollment::Command,
+    ) -> Result<Value> {
+        let session = self.session(id).await?;
+        let _permit = if command.reads() {
+            None
+        } else {
+            Some(
+                session
+                    .advancing
+                    .clone()
+                    .try_acquire_owned()
+                    .context("Profile work is busy. Retry shortly.")?,
+            )
+        };
+        let result =
+            enrollment::run(profile, session.remote.scope(), &session.catalog, command).await;
         self.session(id).await?;
         result
     }

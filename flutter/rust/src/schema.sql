@@ -53,5 +53,10 @@ CREATE INDEX IF NOT EXISTS profile_publication_scope ON profile_publications(sco
 CREATE INDEX IF NOT EXISTS profile_publication_recent ON profile_publications(scope,seq);
 CREATE TABLE IF NOT EXISTS profile_publication_rows(publication TEXT NOT NULL REFERENCES profile_publications(id),position INTEGER NOT NULL,operation TEXT NOT NULL UNIQUE,changes TEXT NOT NULL,request TEXT,local_id TEXT,shared_id TEXT,account TEXT,PRIMARY KEY(publication,position));
 CREATE TABLE IF NOT EXISTS profile_account_mappings(profile TEXT NOT NULL,local_id TEXT NOT NULL,shared_id TEXT NOT NULL,PRIMARY KEY(profile,shared_id),UNIQUE(profile,local_id));
-PRAGMA user_version=10;
+CREATE TABLE IF NOT EXISTS profile_enrollments(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,scope TEXT NOT NULL,source TEXT NOT NULL,baseline TEXT NOT NULL,phase TEXT NOT NULL,review TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS profile_enrollment_recent ON profile_enrollments(scope,seq);
+CREATE TABLE IF NOT EXISTS profile_enrollment_fields(enrollment TEXT NOT NULL REFERENCES profile_enrollments(id),target TEXT NOT NULL,change TEXT,error TEXT,PRIMARY KEY(enrollment,target));
+CREATE TABLE IF NOT EXISTS profile_enrollment_rows(enrollment TEXT NOT NULL REFERENCES profile_enrollments(id),position INTEGER NOT NULL,target TEXT NOT NULL,kind TEXT NOT NULL,details TEXT NOT NULL,choice TEXT NOT NULL,receipt TEXT,PRIMARY KEY(enrollment,position),UNIQUE(enrollment,target));
+CREATE TABLE IF NOT EXISTS profile_reconnect(account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,reason TEXT NOT NULL);
+PRAGMA user_version=11;
 COMMIT;

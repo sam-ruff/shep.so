@@ -134,27 +134,35 @@ pub(crate) fn activate(db: &mut Connection, slot: &str) -> Result<()> {
         "UPDATE credential_slots SET state='active',settings=NULL,expected=NULL WHERE slot=?1",
         [slot],
     )?;
+    tx.execute("DELETE FROM profile_reconnect WHERE account_id=?", [&id])?;
     tx.commit().context("Could not activate the saved connection. The previous connection is preserved; retry reconnecting.")?;
     Ok(())
 }
 pub(crate) fn target(db: &Connection, account: Account) -> Result<String> {
+    require_connected(db, &account.id)?;
     let current = crate::operations::stored_account(db, &account.id)?;
     anyhow::ensure!(
         without_sent(current) == without_sent(account.clone()),
         "This account changed. Reopen Preferences and refresh before retrying."
     );
+    stored_slot(db, &account.id)
+}
+/// Read the opaque pointer for local removal review. This does not authorize
+/// credential access; provider paths must use target/check_binding instead.
+pub(crate) fn stored_slot(db: &Connection, id: &str) -> Result<String> {
     Ok(db
         .query_row(
-            "SELECT slot FROM account_credentials WHERE account_id=?1",
-            [&account.id],
+            "SELECT slot FROM account_credentials WHERE account_id=?",
+            [id],
             |r| r.get(0),
         )
         .optional()?
-        .unwrap_or(account.id))
+        .unwrap_or_else(|| id.to_owned()))
 }
 /// Call only while holding the account operation lock, before provider work.
 pub(crate) fn check_binding(db: &Connection, id: &str, slot: Option<&str>) -> Result<()> {
     crate::accounts::available(db, id)?;
+    require_connected(db, id)?;
     let current: Option<String> = db
         .query_row(
             "SELECT slot FROM account_credentials WHERE account_id=?1",
@@ -168,6 +176,18 @@ pub(crate) fn check_binding(db: &Connection, id: &str, slot: Option<&str>) -> Re
             None => slot.is_none_or(|s| s == id),
         },
         "The account credentials changed. Refresh or reopen the action before retrying; no provider operation was started."
+    );
+    Ok(())
+}
+fn require_connected(db: &Connection, id: &str) -> Result<()> {
+    let reconnect: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM profile_reconnect WHERE account_id=?)",
+        [id],
+        |r| r.get(0),
+    )?;
+    anyhow::ensure!(
+        !reconnect,
+        "This profile account needs its own passwords on this device. Open Preferences and reconnect it."
     );
     Ok(())
 }

@@ -75,6 +75,23 @@ impl Discovery {
         self.call(move |catalog| catalog.profiles(after.as_deref()))
             .await
     }
+    pub async fn snapshot(
+        &self,
+        profile: Uuid,
+        generation: Uuid,
+        expected_revision: u64,
+    ) -> Result<Snapshot> {
+        self.call(move |catalog| catalog.snapshot(profile, generation, expected_revision))
+            .await
+    }
+    pub async fn export_record(
+        &self,
+        source: Snapshot,
+        after: u64,
+    ) -> Result<Option<history::Record>> {
+        self.call(move |catalog| catalog.export_record(source, after))
+            .await
+    }
     /// Restarting retains known file identities and remote history. A changed
     /// revision fences the previous HTTP response without waiting for that read.
     pub async fn refresh(&self, expected_revision: u64, full: bool) -> Result<State> {

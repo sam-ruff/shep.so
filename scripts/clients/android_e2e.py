@@ -164,15 +164,15 @@ def formatted(device, flutter, env):
                 try:fixture.wait(timeout=5)
                 except subprocess.TimeoutExpired:fixture.kill();fixture.wait()
 
-def appium(device,flutter,env,formatted_reader=False,discovery_reader=False,creation_reader=False):
+def appium(device,flutter,env,formatted_reader=False,discovery_reader=False,creation_reader=False,enrollment_reader=False):
     if formatted_reader:
         run('android-formatted-fixture-check',[sys.executable,str(ROOT/'scripts/clients/generate_html_fixture.py'),'--check'],env=env)
     # Integration tests replace the APK; rebuild the review entry before Appium.
-    run('android-preview-build', [flutter,'build','apk','--debug','--flavor','preview','--target','test/profile_creation_main.dart' if creation_reader else 'test/profile_discovery_main.dart' if discovery_reader else 'test/formatted_main.dart' if formatted_reader else 'test/preview_main.dart'], ROOT/'flutter')
+    run('android-preview-build', [flutter,'build','apk','--debug','--flavor','preview','--target','test/profile_enrollment_main.dart' if enrollment_reader else 'test/profile_creation_main.dart' if creation_reader else 'test/profile_discovery_main.dart' if discovery_reader else 'test/formatted_main.dart' if formatted_reader else 'test/preview_main.dart'], ROOT/'flutter')
     run('android-install', ['adb','-s',device,'install','-r',str(ROOT/'flutter/build/app/outputs/flutter-apk/app-preview-debug.apk')])
-    native_automation(device,env,formatted_reader,discovery_reader,creation_reader)
+    native_automation(device,env,formatted_reader,discovery_reader,creation_reader,enrollment_reader)
 
-def native_automation(device,env,formatted_reader=False,discovery_reader=False,creation_reader=False):
+def native_automation(device,env,formatted_reader=False,discovery_reader=False,creation_reader=False,enrollment_reader=False):
     manifest=ROOT/'artifacts/appium/node_modules/.cache/appium/extensions.yaml'
     if not manifest.exists():
         run('appium-driver-install',['appium','driver','install','uiautomator2@4.2.9'],env=env)
@@ -190,7 +190,7 @@ def native_automation(device,env,formatted_reader=False,discovery_reader=False,c
                 except (OSError,ValueError,KeyError): pass
                 if process.poll() is not None or time.monotonic()>deadline: raise RuntimeError('Appium did not start; see its log')
                 time.sleep(.2)
-            run('android-creation-appium' if creation_reader else 'android-discovery-appium' if discovery_reader else 'android-formatted-appium' if formatted_reader else 'android-appium-e2e',['node','flutter/e2e/profile_creation.mjs','native'] if creation_reader else ['node','flutter/e2e/profile_discovery.mjs','native'] if discovery_reader else ['node','flutter/e2e/formatted_native.mjs'] if formatted_reader else ['npm','--prefix','flutter/e2e','run','native'],env=env)
+            run('android-enrollment-appium' if enrollment_reader else 'android-creation-appium' if creation_reader else 'android-discovery-appium' if discovery_reader else 'android-formatted-appium' if formatted_reader else 'android-appium-e2e',['node','flutter/e2e/profile_enrollment.mjs','native'] if enrollment_reader else ['node','flutter/e2e/profile_creation.mjs','native'] if creation_reader else ['node','flutter/e2e/profile_discovery.mjs','native'] if discovery_reader else ['node','flutter/e2e/formatted_native.mjs'] if formatted_reader else ['npm','--prefix','flutter/e2e','run','native'],env=env)
         finally:
             process.terminate()
             try: process.wait(timeout=10)
@@ -228,7 +228,15 @@ def creation(device, flutter, env):
     if not report.exists() or json.loads(report.read_text()).get('profile_creation') != ['creation-review-retry-pages-appearance', 'creation-pause-browse-resume']:
         raise RuntimeError('Profile publication controls did not report completion; an interrupted driver is not a pass')
 
-def main(device, flutter='flutter', compose_only=False, outbox_only=False, incoming_only=False, appium_only=False, formatted_only=False, forward_only=False, print_only=False, google_only=False, profiles_only=False, discovery_only=False, creation_only=False):
+def enrollment(device, flutter, env):
+    test_env = env.copy(); test_env['SHEP_NATIVE_REPORT'] = 'integration-enrollment-result'
+    report = ROOT/'artifacts/flutter/native/integration-enrollment-result.json'
+    report.unlink(missing_ok=True)
+    run('android-enrollment-integration', [flutter, 'drive', '--driver', 'test_driver/native_driver.dart', '--target', 'integration_test/profile_enrollment_android_test.dart', '-d', device, '--flavor', 'preview'], ROOT/'flutter', env=test_env)
+    if not report.exists() or json.loads(report.read_text()).get('profile_enrollment') != ['enrollment-review-retry-reconnect', 'enrollment-pause-browse-resume']:
+        raise RuntimeError('Profile enrollment controls did not report completion; an interrupted driver is not a pass')
+
+def main(device, flutter='flutter', compose_only=False, outbox_only=False, incoming_only=False, appium_only=False, formatted_only=False, forward_only=False, print_only=False, google_only=False, profiles_only=False, discovery_only=False, creation_only=False, enrollment_only=False):
     if not device.startswith('emulator-') or not device.removeprefix('emulator-').isdigit():
         raise ValueError('Only an explicit Android emulator is allowed; personal devices are refused')
     avd = subprocess.check_output(['adb', '-s', device, 'emu', 'avd', 'name'], text=True).splitlines()[0]
@@ -237,6 +245,11 @@ def main(device, flutter='flutter', compose_only=False, outbox_only=False, incom
     env = os.environ.copy()
     env['ANDROID_SERIAL'] = device
     env['APPIUM_HOME'] = str(ROOT / 'artifacts/appium')
+    if enrollment_only:
+        enrollment(device, flutter, env)
+        appium(device, flutter, env, enrollment_reader=True)
+        print('Android enrollment controls passed with isolated provider fixtures; live Google remains separate.')
+        return
     if creation_only:
         creation(device, flutter, env)
         appium(device,flutter,env,creation_reader=True)
@@ -292,6 +305,8 @@ def main(device, flutter='flutter', compose_only=False, outbox_only=False, incom
     appium(device,flutter,env,discovery_reader=True)
     creation(device,flutter,env)
     appium(device,flutter,env,creation_reader=True)
+    enrollment(device,flutter,env)
+    appium(device,flutter,env,enrollment_reader=True)
     compose(device,flutter,env)
     forward(device,flutter,env)
     printing(device,flutter,env)
@@ -321,6 +336,7 @@ if __name__=='__main__':
     parser.add_argument('--profiles-only',action='store_true',help='Run native two-device profile history, conflict and restart integration')
     parser.add_argument('--discovery-only',action='store_true',help='Run native profile discovery retry, paging and pause controls')
     parser.add_argument('--creation-only',action='store_true',help='Run native profile publication review, retry and pause controls')
+    parser.add_argument('--enrollment-only',action='store_true',help='Run native profile review, application, retry and reconnect controls')
     args=parser.parse_args()
-    if sum([args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only,args.forward_only,args.print_only,args.google_only,args.profiles_only,args.discovery_only,args.creation_only])>1: parser.error('Choose only one targeted scenario')
-    main(args.device,args.flutter,args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only,args.forward_only,args.print_only,args.google_only,args.profiles_only,args.discovery_only,args.creation_only)
+    if sum([args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only,args.forward_only,args.print_only,args.google_only,args.profiles_only,args.discovery_only,args.creation_only,args.enrollment_only])>1: parser.error('Choose only one targeted scenario')
+    main(args.device,args.flutter,args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only,args.forward_only,args.print_only,args.google_only,args.profiles_only,args.discovery_only,args.creation_only,args.enrollment_only)
