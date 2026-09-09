@@ -2289,6 +2289,41 @@ class NativeFlows(unittest.TestCase):
                        check("settings_group", "Profiles and sync"),
                        check("profile_sync.loaded", True), wait(100))
 
+    def duplicate_address_account_setup(self):
+        started = self.mcp.call("desktop.start", profile_sync="existing-connections", profile_login=True, empty_profile=True)
+        print(f"Duplicate-address sidebar evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("account_count", 1), check("profile_sync.working", False))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
+                       click(375, 665), check("profile_sync.account_reviews.0.name", "Cloud account"), check("profile_sync.working", False),
+                       {"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":8}, wait(100),
+                       click(368, 698), check("account_count", 2), check("profile_sync.account_reviews", []),
+                       check("profile_sync.working", False), key("ctrl+1"), check("tab", "Mail"),
+                       check("sidebar_labels", "Cloud account (previous setup)", "contains"),
+                       check("sidebar_labels", "Cloud account", "contains"), wait(100))
+        return started
+
+    def test_sidebar_duplicate_addresses_distinguish_saved_names_and_controls(self):
+        self.duplicate_address_account_setup()
+        self.mcp.batch(shot("duplicate-address-account-headings"), click(185, 278), wait(100), shot("duplicate-address-expanded-inboxes"),
+                       click(110, 335), check("account", None, "ne"), check("folder", "INBOX"),
+                       check("sidebar_focus", True), check("sidebar_index", 1))
+        previous = self.mcp.call("desktop.state")["account"]
+        self.mcp.batch(click(110, 393), check("account", previous, "ne"), check("sidebar_index", 2))
+        current = self.mcp.call("desktop.state")["account"]
+        self.mcp.batch(key("Up"), check("sidebar_index", 1), check("account", previous),
+                       key("Down"), check("sidebar_index", 2), check("account", current),
+                       click(110, 626), check("collapsed_accounts", [previous]), check("sidebar_index", 7),
+                       click(110, 626), check("collapsed_accounts", []),
+                       key("Down"), check("sidebar_index", 8), key("Return"), check("collapsed_accounts", [current]),
+                       key("Return"), check("collapsed_accounts", []), key("Up"), check("sidebar_index", 7),
+                       key("Return"), check("collapsed_accounts", [previous]), shot("duplicate-address-keyboard-collapse"),
+                       key("Return"), check("collapsed_accounts", []),
+                       drag(222, 500, 100, 500), check("sidebar_width", 160), check("preferences_saved", True),
+                       check("saved_sidebar_width", 160), wait(100), shot("duplicate-address-narrow-sidebar"),
+                       {"type": "resize", "width": 900, "height": 640}, check("window_size", [900, 640]),
+                       check("sidebar_width", 160), wait(150), shot("duplicate-address-compact"))
+
     def test_profile_account_review_native_adds_shared_connection_and_preserves_previous_setup(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-connections", profile_login=True, empty_profile=True)
         print(f"Account connection review evidence: {started['artifacts']}", flush=True)

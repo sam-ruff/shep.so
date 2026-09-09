@@ -7,6 +7,7 @@ use iced::{
 
 pub(super) struct SidebarItem {
     pub label: String,
+    account_email: Option<String>,
     pub icon: &'static str,
     pub action: Message,
     pub active: bool,
@@ -86,8 +87,16 @@ impl App {
     }
     pub(super) fn sidebar_items(&self) -> Vec<SidebarItem> {
         let mut items = Vec::new();
+        let mut email_counts = HashMap::<&str, usize>::new();
+        for account in &self.workspace.accounts {
+            *email_counts.entry(&account.email).or_default() += 1;
+        }
+        let duplicate = |account: &Account| {
+            email_counts[account.email.as_str()] > 1 && !account.name.trim().is_empty()
+        };
         if self.preferences.unified_inbox {
             items.push(SidebarItem {
+                account_email: None,
                 label: self.inbox_label(None, "Inbox"),
                 icon: "inbox",
                 action: Message::AccountFolderUnified,
@@ -98,7 +107,15 @@ impl App {
             if self.inbox_expanded {
                 for account in &self.workspace.accounts {
                     items.push(SidebarItem {
-                        label: self.inbox_label(Some(&account.id), &account.email),
+                        account_email: duplicate(account).then(|| account.email.clone()),
+                        label: self.inbox_label(
+                            Some(&account.id),
+                            if duplicate(account) {
+                                &account.name
+                            } else {
+                                &account.email
+                            },
+                        ),
                         icon: "mail",
                         action: Message::AccountFolder(account.id.clone(), "INBOX".into()),
                         active: self.query.folder == "INBOX"
@@ -116,6 +133,7 @@ impl App {
             ("Trash", "trash", "Trash"),
         ] {
             items.push(SidebarItem {
+                account_email: None,
                 label: label.into(),
                 icon,
                 action: if folder.is_empty() {
@@ -136,6 +154,7 @@ impl App {
         }
         if self.workspace.outgoing_pending > 0 {
             items.push(SidebarItem {
+                account_email: None,
                 label: format!("Outbox · {}", self.workspace.outgoing_pending),
                 icon: "send",
                 action: Message::OpenOutbox,
@@ -146,6 +165,7 @@ impl App {
         }
         if !self.folder_controls.jobs.is_empty() {
             items.push(SidebarItem {
+                account_email: None,
                 label: "Folder changes".into(),
                 icon: "clock",
                 action: Message::Folders(folder_controls::Message::History(0)),
@@ -157,6 +177,7 @@ impl App {
         let drafts = self.draft_labels();
         if !drafts.is_empty() {
             items.push(SidebarItem {
+                account_email: None,
                 label: format!("Drafts ({})", drafts.len()),
                 icon: "file",
                 action: Message::ToggleDrafts,
@@ -167,6 +188,7 @@ impl App {
             if !self.preferences.collapsed_drafts {
                 for (id, subject) in drafts {
                     items.push(SidebarItem {
+                        account_email: None,
                         label: if subject.is_empty() {
                             "Untitled draft".into()
                         } else {
@@ -183,7 +205,12 @@ impl App {
         }
         for account in &self.workspace.accounts {
             items.push(SidebarItem {
-                label: account.email.clone(),
+                account_email: duplicate(account).then(|| account.email.clone()),
+                label: if duplicate(account) {
+                    account.name.clone()
+                } else {
+                    account.email.clone()
+                },
                 icon: "mail",
                 action: Message::ToggleAccountFolders(account.id.clone()),
                 active: false,
@@ -208,6 +235,7 @@ impl App {
                     continue;
                 }
                 items.push(SidebarItem {
+                    account_email: None,
                     label: if folder == "INBOX" {
                         self.inbox_label(Some(&account.id), "Inbox")
                     } else {
@@ -288,15 +316,26 @@ impl App {
                 content = content.push(space().height(17));
             }
             let focus = self.sidebar_focus && self.sidebar_index == index;
-            let mut label = row![
-                icon(item.icon, 18.),
-                super::ellipsis::Ellipsis::new(
-                    item.label.clone(),
-                    if item.section { 11. } else { 12. }
-                )
-            ]
-            .spacing(9)
-            .align_y(Alignment::Center);
+            let label_size = if item.section { 11. } else { 12. };
+            let title: Element<'_, Message> = if let Some(email) = &item.account_email {
+                // The saved name can contain the only distinction between two
+                // endpoints. Wrap it so a suffix such as "(previous setup)"
+                // remains visible even at the minimum sidebar width.
+                column![
+                    text(item.label.clone())
+                        .size(label_size)
+                        .width(Length::Fill),
+                    super::ellipsis::Ellipsis::new(email.clone(), 11.)
+                ]
+                .spacing(3)
+                .width(Length::Fill)
+                .into()
+            } else {
+                super::ellipsis::Ellipsis::new(item.label.clone(), label_size).into()
+            };
+            let mut label = row![icon(item.icon, 18.), title]
+                .spacing(9)
+                .align_y(Alignment::Center);
             if self.preferences.unified_inbox && index == 0 {
                 label = label.push(
                     button(icon(
