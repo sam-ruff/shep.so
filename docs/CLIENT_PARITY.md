@@ -98,3 +98,12 @@ preference intent. Matching accounts retain mail/drafts/credentials; a different
 connection needs explicit selection as a separate account. Browser enrollment and
 credential handover remain gaps. Linux control, injected keychain and scripted
 Drive evidence do not establish live Google, Apple or continuous reconciliation.
+
+
+Desktop profile reviews retain their current page after selection changes or
+recoverable failures. Native large-list scenarios cover discovery's 50/1 profiles,
+publication's 50/25 accounts and enrollment's 50/26 account/settings rows, including
+second-page choices and guarded application. Flutter already reloads the selected
+enrollment page after a choice; its saved mobile paging controls remain the
+counterpart. Separate browser enrollment is still open. See the completion log
+for executed results and shipping.

@@ -463,6 +463,25 @@ async fn independent_offline_history_is_retained_and_large_review_pages_keep_uns
         .await
         .unwrap();
     assert_eq!(o.enrollment.rows.len(), 28);
+    let position = o.enrollment.rows[0].position;
+    let changed = session
+        .run_enrollment(
+            &db,
+            Command::Choose {
+                id: review.id,
+                position,
+                selected: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(changed.error.is_none());
+    assert_eq!(
+        changed.enrollment.after, 50,
+        "Choosing a later row must keep that page visible"
+    );
+    assert_eq!(changed.enrollment.rows[0].position, position);
+    assert!(!changed.enrollment.rows[0].selected);
     let unsupported = o
         .enrollment
         .rows
@@ -482,6 +501,10 @@ async fn independent_offline_history_is_retained_and_large_review_pages_keep_uns
         .await
         .unwrap();
     assert!(o.error.is_some());
+    assert_eq!(
+        o.enrollment.after, 50,
+        "A refused choice must retain the current page"
+    );
     let history = Worker::open(
         root.path()
             .join("discovery/histories")

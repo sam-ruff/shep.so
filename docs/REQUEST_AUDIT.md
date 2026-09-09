@@ -645,3 +645,12 @@ R02/R49/R75/desktop-main:R92 shipping: desktop enrollment [`8f969cd`](https://gi
 is pushed and remotely verified. Normal hooks pass 470 Rust tests (two personal
 live checks ignored), alongside 125 native flows, 41 Python checks, 37 parity
 contracts, production compilation and strict docs. All 40 active requests remain.
+
+
+R02/R49/R75/desktop-main:R92/R63/R73 continuation: desktop enrollment choices and
+recoverable failures retain the current review page. Native large-list controls
+cover 51 profiles and 75 accounts, second-page exclusion, guarded application,
+connection details and publication cancellation. R63's badge check now uses the
+current unread count after read-on-leave, preserving actual private-bus controls.
+Final checks and shipping are in [completion](COMPLETION.md). No active request
+is removed; continuous reconciliation and the other parity gaps remain open.

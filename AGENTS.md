@@ -48,7 +48,8 @@ Desktop enrollment lives in `src/profiles/enrollment/`, `src/store/profile_enrol
 and `src/ui/profiles/enrollment.rs`; see [the contract](docs/agents/PROFILE_DESKTOP.md).
 Keep original records in the independent publication/history owner. Reviews and
 application receipts belong to the existing mail Store connection, through its
-background worker. Preserve 50-row paging, source/history revision checks, stable
+background worker. Preserve 50-row paging and the displayed enrollment page after row choices or
+recoverable failures. Keep source/history revision checks, stable
 mappings and newer account/removal intent. Imported accounts retain a durable
 reconnect guard through both explicit password writes and checked activation;
 provider/backup/restore paths must never bypass it. Local cached actions remain usable.

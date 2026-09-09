@@ -6,9 +6,15 @@ impl Engine {
         let mut session: Option<Session> = None;
         #[cfg(feature = "test-support")]
         let fixture = if self.demo && std::env::args().any(|arg| arg == "--profile-discovery") {
-            crate::profiles::fixture::Fixture::start(2, true, Duration::from_millis(600))
-                .await
-                .ok()
+            if std::env::args().any(|arg| arg == "--profile-pages") {
+                crate::profiles::fixture::Fixture::start_paged(true, Duration::from_millis(600))
+                    .await
+                    .ok()
+            } else {
+                crate::profiles::fixture::Fixture::start(2, true, Duration::from_millis(600))
+                    .await
+                    .ok()
+            }
         } else {
             None
         };

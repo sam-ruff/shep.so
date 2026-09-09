@@ -241,10 +241,10 @@ impl Session {
         command: enrollment::Command,
     ) -> Result<Observation> {
         use crate::store::profile_enrollment as sql;
-        let after = if let enrollment::Command::Rows { after, .. } = &command {
-            *after
-        } else {
-            0
+        let after = match &command {
+            enrollment::Command::Rows { after, .. } => *after,
+            enrollment::Command::Current | enrollment::Command::Prepare { .. } => 0,
+            _ => self.enrollment.after,
         };
         let prepare = if let enrollment::Command::Prepare { id, .. } = &command {
             Some(*id)
@@ -276,7 +276,14 @@ impl Session {
         {
             self.enrollment.next_id = Some(Uuid::new_v4());
         }
-        let after = if error.is_none() { after } else { 0 };
+        let after = if error.is_none() {
+            after
+        } else if review.as_ref().map(|r| r.id) == self.enrollment.review.as_ref().map(|r| r.id) {
+            self.enrollment.after
+        } else {
+            0
+        };
+
         self.enrollment.rows = if let Some(review) = &review {
             let id = review.id;
             store.run(move |db| sql::rows(db, &key, id, after)).await?

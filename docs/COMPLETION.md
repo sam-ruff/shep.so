@@ -2462,3 +2462,55 @@ native functional flows**, 41 Python checks, 37 parity contracts, production
 compilation and strict docs pass as recorded above. The shipping receipt is
 `artifacts/desktop-enrollment-shipping.json`. This completes reviewed initial
 desktop enrollment; the full product goal and all 40 active requests remain open.
+
+
+## Desktop profile pages — 2026-09-09
+
+Changing an enrollment choice on a later page no longer returns the review to
+page one. Recoverable failures retain the page for the same review; opening a new
+review starts at the first page. The 78-row protocol/storage regression failed
+before this fix and passes afterward (`artifacts/logs/profile-pages-before.log`
+and `profile-pages-rust.log`). Skipped new connections say **Not imported**;
+publication guidance now describes the delivered reviewed import.
+
+Three saved native scenarios use a bounded loopback fixture with 51 profiles,
+75 local accounts and 75 offered accounts. Discovery exercises 50/1 profiles in
+light and compact dark. Publication reviews 50/25 accounts, connection details,
+First/More and cancellation without uploading. Enrollment exercises 50/26 rows,
+repeated second-page choices, details and page revisits, then applies 74 chosen
+accounts while excluding one. All 74 imports retain reconnect guards; the chosen
+Dark appearance applies. Original local accounts remain intact.
+
+The full native run passed **127 of 128 flows** in 570.506 seconds. Its only failure
+was the existing badge preference test expecting its initial count of four after
+read-on-leave navigation correctly changed the count to three. The private-bus
+trace confirms 0 → 4 → 0 → 3; the saved screen and mailbox agree. The test now
+checks the current global unread total before re-enabling badges, retaining
+zero/hidden, preference persistence and account-scope assertions. Focused rerun
+and final Rust/shipping results follow below. Logs are
+`artifacts/logs/profile-pages-native-full.log` and `profile-pages-badge-rerun.log`.
+
+Reviewed full-run captures are `0c03527d1547` (discovery), `b35109af89ab`
+(enrollment) and `c5d1ee4520df` (publication); targeted captures include
+`08470e12e865`, `dadd38d66249` and `b63beeeb0ac0`. Retained failed-before captures
+include `5e0f787d867f` (General retained scroll), `5994de8400de` and `d95d3d518d6e`
+(test cursor assumptions), `b63beeeb0ac0` (cancelled reviews remain durable) and
+`b2ed904d168a` (the badge count). No control was forced or deadline relaxed.
+
+The fixture/targeted Rust checks, 42 Python checks, 37 parity contracts and strict
+Zensical build pass. Flutter already retains its selected enrollment page; its
+existing mobile controls remain the counterpart. Separate browser enrollment,
+continuous reconciliation, automatic setup, complete settings/categories,
+protected credentials and live Google/Apple remain open. All 40 active requests
+remain. Performance is deferred on the busy host and its earlier failure remains
+tracked. Quality/release CI stays disabled; no phone reinstall, main merge or VPS
+deployment accompanies this checkpoint.
+
+
+All four badge flows pass in the focused rerun (26.535 seconds), including the
+corrected current-count assertion. Its compact capture `d34cbac780b9` is reviewed.
+Thus all **128 native functional scenarios pass across the full run and focused
+rerun**; this is not a claim that the initial full invocation had no failure.
+The other 127 scenarios already passed on the same production source; only that
+test's stale baseline/navigation checks changed before the rerun. Final mandatory
+Rust hooks and remote shipping are recorded below.

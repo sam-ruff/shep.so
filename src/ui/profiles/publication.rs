@@ -273,7 +273,7 @@ impl App {
                     super::Message::Publication(action),
                 )))
         };
-        let mut body=column![control("Back to profiles",Message::Back,true),muted("Publish account connection details and selected preferences to your private Google Drive app data. Passwords and mail are not included. Continuous synchronization and desktop import are still in development.").size(12)].spacing(12);
+        let mut body=column![control("Back to profiles",Message::Back,true),muted("Publish account connection details and selected preferences to your private Google Drive app data. Passwords and mail are not included. Other devices review the setup before importing it.").size(12)].spacing(12);
         let review = observation.review.as_ref();
         if form.new_form || review.is_none_or(|r| r.phase == PublicationPhase::Cancelled) {
             body = body
