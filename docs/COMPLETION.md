@@ -2665,3 +2665,56 @@ The source worktree was clean after shipping. The final receipt is
 performance measurement is claimed for this increment. All 40 active requests
 remain; next is checked conflict resolution and ongoing Flutter integration,
 followed by the remaining profile/product scope.
+
+
+## Checked desktop preference decisions — 2026-09-09
+
+Desktop preference conflicts now open a durable review with 50-version pages,
+local/shared choices, explicit cancellation and exact saved-decision retry.
+Every version page must be opened before saving. The backend rechecks the local
+field generation, subscription/device/workspace binding and history versions;
+newer or reverted local edits remain pending. A staged decision survives restart
+and cannot be discarded while its result is uncertain. Preferences and the
+completed receipt commit atomically. Cached browsing/cancellation still work
+after Google disconnection; new decisions require the active grant.
+
+The saved native flow passes in **26.282 seconds**. It reviews 51 versions,
+clicks the disabled premature save, cancels/reopens, chooses the last-page Light
+value, reviews 900×640 dark controls, recovers a failed local receipt, then retries
+a committed cloud upload with a lost reply while searching Mail. Reviewed WebP
+captures are in `artifacts/e2e/3804d69ea8da/`; earlier successful save/retry captures
+are in `e5c8e8e23d7d/`. Native fixtures do not access personal Google or mail.
+
+Retained authoring failures: `profile-resolution-native-first.log` used an invalid
+comparison operator; `profile-resolution-native-save.log` exceeded the harness's
+30-wheel-action bound. The corrected saved flow uses existing `gte` and bounded
+real scrolling. `profile-resolution-native-complete.log` clicked a row after
+reopening retained scroll position; its failure capture is
+`16c3948ceb12/failure-23.webp`. The corrected flow scrolls to the actual page
+controls. No forced inputs, state mutations or relaxed deadlines were introduced.
+`profile-resolution-controls-rust.log` retains the initial macro-import compile
+error; `profile-resolution-ui-ordering.log` retains a test wired to the profile
+channel instead of the existing separate preference-save channel. Both fixes pass.
+
+Final surrounding regression checks and verified shipping are recorded below
+when complete. Ongoing Flutter/browser reconciliation, complete settings,
+accounts/categories, automatic setup/restoration, secure credential portability,
+live Google/Apple execution and the full product goal remain open. All 40 active
+requests remain in TODO. No performance budget or CI enablement changed.
+
+
+Final decision checks pass: **54 profile Rust checks**, **44 Python checks** and
+**37 parity contracts**, plus production compilation and strict Zensical. The
+independent-device runner regression now resolves a conflict through the review,
+uploads it via the loopback Drive transport and verifies the other enrolled
+device converges. The surrounding **23 native flows pass in 219.995 seconds**.
+
+A new ordering regression reproduced Back being undone by a late review-page
+reply (`profile-resolution-navigation-before.log`). Review visibility now follows
+explicit navigation; replies update cached review data without reopening it.
+The regression passes. All **three final affected native flows pass in 64.050
+seconds**: conflict decisions, reviewed publication and ongoing background sync.
+Final conflict Back/reopen, compact footer and lost-receipt captures in
+`artifacts/e2e/b5255ffe7d09/` were reviewed. Normal commit hooks and remote shipping
+are the remaining checkpoint steps. The full native suite and performance gates
+were not rerun; their earlier limits remain active.

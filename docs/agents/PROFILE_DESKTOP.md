@@ -142,5 +142,6 @@ copies incremental original records and applies supported remote preferences wit
 atomic receipts. Completed publication/enrollment reviews offer explicit paused
 sync choices, followed by master/field controls and authenticated background work
 outside Preferences. Storage/provider/native controls are verified in completion.
-Initial enrollment never silently enables ongoing sync. Checked conflict resolution,
-complete categories/settings/accounts and Flutter/browser equivalents remain open.
+Initial enrollment never silently enables ongoing sync. Checked preference decisions
+now have durable paged reviews and exact retry after a lost receipt. Complete
+categories/settings/accounts and Flutter/browser equivalents remain open.

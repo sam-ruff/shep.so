@@ -7,7 +7,7 @@ and initial enrollment. Complete account/settings sharing remains open. This doc
 contract to implement and verify in Rust desktop and Flutter, with browser parity
 tracked separately. Keep the linked entry first in the root TODO until delivery.
 
-See [desktop profiles](PROFILE_DESKTOP.md), [Flutter enrollment](PROFILE_ENROLLMENT.md) and the [desktop reconciliation engine](PROFILE_RECONCILIATION.md) for the current boundaries. Desktop scheduling and controls now have protocol/storage/native coverage. Checked conflict resolution, complete categories/settings/accounts and Flutter/browser ongoing reconciliation remain open.
+See [desktop profiles](PROFILE_DESKTOP.md), [Flutter enrollment](PROFILE_ENROLLMENT.md) and the [desktop reconciliation engine](PROFILE_RECONCILIATION.md) for the current boundaries. Desktop scheduling and controls now have protocol/storage/native coverage. Checked desktop preference decisions now have paged native controls and durable recovery; complete categories/settings/accounts and Flutter/browser ongoing reconciliation remain open.
 
 ## Existing code to reuse
 

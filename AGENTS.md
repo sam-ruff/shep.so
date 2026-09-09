@@ -58,7 +58,7 @@ field intent, including reverted edits. Never replace these patches with an old
 whole-preferences snapshot. Keep exact save ordering, canonical-value effects and
 newer UI-edit protection alongside the native enrollment and publication flows.
 
-Desktop ongoing reconciliation is being connected through `src/profiles/sync/`
+Desktop ongoing reconciliation is connected through `src/profiles/sync/`
 and `src/store/profile_sync.rs`; see [its current boundary](docs/agents/PROFILE_RECONCILIATION.md).
 Keep the exact staged local request until its own history receipt is saved.
 An idempotent history Edit reply reports current history, not the original field
@@ -69,8 +69,13 @@ history identity, immutable upload reservations, atomic preferences/receipt
 transaction and newer field generations. Pausing cannot authorize a workspace
 switch. The runner alone does not authorize background work: its engine caller
 must serialize history ownership with publication/enrollment, check the active
-Google grant and own provider capacity/lifecycle locks. These controls remain
-unfinished until connected and verified through the saved native harness.
+Google grant and own provider capacity/lifecycle locks. Checked preference conflict decisions use the existing history owner plus durable
+mail-store reviews. Freeze and page exact versions, recheck local intent before
+staging, and replay the same staged request after a lost receipt. Never retire an
+uncertain pending edit without its exact History.Edit result. Cached review and
+cancellation stay available when Google disconnects; accepted decisions cannot be
+cancelled as if they had never been recorded. Preserve the saved native conflict
+scenario and atomic receipt/newer-intent/restart tests.
 
 ## Request tracking — required every turn
 

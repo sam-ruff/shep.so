@@ -485,7 +485,7 @@ impl App {
     pub(super) fn profile_observation(&self) -> serde_json::Value {
         serde_json::json!({"pending":self.profiles.pending.is_some(), "running":self.profiles.running,
             "enrollment_running":self.profiles.enrollment.running,"enrollment_visible":self.profiles.enrollment.visible,"publication_running":self.profiles.publication.running, "publication_visible":self.publication_visible(), "loaded":self.profiles.loaded, "namespace":self.profiles.namespace,
-            "sync":*self.profiles.sync.observation,"sync_visible":self.profiles.sync.visible,"sync_master":self.profiles.sync.master,"sync_fields":self.profiles.sync.fields,"sync_error":self.profiles.sync.error, "error":self.profiles.error, "discovery":*self.profiles.observation})
+            "sync_review":self.profiles.sync.review,"sync_review_open":self.profiles.sync.review_open,"sync_choice":self.profiles.sync.choice,"sync":*self.profiles.sync.observation,"sync_visible":self.profiles.sync.visible,"sync_master":self.profiles.sync.master,"sync_fields":self.profiles.sync.fields,"sync_error":self.profiles.sync.error, "error":self.profiles.error, "discovery":*self.profiles.observation})
     }
 }
 

@@ -20,6 +20,24 @@ pub enum Source {
 #[derive(Clone, Debug)]
 pub enum Command {
     Current,
+    Review {
+        profile: String,
+        key: SettingKey,
+    },
+    ReviewPage {
+        profile: String,
+        id: Uuid,
+        after: Option<Uuid>,
+    },
+    Resolve {
+        profile: String,
+        id: Uuid,
+        choice: Option<super::resolution::Choice>,
+    },
+    CancelReview {
+        profile: String,
+        id: Uuid,
+    },
     Prepare(Source),
     Enable {
         profile: String,
@@ -39,6 +57,9 @@ pub enum Command {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Observation {
     pub profile: Option<String>,
+    pub review: Option<super::resolution::Page>,
+    #[serde(skip)]
+    pub applied: Option<std::sync::Arc<crate::store::PreferenceSnapshot>>,
     pub subscription: Option<Subscription>,
     pub fields: Vec<Field>,
     pub phase: Option<String>,

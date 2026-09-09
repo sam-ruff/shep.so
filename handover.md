@@ -49,6 +49,17 @@ store submissions in TODO.
 
 ## Current continuation
 
+Current continuation adds checked desktop preference decisions: durable 50-row
+reviews, local/shared choices, cancellation and exact retry after a lost receipt.
+The 23 surrounding native flows pass (219.995 seconds), and all three final
+affected flows pass (64.050 seconds). The conflict flow includes compact dark
+pages, Back/reopen and light recovery while searching Mail; final captures in
+`artifacts/e2e/b5255ffe7d09/` were reviewed. The 54 profile Rust checks, 44 Python
+checks and 37 parity contracts pass. Hook-checked shipping is being completed;
+read the newest completion entry before proceeding. Next continue ongoing Flutter
+reconciliation and its native/Playwright controls, then all fields/categories,
+account lifecycle, automatic setup/restoration and authenticated interchange.
+
 Connected desktop code [`13e056d`](https://github.com/sam-ruff/shep.so/commit/13e056dcc836fbf41e418de220085540fe174dbc) is pushed and remotely verified:
 completed publication/enrollment offers **Sync these preferences**, explicit
 master/field controls, background scheduling outside Preferences, status and
@@ -64,7 +75,7 @@ full inventory scan whenever an owner opens/reconnects. A changed Google project
 empty inventory cannot authorize upload from old cached proof. Tests preserve
 reverted edits, queued identities, provider saturation and Pause during Google
 lifecycle changes. See [the contract](docs/agents/PROFILE_RECONCILIATION.md).
-All 40 requests remain active. Checked conflict resolution, complete fields/
+All 40 requests remain active. Complete fields/
 categories/accounts, ongoing Flutter/browser integration and automatic setup/
 restoration are still unfinished.
 
@@ -126,9 +137,9 @@ also remain R63.
 ## Restart order
 
 1. **Highest priority:** continue [OAuth/shared profiles](docs/agents/PROFILE_SYNC_HANDOVER.md).
-   Implement checked, paged conflict resolution with durable exact requests and
-   newer local intent protection; extend Flutter reconciliation with native and
-   Playwright controls. Continue automatic restoration/first setup, complete
+   Extend Flutter reconciliation and checked preference decisions with native and
+   Playwright controls. Preserve the delivered desktop reviews, exact saved
+   decisions and newer local intent protection. Continue automatic restoration/first setup, complete
    portable settings/categories, account lifecycle and authenticated interchange.
    Do not turn a missing remote original or another project's empty app-data
    space into successful setup. Preserve full rescan on owner reopen, known

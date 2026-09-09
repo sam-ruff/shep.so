@@ -7,6 +7,9 @@ use shep_profile_core::drive::Drive;
 
 pub(super) struct Background {
     runner: Option<Runner>,
+    pub root: Option<std::path::PathBuf>,
+    #[cfg(feature = "test-support")]
+    pub fail_resolution_once: bool,
     grant: Option<Grant>,
     pub deadline: tokio::time::Instant,
 }
@@ -14,6 +17,9 @@ impl Default for Background {
     fn default() -> Self {
         Self {
             runner: None,
+            root: None,
+            #[cfg(feature = "test-support")]
+            fail_resolution_once: false,
             grant: None,
             deadline: tokio::time::Instant::now() + Duration::from_secs(1),
         }
@@ -34,8 +40,112 @@ impl Background {
         session: Option<&Session>,
         command: &control::Command,
     ) -> anyhow::Result<Observation> {
+        let mut review = None;
+        let mut applied = None;
         let profile = match command {
-            control::Command::Current => None,
+            control::Command::Current => {
+                if let Some(sub) = engine.store.profile_sync_current().await? {
+                    review = Some(
+                        engine
+                            .store
+                            .profile_resolution_current(sub.binding.storage_key()?)
+                            .await?,
+                    );
+                }
+                None
+            }
+            control::Command::ReviewPage { profile, id, after } => {
+                review = Some(
+                    engine
+                        .store
+                        .profile_resolution_page(profile.clone(), *id, *after)
+                        .await?,
+                );
+                Some(profile.clone())
+            }
+            control::Command::CancelReview { profile, id } => {
+                engine
+                    .store
+                    .profile_resolution_cancel(profile.clone(), *id)
+                    .await?;
+                review = Some(Default::default());
+                Some(profile.clone())
+            }
+            control::Command::Review { profile, .. }
+            | control::Command::Resolve { profile, .. } => {
+                let _google = engine.google_connection_lock.try_read().context(
+                    "Google connection is changing. Retry after sign-in or disconnect finishes.",
+                )?;
+                let sub = engine
+                    .store
+                    .profile_sync_subscription(profile.clone())
+                    .await?;
+                control::check_grant(
+                    &request.grant,
+                    &engine.store.get("preferences").await?,
+                    &sub,
+                )?;
+                let namespace: String = engine.store.get("profile_namespace").await?;
+                anyhow::ensure!(
+                    namespace == sub.binding.namespace,
+                    "Reopen the profile's application namespace before resolving preferences."
+                );
+                let root = self
+                    .root
+                    .clone()
+                    .or_else(|| session.map(|s| s.root().to_owned()))
+                    .context("Reopen Profiles and sync before reviewing this preference.")?;
+                self.close().await?;
+                match command {
+                    control::Command::Review { key, .. } => {
+                        review = Some(
+                            crate::profiles::sync::resolution::begin(
+                                &engine.store,
+                                &root,
+                                profile.clone(),
+                                *key,
+                            )
+                            .await?,
+                        );
+                    }
+                    control::Command::Resolve { id, choice, .. } => {
+                        #[cfg(feature = "test-support")]
+                        let injected =
+                            engine.demo && std::mem::take(&mut self.fail_resolution_once);
+                        #[cfg(feature = "test-support")]
+                        if injected {
+                            engine.store.run(|db| {db.execute_batch("CREATE TEMP TRIGGER fail_profile_decision_receipt BEFORE UPDATE OF phase ON profile_sync_reviews WHEN NEW.phase='complete' BEGIN SELECT RAISE(FAIL,'Synthetic storage failure. Retry the saved decision.');END;")?;Ok(())}).await?;
+                        }
+                        let saved = crate::profiles::sync::resolution::save(
+                            &engine.store,
+                            &root,
+                            profile.clone(),
+                            *id,
+                            choice.clone(),
+                        )
+                        .await;
+                        #[cfg(feature = "test-support")]
+                        if injected {
+                            engine
+                                .store
+                                .run(|db| {
+                                    db.execute_batch("DROP TRIGGER fail_profile_decision_receipt")?;
+                                    Ok(())
+                                })
+                                .await?;
+                        }
+                        applied = Some(Arc::new(saved?));
+                        review = Some(
+                            engine
+                                .store
+                                .profile_resolution_page(profile.clone(), *id, None)
+                                .await?,
+                        );
+                    }
+                    _ => unreachable!(),
+                }
+                Some(profile.clone())
+            }
             control::Command::Prepare(source) => {
                 let session = session
                     .context("Open the completed profile review before choosing ongoing sync.")?;
@@ -142,6 +252,8 @@ impl Background {
             Observation::default()
         };
         let mut sync = engine.store.profile_sync_observe(profile).await?;
+        sync.review = review;
+        sync.applied = applied;
         self.progress(&mut sync);
         observation.sync = Some(sync);
         Ok(observation)

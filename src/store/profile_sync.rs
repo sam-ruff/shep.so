@@ -10,7 +10,10 @@ use rusqlite::OptionalExtension;
 use shep_profile_core::{Action, Change, SettingKey, history::LocalEdit};
 use uuid::Uuid;
 
+mod resolution;
+
 pub(super) fn schema(db: &Connection) -> anyhow::Result<()> {
+    resolution::schema(db)?;
     db.execute_batch("CREATE TABLE IF NOT EXISTS profile_sync (
         profile TEXT PRIMARY KEY, binding TEXT NOT NULL, device TEXT NOT NULL, name TEXT NOT NULL,
         enabled INTEGER NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
@@ -442,6 +445,6 @@ impl Store {
         })
     }
     pub async fn profile_sync_review_pending(&self) -> anyhow::Result<bool> {
-        self.run(|db| Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM profile_enrollments WHERE phase NOT IN ('complete','cancelled')) OR EXISTS(SELECT 1 FROM profile_publications WHERE phase NOT IN ('complete','cancelled'))",[],|row|row.get(0))?)).await
+        self.run(|db| Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM profile_enrollments WHERE phase NOT IN ('complete','cancelled')) OR EXISTS(SELECT 1 FROM profile_publications WHERE phase NOT IN ('complete','cancelled')) OR EXISTS(SELECT 1 FROM profile_sync_reviews WHERE phase IN ('collecting','review','staged'))",[],|row|row.get(0))?)).await
     }
 }

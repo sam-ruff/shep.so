@@ -696,3 +696,13 @@ Mandatory hooks pass 490 Rust tests; 22 native regressions and both final sync
 control flows pass, alongside 16 Flutter Rust bridge checks, 43 Python checks,
 37 parity contracts, production compilation and strict docs. The completion log
 retains failed-before evidence and reviewed captures. All 40 requests stay active.
+
+
+2026-09-09 checked-preference-decision continuation (R02/R49/R75/desktop-main:R92,
+R63/R67/R69/R73): desktop conflicts now have durable paged reviews, guarded
+local/shared choices and exact result recovery. The saved 51-version native flow
+passes with reviewed dark/compact/light captures. Backend tests cover stale and
+reverted intent, restart, rejected versus accepted pending requests, atomic
+receipt failure and disconnected cached reviews. Final shipping evidence belongs
+in completion; ongoing Flutter/browser equivalents and complete profile scope
+remain active. This does not remove any of the 40 active requests.

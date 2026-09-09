@@ -114,8 +114,7 @@ scheduling, master/field pause controls and retry/status. Partial catalog-loss
 recovery checks acknowledged originals against verified inventory, and a new or
 reconnected owner performs a full scan. Native verification and shipping are in
 [completion](COMPLETION.md); the [contract](agents/PROFILE_RECONCILIATION.md) keeps
-checked conflict resolution, complete settings/categories/accounts and ongoing
-Flutter/browser equivalents OPEN. Sixteen Flutter Rust bridge checks cover the
+complete settings/categories/accounts and ongoing Flutter/browser equivalents OPEN. Desktop checked preference decisions now have durable 50-row reviews, guarded choices and exact retry after a lost receipt. Flutter/browser decision controls remain OPEN. Sixteen Flutter Rust bridge checks cover the
 shared-core changes. The additional history export command changes local APIs,
 not the portable operation format. Existing mobile discovery/publication/enrollment
 contracts remain required.

@@ -1534,6 +1534,70 @@ class NativeFlows(unittest.TestCase):
                        check("profiles.pending",False), check("profiles.error",None), check("account_count",75),
                        check("reconnect_required_count",0), shot("publication-pages-cancelled-light"))
 
+    def test_desktop_profile_conflict_review_pages_and_resolution(self):
+        result = self.mcp.call("desktop.start", google_permissions="drive", profile_conflicts=True)
+        print(f"Preference conflict evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(956,156), check("settings_tab", "Profiles"), check("profiles.loaded",True),
+                       wait(150), click(600,390), type_text("so.shep.fixture"), click(342,441),
+                       check("profiles.error",None,"ne"), check("profiles.pending",False),
+                       click(344,601), check("profiles.discovery.state.phase","complete"),
+                       check("profiles.pending",False), wait(150), click(500,534),
+                       check("profiles.discovery.enrollment.review.phase","review"),
+                       check("profiles.pending",False), wait(150), click(351,543),
+                       check("profiles.discovery.enrollment.review.phase","complete"),
+                       check("profiles.pending",False), check("dark",True), wait(150), click(366,479),
+                       check("profiles.sync.subscription.enabled",False), check("profiles.pending",False),
+                       wait(150), click(288,413), check("profiles.sync.subscription.enabled",True),
+                       check("profiles.sync.phase","Receiving changes"))
+        self.mcp.batch(check("profiles.sync.subscription.remote_cursor",25,"gte"),
+                       check("profiles.sync.subscription.remote_cursor",54,"gte"),
+                       check("profiles.sync.subscription.conflicts",1),
+                       check("profiles.sync.phase","Last check finished"),
+                       check("dark",True), wait(150), shot("conflict-attention-dark"),
+                       click(366,658), check("profiles.sync_review_open",True),
+                       check("profiles.sync_review.review.phase","review"),check("profiles.pending",False),
+                       check("profiles.sync_review.review.total",51),
+                       check("profiles.sync_review.review.seen",50),wait(150),shot("conflict-first-page-dark"))
+        self.mcp.batch(click(343,482),check("profiles.sync_choice","Local"),
+                       {"type":"hover","x":1100,"y":760},*[{"type":"scroll","amount":30} for _ in range(5)],
+                       wait(150),shot("conflict-first-footer-disabled-dark"),
+                       click(348,818),check("profiles.sync_review.review.phase","review"),
+                       click(479,818),check("profiles.sync_review_open",False),check("profiles.pending",False),
+                       check("profiles.sync.subscription.conflicts",1),wait(150),click(366,658),
+                       check("profiles.sync_review.review.phase","review"),check("profiles.pending",False),
+                       check("profiles.sync_review.review.seen",50),
+                       *[{"type":"scroll","amount":-30} for _ in range(5)],wait(150),click(374,535),
+                       check("profiles.sync_review.review.seen",51),check("profiles.sync_review.more",False),
+                       check("profiles.pending",False),wait(150),shot("conflict-last-page-dark"),
+                       click(601,596),check("profiles.sync_choice.Version","00000000-0000-0000-0000-00000000c382"),
+                       click(310,333),check("profiles.sync_review_open",False),wait(150),shot("conflict-paused-review-navigation-dark"),
+                       click(403,571),check("profiles.sync_review_open",True),
+                       check("profiles.sync_review.review.seen",51),check("profiles.sync_review.more",False),
+                       check("profiles.sync_choice.Version","00000000-0000-0000-0000-00000000c382"),
+                       {"type":"resize","width":900,"height":640},check("window_size",[900,640]),
+                       wait(150),shot("conflict-last-page-compact-dark"),
+                       {"type":"hover","x":750,"y":550},{"type":"scroll","amount":20},
+                       wait(150),shot("conflict-last-footer-compact-dark"),
+                       {"type":"resize","width":1440,"height":920},check("window_size",[1440,920]),
+                       {"type":"scroll","amount":-30},wait(150),
+                       click(367,715),check("profiles.sync_review.review.phase","staged"),
+                       check("profiles.pending",False),check("dark",True),
+                       check("profiles.sync_error",None,"ne"),wait(150),shot("conflict-lost-receipt-dark"),
+                       click(366,510),check("profiles.sync_review.review.phase","complete"),
+                       check("profiles.pending",False),check("dark",False),check("preferences_saved",True),
+                       wait(150),shot("conflict-decision-complete-light"))
+        self.mcp.batch(click(313,510),check("profiles.sync_review_open",False),check("profiles.pending",False),
+                       check("profiles.sync.subscription.error",None,"ne"),check("profiles.sync.queued",1),
+                       check("profiles.sync.subscription.conflicts",0),wait(150),shot("conflict-upload-needs-retry-light"),
+                       click(372,640),check("profiles.sync.phase","Checking shared changes"),
+                       key("ctrl+1"),check("tab","Mail"),key("ctrl+k"),check("focused_input","search"),
+                       type_text("prototype"),check("query","prototype"),check("total",1),
+                       check("profiles.sync.phase","Last check finished"),check("profiles.sync.queued",0),
+                       check("profiles.sync.subscription.error",None),check("profiles.sync.subscription.conflicts",0),
+                       check("dark",False),shot("conflict-recovered-while-searching-light"))
+
+
     def test_desktop_profile_sync_background_and_controls(self):
         result = self.mcp.call("desktop.start", google_permissions="drive", profile_sync=True)
         print(f"Ongoing profile evidence: {result['artifacts']}", flush=True)

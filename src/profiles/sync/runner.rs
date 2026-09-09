@@ -416,7 +416,7 @@ impl Runner {
 // the precise receipt. Otherwise retain the known pre-edit baseline so Merge
 // must inspect the later remote value/conflict; a whole-history revision could
 // accidentally classify that unseen intent as already applied.
-async fn receipt_revision(history: &Worker, edit: &PendingEdit) -> Result<u64> {
+pub(super) async fn receipt_revision(history: &Worker, edit: &PendingEdit) -> Result<u64> {
     let target = shep_profile_core::history::target(&edit.request.changes[0].action);
     let Reply::Fields(fields) = history
         .request(Command::Fields {
