@@ -3,9 +3,17 @@ use secrecy::{ExposeSecret, SecretString};
 
 pub(super) type ConnectionCheck = (u64, BackupTarget, Option<Result<(), String>>);
 
+pub(super) struct HostKeyReview {
+    pub request: u64,
+    pub settings: crate::backup::sftp::Settings,
+    pub result: Option<Result<String, String>>,
+    pub verified: bool,
+}
+
 pub(super) enum BackupAction {
     Save(SecretString),
     ConnectS3(Option<(SecretString, SecretString)>),
+    ConnectSftp(Option<SecretString>),
     List,
     Restore(String, SecretString),
 }
@@ -19,6 +27,16 @@ impl App {
     pub(super) fn backup_validation_error(&mut self, error: impl Into<String>) {
         self.notice(error, true);
         self.preference_notice = self.notice.as_ref().map(|notice| notice.2);
+    }
+
+    fn clear_backup_validation(&mut self) {
+        if self
+            .preference_notice
+            .take()
+            .is_some_and(|at| self.notice.as_ref().is_some_and(|notice| notice.2 == at))
+        {
+            self.notice = None;
+        }
     }
 
     pub(super) fn change_backup_destination(&mut self, id: Option<String>) {
@@ -37,6 +55,9 @@ impl App {
                 self.fields.remove("s3_access_secret");
                 self.fields.remove("s3_key_secret");
                 self.s3_connection = None;
+                self.sftp_connection = None;
+                self.sftp_host_key = None;
+                self.fields.remove("sftp_password_secret");
                 self.backups_generation += 1;
                 self.save_preferences();
             }
@@ -60,7 +81,66 @@ impl App {
         settings
     }
 
+    pub(super) fn sftp_form_settings(&self) -> crate::backup::sftp::Settings {
+        let mut settings = self.preferences.backup_sftp.clone();
+        if self.fields.contains_key("sftp_host") {
+            settings.host = self.field("sftp_host").trim().into();
+            settings.port = self.field("sftp_port").trim().parse().unwrap_or(0);
+            settings.username = self.field("sftp_username").trim().into();
+            settings.directory = self.field("sftp_directory").trim().into();
+            settings.fingerprint = self.field("sftp_fingerprint").trim().into();
+        }
+        settings
+    }
+    pub(super) fn probe_sftp_fingerprint(&mut self) {
+        let settings = self.sftp_form_settings();
+        if let Err(error) = settings.server() {
+            self.backup_validation_error(error.to_string());
+            return;
+        }
+        self.clear_backup_validation();
+        self.backups_generation += 1;
+        let request = self.backups_generation;
+        self.sftp_host_key = Some(HostKeyReview {
+            request,
+            settings: settings.clone(),
+            result: None,
+            verified: false,
+        });
+        if !self.try_command(Command::ProbeSftp(request, settings)) {
+            self.sftp_host_key = None;
+        }
+    }
+    pub(super) fn accept_sftp_fingerprint(&mut self) {
+        let settings = self.sftp_form_settings();
+        let Some(review) = &self.sftp_host_key else {
+            return;
+        };
+        let Some(Ok(fingerprint)) = &review.result else {
+            return;
+        };
+        if !review.verified
+            || settings.host != review.settings.host
+            || settings.port != review.settings.port
+        {
+            return;
+        }
+        self.fields.insert("sftp_fingerprint", fingerprint.clone());
+        self.fields.remove("sftp_password_secret");
+        self.sftp_host_key = None;
+        self.sftp_connection = None;
+        match self.read_preferences() {
+            Ok(()) => self.save_preferences(),
+            Err(error) => self.backup_validation_error(error.to_string()),
+        }
+    }
+
     pub(super) fn configured_backup_target(&self) -> BackupTarget {
+        if self.preferences.backup_destination == BackupDestination::Sftp
+            && self.tab == Tab::Preferences
+        {
+            return BackupTarget::Sftp(self.sftp_form_settings().identity());
+        }
         if self.preferences.backup_destination == BackupDestination::S3
             && self.tab == Tab::Preferences
         {
@@ -107,6 +187,12 @@ impl App {
             self.backup_validation_error(error.to_string());
             return;
         }
+        if matches!(&target, BackupTarget::Sftp(_))
+            && let Err(error) = self.preferences.backup_sftp.validate()
+        {
+            self.backup_validation_error(error.to_string());
+            return;
+        }
         if matches!(target, BackupTarget::GoogleDrive { .. })
             && (self.preferences.google_lifecycle.disconnected
                 || !self.preferences.google_grant.access.drive_allowed())
@@ -123,13 +209,7 @@ impl App {
             return;
         }
         let request = self.preference_sync.changed();
-        if self
-            .preference_notice
-            .take()
-            .is_some_and(|at| self.notice.as_ref().is_some_and(|notice| notice.2 == at))
-        {
-            self.notice = None;
-        }
+        self.clear_backup_validation();
         self.pending_backup = Some(PendingBackup {
             request,
             target,
@@ -169,6 +249,12 @@ impl App {
             return;
         }
         match pending.action {
+            BackupAction::ConnectSftp(secret) => {
+                self.sftp_connection = Some((request, pending.target.clone(), None));
+                if !self.try_command(Command::ConnectSftp(request, pending.target, secret)) {
+                    self.sftp_connection = None;
+                }
+            }
             BackupAction::ConnectS3(secret) => {
                 self.s3_connection = Some((request, pending.target.clone(), None));
                 if !self.try_command(Command::ConnectS3(request, pending.target, secret)) {
@@ -199,6 +285,66 @@ mod tests {
             name: id.into(),
             created_at: String::new(),
         }
+    }
+
+    #[test]
+    fn sftp_fingerprint_review_needs_explicit_verification_and_rejects_a_changed_server() {
+        use base64::Engine as _;
+        let fingerprint = |byte| {
+            format!(
+                "SHA256:{}",
+                base64::engine::general_purpose::STANDARD_NO_PAD.encode([byte; 32])
+            )
+        };
+        let (mut app, _) = App::new();
+        app.tab = Tab::Preferences;
+        app.preferences.backup_destination = BackupDestination::Sftp;
+        app.preferences.backup_sftp = crate::backup::sftp::Settings {
+            host: "backup.example.test".into(),
+            username: "fixture-user".into(),
+            directory: "/archive".into(),
+            fingerprint: fingerprint(1),
+            ..Default::default()
+        };
+        app.settings_fields();
+        let settings = app.sftp_form_settings();
+        app.sftp_host_key = Some(HostKeyReview {
+            request: 1,
+            settings: settings.clone(),
+            result: Some(Ok(fingerprint(2))),
+            verified: false,
+        });
+        let _ = app.handle(Message::AcceptSftpFingerprint);
+        assert_eq!(app.field("sftp_fingerprint"), fingerprint(1));
+        let _ = app.handle(Message::VerifySftpFingerprint(true));
+        let _ = app.handle(Message::Field("sftp_host", "different.example.test".into()));
+        let _ = app.handle(Message::AcceptSftpFingerprint);
+        assert_eq!(app.field("sftp_fingerprint"), fingerprint(1));
+        assert!(app.sftp_host_key.is_none());
+        let _ = app.handle(Message::Backend(Event::SftpFingerprint(
+            1,
+            settings,
+            Ok(fingerprint(2)),
+        )));
+        assert!(app.sftp_host_key.is_none());
+        let (sender, mut saves) = engine::CommandSender::persistence_test_channel();
+        app.tx = Some(sender);
+        app.sftp_host_key = Some(HostKeyReview {
+            request: 2,
+            settings: app.sftp_form_settings(),
+            result: Some(Ok(fingerprint(3))),
+            verified: true,
+        });
+        app.fields
+            .insert("sftp_password_secret", "old-password".into());
+        let _ = app.handle(Message::AcceptSftpFingerprint);
+        let Command::SavePreferences(_, saved) = saves.try_recv().unwrap() else {
+            panic!("verified fingerprint must persist");
+        };
+        assert_eq!(saved.backup_sftp.fingerprint, fingerprint(3));
+        assert_eq!(saved.backup_sftp.host, "different.example.test");
+        assert!(app.field("sftp_password_secret").is_empty());
+        assert!(app.sftp_host_key.is_none());
     }
 
     #[tokio::test]

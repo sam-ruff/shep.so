@@ -2,7 +2,7 @@
 name = "shep"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 description = "A calm email and calendar client with excellent mouse and keyboard support"
 license = "MIT"
 
@@ -37,6 +37,9 @@ mailparse = "0.16"
 mime_guess = "2"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-native-tls"] }
 rusty-s3 = { version = "0.10.2", default-features = false, features = ["rustcrypto", "xml"] }
+russh = { version = "0.63.2", default-features = false, features = ["ring", "rsa"] }
+russh-sftp = "3.0.0"
+tokio-util = { version = "0.7", features = ["codec", "io"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 secrecy = { version = "0.10", features = ["serde"] }
@@ -83,6 +86,7 @@ winreg = "0.55"
 same-file = "1"
 
 [dev-dependencies]
+rand_sftp = { package = "rand", version = "0.10" }
 ab_glyph = "=0.2.32"
 shep-profile-core = { git = "https://github.com/sam-ruff/shep.so", rev = "43cdcf0f70f7dbff2f80b7828eb7e570d025b09a", features = ["test-support"] }
 litehtml-sys = { version = "=0.2.5", features = ["shep-test-support"] }

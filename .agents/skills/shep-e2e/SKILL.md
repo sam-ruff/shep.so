@@ -790,3 +790,13 @@ imports twelve shared accounts while reusing one existing native account.
 `profile_sync.join_review.page`, `links` and `offset` only observe the review;
 never use them to operate it. Preserve local mail, pending Reconnect state and
 stale-review rejection tests. These fixtures do not use live Google or keychains.
+
+The saved `test_sftp_backup_host_identity_setup_and_restart` scenario uses native
+controls to check an unavailable host, inspect/copy a fictional fingerprint,
+require explicit verification, reject unverified replacement, retry a changed
+host, and persist the verified settings through restart. Review light host-key
+and 900×640 dark credential WebPs. Preview fingerprints are object-scoped fixture
+values; password authentication stays disabled. `cargo test --all-features sftp_`
+uses real loopback SSH/SFTP peers for authentication, staged upload/journal
+recovery, retention, restore and keychain ownership. Never substitute preview
+status for actual provider success or introduce real credentials in either layer.

@@ -1,5 +1,53 @@
 # Completion audit
 
+## SFTP and connection-intent integration — verification in progress
+
+Root integrates SFTP checkpoint `f60dac0` and account connection-reversion
+checkpoint `85b2fd0`. SFTP uses verified SHA-256 host keys before password
+authentication, bounded packet framing, exact staged upload recovery and owned
+retention/restore. Its dependency requires Rust 1.89; the manifest and installation
+docs record that minimum. Password authentication is supported; private-key/agent
+authentication, live providers and actual Windows/macOS execution remain open.
+
+Review found an unbounded authenticated session-channel confirmation wait in the
+SSH library. The new real loopback test reaches that held stage, advances virtual
+time and fails on the original implementation. Bounded channel/subsystem setup
+now releases it with an actionable error; retry succeeds without any backup
+file write. All 16 SFTP tests pass, with the original failure retained in
+`artifacts/logs/sftp-channel-before-fix.log` and corrected provider tests in
+`sftp-channel-and-provider-tests.log`. No production timeout or performance
+budget was shortened for this test. Native, Windows and hook integration checks
+are still running; this paragraph is not yet a shipping receipt.
+
+## Palette, S3 and matching-account links — shipped integration
+
+Source **`4e75005`** is pushed to main with exact remote equality verified.
+It integrates palette commits `af76f15`/`4727fb7`/`a6dc0c7`, S3 commits
+`6d1857c`/`878e9f9` and matching-account import `59c6cf0`. All **88 combined
+native scenarios** pass in 320.232 seconds, including palette invalid-input and
+contrast recovery, held-provider saves, shared-profile creation/import/conflict
+reviews, 12-account paging, backup setup, database transfer, preferences search
+and compact layouts. The S3 setup scenario also saves a custom palette through
+the global header, then verifies it survives backup settings, connection failure
+and restart. No live cloud credentials are used.
+
+Normal hooks pass **798 test executions** (three personal diagnostics ignored),
+all **81 Python tests** pass, full Windows GNU all-target/all-feature checking
+passes, and strict Zensical passes. Final native SHA-256:
+`d0199f2ccbdad14ed0c559b2815b1bcb7384ba0a887e8929f8afdc06cf4d708c`.
+Root reviewed compact palette (`516fc5061095`), contrast reset (`0795c44983c5`),
+invalid header save (`620e629566fe`), compact account links (`76c52f0613d2`),
+account paging (`94ef7df4e703`) and S3 setup/recovery/compact credentials
+(`64a7956f0d2a`). Logs use `artifacts/logs/palette-s3-links-main-*`.
+R25 is removed after this publication. Palette Drive interoperability remains
+R49; further backup providers/options remain R32; endpoint/removal reviews,
+post-enrollment linking and credential transfer remain R02/R49. Production
+installation, live Google/S3 and actual Windows/macOS execution remain unverified.
+
+The preceding compact/icon source `15a4a3c` also has green documentation CI
+**34355986987**. Quality and release CI remain disabled.
+
+
 ## 9 September: compact inbox rows and unread hierarchy
 
 R88 replaces the 104-pixel avatar rows with 60-pixel conversation rows. Wide lists
@@ -72,6 +120,20 @@ strict Zensical passes, and source is pushed as **`15a4a3c`** with exact remote
 equality verified. R88 is removed from TODO after this source publication. Production installation and actual desktop
 shell/platform review remain R64/R08 work; no personal data was changed.
 Performance measurements remain deferred while parallel builds run.
+
+## Account connection reversions — review groundwork
+
+Native incoming/SMTP connection changes now have independent durable intent
+generations, alongside account-name generations. Reverting an endpoint,
+authentication or sent-copy choice before the next pull remains a local edit
+after restart; a rename or unchanged save cannot invent a connection change.
+This uses the existing Store owner and profile checkpoint, with no added lock.
+Two new SQLite/history regressions cover four connection-field reversions and
+rename/no-op isolation; all 102 matching profile tests pass (one personal
+diagnostic ignored). Log: `artifacts/logs/profile-account-reversions-all-tests.log`.
+Mandatory hooks and root integration remain pending. Shared endpoint/removal
+review controls and credential retargeting protection are separate unfinished
+R02/R49 work; this checkpoint never applies a remote endpoint.
 
 
 ## Explicit account links during profile import — integration pending

@@ -1,6 +1,38 @@
 use super::*;
 
 impl Engine {
+    pub(super) async fn connect_sftp(
+        &self,
+        target: &BackupTarget,
+        supplied: Option<SecretString>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(!self.demo, "SFTP connections are disabled in preview.");
+        let saved: Preferences = self.store.get("preferences").await?;
+        let configured = backup::config::resolve(&saved, target)?;
+        anyhow::ensure!(
+            configured.backup_destination == BackupDestination::Sftp,
+            "Choose an SFTP destination first."
+        );
+        let id = configured.backup_sftp.secret_id();
+        let secret = match supplied {
+            Some(secret) => secret,
+            None => self.credentials.read(&id).await.map_err(|_| {
+                anyhow::anyhow!("Enter the SFTP password for this verified server.")
+            })?,
+        };
+        backup::sftp::SftpBackup::new(&configured.backup_sftp, secret.clone())?
+            .test_connection()
+            .await?;
+        let current: Preferences = self.store.get("preferences").await?;
+        let current = backup::config::resolve(&current, target)?;
+        anyhow::ensure!(
+            current.backup_sftp.secret_id() == id,
+            "The SFTP connection settings changed. Test the current settings again."
+        );
+        self.credentials.write(&id, secret).await?;
+        Ok(())
+    }
+
     pub(super) async fn connect_s3(
         &self,
         target: &BackupTarget,
@@ -69,7 +101,7 @@ impl Engine {
             BackupTarget::GoogleDrive { .. } => {
                 Some(self.google_connection_lock.clone().read_owned().await)
             }
-            BackupTarget::Local(_) | BackupTarget::S3(_) => None,
+            BackupTarget::Local(_) | BackupTarget::S3(_) | BackupTarget::Sftp(_) => None,
         }
     }
 

@@ -36,7 +36,7 @@ Uses built-in PowerShell and Windows `tar.exe`. Installs under your user profile
 - **Everyday essentials.** Replies, forwarding, printing, attachments, autosaved drafts and recovery for interrupted sends.
 - **Calendars alongside.** Google Calendar and CalDAV, with a month view and agenda.
 - **Make it yours.** Light, Dark or System appearance, editable color palettes, resizable panes, configurable shortcuts and new-mail popup/sound controls.
-- **Encrypted backups.** Save to multiple local folders, Google Drive or S3-compatible storage. Google is optional.
+- **Encrypted backups.** Save to multiple local folders, Google Drive, S3-compatible storage or SFTP. Google is optional.
 
 ![Shep's calendar in dark mode, showing the month and upcoming events](docs/images/calendar-dark.webp)
 
@@ -44,7 +44,7 @@ Uses built-in PowerShell and Windows `tar.exe`. Installs under your user profile
 
 ## Get started
 
-With stable Rust and the [Linux dependencies](docs/installation.md) installed, run from the checkout:
+With stable Rust (1.89 or newer) and the [Linux dependencies](docs/installation.md) installed, run from the checkout:
 
 ```sh
 cargo run --release

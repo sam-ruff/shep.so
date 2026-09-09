@@ -774,3 +774,17 @@ async fn seed_profile_google(store: &Store) -> anyhow::Result<()> {
         .await?;
     Ok(())
 }
+
+/// Fictional host-key review controls; the native fixture never contacts SSH.
+pub fn sftp_fingerprint(host: &str) -> anyhow::Result<String> {
+    use base64::Engine as _;
+    let bytes = match host {
+        "backup.example.test" => [1; 32],
+        "changed.example.test" => [2; 32],
+        _ => anyhow::bail!("The fixture SFTP server is unavailable. Check the server and retry."),
+    };
+    Ok(format!(
+        "SHA256:{}",
+        base64::engine::general_purpose::STANDARD_NO_PAD.encode(bytes)
+    ))
+}

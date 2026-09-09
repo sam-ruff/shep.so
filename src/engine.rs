@@ -106,6 +106,8 @@ pub enum Command {
     Backup(BackupTarget, SecretString),
     AutomaticBackup(BackupTarget),
     ConnectS3(u64, BackupTarget, Option<(SecretString, SecretString)>),
+    ConnectSftp(u64, BackupTarget, Option<SecretString>),
+    ProbeSftp(u64, backup::sftp::Settings),
     ListBackups(u64, BackupTarget),
     Restore(BackupTarget, String, SecretString),
     ExportAttachment(String, usize, String),
@@ -135,7 +137,11 @@ impl Command {
             Self::Backup(target, _)
             | Self::AutomaticBackup(target)
             | Self::Restore(target, ..)
-            | Self::ConnectS3(_, target, _) => Some(target.work_key()),
+            | Self::ConnectS3(_, target, _)
+            | Self::ConnectSftp(_, target, _) => Some(target.work_key()),
+            Self::ProbeSftp(_, settings) => {
+                Some(format!("sftp-probe:{}:{}", settings.host, settings.port))
+            }
             Self::Send(d) => Some(format!("send:{}", d.id)),
             Self::SaveEvent(e) | Self::DeleteEvent(e) => Some(format!("event:{}", e.key())),
             Self::Flags(request, m, _) => Some(format!("flags:{}:{request}", m.id)),
@@ -221,6 +227,8 @@ pub enum Event {
     Backups(u64, BackupTarget, Result<Arc<Vec<BackupCopy>>, String>),
     BackupSaved(BackupTarget, BackupCopy),
     S3Connection(u64, BackupTarget, Result<(), String>),
+    SftpConnection(u64, BackupTarget, Result<(), String>),
+    SftpFingerprint(u64, backup::sftp::Settings, Result<String, String>),
     BackupFinished(BackupTarget),
     Busy(String, bool),
     Notice(String),
@@ -484,6 +492,11 @@ impl Engine {
                 Box::new(backup::LocalBackup {
                     directory: prefs.backup_folder.clone().into(),
                 })
+            }
+            BackupDestination::Sftp => {
+                let secret = self.credentials.read(&prefs.backup_sftp.secret_id()).await
+                    .map_err(|_| anyhow::anyhow!("SFTP credentials are unavailable for this verified server. Open Backups and test and save the connection."))?;
+                Box::new(backup::sftp::SftpBackup::new(&prefs.backup_sftp, secret)?)
             }
             BackupDestination::S3 => {
                 let secret = self.credentials.read(&prefs.backup_s3.identity().secret_id()).await
@@ -1251,6 +1264,39 @@ impl Engine {
                     &mut output,
                 )
                 .await?;
+            }
+            Command::ProbeSftp(request, settings) => {
+                let result = if self.demo {
+                    #[cfg(feature = "test-support")]
+                    {
+                        crate::test_support::sftp_fingerprint(&settings.host)
+                    }
+                    #[cfg(not(feature = "test-support"))]
+                    {
+                        Err(anyhow::anyhow!(
+                            "SFTP fingerprint probes are disabled in preview."
+                        ))
+                    }
+                } else {
+                    backup::sftp::probe_fingerprint(&settings).await
+                };
+                output
+                    .send(Event::SftpFingerprint(
+                        request,
+                        settings,
+                        result.map_err(|error| format!("{error:#}")),
+                    ))
+                    .await?;
+            }
+            Command::ConnectSftp(request, target, supplied) => {
+                let result = self.connect_sftp(&target, supplied).await;
+                output
+                    .send(Event::SftpConnection(
+                        request,
+                        target,
+                        result.map_err(|error| format!("{error:#}")),
+                    ))
+                    .await?;
             }
             Command::ConnectS3(request, target, supplied) => {
                 let result = self

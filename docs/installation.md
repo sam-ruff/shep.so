@@ -81,7 +81,7 @@ Windows verification. This script does not sign the application.
 
 ## Run from source
 
-Install stable Rust (1.88 or newer) and Python 3. On Debian or Ubuntu, add these build dependencies:
+Install stable Rust (1.89 or newer) and Python 3. On Debian or Ubuntu, add these build dependencies:
 
 ```sh
 sudo apt install build-essential cmake pkg-config libssl-dev libdbus-1-dev \

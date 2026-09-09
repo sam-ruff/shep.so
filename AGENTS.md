@@ -1379,3 +1379,15 @@ live control and durable join receipt retain the exact chosen links; stale event
 and a lost-acknowledgment retry with other choices are rejected. Preserve
 `profile_join_*` storage/controller tests and all `test_profile_join_link_native_*`
 scenarios. This does not implement post-enrollment linking or password transfer.
+
+Native account connection edits have their own durable profile field generation,
+separate from name changes. Keep incoming/SMTP/security/auth/sent-copy reversions
+through pulls and restart. Rename/no-op saves must not create connection intent.
+Do not turn these generations into permission to retarget saved credentials.
+
+SFTP session/channel setup has explicit deadlines in addition to transport
+inactivity and per-request SFTP timeouts. Keep the real held-channel regression: it
+advances virtual time only after the SSH handshake, verifies visible timeout and
+recovery, and must not write a backup file before setup succeeds. Keep host-key
+verification before authentication and never use keepalive activity as proof that
+a requested operation is progressing.

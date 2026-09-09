@@ -3,6 +3,7 @@ mod drive;
 pub(crate) mod journal;
 pub(crate) mod restore;
 pub mod s3;
+pub mod sftp;
 
 use crate::{model::*, providers::google::Google};
 use aes_gcm::{
@@ -45,6 +46,7 @@ pub struct BackupCopy {
 pub enum BackupTarget {
     Local(String),
     S3(s3::Identity),
+    Sftp(sftp::Identity),
     GoogleDrive {
         client_id: String,
         connection_id: String,
@@ -55,6 +57,7 @@ impl BackupTarget {
         match prefs.backup_destination {
             BackupDestination::Local => Self::Local(prefs.backup_folder.clone()),
             BackupDestination::S3 => Self::S3(prefs.backup_s3.identity()),
+            BackupDestination::Sftp => Self::Sftp(prefs.backup_sftp.identity()),
             BackupDestination::GoogleDrive => Self::GoogleDrive {
                 client_id: prefs.active_google_client().to_string(),
                 connection_id: prefs.google_connection_id.clone(),
