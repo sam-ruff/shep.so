@@ -60,14 +60,30 @@ impl App {
     pub(super) fn shared_account_reviews(&self, idle: bool) -> Element<'_, Message> {
         let state = &self.profile_sync;
         let mut body = column![
-            text("Choose account connections").font(BOLD).size(16),
-            muted("Keep your current connection, or add the shared setup and reconnect it. Your previous account and mail remain available.").size(12)
-        ].spacing(14);
+            text("Review shared accounts").font(BOLD).size(16),
+            muted("Review shared changes before changing connections or removing local mail.")
+                .size(12)
+        ]
+        .spacing(14);
         if let Some(reviews) = &state.account_reviews {
             if reviews.is_empty() {
                 body = body.push(text("No connections on this page need a choice.").size(13));
             }
             for review in reviews {
+                if review.removed() {
+                    body = body.push(column![
+                        text(&review.local().name).font(BOLD).size(14),
+                        text(&review.local().email).size(13),
+                        muted("Removed from the shared profile. Keep this account on this device, or review its local data before removing it here.").size(12),
+                        row![
+                            button(text("Keep on this device").size(13)).padding([10, 14]).style(outline)
+                                .on_press_maybe(idle.then(|| Message::ProfileSync(Action::ResolveAccount(review.clone(), Choice::KeepRemovedLocal)))),
+                            button(text("Review removal…").size(13)).padding([10, 14]).style(outline)
+                                .on_press_maybe(idle.then(|| Message::ProfileSync(Action::ReviewRemovedAccount(review.clone())))),
+                        ].spacing(8),
+                    ].spacing(10));
+                    continue;
+                }
                 let choices: Vec<_> = review
                     .versions()
                     .iter()

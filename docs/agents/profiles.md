@@ -37,3 +37,19 @@ Connection reviews read at most eight mapped native accounts per page. Each free
 **Keep this device's connection** publishes the reviewed local endpoints, preserving other field intent. **Add shared connection** assigns a fresh native account UUID and requires reconnection. The old account keeps its endpoints, credentials, mail and server identities, is named “(previous setup)” and remains local-only. It can later be removed through the normal account-removal review. No existing message UID or password is redirected to a different server. The shared operation retains its original optional fields and exact conflict resolutions.
 
 Native account changes and a durable pending operation are committed before shared-history admission. Restart retries that saved operation; it does not add another native account. Remote removals require a separate decision and cannot be revived by accepting an old connection review. Account password transfer, post-enrollment linking/suppression, removal choices and actual cross-client Google verification remain open. Local imports use reconnection while credential protection awaits the recorded user choice.
+
+
+Shared account removal is reviewed separately from endpoint choices. Keep on
+this device records durable suppression while preserving that account, cached
+mail and keychain identity. Later local edits remain local. Review removal opens
+the normal local-data confirmation, including draft and unfinished-work checks;
+Cancel leaves everything intact. A confirmed local removal clears stale review
+controls and does not delete server mail or publish a shared removal.
+
+Keep decisions validate the selected profile, sync consent, Google lifecycle,
+native connection revision and exact reviewed remote history before committing.
+No cloud tombstone is inferred from removing an account only on this device.
+Global account removal, post-enrollment linking/suppression controls and password
+transfer remain separate follow-ups. The saved native `profile_account_removal`
+scenarios cover Keep, Cancel, confirmed removal and restart; Rust fixtures retain
+actual cached mail through remote removal and reject stale choices.

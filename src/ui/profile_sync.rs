@@ -27,6 +27,7 @@ pub enum Action {
         Arc<crate::profile_sync::account_reviews::Review>,
         account_reviews::Candidate,
     ),
+    ReviewRemovedAccount(Arc<crate::profile_sync::account_reviews::Review>),
     CloseAccountReviews,
     SettingReviews,
     ResolveSetting(
@@ -95,6 +96,13 @@ pub(super) struct State {
     cycle: Option<crate::profile_sync::continuous::Report>,
 }
 impl State {
+    pub(super) fn connection_removed(&mut self) {
+        self.account_reviews = None;
+        self.account_choices.clear();
+        self.account_after = None;
+        self.cycle = None;
+        self.next_sync = Some(Instant::now());
+    }
     fn accepts_account_review(
         &self,
         review: &Arc<crate::profile_sync::account_reviews::Review>,
@@ -140,7 +148,7 @@ impl State {
     pub fn observation(&self) -> serde_json::Value {
         serde_json::json!({"loaded":self.snapshot.is_some(),"available":self.snapshot.as_ref().is_some_and(|s|s.available),"empty_workspace":self.snapshot.as_ref().is_some_and(|s|s.empty_workspace),
             "options":self.options(),"offer":self.offer,"login_pending":self.login_pending.is_some(),"saving":self.saving.is_some(),"working":self.job.is_some(),"stopping":self.stopping.is_some(),
-            "account_reviews": self.account_reviews.as_ref().map(|r| r.iter().map(|r|serde_json::json!({"id":r.local().id,"name":r.local().name,"host":r.local().host,"versions":r.versions().iter().map(|v|&v.account.host).collect::<Vec<_>>()})).collect::<Vec<_>>()),
+            "account_reviews": self.account_reviews.as_ref().map(|r| r.iter().map(|r|serde_json::json!({"id":r.local().id,"name":r.local().name,"host":r.local().host,"removed":r.removed(),"versions":r.versions().iter().map(|v|&v.account.host).collect::<Vec<_>>()})).collect::<Vec<_>>()),
             "account_after": self.account_after,
             "setting_reviews": self.setting_reviews.as_ref().map(|r|r.iter().map(|r|serde_json::json!({"label":r.label(),"local":r.local(),"versions":r.versions().iter().map(|v|&v.value).collect::<Vec<_>>()})).collect::<Vec<_>>()),
             "review":self.review.as_ref().map(|r|r.records()),
@@ -194,6 +202,21 @@ impl App {
                     self.profile_sync
                         .account_choices
                         .insert(review.local().id.clone(), candidate);
+                }
+                return;
+            }
+            Action::ReviewRemovedAccount(review) => {
+                if self.profile_sync.job.is_none()
+                    && review.removed()
+                    && self.profile_sync.accepts_account_review(&review)
+                {
+                    // This opens the ordinary local-data review. Its final
+                    // confirmation rechecks current mail/drafts/pending changes;
+                    // opening it alone never removes or suppresses anything.
+                    self.review_removal(crate::store::ConnectionRef {
+                        kind: crate::store::ConnectionKind::Account,
+                        id: review.local().id.clone(),
+                    });
                 }
                 return;
             }
@@ -548,7 +571,7 @@ impl App {
                     state.account_choices.clear();
                     if saved {
                         state.next_sync = Some(Instant::now() + Duration::from_secs(2));
-                        self.notice("Account choice saved · waiting to sync", false);
+                        self.notice("Account choice saved", false);
                     }
                 } else {
                     refresh = true;
@@ -769,7 +792,7 @@ impl App {
                 }
                 if options.accounts {
                     body = body.push(
-                        button(text("Review shared connections").size(13))
+                        button(text("Review shared accounts").size(13))
                             .padding([12, 16])
                             .style(outline)
                             .on_press_maybe(
@@ -1023,6 +1046,23 @@ mod tests {
         app.tx = Some(sender);
         app.profile_sync.snapshot = Some(original.clone());
         (app, queue, original)
+    }
+
+    #[test]
+    fn profile_account_review_local_removal_clears_stale_choices() {
+        let review = Arc::new(crate::profile_sync::account_reviews::Review::fixture(
+            "Removed account",
+        ));
+        let mut state = State {
+            account_reviews: Some(vec![review.clone()]),
+            account_after: Some("older cursor".into()),
+            ..Default::default()
+        };
+        assert!(state.accepts_account_review(&review));
+        state.connection_removed();
+        assert!(!state.accepts_account_review(&review));
+        assert!(state.account_after.is_none());
+        assert!(state.next_sync.is_some());
     }
 
     #[tokio::test]

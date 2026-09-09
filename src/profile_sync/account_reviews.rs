@@ -32,10 +32,14 @@ pub struct Review {
     pub(crate) basis: Basis,
     pub(crate) revision: u64,
     versions: Vec<Version>,
+    removals: Vec<Uuid>,
 }
 impl Review {
     pub fn local(&self) -> &Account {
         &self.basis.local
+    }
+    pub fn removed(&self) -> bool {
+        !self.removals.is_empty()
     }
     pub fn versions(&self) -> &[Version] {
         &self.versions
@@ -50,6 +54,7 @@ pub struct Page {
 pub enum Choice {
     Local,
     AddShared(Uuid),
+    KeepRemovedLocal,
 }
 pub(crate) fn target(id: Uuid) -> String {
     format!("account:{id}:connection")
@@ -69,11 +74,14 @@ fn ready(state: &history::State) -> anyhow::Result<()> {
     );
     Ok(())
 }
-async fn versions(replica: &Replica, id: Uuid) -> anyhow::Result<Vec<history::Version>> {
+async fn target_versions(
+    replica: &Replica,
+    target: String,
+) -> anyhow::Result<Vec<history::Version>> {
     let mut versions = Vec::new();
     let mut after = None;
     loop {
-        let page = replica.versions(target(id), after).await?;
+        let page = replica.versions(target.clone(), after).await?;
         if page.is_empty() {
             break;
         }
@@ -86,11 +94,20 @@ async fn versions(replica: &Replica, id: Uuid) -> anyhow::Result<Vec<history::Ve
     }
     Ok(versions)
 }
+async fn versions(replica: &Replica, id: Uuid) -> anyhow::Result<Vec<history::Version>> {
+    target_versions(replica, target(id)).await
+}
+async fn removals(replica: &Replica, id: Uuid) -> anyhow::Result<Vec<Uuid>> {
+    Ok(
+        target_versions(replica, history::target(&Action::AccountRemoved { id }))
+            .await?
+            .into_iter()
+            .map(|version| version.operation)
+            .collect(),
+    )
+}
 async fn live_account(replica: &Replica, id: Uuid) -> anyhow::Result<bool> {
-    Ok(replica
-        .versions(history::target(&Action::AccountRemoved { id }), None)
-        .await?
-        .is_empty())
+    Ok(removals(replica, id).await?.is_empty())
 }
 pub async fn prepare(
     store: &Store,
@@ -104,8 +121,15 @@ pub async fn prepare(
         .await?;
     let mut reviews = Vec::new();
     for basis in bases {
-        // Removal has its own decision; do not revive its hidden connection.
-        if !live_account(replica, basis.shared).await? {
+        // A remote tombstone never silently deletes native mail or credentials.
+        let removals = removals(replica, basis.shared).await?;
+        if !removals.is_empty() {
+            reviews.push(Review {
+                basis,
+                revision: state.revision,
+                versions: vec![],
+                removals,
+            });
             continue;
         }
         let local = local_change(&basis.local, basis.shared)?;
@@ -136,6 +160,7 @@ pub async fn prepare(
             basis,
             revision: state.revision,
             versions: candidates,
+            removals: vec![],
         });
     }
     Ok(Page {
@@ -156,6 +181,18 @@ pub async fn accept(
     );
     let current = replica.state().await?;
     ready(&current)?;
+    if review.removed() {
+        ensure!(
+            matches!(choice, Choice::KeepRemovedLocal),
+            "Review this account's removal before choosing."
+        );
+        ensure!(
+            current.revision == review.revision
+                && removals(replica, review.basis.shared).await? == review.removals,
+            "Shared history changed. Refresh this removal review before choosing."
+        );
+        return store.keep_removed_profile_account(review).await;
+    }
     ensure!(
         live_account(replica, review.basis.shared).await?,
         "This shared account was removed. Keep the local setup and refresh its review."
@@ -170,6 +207,9 @@ pub async fn accept(
         "Shared connections changed while this review was open. Refresh before choosing."
     );
     let operation = match choice {
+        Choice::KeepRemovedLocal => {
+            anyhow::bail!("This account has not been removed from the shared profile.")
+        }
         Choice::Local => {
             review
                 .versions
@@ -246,6 +286,7 @@ impl Review {
                 pending: None,
             },
             revision: 1,
+            removals: vec![],
             versions: vec![Version {
                 operation: Uuid::new_v4(),
                 account: local,
