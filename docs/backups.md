@@ -5,7 +5,7 @@ Google is optional. Mail, CalDAV, local, S3 and SFTP backups work without it.
 ## Make a backup
 
 1. Open **Preferences → Backups**.
-2. Choose **Local folder**, **Google Drive**, **S3-compatible storage** or **SFTP**.
+2. Choose **Local folder**, **Google Drive**, **S3-compatible storage**, **SFTP** or **FTP / FTPS**.
 3. Set how many copies to keep and enter a passphrase of at least 12 characters.
 4. Choose **Back up now**. After your first copy succeeds, enable automatic backups if wanted.
 
@@ -33,6 +33,14 @@ paste a SHA256 fingerprint you already verified. Enter your password and choose
 previous credentials and automatic-backup readiness are not reused for it.
 SFTP currently supports password authentication. Private keys and SSH agents
 are not supported yet.
+
+FTP / FTPS defaults to encrypted STARTTLS on port 21; implicit TLS uses port 990.
+Enter the server, an existing absolute folder, username and password, then choose
+**Test and save connection**. FTPS verifies the server certificate and encrypts
+both login and data transfers. Plain FTP is a separate, clearly labelled choice
+for servers that require it. The server must support machine-readable listings
+(MLSD). Each rolling copy occupies its own folder containing the encrypted
+archive and a small commit record; unrelated folders and files are preserved.
 
 ## Restore a copy
 

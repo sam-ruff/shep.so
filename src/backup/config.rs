@@ -13,6 +13,8 @@ pub struct Destination {
     pub s3: super::s3::Settings,
     #[serde(default)]
     pub sftp: super::sftp::Settings,
+    #[serde(default)]
+    pub ftp: super::ftp::Settings,
     pub copies: usize,
     pub hours: u64,
     pub accounts: bool,
@@ -29,6 +31,7 @@ impl Destination {
             folder: prefs.backup_folder.clone(),
             s3: prefs.backup_s3.clone(),
             sftp: prefs.backup_sftp.clone(),
+            ftp: prefs.backup_ftp.clone(),
             copies: prefs.backup_copies,
             hours: prefs.backup_hours,
             accounts: prefs.backup_accounts,
@@ -42,6 +45,7 @@ impl Destination {
         prefs.backup_folder = self.folder.clone();
         prefs.backup_s3 = self.s3.clone();
         prefs.backup_sftp = self.sftp.clone();
+        prefs.backup_ftp = self.ftp.clone();
         prefs.backup_copies = self.copies;
         prefs.backup_hours = self.hours;
         prefs.backup_accounts = self.accounts;
@@ -54,6 +58,7 @@ impl Destination {
             BackupDestination::Local => BackupTarget::Local(self.folder.clone()),
             BackupDestination::S3 => BackupTarget::S3(self.s3.identity()),
             BackupDestination::Sftp => BackupTarget::Sftp(self.sftp.identity()),
+            BackupDestination::Ftp => BackupTarget::Ftp(self.ftp.identity()),
             BackupDestination::GoogleDrive => BackupTarget::GoogleDrive {
                 client_id: prefs.active_google_client().to_owned(),
                 connection_id: prefs.google_connection_id.clone(),
@@ -140,6 +145,9 @@ pub fn validate(prefs: &Preferences) -> anyhow::Result<()> {
     if prefs.backup_destination == BackupDestination::Sftp {
         prefs.backup_sftp.validate_draft()?;
     }
+    if prefs.backup_destination == BackupDestination::Ftp {
+        prefs.backup_ftp.validate_draft()?;
+    }
     let mut ids = std::collections::HashSet::new();
     let mut targets = std::collections::HashSet::new();
     for d in &prefs.backup_destinations {
@@ -148,6 +156,9 @@ pub fn validate(prefs: &Preferences) -> anyhow::Result<()> {
         }
         if d.destination == BackupDestination::Sftp {
             d.sftp.validate_draft()?;
+        }
+        if d.destination == BackupDestination::Ftp {
+            d.ftp.validate_draft()?;
         }
         let target = match d.destination {
             BackupDestination::Local if d.folder.trim().is_empty() => None,
@@ -162,6 +173,14 @@ pub fn validate(prefs: &Preferences) -> anyhow::Result<()> {
                 let id = d.sftp.identity();
                 Some(format!(
                     "sftp:{}",
+                    serde_json::to_string(&(id.host, id.port, id.directory))?
+                ))
+            }
+            BackupDestination::Ftp if d.ftp.host.is_empty() || d.ftp.directory.is_empty() => None,
+            BackupDestination::Ftp => {
+                let id = d.ftp.identity();
+                Some(format!(
+                    "ftp:{}",
                     serde_json::to_string(&(id.host, id.port, id.directory))?
                 ))
             }

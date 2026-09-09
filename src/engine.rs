@@ -1,3 +1,4 @@
+mod account_setup;
 mod account_sync;
 mod account_work;
 mod backups;
@@ -107,6 +108,7 @@ pub enum Command {
     AutomaticBackup(BackupTarget),
     ConnectS3(u64, BackupTarget, Option<(SecretString, SecretString)>),
     ConnectSftp(u64, BackupTarget, Option<SecretString>),
+    ConnectFtp(u64, BackupTarget, Option<SecretString>),
     ProbeSftp(u64, backup::sftp::Settings),
     ListBackups(u64, BackupTarget),
     Restore(BackupTarget, String, SecretString),
@@ -138,7 +140,8 @@ impl Command {
             | Self::AutomaticBackup(target)
             | Self::Restore(target, ..)
             | Self::ConnectS3(_, target, _)
-            | Self::ConnectSftp(_, target, _) => Some(target.work_key()),
+            | Self::ConnectSftp(_, target, _)
+            | Self::ConnectFtp(_, target, _) => Some(target.work_key()),
             Self::ProbeSftp(_, settings) => {
                 Some(format!("sftp-probe:{}:{}", settings.host, settings.port))
             }
@@ -228,6 +231,7 @@ pub enum Event {
     BackupSaved(BackupTarget, BackupCopy),
     S3Connection(u64, BackupTarget, Result<(), String>),
     SftpConnection(u64, BackupTarget, Result<(), String>),
+    FtpConnection(u64, BackupTarget, Result<(), String>),
     SftpFingerprint(u64, backup::sftp::Settings, Result<String, String>),
     BackupFinished(BackupTarget),
     Busy(String, bool),
@@ -493,6 +497,10 @@ impl Engine {
                     directory: prefs.backup_folder.clone().into(),
                 })
             }
+            BackupDestination::Ftp => {
+                let secret = self.credentials.read(&prefs.backup_ftp.secret_id()).await.map_err(|_| anyhow::anyhow!("FTP credentials are unavailable. Open Backups and test and save this connection."))?;
+                Box::new(backup::ftp::FtpBackup::new(&prefs.backup_ftp, secret)?)
+            }
             BackupDestination::Sftp => {
                 let secret = self.credentials.read(&prefs.backup_sftp.secret_id()).await
                     .map_err(|_| anyhow::anyhow!("SFTP credentials are unavailable for this verified server. Open Backups and test and save the connection."))?;
@@ -711,10 +719,8 @@ impl Engine {
                 let result = async {
                     account.validate()?;
                     anyhow::ensure!(!self.demo, "Connection tests require a real account. Test workspaces do not connect to mail servers.");
-                    let secret = if target == ConnectionTarget::Smtp && account.smtp_auth == SmtpAuth::None { SecretString::from("") }
-                    else if target == ConnectionTarget::Smtp && account.smtp_separate_password {
-                        if smtp_password.expose_secret().is_empty() { self.credentials.read(&format!("{}:smtp", account.id)).await? } else { smtp_password }
-                    } else if password.expose_secret().is_empty() { self.credentials.read(&account.id).await.context("Enter a password before testing a new account")? } else { password };
+                    let _guard = self.account_access(&account.id).await;
+                    let secret = self.setup_password(&account, &password, &smtp_password, target).await?;
                     match target { ConnectionTarget::Incoming => providers::mail::test_incoming(&account, &secret).await, ConnectionTarget::Smtp => providers::mail::test_smtp(&account, &secret).await }
                 }.await;
                 output
@@ -740,25 +746,34 @@ impl Engine {
                     })
                     .await?;
                 let saved_id = account.id.clone();
-                let password = if password.expose_secret().is_empty() {
-                    self.credentials
-                        .read(&account.id)
-                        .await
-                        .context("Enter an account password or app password")?
-                } else {
-                    password
-                };
-                if account.smtp_separate_password {
-                    let smtp_id = format!("{}:smtp", account.id);
-                    let smtp_password = if smtp_password.expose_secret().is_empty() {
-                        self.credentials
-                            .read(&smtp_id)
-                            .await
-                            .context("Enter the separate SMTP password")?
+                // Resolve all required credentials before writing any of them.
+                // Downloaded endpoint changes cannot reuse a saved old secret.
+                let password = self
+                    .setup_password(
+                        &account,
+                        &password,
+                        &smtp_password,
+                        ConnectionTarget::Incoming,
+                    )
+                    .await?;
+                let separate =
+                    if account.smtp_separate_password && account.smtp_auth != SmtpAuth::None {
+                        Some(
+                            self.setup_password(
+                                &account,
+                                &password,
+                                &smtp_password,
+                                ConnectionTarget::Smtp,
+                            )
+                            .await?,
+                        )
                     } else {
-                        smtp_password
+                        None
                     };
-                    self.credentials.write(&smtp_id, smtp_password).await?;
+                if let Some(smtp_password) = separate {
+                    self.credentials
+                        .write(&format!("{}:smtp", account.id), smtp_password)
+                        .await?;
                 }
                 self.credentials
                     .write(&account.id, password)
@@ -1284,6 +1299,16 @@ impl Engine {
                     .send(Event::SftpFingerprint(
                         request,
                         settings,
+                        result.map_err(|error| format!("{error:#}")),
+                    ))
+                    .await?;
+            }
+            Command::ConnectFtp(request, target, supplied) => {
+                let result = self.connect_ftp(&target, supplied).await;
+                output
+                    .send(Event::FtpConnection(
+                        request,
+                        target,
                         result.map_err(|error| format!("{error:#}")),
                     ))
                     .await?;

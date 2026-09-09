@@ -1,5 +1,6 @@
 pub mod config;
 mod drive;
+pub mod ftp;
 pub(crate) mod journal;
 pub(crate) mod restore;
 pub mod s3;
@@ -47,6 +48,7 @@ pub enum BackupTarget {
     Local(String),
     S3(s3::Identity),
     Sftp(sftp::Identity),
+    Ftp(ftp::Identity),
     GoogleDrive {
         client_id: String,
         connection_id: String,
@@ -58,6 +60,7 @@ impl BackupTarget {
             BackupDestination::Local => Self::Local(prefs.backup_folder.clone()),
             BackupDestination::S3 => Self::S3(prefs.backup_s3.identity()),
             BackupDestination::Sftp => Self::Sftp(prefs.backup_sftp.identity()),
+            BackupDestination::Ftp => Self::Ftp(prefs.backup_ftp.identity()),
             BackupDestination::GoogleDrive => Self::GoogleDrive {
                 client_id: prefs.active_google_client().to_string(),
                 connection_id: prefs.google_connection_id.clone(),

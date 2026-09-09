@@ -152,3 +152,71 @@ flows in 19.489 seconds; its SHA-256 is
 Hook and integrated shipping receipts belong in the completion log. Python checks passed with seven
 platform-dependent skips; strict Zensical building passed. No performance
 measurements or live server writes were performed.
+
+## FTP and FTPS
+
+The FTP/FTPS provider uses maintained [libcurl Rust bindings](https://docs.rs/curl/latest/curl/easy/struct.Easy2.html)
+with bundled libcurl and its FTP protocol enabled. The native library runs only
+inside background-owned requests; the bounded provider dispatcher limits
+concurrency. Cancellation closes a one-shot observer and the progress callback
+stops abandoned transfers. Connection setup has a 15-second deadline; a request
+has a 300-second total deadline and a 30-second inactivity limit. Read-only
+connection testing has an overall 30-second deadline before any keychain write.
+
+Explicit FTPS (STARTTLS, port 21) is the default. Implicit FTPS (port 990) and
+clearly labelled plain FTP are selectable. FTPS requires TLS for both control
+and data, verifies the certificate chain/hostname, and never falls back to
+plaintext. See the [libcurl TLS requirement](https://curl.se/libcurl/c/CURLOPT_USE_SSL.html)
+and [certificate verification](https://curl.se/libcurl/c/CURLOPT_SSL_VERIFYPEER.html)
+contracts. Passwords pass through the existing credential owner after successful
+connection validation; secrets are absent from URLs, SQLite and MCP observations.
+Verbose protocol logging stays disabled, server error bodies are discarded, and
+only numeric transport/status codes enter error messages. Control replies and
+collected data have bounded callbacks. Passive data stays on the control peer's
+address, ignoring server-supplied PASV IPs.
+
+Every request checks CWD/PWD before transferring data or mutating files. Use the
+server's absolute canonical folder; aliased paths are rejected. MLSD is required
+for reliable entry types and complete, bounded directory listings. Failed,
+malformed or duplicate listings preserve existing copies.
+
+FTP has no portable conditional STOR or rename. Each reserved copy therefore
+gets its own exclusively created directory, a persisted creation receipt before
+writing, an encrypted `mail.shepbackup`, and a small `shep-commit.json` record.
+The public commit record contains only format, filename, ciphertext size and
+checksum. Retry verifies any saved prefix before appending to an interrupted
+archive or commit record. An uncertain committed transfer is recovered from the
+same manifest and archive without another upload. Unconfirmed directories
+without a creation receipt are kept for inspection; unexpected contents are
+never overwritten. Restore verifies the committed checksum before the existing
+passphrase/decryption/merge path. Retention verifies the archive and exact owned
+folder contents before deletion, preserving folders with unrelated files.
+
+Protocol tests use an object-scoped loopback peer with a bounded file-state owner
+and generated fixture certificates. Native preview continues to reject FTP
+connections and cloud writes. Live FTP/FTPS servers, real OS-keychain sessions and
+Windows/macOS execution remain separate from these checks. Optional compression,
+unencrypted archives, Back up all and richer per-destination history remain R32
+follow-ups.
+
+The release archive includes the upstream libcurl and curl-rust license notices
+under `licenses/`. This addition does not enable the dormant release workflow.
+The backend passed a full Windows GNU all-target/all-feature check; actual
+Windows/macOS FTP execution is still unverified.
+
+The FTP lane carries the exact SFTP setup-deadline follow-up from main
+`ff03b02`: channel and subsystem setup each have a 15-second deadline, with the
+real held-channel/retry regression. It does not replay main's other ancestry.
+
+FTP delivery evidence: 28 matching FTP/SFTP Rust regressions pass, including
+keychain/removal races, alias rejection before mutations and response/cancellation
+bounds. Full Windows GNU all-target/all-feature checking and Clippy pass. The
+final binary passes all six selected FTP, SFTP, S3, multiple-destination, existing
+setup and compact-layout native scenarios in 25.612 seconds. Its SHA-256 is
+`e9ab18cae9d3aa5b6aea47e96cc7b32373ba53fda316cc697cb81c3c5d500f14`.
+Final reviewed FTP WebPs are under ignored `artifacts/e2e/be05e8c32b7a`; logs use
+`artifacts/logs/ftp-*`. Python checks pass with seven platform-dependent skips,
+and strict documentation building passes. This is selected correctness evidence;
+no performance measurements, actual Windows/macOS execution or live server
+verification is claimed. Mandatory hooks and main integration remain the final
+shipping receipts.

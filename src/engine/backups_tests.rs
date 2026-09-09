@@ -761,3 +761,68 @@ async fn sftp_verified_connection_stores_keys_only_after_success_and_keeps_later
     );
     fixture.finish().await;
 }
+
+#[tokio::test]
+async fn ftp_verified_connection_stores_keys_only_after_success_and_keeps_later_settings() {
+    use crate::backup::ftp::tests::wire_server::Fixture;
+    let fixture = Fixture::start(crate::backup::ftp::Security::Plain).await;
+    let mut engine = engine(Arc::new(Secrets::default()));
+    engine.credentials = crate::credentials::Credentials::with_backend(
+        crate::credentials::Scope::Legacy,
+        S3Vault::default(),
+    );
+    let prefs = Preferences {
+        backup_destination: BackupDestination::Ftp,
+        backup_ftp: fixture.settings.clone(),
+        ..Default::default()
+    };
+    engine.store.save_preferences(prefs.clone()).await.unwrap();
+    let target = BackupTarget::from_preferences(&prefs);
+    let id = prefs.backup_ftp.secret_id();
+    engine
+        .connect_ftp(&target, Some("fixture-password".into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        engine.credentials.read(&id).await.unwrap().expose_secret(),
+        "fixture-password"
+    );
+    assert!(
+        engine
+            .connect_ftp(&target, Some("wrong-password".into()))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        engine.credentials.read(&id).await.unwrap().expose_secret(),
+        "fixture-password"
+    );
+    let (observed_tx, observed) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    fixture
+        .files
+        .run(|files| files.hold_list = Some((observed_tx, released)))
+        .await;
+    let work = engine.connect_ftp(&target, None);
+    let changed = async {
+        observed.await.unwrap();
+        engine
+            .store
+            .save_preferences(Preferences::default())
+            .await
+            .unwrap();
+        release.send(()).unwrap();
+    };
+    let (result, ()) = tokio::join!(work, changed);
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("destination changed")
+    );
+    assert_eq!(
+        engine.credentials.read(&id).await.unwrap().expose_secret(),
+        "fixture-password"
+    );
+    fixture.finish().await;
+}

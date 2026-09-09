@@ -14,6 +14,7 @@ pub(super) enum BackupAction {
     Save(SecretString),
     ConnectS3(Option<(SecretString, SecretString)>),
     ConnectSftp(Option<SecretString>),
+    ConnectFtp(Option<SecretString>),
     List,
     Restore(String, SecretString),
 }
@@ -56,6 +57,8 @@ impl App {
                 self.fields.remove("s3_key_secret");
                 self.s3_connection = None;
                 self.sftp_connection = None;
+                self.ftp_connection = None;
+                self.fields.remove("ftp_password_secret");
                 self.sftp_host_key = None;
                 self.fields.remove("sftp_password_secret");
                 self.backups_generation += 1;
@@ -81,6 +84,16 @@ impl App {
         settings
     }
 
+    pub(super) fn ftp_form_settings(&self) -> crate::backup::ftp::Settings {
+        let mut settings = self.preferences.backup_ftp.clone();
+        if self.fields.contains_key("ftp_host") {
+            settings.host = self.field("ftp_host").trim().into();
+            settings.port = self.field("ftp_port").trim().parse().unwrap_or(0);
+            settings.username = self.field("ftp_username").trim().into();
+            settings.directory = self.field("ftp_directory").trim().into();
+        }
+        settings
+    }
     pub(super) fn sftp_form_settings(&self) -> crate::backup::sftp::Settings {
         let mut settings = self.preferences.backup_sftp.clone();
         if self.fields.contains_key("sftp_host") {
@@ -136,6 +149,11 @@ impl App {
     }
 
     pub(super) fn configured_backup_target(&self) -> BackupTarget {
+        if self.preferences.backup_destination == BackupDestination::Ftp
+            && self.tab == Tab::Preferences
+        {
+            return BackupTarget::Ftp(self.ftp_form_settings().identity());
+        }
         if self.preferences.backup_destination == BackupDestination::Sftp
             && self.tab == Tab::Preferences
         {
@@ -189,6 +207,12 @@ impl App {
         }
         if matches!(&target, BackupTarget::Sftp(_))
             && let Err(error) = self.preferences.backup_sftp.validate()
+        {
+            self.backup_validation_error(error.to_string());
+            return;
+        }
+        if matches!(&target, BackupTarget::Ftp(_))
+            && let Err(error) = self.preferences.backup_ftp.validate()
         {
             self.backup_validation_error(error.to_string());
             return;
@@ -249,6 +273,12 @@ impl App {
             return;
         }
         match pending.action {
+            BackupAction::ConnectFtp(secret) => {
+                self.ftp_connection = Some((request, pending.target.clone(), None));
+                if !self.try_command(Command::ConnectFtp(request, pending.target, secret)) {
+                    self.ftp_connection = None;
+                }
+            }
             BackupAction::ConnectSftp(secret) => {
                 self.sftp_connection = Some((request, pending.target.clone(), None));
                 if !self.try_command(Command::ConnectSftp(request, pending.target, secret)) {
@@ -285,6 +315,30 @@ mod tests {
             name: id.into(),
             created_at: String::new(),
         }
+    }
+
+    #[test]
+    fn ftp_security_switch_preserves_custom_ports_and_clears_stale_password_results() {
+        use crate::backup::ftp::Security;
+        let (mut app, _) = App::new();
+        app.tab = Tab::Preferences;
+        app.preferences.backup_destination = BackupDestination::Ftp;
+        app.settings_fields();
+        app.fields
+            .insert("ftp_password_secret", "fixture-password".into());
+        let old = app.configured_backup_target();
+        app.ftp_connection = Some((9, old.clone(), None));
+        let _ = app.handle(Message::FtpSecurity(Security::ImplicitTls));
+        assert_eq!(app.field("ftp_port"), "990");
+        assert!(app.field("ftp_password_secret").is_empty());
+        assert!(app.ftp_connection.is_none());
+        let _ = app.handle(Message::Backend(Event::FtpConnection(9, old, Ok(()))));
+        assert!(app.ftp_connection.is_none());
+        let _ = app.handle(Message::Field("ftp_port", "2121".into()));
+        let _ = app.handle(Message::FtpSecurity(Security::ExplicitTls));
+        assert_eq!(app.field("ftp_port"), "2121");
+        let _ = app.handle(Message::FtpSecurity(Security::Plain));
+        assert_eq!(app.field("ftp_port"), "2121");
     }
 
     #[test]
