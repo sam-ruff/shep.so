@@ -49,6 +49,15 @@ store submissions in TODO.
 
 ## Current continuation
 
+The desktop ongoing-sync engine is now implemented as a **prerequisite**, with
+12 new storage/provider regressions. It is not connected to automatic scheduling,
+subscription creation or Preferences controls. See
+[reconciliation](docs/agents/PROFILE_RECONCILIATION.md) for its receipt/cursor
+contracts, concrete next wiring steps and validation. The profile-focused run
+passes 41 checks; all 10 existing native profile flows pass, with reviewed captures. Final shipping verification is recorded in completion. Keep all
+40 requests active. Do not present this engine checkpoint as continuous sync.
+
+
 Desktop **Profiles and sync** now connects durable discovery, reviewed publication
 and account/preferences enrollment through actual iced controls. It retains
 independent histories, upload identities, frozen reviews, durable receipts,
@@ -107,10 +116,11 @@ also remain R63.
 ## Restart order
 
 1. **Highest priority:** continue [OAuth and shared profiles](docs/agents/PROFILE_SYNC_HANDOVER.md).
-   Finish and verify desktop enrollment on `src/profiles/discovery.rs`,
-   `src/profiles/publication.rs` and `src/engine/profiles.rs`; preserve the publication
-   journal and native review/retry controls. Then continue Flutter ongoing reconciliation,
-   category controls and automatic restoration. Close the authenticated-source to
+   Connect the verified reconciliation runner to reviewed subscription creation,
+   authenticated background scheduling and Preferences pause/field/retry/conflict
+   controls; preserve shared ownership with publication/enrollment. Cover newer
+   native preference edits during remote application and add saved native flows.
+   Then connect Flutter reconciliation, category controls and automatic restoration. Close the authenticated-source to
    actual Flutter FFI integration gap without adding a production login bypass. Preserve tracked own-upload identities and the causal completion barrier for
    multi-record setup.
    Copy original records into independently owned device history, never clone a

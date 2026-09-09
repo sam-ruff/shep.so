@@ -2,12 +2,12 @@
 
 This is the next implementation priority (R75/R02/R49 and
 `desktop-main:R92`). **Continuous profile sync is not implemented.** The desktop
-has Google OAuth and encrypted Drive backups; these do not yet enroll another
-device or continuously share its accounts/settings. This document records the
+has Google OAuth, encrypted Drive backups and reviewed initial profile enrollment.
+Continuous account/settings sharing is still unfinished. This document records the
 contract to implement and verify in Rust desktop and Flutter, with browser parity
 tracked separately. Keep the linked entry first in the root TODO until delivery.
 
-See [desktop profiles](PROFILE_DESKTOP.md) and [Flutter enrollment](PROFILE_ENROLLMENT.md) for the current connected boundaries.
+See [desktop profiles](PROFILE_DESKTOP.md), [Flutter enrollment](PROFILE_ENROLLMENT.md) and the [desktop reconciliation engine](PROFILE_RECONCILIATION.md) for the current boundaries. The reconciliation engine has protocol/storage coverage; its automatic scheduler and controls are not connected.
 
 ## Existing code to reuse
 
@@ -114,8 +114,9 @@ Do not serialize `Preferences` wholesale or use SQLite as the shared profile.
 The initial metadata codec and native/WASM fixtures now live in `shared/profile-core`;
 see [the implemented format subset](PROFILE_FORMAT.md). Native causal metadata history now has independent-store and Android bridge coverage;
 see [the history API](PROFILE_HISTORY.md) and [Flutter publication](PROFILE_PUBLICATION.md).
-Enrollment, real account/preferences application, desktop/browser publication and
-the remaining settings/credential format are still open. The following is a design target, **not a shipped
+Reviewed desktop/Flutter publication and initial account/preferences application
+are connected. Browser publication/enrollment, continuous reconciliation and the
+remaining settings/credential format are still open. The following is a design target, **not a shipped
 wire format**; freeze exact field names/enums and crypto parameters together with
 the implementation and golden fixtures before either client writes production
 files.

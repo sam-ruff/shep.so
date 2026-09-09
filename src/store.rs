@@ -11,6 +11,7 @@ mod outgoing;
 pub(crate) mod profile_enrollment;
 pub(crate) mod profile_preferences;
 pub(crate) mod profile_reconnect;
+pub(crate) mod profile_sync;
 pub(crate) mod profiles;
 mod restore;
 mod selection;
@@ -110,6 +111,7 @@ impl Store {
         profile_enrollment::schema(&conn)?;
         profile_reconnect::schema(&conn)?;
         profile_preferences::schema(&conn)?;
+        profile_sync::schema(&conn)?;
         outgoing::schema(&conn)?;
         selection::schema(&conn)?;
         bulk::schema(&conn)?;

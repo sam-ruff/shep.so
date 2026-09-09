@@ -84,6 +84,18 @@ impl Discovery {
         self.call(move |catalog| catalog.snapshot(profile, generation, expected_revision))
             .await
     }
+    /// Locate one enrolled profile without loading unrelated profile pages.
+    /// Missing/incomplete history is an error, never an empty setup.
+    pub async fn latest_snapshot(&self, profile: Uuid, generation: Uuid) -> Result<Snapshot> {
+        self.call(move |catalog| catalog.latest_snapshot(profile, generation))
+            .await
+    }
+    /// Device-local observation identity scopes record positions. A rebuilt
+    /// observation history must replay original records from the beginning.
+    pub async fn source_device(&self, source: Snapshot) -> Result<Uuid> {
+        self.call(move |catalog| catalog.source_device(source))
+            .await
+    }
     pub async fn export_record(
         &self,
         source: Snapshot,
