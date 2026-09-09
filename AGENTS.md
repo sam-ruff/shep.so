@@ -1264,3 +1264,12 @@ thread. Cross-compilation does not establish actual platform/menu-bar execution.
 and notification service; Python GI/GTK3 and python3-dbus are harness dependencies,
 not production requirements. Never use the user's desktop session bus for these
 tests. Keep normal non-tray close/restart native flows alongside tray regressions.
+
+Ordinary tray hiding also preserves required-write error visibility. Track actual
+hidden-window ownership separately from startup's absent window. A fresh error
+while an ordinary-hidden write is pending reopens the work; an old error or an
+optional read-only refresh does not. If Quit was already pending, use the existing
+operation-owned cancellation state before reopening: a stale attachment/discard
+result cannot cancel a newer close dependency. Queue-rejected draft saves keep
+the visible window. Preserve `test_tray_native_ordinary_hide_reopens_when_pending_send_fails`
+and its actual tray-menu Quit variant alongside the typed-result regressions.

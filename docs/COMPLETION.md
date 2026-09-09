@@ -41,6 +41,28 @@ installation remain distinct unfinished work; no performance claim is made.
 
 
 
+Root integrated the native tray checkpoint as
+[`6728931`](https://github.com/sam-ruff/shep.so/commit/6728931) and pushed it to main,
+verifying exact remote equality. Mandatory hooks pass 745 executions with three
+personal diagnostics ignored; Python58 and strict Zensical pass. All 32 selected
+integrated native scenarios pass in170.625 seconds, including the newer adjacent
+selection and profile-cache restart regressions. Binary SHA-256:
+`cfd6e424e619821cde28b4f041c6a06470dab67769474189aa178d804d89c65d`.
+Log: `artifacts/logs/tray-main-native.log`. Root reviewed the integrated compact
+preferences (`62acdb7a7cee`) and failed-send recovery (`e410af37a3bd`) WebPs.
+
+A follow-up saved native scenario reproduced an additional ordinary-close case:
+with close-to-tray enabled, a failed pending send remained hidden. Reproduction
+log: `artifacts/logs/tray-ordinary-hide-reproduction.log`. This is separate from
+temporary-saving mode, whose failure recovery already passes. The root is adding
+fresh-error recovery for pending writes and visible queue-admission failure;
+old errors and routine read-only refreshes must not reopen the window.
+The first full hook run caught two older-operation ownership regressions in the
+initial correction. Explicit hidden-window state and pre-event close ownership
+now distinguish ordinary hide, startup, and a pending Quit; an obsolete attachment
+failure cannot cancel a newer required save. The failing hooks were retained and
+corrected, without bypassing them. Final verification/shipping remains pending.
+
 ## 9 September: adjacent selection after deleting mail
 
 R89 now selects the following displayed message immediately after a move/delete,

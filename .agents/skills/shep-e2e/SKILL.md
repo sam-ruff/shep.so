@@ -707,3 +707,10 @@ preference persistence, missing host fallback, Open/Quit, temporary-save notice,
 failure/retry, durable auto-exit and background arrivals. Review light and compact
 dark WebPs. These Linux native fixture checks are distinct from an actual desktop
 shell and from Windows/macOS execution; keep those limitations explicit.
+
+`test_tray_native_ordinary_hide_reopens_when_pending_send_fails` enables the real
+close preference, sends an isolated failing reply, and closes to the native tray.
+It covers both ordinary hidden saving and selecting Quit from the actual tray
+menu while the send is pending. Both failures must reopen the intact reply with
+its error and cancel exit. Keep old-result ownership and read-only-background
+checks; the previously saved error is not a new recovery event.
