@@ -1725,17 +1725,60 @@ impl App {
                 } else {
                     "Manual"
                 };
+                let id = destination.id.clone();
                 destinations = destinations.push(
-                    button(row![
-                        text(&destination.name).size(13),
-                        space().width(Length::Fill),
-                        text(status).size(11)
-                    ])
-                    .padding([12, 14])
-                    .width(Length::Fill)
-                    .style(if selected { primary } else { outline })
-                    .on_press(Message::SelectBackupDestination(destination.id.clone())),
+                    row![
+                        checkbox(destination.included)
+                            .label("Include")
+                            .text_size(11)
+                            .on_toggle(move |included| Message::IncludeBackup(
+                                id.clone(),
+                                included
+                            )),
+                        button(row![
+                            text(&destination.name).size(13),
+                            space().width(Length::Fill),
+                            text(status).size(11)
+                        ])
+                        .padding([12, 14])
+                        .width(Length::Fill)
+                        .style(if selected { primary } else { outline })
+                        .on_press(Message::SelectBackupDestination(destination.id.clone()))
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
                 );
+                if let Some(run) = self.backup_run.iter().find(|row| row.id == destination.id) {
+                    use crate::backup::run::Status;
+                    let mut result =
+                        row![container(text(run.status.label()).size(12)).width(Length::Fill)]
+                            .spacing(12)
+                            .align_y(Alignment::Center);
+                    if matches!(run.status, Status::Failed(_)) {
+                        result = result.push(
+                            button(text("Retry").size(12))
+                                .padding([10, 14])
+                                .style(outline)
+                                .on_press_maybe(
+                                    (destination.included
+                                        && self.pending_backup_all.is_none()
+                                        && !self.busy.contains(&run.target.work_key()))
+                                    .then(|| Message::RetryBackup(destination.id.clone())),
+                                ),
+                        );
+                    }
+                    if matches!(
+                        run.status,
+                        Status::Failed(_) | Status::NeedsSetup(_) | Status::SavedWithWarning(_)
+                    ) {
+                        result = result.push(action(
+                            "Setup",
+                            Message::SelectBackupDestination(destination.id.clone()),
+                        ));
+                    }
+                    destinations =
+                        destinations.push(container(result).padding([8, 12]).style(subtle));
+                }
             }
             let mut management =
                 row![action("Add destination", Message::AddBackupDestination)].spacing(12);
@@ -1743,6 +1786,17 @@ impl App {
                 management =
                     management.push(action("Remove destination", Message::ReviewBackupRemoval));
             }
+            management = management.push(space().width(Length::Fill)).push(
+                button(text("Back up all").size(12))
+                    .padding([11, 17])
+                    .style(primary)
+                    .on_press_maybe(
+                        (self.pending_backup.is_none()
+                            && self.pending_backup_all.is_none()
+                            && !self.backup_run.iter().any(|row| row.status.pending()))
+                        .then_some(Message::BackupAll),
+                    ),
+            );
             form = column![
                 management,
                 destinations,
@@ -1861,7 +1915,7 @@ impl App {
         column![
             self.settings_card(
                 "Backups",
-                "Choose a destination, schedule and number of copies to keep.",
+                "Choose where to keep copies. Include selects destinations for Back up all.",
                 form.into()
             ),
             self.settings_card(

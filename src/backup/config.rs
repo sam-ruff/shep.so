@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 pub struct Destination {
     pub id: String,
     pub name: String,
+    #[serde(default = "included_by_default")]
+    pub included: bool,
     pub destination: BackupDestination,
     pub folder: String,
     #[serde(default)]
@@ -22,11 +24,16 @@ pub struct Destination {
     pub last_backup: Option<i64>,
     pub ready: bool,
 }
+fn included_by_default() -> bool {
+    true
+}
+
 impl Destination {
     pub fn capture(prefs: &Preferences, id: String, name: String) -> Self {
         Self {
             id,
             name,
+            included: true,
             destination: prefs.backup_destination,
             folder: prefs.backup_folder.clone(),
             s3: prefs.backup_s3.clone(),
@@ -73,8 +80,10 @@ pub fn capture_editor(prefs: &mut Preferences) {
         return;
     };
     if let Some(index) = prefs.backup_destinations.iter().position(|d| d.id == id) {
+        let included = prefs.backup_destinations[index].included;
         let name = prefs.backup_destinations[index].name.clone();
         prefs.backup_destinations[index] = Destination::capture(prefs, id, name);
+        prefs.backup_destinations[index].included = included;
     }
 }
 

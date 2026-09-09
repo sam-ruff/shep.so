@@ -209,6 +209,9 @@ pub enum Message {
     BackupDestination(BackupDestination),
     BackupAccounts(bool),
     AutoBackup(bool),
+    IncludeBackup(String, bool),
+    BackupAll,
+    RetryBackup(String),
     GoogleLogin(bool),
     ReviewGoogleDisconnect,
     ConfirmGoogleDisconnect,
@@ -380,6 +383,9 @@ pub struct App {
     preference_sync: preference_sync::PreferenceSync,
     pending_google_login: Option<(u64, Preferences, bool)>,
     pending_backup: Option<backups::PendingBackup>,
+    pending_backup_all: Option<u64>,
+    backup_run_generation: u64,
+    backup_run: Vec<backups::RunRow>,
     tab: Tab,
     settings_tab: SettingsTab,
     settings_search: String,
@@ -538,6 +544,9 @@ impl App {
                 preference_sync: Default::default(),
                 pending_google_login: None,
                 pending_backup: None,
+                pending_backup_all: None,
+                backup_run_generation: 0,
+                backup_run: Vec::new(),
                 tab: Tab::Mail,
                 settings_tab: SettingsTab::General,
                 settings_search: String::new(),
@@ -685,7 +694,8 @@ impl App {
             Command::SaveAccount(..)
             | Command::SaveEvent(..)
             | Command::DeleteEvent(..)
-            | Command::GoogleLogin(..) => command.key(),
+            | Command::GoogleLogin(..)
+            | Command::BackupIncluded(..) => command.key(),
             _ => None,
         };
         if close_key
@@ -1694,6 +1704,9 @@ impl App {
                         self.s3_connection = Some((request, target, Some(result)));
                     }
                 }
+                Event::BackupRun(request, target, status) => {
+                    self.observe_backup_run(request, target, status)
+                }
                 Event::BackupSaved(target, copy) => {
                     if target == self.configured_backup_target() {
                         self.backups_generation += 1;
@@ -1783,6 +1796,7 @@ impl App {
                     key.starts_with("send:")
                         || key.starts_with("event:")
                         || key.starts_with("account:")
+                        || key.starts_with("backup:")
                 }) {
                     self.notice("Finishing your changes before closing…", false);
                 } else if self.composer.discard_pending {
@@ -2641,6 +2655,9 @@ impl App {
                 self.preferences.backup_accounts = enabled;
                 self.preference_sync.changed();
             }
+            Message::IncludeBackup(id, included) => self.include_backup(id, included),
+            Message::BackupAll => self.begin_backup_all(None),
+            Message::RetryBackup(id) => self.begin_backup_all(Some(id)),
             Message::AutoBackup(enabled) => {
                 self.preferences.auto_backup = enabled;
                 self.preference_sync.changed();
@@ -4009,6 +4026,7 @@ impl App {
         data["sftp_connection"] = serde_json::json!(self.sftp_connection.as_ref().map(|(_, target, result)| serde_json::json!({"current": *target == self.configured_backup_target(), "pending": result.is_none(), "connected": result.as_ref().is_some_and(|r| r.is_ok()), "error": result.as_ref().and_then(|r| r.as_ref().err()) })));
         data["sftp_host_key"] = serde_json::json!(self.sftp_host_key.as_ref().map(|review| serde_json::json!({"pending": review.result.is_none(), "verified":review.verified, "fingerprint": review.result.as_ref().and_then(|r| r.as_ref().ok()), "error": review.result.as_ref().and_then(|r| r.as_ref().err()) })));
         data["saved_backup_s3"] = serde_json::json!(self.workspace.preferences.backup_s3);
+        data["backup_run"] = serde_json::json!(self.backup_run);
         data["backup_destinations"] = serde_json::json!(self.preferences.backup_destinations);
         data["backup_selected"] = serde_json::json!(self.preferences.backup_selected);
         data["saved_backup_destinations"] =

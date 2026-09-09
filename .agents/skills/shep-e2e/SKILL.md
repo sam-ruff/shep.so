@@ -818,3 +818,15 @@ navigation while work is pending, assert it is still held, then release it.
 This only controls the fictional transport; it cannot mutate application state
 or contact Google. Keep the existing completion deadline and saved automated
 first-device scenario. Fixture shutdown also releases the response.
+
+Combined-backup correctness flows use `desktop.start(backup_run="ready" | "recover")`.
+They require the owned persistent fixture workspace and prepare two local folders
+beneath its artifact directory. The production queue, snapshot encryption,
+reservation journal, upload, metadata and retention paths run unchanged. An
+isolated credential worker holds fictional distinct passphrases; account-password
+export and non-fixture provider targets are rejected. The recovery fixture loses
+one acknowledgment after the second target's actual local upload, retaining its
+ciphertext and reserved identity for retry/restart. Ordinary preview still cannot
+back up. Observe `backup_run` rows and saved destination inclusion; never modify
+these observations to actuate the UI. Review the light progress/error and compact
+dark WebPs alongside saved native scenarios and `cargo test --all-features backup_all`.

@@ -3,6 +3,7 @@ mod drive;
 pub mod ftp;
 pub(crate) mod journal;
 pub(crate) mod restore;
+pub mod run;
 pub mod s3;
 pub mod sftp;
 

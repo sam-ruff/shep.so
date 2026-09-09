@@ -106,6 +106,7 @@ pub enum Command {
     DeleteEvent(CalendarEvent),
     Backup(BackupTarget, SecretString),
     AutomaticBackup(BackupTarget),
+    BackupIncluded(u64, String, BackupTarget),
     ConnectS3(u64, BackupTarget, Option<(SecretString, SecretString)>),
     ConnectSftp(u64, BackupTarget, Option<SecretString>),
     ConnectFtp(u64, BackupTarget, Option<SecretString>),
@@ -138,6 +139,7 @@ impl Command {
             Self::DisconnectGoogle(_) | Self::CleanupGoogle => Some("google-disconnect".into()),
             Self::Backup(target, _)
             | Self::AutomaticBackup(target)
+            | Self::BackupIncluded(_, _, target)
             | Self::Restore(target, ..)
             | Self::ConnectS3(_, target, _)
             | Self::ConnectSftp(_, target, _)
@@ -234,6 +236,7 @@ pub enum Event {
     FtpConnection(u64, BackupTarget, Result<(), String>),
     SftpFingerprint(u64, backup::sftp::Settings, Result<String, String>),
     BackupFinished(BackupTarget),
+    BackupRun(u64, BackupTarget, backup::run::Status),
     Busy(String, bool),
     Notice(String),
     Error(String),
@@ -311,6 +314,18 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
                 .map(|p| p.current.scope())
                 .unwrap_or_default(),
         );
+        #[cfg(feature = "test-support")]
+        let credentials = if demo && crate::test_support::backups::active() {
+            match crate::test_support::backups::credentials(&store).await {
+                Ok(credentials) => credentials,
+                Err(error) => {
+                    let _ = output.send(Event::Error(error.to_string())).await;
+                    return;
+                }
+            }
+        } else {
+            credentials
+        };
         let engine = Engine {
             profiles,
             credentials: credentials.clone(),
@@ -487,6 +502,10 @@ impl Engine {
         &self,
         prefs: &Preferences,
     ) -> anyhow::Result<Box<dyn BackupProvider>> {
+        #[cfg(feature = "test-support")]
+        if self.demo && crate::test_support::backups::active() {
+            return crate::test_support::backups::provider(&self.store, prefs);
+        }
         Ok(match prefs.backup_destination {
             BackupDestination::Local => {
                 anyhow::ensure!(
@@ -1339,12 +1358,16 @@ impl Engine {
                 self.run_backup(target, Some(passphrase), &mut output)
                     .await?;
             }
+            Command::BackupIncluded(request, id, target) => {
+                self.backup_included(request, id, target, &mut output)
+                    .await?;
+            }
             Command::AutomaticBackup(target) => {
                 self.run_backup(target, None, &mut output).await?;
             }
             Command::ListBackups(request, target) => {
                 let result: anyhow::Result<Vec<BackupCopy>> = async {
-                    anyhow::ensure!(!self.demo, "Backup listing is disabled in preview.");
+                    self.allow_backup()?;
                     let _guard = self.backup_connection_guard(&target).await;
                     let prefs = self.store.get("preferences").await?;
                     Self::check_backup_target(&target, &prefs)?;
