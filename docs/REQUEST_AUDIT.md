@@ -672,3 +672,10 @@ Automatic scheduling, reviewed subscription creation, sync/conflict controls,
 account/category reconciliation and Flutter/browser equivalents remain open.
 Shipping and subsequent checks belong to the completion entry; all 40 active
 requests remain in TODO.
+
+The engine checkpoint [`ecd98c5`](https://github.com/sam-ruff/shep.so/commit/ecd98c59254d59b270ec0ef521aa6e70fff29bd6) is pushed and remotely verified. Normal hooks pass
+483 Rust tests; 10 native profile regressions, 42 Python checks, 37 parity
+contracts, production compilation and strict docs pass. Partial catalog-loss and
+missing-remote-ancestry recovery need additional coverage before automatic sync
+is exposed; the existing full observation-directory rebuild test retains all
+remote originals. Full scheduling/control/client integration remains open.

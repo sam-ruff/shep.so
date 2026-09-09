@@ -50,7 +50,7 @@ store submissions in TODO.
 ## Current continuation
 
 The desktop ongoing-sync engine is now implemented as a **prerequisite**, with
-12 new storage/provider regressions. It is not connected to automatic scheduling,
+12 new storage/provider regressions. Code [`ecd98c5`](https://github.com/sam-ruff/shep.so/commit/ecd98c59254d59b270ec0ef521aa6e70fff29bd6) is pushed with exact remote verification; normal hooks pass 483 Rust tests. It is not connected to automatic scheduling,
 subscription creation or Preferences controls. See
 [reconciliation](docs/agents/PROFILE_RECONCILIATION.md) for its receipt/cursor
 contracts, concrete next wiring steps and validation. The profile-focused run
@@ -116,7 +116,10 @@ also remain R63.
 ## Restart order
 
 1. **Highest priority:** continue [OAuth and shared profiles](docs/agents/PROFILE_SYNC_HANDOVER.md).
-   Connect the verified reconciliation runner to reviewed subscription creation,
+   Verify partial catalog-loss/missing-remote-ancestry recovery before enabling
+   automatic work. The existing rebuild regression deletes the whole observation
+   directory while remote originals remain available. Then connect the verified
+   reconciliation runner to reviewed subscription creation,
    authenticated background scheduling and Preferences pause/field/retry/conflict
    controls; preserve shared ownership with publication/enrollment. Cover newer
    native preference edits during remote application and add saved native flows.

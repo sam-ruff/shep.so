@@ -2573,3 +2573,21 @@ the earlier native/combined performance failure remains open. No live Google,
 Apple, authenticated Flutter interchange, deployment or full-parity claim is
 made. Quality/release definitions remain disabled. Phone data, the installed
 desktop and the independent main worktree remain untouched.
+
+
+Reconciliation engine code [`ecd98c5`](https://github.com/sam-ruff/shep.so/commit/ecd98c59254d59b270ec0ef521aa6e70fff29bd6) is pushed to
+`feat/mobile-web-clients`; its exact remote SHA matches and the source worktree
+was clean after shipping. The normal hooks pass formatting, Clippy and **483 Rust
+tests**, with only the two opt-in live diagnostics ignored. Final production
+compilation and strict documentation pass. The 42 Python checks, 37 parity
+contracts and 10 native profile flows described above also pass. No full native
+suite or performance remeasurement is claimed for this engine-only checkpoint.
+The shipping receipt is `artifacts/profile-sync-shipping.json`.
+
+Before exposing automatic sync, extend recovery coverage to partial catalog loss
+(retained observation histories) and missing remote ancestry after a rebuild.
+The current cache-rebuild test removes the complete observation directory while
+all original remote files remain available. It does not prove that broader
+recovery case. Then connect authenticated scheduling, reviewed subscriptions and
+sync/conflict controls, followed by Flutter/account/category reconciliation.
+All 40 active requests and the full product goal remain open.
