@@ -749,3 +749,19 @@ restart and upload convergence. A separate native flow changes Appearance while
 a review is open, rejects the stale action, refreshes and retries. Read-only
 SQLite assertions inspect the closed fixture's durable checkpoint; they never
 actuate the UI. These are fixture/history contracts, not live Google evidence.
+
+
+For transparent/theme-aware launcher and tray assets, keep
+`test_tray_native_symbolic_icon_follows_host_theme_while_app_is_hidden`.
+The owned host loads the actual installed-name symbolic SVG from a private icon
+theme directory. `tray_theme` clicks its native theme button; it changes only
+that GTK fixture process. Assert the actual StatusNotifier IconName and successful
+native icon lookup, then inspect the light/dark WebPs and reopen Shep normally.
+This demonstrates GTK symbolic recoloring and the real SNI/menu path, not a real
+GNOME Shell session or Windows/macOS rendering.
+
+Compact list navigation observes `inbox_reveal_height`, the actual native viewport.
+After rapid navigation, wait for the target row to be fully revealed before
+capturing a scroll offset for a later operation. Selection state can arrive first.
+The owned Xvfb selects GTK's Cairo renderer for file pickers; keep real controls,
+clipboard ownership proof and path confinement intact.

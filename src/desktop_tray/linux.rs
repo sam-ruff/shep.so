@@ -13,6 +13,9 @@ impl ksni::Tray for Tray {
     fn title(&self) -> String {
         "Shep".into()
     }
+    fn icon_name(&self) -> String {
+        "so.shep.Shep-symbolic".into()
+    }
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         let mut argb = self.icon.rgba.clone();
         for pixel in argb.chunks_exact_mut(4) {

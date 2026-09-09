@@ -19,6 +19,7 @@ mod google_lifecycle_tests;
 mod html_reader;
 mod layout;
 mod mail_actions;
+mod mail_list;
 mod mail_selection;
 mod move_recovery;
 mod native_input;
@@ -240,6 +241,7 @@ pub enum Message {
     PaneResize(widget::pane_grid::ResizeEvent),
     SaveLayout(u64),
     InboxScroll(f32),
+    InboxRevealed(mail_list::reveal::Revealed),
     DragChanged,
     DragReveal(drag_mail::Reveal),
     DropMail(Arc<drag_mail::Payload>, Option<drag_mail::Target>),
@@ -328,6 +330,8 @@ pub struct App {
     reader_selection_generation: u64,
     reader_preparation: Option<iced::task::Handle>,
     inbox_scroll: f32,
+    #[cfg(feature = "test-support")]
+    inbox_reveal_height: f32,
     mail_drag: drag_mail::Handle,
     last_click: Option<(String, Instant)>,
     pending_focus: Option<&'static str>,
@@ -480,6 +484,8 @@ impl App {
                 reader_selection_generation: 0,
                 reader_preparation: None,
                 inbox_scroll: 0.,
+                #[cfg(feature = "test-support")]
+                inbox_reveal_height: 0.,
                 mail_drag: Default::default(),
                 last_click: None,
                 pending_focus: None,
@@ -2020,30 +2026,8 @@ impl App {
                     };
                     if let Some(m) = self.page.rows.get(next) {
                         let id = m.id.clone();
-                        self.select_for_read(id.clone());
-                        let next = self
-                            .page
-                            .rows
-                            .iter()
-                            .position(|mail| mail.id == id)
-                            .unwrap_or(next);
-                        let viewport = (self.size.height
-                            / (self.preferences.interface_scale as f32 / 100.)
-                            - 220.)
-                            .max(104.);
-                        let top = next as f32 * 104.;
-                        let offset = if top < self.inbox_scroll {
-                            top
-                        } else if top + 104. > self.inbox_scroll + viewport {
-                            top + 104. - viewport
-                        } else {
-                            self.inbox_scroll
-                        };
-                        self.inbox_scroll = offset;
-                        return widget::operation::scroll_to(
-                            "inbox-list",
-                            widget::scrollable::AbsoluteOffset { x: 0., y: offset },
-                        );
+                        self.select_for_read(id);
+                        return self.reveal_selected_mail();
                     }
                 }
             }
@@ -2943,6 +2927,15 @@ impl App {
                 }
             }
             Message::InboxScroll(offset) => self.inbox_scroll = offset,
+            Message::InboxRevealed(result) => {
+                if result.context == self.inbox_context() && result.height > 0. {
+                    self.inbox_scroll = result.offset;
+                    #[cfg(feature = "test-support")]
+                    {
+                        self.inbox_reveal_height = result.height;
+                    }
+                }
+            }
             Message::PaneResize(event) => {
                 let schedule = self.pending_resize.is_none();
                 self.pending_resize = Some(event);
@@ -3912,6 +3905,7 @@ impl App {
             data["keys"] = serde_json::json!(self.test_keys);
         }
         data["inbox_scroll"] = serde_json::json!(self.inbox_scroll);
+        data["inbox_reveal_height"] = serde_json::json!(self.inbox_reveal_height);
         Task::perform(
             async move {
                 static SNAPSHOT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

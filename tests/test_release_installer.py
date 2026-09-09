@@ -51,6 +51,7 @@ class ReleaseFixture:
             ("shep", binary),
             ("scripts/install_linux.py", (ROOT / "scripts/install_linux.py").read_bytes()),
             ("assets/launcher.png", (ROOT / "assets/launcher.png").read_bytes()),
+            ("assets/shepherd-symbolic.svg", (ROOT / "assets/shepherd-symbolic.svg").read_bytes()),
         ]
         buffer = io.BytesIO()
         with tarfile.open(fileobj=buffer, mode="w:gz") as archive:

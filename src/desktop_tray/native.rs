@@ -22,6 +22,7 @@ pub(super) fn initialize(
         let quit = MenuItem::with_id("shep.quit", "Quit Shep", true, None);
         menu.append_items(&[&open, &PredefinedMenuItem::separator(), &quit])?;
         let tray = TrayIconBuilder::new()
+            .with_icon_as_template(cfg!(target_os = "macos"))
             .with_tooltip("Shep")
             .with_icon(tray_icon::Icon::from_rgba(
                 icon.rgba.clone(),

@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import time
 import tempfile
+import shutil
 
 
 class TrayFixture:
@@ -14,6 +15,10 @@ class TrayFixture:
         self.host = None
         directory = desktop.directory
         self.log = (directory / "tray-host.log").open("w")
+        icon_directory = directory / "icon-theme" / "hicolor" / "scalable" / "apps"
+        icon_directory.mkdir(parents=True)
+        shutil.copyfile(Path(__file__).resolve().parents[1] / "assets/shepherd-symbolic.svg",
+                        icon_directory / "so.shep.Shep-symbolic.svg")
         # AF_UNIX names have a small platform limit; worktree artifact paths can
         # exceed it. This owned alias still points to the exact fixture directory.
         self.alias = tempfile.TemporaryDirectory(prefix="shep-tray-")
@@ -65,6 +70,13 @@ class TrayFixture:
         self.desktop.command("xdotool", "windowraise", self.host_window)
         self.desktop.command("xdotool", "windowfocus", self.host_window)
         self.desktop.command("xdotool", "mousemove", "--window", self.host_window, "80", "23", "click", "1")
+
+    def theme(self):
+        if not self.host or self.host.poll() is not None:
+            raise RuntimeError("The owned native tray host is unavailable")
+        self.desktop.command("xdotool", "windowraise", self.host_window)
+        self.desktop.command("xdotool", "windowfocus", self.host_window)
+        self.desktop.command("xdotool", "mousemove", "--window", self.host_window, "80", "77", "click", "1")
 
     def state(self):
         path = self.desktop.directory / "tray-host.json"

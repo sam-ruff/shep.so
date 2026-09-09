@@ -10,9 +10,10 @@ Historical implementation notes belong there, rather than becoming new TODOs.
 
 The user now explicitly requests independent agents/worktrees and primary-agent
 integration into main. Active lanes live under ignored `artifacts/worktrees/`:
-`compact-mail` (refresh, compact rows, delete selection), `multiple-backups`
-(Local/Drive first, then remote providers), and `native-tray` (close lifecycle
-first, then platform trays). Keep each Cargo target separate and builds capped at
+`folder-convergence` (combined folders and reconciliation), `multiple-backups`
+(SFTP after its reviewed S3 checkpoint), and `native-tray` (encrypted storage
+after its reviewed palette checkpoint). Compact rows/icons are integrated in the
+primary workspace; matching-account import is ready in `codex/profile-links`. Keep each Cargo target separate and builds capped at
 four jobs. Isolated correctness-only native flows can run alongside unrelated
 builds; latency and renderer pixel measurements need a quiet window. Never relax
 budgets to accommodate host load.
@@ -28,7 +29,8 @@ credential protection still remain. Do not discard any lane's uncommitted work.
 
 Portable preference reviews from `713f96e` are integrated: six targeted
 regressions, 86 matching profile tests, 81 Python tests and all 25 integrated native
-profile flows pass on the final control-identity guard. Root hooks/push follow.
+profile flows pass on the final control-identity guard. Source `22a3af5` is pushed
+with 762 mandatory hook executions and exact remote equality verified.
 Account linking/removal/endpoint reviews remain separate work.
 
 `2b87db4` is pushed: multiple Local/Drive destinations, 756 hook executions and

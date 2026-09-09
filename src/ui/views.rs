@@ -430,152 +430,24 @@ impl App {
             filters.into()
         };
         // Fixed-height rows let us shape only visible text plus a small overscan.
-        let row_height = 104.;
+        let row_height = super::mail_list::ROW_HEIGHT;
         let first = ((self.inbox_scroll / row_height) as usize)
             .saturating_sub(2)
             .min(self.page.rows.len());
         let count = ((self.size.height / (self.preferences.interface_scale as f32 / 100.) - 220.)
-            .max(104.)
+            .max(row_height)
             / row_height)
             .ceil() as usize
             + 5;
         let end = (first + count).min(self.page.rows.len());
         let mut messages = column![space().height(first as f32 * row_height)].spacing(0);
-        for (index, mail) in self.page.rows.iter().enumerate().take(end).skip(first) {
+        for mail in self.page.rows.iter().take(end).skip(first) {
             let active = if self.mail_selection.mode {
                 self.mail_selection.visible.contains(&mail.id)
             } else {
                 self.selected.as_deref() == Some(&mail.id)
             };
-            let unread = mail.unread;
-            let sender = sender_name(&mail.sender);
-            let date = chrono::DateTime::from_timestamp(mail.timestamp, 0)
-                .unwrap_or_default()
-                .with_timezone(&chrono::Local);
-            let date = if date.date_naive() == chrono::Local::now().date_naive() {
-                date.format("%H:%M").to_string()
-            } else {
-                date.format("%d %b").to_string()
-            };
-            let mut top = row![
-                if self.mail_selection.mode {
-                    super::context_menu::ContextArea::sidebar(
-                        button(
-                            checkbox(self.mail_selection.visible.contains(&mail.id))
-                                .size(18)
-                                .on_toggle({
-                                    let id = mail.id.clone();
-                                    move |_| Message::CheckMail(id.clone())
-                                }),
-                        )
-                        .padding(6)
-                        .style(ghost)
-                        .on_press(Message::CheckMail(mail.id.clone())),
-                    )
-                    .with_drag(super::drag_mail::Region::Block(self.mail_drag.clone()))
-                    .into()
-                } else {
-                    avatar(&sender, index, 30.)
-                },
-                text(truncate(&sender, 23)).size(12).font(if unread {
-                    BOLD
-                } else {
-                    iced::Font::DEFAULT
-                }),
-                space().width(Length::Fill),
-                muted(date).size(10),
-                super::context_menu::ContextArea::sidebar(opaque(
-                    button(flag_icon(mail.starred, 18.))
-                        .padding(6)
-                        .style(if mail.starred { flagged } else { ghost })
-                        .on_press_maybe(
-                            (!self.mail_actions.restoring(&mail.id)
-                                && !self.bulk_owns_mail(&mail.id))
-                            .then(|| Message::FlagRow(mail.id.clone()))
-                        )
-                ))
-                .with_drag(super::drag_mail::Region::Block(self.mail_drag.clone()))
-            ]
-            .spacing(9)
-            .align_y(Alignment::Center);
-            if self.mail_actions.restoring(&mail.id) {
-                top = top.push(muted("Restoring…").size(10));
-            }
-            if unread {
-                top = top.push(
-                    container(space())
-                        .width(5)
-                        .height(5)
-                        .style(|t| container::Style {
-                            background: Some(colors(t).accent.into()),
-                            border: Border {
-                                radius: 3.into(),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        }),
-                );
-            }
-            let mut bottom = row![
-                container(
-                    muted(truncate(&mail.preview, 84))
-                        .wrapping(text::Wrapping::None)
-                        .height(17)
-                        .size(12)
-                        .width(Length::Fill),
-                )
-                .width(Length::Fill)
-                .clip(true),
-                if mail.attachment_count > 0 {
-                    icon("clip", 16.)
-                } else {
-                    space().into()
-                }
-            ]
-            .spacing(8);
-            if self.query.searches_all_folders() {
-                let folder = self
-                    .workspace
-                    .folder_label(Some(mail.account_id.as_str()), &mail.folder);
-                bottom = bottom.push(
-                    container(muted(truncate(&folder, 18)).size(10))
-                        .padding([1, 5])
-                        .style(subtle),
-                );
-            }
-            let entry = button(
-                column![
-                    top,
-                    text(truncate(&mail.subject, 57))
-                        .wrapping(text::Wrapping::None)
-                        .height(18)
-                        .size(12)
-                        .font(if unread { BOLD } else { iced::Font::DEFAULT }),
-                    bottom
-                ]
-                .spacing(5),
-            )
-            .padding([10, 16])
-            .height(row_height - 1.)
-            .width(Length::Fill)
-            .style(move |t, status| {
-                let p = colors(t);
-                button::Style {
-                    background: Some(
-                        if active {
-                            p.tint
-                        } else if matches!(status, button::Status::Hovered) {
-                            p.subtle
-                        } else {
-                            p.surface
-                        }
-                        .into(),
-                    ),
-                    text_color: p.text,
-                    ..Default::default()
-                }
-            })
-            .on_press(Message::Select(mail.id.clone()));
+            let entry = self.mail_row(mail, active);
             let entry = super::context_menu::ContextArea::new(
                 mouse_area(entry).on_enter(Message::Hover(mail.id.clone())),
                 mail.id.clone(),
@@ -638,23 +510,28 @@ impl App {
                 )
         ]
         .align_y(Alignment::Center);
-        column![
-            container(column![filters, search].spacing(15)).padding(18),
-            line(),
-            iced::widget::keyed_column([(
-                self.list_revision,
-                scrollable(messages)
-                    .id("inbox-list")
-                    .height(Length::Fill)
-                    .on_scroll(|v| Message::InboxScroll(v.absolute_offset().y))
-                    .into()
-            )])
+        container(
+            column![
+                container(column![filters, search].spacing(15)).padding(18),
+                line(),
+                iced::widget::keyed_column([(
+                    self.list_revision,
+                    scrollable(messages)
+                        .id("inbox-list")
+                        .height(Length::Fill)
+                        .on_scroll(|v| Message::InboxScroll(v.absolute_offset().y))
+                        .into()
+                )])
+                .height(Length::Fill),
+                line(),
+                container(pages).padding([3, 12])
+            ]
+            .width(Length::Fill)
             .height(Length::Fill),
-            line(),
-            container(pages).padding([3, 12])
-        ]
-        .width(Length::Fill)
+        )
+        .id(self.inbox_context())
         .height(Length::Fill)
+        .width(Length::Fill)
         .into()
     }
     fn reader(&self) -> Element<'_, Message> {

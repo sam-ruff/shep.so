@@ -278,7 +278,9 @@ class Desktop:
         # Keep native file selection on our display, never the user's portal.
         # rfd falls back to the real GTK/Zenity picker when no portal is available.
         self.env.update(DBUS_SESSION_BUS_ADDRESS=f"unix:path={self.directory}/no-session-bus",
-                        GDK_BACKEND="x11", GTK_USE_PORTAL="0", GSETTINGS_BACKEND="memory",
+                        # The owned Xvfb has no hardware GPU. Keep the GTK picker
+                        # on its CPU renderer; production GTK preferences are untouched.
+                        GDK_BACKEND="x11", GSK_RENDERER="cairo", GTK_USE_PORTAL="0", GSETTINGS_BACKEND="memory",
                         XDG_DATA_HOME=str(self.directory / "data"),
                         XDG_CONFIG_HOME=str(self.directory / "config"),
                         XDG_CACHE_HOME=str(self.directory / "cache"))
@@ -328,7 +330,8 @@ class Desktop:
                     state = self.state()
                     if state.get("ready") and state.get("page_loaded"):
                         return {"pid": self.app.pid, "window": self.window, "size": [width, height], "state": state,
-                                "artifacts": str(self.directory)}
+                                "artifacts": str(self.directory),
+                                "window_class": self.command("xprop", "-id", self.window, "WM_CLASS").strip() if self.tray_fixture else None}
             except (subprocess.SubprocessError, FileNotFoundError, json.JSONDecodeError):
                 pass
             time.sleep(0.05)
@@ -729,11 +732,11 @@ class Desktop:
                         raise ValueError("Test window must be 900–2560 × 640–1600.")
                     self.command("xdotool", "windowsize", self.window, str(width), str(height))
                     self.launch_size = (width,height)
-                elif kind in ("tray_menu", "tray_host_stop", "tray_host_start"):
+                elif kind in ("tray_menu", "tray_host_stop", "tray_host_start", "tray_theme"):
                     if not self.tray_fixture:
                         raise RuntimeError("Start an owned tray fixture first")
                     {"tray_menu": self.tray_fixture.menu, "tray_host_stop": self.tray_fixture.stop_host,
-                     "tray_host_start": self.tray_fixture.start_host}[kind]()
+                     "tray_host_start": self.tray_fixture.start_host, "tray_theme": self.tray_fixture.theme}[kind]()
                 elif kind == "wait_exit":
                     if not self.app:
                         raise RuntimeError("Start an owned fixture first")
@@ -861,7 +864,7 @@ TOOLS = [
     {"name": "desktop.close", "description": "Close only the owned fixture app, keeping its Xvfb display and persistent fixture cache available for restart. Normally sends WM_DELETE_WINDOW; crash=true kills only the owned process for recovery tests.", "inputSchema": {"type": "object", "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.restart", "description": "Restart only the owned persistent fixture app on its existing Xvfb display. Normally sends a native window-close request; crash=true kills that owned process to exercise journal recovery. Retains the fixture SQLite cache and never changes app state directly.", "inputSchema": {"type": "object", "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.batch", "description": "Run 1–100 real mouse/keyboard actions in order, including held left-button mouse_down/mouse_up, short waits, state assertions and WebP screenshots. Stops at first failure and captures evidence. Prefer batches to one call per action.",
-     "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}, "type": {"enum": ["pixel_reference", "measure_pixels", "close_request", "tray_menu", "tray_host_stop", "tray_host_start", "wait_exit", "restart", "click", "double_click", "mouse_down", "mouse_up", "hover", "resize", "drag", "type", "paste", "key", "key_sequence", "choose_file", "print_output", "cancel_print", "focus_app", "browser_screenshot", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "points": {"type": "array", "minItems": 8, "maxItems": 128, "items": {"type": "array", "minItems": 5, "maxItems": 5, "items": {"type": "integer"}}}, "count": {"type": "integer"}, "pages": {"type": "integer"}, "x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "button": {"type": "integer", "enum": [1, 2, 3]}, "modifiers": {"type": "array", "items": {"type": "string", "enum": ["ctrl", "shift", "alt", "super"]}}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "keys": {"type":"array","minItems":1,"maxItems":32,"items":{"type":"string","minLength":1,"maxLength":80}}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
+     "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}, "type": {"enum": ["pixel_reference", "measure_pixels", "close_request", "tray_menu", "tray_host_stop", "tray_host_start", "tray_theme", "wait_exit", "restart", "click", "double_click", "mouse_down", "mouse_up", "hover", "resize", "drag", "type", "paste", "key", "key_sequence", "choose_file", "print_output", "cancel_print", "focus_app", "browser_screenshot", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "points": {"type": "array", "minItems": 8, "maxItems": 128, "items": {"type": "array", "minItems": 5, "maxItems": 5, "items": {"type": "integer"}}}, "count": {"type": "integer"}, "pages": {"type": "integer"}, "x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "button": {"type": "integer", "enum": [1, 2, 3]}, "modifiers": {"type": "array", "items": {"type": "string", "enum": ["ctrl", "shift", "alt", "super"]}}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "keys": {"type":"array","minItems":1,"maxItems":32,"items":{"type":"string","minLength":1,"maxLength":80}}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
     {"name": "desktop.state", "description": "Read observed UI state, cache counts, shortcuts and handler timings; does not change app state.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "desktop.screenshot", "description": "Capture the actual iced window as WebP. Returns image and artifact path.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}}},
     {"name": "desktop.stop", "description": "Stop only the isolated app and Xvfb processes created by this harness.", "inputSchema": {"type": "object", "properties": {}}},
