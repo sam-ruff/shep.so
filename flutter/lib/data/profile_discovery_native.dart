@@ -1,8 +1,13 @@
 import 'native_repository.dart';
 import 'accounts.dart';
 import 'profile_discovery.dart';
+import 'profile_creation.dart';
 
-class NativeProfileDiscovery implements ProfileDiscoveryRepository {
+class NativeProfileDiscovery
+    implements ProfileDiscoveryRepository, ProfileCreationRepository {
+  @override
+  Future<dynamic> creation(String session, Map<String, Object?> command) =>
+      _call({'op': 'profile_creation', 'session': session, 'command': command});
   NativeProfileDiscovery(this.repository);
   final NativeRepository repository;
   Future<dynamic> _call(Map<String, Object?> data) async {

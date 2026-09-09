@@ -157,6 +157,8 @@ pub struct State {
     pub fields: u64,
     pub conflicts: u64,
     pub removed: bool,
+    #[serde(default)]
+    pub initialized: bool,
 }
 
 /// Small projection for profile discovery and enrollment reviews. Counts describe
@@ -271,7 +273,7 @@ impl Journal {
         }
     }
     pub fn state(&self) -> Result<State> {
-        Ok(self.db.query_row(
+        let mut state = self.db.query_row(
             "SELECT revision,operations,waiting,queued,fields,conflicts,removed,ready FROM state",
             [],
             |r| {
@@ -285,9 +287,13 @@ impl Journal {
                     conflicts: count(r, 5)?,
                     removed: r.get(6)?,
                     ready: count(r, 7)?,
+                    initialized: false,
                 })
             },
-        )?)
+        )?;
+        state.initialized = !state.removed && state.waiting == 0 && state.ready == 0 &&
+            self.db.query_row("SELECT EXISTS(SELECT 1 FROM versions v JOIN targets t ON t.target=v.target JOIN operations o ON o.id=v.operation WHERE v.target='profile:setup' AND t.visible=1 AND t.versions=1 AND json_extract(CAST(o.raw AS TEXT),'$.changes[0].complete')=1)", [], |r|r.get::<_,bool>(0))?;
+        Ok(state)
     }
     pub fn fields(&self, after: Option<&str>) -> Result<Vec<Field>> {
         Ok(self.db.prepare("SELECT target,versions,revision FROM targets WHERE visible=1 AND target>? ORDER BY target LIMIT 50")?
@@ -431,5 +437,6 @@ pub fn target(action: &Action) -> String {
         ),
         Action::ProfileName { .. } => "profile:name".into(),
         Action::ProfileRemoved => "profile:removed".into(),
+        Action::ProfileSetup { .. } => "profile:setup".into(),
     }
 }

@@ -178,7 +178,21 @@ impl Catalog {
             [storage::integer(position)?],
             |r| r.get(0),
         )?;
-        if self.load_file(&saved)? != file
+        if self.load_file(&saved)? != file {
+            return Err(Error::Integrity);
+        }
+        self.accept_record(file, record, Some(position))
+    }
+    pub(super) fn accept_upload(&mut self, file: File, record: String) -> Result<State> {
+        let revision = self.state()?.revision;
+        self.step(revision, move |catalog| {
+            catalog.accept_record(file, record, None)
+        })
+    }
+    fn accept_record(&mut self, file: File, record: String, position: Option<u64>) -> Result<()> {
+        let saved = wire::saved_file(&file);
+        if file.principal != self.scope.principal
+            || file.namespace != self.scope.namespace
             || record.len() != file.size
             || wire::sha256(record.as_bytes()) != file.sha256
         {
@@ -232,10 +246,12 @@ impl Catalog {
             "UPDATE files SET verified=1,seen_scan=(SELECT scan FROM state) WHERE id=?",
             [file.id],
         )?;
-        tx.execute(
-            "DELETE FROM pending WHERE position=?",
-            [storage::integer(position)?],
-        )?;
+        if let Some(position) = position {
+            tx.execute(
+                "DELETE FROM pending WHERE position=?",
+                [storage::integer(position)?],
+            )?;
+        }
         tx.execute("UPDATE state SET revision=revision+1", [])?;
         tx.commit()?;
         Ok(())

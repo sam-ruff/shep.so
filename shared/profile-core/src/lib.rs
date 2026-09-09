@@ -19,7 +19,12 @@ pub const FORMAT: &str = "so.shep.profile-operation";
 pub const MAX_RECORD_BYTES: usize = 1024 * 1024;
 pub const MAX_CHANGES: usize = 64;
 pub const MAX_PARENTS: usize = 256;
-const CAPABILITIES: &[&str] = &["causal-v1", "accounts-v1", "settings-v1"];
+const CAPABILITIES: &[&str] = &[
+    "causal-v1",
+    "accounts-v1",
+    "settings-v1",
+    "initialization-v1",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -86,6 +91,7 @@ impl<'de> Deserialize<'de> for Change {
             Action::SettingRemoved { .. } => &["key"],
             Action::ProfileName { .. } => &["name"],
             Action::ProfileRemoved => &[],
+            Action::ProfileSetup { .. } => &["complete"],
         };
         for field in fields {
             extra.remove(*field);
@@ -99,13 +105,31 @@ impl<'de> Deserialize<'de> for Change {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Action {
-    AccountConnection { account: account::Connection },
-    AccountName { id: Uuid, name: String },
-    AccountRemoved { id: Uuid },
-    Setting { key: SettingKey, value: Value },
-    SettingRemoved { key: SettingKey },
-    ProfileName { name: String },
+    AccountConnection {
+        account: account::Connection,
+    },
+    AccountName {
+        id: Uuid,
+        name: String,
+    },
+    AccountRemoved {
+        id: Uuid,
+    },
+    Setting {
+        key: SettingKey,
+        value: Value,
+    },
+    SettingRemoved {
+        key: SettingKey,
+    },
+    ProfileName {
+        name: String,
+    },
     ProfileRemoved,
+    /// A preparing root and a causal completion barrier delimit first setup.
+    ProfileSetup {
+        complete: bool,
+    },
 }
 
 /// Freeze supported portable fields explicitly. New fields require a codec
@@ -121,6 +145,10 @@ pub enum SettingKey {
     GroupConversations,
     DesktopBadges,
     PreviewLines,
+    LeftSwipe,
+    RightSwipe,
+    SenderPictures,
+    Tooltips,
 }
 
 impl SettingKey {
@@ -135,6 +163,12 @@ impl SettingKey {
             Self::ImagePolicy => value
                 .as_str()
                 .is_some_and(|s| ["BlockAll", "Contacts", "AllowAll"].contains(&s)),
+            Self::LeftSwipe | Self::RightSwipe => value.as_str().is_some_and(|s| {
+                [
+                    "none", "archive", "trash", "read", "star", "select", "move", "spam",
+                ]
+                .contains(&s)
+            }),
             Self::PreviewLines => value.as_u64().is_some_and(|n| n <= 4),
             _ => value.is_boolean(),
         }
@@ -250,6 +284,12 @@ impl Operation {
                         return Err(Error::Invalid);
                     }
                     ("profile:name".into(), "causal-v1")
+                }
+                Action::ProfileSetup { .. } => {
+                    if self.changes.len() != 1 {
+                        return Err(Error::Invalid);
+                    }
+                    ("profile:setup".into(), "initialization-v1")
                 }
                 Action::ProfileRemoved => {
                     if self.changes.len() != 1 {

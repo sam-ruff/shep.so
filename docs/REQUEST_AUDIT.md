@@ -557,3 +557,11 @@ on the review branch with exact remote verification. Mandatory hooks pass 443
 root/shared tests, and the scoped native/Flutter/Android/Appium/Playwright checks
 are recorded in the completion log. All 40 active request entries remain in TODO;
 this is progress toward profile sync, not completed enrollment or full parity.
+
+R75/R02/R49/desktop-main:R92/R67/R69/R73/R77 continuation: Flutter now prepares and
+publishes initialized profiles from a frozen paged review, preserves exact upload
+requests/owned receipts and supports pause/retry without blocking mail. Shared,
+native, host, Android, Appium and Flutter Playwright evidence and retained failures
+are in the latest completion entry. This advances first setup; enrollment, actual
+account/preferences application, credentials and ongoing sync remain active. All
+40 TODO entries are retained; final review-branch shipping is recorded below.

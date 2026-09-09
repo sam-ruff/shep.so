@@ -159,6 +159,12 @@ impl Discovery {
         })
         .await
     }
+    /// The Drive transport calls this only after checking the exact remote bytes.
+    /// Save the discovery receipt before acknowledging the local upload journal.
+    pub(crate) async fn accept_upload(&self, file: File, record: String) -> Result<State> {
+        self.call(move |catalog| catalog.accept_upload(file, record))
+            .await
+    }
     /// Drain accepted work once every other discovery handle has been dropped.
     pub async fn close(self) -> Result<()> {
         let Self {

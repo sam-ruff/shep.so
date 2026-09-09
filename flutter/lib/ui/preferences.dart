@@ -267,7 +267,10 @@ class PreferencesView extends StatelessWidget {
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute<void>(
-                  builder: (_) => ProfileDiscoveryScreen(discovery: discovery),
+                  builder: (_) => ProfileDiscoveryScreen(
+                    discovery: discovery,
+                    preferences: () => workspace.preferences,
+                  ),
                 ),
               ),
             ),

@@ -160,6 +160,7 @@ class FixtureProfileDiscovery implements ProfileDiscoveryRepository {
         'ready': 0,
         'conflicts': i == 1 ? 1 : 0,
         'removed': false,
+        'initialized': true,
       }),
     );
     return rows

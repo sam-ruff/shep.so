@@ -759,3 +759,80 @@ async fn common_wire_fixture_preserves_raw_bytes_and_does_not_claim_missing_ance
     server.finish().await;
     worker.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn publication_records_own_file_before_ack_and_recovers_failed_catalog_receipt_without_posting_twice()
+ {
+    let directory = tempfile::tempdir().unwrap();
+    let (worker, upload) = queued(&directory.path().join("local.sqlite")).await;
+    let path = directory.path().join("catalog.sqlite");
+    let scope = catalog::Scope {
+        namespace: NAMESPACE.into(),
+        principal: PRINCIPAL.into(),
+    };
+    let catalog = catalog::Discovery::open(path.clone(), scope.clone())
+        .await
+        .unwrap();
+    let server = Server::start(vec![
+        identity(),
+        reservation(),
+        reply(TestResponse::new(404, vec![])),
+        value(json!({"id":FILE_ID})),
+        value(metadata(&upload)),
+        reply(TestResponse::new(200, upload.record.clone().into_bytes())),
+        value(metadata(&upload)),
+        reply(TestResponse::new(200, upload.record.clone().into_bytes())),
+        value(json!({"startPageToken":"before-rescan"})),
+        value(json!({"incompleteSearch":false,"files":[]})),
+        value(json!({"changes":[],"newStartPageToken":"after-rescan"})),
+    ])
+    .await;
+    let drive = server.connect(Some(PRINCIPAL)).await.unwrap();
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TRIGGER fail_profile_receipt BEFORE INSERT ON profiles BEGIN SELECT RAISE(ABORT,'synthetic failed receipt'); END;").unwrap();
+    assert!(matches!(
+        drive.upload_next_tracked(&worker, &catalog).await,
+        Err(Error::DiscoveryReceipt)
+    ));
+    assert_eq!(state(&worker).await.queued, 1);
+    assert_eq!(catalog.state().await.unwrap().files, 1);
+    db.execute_batch("DROP TRIGGER fail_profile_receipt")
+        .unwrap();
+    drop(db);
+    catalog.close().await.unwrap();
+    let catalog = catalog::Discovery::open(path, scope).await.unwrap();
+    assert_eq!(
+        drive.upload_next_tracked(&worker, &catalog).await.unwrap(),
+        Some(upload.operation)
+    );
+    assert_eq!(state(&worker).await.queued, 0);
+    let saved = catalog.state().await.unwrap();
+    assert_eq!(saved.files, 1);
+    catalog.refresh(saved.revision, true).await.unwrap();
+    let mut missing = false;
+    for _ in 0..8 {
+        match catalog.advance(&drive).await {
+            Err(catalog::Error::Missing) => {
+                missing = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(error) => panic!("{error}"),
+        }
+    }
+    assert!(
+        missing,
+        "own acknowledged files cannot disappear silently on rescan"
+    );
+    let requests = server.finish().await;
+    assert_eq!(requests.iter().filter(|r| r.method == "POST").count(), 1);
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r.url.path().ends_with("generateIds"))
+            .count(),
+        1
+    );
+    catalog.close().await.unwrap();
+    worker.close().await.unwrap();
+}

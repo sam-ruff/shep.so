@@ -208,7 +208,7 @@ The successive-group control holds the initial History observation, a provider r
 
 ## Shared profile metadata
 
-`cargo test -p shep-profile-core` and `cargo test -p shep-mail-core --test profiles` validate the operation format and explicit account mapping. `shared/profile-cases.json` supplies the same 23 valid/invalid interoperability cases to Rust, `flutter/rust/src/profile_tests.rs`, the actual Dart FFI scenario in `native_repository_test.dart`, and `node scripts/clients/test_profile_codec.mjs`. The WASM script requires the pinned CLI/target above and writes only ignored `artifacts/profile-codec-*`. It runs the WASM ABI in Node, not browser Settings controls.
+`cargo test -p shep-profile-core` and `cargo test -p shep-mail-core --test profiles` validate the operation format and explicit account mapping. `shared/profile-cases.json` supplies the same 28 valid/invalid interoperability cases to Rust, `flutter/rust/src/profile_tests.rs`, the actual Dart FFI scenario in `native_repository_test.dart`, and `node scripts/clients/test_profile_codec.mjs`. The WASM script requires the pinned CLI/target above and writes only ignored `artifacts/profile-codec-*`. It runs the WASM ABI in Node, not browser Settings controls.
 
 Cases retain unknown optional fields, reject unsupported versions/capabilities/security, duplicate JSON/targets/parents, malformed identities and known local/secret fields. Additional Rust/WASM checks cover size/depth bounds and output encoding; account mapping tests resolve legacy SMTP defaults and keep unknown connection extensions read-only. Native validation finishes with provider capacity held and preserves the original accounts/mail; actual Dart FFI keeps the credential store untouched. This is metadata validation, not working OAuth, enrollment, causal merge, credential transfer or complete database migration. See [the format subset](agents/PROFILE_FORMAT.md).
 
@@ -255,3 +255,23 @@ Standalone preview entry: `test/profile_discovery_main.dart`. Use the native
 [configuration and boundaries](agents/PROFILE_MOBILE.md) for production builds.
 Browser tests here exercise the Flutter automation surface, not the separate
 hosted email client. Live Google, enrollment and Apple remain distinct work.
+
+
+## Flutter first-profile publication
+
+```sh
+python3 scripts/clients/android_e2e.py --device emulator-5554 --creation-only
+python3 scripts/clients/flutter_web_e2e.py --creation
+```
+
+The Android wrapper runs two saved integration scenarios, rebuilds the explicit
+`test/profile_creation_main.dart` preview, then runs four UiAutomator2/Appium flows.
+The Flutter web wrapper runs the same four flows through Playwright. Both use
+`flutter/e2e/profile_harness.mjs`, also used by discovery. Re-run discovery controls
+after changing this harness. Profile providers are isolated fixtures.
+
+`profile_creation_controls_test.dart` shares the Android review/paging/retry/
+appearance and pause/browse/resume controls. Native Rust tests separately execute
+the real SQLite publication path, receipt recovery and session retirement. See
+[the publication contract](agents/PROFILE_PUBLICATION.md) and completion evidence;
+these checks do not establish live Google, enrollment or continuous sync.

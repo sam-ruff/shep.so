@@ -4,9 +4,9 @@ The optional native `history` feature in `shared/profile-core` stores immutable
 account/settings operations and merges their causal history. It is a foundation
 for [continuous profiles](PROFILE_SYNC_HANDOVER.md). The optional [Drive transport](PROFILE_DRIVE.md) now verifies provider identity
 and immutable files against this journal. A separate [discovery catalog](PROFILE_DISCOVERY.md)
-now retains remote scan progress. Client integration, creation/enrollment,
-category switches and real account/preferences application remain
-unfinished. The browser currently shares the codec, not this SQLite journal.
+now retains remote scan progress. Flutter discovery and [initialized publication](PROFILE_PUBLICATION.md)
+are connected; desktop/browser integration, enrollment, category switches and real
+account/preferences application remain unfinished. The browser currently shares the codec, not this SQLite journal.
 
 ## Ownership and bounds
 

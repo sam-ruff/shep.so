@@ -74,8 +74,9 @@ Their providers are explicit isolated fixtures. See the latest completion log fo
 executed scenarios and reviewed captures; neither fixtures nor successful builds
 establish live Google or Apple execution.
 
-Continue initialized first-profile publication, owned upload receipts, bounded
-reviewed enrollment, category controls and real account/preferences application.
+[First-profile publication](PROFILE_PUBLICATION.md) now adds frozen reviews,
+initialized history and owned upload receipts. Continue bounded reviewed enrollment,
+category controls and real account/preferences application.
 Keep local mail/drafts and device identity; changed endpoints require reviewed
 credential activation. The credential-protection choice, legacy migration,
 desktop/browser integration, Apple and live cross-client verification remain open.

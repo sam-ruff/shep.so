@@ -39,6 +39,18 @@ class Preferences {
     tooltips: tooltips ?? this.tooltips,
   );
 
+  Map<String, Object?> profileSettings() => {
+    'appearance':
+        '${appearance.name[0].toUpperCase()}${appearance.name.substring(1)}',
+    'left_swipe': leftSwipe.name,
+    'right_swipe': rightSwipe.name,
+    'preview_lines': previewLines,
+    'sender_pictures': avatars,
+    'unified_inbox': unified,
+    'reply_display': quoteMode == 'Latest only' ? 'LatestOnly' : quoteMode,
+    'tooltips': tooltips,
+  };
+
   String encode() => jsonEncode({
     'version': 1,
     'appearance': appearance.name,

@@ -48,5 +48,10 @@ CREATE TABLE IF NOT EXISTS credential_slots(slot TEXT PRIMARY KEY, account_id TE
 CREATE TABLE IF NOT EXISTS account_credentials(account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE, slot TEXT NOT NULL UNIQUE REFERENCES credential_slots(slot));
 CREATE TABLE IF NOT EXISTS draft_inline(file_id TEXT PRIMARY KEY REFERENCES draft_files(id) ON DELETE CASCADE, content_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS draft_forwards(draft_id TEXT PRIMARY KEY REFERENCES drafts(id) ON DELETE CASCADE, source_id TEXT NOT NULL);
-PRAGMA user_version=9;
+CREATE TABLE IF NOT EXISTS profile_publications(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,scope TEXT NOT NULL,specification TEXT NOT NULL,baseline TEXT NOT NULL,phase TEXT NOT NULL,review TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS profile_publication_scope ON profile_publications(scope,phase);
+CREATE INDEX IF NOT EXISTS profile_publication_recent ON profile_publications(scope,seq);
+CREATE TABLE IF NOT EXISTS profile_publication_rows(publication TEXT NOT NULL REFERENCES profile_publications(id),position INTEGER NOT NULL,operation TEXT NOT NULL UNIQUE,changes TEXT NOT NULL,request TEXT,local_id TEXT,shared_id TEXT,account TEXT,PRIMARY KEY(publication,position));
+CREATE TABLE IF NOT EXISTS profile_account_mappings(profile TEXT NOT NULL,local_id TEXT NOT NULL,shared_id TEXT NOT NULL,PRIMARY KEY(profile,shared_id),UNIQUE(profile,local_id));
+PRAGMA user_version=10;
 COMMIT;

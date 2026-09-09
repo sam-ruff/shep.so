@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import '../data/profile_discovery.dart';
+import '../data/profile_creation.dart';
 import 'google_connection.dart';
+part 'profile_creation.dart';
 
 class ProfileDiscovery extends ChangeNotifier {
   ProfileDiscovery(this.google, this.repository, {required this.namespace}) {
@@ -13,6 +15,10 @@ class ProfileDiscovery extends ChangeNotifier {
   final ProfileDiscoveryRepository repository;
   final String namespace;
   DiscoveryState? state;
+  ProfileCreation? creation;
+  List<ProfileAccountReview> creationAccounts = [];
+  int creationAfter = 0;
+  bool publishing = false;
   List<DiscoveredProfile> profiles = [];
   String? error, after;
   bool busy = false, paused = false;
@@ -37,6 +43,9 @@ class ProfileDiscovery extends ChangeNotifier {
       _generation++;
       paused = true;
       state = null;
+      creation = null;
+      creationAccounts = [];
+      creationAfter = 0;
       profiles = [];
       after = null;
       error = null;
@@ -127,6 +136,11 @@ class ProfileDiscovery extends ChangeNotifier {
         if (!_current(generation, id)) return;
         bound = true;
         state = opened.state;
+        await _readCreation(generation, id);
+        if (!_current(generation, id)) return;
+        if (creation?.needsReview == true) {
+          await _creationPage(generation, id, 0);
+        }
         await _page(generation, id, null);
         if (!_current(generation, id)) return;
         DiscoveryState? refreshed;
