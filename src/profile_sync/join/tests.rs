@@ -832,3 +832,170 @@ async fn profile_join_does_not_apply_unknown_connection_fields_or_resurrect_remo
         server.finish().await;
     }
 }
+
+#[tokio::test]
+async fn profile_join_links_an_explicit_matching_local_account_without_replacing_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = local(dir.path()).await;
+    let paths = Paths::for_cache(&dir.path().join("cache.sqlite")).unwrap();
+    let record = record();
+    let Action::AccountConnection {
+        account: connection,
+    } = &record.record.operation().changes[0].action
+    else {
+        panic!("account")
+    };
+    let mut account = metadata::review_account(connection, "My existing account").unwrap();
+    account.id = Uuid::new_v4().to_string();
+    store.save_account(account.clone()).await.unwrap();
+    let review = reviewed(&store, &paths, &record).await;
+    assert_eq!(review.account_page(0)[0].matches[0].id, account.id);
+    let links = links::Links::from([(connection.id, account.id.clone())]);
+    accept_linked(
+        &store,
+        &paths,
+        review.clone(),
+        links.clone(),
+        &Control::default(),
+    )
+    .await
+    .unwrap();
+    let workspace = store.workspace().await.unwrap();
+    assert_eq!(workspace.accounts, vec![account.clone()]);
+    assert!(workspace.account_reconnect.is_empty());
+    assert_eq!(
+        store.accounts_ready_to_sync().await.unwrap(),
+        vec![account.clone()]
+    );
+    let state = store
+        .profile_replication(review.selection.binding.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        state.accounts,
+        BTreeMap::from([(account.id.clone(), connection.id)])
+    );
+    assert!(state.local_only.is_empty());
+    // A connection match never applies a shared display name over local intent.
+    let pending = store.capture_profile_change().await.unwrap().unwrap();
+    assert!(
+        matches!(pending.change.action,Action::AccountName {id,name} if id == connection.id && name == account.name)
+    );
+    drop(store);
+    let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    let error = accept(&store, &paths, review.clone(), &Control::default())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("different account choices"));
+    accept_linked(&store, &paths, review, links, &Control::default())
+        .await
+        .unwrap();
+    assert_eq!(store.workspace().await.unwrap().accounts, vec![account]);
+}
+
+#[tokio::test]
+async fn profile_join_link_rejects_unoffered_endpoints_and_changed_or_reverted_local_intent() {
+    for failure in ["endpoint", "changed", "reverted", "unoffered"] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = local(dir.path()).await;
+        let paths = Paths::for_cache(&dir.path().join("cache.sqlite")).unwrap();
+        let record = record();
+        let Action::AccountConnection {
+            account: connection,
+        } = &record.record.operation().changes[0].action
+        else {
+            panic!("account")
+        };
+        let mut account = metadata::review_account(connection, "Existing").unwrap();
+        account.id = Uuid::new_v4().to_string();
+        if failure == "endpoint" {
+            account.smtp_host = "different.example.test".into();
+        }
+        store.save_account(account.clone()).await.unwrap();
+        let review = reviewed(&store, &paths, &record).await;
+        if failure == "endpoint" {
+            assert!(review.account_page(0)[0].matches.is_empty());
+        }
+        if matches!(failure, "changed" | "reverted") {
+            let mut changed = account.clone();
+            changed.username = "another@example.test".into();
+            store.save_account(changed).await.unwrap();
+            if failure == "reverted" {
+                store.save_account(account.clone()).await.unwrap();
+            }
+        }
+        let id = if failure == "unoffered" {
+            Uuid::new_v4().to_string()
+        } else {
+            account.id.clone()
+        };
+        let error = accept_linked(
+            &store,
+            &paths,
+            review,
+            links::Links::from([(connection.id, id)]),
+            &Control::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(!error.to_string().is_empty());
+        let workspace = store.workspace().await.unwrap();
+        assert_eq!(workspace.accounts.len(), 1);
+        assert_eq!(workspace.preferences.appearance, Appearance::Light);
+        assert!(
+            store
+                .profile_enrollment()
+                .await
+                .unwrap()
+                .enrollment
+                .selection
+                .is_none()
+        );
+    }
+}
+
+#[tokio::test]
+async fn profile_join_link_preserves_an_existing_reconnect_requirement() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = local(dir.path()).await;
+    let paths = Paths::for_cache(&dir.path().join("cache.sqlite")).unwrap();
+    let record = record();
+    let Action::AccountConnection {
+        account: connection,
+    } = &record.record.operation().changes[0].action
+    else {
+        panic!("account")
+    };
+    let mut account =
+        metadata::review_account(connection, "Existing disconnected account").unwrap();
+    account.id = Uuid::new_v4().to_string();
+    store.save_account(account.clone()).await.unwrap();
+    store
+        .put(RECONNECT_KEY, BTreeSet::from([account.id.clone()]))
+        .await
+        .unwrap();
+    let review = reviewed(&store, &paths, &record).await;
+    accept_linked(
+        &store,
+        &paths,
+        review,
+        links::Links::from([(connection.id, account.id.clone())]),
+        &Control::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        store.workspace().await.unwrap().accounts,
+        vec![account.clone()]
+    );
+    assert!(
+        store
+            .workspace()
+            .await
+            .unwrap()
+            .account_reconnect
+            .contains(&account.id)
+    );
+    assert!(store.accounts_ready_to_sync().await.unwrap().is_empty());
+    assert!(store.require_account_reconnected(account.id).await.is_err());
+}

@@ -105,6 +105,7 @@ pub enum Command {
     DeleteEvent(CalendarEvent),
     Backup(BackupTarget, SecretString),
     AutomaticBackup(BackupTarget),
+    ConnectS3(u64, BackupTarget, Option<(SecretString, SecretString)>),
     ListBackups(u64, BackupTarget),
     Restore(BackupTarget, String, SecretString),
     ExportAttachment(String, usize, String),
@@ -131,9 +132,10 @@ impl Command {
             Self::RestoreGoogleCalendars => Some("restore-calendars".into()),
             Self::GoogleLogin(..) => Some("google".into()),
             Self::DisconnectGoogle(_) | Self::CleanupGoogle => Some("google-disconnect".into()),
-            Self::Backup(target, _) | Self::AutomaticBackup(target) | Self::Restore(target, ..) => {
-                Some(target.work_key())
-            }
+            Self::Backup(target, _)
+            | Self::AutomaticBackup(target)
+            | Self::Restore(target, ..)
+            | Self::ConnectS3(_, target, _) => Some(target.work_key()),
             Self::Send(d) => Some(format!("send:{}", d.id)),
             Self::SaveEvent(e) | Self::DeleteEvent(e) => Some(format!("event:{}", e.key())),
             Self::Flags(request, m, _) => Some(format!("flags:{}:{request}", m.id)),
@@ -218,6 +220,7 @@ pub enum Event {
     Calendar(u64, Arc<Vec<CalendarEvent>>),
     Backups(u64, BackupTarget, Result<Arc<Vec<BackupCopy>>, String>),
     BackupSaved(BackupTarget, BackupCopy),
+    S3Connection(u64, BackupTarget, Result<(), String>),
     BackupFinished(BackupTarget),
     Busy(String, bool),
     Notice(String),
@@ -481,6 +484,14 @@ impl Engine {
                 Box::new(backup::LocalBackup {
                     directory: prefs.backup_folder.clone().into(),
                 })
+            }
+            BackupDestination::S3 => {
+                let secret = self.credentials.read(&prefs.backup_s3.identity().secret_id()).await
+                    .map_err(|_| anyhow::anyhow!("S3 credentials are unavailable. Open Backups and test and save this connection."))?;
+                Box::new(backup::s3::S3Backup::from_secret(
+                    &prefs.backup_s3,
+                    &secret,
+                )?)
             }
             BackupDestination::GoogleDrive => {
                 Box::new(backup::DriveBackup::new(self.google.clone(), prefs.clone()))
@@ -1240,6 +1251,18 @@ impl Engine {
                     &mut output,
                 )
                 .await?;
+            }
+            Command::ConnectS3(request, target, supplied) => {
+                let result = self
+                    .connect_s3(&target, supplied, backup::s3::S3Backup::from_secret)
+                    .await;
+                output
+                    .send(Event::S3Connection(
+                        request,
+                        target,
+                        result.map_err(|error| format!("{error:#}")),
+                    ))
+                    .await?;
             }
             Command::Backup(target, passphrase) => {
                 self.run_backup(target, Some(passphrase), &mut output)

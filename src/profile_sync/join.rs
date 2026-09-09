@@ -1,5 +1,6 @@
 //! Existing-device enrollment. A sealed review references a frozen local history;
 //! only small summaries reach iced. Acceptance re-reads it on background owners.
+pub mod links;
 use super::{control::Control, enrollment::*, paths::Paths, replica::Replica, *};
 use crate::{model::Account, store::Store};
 use shep_profile_core::{Action, Change, history};
@@ -18,7 +19,7 @@ pub struct Review {
     pub(crate) device: Uuid,
     pub accounts: usize,
     pub settings: usize,
-    pub account_preview: Vec<(String, String)>,
+    pub(crate) account_offers: Vec<links::AccountOffer>,
 }
 impl Review {
     pub fn name(&self) -> &str {
@@ -37,6 +38,8 @@ pub(crate) struct Applied {
     pub binding: history::Binding,
     pub history_revision: u64,
     pub accounts: BTreeMap<Uuid, String>,
+    #[serde(default)]
+    pub links: links::Links,
 }
 
 pub(crate) struct Values {
@@ -225,12 +228,12 @@ pub(crate) async fn prepare(
             device: pulled.state().device,
             accounts: values.accounts.len(),
             settings: values.settings.len(),
-            account_preview: values
-                .accounts
-                .into_iter()
-                .take(8)
-                .map(|a| (a.name, a.email))
-                .collect(),
+            account_offers: links::offers(
+                &values.accounts,
+                &store
+                    .profile_join_local_accounts(discovery.local().clone())
+                    .await?,
+            )?,
         })
     }
     .await;
@@ -247,10 +250,21 @@ pub(crate) async fn accept(
     review: Review,
     control: &Control,
 ) -> anyhow::Result<Snapshot> {
+    accept_linked(store, paths, review, links::Links::new(), control).await
+}
+
+pub(crate) async fn accept_linked(
+    store: &Store,
+    paths: &Paths,
+    review: Review,
+    links: links::Links,
+    control: &Control,
+) -> anyhow::Result<Snapshot> {
     control.check()?;
+    review.validate_links(&links)?;
     // A lost acceptance acknowledgment is safe to retry without applying again,
     // even if preferences have since changed or the device is now offline.
-    if let Some(saved) = store.applied_profile_join(review.id).await? {
+    if let Some(saved) = store.applied_profile_join(review.id, links.clone()).await? {
         return Ok(saved);
     }
     store.check_profile_review(review.local.clone()).await?;
@@ -274,7 +288,9 @@ pub(crate) async fn accept(
         );
         control.check()?;
         // Once admitted, keep this atomic write owned through its acknowledgment.
-        store.accept_profile_join(review, values).await
+        store
+            .accept_profile_join_linked(review, values, links)
+            .await
     }
     .await;
     replica

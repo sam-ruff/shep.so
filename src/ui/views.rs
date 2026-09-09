@@ -1417,6 +1417,7 @@ impl App {
                 .spacing(14)
                 .into()
             ),
+            self.palette_settings(),
             self.settings_card(
                 "About Shep",
                 "",
@@ -1690,7 +1691,11 @@ impl App {
                 text("Save to").size(13),
                 space().width(Length::Fill),
                 pick_list(
-                    [BackupDestination::Local, BackupDestination::GoogleDrive],
+                    [
+                        BackupDestination::Local,
+                        BackupDestination::GoogleDrive,
+                        BackupDestination::S3
+                    ],
                     Some(self.preferences.backup_destination),
                     Message::BackupDestination
                 )
@@ -1765,6 +1770,8 @@ impl App {
                 .spacing(12)
                 .align_y(Alignment::End),
             );
+        } else if self.preferences.backup_destination == BackupDestination::S3 {
+            form = form.push(self.s3_backup_settings());
         } else if !self.google_connected || !self.preferences.google_grant.access.drive_allowed() {
             form = form.push(action(
                 "Connect Google / approve Drive access",
@@ -1861,6 +1868,42 @@ impl App {
         .spacing(if self.settings_group.is_some() { 0 } else { 22 })
         .into()
     }
+    fn s3_backup_settings(&self) -> Element<'_, Message> {
+        let testing = self
+            .s3_connection
+            .as_ref()
+            .is_some_and(|(_, target, result)| {
+                *target == self.configured_backup_target() && result.is_none()
+            });
+        let mut form = column![
+            form_field("S3 endpoint", "https://s3.eu-west-1.amazonaws.com", self.field("s3_endpoint"), "s3_endpoint", false),
+            row![
+                form_field("Bucket", "my-backups", self.field("s3_bucket"), "s3_bucket", false),
+                form_field("Signing region", "eu-west-1", self.field("s3_region"), "s3_region", false),
+            ].spacing(18),
+            form_field("Folder prefix", "shep", self.field("s3_prefix"), "s3_prefix", false),
+            checkbox(self.preferences.backup_s3.path_style).label("Use path-style bucket addresses").on_toggle(Message::S3PathStyle).text_size(12),
+            row![
+                form_field("Access key", "Leave blank to reuse saved keys", self.field("s3_access_secret"), "s3_access_secret", true),
+                form_field("Secret key", "Leave blank to reuse saved keys", self.field("s3_key_secret"), "s3_key_secret", true),
+            ].spacing(18),
+            button(text(if testing { "Testing connection…" } else { "Test and save connection" }).size(12))
+                .padding([11, 17]).style(outline)
+                .on_press_maybe((!self.backup_busy() && self.pending_backup.is_none()).then_some(Message::TestS3Connection)),
+            muted("Enter keys once, then Test and save connection. The test checks read access; the first backup checks upload permissions.").size(11),
+        ].spacing(18);
+        if let Some((_, target, result)) = &self.s3_connection
+            && *target == self.configured_backup_target()
+            && let Some(result) = result
+        {
+            form = form.push(match result {
+                Ok(()) => text("Connected · credentials saved").size(12),
+                Err(error) => text(error).size(12),
+            });
+        }
+        form.into()
+    }
+
     fn shortcut_settings(&self) -> Element<'_, Message> {
         let mut actions = column![
             row![

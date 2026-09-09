@@ -24,6 +24,7 @@ pub enum Request {
     JoinAccept {
         request: u64,
         review: Arc<super::join::Review>,
+        links: super::join::links::Links,
     },
     Options {
         request: u64,

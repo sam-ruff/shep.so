@@ -12,6 +12,11 @@ pub(super) struct Setting {
 }
 const SETTINGS: &[Setting] = &[
     Setting {
+        title: "Colors",
+        tab: SettingsTab::General,
+        keywords: "color colour palette primary secondary accent surface background border light dark theme contrast",
+    },
+    Setting {
         title: "System tray",
         tab: SettingsTab::General,
         keywords: "tray close minimize minimise quit exit menu bar background saving",
@@ -19,7 +24,7 @@ const SETTINGS: &[Setting] = &[
     Setting {
         title: "Appearance",
         tab: SettingsTab::General,
-        keywords: "theme light dark system colors colour",
+        keywords: "theme light dark system",
     },
     Setting {
         title: "Reading and layout",
@@ -73,7 +78,7 @@ const SETTINGS: &[Setting] = &[
     Setting {
         title: "Backups",
         tab: SettingsTab::Backups,
-        keywords: "backup drive destination folder rolling copies retention schedule passphrase password encryption",
+        keywords: "backup drive s3 bucket endpoint region access key destination folder rolling copies retention schedule passphrase password encryption",
     },
     Setting {
         title: "Restore a copy",
@@ -157,7 +162,12 @@ mod tests {
         assert_eq!(matches("font")[0].title, "Reading and layout");
         assert_eq!(matches("TLS")[0].title, "Your accounts");
         assert_eq!(matches("tooltip")[0].title, "Tooltips");
-        assert_eq!(matches("secondary")[0].title, "Keyboard shortcuts");
+        assert!(
+            matches("secondary")
+                .iter()
+                .any(|setting| setting.title == "Keyboard shortcuts")
+        );
+        assert_eq!(matches("palette")[0].title, "Colors");
         assert_eq!(matches("select all")[0].title, "Keyboard shortcuts");
         assert!(matches("no-such-setting").is_empty());
     }

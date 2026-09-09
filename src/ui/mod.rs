@@ -25,6 +25,7 @@ mod move_recovery;
 mod native_input;
 mod notifications;
 mod outgoing;
+mod palette;
 mod pointer;
 mod preference_sync;
 mod printing;
@@ -187,10 +188,18 @@ pub enum Message {
     CalendarBack,
     SavePreferences,
     Appearance(Appearance),
+    TestS3Connection,
+    S3PathStyle(bool),
     AddBackupDestination,
     SelectBackupDestination(String),
     ReviewBackupRemoval,
     RemoveBackupDestination,
+    PaletteTheme(bool),
+    PaletteRole(crate::appearance::Role),
+    PaletteValue(String),
+    PaletteReset,
+    PaletteDiscard,
+    PaletteApply,
     BackupDestination(BackupDestination),
     BackupAccounts(bool),
     AutoBackup(bool),
@@ -360,6 +369,8 @@ pub struct App {
     tx: Option<engine::CommandSender>,
     workspace: Arc<Workspace>,
     preferences: Preferences,
+    theme_cache: palette::ThemeCache,
+    palette_editor: palette::Editor,
     preference_sync: preference_sync::PreferenceSync,
     pending_google_login: Option<(u64, Preferences, bool)>,
     pending_backup: Option<backups::PendingBackup>,
@@ -404,6 +415,7 @@ pub struct App {
     backups: Arc<Vec<BackupCopy>>,
     backups_target: Option<BackupTarget>,
     backups_generation: u64,
+    s3_connection: Option<backups::ConnectionCheck>,
     restore_id: String,
     restore_target: Option<BackupTarget>,
     export_index: Option<usize>,
@@ -521,6 +533,8 @@ impl App {
                 settings_tab: SettingsTab::General,
                 settings_search: String::new(),
                 settings_group: None,
+                theme_cache: Default::default(),
+                palette_editor: Default::default(),
                 dialog: None,
                 fields: HashMap::new(),
                 protocol: Protocol::Imap,
@@ -565,6 +579,7 @@ impl App {
                 backups: Arc::new(Vec::new()),
                 backups_target: None,
                 backups_generation: 0,
+                s3_connection: None,
                 restore_id: String::new(),
                 restore_target: None,
                 export_index: None,
@@ -581,25 +596,10 @@ impl App {
         )
     }
     fn theme(&self) -> Theme {
-        static THEMES: std::sync::OnceLock<[Theme; 2]> = std::sync::OnceLock::new();
-        let themes = THEMES.get_or_init(|| {
-            let make = |dark| {
-                Theme::custom(
-                    if dark { "Shep Dark" } else { "Shep Light" },
-                    iced::theme::Palette {
-                        background: if dark { hex(0x141416) } else { hex(0xf7f7f9) },
-                        text: if dark { hex(0xf4f4f5) } else { hex(0x292830) },
-                        primary: if dark { hex(0xb5a0ff) } else { hex(0x7356bd) },
-                        success: hex(0x398366),
-                        warning: hex(0xc7954a),
-                        danger: hex(0xbf5757),
-                    },
-                )
-            };
-            [make(false), make(true)]
-        });
-        themes[usize::from(self.dark())].clone()
+        self.theme_cache
+            .get(self.preferences.palettes.get(self.dark()), self.dark())
     }
+
     fn dark(&self) -> bool {
         match self.preferences.appearance {
             Appearance::Light => false,
@@ -1631,6 +1631,20 @@ impl App {
                         }
                     }
                 }
+                Event::S3Connection(request, target, result) => {
+                    if self
+                        .s3_connection
+                        .as_ref()
+                        .is_some_and(|(id, previous, _)| *id == request && *previous == target)
+                        && target == self.configured_backup_target()
+                    {
+                        if result.is_ok() {
+                            self.fields.remove("s3_access_secret");
+                            self.fields.remove("s3_key_secret");
+                        }
+                        self.s3_connection = Some((request, target, Some(result)));
+                    }
+                }
                 Event::BackupSaved(target, copy) => {
                     if target == self.configured_backup_target() {
                         self.backups_generation += 1;
@@ -2256,6 +2270,13 @@ impl App {
                         );
                     }
                 }
+                if key.starts_with("s3_") {
+                    self.s3_connection = None;
+                    if matches!(key, "s3_endpoint" | "s3_bucket" | "s3_prefix") {
+                        self.fields.remove("s3_access_secret");
+                        self.fields.remove("s3_key_secret");
+                    }
+                }
                 self.fields.insert(key, value);
             }
             Message::Protocol(protocol) => {
@@ -2416,13 +2437,53 @@ impl App {
                 }
                 Err(e) => {
                     self.confirm_save = None;
+                    self.saved_toast = None;
                     self.notice(e.to_string(), true);
                     self.preference_notice = self.notice.as_ref().map(|notice| notice.2);
                 }
             },
+            Message::PaletteTheme(dark) => self.palette_editor.select(
+                dark,
+                self.palette_editor.role,
+                self.preferences.palettes,
+            ),
+            Message::PaletteRole(role) => self.palette_editor.select(
+                self.palette_editor.dark,
+                role,
+                self.preferences.palettes,
+            ),
+            Message::PaletteValue(value) => {
+                self.palette_editor.edit(value, self.preferences.palettes)
+            }
+            Message::PaletteReset => self.palette_editor.reset(self.preferences.palettes),
+            Message::PaletteDiscard => self.palette_editor.discard(self.preferences.palettes),
+            Message::PaletteApply => {
+                if let Some(palettes) = self.palette_editor.apply(self.preferences.palettes) {
+                    self.preferences.palettes = palettes;
+                    self.save_preferences();
+                    self.confirm_save = Some(self.preference_sync.generation());
+                    self.saved_toast = None;
+                }
+            }
             Message::Appearance(appearance) => {
                 self.preferences.appearance = appearance;
                 self.save_preferences();
+            }
+            Message::TestS3Connection => {
+                let key = self.field("s3_access_secret").trim();
+                let secret = self.field("s3_key_secret");
+                if key.is_empty() != secret.is_empty() {
+                    self.backup_validation_error("Enter both the S3 access key and secret key.");
+                } else {
+                    let supplied = (!key.is_empty())
+                        .then(|| (key.to_owned().into(), secret.to_owned().into()));
+                    self.begin_backup_request(backups::BackupAction::ConnectS3(supplied));
+                }
+            }
+            Message::S3PathStyle(enabled) => {
+                self.preferences.backup_s3.path_style = enabled;
+                self.s3_connection = None;
+                self.preference_sync.changed();
             }
             Message::AddBackupDestination => self.change_backup_destination(None),
             Message::SelectBackupDestination(id) => self.change_backup_destination(Some(id)),
@@ -2434,6 +2495,9 @@ impl App {
                             self.dialog = None;
                             self.settings_fields();
                             self.fields.remove("passphrase");
+                            self.fields.remove("s3_access_secret");
+                            self.fields.remove("s3_key_secret");
+                            self.s3_connection = None;
                             self.save_preferences();
                             self.notice(
                                 "Backup destination removed. Saved copies are kept.",
@@ -2445,6 +2509,9 @@ impl App {
                 }
             }
             Message::BackupDestination(destination) => {
+                self.fields.remove("s3_access_secret");
+                self.fields.remove("s3_key_secret");
+                self.s3_connection = None;
                 self.preferences.backup_destination = destination;
                 self.preference_sync.changed();
             }
@@ -3127,6 +3194,10 @@ impl App {
                     .unwrap_or_else(|| "Main backup".into()),
             ),
             ("backup_folder", self.preferences.backup_folder.clone()),
+            ("s3_endpoint", self.preferences.backup_s3.endpoint.clone()),
+            ("s3_region", self.preferences.backup_s3.region.clone()),
+            ("s3_bucket", self.preferences.backup_s3.bucket.clone()),
+            ("s3_prefix", self.preferences.backup_s3.prefix.clone()),
             ("copies", self.preferences.backup_copies.to_string()),
             ("hours", self.preferences.backup_hours.to_string()),
             (
@@ -3144,9 +3215,13 @@ impl App {
         }
     }
     fn read_preferences(&mut self) -> anyhow::Result<()> {
+        if let Some(error) = self.palette_editor.error {
+            anyhow::bail!("Colors: {error}");
+        }
         let mut next = self.preferences.clone();
         if self.fields.contains_key("copies") {
             next.backup_folder = self.field("backup_folder").into();
+            next.backup_s3 = self.s3_form_settings();
             next.backup_copies = self.field("copies").parse()?;
             next.backup_hours = self.field("hours").parse()?;
             next.mail_check_seconds = self.field("mail_check_seconds").parse()?;
@@ -3172,6 +3247,9 @@ impl App {
         }
         crate::backup::config::capture_editor(&mut next);
         next.validate()?;
+        if let Some(palettes) = self.palette_editor.apply(next.palettes) {
+            next.palettes = palettes;
+        }
         self.preferences = next;
         Ok(())
     }
@@ -3776,6 +3854,10 @@ impl App {
         );
         data["draft_in_reply_to"] = serde_json::json!(self.composer.current.draft.in_reply_to);
         data["focused_input"] = serde_json::json!(self.focused_input);
+        data["s3_connection"] = serde_json::json!(self.s3_connection.as_ref().map(|(_, target, result)| serde_json::json!({"current": *target == self.configured_backup_target(), "pending": result.is_none(), "connected": result.as_ref().is_some_and(|r| r.is_ok()), "error": result.as_ref().and_then(|r| r.as_ref().err()) })));
+        data["backup_destination"] =
+            serde_json::json!(format!("{:?}", self.preferences.backup_destination));
+        data["saved_backup_s3"] = serde_json::json!(self.workspace.preferences.backup_s3);
         data["backup_destinations"] = serde_json::json!(self.preferences.backup_destinations);
         data["backup_selected"] = serde_json::json!(self.preferences.backup_selected);
         data["saved_backup_destinations"] =
@@ -3785,6 +3867,15 @@ impl App {
         data["saved_backup_folder"] = serde_json::json!(self.workspace.preferences.backup_folder);
         data["saved_backup_copies"] = serde_json::json!(self.workspace.preferences.backup_copies);
         data["saved_auto_backup"] = serde_json::json!(self.workspace.preferences.auto_backup);
+        data["palettes"] = serde_json::json!(self.preferences.palettes);
+        data["saved_palettes"] = serde_json::json!(self.workspace.preferences.palettes);
+        data["palette_editor"] = serde_json::json!({
+            "dark": self.palette_editor.dark,
+            "role": self.palette_editor.role.to_string(),
+            "value": self.palette_editor.value,
+            "draft": self.palette_editor.draft,
+            "error": self.palette_editor.error,
+        });
         data["preferences_saved"] = serde_json::json!(!self.preference_sync.dirty());
         data["saved_preferences_revision"] = serde_json::json!(self.workspace.preferences_revision);
         data["saved_appearance"] =

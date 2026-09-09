@@ -1,6 +1,44 @@
 use super::*;
 
 impl Engine {
+    pub(super) async fn connect_s3(
+        &self,
+        target: &BackupTarget,
+        supplied: Option<(SecretString, SecretString)>,
+        factory: impl FnOnce(
+            &backup::s3::Settings,
+            &SecretString,
+        ) -> anyhow::Result<backup::s3::S3Backup>
+        + Send,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(!self.demo, "S3 connections are disabled in preview.");
+        let saved: Preferences = self.store.get("preferences").await?;
+        let configured = backup::config::resolve(&saved, target)?;
+        anyhow::ensure!(
+            configured.backup_destination == BackupDestination::S3,
+            "Choose an S3 destination first."
+        );
+        let id = configured.backup_s3.identity().secret_id();
+        let secret = match supplied {
+            Some((key, secret)) => backup::s3::access_secret(
+                key.expose_secret().into(),
+                secret.expose_secret().into(),
+            )?,
+            None => self.credentials.read(&id).await.map_err(|_| {
+                anyhow::anyhow!(
+                    "Enter the S3 access key and secret key to set up this destination."
+                )
+            })?,
+        };
+        factory(&configured.backup_s3, &secret)?
+            .test_connection()
+            .await?;
+        let current: Preferences = self.store.get("preferences").await?;
+        backup::config::resolve(&current, target)?;
+        self.credentials.write(&id, secret).await?;
+        Ok(())
+    }
+
     pub(super) async fn backup_journal(&self) -> anyhow::Result<backup::journal::Journal> {
         self.backup_uploads
             .get_or_try_init(|| async {
@@ -31,7 +69,7 @@ impl Engine {
             BackupTarget::GoogleDrive { .. } => {
                 Some(self.google_connection_lock.clone().read_owned().await)
             }
-            BackupTarget::Local(_) => None,
+            BackupTarget::Local(_) | BackupTarget::S3(_) => None,
         }
     }
 

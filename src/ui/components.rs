@@ -23,6 +23,20 @@ pub struct Colors {
     pub flag: Color,
 }
 pub fn colors(theme: &Theme) -> Colors {
+    if matches!(theme, Theme::Custom(_)) {
+        let p = theme.extended_palette();
+        return Colors {
+            bg: p.background.base.color,
+            surface: p.background.weak.color,
+            subtle: p.background.strong.color,
+            text: p.background.base.text,
+            muted: p.background.strong.text,
+            border: p.secondary.base.color,
+            accent: p.primary.strong.color,
+            tint: p.primary.weak.color,
+            flag: p.danger.strong.color,
+        };
+    }
     let dark = theme.palette().background.r < 0.3;
     if dark {
         Colors {
@@ -128,14 +142,30 @@ pub fn destructive(theme: &Theme, status: button::Status) -> button::Style {
     if status != button::Status::Disabled {
         style.background = Some(
             match status {
-                button::Status::Hovered | button::Status::Pressed => hex(0x991b1b),
-                _ => hex(0xb91c1c),
+                button::Status::Hovered | button::Status::Pressed => {
+                    let color = theme.palette().danger;
+                    if color == hex(0xb91c1c) {
+                        hex(0x991b1b)
+                    } else {
+                        shade(color, false)
+                    }
+                }
+                _ => theme.palette().danger,
             }
             .into(),
         );
         style.text_color = Color::WHITE;
     }
     style
+}
+
+fn shade(color: Color, lighter: bool) -> Color {
+    let target = if lighter { 1. } else { 0. };
+    Color::from_rgb(
+        color.r * 0.85 + target * 0.15,
+        color.g * 0.85 + target * 0.15,
+        color.b * 0.85 + target * 0.15,
+    )
 }
 
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
@@ -151,14 +181,27 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
             ..Default::default()
         };
     }
+    let primary = theme.extended_palette().primary.base;
     let bg = match status {
-        button::Status::Hovered => hex(0x8060cc),
-        button::Status::Pressed => hex(0x60459f),
-        _ => hex(0x7356bd),
+        button::Status::Hovered => {
+            if primary.color == hex(0x7356bd) {
+                hex(0x8060cc)
+            } else {
+                shade(primary.color, true)
+            }
+        }
+        button::Status::Pressed => {
+            if primary.color == hex(0x7356bd) {
+                hex(0x60459f)
+            } else {
+                shade(primary.color, false)
+            }
+        }
+        _ => primary.color,
     };
     button::Style {
         background: Some(bg.into()),
-        text_color: Color::WHITE,
+        text_color: primary.text,
         border: Border {
             radius: 8.into(),
             width: if status == button::Status::Pressed {
@@ -166,7 +209,11 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
             } else {
                 0.
             },
-            color: hex(0x4e3787),
+            color: if primary.color == hex(0x7356bd) {
+                hex(0x4e3787)
+            } else {
+                shade(primary.color, false)
+            },
         },
         ..if matches!(status, button::Status::Disabled) {
             button::Style {

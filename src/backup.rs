@@ -2,6 +2,7 @@ pub mod config;
 mod drive;
 pub(crate) mod journal;
 pub(crate) mod restore;
+pub mod s3;
 
 use crate::{model::*, providers::google::Google};
 use aes_gcm::{
@@ -43,6 +44,7 @@ pub struct BackupCopy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackupTarget {
     Local(String),
+    S3(s3::Identity),
     GoogleDrive {
         client_id: String,
         connection_id: String,
@@ -52,6 +54,7 @@ impl BackupTarget {
     pub fn from_preferences(prefs: &Preferences) -> Self {
         match prefs.backup_destination {
             BackupDestination::Local => Self::Local(prefs.backup_folder.clone()),
+            BackupDestination::S3 => Self::S3(prefs.backup_s3.identity()),
             BackupDestination::GoogleDrive => Self::GoogleDrive {
                 client_id: prefs.active_google_client().to_string(),
                 connection_id: prefs.google_connection_id.clone(),
@@ -59,7 +62,7 @@ impl BackupTarget {
         }
     }
     pub(crate) fn work_key(&self) -> String {
-        self.secret_id()
+        format!("backup:{self:?}")
     }
     fn secret_id(&self) -> String {
         use sha2::{Digest, Sha256};

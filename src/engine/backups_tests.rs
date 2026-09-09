@@ -584,3 +584,115 @@ async fn multiple_backup_targets_upload_and_retain_independently_with_distinct_p
     assert!(journal.pending(&first).await.unwrap().is_none());
     assert!(journal.pending(&second).await.unwrap().is_none());
 }
+
+#[derive(Default)]
+struct S3Vault(std::collections::HashMap<String, SecretString>);
+impl crate::credentials::Backend for S3Vault {
+    fn read(&mut self, key: &str) -> anyhow::Result<Option<SecretString>> {
+        Ok(self.0.get(key).cloned())
+    }
+    fn write(&mut self, key: &str, secret: SecretString) -> anyhow::Result<()> {
+        self.0.insert(key.into(), secret);
+        Ok(())
+    }
+    fn delete(&mut self, key: &str) -> anyhow::Result<()> {
+        self.0.remove(key);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn s3_connection_only_saves_verified_keys_and_rejects_a_destination_removed_during_test() {
+    use crate::providers::test_http::{Reply, Server};
+    let mut engine = engine(Arc::new(Secrets::default()));
+    engine.credentials = crate::credentials::Credentials::with_backend(
+        crate::credentials::Scope::Legacy,
+        S3Vault::default(),
+    );
+    let prefs = Preferences {
+        backup_destination: BackupDestination::S3,
+        backup_s3: backup::s3::Settings {
+            bucket: "fixture-backups".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let target = BackupTarget::from_preferences(&prefs);
+    let id = prefs.backup_s3.identity().secret_id();
+    engine.store.save_preferences(prefs.clone()).await.unwrap();
+    let xml = "<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated></ListBucketResult>";
+    let mut server = Server::start(vec![Reply::new(200, xml)]).await;
+    let mut endpoint = server.url.clone();
+    endpoint.set_path("/");
+    engine
+        .connect_s3(
+            &target,
+            Some(("fixture-key".into(), "fixture-secret".into())),
+            |settings, secret| {
+                let mut settings = settings.clone();
+                settings.endpoint = endpoint.to_string();
+                backup::s3::S3Backup::fixture(&settings, secret)
+            },
+        )
+        .await
+        .unwrap();
+    server.finish().await;
+    let stored = engine.credentials.read(&id).await.unwrap();
+    assert!(stored.expose_secret().contains("fixture-secret"));
+    let mut failed = Server::start(vec![Reply::new(403, "private-error-body")]).await;
+    let mut endpoint = failed.url.clone();
+    endpoint.set_path("/");
+    assert!(
+        engine
+            .connect_s3(
+                &target,
+                Some(("new-key".into(), "new-secret".into())),
+                |settings, secret| {
+                    let mut settings = settings.clone();
+                    settings.endpoint = endpoint.to_string();
+                    backup::s3::S3Backup::fixture(&settings, secret)
+                }
+            )
+            .await
+            .is_err()
+    );
+    failed.finish().await;
+    assert_eq!(
+        engine.credentials.read(&id).await.unwrap().expose_secret(),
+        stored.expose_secret()
+    );
+    let (reply, observed, release) = Reply::new(200, xml).held();
+    let mut held = Server::start(vec![reply]).await;
+    let mut endpoint = held.url.clone();
+    endpoint.set_path("/");
+    let operation = engine.connect_s3(
+        &target,
+        Some(("new-key".into(), "new-secret".into())),
+        |settings, secret| {
+            let mut settings = settings.clone();
+            settings.endpoint = endpoint.to_string();
+            backup::s3::S3Backup::fixture(&settings, secret)
+        },
+    );
+    let change = async {
+        observed.await.unwrap();
+        engine
+            .store
+            .save_preferences(Preferences::default())
+            .await
+            .unwrap();
+        release.send(()).unwrap();
+    };
+    let (result, ()) = tokio::join!(operation, change);
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("destination changed")
+    );
+    held.finish().await;
+    assert_eq!(
+        engine.credentials.read(&id).await.unwrap().expose_secret(),
+        stored.expose_secret()
+    );
+}

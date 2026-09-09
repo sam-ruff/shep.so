@@ -765,3 +765,28 @@ After rapid navigation, wait for the target row to be fully revealed before
 capturing a scroll offset for a later operation. Selection state can arrive first.
 The owned Xvfb selects GTK's Cairo renderer for file pickers; keep real controls,
 clipboard ownership proof and path confinement intact.
+
+For palette controls, search Preferences for `palette` and open Colors. Keep the saved `test_palette_native_*` equivalents for invalid hex input, custom light/dark colors, normal and compact layouts, applying/undo/reset, and graceful restart. The preview sample changes before application; verify the sidebar/inbox pixels and saved palette separately. The Colors editor deliberately uses readable default controls around the custom sample. These fixture settings are unrelated to live profile or OS-theme synchronization.
+
+The saved palette header-save flow uses the global Save changes button as well
+as Apply colors. Invalid hex must retain the saved palette, show a Colors error
+and clear old success feedback; corrected input must save and clear that error.
+Preserve this path when changing generic settings validation or save handlers.
+
+The saved `test_s3_backup_setup_native_validation_and_saved_target` scenario
+selects S3 through the native provider picker, rejects blank buckets/insecure
+endpoints/incomplete keys, saves settings before its preview-disabled connection
+test, restarts, and reviews 900×640 dark setup and credential controls. It checks
+that fixture keys never reach MCP observations or persisted SQLite settings.
+Transport and verified-key storage success/recovery use object-scoped loopback
+Rust tests (`cargo test --all-features s3_`), not cloud credentials in the native
+fixture. Keep both layers when changing S3 setup or provider behavior.
+
+For existing-account import links, use the owned `existing-matching` or
+`existing-many` profile fixture. `test_profile_join_link_native_*` drives actual
+account-choice dropdowns, Add new, compact dark Import and eight-account paging,
+then checks restart and the closed cache mapping. The many-account scenario
+imports twelve shared accounts while reusing one existing native account.
+`profile_sync.join_review.page`, `links` and `offset` only observe the review;
+never use them to operate it. Preserve local mail, pending Reconnect state and
+stale-review rejection tests. These fixtures do not use live Google or keychains.
