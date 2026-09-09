@@ -8,6 +8,7 @@ pub use connections::{ConnectionKind, ConnectionRef, CredentialCleanup, RemovalP
 mod drafts;
 mod google_lifecycle;
 mod outgoing;
+pub(crate) mod profiles;
 mod restore;
 mod selection;
 use anyhow::Context;
@@ -101,6 +102,7 @@ impl Store {
             CREATE INDEX IF NOT EXISTS event_start ON events(start);")?;
         conversations::schema(&conn)?;
         connections::schema(&conn)?;
+        profiles::schema(&conn)?;
         outgoing::schema(&conn)?;
         selection::schema(&conn)?;
         bulk::schema(&conn)?;

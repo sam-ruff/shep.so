@@ -2342,3 +2342,49 @@ Rust tests**, with only two opt-in personal-account diagnostics ignored. The
 production configuration also passes `cargo check --lib` without test-support.
 Shipping and gate logs are under `artifacts/logs/desktop-profile-*`. This receipt
 delivers the discovery increment, not full profile sync or product parity.
+
+
+## Desktop reviewed profile publication
+
+Preferences → Profiles and sync now publishes a named selection of saved account
+connections and eight supported portable preferences. The review freezes source
+values, pages account metadata in groups of 50 and shows connection details.
+Changing accounts or selected preferences rejects approval. Displayed preferences
+must finish saving before preparation or approval enters the profile queue.
+
+The mail owner stores exact planned operations and explicit account mappings.
+Each history request is durable before crossing into an independent journal;
+tracked Drive uploads retain reserved IDs and exact media before confirmation.
+Pause/navigation stops subsequent steps, and reopening retains the review and
+receipts. The active grant fences each accepted step; changed OAuth clients force
+full discovery while retaining known files. Publication never copies mail,
+passwords, tokens or device-only settings.
+
+Ten targeted Rust tests pass, including 75-account preparation/paging, changed
+reviews, lost staging receipts, and a full mail-database/session reopen after a
+failed Drive confirmation. The latter publishes five records with five distinct
+POSTs and verifies the initialized result through another catalog. The save-order
+controller test covers mismatched acknowledgments, pause, save failure and changed
+grants. Native controls pass both saved `test_desktop_profile_publication_*` flows:
+selection/name input, details, pause/browse, failed confirmation/retry, reopened
+receipts, compact dark review, changed preferences/cancel and account exclusion.
+
+Reviewed targeted captures are in `artifacts/e2e/ce56a55b4f59`, `77a412dc2c44` and
+`10259a2a8af5`; final-suite publication captures in `e9fe87150127` and
+`30226a395d57` were also reviewed. Earlier evidence caught a moved Retry control (`53e08622ea48`) and
+an upload error below account details (`ee445bb4cbc3`); the final layout preserves
+Retry and places publication errors beside recovery controls. A test initially
+used the compact Dark coordinate in a wide window (`5be7c1a7416a`); the corrected
+scenario targets the actual wide control before resizing.
+
+The full **123-flow native functional suite passes** in 483.337 seconds
+(`artifacts/logs/desktop-publication-native-full.log`). **41 Python checks**,
+**37 parity contracts** and the pinned strict Zensical build also pass. The final
+commit-hook and shipping receipt follows below. All 40 active requests remain.
+Desktop enrollment, native large-page controls, browser publication/application,
+ongoing reconciliation, complete portable categories/settings, protected passwords,
+authenticated cross-client interchange, Apple/live Google and full product parity
+remain open. Fixture HTTP/SQLite/native success does not establish live Google.
+Performance measurements remain deferred on the busy host; the earlier navigation
+gate still fails. Quality/release CI remains disabled. No phone reinstall, main
+merge or VPS deployment accompanies this worktree increment.

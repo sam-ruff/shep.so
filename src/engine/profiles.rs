@@ -32,7 +32,16 @@ impl Engine {
                 // One accepted provider step retains the active grant; disconnect
                 // takes the write side between steps. Never access the keychain
                 // or Google before the cached workspace is ready.
-                let network = matches!(request.action, Action::Open { .. } | Action::Advance);
+                let network = matches!(request.action, Action::Open { .. } | Action::Advance)
+                    || if let Action::Publication(command) = &request.action {
+                        session
+                            .as_ref()
+                            .context("Reopen Profiles and sync.")?
+                            .publication_network(&self.store, command)
+                            .await?
+                    } else {
+                        false
+                    };
                 let _slot = if network {
                     Some(self.provider_slots.acquire().await)
                 } else {
@@ -128,10 +137,22 @@ impl Engine {
                         .await?,
                     );
                     self.store.put("profile_namespace", namespace).await?;
-                    let opened = session.as_ref().unwrap().observe(None).await?;
-                    if let Some(state) = &opened.state
-                        && state.phase == shep_profile_core::drive::catalog::Phase::Complete
-                        && state.error.is_none()
+                    let active = session.as_mut().unwrap();
+                    let scope_key = active.scope().storage_key()?;
+                    let binding_key = format!("profile_discovery_client:{scope_key}");
+                    let previous: String = self.store.get(&binding_key).await?;
+                    let client_changed = previous != request.grant.client_id();
+                    let opened = active
+                        .run_publication(
+                            &self.store,
+                            crate::profiles::publication::Command::Current,
+                            None,
+                        )
+                        .await?;
+                    let refreshed = if let Some(state) = &opened.state
+                        && ((state.phase == shep_profile_core::drive::catalog::Phase::Complete
+                            && state.error.is_none())
+                            || client_changed)
                     {
                         session
                             .as_mut()
@@ -139,14 +160,29 @@ impl Engine {
                             .run(
                                 Action::Refresh {
                                     revision: state.revision,
-                                    full: false,
+                                    full: client_changed,
                                 },
                                 None,
                             )
                             .await
                     } else {
                         Ok(opened)
+                    }?;
+                    // Namespace is configured by the app project, not inferred
+                    // from an OAuth client ID. A changed client forces a full
+                    // scan; missing known records prevent publication.
+                    if refreshed.error.is_none() {
+                        self.store
+                            .put(&binding_key, request.grant.client_id().to_owned())
+                            .await?;
                     }
+                    Ok(refreshed)
+                } else if let Action::Publication(command) = &request.action {
+                    session
+                        .as_mut()
+                        .context("Reopen Profiles and sync.")?
+                        .run_publication(&self.store, command.clone(), drive.as_ref())
+                        .await
                 } else {
                     session
                         .as_mut()

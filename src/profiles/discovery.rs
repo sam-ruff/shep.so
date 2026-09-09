@@ -1,5 +1,6 @@
 //! One desktop discovery owner. The provider queue drives one bounded step at a
 //! time; cached mail, drafts and preferences use their existing independent queues.
+use super::publication;
 use crate::model::Preferences;
 use anyhow::{Result, ensure};
 use serde::Serialize;
@@ -42,6 +43,9 @@ impl Grant {
         );
         Ok(())
     }
+    pub fn client_id(&self) -> &str {
+        &self.client
+    }
     pub fn principal(&self) -> &str {
         &self.principal
     }
@@ -55,6 +59,7 @@ pub enum Action {
     Advance,
     Retry { revision: u64 },
     Refresh { revision: u64, full: bool },
+    Publication(publication::Command),
     Close,
 }
 #[derive(Clone, Debug)]
@@ -71,6 +76,7 @@ pub struct Observation {
     pub rows: Vec<Profile>,
     pub after: Option<String>,
     pub error: Option<String>,
+    pub publication: publication::Observation,
 }
 pub struct Session {
     pub panel: Uuid,
@@ -78,6 +84,8 @@ pub struct Session {
     pub namespace: String,
     catalog: Discovery,
     after: Option<String>,
+    history_root: PathBuf,
+    publication: publication::Observation,
 }
 impl Session {
     pub async fn open(root: PathBuf, panel: Uuid, grant: Grant, drive: &Drive) -> Result<Self> {
@@ -94,6 +102,11 @@ impl Session {
             panel,
             grant,
             namespace: scope.namespace.clone(),
+            history_root: root.join("histories"),
+            publication: publication::Observation {
+                next_id: Some(Uuid::new_v4()),
+                ..Default::default()
+            },
             catalog: Discovery::open(path, scope).await?,
             after: None,
         })
@@ -105,6 +118,7 @@ impl Session {
             rows: self.catalog.profiles(self.after.clone()).await?,
             after: self.after.clone(),
             error,
+            publication: self.publication.clone(),
         })
     }
     pub async fn run(&mut self, action: Action, drive: Option<&Drive>) -> Result<Observation> {
@@ -137,6 +151,81 @@ impl Session {
         .await;
         self.observe(result.err().map(|error| error.to_string()))
             .await
+    }
+    pub fn scope(&self) -> Scope {
+        Scope {
+            namespace: self.namespace.clone(),
+            principal: self.grant.principal().into(),
+        }
+    }
+    pub async fn publication_network(
+        &self,
+        store: &crate::store::Store,
+        command: &publication::Command,
+    ) -> Result<bool> {
+        if let publication::Command::Step { id } = command {
+            return Ok(store
+                .publication_review(self.scope().storage_key()?, *id)
+                .await?
+                .phase
+                == publication::Phase::Uploading);
+        }
+        Ok(false)
+    }
+    pub async fn run_publication(
+        &mut self,
+        store: &crate::store::Store,
+        command: publication::Command,
+        drive: Option<&Drive>,
+    ) -> Result<Observation> {
+        let after = if let publication::Command::Accounts { after, .. } = &command {
+            *after
+        } else {
+            0
+        };
+        let prepare = if let publication::Command::Prepare { id, .. } = &command {
+            Some(*id)
+        } else {
+            None
+        };
+        let result = publication::run(
+            store,
+            self.scope(),
+            &self.history_root,
+            &self.catalog,
+            drive,
+            command,
+        )
+        .await;
+        let (review, error) = match result {
+            Ok(review) => (review, None),
+            Err(error) => (
+                store
+                    .publication_current(self.scope().storage_key()?)
+                    .await?,
+                Some(error.to_string()),
+            ),
+        };
+        // Observe the saved receipt even when its caller lost an earlier reply.
+        // A new form gets a backend-issued UUID; iced never needs OS randomness.
+        if prepare.is_some()
+            && prepare == self.publication.next_id
+            && review.as_ref().is_some_and(|r| Some(r.id) == prepare)
+        {
+            self.publication.next_id = Some(Uuid::new_v4());
+        }
+        let after = if error.is_none() { after } else { 0 };
+        let rows = if let Some(review) = &review {
+            store
+                .publication_accounts(self.scope().storage_key()?, review.id, after)
+                .await?
+        } else {
+            vec![]
+        };
+        self.publication.review = review;
+        self.publication.rows = rows;
+        self.publication.after = after;
+        self.observe(error).await
     }
     pub async fn close(self) -> Result<()> {
         self.catalog.close().await.map_err(Into::into)

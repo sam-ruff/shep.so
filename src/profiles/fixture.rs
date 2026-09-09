@@ -12,6 +12,8 @@ pub struct Fixture {
     pub root: tempfile::TempDir,
     pub url: url::Url,
     task: tokio::task::JoinHandle<()>,
+    #[cfg(test)]
+    pub attempts: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -93,9 +95,16 @@ impl Fixture {
                 records.push((meta, bytes));
             }
         }
+        let attempts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let written = attempts.clone();
+        let mut upload_failure = fail_once;
+        let mut hidden_once: Option<String> = None;
+        let mut reserved = std::collections::HashSet::new();
         let task = tokio::spawn(async move {
             while let Ok((mut socket, _)) = listener.accept().await {
                 let mut bytes = Vec::new();
+                let mut body_start = None;
+                let mut content_length = 0;
                 loop {
                     let mut chunk = [0; 4096];
                     let Ok(n) = socket.read(&mut chunk).await else {
@@ -105,7 +114,26 @@ impl Fixture {
                         break;
                     }
                     bytes.extend_from_slice(&chunk[..n]);
-                    if bytes.windows(4).any(|w| w == b"\r\n\r\n") || bytes.len() > 32768 {
+                    if body_start.is_none()
+                        && let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n")
+                    {
+                        body_start = Some(end + 4);
+                        content_length = String::from_utf8_lossy(&bytes[..end])
+                            .lines()
+                            .find_map(|line| {
+                                let (key, value) = line.split_once(':')?;
+                                key.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())
+                                    .flatten()
+                            })
+                            .unwrap_or(0);
+                    }
+                    if bytes.len() > shep_profile_core::MAX_RECORD_BYTES + 32768
+                        || content_length > shep_profile_core::MAX_RECORD_BYTES + 16384
+                    {
+                        break;
+                    }
+                    if body_start.is_some_and(|start| bytes.len() >= start + content_length) {
                         break;
                     }
                 }
@@ -117,9 +145,48 @@ impl Fixture {
                     continue;
                 };
                 let mut status = 200;
-                let body: Vec<u8> = if method != "GET" {
+                let body: Vec<u8> = if method == "POST" && uri.path() == "/upload/drive/v3/files" {
+                    tokio::time::sleep(delay).await;
+                    match body_start
+                        .and_then(|start| bytes.get(start..start + content_length))
+                        .and_then(|body| upload_record(body).ok())
+                    {
+                        Some((meta, record))
+                            if meta["id"].as_str().is_some_and(|id| reserved.contains(id)) =>
+                        {
+                            let id = meta["id"].as_str().unwrap().to_owned();
+                            written.lock().unwrap().push(id.clone());
+                            if records.iter().any(|(m, _)| m["id"] == id) {
+                                status = 409;
+                            } else {
+                                records.push((meta, record));
+                            }
+                            if upload_failure {
+                                upload_failure = false;
+                                hidden_once = Some(id.clone());
+                                status = 503;
+                            }
+                            serde_json::to_vec(&json!({"id":id})).unwrap()
+                        }
+                        _ => {
+                            status = 400;
+                            b"invalid synthetic upload".to_vec()
+                        }
+                    }
+                } else if method != "GET" {
                     status = 405;
-                    b"fixture is read only".to_vec()
+                    vec![]
+                } else if uri.path() == "/drive/v3/files/generateIds" {
+                    let id = format!("reserved-{}", reserved.len() + 1);
+                    reserved.insert(id.clone());
+                    serde_json::to_vec(&json!({"space":"appDataFolder","ids":[id]})).unwrap()
+                } else if hidden_once
+                    .as_ref()
+                    .is_some_and(|id| uri.path() == format!("/drive/v3/files/{id}"))
+                {
+                    hidden_once = None;
+                    status = 503;
+                    b"synthetic lost upload receipt".to_vec()
                 } else if uri.path() == "/drive/v3/about" {
                     serde_json::to_vec(&json!({"user":{"permissionId":"fixture"}})).unwrap()
                 } else if uri.path() == "/drive/v3/changes/startPageToken" {
@@ -168,7 +235,13 @@ impl Fixture {
                 }
             }
         });
-        Ok(Self { root, url, task })
+        Ok(Self {
+            root,
+            url,
+            task,
+            #[cfg(test)]
+            attempts,
+        })
     }
     pub async fn connect(
         &self,
@@ -184,4 +257,44 @@ impl Fixture {
             .await?,
         )
     }
+}
+
+fn upload_record(body: &[u8]) -> Result<(Value, Vec<u8>)> {
+    let text = std::str::from_utf8(body)?;
+    let (boundary, _) = text
+        .split_once("\r\n")
+        .ok_or_else(|| anyhow::anyhow!("multipart boundary"))?;
+    anyhow::ensure!(
+        boundary.starts_with("--shep_") && boundary.len() < 100,
+        "multipart boundary"
+    );
+    let parts: Vec<_> = text.split(boundary).collect();
+    anyhow::ensure!(
+        parts.len() == 4 && parts[0].is_empty() && parts[3] == "--\r\n",
+        "multipart parts"
+    );
+    let json_part = |part: &str| -> Result<String> {
+        let (_, value) = part
+            .split_once("\r\n\r\n")
+            .ok_or_else(|| anyhow::anyhow!("multipart headers"))?;
+        Ok(value
+            .strip_suffix("\r\n")
+            .ok_or_else(|| anyhow::anyhow!("multipart ending"))?
+            .to_owned())
+    };
+    let mut meta: Value = serde_json::from_str(&json_part(parts[1])?)?;
+    let record = json_part(parts[2])?.into_bytes();
+    let operation = Operation::decode(&record)?;
+    anyhow::ensure!(
+        operation.namespace == NAMESPACE
+            && meta["parents"] == json!(["appDataFolder"])
+            && meta["appProperties"]["shepSha256"] == format!("{:x}", Sha256::digest(&record))
+            && meta["appProperties"]["shepOperation"] == operation.operation.to_string(),
+        "uploaded metadata"
+    );
+    meta["ownedByMe"] = json!(true);
+    meta["trashed"] = json!(false);
+    meta["spaces"] = json!(["appDataFolder"]);
+    meta["size"] = json!(record.len().to_string());
+    Ok((meta, record))
 }

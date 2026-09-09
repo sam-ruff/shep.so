@@ -607,3 +607,13 @@ R08/R10/R75/R02/R49/desktop-main:R92 shipping: desktop discovery [`9e666a5`](htt
 and remotely verified. Mandatory hooks pass 454 Rust tests (two personal live
 checks ignored), alongside the recorded 121 native flows, 41 Python checks,
 37 parity contracts and strict docs build. All 40 active requests remain.
+
+
+R75/R02/R49/desktop-main:R92/R63/R73/R08/R10 continuation: desktop initial profile
+publication now connects actual saved account/preferences reviews to durable
+staging and tracked Drive receipts. Changed reviews, saved-preference ordering,
+75-account paging, no-duplicate upload recovery after database reopen and real iced
+review/pause/retry/compact controls have evidence. Full regression and shipping
+are recorded in [completion](COMPLETION.md); desktop enrollment, continuous sync,
+credential protection and all other active requests remain unfinished. No request
+is removed by this increment.

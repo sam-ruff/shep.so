@@ -1414,6 +1414,87 @@ class NativeFlows(unittest.TestCase):
                        shot("outbox-empty-compact"), key("Escape"), check("dialog", None),
                        click(87, 359), check("folder", "Sent"), check("total", 2), shot("local-sent-copies-compact"))
 
+    def test_desktop_profile_publication_review_retry_reopen(self):
+        result = self.mcp.call("desktop.start", google_permissions="drive", profile_discovery=True)
+        print(f"Desktop publication evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(956,156), check("settings_tab", "Profiles"), check("profiles.loaded",True),
+                       wait(150), click(600,390), type_text("so.shep.fixture"), click(342,441),
+                       check("profiles.error",None,"ne"), check("profiles.pending",False),
+                       click(344,629), check("profiles.discovery.state.phase","complete"),
+                       check("profiles.pending",False), wait(150), shot("publication-entry-light"),
+                       click(370,725), check("profiles.publication_visible",True), check("profiles.pending",False),
+                       wait(150), shot("publication-form-light"),
+                       {"type":"hover","x":1100,"y":760}, {"type":"scroll","amount":25},
+                       wait(150), shot("publication-form-footer-light"),
+                       click(600,374), key("ctrl+a"), type_text("Mail setup M"), check("dialog",None),
+                       click(288,797), click(335,847),
+                       check("profiles.discovery.publication.review.phase","review"), check("profiles.pending",False),
+                       check("profiles.discovery.publication.review.name","Mail setup M"),
+                       check("profiles.discovery.publication.review.accounts",2),
+                       {"type":"scroll","amount":-30}, wait(150), shot("publication-review-light"))
+        reviewed = self.mcp.call("desktop.state")["profiles"]["discovery"]["publication"]["review"]
+        self.assertEqual(len(reviewed["settings"]), 7)
+        self.assertNotIn("tooltips", reviewed["settings"])
+        self.mcp.batch(click(1100,738), {"type":"hover","x":1100,"y":760},
+                       {"type":"scroll","amount":20}, wait(150), shot("publication-account-details-light"),
+                       {"type":"scroll","amount":-30}, wait(100), click(365,493),
+                       check("profiles.discovery.publication.review.phase","uploading"),
+                       check("profiles.pending",True), click(350,493), check("profiles.publication_running",False),
+                       key("ctrl+1"), check("tab","Mail"), key("Down"),
+                       check("selected","Your weekly workspace digest"), check("profiles.pending",False),
+                       shot("publication-paused-mail"), key("ctrl+comma"), check("tab","Preferences"),
+                       check("profiles.error",None,"ne"), wait(150), shot("publication-failed-light"),
+                       click(350,493), check("profiles.discovery.publication.review.phase","complete"),
+                       check("profiles.pending",False), check("profiles.error",None),
+                       check("profiles.discovery.publication.review.uploaded",5),
+                       check("profiles.discovery.state.profiles",3), wait(150), shot("publication-complete-light"),
+                       click(335,333), check("profiles.publication_visible",False), wait(150),
+                       click(741,441), check("profiles.discovery.state",None), wait(100),
+                       click(342,441), check("profiles.discovery.state.phase","complete"), check("profiles.pending",False),
+                       check("profiles.discovery.publication.review.id",reviewed["id"]),
+                       check("profiles.discovery.publication.review.phase","complete"),
+                       wait(150), shot("publication-reopened-discovery-light"))
+
+    def test_desktop_profile_publication_compact_dark_cancel_changed_review(self):
+        result = self.mcp.call("desktop.start", google_permissions="drive", profile_discovery=True)
+        print(f"Compact publication evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab","Preferences"), wait(150),
+                       click(725,366), check("dark",True), click(956,156), check("settings_tab","Profiles"),
+                       check("profiles.loaded",True), wait(150), click(600,390), type_text("so.shep.fixture"),
+                       click(342,441), check("profiles.error",None,"ne"), check("profiles.pending",False),
+                       click(344,629), check("profiles.discovery.state.phase","complete"), check("profiles.pending",False),
+                       wait(150), click(370,725), check("profiles.publication_visible",True), check("profiles.pending",False),
+                       wait(150), click(288,499), {"type":"resize","width":900,"height":640},
+                       check("window_size",[900,640]), {"type":"hover","x":750,"y":550},
+                       {"type":"scroll","amount":30}, wait(150), shot("publication-form-compact-dark"),
+                       click(335,568), check("profiles.discovery.publication.review.phase","review"),
+                       check("profiles.discovery.publication.review.accounts",0), check("profiles.pending",False),
+                       {"type":"scroll","amount":-30}, wait(150), shot("publication-review-compact-dark"))
+        original = self.mcp.call("desktop.state")["profiles"]["discovery"]["publication"]["review"]["id"]
+        self.mcp.batch({"type":"resize","width":1440,"height":920}, check("window_size",[1440,920]),
+                       wait(150), click(292,156), check("settings_tab","General"), wait(150),
+                       click(399,366), check("dark",False), click(956,156), check("settings_tab","Profiles"),
+                       {"type":"resize","width":900,"height":640}, check("window_size",[900,640]),
+                       {"type":"hover","x":750,"y":550}, {"type":"scroll","amount":-30}, wait(150),
+                       click(340,509), check("profiles.error","Preferences changed","contains"),
+                       check("profiles.discovery.publication.review.phase","review"),
+                       check("profiles.discovery.publication.review.settings.appearance","Dark"),
+                       shot("publication-changed-review-compact-light"), click(488,509),
+                       check("profiles.discovery.publication.review.phase","cancelled"), check("profiles.pending",False),
+                       {"type":"scroll","amount":30}, wait(150), click(335,568),
+                       check("profiles.discovery.publication.review.phase","review"), check("profiles.pending",False),
+                       check("profiles.discovery.publication.review.id",original,"ne"),
+                       check("profiles.discovery.publication.review.settings.appearance","Light"),
+                       check("profiles.discovery.publication.review.accounts",0),
+                       {"type":"scroll","amount":-30}, wait(150), click(340,509),
+                       check("profiles.error",None,"ne"), check("profiles.pending",False),
+                       shot("publication-failed-compact-light"), click(340,509),
+                       check("profiles.discovery.publication.review.phase","complete"), check("profiles.pending",False),
+                       check("profiles.discovery.publication.review.uploaded",3), check("profiles.error",None),
+                       shot("publication-complete-compact-light"), key("ctrl+1"), check("tab","Mail"),
+                       check("account_count",2), check("dark",False))
+
     def test_desktop_profile_discovery_pause_retry_reopen(self):
         result = self.mcp.call("desktop.start", google_permissions="drive", profile_discovery=True)
         print(f"Desktop profile evidence: {result['artifacts']}", flush=True)

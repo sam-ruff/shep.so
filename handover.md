@@ -55,8 +55,12 @@ compact dark recovery and permission refusal have real iced controls; all **121
 native functional flows pass**. The horizontal tab strip preserves existing compact
 control positions. See [the desktop contract](docs/agents/PROFILE_DESKTOP.md) and
 the completion log for shipping. Code [`9e666a5`](https://github.com/sam-ruff/shep.so/commit/9e666a55582746fa59a1849ecc2d870a4c9d4b3c) is pushed and remotely verified;
-mandatory hooks pass 454 Rust tests. Desktop publication and reviewed import remain
-next; native large-page controls still need coverage beyond protocol paging.
+mandatory hooks pass 454 Rust tests. Desktop publication now connects saved accounts/preferences to a frozen review,
+exact staging and tracked Drive uploads. All **123 native functional flows pass**,
+including compact dark review, changed preferences/cancel, pause/browse,
+retry/reopen and account exclusion. Final hooks and shipping for this continuation
+are recorded in the completion log. Reviewed import remains next;
+native large-page controls still need coverage beyond protocol paging.
 
 Flutter profile publication and **Use profile on this device** now have a frozen,
 paged account/settings review, original-record transfer and durable application
@@ -92,8 +96,9 @@ also remain R63.
 ## Restart order
 
 1. **Highest priority:** continue [OAuth and shared profiles](docs/agents/PROFILE_SYNC_HANDOVER.md).
-   Build desktop publication/enrollment on `src/profiles/discovery.rs` and
-   `src/engine/profiles.rs`; then continue Flutter ongoing reconciliation,
+   Finish and verify desktop enrollment on `src/profiles/discovery.rs`,
+   `src/profiles/publication.rs` and `src/engine/profiles.rs`; preserve the publication
+   journal and native review/retry controls. Then continue Flutter ongoing reconciliation,
    category controls and automatic restoration. Close the authenticated-source to
    actual Flutter FFI integration gap without adding a production login bypass. Preserve tracked own-upload identities and the causal completion barrier for
    multi-record setup.

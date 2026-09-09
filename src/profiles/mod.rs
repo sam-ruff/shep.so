@@ -4,3 +4,4 @@ pub mod discovery;
 #[cfg(feature = "test-support")]
 pub(crate) mod fixture;
 pub mod preferences;
+pub mod publication;
