@@ -1,6 +1,7 @@
 //! Persistent device synchronization state. Local edits and remote application
 //! receipts stay in the mail database; immutable operations stay in history.
 pub mod control;
+pub mod resolution;
 pub mod runner;
 use serde::{Deserialize, Serialize};
 use shep_profile_core::{Change, SettingKey, history::Binding};

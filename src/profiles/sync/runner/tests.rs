@@ -227,6 +227,51 @@ async fn two_enrolled_devices_exchange_changes_and_preserve_concurrent_versions(
         h.close().await.unwrap();
     }
     ra.close().await.unwrap();
+    let profile = suba.binding.storage_key().unwrap();
+    let page = crate::profiles::sync::resolution::begin(
+        &sa,
+        &a.path().join("discovery"),
+        profile.clone(),
+        SettingKey::Appearance,
+    )
+    .await
+    .unwrap();
+    let review = page.review.unwrap();
+    crate::profiles::sync::resolution::save(
+        &sa,
+        &a.path().join("discovery"),
+        profile.clone(),
+        review.id,
+        Some(crate::profiles::sync::resolution::Choice::Local),
+    )
+    .await
+    .unwrap();
+    let mut ra = Runner::open(
+        a.path().join("discovery"),
+        &sa.profile_sync_subscription(profile.clone()).await.unwrap(),
+    )
+    .await
+    .unwrap();
+    ra.rescan().await.unwrap();
+    cycle(&mut ra, &sa, &drive).await;
+    cycle(&mut rb, &sb, &drive).await;
+    assert_eq!(appearance(&sa).await, Appearance::Dark);
+    assert_eq!(appearance(&sb).await, Appearance::Dark);
+    assert_eq!(
+        sa.profile_sync_subscription(profile.clone())
+            .await
+            .unwrap()
+            .conflicts,
+        0
+    );
+    assert_eq!(
+        sb.profile_sync_subscription(profile)
+            .await
+            .unwrap()
+            .conflicts,
+        0
+    );
+    ra.close().await.unwrap();
     rb.close().await.unwrap();
 }
 #[tokio::test]

@@ -26,20 +26,23 @@ impl Drop for Fixture {
 }
 impl Fixture {
     pub async fn start(count: usize, fail_once: bool, delay: std::time::Duration) -> Result<Self> {
-        Self::start_with_accounts(count, 1, fail_once, delay, false).await
+        Self::start_with_accounts(count, 1, fail_once, delay, 0).await
     }
     pub async fn start_paged(fail_once: bool, delay: std::time::Duration) -> Result<Self> {
-        Self::start_with_accounts(51, 75, fail_once, delay, false).await
+        Self::start_with_accounts(51, 75, fail_once, delay, 0).await
     }
     pub async fn start_sync(delay: std::time::Duration) -> Result<Self> {
-        Self::start_with_accounts(1, 1, true, delay, true).await
+        Self::start_with_accounts(1, 1, true, delay, 1).await
+    }
+    pub async fn start_conflicts(delay: std::time::Duration) -> Result<Self> {
+        Self::start_with_accounts(1, 1, true, delay, 51).await
     }
     async fn start_with_accounts(
         count: usize,
         first_accounts: usize,
         mut fail_once: bool,
         delay: std::time::Duration,
-        remote_on_sync: bool,
+        remote_on_sync: usize,
     ) -> Result<Self> {
         anyhow::ensure!(
             count <= 60 && (1..=75).contains(&first_accounts),
@@ -252,30 +255,33 @@ impl Fixture {
                     serde_json::to_vec(&json!({"user":{"permissionId":"fixture"}})).unwrap()
                 } else if uri.path() == "/drive/v3/changes/startPageToken" {
                     starts += 1;
-                    if remote_on_sync && starts == 2 {
-                        // Another device changes appearance after initial
-                        // enrollment. Only the explicit native fixture adds it.
-                        let mut operation: Operation =
-                            serde_json::from_slice(&records[2].1).unwrap();
-                        operation.parents = vec![operation.operation];
-                        operation.operation = Uuid::from_u128(50000);
-                        operation.device = Uuid::from_u128(600);
-                        operation.changes = vec![Change {
-                            action: Action::Setting {
-                                key: SettingKey::Appearance,
-                                value: json!("Light"),
-                            },
-                            extra: Default::default(),
-                        }];
-                        let bytes = operation.encode().unwrap();
-                        let mut meta = records[2].0.clone();
-                        meta["id"] = json!("fixture-50000");
-                        meta["name"] = json!(format!("shep-profile-{}.json", operation.operation));
-                        meta["size"] = json!(bytes.len().to_string());
-                        meta["appProperties"]["shepOperation"] = json!(operation.operation);
-                        meta["appProperties"]["shepSha256"] =
-                            json!(format!("{:x}", Sha256::digest(&bytes)));
-                        records.push((meta, bytes));
+                    if starts == 2 {
+                        for n in 0..remote_on_sync {
+                            // Another device changes appearance after initial
+                            // enrollment. Only the explicit native fixture adds it.
+                            let mut operation: Operation =
+                                serde_json::from_slice(&records[2].1).unwrap();
+                            operation.parents = vec![operation.operation];
+                            operation.operation = Uuid::from_u128(50000 + n as u128);
+                            operation.device = Uuid::from_u128(600 + n as u128);
+                            operation.changes = vec![Change {
+                                action: Action::Setting {
+                                    key: SettingKey::Appearance,
+                                    value: json!(if n % 2 == 0 { "Light" } else { "System" }),
+                                },
+                                extra: Default::default(),
+                            }];
+                            let bytes = operation.encode().unwrap();
+                            let mut meta = records[2].0.clone();
+                            meta["id"] = json!(format!("fixture-{}", 50000 + n));
+                            meta["name"] =
+                                json!(format!("shep-profile-{}.json", operation.operation));
+                            meta["size"] = json!(bytes.len().to_string());
+                            meta["appProperties"]["shepOperation"] = json!(operation.operation);
+                            meta["appProperties"]["shepSha256"] =
+                                json!(format!("{:x}", Sha256::digest(&bytes)));
+                            records.push((meta, bytes));
+                        }
                     }
                     serde_json::to_vec(&json!({"startPageToken":records.len().to_string()}))
                         .unwrap()

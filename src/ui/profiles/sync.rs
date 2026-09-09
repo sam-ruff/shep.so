@@ -2,9 +2,11 @@ use super::*;
 use crate::profiles::sync::control::{
     Command as SyncCommand, Observation as SyncObservation, Source,
 };
+use crate::profiles::sync::resolution::{Choice, Page};
 use iced::widget::{checkbox, column};
 use shep_profile_core::{Action, SettingKey};
 use std::collections::BTreeMap;
+mod resolution;
 
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -14,6 +16,12 @@ pub enum Message {
     Enable(bool),
     Field(SettingKey, bool),
     Check,
+    Review(SettingKey),
+    ReviewPage(bool),
+    Choose(Choice),
+    Resolve,
+    CancelReview,
+    ResumeReview,
 }
 #[derive(Default)]
 pub(super) struct Sync {
@@ -21,7 +29,10 @@ pub(super) struct Sync {
     pub(super) observation: Arc<SyncObservation>,
     pub(super) master: Option<bool>,
     pub(super) fields: BTreeMap<SettingKey, bool>,
-    saving: Option<(u64, Source, Grant)>,
+    saving: Option<(u64, SyncCommand, Grant)>,
+    pub(super) review: Page,
+    pub(super) review_open: bool,
+    pub(super) choice: Option<Choice>,
     pub(super) error: Option<String>,
 }
 impl Sync {
@@ -34,6 +45,18 @@ impl Sync {
             if old.binding != new.binding {
                 self.master = None;
                 self.fields.clear();
+                self.review = Page::default();
+                self.review_open = false;
+                self.choice = None;
+            }
+        }
+        if let Some(page) = &observation.review {
+            if page.review.as_ref().map(|r| r.id) != self.review.review.as_ref().map(|r| r.id) {
+                self.choice = None;
+            }
+            self.review = page.clone();
+            if self.review.review.is_none() {
+                self.review_open = false;
             }
         }
         self.observation = observation;
@@ -59,9 +82,9 @@ impl App {
             .as_ref()
             .is_some_and(|(id, _, _)| *id == request)
         {
-            let (_, source, grant) = self.profiles.sync.saving.take().unwrap();
+            let (_, command, grant) = self.profiles.sync.saving.take().unwrap();
             if grant == Grant::from_preferences(&self.preferences) {
-                self.request_profile(ProfileAction::Sync(SyncCommand::Prepare(source)));
+                self.request_profile(ProfileAction::Sync(command));
             }
         }
     }
@@ -75,12 +98,16 @@ impl App {
         {
             self.profiles.sync.saving = None;
             self.profiles.sync.error =
-                Some("Save Preferences, then reopen the completed review to choose sync.".into());
+                Some("Save Preferences, then reopen this sync review.".into());
         }
     }
     pub(super) fn sync_message(&mut self, message: Message) {
         match message {
             Message::Back => {
+                if self.profiles.sync.review_open {
+                    self.profiles.sync.review_open = false;
+                    return;
+                }
                 self.profiles.sync.visible = false;
                 return;
             }
@@ -96,25 +123,58 @@ impl App {
                 self.pause_profiles();
                 self.profiles.sync.error = None;
                 self.profiles.sync.visible = true;
+                self.profiles.sync.review_open = true;
                 self.request_profile(ProfileAction::Sync(SyncCommand::Current));
             }
-            Message::Prepare(source) => {
+            Message::Prepare(source) => self.sync_save_before(SyncCommand::Prepare(source)),
+            Message::Review(key) => {
                 if self.profiles.pending.is_some() || self.profiles.sync.saving.is_some() {
                     return;
                 }
-                if let Err(error) = self.read_preferences() {
-                    self.profiles.error = Some(error.to_string());
-                    return;
-                }
-                self.pause_profiles();
-                self.profiles.sync.visible = true;
-                let request = self.preference_sync.changed();
-                self.profiles.sync.saving =
-                    Some((request, source, Grant::from_preferences(&self.preferences)));
-                if !self.try_command(Command::SavePreferences(request, self.preferences.clone())) {
-                    self.sync_save_failed(request);
+                self.profiles.sync.review_open = true;
+                if let Some(profile) = self.profiles.sync.observation.profile.clone() {
+                    self.sync_save_before(SyncCommand::Review { profile, key });
                 }
             }
+            Message::ReviewPage(next) => {
+                let sync = &self.profiles.sync;
+                if let Some(review) = &sync.review.review {
+                    self.request_profile(ProfileAction::Sync(SyncCommand::ReviewPage {
+                        profile: review.profile.clone(),
+                        id: review.id,
+                        after: if next {
+                            sync.review.versions.last().map(|v| v.operation)
+                        } else {
+                            None
+                        },
+                    }));
+                }
+            }
+            Message::Choose(choice) => self.profiles.sync.choice = Some(choice),
+            Message::Resolve => {
+                let sync = &self.profiles.sync;
+                if let Some(review) = &sync.review.review {
+                    let choice = if review.phase == "staged" {
+                        None
+                    } else {
+                        sync.choice.clone()
+                    };
+                    self.sync_save_before(SyncCommand::Resolve {
+                        profile: review.profile.clone(),
+                        id: review.id,
+                        choice,
+                    });
+                }
+            }
+            Message::CancelReview => {
+                if let Some(review) = &self.profiles.sync.review.review {
+                    self.request_profile(ProfileAction::Sync(SyncCommand::CancelReview {
+                        profile: review.profile.clone(),
+                        id: review.id,
+                    }));
+                }
+            }
+            Message::ResumeReview => self.profiles.sync.review_open = true,
             Message::Check => {
                 if let Some(profile) = self.profiles.sync.observation.profile.clone() {
                     self.request_profile(ProfileAction::Sync(SyncCommand::Check { profile }));
@@ -122,6 +182,24 @@ impl App {
             }
         }
         self.sync_pump();
+    }
+    fn sync_save_before(&mut self, command: SyncCommand) {
+        if self.profiles.pending.is_some() || self.profiles.sync.saving.is_some() {
+            return;
+        }
+        if let Err(error) = self.read_preferences() {
+            self.profiles.sync.error = Some(error.to_string());
+            return;
+        }
+        self.pause_profiles();
+        self.profiles.sync.visible = true;
+        self.profiles.sync.error = None;
+        let request = self.preference_sync.changed();
+        self.profiles.sync.saving =
+            Some((request, command, Grant::from_preferences(&self.preferences)));
+        if !self.try_command(Command::SavePreferences(request, self.preferences.clone())) {
+            self.sync_save_failed(request);
+        }
     }
     pub(super) fn sync_pump(&mut self) {
         if self.profiles.pending.is_some() || self.profiles.sync.saving.is_some() {
@@ -163,9 +241,13 @@ impl App {
         match result {
             Ok(observation) => {
                 if let Some(sync) = &observation.sync {
-                    self.profiles.sync.observe(Arc::new(sync.clone()));
+                    self.sync_background(None, Arc::new(sync.clone()), sync.applied.clone());
                 }
-                if !matches!(command, SyncCommand::Current) || observation.error.is_some() {
+                if !matches!(
+                    command,
+                    SyncCommand::Current | SyncCommand::ReviewPage { .. }
+                ) || observation.error.is_some()
+                {
                     self.profiles.sync.error = observation.error.clone();
                 }
                 self.sync_pump();
@@ -174,8 +256,16 @@ impl App {
                 self.profiles.sync.error = Some(error);
                 // Reload the durable revision before dispatching any newer
                 // coalesced choice. Never replay a stale CAS indefinitely.
-                if !matches!(command, SyncCommand::Current) {
-                    self.request_profile(ProfileAction::Sync(SyncCommand::Current));
+                match command {
+                    SyncCommand::Resolve { profile, id, .. } => {
+                        self.request_profile(ProfileAction::Sync(SyncCommand::ReviewPage {
+                            profile,
+                            id,
+                            after: self.profiles.sync.review.after,
+                        }));
+                    }
+                    SyncCommand::Current => {}
+                    _ => self.request_profile(ProfileAction::Sync(SyncCommand::Current)),
                 }
             }
         }
@@ -200,6 +290,9 @@ impl App {
     }
     pub(super) fn sync_view(&self) -> Element<'_, super::super::Message> {
         let sync = &self.profiles.sync;
+        if sync.review_open && sync.review.review.is_some() {
+            return self.sync_resolution_view();
+        }
         let message = |m| super::super::Message::Profiles(super::Message::Sync(m));
         let mut body = column![
             button(text("Back").size(12))
@@ -253,6 +346,21 @@ impl App {
                 })
                 .size(12),
             );
+            if let Some(review) = &sync.review.review {
+                body = body.push(
+                    button(
+                        text(if review.phase == "staged" {
+                            "Recover saved preference decision"
+                        } else {
+                            "Reopen preference review"
+                        })
+                        .size(12),
+                    )
+                    .padding([12, 16])
+                    .style(outline)
+                    .on_press(message(Message::ResumeReview)),
+                );
+            }
             for field in &sync.observation.fields {
                 let key = field.key;
                 let selected = sync.fields.get(&key).copied().unwrap_or(field.enabled);
@@ -281,7 +389,15 @@ impl App {
                         .size(12),
                     );
                 if let Some(error) = &field.error {
-                    body = body.push(text(error).size(12));
+                    body = body.push(text(error).size(12)).push(
+                        button(text("Review preference").size(12))
+                            .padding([12, 16])
+                            .style(outline)
+                            .on_press_maybe(
+                                (self.profiles.pending.is_none() && sync.saving.is_none())
+                                    .then_some(message(Message::Review(key))),
+                            ),
+                    );
                 }
             }
             body = body.push(
@@ -296,7 +412,7 @@ impl App {
             if let Some(error) = &s.error {
                 body = body.push(text(error).size(12));
             }
-            body=body.push(muted("Preferences with conflicting versions stay unchanged until reviewed. Conflict resolution and account sync are still being developed.").size(12));
+            body=body.push(muted("Preferences with conflicting versions stay unchanged until you review them. Account sync is still being developed.").size(12));
         } else {
             body=body.push(text(if sync.saving.is_some() || self.profiles.pending.is_some() {"Preparing sync choices…"} else {"Complete a profile publication or enrollment review, then choose Sync these preferences."}).size(12));
         }

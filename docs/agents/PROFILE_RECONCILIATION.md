@@ -4,7 +4,7 @@
 ongoing preference reconciliation. Completed publication/enrollment reviews offer
 **Sync these preferences**, followed by explicit master and per-preference choices.
 The background owner continues outside Preferences. Flutter/browser equivalents,
-account changes, full categories and checked conflict resolution remain open.
+account changes and full categories remain open. Checked preference conflict reviews are connected.
 
 ## Device state and ownership
 
@@ -90,9 +90,41 @@ stops upload; restoring it and restarting the scan recovers without another
 operation. Every acknowledged original is proved after reopen, then only newly
 acknowledged originals during ordinary cycles.
 
+## Conflict decisions
+
+The mail Store owns durable reviews and 50-row version pages. A review captures
+local field intent, subscription/device identity and the history revision while
+holding the history owner. Choosing the device value or one shared version
+requires opening every version page. The backend rechecks local intent and sync
+configuration before staging the decision, and History checks exact concurrent
+version IDs before recording it. The existing causal protocol permits at most
+256 independent versions in one decision; larger conflicts retain an explicit
+update requirement.
+
+An old pending edit is replayed exactly before reviewing it. Only History's
+definitive Changed/Conflict reply permits retiring that rejected request; its
+original bytes remain in a local audit row. An accepted edit with a lost reply
+receives its own receipt instead. Storage/identity failures retain the request.
+
+A decision is staged before History.Edit. An interrupted result exposes **Retry
+saved decision** and cannot be cancelled or replaced with another UUID. Applying
+the chosen value, advancing its field receipt and completing the review share
+one mail transaction. Later or reverted local edits remain pending. Retry after
+a lost result reuses the same operation; a later shared version is still inspected
+by normal reconciliation. Newer history invalidates an unsaved review.
+
+Cached pages and cancellation remain available through Google disconnection.
+Opening/saving a decision checks the current grant, namespace and workspace
+binding. The background owner pauses for a collecting/open/staged review; it
+reopens with a full source scan afterward. Saving a decision does not acknowledge
+its cloud upload. The UI preserves page/choice during background observations,
+saves displayed Preferences before review/save, and retains errors through the
+recovery-page read. Existing Preferences scroll position can persist across
+reopened cards; use the visible First/Next controls or scroll to the top.
+
 ## Remaining integration
 
-Deliver checked, paged conflict resolution, complete settings/categories and
+Deliver complete settings/categories and
 account lifecycle synchronization. Extend Flutter through its SQLite/SDK lifecycle
 with Android/Playwright equivalents, then browser integration, automatic setup,
 restoration and reviewed workspace switching. Preserve unresolved requests until
@@ -111,8 +143,7 @@ history; and a committed upload with a lost response across Pause/restart.
 Run `cargo test --all-features profile` for this engine and related profile
 contracts. The first complete run passes 41 checks. Initial test-fixture failures
 (identity setup and missing Drive change type) remain under ignored logs. Native
-profile controls are regression checks for the shared fixture; there is no native
-ongoing-sync control yet. Final checks and shipping are in [completion](../COMPLETION.md).
+profile controls at that earlier checkpoint exercised the shared discovery fixture; ongoing controls were connected afterward. Final checks and shipping are in [completion](../COMPLETION.md).
 These fixtures do not establish live Google access, authenticated Flutter
 interchange, Apple execution or final performance.
 

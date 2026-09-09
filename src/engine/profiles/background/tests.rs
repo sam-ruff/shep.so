@@ -268,3 +268,92 @@ async fn background_runs_without_preferences_and_pause_survives_provider_saturat
     );
     background.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn profile_resolution_controls_check_grant_and_keep_cached_review_available_during_disconnect()
+ {
+    let fixture = Fixture::start(1, false, Duration::ZERO).await.unwrap();
+    let drive = fixture
+        .connect(NAMESPACE.into(), "drive:fixture")
+        .await
+        .unwrap();
+    let (store, sub) = enrolled(fixture.root.path(), &drive).await;
+    let profile = sub.binding.storage_key().unwrap();
+    let engine = engine(store);
+    let mut background = Background {
+        root: Some(fixture.root.path().join("discovery")),
+        ..Default::default()
+    };
+    let prefs: Preferences = engine.store.get("preferences").await.unwrap();
+    let request = Request {
+        panel: Uuid::new_v4(),
+        serial: 1,
+        grant: Grant::from_preferences(&prefs),
+        action: Action::Load,
+    };
+    let review = control::Command::Review {
+        profile: profile.clone(),
+        key: shep_profile_core::SettingKey::Appearance,
+    };
+    let lock = engine.google_connection_lock.write().await;
+    assert!(
+        background
+            .command(&engine, &request, None, &review)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("connection is changing")
+    );
+    drop(lock);
+    let result = background
+        .command(&engine, &request, None, &review)
+        .await
+        .unwrap();
+    let id = result.sync.unwrap().review.unwrap().review.unwrap().id;
+    assert!(engine.store.profile_sync_review_pending().await.unwrap());
+    let mut disconnected = prefs;
+    disconnected.google_lifecycle.disconnected = true;
+    engine.store.put("preferences", disconnected).await.unwrap();
+    assert!(
+        background
+            .command(
+                &engine,
+                &request,
+                None,
+                &control::Command::Resolve {
+                    profile: profile.clone(),
+                    id,
+                    choice: Some(crate::profiles::sync::resolution::Choice::Local)
+                }
+            )
+            .await
+            .is_err()
+    );
+    let result = background
+        .command(
+            &engine,
+            &request,
+            None,
+            &control::Command::ReviewPage {
+                profile: profile.clone(),
+                id,
+                after: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        result.sync.unwrap().review.unwrap().review.unwrap().phase,
+        "review"
+    );
+    background
+        .command(
+            &engine,
+            &request,
+            None,
+            &control::Command::CancelReview { profile, id },
+        )
+        .await
+        .unwrap();
+    assert!(!engine.store.profile_sync_review_pending().await.unwrap());
+}

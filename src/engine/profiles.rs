@@ -8,7 +8,11 @@ impl Engine {
         let mut background = background::Background::default();
         #[cfg(feature = "test-support")]
         let fixture = if self.demo && std::env::args().any(|arg| arg == "--profile-discovery") {
-            if std::env::args().any(|arg| arg == "--profile-sync") {
+            if std::env::args().any(|arg| arg == "--profile-conflicts") {
+                crate::profiles::fixture::Fixture::start_conflicts(Duration::from_millis(20))
+                    .await
+                    .ok()
+            } else if std::env::args().any(|arg| arg == "--profile-sync") {
                 crate::profiles::fixture::Fixture::start_sync(Duration::from_millis(600))
                     .await
                     .ok()
@@ -23,6 +27,24 @@ impl Engine {
             }
         } else {
             None
+        };
+        #[cfg(feature = "test-support")]
+        {
+            background.fail_resolution_once =
+                self.demo && std::env::args().any(|arg| arg == "--profile-conflicts");
+        }
+        background.root = if self.demo {
+            #[cfg(feature = "test-support")]
+            {
+                fixture.as_ref().map(|f| f.root.path().join("discovery"))
+            }
+            #[cfg(not(feature = "test-support"))]
+            {
+                None
+            }
+        } else {
+            directories::ProjectDirs::from("so", "shep", "Shep")
+                .map(|dirs| dirs.data_local_dir().join("profiles/discovery"))
         };
         loop {
             let command = tokio::select! {

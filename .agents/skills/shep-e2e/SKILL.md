@@ -268,3 +268,14 @@ paused local edit and retries an acknowledged upload with a lost reply. Observe
 the app. Unknown upload counts are distinct from zero. Keep the publication
 scenario's seven-preference setup and compact controls. Review the saved WebP
 captures; these fixtures do not authenticate to Google or use personal profiles.
+
+For preference conflicts, `desktop.start(profile_conflicts=true,
+google_permissions="drive")` adds 51 concurrent appearance versions after
+reviewed enrollment, plus one failed local decision receipt and one lost cloud
+upload reply. Preserve `test_desktop_profile_conflict_review_pages_and_resolution`:
+real page/choice controls, disabled premature save, cancellation/reopen, compact
+scrolling, exact saved-decision retry and upload recovery while searching Mail.
+`profiles.sync_review`, `sync_review_open` and `sync_choice` are observations only.
+Each wheel action is bounded to 30; repeated real wheel actions reach long-page
+footers. Preferences can retain scroll position across reopening a card. Review
+its WebP captures; the fixture never accesses real Google or personal data.
