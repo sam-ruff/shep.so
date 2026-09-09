@@ -18,7 +18,8 @@ by this transport; provider error bodies and request errors are not echoed.
 
 Production requests use the fixed Google HTTPS endpoint, certificate validation,
 no redirects, a 10-second connection timeout and a 30-second request timeout.
-Loopback endpoint injection exists only inside private tests. Run calls from an
+Loopback tests share the production redirect/timeout builder, with a shorter test
+deadline and no system proxy. Endpoint injection exists only inside private tests. Run calls from an
 owned provider task, never iced update/view or Flutter's UI isolate. Serialize
 profile work in the client and retain ownership through accepted persistence.
 

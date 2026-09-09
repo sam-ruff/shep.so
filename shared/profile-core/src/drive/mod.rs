@@ -126,11 +126,8 @@ impl Drive {
         namespace: String,
         expected_principal: Option<&str>,
     ) -> Result<Self> {
-        let http = Client::builder()
+        let http = Self::client_builder()
             .https_only(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
             .build()
             .map_err(|_| Error::Network)?;
         Self::verify(
@@ -141,6 +138,14 @@ impl Drive {
             expected_principal,
         )
         .await
+    }
+    // The loopback fixture uses this same redirect/timeout policy. Keep the
+    // HTTPS-only production endpoint separate from test-only HTTP connections.
+    fn client_builder() -> reqwest::ClientBuilder {
+        Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
     }
     async fn verify(
         http: Client,
