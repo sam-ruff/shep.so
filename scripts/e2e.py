@@ -2289,6 +2289,46 @@ class NativeFlows(unittest.TestCase):
                        check("settings_group", "Profiles and sync"),
                        check("profile_sync.loaded", True), wait(100))
 
+    def open_removed_shared_account(self):
+        started = self.mcp.call("desktop.start", profile_sync="existing-removal", profile_login=True, empty_profile=True)
+        print(f"Shared account removal evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("account_count", 1), check("profile_sync.working", False))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1, "gte"), check("profile_sync.working", False),
+                       click(375, 665), check("profile_sync.account_reviews.0.removed", True), check("profile_sync.working", False),
+                       {"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":12}, wait(100), shot("profile-account-removed-review"))
+        return started
+
+    def test_profile_account_removal_native_keep_is_durable_and_stops_repeated_reviews(self):
+        started = self.open_removed_shared_account()
+        self.mcp.batch(click(350, 698), check("profile_sync.account_reviews", []), check("account_count", 1),
+                       check("profile_sync.working", False), shot("profile-removed-account-kept"), {"type":"restart"})
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_sync.cycle.review", 0), check("account_count", 1), shot("profile-removed-account-restarted"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        checkpoint = self.profile_checkpoint(started)
+        self.assertEqual(checkpoint["suppressed"], ["50000000-0000-4000-8000-000000000001"])
+        self.assertEqual(len(checkpoint["accounts"]), 1)
+
+    def test_profile_account_removal_native_reviews_local_data_and_cancel_keeps_account(self):
+        self.open_removed_shared_account()
+        self.mcp.batch(click(500, 698), check("dialog", "Removal"), check("removal.messages", 0),
+                       check("account_count", 1), shot("profile-removed-account-local-data-review"), key("Escape"),
+                       check("dialog", None), check("account_count", 1), shot("profile-removed-account-cancelled"))
+
+    def test_profile_account_removal_native_removes_only_after_confirmation_and_stays_removed(self):
+        started = self.open_removed_shared_account()
+        self.mcp.batch(click(500, 698), check("dialog", "Removal"), check("removal.messages", 0),
+                       check("account_count", 1), shot("profile-removed-account-confirmation"),
+                       click(890, 562), check("account_count", 0), check("dialog", None), check("profile_sync.account_reviews", None),
+                       shot("profile-removed-account-local-removed"), {"type":"restart"}, check("account_count", 0))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_sync.cycle.review", 0), check("account_count", 0), shot("profile-removed-account-stays-removed"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.assertEqual(self.profile_checkpoint(started)["suppressed"], ["50000000-0000-4000-8000-000000000001"])
+
     def test_profile_account_review_native_adds_shared_connection_and_preserves_previous_setup(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-connections", profile_login=True, empty_profile=True)
         print(f"Account connection review evidence: {started['artifacts']}", flush=True)
