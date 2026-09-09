@@ -241,7 +241,9 @@ impl Journal {
         Self::initialize(db, binding, Some(lock))
     }
     pub fn memory(binding: Binding) -> Result<Self> {
-        Self::initialize(Connection::open_in_memory()?, binding, None)
+        let connection = Connection::open_in_memory()?;
+        connection.pragma_update(None, "temp_store", "FILE")?;
+        Self::initialize(connection, binding, None)
     }
     fn initialize(mut db: Connection, binding: Binding, lock: Option<File>) -> Result<Self> {
         binding.validate()?;

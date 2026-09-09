@@ -7,9 +7,11 @@
 existing default open APIs. Initialization runs after file ownership and before
 schema reads. Failure does not fall back to an unconfigured connection. Catalogs
 retain the same initializer for every nested observation, including reopened
-histories, and preserve the configured temporary-store policy.
+histories, and preserve the configured temporary-store policy. The default
+factory and memory opener retain their existing FILE request; custom factory
+configuration is preserved.
 
-All 57 isolated shared tests and all-target Clippy pass, including four new
+All 58 isolated shared tests and all-target Clippy pass, including five new
 configuration/ownership/failure/retry/nested-observation regressions. These are
 connection contract tests, not evidence of production encryption. Desktop key
 management, ciphertext, safe migration and native recovery remain R22 work.
