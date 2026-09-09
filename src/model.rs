@@ -643,6 +643,8 @@ pub struct Preferences {
     pub image_senders: Vec<String>,
     pub image_domains: Vec<String>,
     pub image_messages: Vec<String>,
+    pub backup_destinations: Vec<crate::backup::config::Destination>,
+    pub backup_selected: Option<String>,
     pub backup_destination: BackupDestination,
     pub backup_folder: String,
     pub backup_copies: usize,
@@ -687,6 +689,8 @@ impl Default for Preferences {
             image_senders: Vec::new(),
             image_domains: Vec::new(),
             image_messages: Vec::new(),
+            backup_destinations: Vec::new(),
+            backup_selected: None,
             backup_destination: BackupDestination::Local,
             backup_folder: String::new(),
             backup_copies: 7,
@@ -812,6 +816,7 @@ impl Preferences {
             (80..=140).contains(&self.interface_scale),
             "Interface size must be 80–140%."
         );
+        crate::backup::config::validate(self)?;
         self.shortcuts.validate()?;
         Ok(())
     }

@@ -1,3 +1,4 @@
+pub mod config;
 mod drive;
 pub(crate) mod journal;
 pub(crate) mod restore;
@@ -56,6 +57,9 @@ impl BackupTarget {
                 connection_id: prefs.google_connection_id.clone(),
             },
         }
+    }
+    pub(crate) fn work_key(&self) -> String {
+        self.secret_id()
     }
     fn secret_id(&self) -> String {
         use sha2::{Digest, Sha256};

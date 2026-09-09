@@ -481,3 +481,106 @@ async fn in_memory_test_workspaces_have_independent_upload_journals() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn multiple_backup_targets_upload_and_retain_independently_with_distinct_passphrases() {
+    use backup::config;
+    let secrets = Arc::new(Secrets::default());
+    let engine = engine(secrets.clone());
+    let directory = tempfile::tempdir().unwrap();
+    let mut prefs = Preferences {
+        backup_folder: directory.path().join("one").to_string_lossy().into(),
+        backup_copies: 1,
+        auto_backup: true,
+        ..Default::default()
+    };
+    let first = BackupTarget::from_preferences(&prefs);
+    config::add(&mut prefs).unwrap();
+    prefs.backup_folder = directory.path().join("two").to_string_lossy().into();
+    prefs.backup_copies = 2;
+    prefs.auto_backup = true;
+    config::capture_editor(&mut prefs);
+    let second = BackupTarget::from_preferences(&prefs);
+    engine.store.save_preferences(prefs).await.unwrap();
+    let second_secret = SecretString::from("another isolated passphrase");
+    let (mut output, events) = futures::channel::mpsc::channel(32);
+    let observer = tokio::spawn(async move { events.collect::<Vec<_>>().await });
+    // Both destinations are admitted concurrently, through independent journal rows.
+    let mut other_output = output.clone();
+    let (one, two) = tokio::join!(
+        engine.run_backup(first.clone(), Some(passphrase()), &mut output),
+        engine.run_backup(
+            second.clone(),
+            Some(second_secret.clone()),
+            &mut other_output
+        )
+    );
+    one.unwrap();
+    two.unwrap();
+    drop(other_output);
+    engine
+        .run_backup(first.clone(), None, &mut output)
+        .await
+        .unwrap();
+    engine
+        .run_backup(second.clone(), None, &mut output)
+        .await
+        .unwrap();
+    engine
+        .run_backup(second.clone(), None, &mut output)
+        .await
+        .unwrap();
+    let saved: Preferences = engine.store.get("preferences").await.unwrap();
+    let first_provider = backup::LocalBackup {
+        directory: directory.path().join("one"),
+    };
+    let second_provider = backup::LocalBackup {
+        directory: directory.path().join("two"),
+    };
+    let copies = first_provider.list().await.unwrap();
+    assert_eq!(copies.len(), 1);
+    let bytes = first_provider.download(&copies[0].id).await.unwrap();
+    backup::decrypt(&bytes, &passphrase()).unwrap();
+    assert!(backup::decrypt(&bytes, &second_secret).is_err());
+    let copies = second_provider.list().await.unwrap();
+    assert_eq!(copies.len(), 2);
+    for copy in copies {
+        let bytes = second_provider.download(&copy.id).await.unwrap();
+        backup::decrypt(&bytes, &second_secret).unwrap();
+        assert!(backup::decrypt(&bytes, &passphrase()).is_err());
+    }
+    assert!(config::resolve(&saved, &first).unwrap().backup_ready);
+    assert!(config::resolve(&saved, &second).unwrap().backup_ready);
+    assert_eq!(secrets.entries.lock().unwrap().len(), 2);
+    // Missing one passphrase pauses only its schedule, without blocking the other.
+    secrets
+        .entries
+        .lock()
+        .unwrap()
+        .retain(|(target, _)| *target != first);
+    assert!(
+        engine
+            .run_backup(first.clone(), None, &mut output)
+            .await
+            .is_err()
+    );
+    let saved: Preferences = engine.store.get("preferences").await.unwrap();
+    assert!(!config::resolve(&saved, &first).unwrap().backup_ready);
+    assert!(config::resolve(&saved, &second).unwrap().backup_ready);
+    engine
+        .run_backup(second.clone(), None, &mut output)
+        .await
+        .unwrap();
+    drop(output);
+    let events = observer.await.unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, Event::BackupSaved(..)))
+            .count(),
+        6
+    );
+    let journal = engine.backup_journal().await.unwrap();
+    assert!(journal.pending(&first).await.unwrap().is_none());
+    assert!(journal.pending(&second).await.unwrap().is_none());
+}

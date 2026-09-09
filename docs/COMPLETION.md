@@ -1,5 +1,39 @@
 # Completion audit
 
+## Multiple Local/Drive backups — integration in progress
+
+Agent checkpoint `3f00292` adds named Local/Drive destinations, independent
+schedules, retention/passphrases and history, switching and reviewed removal.
+Existing single-target settings migrate when another is added; imported database
+profiles clear device-local schedules. Duplicate targets and local aliases are
+rejected. The remaining S3/FTP/FTPS/SFTP adapters, optional compression/encryption,
+combined manual backup and richer result history remain R32 work.
+
+The lane passes mandatory hooks (706 executions, three personal diagnostics
+ignored), 37 backup tests, nine preferences tests and 55 Python tests. Its final
+three native scenarios pass in 11.220 seconds, covering existing first-copy setup,
+compact layout and the new migration/switch/removal/restart workflow. Root reviewed
+light, red removal and compact dark WebPs under `3ee3c19c5507`; final equivalent
+run is `c023ba64588f`. Root integration preserves main's typed portable preference
+intent and native edit generations; a new regression combines a stale backup form,
+a remote setting change and another destination's completed upload. Merged checks
+and shipping remain pending. Logs use `artifacts/logs/multiple-backups-*`.
+
+## Windows/macOS badges — shipped integration
+
+Root integrated `66222f6` as
+[`1595fb3`](https://github.com/sam-ruff/shep.so/commit/1595fb3) and pushed to main,
+verifying exact remote equality. Mandatory hooks pass 751 executions, three
+personal diagnostics ignored; Python: 59 and strict Zensical pass. Full merged
+Windows GNU all-target/all-feature checking and the exact macOS adapter check
+pass. All 12 integrated Linux badge/tray scenarios pass in 56.460 seconds, including
+ordinary-hide failure recovery. Root reviewed compact preferences (`d197a0b27609`)
+and failed-archive recovery (`96a237e88cf1`) WebPs. Native SHA-256:
+`aa9145b440fa98d69b9d69fa93d95fe92882c7e19374961e8df38d6755ae9b22`.
+Logs: `artifacts/logs/badge-main-*`. Actual Windows/macOS rendering and shell
+execution remain R70 verification work; production installation is unchanged.
+
+
 
 ## Windows/macOS unread badges — integration checkpoint
 
@@ -104,7 +138,7 @@ corrected, without bypassing them. Final verification/shipping remains pending.
 
 The corrected ordinary-hide follow-up is pushed as
 [`b8eafde`](https://github.com/sam-ruff/shep.so/commit/b8eafde), with exact remote
-equality verified. All12 tray/controller tests and748 hook executions pass
+equality verified. All 12 tray/controller tests and 748 hook executions pass
 (three personal diagnostics ignored), as do all16 selected native scenarios in
 78.974 seconds and strict Zensical. The new native scenario covers both ordinary
 hide and subsequent actual tray-menu Quit. Root reviewed the retained reply and

@@ -152,6 +152,8 @@ pub(super) fn apply(
     let mut preferences: Preferences = setting(&tx, "preferences")?;
     preferences.window_size = local.window_size;
     preferences.backup_folder = local.backup_folder.clone();
+    preferences.backup_destinations.clear();
+    preferences.backup_selected = None;
     preferences.auto_backup = false;
     preferences.backup_ready = false;
     preferences.last_backup = None;

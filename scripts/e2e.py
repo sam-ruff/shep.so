@@ -3885,6 +3885,69 @@ class NativeFlows(unittest.TestCase):
                            click(87, 159), check("tab", "Calendar"),
                            shot(f"responsive-during-sync-{appearance}"), check("busy", []))
 
+    def test_multiple_backup_destinations_setup_and_restart(self):
+        result = self.mcp.call("desktop.start", persistent=True)
+        print(f"Multiple backup evidence: {result['artifacts']}", flush=True)
+        first = str(Path(result["artifacts"]) / "first-backup")
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(559, 156), check("settings_tab", "Backups"),
+                       click(500, 414), type_text(first), click(1340, 87),
+                       check("preferences_saved", True), check("saved_backup_folder", first),
+                       click(375, 825), check("backup_destinations.1.name", "Backup 2"),
+                       check("preferences_saved", True),
+                       check("backup_destinations.0.folder", first),
+                       shot("multiple-backup-new-destination"))
+        state = self.mcp.call("desktop.state")
+        self.assertEqual(len(state["backup_destinations"]), 2)
+        first_id = state["backup_destinations"][0]["id"]
+        second_id = state["backup_selected"]
+        self.assertNotEqual(first_id, second_id)
+        second = str(Path(result["artifacts"]) / "second-backup")
+        self.mcp.batch(click(500, 657), type_text(first), click(1340, 87),
+                       check("notice", "already configured", "contains"),
+                       shot("multiple-backup-duplicate"),
+                       click(500, 657), key("ctrl+a"), type_text(second),
+                       click(500, 520), key("ctrl+a"), type_text("Home archive"),
+                       click(400, 737), key("ctrl+a"), type_text("13"),
+                       click(1340, 87), check("preferences_saved", True),
+                       check("saved_backup_destinations.1.name", "Home archive"),
+                       check("saved_backup_destinations.1.copies", 13),
+                       click(420, 389), check("backup_selected", first_id),
+                       check("saved_backup_folder", first), check("preferences_saved", True),
+                       click(420, 439), check("backup_selected", second_id),
+                       check("saved_backup_folder", second), check("saved_backup_copies", 13),
+                       shot("multiple-backup-switched"),
+                       {"type": "restart"}, check("ready", True),
+                       check("backup_destinations.0.folder", first),
+                       check("backup_destinations.1.name", "Home archive"),
+                       check("backup_selected", second_id),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       click(559, 156), check("settings_tab", "Backups"),
+                       click(490, 334), check("dialog", "RemoveBackup"),
+                       shot("multiple-backup-remove-review"), key("Escape"), check("dialog", None),
+                       check("backup_destinations.1.name", "Home archive"),
+                       click(490, 334), check("dialog", "RemoveBackup"),
+                       shot("multiple-backup-remove-confirm"),
+                       click(675, 546), check("dialog", None),
+                       check("preferences_saved", True), check("backup_selected", first_id),
+                       check("saved_backup_folder", first), check("saved_backup_copies", 7),
+                       shot("multiple-backup-removed"))
+        self.assertEqual(len(self.mcp.call("desktop.state")["backup_destinations"]), 1)
+        self.mcp.batch({"type": "restart"}, check("ready", True),
+                       check("backup_selected", first_id), check("saved_backup_folder", first))
+        self.assertEqual(len(self.mcp.call("desktop.state")["backup_destinations"]), 1)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(290, 156), check("settings_tab", "General"),
+                       click(690, 366), check("dark", True),
+                       click(559, 156), check("settings_tab", "Backups"),
+                       {"type": "resize", "width": 900, "height": 640}, wait(150),
+                       shot("multiple-backup-compact-dark"),
+                       click(420, 389), check("backup_selected", first_id),
+                       click(450, 465), key("ctrl+a"), type_text("Home safety copy"),
+                       click(820, 87), check("preferences_saved", True),
+                       check("saved_backup_destinations.0.name", "Home safety copy"),
+                       shot("multiple-backup-compact-dark-edited"))
+
     def test_backup_preferences_and_setup(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
                        click(559, 156), check("settings_tab", "Backups"), shot("backup-setup"),

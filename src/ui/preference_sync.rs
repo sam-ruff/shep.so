@@ -67,6 +67,7 @@ impl PreferenceSync {
                 None
             };
             live.backup_ready = same_target && self.saved.value.backup_ready;
+            crate::backup::config::preserve_metadata(&self.saved.value, live);
         } else {
             *live = self.saved.value.clone();
         }
