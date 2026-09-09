@@ -325,3 +325,24 @@ fn explicit_sqlite_shutdown_still_releases_and_reinitializes_the_cipher() {
         String::from_utf8_lossy(&result.stderr)
     );
 }
+
+#[test]
+fn sqlite_backup_rejects_cipher_to_plaintext_conversion() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("encrypted.sqlite");
+    let key = Key::generate().unwrap();
+    let input = key.open(&source, writable()).unwrap();
+    input.execute_batch("CREATE TABLE private(id TEXT PRIMARY KEY,body TEXT); INSERT INTO private VALUES('kept','Fictional private value');").unwrap();
+    let mut output = Connection::open_in_memory().unwrap();
+    let error = match rusqlite::backup::Backup::new(&input, &mut output) {
+        Ok(_) => panic!("Review SQLCipher conversion support before changing the owned copy path"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("backup is not supported"));
+    assert_eq!(
+        input
+            .query_row("SELECT body FROM private", [], |r| r.get::<_, String>(0))
+            .unwrap(),
+        "Fictional private value"
+    );
+}

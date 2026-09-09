@@ -2,6 +2,7 @@ pub mod config;
 mod drive;
 pub mod format;
 pub mod ftp;
+pub mod history;
 pub(crate) mod journal;
 pub(crate) mod restore;
 pub mod run;

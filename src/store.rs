@@ -1,3 +1,4 @@
+pub(crate) mod backup_history;
 mod bulk;
 mod folder_actions;
 mod folder_projection;
@@ -34,7 +35,7 @@ use std::{path::Path, sync::Arc};
 #[derive(Clone)]
 pub struct Store(Arc<worker::Worker>, Option<Arc<crate::cache_cipher::Key>>);
 
-pub(crate) const DATABASE_VERSION: u32 = 3;
+pub(crate) const DATABASE_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Default)]
 pub struct Workspace {
@@ -131,7 +132,7 @@ impl Store {
             version <= DATABASE_VERSION,
             "This database was created by a newer Shep version. Update Shep before opening it."
         );
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
+        conn.execute_batch("PRAGMA main.journal_mode=WAL; PRAGMA foreign_keys=ON;
             CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS messages (
                 id TEXT PRIMARY KEY, account TEXT NOT NULL, folder TEXT NOT NULL,
@@ -167,6 +168,7 @@ impl Store {
             CREATE TABLE IF NOT EXISTS draft_sent (id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, source TEXT NOT NULL, start INTEGER NOT NULL, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS event_start ON events(start);")?;
+        backup_history::schema(&conn)?;
         conversations::schema(&conn)?;
         notifications::schema(&conn)?;
         connections::schema(&conn)?;
@@ -204,6 +206,9 @@ impl Store {
             import_archive_schema(&tx)?;
             tx.pragma_update(None, "user_version", DATABASE_VERSION)?;
             tx.commit()?;
+        }
+        if version < 4 {
+            conn.pragma_update(None, "user_version", DATABASE_VERSION)?;
         }
         Ok(conn)
     }

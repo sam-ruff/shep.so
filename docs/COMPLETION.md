@@ -18,8 +18,9 @@ All **273 native correctness scenarios** pass across two invocations: the full
 run was terminated with exit 143 after 269 passes at 20m17s; the four unfinished
 tray scenarios then pass unchanged in 17.300s. No assertion failure occurred in
 the interrupted run. Its termination cause remains under investigation; this is
-complete scenario coverage, not one uninterrupted successful suite. Normal
-commit hooks and shipping remain pending. Logs use `artifacts/logs/profiles-formats-folders-main-*`.
+complete scenario coverage, not one uninterrupted successful suite. **915 normal hook test executions pass**, with zero failures and three personal
+diagnostics ignored. Source is pushed as `1c0fc4500b1fe568cd64bf2c6d28287bb52a013f`;
+remote equality is verified. Logs use `artifacts/logs/profiles-formats-folders-main-*`.
 
 The preceding foundation-only native run passed 266 of 267 scenarios. Its one
 failure captured selection state before the keyboard row reveal completed.
@@ -468,6 +469,35 @@ root integration/shipping are pending.
 Post-enrollment linking/suppression, endpoint/removal reviews, credential transfer
 and actual cross-client Google verification remain R02/R49/R92 work.
 
+## Conversation scratch ranking — R22 ongoing
+
+Conversation metadata no longer passes through whole-thread ROW_NUMBER windows.
+The owning encrypted scratch database picks one copy per logical message and
+indexes chronological order; Rust receives at most 20 metadata rows. Selected
+mailbox UID, expanded-message focus, timestamp/ID ties and paging are preserved.
+
+Scratch now uses DELETE/OFF with normal transaction rollback and no crash
+survival requirement. Main cache/receipt durability remains FULL. The earlier
+unqualified WAL initializer also changed scratch to WAL; qualifying the main
+pragma makes the intended scratch policy effective. Restart creates new scratch
+and ignores crash leftovers. Orphan cleanup remains unfinished.
+
+All five existing conversation contracts, three ranking tests and three scratch
+tests pass. The encrypted fixture compares 512 logical messages across three
+mailbox copies, focus and timestamp ties against the prior query contract. Query
+plans reject TEMP sorting, materialization and automatic indexes. Normal rollback
+is tested beyond the scratch page-cache target, and restart ignores an encrypted
+orphan while preserving main FULL durability.
+
+Eight of nine native conversation/forward/scroll/selection/bulk-close flows pass.
+The remaining reader scenario exposes the lane's old move-focus fallback, already
+fixed on main in 15a4a3c; its failure receipt remains preserved, and the combined
+main scenario must pass before shipping. Reviewed compact/card/page/review WebPs
+are under `artifacts/e2e/`; binary SHA-256 is
+`5a675577419d4e16442059dba69fb509799c61198bc4ef560834471fbf2ff7c1`.
+Final hooks, combined main native checks and root shipping remain pending. No
+performance result or production encryption activation is claimed.
+
 ## R22 foundation temporary-storage correction (awaiting shipping)
 
 The SQLCipher foundation's global TEMP_STORE=3 policy would have moved existing
@@ -476,14 +506,42 @@ connection and enforces MEMORY for keyed main databases through the existing
 native codec lookup. Encrypted scratch attachments do not change a plaintext
 main's policy. FILE/DEFAULT resets fail after keying, including after authorizer
 replacement/removal. A fixture VFS observes actual temp opens alongside a plain
-positive control. All three targeted regressions pass; final hooks and root
-shipping remain pending. The scratch drain fixture now observes removal of the
+positive control. Commit `86d9c6c` passes all three targeted regressions, 811 normal
+hook executions, 81 Python tests and strict docs; root shipping remains pending. The scratch drain fixture now observes removal of the
 entire owned directory, avoiding the interval between file and directory deletion
 without relaxing its required outcome or deadline.
 
 Selection account/folder summaries, workspace DISTINCT/Inbox GROUP BY and
 recovered-view automatic indexes remain explicit encrypted-startup gates. No
 personal cache migration is activated and no timing result is claimed.
+
+## Keyed raw database export — R22 ongoing
+
+An encrypted Store exports through an independent, URI-readonly snapshot and
+SQLCipher logical conversion. The existing output remains ordinary SQLite,
+excluding account passwords and Google credentials. Its private atomic candidate
+is in the explicitly chosen export folder and is part of that intentional raw
+output. Implicit cache/import/migration candidates still require encryption.
+Cancellation and dropped observers share a bounded watch signal with SQL progress
+handlers and prepublication checks; admitted cache saves continue independently.
+
+The conversion audit verified indexed mail rowids and external-content FTS, then
+reproduced renumbering of an unindexed rowid 991 to 1. A minimal export-only SQLite
+flag patch selects its existing rowid-preserving transfer path. It restores the
+caller's flags and does not alter cipher algorithms; source hashes/provenance and
+release licenses accompany the SQLCipher patches. Tests preserve arbitrary
+extension data, drafts/attachments, an unindexed extension rowid 4444, the exact
+snapshot during concurrent saves, and existing destination files after Cancel or
+a dropped observer. Seven export tests, 18 cipher tests and all eight saved native
+import/export/profile/restart/cancellation flows pass. Reviewed light/compact-dark
+WebPs show usable review, error and inline-editor controls; native binary SHA-256
+is `ae760ffcea8a0af6f0dda5c426ee4282d4c034a7742c71a0518f43a1dab2f5b7`.
+These native fixtures still use plain startup; encrypted disk conversion has the
+separate Rust fixtures. Full Windows GNU all-target/all-feature checking and
+strict docs pass; actual Windows/macOS execution is unverified. Normal hooks
+and root shipping remain pending.
+Encrypted import staging, guarded migration/recovery and native key recovery are
+still unfinished; production bootstrap remains unchanged.
 
 ## Keyed local profile routing — R22 ongoing
 

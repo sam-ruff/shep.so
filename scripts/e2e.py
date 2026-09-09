@@ -4736,6 +4736,55 @@ class NativeFlows(unittest.TestCase):
                        check("saved_backup_destinations.0.name", "Home safety copy"),
                        shot("multiple-backup-compact-dark-edited"))
 
+    def backup_history_recovery(self, mode):
+        result = self.mcp.call("desktop.start", backup_run=mode)
+        print(f"Backup history {mode} evidence: {result['artifacts']}", flush=True)
+        index = 1 if mode == "recover" else 0
+        outcome = "NeedsReview" if mode == "recover" else "SavedWithWarning"
+        root = Path(result["artifacts"]) / "backup-targets" / ("second" if index else "first")
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), click(1080, 334),
+                       check("backup_run.1.status.Failed" if index else "backup_run.0.status.SavedWithWarning",
+                             "acknowledgment was lost" if index else "cleanup", "contains"),
+                       check("busy", []), click(420, 479 if index else 389),
+                       check("preferences_saved", True), {"type": "restart"}, check("ready", True),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), check("backup_activity.entries.0.outcome", outcome),
+                       {"type": "hover", "x": 1000, "y": 750}, {"type": "scroll", "amount": 4}, wait(100))
+        original = list(root.glob("*.shepbackup"))
+        self.assertEqual(len(original), 1)
+        original_bytes = original[0].read_bytes()
+        if mode == "warning":
+            self.mcp.batch(click(520, 440), type_text(f"fixture passphrase for {root}"))
+        self.mcp.batch(click(675, 560), check("backup_activity.open", True),
+                       check("backup_activity.loading", False),
+                       {"type": "hover", "x": 1000, "y": 750}, {"type": "scroll", "amount": 2},
+                       wait(100), shot(f"backup-history-{mode}-after-restart"))
+        self.assertEqual(original[0].read_bytes(), original_bytes)
+        self.mcp.batch(click(1130, 594), check("backup_activity.entries.0.outcome", "Saved"),
+                       check("backup_activity.entries.1.outcome", "Recovered" if index else "SavedWithWarning"),
+                       check("notice", "Second copy: Encrypted backup saved." if index else "Home archive: Encrypted backup saved.", "contains"),
+                       shot(f"backup-history-{mode}-recovered"))
+        self.assertEqual(list(root.glob("*.shepbackup")), original)
+        self.assertEqual(original[0].read_bytes(), original_bytes)
+        self.mcp.batch({"type": "restart"}, check("ready", True),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), check("backup_activity.entries.0.outcome", "Saved"),
+                       check("backup_activity.entries.1.outcome", "Recovered" if index else "SavedWithWarning"),
+                       click(290, 156), check("settings_tab", "General"), click(690, 366), check("dark", True),
+                       click(559, 156), check("settings_tab", "Backups"),
+                       {"type": "hover", "x": 1000, "y": 750}, {"type": "scroll", "amount": 4},
+                       click(675, 560), check("backup_activity.open", True),
+                       {"type": "resize", "width": 900, "height": 640},
+                       {"type": "hover", "x": 760, "y": 515}, {"type": "scroll", "amount": 3},
+                       wait(100), shot(f"backup-history-{mode}-compact-dark"))
+
+    def test_backup_history_native_unconfirmed_restart_retry_keeps_reserved_copy(self):
+        self.backup_history_recovery("recover")
+
+    def test_backup_history_native_confirmed_warning_stays_distinct_after_restart(self):
+        self.backup_history_recovery("warning")
+
     def test_backup_formats_native_options_restore_and_restart(self):
         result = self.mcp.call("desktop.start", backup_run="ready")
         print(f"Backup format evidence: {result['artifacts']}", flush=True)

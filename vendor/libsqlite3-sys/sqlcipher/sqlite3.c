@@ -114904,7 +114904,8 @@ static void sqlcipher_exportFunc(sqlite3_context *context, int argc, sqlite3_val
   db->init.iDb = targetDb_idx;
 
   db->flags |= SQLITE_WriteSchema | SQLITE_IgnoreChecks;
-  db->mDbFlags |= DBFLAG_PreferBuiltin | DBFLAG_Vacuum;
+  /* Shep: preserve implicit rowids in unindexed tables during export too. */
+  db->mDbFlags |= DBFLAG_PreferBuiltin | DBFLAG_Vacuum | DBFLAG_VacuumInto;
   db->flags &= ~(u64)(SQLITE_ForeignKeys | SQLITE_ReverseOrder | SQLITE_Defensive | SQLITE_CountRows);
   db->mTrace = 0;
 

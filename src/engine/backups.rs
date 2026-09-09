@@ -1,5 +1,10 @@
 use super::*;
 
+struct FinishReport {
+    clean: bool,
+    detail: String,
+}
+
 impl Engine {
     pub(super) async fn connect_ftp(
         &self,
@@ -181,7 +186,7 @@ impl Engine {
         supplied: Option<SecretString>,
         output: &mut Output,
     ) -> anyhow::Result<()> {
-        self.run_backup_observed(target, supplied, output, None)
+        self.run_backup_with_history(target, supplied, output, None)
             .await
     }
 
@@ -199,12 +204,77 @@ impl Engine {
         Ok(())
     }
 
+    async fn run_backup_with_history(
+        &self,
+        target: BackupTarget,
+        supplied: Option<SecretString>,
+        output: &mut Output,
+        included: Option<(u64, &str)>,
+    ) -> anyhow::Result<()> {
+        use backup::history::{Entry, Outcome};
+        self.allow_backup()?;
+        let saved: Preferences = self.store.get("preferences").await?;
+        let prefs = backup::config::resolve(&saved, &target)?;
+        if supplied.is_none() && included.is_none() && (!prefs.auto_backup || !prefs.backup_ready) {
+            return Ok(());
+        }
+        let name = prefs
+            .backup_destinations
+            .iter()
+            .find(|d| d.target(&prefs) == target)
+            .map(|d| d.name.clone())
+            .unwrap_or_else(|| prefs.backup_destination.to_string());
+        let mut history = Entry::new(target.clone(), name, prefs.backup_format);
+        self.store
+            .write_backup_history(history.clone())
+            .await
+            .context("Could not save backup history; the copy was not started")?;
+        let result = self
+            .run_backup_observed(target.clone(), supplied, output, included, &mut history)
+            .await;
+        history.finished = Some(chrono::Utc::now().timestamp_millis());
+        if let Err(error) = &result {
+            history.detail = format!("{error:#}");
+            history.outcome =
+                if matches!(history.outcome, Outcome::Saved | Outcome::SavedWithWarning) {
+                    Outcome::SavedWithWarning
+                } else if history.copy.is_some() {
+                    Outcome::NeedsReview
+                } else {
+                    Outcome::Failed
+                };
+        }
+        let confirmed = matches!(history.outcome, Outcome::Saved | Outcome::SavedWithWarning);
+        if let Err(error) = self.store.write_backup_history(history).await {
+            // The upload journal and receipt remain authoritative, even if this
+            // separate activity view cannot record its final result.
+            output.send(Event::Error(format!("Could not update backup activity: {error}. The upload receipt was kept; refresh activity after reopening Shep."))).await?;
+        }
+        output
+            .send(Event::BackupHistoryChanged(target.clone()))
+            .await?;
+        if confirmed && let Err(error) = &result {
+            let detail = format!("Copy saved, but follow-up work failed: {error:#}");
+            output.send(Event::Error(detail.clone())).await?;
+            Self::backup_progress(
+                output,
+                included.map(|(request, _)| request),
+                &target,
+                backup::run::Status::SavedWithWarning(detail),
+            )
+            .await?;
+            return Ok(());
+        }
+        result
+    }
+
     async fn run_backup_observed(
         &self,
         target: BackupTarget,
         supplied: Option<SecretString>,
         output: &mut Output,
         included: Option<(u64, &str)>,
+        history: &mut backup::history::Entry,
     ) -> anyhow::Result<()> {
         let request = included.map(|(request, _)| request);
         self.allow_backup()?;
@@ -220,6 +290,13 @@ impl Engine {
         let provider = self.backup_provider(&prefs).await?;
         let journal = self.backup_journal().await?;
         let mut pending = journal.pending(&target).await?;
+        if let Some(previous) = &pending {
+            history.copy = Some(previous.upload.id.clone());
+            history.format = backup::format::options(&previous.data)?;
+            if previous.committed {
+                history.outcome = backup::history::Outcome::SavedWithWarning;
+            }
+        }
         if let Some(previous) = &pending
             && previous.committed
             && !provider.verify_upload(&previous.upload).await?
@@ -228,6 +305,8 @@ impl Engine {
             // an ambiguous upload, so a new snapshot may safely replace it.
             journal.remove(&target, &previous.upload.id).await?;
             pending = None;
+            history.copy = None;
+            history.outcome = backup::history::Outcome::Unfinished;
         }
         // A retained upload owns its format and passphrase even after the form changes.
         let archive_format = pending
@@ -286,6 +365,12 @@ impl Engine {
                 journal.prepare(&target, upload, bytes).await?
             }
         };
+        history.copy = Some(pending.upload.id.clone());
+        history.format = archive_format;
+        self.store
+            .write_backup_history(history.clone())
+            .await
+            .context("Could not save the reserved copy in backup activity; retry to continue")?;
         // Never associate a new passphrase with a previously staged archive.
         let secret = passphrase.clone();
         let mut pending = tokio::task::spawn_blocking(move || {
@@ -303,6 +388,13 @@ impl Engine {
             provider.upload_prepared(&mut pending.upload, &pending.data, &checkpoint).await
                 .context("The pending copy was kept. Retry to resume it; use Setup if it needs its original passphrase")?;
         }
+        // Acknowledged server acceptance stays distinct from later local/keychain
+        // or retention failures, including a closed observation channel.
+        history.outcome = backup::history::Outcome::Saved;
+        self.store
+            .write_backup_history(history.clone())
+            .await
+            .context("Copy uploaded, but its activity receipt could not be saved")?;
         Self::backup_progress(output, request, &target, backup::run::Status::Finishing).await?;
         let upload = pending.upload;
         let marked = journal.committed(&target, &upload.id).await;
@@ -315,7 +407,7 @@ impl Engine {
             .unwrap_or_default();
         let mut completed_preferences = prefs.clone();
         completed_preferences.backup_format = archive_format;
-        let clean = self
+        let report = self
             .finish_backup_archive(
                 provider.as_ref(),
                 &completed_preferences,
@@ -329,9 +421,10 @@ impl Engine {
                 output,
             )
             .await?;
-        let mut fully_finished = clean && marked.is_ok();
+        history.detail = report.detail;
+        let mut fully_finished = report.clean && marked.is_ok();
         match marked {
-            Ok(()) if clean => {
+            Ok(()) if report.clean => {
                 if let Err(error) = journal.remove(&target, &upload.id).await {
                     fully_finished = false;
                     output
@@ -349,6 +442,12 @@ impl Engine {
                     .await?;
             }
             _ => {}
+        }
+        if !fully_finished {
+            history.outcome = backup::history::Outcome::SavedWithWarning;
+            if history.detail.is_empty() {
+                history.detail = "The copy was saved, but its local upload receipt needs attention. Retry to finish the retained receipt.".into();
+            }
         }
         Self::backup_progress(output, request, &target, if fully_finished {
             backup::run::Status::Saved
@@ -376,7 +475,7 @@ impl Engine {
             self.allow_backup()?;
             let current: Preferences = self.store.get("preferences").await?;
             Self::check_included(&current, &id, &target)?;
-            self.run_backup_observed(target.clone(), None, output, Some((request, &id)))
+            self.run_backup_with_history(target.clone(), None, output, Some((request, &id)))
                 .await
         }
         .await;
@@ -486,6 +585,7 @@ impl Engine {
     ) -> anyhow::Result<bool> {
         self.finish_backup_archive(provider, prefs, target, copy, Some(passphrase), output)
             .await
+            .map(|report| report.clean)
     }
 
     /// Upload acknowledgement is final even if cleanup or local metadata fails.
@@ -497,7 +597,7 @@ impl Engine {
         copy: BackupCopy,
         passphrase: Option<SecretString>,
         output: &mut Output,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<FinishReport> {
         output
             .send(Event::BackupSaved(target.clone(), copy.clone()))
             .await?;
@@ -547,20 +647,31 @@ impl Engine {
         if let Err(error) = self.workspace(output).await {
             warnings.push(format!("Could not refresh local backup settings: {error}."));
         }
-        output.send(Event::BackupFinished(target)).await?;
+        output.send(Event::BackupFinished(target.clone())).await?;
         let clean = warnings.is_empty();
         let saved_label = if prefs.backup_format.encrypted() {
             "Encrypted backup saved."
         } else {
             "Unencrypted backup saved."
         };
+        let saved_label = prefs
+            .backup_destinations
+            .iter()
+            .find(|destination| destination.target(prefs) == target)
+            .map_or_else(
+                || saved_label.to_owned(),
+                |destination| format!("{}: {saved_label}", destination.name),
+            );
         output
             .send(if clean {
-                Event::Notice(saved_label.into())
+                Event::Notice(saved_label)
             } else {
                 Event::Error(format!("{saved_label} {}", warnings.join(" ")))
             })
             .await?;
-        Ok(clean)
+        Ok(FinishReport {
+            clean,
+            detail: warnings.join(" "),
+        })
     }
 }

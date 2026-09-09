@@ -12,6 +12,7 @@ use std::{
 };
 use tokio::sync::{oneshot, watch};
 
+mod encrypted;
 pub mod import;
 
 const PAGES_PER_STEP: i32 = 128;
@@ -72,15 +73,13 @@ pub enum Update {
 }
 
 pub struct Export {
-    cancel: Option<oneshot::Sender<()>>,
+    cancel: watch::Sender<bool>,
     pub progress: watch::Receiver<Progress>,
     result: Option<oneshot::Receiver<anyhow::Result<Outcome>>>,
 }
 impl Export {
     pub fn cancel(&mut self) {
-        if let Some(cancel) = self.cancel.take() {
-            let _ = cancel.send(());
-        }
+        self.cancel.send_replace(true);
     }
 
     /// Cancelling this wait leaves its acknowledgment available to a later wait.
@@ -118,7 +117,7 @@ pub(crate) async fn export_fixture_database(
     start_export(store, destination, replace, move |progress, cancel| {
         if progress.phase == Phase::Copying && !held {
             held = true;
-            let _ = futures::executor::block_on(cancel);
+            let _ = futures::executor::block_on(cancel.changed());
         }
     })
     .await
@@ -128,7 +127,7 @@ async fn start_export(
     store: Store,
     destination: PathBuf,
     replace: bool,
-    mut observe: impl FnMut(Progress, &mut oneshot::Receiver<()>) + Send + 'static,
+    mut observe: impl FnMut(Progress, &mut watch::Receiver<bool>) + Send + 'static,
 ) -> anyhow::Result<Export> {
     // Bound full snapshots independently of provider/read/persistence capacity.
     // The existing lease also excludes another process exporting this cache.
@@ -142,7 +141,8 @@ async fn start_export(
                 .context("Database export requires a saved workspace")
         })
         .await?;
-    let (cancel, cancelled) = oneshot::channel();
+    let key = store.connection_key();
+    let (cancel, cancelled) = watch::channel(false);
     let (progress, updates) = watch::channel(Progress::default());
     let (reply, result) = oneshot::channel();
     tokio::task::spawn_blocking(move || {
@@ -150,6 +150,7 @@ async fn start_export(
             &source,
             &destination,
             replace,
+            key.as_deref(),
             cancelled,
             |value, cancel| {
                 progress.send_replace(value);
@@ -160,22 +161,23 @@ async fn start_export(
         let _ = reply.send(outcome);
     });
     Ok(Export {
-        cancel: Some(cancel),
+        cancel,
         progress: updates,
         result: Some(result),
     })
 }
 
-fn cancelled(input: &mut oneshot::Receiver<()>) -> bool {
-    !matches!(input.try_recv(), Err(oneshot::error::TryRecvError::Empty))
+fn cancelled(input: &mut watch::Receiver<bool>) -> bool {
+    *input.borrow() || input.has_changed().is_err()
 }
 
 fn copy_database(
     source: &Path,
     destination: &Path,
     replace: bool,
-    mut cancel: oneshot::Receiver<()>,
-    mut progress: impl FnMut(Progress, &mut oneshot::Receiver<()>),
+    key: Option<&crate::cache_cipher::Key>,
+    mut cancel: watch::Receiver<bool>,
+    mut progress: impl FnMut(Progress, &mut watch::Receiver<bool>),
 ) -> anyhow::Result<Outcome> {
     if cancelled(&mut cancel) {
         return Ok(Outcome::Cancelled);
@@ -191,66 +193,17 @@ fn copy_database(
         .suffix(".partial")
         .tempfile_in(parent)
         .context("Could not create the export file. Check the folder and available space.")?;
-    let input = Connection::open_with_flags(
-        &source,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    input.busy_timeout(Duration::from_millis(100))?;
-    input.execute_batch("PRAGMA cache_size=-2048; PRAGMA query_only=ON;")?;
-    // Pin the source generation. Later WAL writes remain writable and are not
-    // mixed into this snapshot or able to restart a large copy indefinitely.
-    let snapshot = input.unchecked_transaction()?;
-    snapshot.query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
-        row.get::<_, i64>(0)
-    })?;
-    let mut output = Connection::open(temporary.path())?;
-    output.execute_batch(
-        "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA cache_size=-2048;",
-    )?;
-    let last = {
-        let backup = Backup::new(&snapshot, &mut output)?;
-        let mut stalled_since = None;
-        loop {
-            if cancelled(&mut cancel) {
-                return Ok(Outcome::Cancelled);
-            }
-            let step = backup.step(PAGES_PER_STEP)?;
-            match step {
-                StepResult::Done | StepResult::More => {
-                    stalled_since = None;
-                    let value = backup.progress();
-                    let total_pages = u32::try_from(value.pagecount)?;
-                    let remaining = u32::try_from(value.remaining)?;
-                    let last = Progress {
-                        phase: Phase::Copying,
-                        copied_pages: total_pages.saturating_sub(remaining),
-                        total_pages,
-                    };
-                    progress(last, &mut cancel);
-                    if step == StepResult::Done {
-                        break last;
-                    }
-                }
-                StepResult::Busy | StepResult::Locked => {
-                    anyhow::ensure!(
-                        stalled_since.get_or_insert_with(Instant::now).elapsed() < BUSY_LIMIT,
-                        "The database stayed busy. Retry the export when the other database operation has finished."
-                    );
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                _ => anyhow::bail!("SQLite returned an unsupported snapshot state"),
-            }
-        }
+    let last = match key {
+        Some(key) => encrypted::copy(&source, key, temporary.path(), &mut cancel, &mut progress),
+        None => copy_pages(&source, temporary.path(), &mut cancel, &mut progress),
     };
-    // A standalone database must not depend on a temporary WAL/SHM filename.
-    let journal: String = output.query_row("PRAGMA journal_mode=DELETE", [], |row| row.get(0))?;
-    anyhow::ensure!(
-        journal == "delete",
-        "Could not finish the standalone database export"
-    );
-    output.close().map_err(|(_, error)| error)?;
-    drop(snapshot);
-    drop(input);
+    let last = match last {
+        Err(_) if cancelled(&mut cancel) => return Ok(Outcome::Cancelled),
+        result => result?,
+    };
+    let Some(last) = last else {
+        return Ok(Outcome::Cancelled);
+    };
     progress(
         Progress {
             phase: Phase::Finishing,
@@ -284,6 +237,75 @@ fn copy_database(
         bytes,
         warning,
     })
+}
+
+fn copy_pages(
+    source: &Path,
+    target: &Path,
+    cancel: &mut watch::Receiver<bool>,
+    progress: &mut impl FnMut(Progress, &mut watch::Receiver<bool>),
+) -> anyhow::Result<Option<Progress>> {
+    let input = Connection::open_with_flags(
+        source,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    input.busy_timeout(Duration::from_millis(100))?;
+    input.execute_batch("PRAGMA cache_size=-2048; PRAGMA query_only=ON;")?;
+    // Pin the source generation. Later WAL writes remain writable and are not
+    // mixed into this snapshot or able to restart a large copy indefinitely.
+    let snapshot = input.unchecked_transaction()?;
+    snapshot.query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
+        row.get::<_, i64>(0)
+    })?;
+    let mut output = Connection::open(target)?;
+    output.execute_batch(
+        "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA cache_size=-2048;",
+    )?;
+    let last = {
+        let backup = Backup::new(&snapshot, &mut output)?;
+        let mut stalled_since = None;
+        loop {
+            if cancelled(cancel) {
+                return Ok(None);
+            }
+            let step = backup.step(PAGES_PER_STEP)?;
+            match step {
+                StepResult::Done | StepResult::More => {
+                    stalled_since = None;
+                    let value = backup.progress();
+                    let total_pages = u32::try_from(value.pagecount)?;
+                    let remaining = u32::try_from(value.remaining)?;
+                    let last = Progress {
+                        phase: Phase::Copying,
+                        copied_pages: total_pages.saturating_sub(remaining),
+                        total_pages,
+                    };
+                    progress(last, cancel);
+                    if step == StepResult::Done {
+                        break last;
+                    }
+                }
+                StepResult::Busy | StepResult::Locked => {
+                    anyhow::ensure!(
+                        stalled_since.get_or_insert_with(Instant::now).elapsed() < BUSY_LIMIT,
+                        "The database stayed busy. Retry the export when the other database operation has finished."
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                _ => anyhow::bail!("SQLite returned an unsupported snapshot state"),
+            }
+        }
+    };
+    // A standalone database must not depend on a temporary WAL/SHM filename.
+    let journal: String = output.query_row("PRAGMA journal_mode=DELETE", [], |row| row.get(0))?;
+    anyhow::ensure!(
+        journal == "delete",
+        "Could not finish the standalone database export"
+    );
+    output.close().map_err(|(_, error)| error)?;
+    drop(snapshot);
+    drop(input);
+    Ok(Some(last))
 }
 
 fn checked_destination(source: &Path, destination: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
