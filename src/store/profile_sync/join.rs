@@ -3,13 +3,26 @@ use crate::profile_sync::join::{self, Applied, Reconnect, Review, Values};
 use std::collections::BTreeMap;
 
 impl Store {
+    pub(crate) async fn profile_join_local_accounts(
+        &self,
+        expected: Snapshot,
+    ) -> anyhow::Result<Vec<Account>> {
+        self.run(move |c| {
+            review_matches(c, &expected)?;
+            get(c, "accounts")
+        })
+        .await
+    }
+
     pub(crate) async fn applied_profile_join(
         &self,
         review: uuid::Uuid,
+        links: join::links::Links,
     ) -> anyhow::Result<Option<Snapshot>> {
         self.run(move |c| {
             let saved: Option<Applied> = get(c, join::STORAGE_KEY)?;
-            if saved.is_some_and(|s| s.review == review) {
+            if let Some(saved) = saved.filter(|s| s.review == review) {
+                anyhow::ensure!(saved.links == links, "This import already finished with different account choices. Refresh the profile status.");
                 Ok(Some(snapshot(c)?))
             } else {
                 Ok(None)
@@ -18,15 +31,30 @@ impl Store {
         .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn accept_profile_join(
         &self,
         review: Review,
         values: Values,
     ) -> anyhow::Result<Snapshot> {
+        self.accept_profile_join_linked(review, values, join::links::Links::new())
+            .await
+    }
+
+    pub(crate) async fn accept_profile_join_linked(
+        &self,
+        review: Review,
+        values: Values,
+        links: join::links::Links,
+    ) -> anyhow::Result<Snapshot> {
+        review.validate_links(&links)?;
         self.run(move |c| {
             let tx = c.transaction()?;
             let applied: Option<Applied> = get(&tx,join::STORAGE_KEY)?;
-            if applied.as_ref().is_some_and(|a|a.review == review.id) { return snapshot(&tx); }
+            if let Some(applied) = applied.as_ref().filter(|a|a.review == review.id) {
+                anyhow::ensure!(applied.links == links, "This import already finished with different account choices. Refresh the profile status.");
+                return snapshot(&tx);
+            }
             let mut enrollment = review_matches(&tx,&review.local)?;
             if review.automatic {
                 anyhow::ensure!(snapshot(&tx)?.empty_workspace && enrollment.options.discover_on_login,
@@ -51,6 +79,16 @@ impl Store {
                 account.validate()?;
                 let shared = uuid::Uuid::parse_str(&account.id)?;
                 anyhow::ensure!(!shared.is_nil() && !mapping.contains_key(&shared),"The profile repeats an account identity.");
+                if let Some(local) = links.get(&shared) {
+                    let existing = accounts.iter().find(|a| &a.id == local)
+                        .context("The linked account was removed. Review this profile again.")?;
+                    anyhow::ensure!(join::links::compatible(existing, &account)?,
+                        "The linked connection changed. Refresh the review before importing.");
+                    // Reuse the exact local row and keychain slot. Do not clear
+                    // an existing reconnect requirement or replace native data.
+                    mapping.insert(shared, local.clone());
+                    continue;
+                }
                 // A shared identifier must never select an existing keychain
                 // slot or silently replace another local account's endpoints.
                 let local = uuid::Uuid::new_v4().to_string();
@@ -97,7 +135,7 @@ impl Store {
             anyhow::ensure!(get::<Option<crate::profile_sync::state::State>>(&tx,crate::profile_sync::state::STORAGE_KEY)?.is_none(),
                 "This workspace already has a profile checkpoint. Review its existing setup.");
             put(&tx,crate::profile_sync::state::STORAGE_KEY,&replication)?;
-            put(&tx,join::STORAGE_KEY,&Applied { review:review.id,binding:review.selection.binding,history_revision:review.revision,accounts:mapping })?;
+            put(&tx,join::STORAGE_KEY,&Applied { review:review.id,binding:review.selection.binding,history_revision:review.revision,accounts:mapping,links })?;
             let result = snapshot(&tx)?;
             tx.commit()?;
             Ok(result)

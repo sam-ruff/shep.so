@@ -1,5 +1,34 @@
 # Completion audit
 
+
+## Explicit account links during profile import — integration pending
+
+A reviewed shared account can reuse an existing native account only when every
+portable incoming/SMTP connection field matches. The choice preserves native
+identity, cached mail, its credential slot, local display-name intent and any
+existing reconnect requirement. Unlinked imports retain fresh local IDs and
+Reconnect. One local account cannot serve two shared IDs. Reviews render eight
+accounts per page, preserve choices across pages and freeze the exact choices in
+the acceptance receipt. Changed/reverted connections, stale controls and a
+lost-acknowledgment retry with different choices are rejected.
+
+All 100 matching profile tests pass (one personal diagnostic ignored), including
+link/restart, connection changes and reversions, reconnect preservation, bounded
+pages/duplicate choices and native control-generation contracts. Clippy passes.
+Four saved native paths cover reuse/restart, explicit Add new, compact dark
+choices and a twelve-account paged import with the original local account kept.
+Reviewed WebPs include `1d578884f9f6`, `aac242c963f8`, `aa23fde24ad1`.
+Native binary SHA-256:
+`c6f19a26b45797e821203d90885bc3d8b005400990abb7b4af4c55b0f5c02ef6`.
+Logs use `artifacts/logs/profile-links-*` in the isolated profile-cache worktree.
+All 30 profile native paths were exercised: 29 passed together; the existing
+first-device slow-upload completion timed out once and passed unchanged on rerun
+(`75ec92a70a21` / `a3349d5457bf`). No assertion, timeout or artificial server delay
+was weakened. This fixture readiness follow-up remains R63. Mandatory checks and
+root integration/shipping are pending.
+Post-enrollment linking/suppression, endpoint/removal reviews, credential transfer
+and actual cross-client Google verification remain R02/R49/R92 work.
+
 ## Portable preference reviews — verified integration
 
 A local history review can compare this device's preference with current shared

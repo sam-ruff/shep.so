@@ -188,9 +188,17 @@ reconnect marker; database import archives the source-device join mapping.
 A saved review UUID makes retry after a lost acceptance acknowledgment idempotent.
 Newer local preferences/categories or Google lifecycle reject unapplied reviews.
 Read cancellation remains interruptible; admitted application commits drain before
-close. Account linking
-between already-populated devices, conflict/removal controls and protected password
-transfer still need implementation. Real cross-client Google visibility is unverified.
+close. When joining a populated device, an account with exactly matching incoming
+and SMTP connection settings can explicitly reuse an existing local account.
+This retains its native identity, mail and keychain slot. Names need not match;
+the chosen local name remains local intent for later publication. Reuse never
+clears a pre-existing Reconnect requirement. The default is Add as a new account.
+One local account can only link to one shared account, and reviews show eight
+accounts per page. Choices persist while paging. Acceptance rejects changed
+local connections, stale controls and a lost-reply retry with different choices.
+
+Linking after enrollment, endpoint/removal controls and protected password
+transfer remain unfinished. Real cross-client Google visibility is unverified.
 
 ## Common values and local edits
 
@@ -208,7 +216,7 @@ reply can describe newer history, so its revision alone cannot advance the local
 basis. Category pauses retain the original pending request; admitted receipts
 drain without restoring older options or local values.
 
-The periodic loop uses these APIs. Conflict controls still need implementation;
+The periodic loop uses these APIs. Portable preference conflicts have native reviews;
 conflicted edits retain their exact requests while unrelated fields progress.
 Old profiles without a trustworthy common basis require recovery review, not an
 assumed snapshot of today's cloud values. Existing unmapped local accounts require
@@ -264,6 +272,6 @@ a later reversion. Database import archives these source-device generations.
 New shared accounts get fresh local UUIDs and require Reconnect. Names can update;
 changed existing endpoints and removals retain local accounts for review. No
 existing credential is sent to a downloaded server. Unsupported settings remain in
-history. Account linking, endpoint/removal/conflict review controls, incremental
-history downloads, remaining portable settings and protected credentials remain
+history. Linking after enrollment, endpoint/removal reviews, incremental change-token
+polling, remaining portable settings and protected credentials remain
 unfinished. Full-history checks and fixture success are not live Google evidence.

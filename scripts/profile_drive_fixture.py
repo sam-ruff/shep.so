@@ -10,7 +10,7 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
-MODES = ("empty", "fail-once", "hold-list", "slow-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single", "existing-conflict", "existing-updates", "existing-update-failure", "existing-upload-failure")
+MODES = ("empty", "fail-once", "hold-list", "slow-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-updates", "existing-update-failure", "existing-upload-failure")
 
 
 class ProfileDriveFixture:
@@ -152,9 +152,13 @@ class ProfileDriveFixture:
         account = original["changes"][0]["account"]
         account = {key:value for key,value in account.items() if not key.startswith("x-")}
         account["email"] = account["username"] = account["smtp_username"] = "cloud@example.test"
+        if self.mode in ("existing-matching", "existing-many"):
+            account.update(email="alex@studio.example", username="alex@studio.example", smtp_username="alex@studio.example",
+                host="imap.example", smtp_host="smtp.example", smtp_port=465, smtp_security="Tls",
+                smtp_auth="Automatic", smtp_separate_password=False, sent_folder="")
         if self.mode == "existing-unsupported":
             account["future_tls_requirement"] = True
-        names = ("Home",) if self.mode in ("existing-single", "existing-conflict", "existing-updates", "existing-update-failure", "existing-upload-failure") else ("Home", "Work")
+        names = ("Home",) if self.mode in ("existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-updates", "existing-update-failure", "existing-upload-failure") else ("Home", "Work")
         for number, name in enumerate(names, start=1):
             operation = dict(original)
             for field, prefix in (("profile","1"),("generation","2"),("device","3"),("operation","4")):
@@ -166,6 +170,11 @@ class ProfileDriveFixture:
             if number == 1:
                 operation["changes"] += [{"kind":"account_connection", "account":account},
                     {"kind":"account_name", "id":account["id"], "name":"Cloud account"}]
+            if self.mode == "existing-many" and number == 1:
+                for extra in range(2,13):
+                    copied=dict(account,id=f"50000000-0000-4000-8000-{extra:012d}",email=f"account{extra}@example.test")
+                    operation["changes"] += [{"kind":"account_connection","account":copied},
+                        {"kind":"account_name","id":copied["id"],"name":f"Shared account {extra:02d}"}]
             if number == 1:
                 operation["changes"].append({"kind":"setting", "key":"tooltips", "value":False})
             if self.mode == "existing-legacy" and number == 1:
