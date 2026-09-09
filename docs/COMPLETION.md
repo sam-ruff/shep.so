@@ -1927,3 +1927,22 @@ No UI/E2E, APK or timing rerun is claimed for this provider-only change. The pri
 combined performance gate still fails native navigation. Main, installed desktop
 and personal phone were untouched. Quality/release CI remains disabled; re-enable
 when trusted runners are ready and the user requests it.
+
+
+Profile transport code [`557f8d5`](https://github.com/sam-ruff/shep.so/commit/557f8d5d1dd01ed9d2eee2decbd2a5235f036cac)
+and fixture portability [`9289f53`](https://github.com/sam-ruff/shep.so/commit/9289f5327b71bb6aaff463ee965eab48c13df85a)
+are **pushed to `feat/mobile-web-clients`**, with the exact remote `9289f53` head
+verified. Mandatory hooks pass formatting, Clippy and **428 root/shared Rust
+tests**, including the 34 profile core tests; two personal-account diagnostics
+remain intentionally ignored. Strict pinned Zensical passes. A real Git checkout
+with `core.autocrlf=true` confirms that the two wire fixtures preserve their exact
+bytes, size and digest under the explicit LF attributes. This is a checkout
+conversion check on Linux, not Windows or Apple execution.
+
+Final shipping logs are `profile-drive-commit.log`,
+`profile-drive-portability-commit.log`, `profile-drive-line-endings.log`,
+`profile-drive-docs-final.log`, `profile-drive-docs-portability.log` and
+`profile-drive-push.log` under ignored `artifacts/logs/`. Updated TODO/handover
+evidence follows these code checkpoints. The full product goal remains active;
+durable catalog/enrollment, real client application, live access and the previous
+native performance failure are not completed by this push.
