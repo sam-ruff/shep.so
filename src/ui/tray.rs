@@ -55,14 +55,39 @@ impl App {
             return Task::none();
         }
         self.tray.ready = true;
+        #[cfg(target_os = "windows")]
+        let badge = self.apply_desktop_overlay();
+        #[cfg(not(target_os = "windows"))]
+        let badge = Task::none();
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         if let Some((icon, actions)) = self.tray.initialization.take() {
-            return iced::window::run(window, move |_| {
-                crate::desktop_tray::initialize(icon, actions)
-            })
-            .map(|available| Message::Tray(Event::Available(available)));
+            return Task::batch([
+                badge,
+                iced::window::run(window, move |_| {
+                    crate::desktop_tray::initialize(icon, actions)
+                })
+                .map(|available| Message::Tray(Event::Available(available))),
+            ]);
         }
-        self.handle(Message::HtmlScaleRequest(window))
+        Task::batch([badge, self.handle(Message::HtmlScaleRequest(window))])
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(super) fn apply_desktop_overlay(&self) -> Task<Message> {
+        let (Some(window), Some(frame)) = (self.tray.window, &self.desktop_overlay) else {
+            return Task::none();
+        };
+        // Old worker output cannot restore a badge just disabled by the user.
+        if !self.tray.ready || frame.count != self.unread_badge_count() {
+            return Task::none();
+        }
+        let frame = frame.clone();
+        iced::window::run(window, move |native| {
+            if let Err(error) = crate::desktop_badge::apply_overlay(native, frame) {
+                tracing::debug!(%error, "Taskbar badge could not be updated");
+            }
+        })
+        .discard()
     }
 
     fn hide_main_window(&mut self) -> Task<Message> {

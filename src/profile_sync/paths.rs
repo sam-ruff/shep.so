@@ -129,17 +129,17 @@ mod tests {
                 .to_string_lossy()
                 .contains("history-lock")
         }));
-        for (_index, path) in entries.iter().enumerate() {
+        for path in &entries {
             denied(&store, path.clone()).await;
-            #[cfg(unix)]
-            {
-                let alias = dir.path().join(format!("alias-{_index}.sqlite"));
-                std::fs::hard_link(path, &alias).unwrap();
-                denied(&store, alias.clone()).await;
-                std::fs::remove_file(&alias).unwrap();
-                std::os::unix::fs::symlink(path, &alias).unwrap();
-                denied(&store, alias).await;
-            }
+        }
+        #[cfg(unix)]
+        for (index, path) in entries.iter().enumerate() {
+            let alias = dir.path().join(format!("alias-{index}.sqlite"));
+            std::fs::hard_link(path, &alias).unwrap();
+            denied(&store, alias.clone()).await;
+            std::fs::remove_file(&alias).unwrap();
+            std::os::unix::fs::symlink(path, &alias).unwrap();
+            denied(&store, alias).await;
         }
         assert!(protect(dir.path(), &paths.root.join("future-history.sqlite")).is_err());
         assert!(protect(dir.path(), &dir.path().join("ordinary-export.sqlite")).is_ok());

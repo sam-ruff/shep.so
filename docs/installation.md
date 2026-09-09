@@ -49,4 +49,4 @@ The installed desktop entry must remain named `so.shep.Shep.desktop`.
 
 The dock must support the [Unity Launcher API](https://wiki.ubuntu.com/Unity/LauncherAPI),
 as [Dash to Dock does](https://github.com/micheleg/dash-to-dock/blob/master/launcherAPI.js).
-Windows and macOS badge adapters are still pending.
+Windows uses a native taskbar overlay (large taskbar icons), and macOS uses the native Dock badge. These adapters pass platform compilation checks; actual Windows/macOS desktop verification remains pending. Windows displays 99+ above 99 unread emails; its accessibility label retains the full count.
