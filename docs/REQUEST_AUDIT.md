@@ -176,3 +176,8 @@ including final picker coverage and reviewed light/compact-dark/native menu WebP
 pass, with actual OS execution and full macOS app checking explicitly outstanding.
 See the completion log; root integration/shipping and mandatory hook recording
 remain pending, so R86/R90 are retained in TODO.
+
+Account connection-reversion groundwork tracks incoming/SMTP intent independently
+of account names, including changes reverted before a pull and after restart.
+All 102 matching profile tests pass; explicit endpoint/removal controls remain
+R02/R49, with root integration pending. See the completion log.

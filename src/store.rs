@@ -564,7 +564,7 @@ impl Store {
             connections::allow(c, ConnectionKind::Account, &account.id)?;
             folder_actions::idle(c, &account.id)?;
             let mut accounts: Vec<Account> = get(c, "accounts")?;
-            let previous_name = accounts.iter().find(|a| a.id == account.id).map(|a| a.name.clone());
+            let previous = accounts.iter().find(|a| a.id == account.id).cloned();
             accounts.retain(|a| a.id != account.id);
             if !account.sent_folder.is_empty() {c.execute("INSERT INTO sent_folders(account,folder) VALUES(?,?) ON CONFLICT(account) DO UPDATE SET folder=excluded.folder",params![account.id,account.sent_folder])?;}
             else {c.execute("DELETE FROM sent_folders WHERE account=?",[&account.id])?;}
@@ -572,7 +572,7 @@ impl Store {
             accounts.push(account.clone());
             put(c, "accounts", &accounts)?;
             connections::changed(c)?;
-            profile_sync::state::record_native_account_name(c, &account, previous_name.as_deref())?;
+            profile_sync::state::record_native_account_fields(c, &account, previous.as_ref())?;
             tx.commit()?;
             Ok(())
         })
