@@ -20,6 +20,7 @@ Read the repository's [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/
 - [Profile metadata format and current limits](PROFILE_FORMAT.md).
 - [Local profile history](PROFILE_HISTORY.md): causal merge, durable upload identities, native worker/bridge and remaining enrollment work.
 - [Google profile files](PROFILE_DRIVE.md): verified identity, bounded file pages and immutable upload recovery; client enrollment remains unfinished.
+- [Durable profile discovery](PROFILE_DISCOVERY.md): saved scans, change replay and isolated remote summaries; client enrollment remains unfinished.
 - [Profile sync handover](PROFILE_SYNC_HANDOVER.md): next-priority OAuth, Rust/Flutter enrollment, portable records, conflicts and verification requirements; implementation remains open.
 - [Limits](limits.md): protocol requirements, storage ceilings and unverified behavior.
 

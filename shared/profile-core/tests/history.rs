@@ -65,6 +65,105 @@ fn value(j: &Journal, key: &str) -> Change {
 }
 
 #[test]
+fn overview_counts_account_definitions_and_setting_intents_with_explicit_name_conflicts() {
+    let fixture = Operation::decode(include_bytes!("../../profile-operation.json")).unwrap();
+    let account = fixture
+        .changes
+        .iter()
+        .find_map(|change| match &change.action {
+            Action::AccountConnection { account } => Some(account.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let mut journal = Journal::memory(binding()).unwrap();
+    import(
+        &mut journal,
+        &op(
+            10,
+            &[],
+            vec![
+                change(Action::ProfileName {
+                    name: "Work".into(),
+                }),
+                change(Action::AccountConnection {
+                    account: account.clone(),
+                }),
+                setting("Dark"),
+            ],
+        ),
+    );
+    let overview = journal.overview().unwrap();
+    assert_eq!(overview.accounts, 1);
+    assert_eq!(overview.settings, 1);
+    assert_eq!(overview.name.as_deref(), Some("Work"));
+    assert!(!overview.name_conflict);
+    import(
+        &mut journal,
+        &op(
+            11,
+            &[10],
+            vec![change(Action::AccountName {
+                id: id(999),
+                name: "Name without a definition".into(),
+            })],
+        ),
+    );
+    import(
+        &mut journal,
+        &op(
+            12,
+            &[10],
+            vec![change(Action::ProfileName {
+                name: "Personal".into(),
+            })],
+        ),
+    );
+    import(
+        &mut journal,
+        &op(
+            13,
+            &[10],
+            vec![change(Action::ProfileName {
+                name: "Another".into(),
+            })],
+        ),
+    );
+    let overview = journal.overview().unwrap();
+    assert_eq!(overview.accounts, 1);
+    assert!(overview.name_conflict);
+    assert!(overview.name.is_none());
+    import(
+        &mut journal,
+        &op(
+            14,
+            &[11, 12, 13],
+            vec![
+                change(Action::AccountRemoved { id: account.id }),
+                change(Action::SettingRemoved {
+                    key: SettingKey::Appearance,
+                }),
+            ],
+        ),
+    );
+    let overview = journal.overview().unwrap();
+    assert_eq!((overview.accounts, overview.settings), (0, 1));
+    assert!(matches!(
+        value(&journal, "setting:appearance").action,
+        Action::SettingRemoved { .. }
+    ));
+    assert!(overview.name_conflict);
+    import(
+        &mut journal,
+        &op(15, &[14], vec![change(Action::ProfileRemoved)]),
+    );
+    let overview = journal.overview().unwrap();
+    assert!(overview.state.removed);
+    assert!(!overview.name_conflict);
+    assert!(overview.name.is_none());
+    assert_eq!((overview.accounts, overview.settings), (0, 0));
+}
+
+#[test]
 fn independent_devices_merge_fields_and_review_conflicts_without_clock_winners() {
     let a = op(
         10,

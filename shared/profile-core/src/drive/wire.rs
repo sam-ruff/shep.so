@@ -103,11 +103,8 @@ pub(super) async fn json(response: Response) -> Result<Value> {
     // JSON is bounded independently of profile operation bytes and mail data.
     crate::json::decode(&bytes(response, JSON_LIMIT).await?).map_err(|_| Error::Invalid)
 }
-pub(super) fn multipart(file: &File, record: &[u8]) -> Result<(String, Vec<u8>)> {
-    if !id(&file.id) || record.len() > crate::MAX_RECORD_BYTES {
-        return Err(Error::Invalid);
-    }
-    let metadata = json!({
+fn upload_metadata(file: &File) -> Value {
+    json!({
         "id": file.id,
         "name": format!("shep-profile-{}.json", file.operation),
         "mimeType": "application/json",
@@ -121,8 +118,23 @@ pub(super) fn multipart(file: &File, record: &[u8]) -> Result<(String, Vec<u8>)>
             "shepOperation": file.operation,
             "shepSha256": file.sha256,
         },
-    });
-    let metadata = serde_json::to_vec(&metadata).map_err(|_| Error::Invalid)?;
+    })
+}
+/// Rebuild only validated fields for the device-local catalog. No token, provider
+/// error body or unbounded optional Drive metadata is copied into this record.
+pub(super) fn saved_file(file: &File) -> String {
+    let mut metadata = upload_metadata(file);
+    metadata["spaces"] = json!(["appDataFolder"]);
+    metadata["ownedByMe"] = json!(true);
+    metadata["trashed"] = json!(false);
+    metadata["size"] = json!(file.size.to_string());
+    metadata.to_string()
+}
+pub(super) fn multipart(file: &File, record: &[u8]) -> Result<(String, Vec<u8>)> {
+    if !id(&file.id) || record.len() > crate::MAX_RECORD_BYTES {
+        return Err(Error::Invalid);
+    }
+    let metadata = serde_json::to_vec(&upload_metadata(file)).map_err(|_| Error::Invalid)?;
     let boundary = format!("shep_{}", Uuid::new_v4().simple());
     if record
         .windows(boundary.len())

@@ -68,9 +68,10 @@ changed, future-format or unowned records never become empty profiles.
 and a files array. Empty pages with a next token remain partial; repeated current
 tokens and duplicate IDs within a page fail. Google documents that
 [pagination can change as files arrive or disappear](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list).
-There is no durable scan/catalog yet: its owner must record all visited tokens and
-file identities in bounded background storage, reject longer cycles/duplicates,
-restart expired scans and reconcile arrivals before publishing a discovery result.
+The [durable catalog](PROFILE_DISCOVERY.md) now records visited tokens and file
+identities, stages downloads before advancing and replays changes captured before
+the listing. It preserves known history across retry/rescan and rejects missing
+files and longer loops. Client enrollment/application are still unconnected.
 Neither one final page nor zero missing received parents establishes enrollment.
 
 `upload_next` checks the session against the immutable worker binding, obtains one
@@ -90,7 +91,7 @@ cleanup may remove profile operations or tombstones.
 
 ## Remaining integration
 
-Implement durable discovery/catalog and explicit creation/enrollment, category
+Connect the durable catalog to explicit creation/enrollment, category
 controls, reviewed conflict/account matching and actual account/preferences
 application. Wire the same provider contract to desktop/Flutter authorization and
 the separate browser client. Complete live same-project tests, Apple execution,
