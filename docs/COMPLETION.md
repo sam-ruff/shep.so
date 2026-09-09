@@ -43,6 +43,17 @@ The OAuth handover stays first in TODO. Password protection has no recorded
 choice, and real cross-client Google access is unverified. No personal installation
 or performance measurement was changed. Logs: ignored `artifacts/logs/profile-enrollment-*`.
 
+Source [`6e2880b`](https://github.com/sam-ruff/shep.so/commit/6e2880bac6bd49777e41f9a8e44ccdbff4e12a1c)
+was pushed to main, with exact remote equality verified. Mandatory hooks passed
+**617 Rust + two renderer + 34 shared tests (653 executions)**, all formatting and
+Clippy checks. Final Windows GNU cross-compilation also passed. The native test
+executable was SHA-256 `9f62842bed91c601f144316736ce628efbebb764146be6625a51cd08506a09f8`;
+the installed production app was not replaced. Compact Google disconnect was
+also visually reviewed (`06a4c2a494e6`). No root runtime artifacts remain.
+[Source documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34306619608)
+passed build and deployment. Quality/release workflows remain deliberately disabled.
+The full application goal and all remaining TODO entries stay open.
+
 ## 9 September: shared causal pull/publish bridge
 
 R02/R49/R92 now connect the verified desktop Drive transport to the published
