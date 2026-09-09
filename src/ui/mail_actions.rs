@@ -170,6 +170,7 @@ impl App {
                 || self.query.starred_only && !mail.starred);
             if !keep {
                 page.total = page.total.saturating_sub(1);
+                page.unread = page.unread.saturating_sub(usize::from(mail.unread));
             }
             keep
         });
