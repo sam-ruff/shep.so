@@ -135,3 +135,10 @@ returns between pages and applies the selected accounts with reconnect guards.
 Skipped new connections say **Not imported**. Final execution, reviewed captures
 and shipping are recorded in the completion log. This is isolated protocol/native
 coverage; live Google, continuous synchronization and Apple remain separate work.
+
+
+The [reconciliation engine](PROFILE_RECONCILIATION.md) retains later local edits,
+copies incremental original records and applies supported remote preferences with
+atomic receipts. Its storage/provider tests pass, but automatic scheduling,
+reviewed subscription creation and sync/conflict controls remain unconnected.
+Initial enrollment does not silently enable it.

@@ -2525,3 +2525,51 @@ are the 127-pass full run plus the corrected four-flow badge rerun described
 above, covering all 128 scenarios. The receipt is
 `artifacts/profile-pages-shipping.json`. All 40 active requests remain; next is
 ongoing Flutter/desktop reconciliation and automatic first setup/restoration.
+
+## Desktop reconciliation engine — 2026-09-09
+
+A durable local edit ledger and bounded runner now exchange later preference
+changes through independent enrolled histories and the shared Drive provider.
+Exact requests survive lost acknowledgments and newer local edits. Remote
+application and its receipt commit atomically, preserve device-only settings and
+do not echo. Concurrent values remain available for review. Copy cursors are
+bound to the observation history identity and reset after rebuilding that cache.
+Missing, replaced or rolled-back enrolled histories fail explicitly. Pausing
+retains requests/upload identities and cannot authorize a workspace switch.
+
+**This is an engine prerequisite.** Automatic scheduling, reviewed subscription
+creation, active-grant ownership, sync/conflict controls, account/category
+reconciliation and Flutter/browser equivalents remain unfinished. Existing
+publication/enrollment does not silently enable it. The full product goal and all
+40 active requests remain open. The [engine contract](agents/PROFILE_RECONCILIATION.md)
+and handover record the next concrete integration steps.
+
+Twelve new regressions comprise seven Store and five runner tests. The runner
+uses actual reviewed enrollment, independent device identities and loopback Drive
+HTTP. It verifies two-device changes and concurrent versions, original-record
+replay after a lost receipt, cache rebuild, a delayed local receipt followed by
+another device's value, missing/replaced/rolled-back history, and a committed
+upload with a lost reply across Pause/restart without another upload. The complete
+profile-focused run passes **41 checks**; all five runner regressions pass after
+the final rollback guard. Initial fixture failures (missing synthetic grant
+identity and Drive change type) remain in
+`artifacts/logs/profile-sync-runner-fixture-before.log` and
+`profile-sync-runner-change-feed-before.log`.
+
+The updated synthetic Drive fixture also passes all **10 saved native profile
+flows** in 131.276 seconds: discovery/permissions, publication/retry, enrollment,
+page retention and light/dark/compact layouts. Reviewed captures include
+`bacfd0e3f8f7` and `b451ae5e1283` (discovery), `630f3bb5ec11` (74 guarded imports,
+page exclusion and compact footer), and `334ed6552462` / `fd1141808e3f`
+(publication and connection details). The subsequent rollback guard changes only
+the unconnected runner and has its separate Rust regression. This native run
+checks the existing controls; it cannot prove an ongoing-sync UI exists.
+
+Forty-two Python checks, 37 parity contracts, Clippy and strict Zensical pass.
+Production compilation passes before the final guard; final production and
+mandatory-hook results are recorded with shipping below. Logs use
+`artifacts/logs/profile-sync-*`. Performance remains deferred on the shared host;
+the earlier native/combined performance failure remains open. No live Google,
+Apple, authenticated Flutter interchange, deployment or full-parity claim is
+made. Quality/release definitions remain disabled. Phone data, the installed
+desktop and the independent main worktree remain untouched.

@@ -11,3 +11,5 @@ pub(crate) mod reconnect;
 pub mod preference_state;
 
 pub mod enrollment;
+
+pub mod sync;

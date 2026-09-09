@@ -107,3 +107,12 @@ second-page choices and guarded application. Flutter already reloads the selecte
 enrollment page after a choice; its saved mobile paging controls remain the
 counterpart. Separate browser enrollment is still open. See the completion log
 for executed results and shipping.
+
+
+Desktop ongoing preference reconciliation has a durable edit ledger and a bounded
+runner, tested with two independent enrolled histories and the loopback Drive
+provider. Lost receipts, restart, pause, cache replacement and concurrent values
+are covered. [Its contract](agents/PROFILE_RECONCILIATION.md) explicitly leaves
+subscription creation, authenticated automatic scheduling, sync/conflict controls,
+account/category reconciliation and Flutter/browser equivalents open. This is
+engine coverage; it does not establish a working continuous-sync user flow.

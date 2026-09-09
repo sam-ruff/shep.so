@@ -14,6 +14,8 @@ pub struct Fixture {
     task: tokio::task::JoinHandle<()>,
     #[cfg(test)]
     pub attempts: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    #[cfg(test)]
+    pub upload_failure: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -145,7 +147,8 @@ impl Fixture {
         }
         let attempts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let written = attempts.clone();
-        let mut upload_failure = fail_once;
+        let upload_failure = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(fail_once));
+        let fail_upload = upload_failure.clone();
         let mut hidden_once: Option<String> = None;
         let mut reserved = std::collections::HashSet::new();
         let task = tokio::spawn(async move {
@@ -209,8 +212,7 @@ impl Fixture {
                             } else {
                                 records.push((meta, record));
                             }
-                            if upload_failure {
-                                upload_failure = false;
+                            if fail_upload.swap(false, std::sync::atomic::Ordering::SeqCst) {
                                 hidden_once = Some(id.clone());
                                 status = 503;
                             }
@@ -238,12 +240,27 @@ impl Fixture {
                 } else if uri.path() == "/drive/v3/about" {
                     serde_json::to_vec(&json!({"user":{"permissionId":"fixture"}})).unwrap()
                 } else if uri.path() == "/drive/v3/changes/startPageToken" {
-                    serde_json::to_vec(&json!({"startPageToken":"fixture-start"})).unwrap()
+                    serde_json::to_vec(&json!({"startPageToken":records.len().to_string()}))
+                        .unwrap()
                 } else if uri.path() == "/drive/v3/changes" {
-                    serde_json::to_vec(
-                        &json!({"changes":[],"newStartPageToken":"fixture-caught-up"}),
-                    )
-                    .unwrap()
+                    let offset = uri
+                        .query_pairs()
+                        .find(|(key, _)| key == "pageToken")
+                        .and_then(|(_, value)| value.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    let changes = records
+                        .iter()
+                        .skip(offset)
+                        .take(50)
+                        .map(|(meta, _)| json!({"changeType":"file","fileId":meta["id"],"removed":false,"file":meta}))
+                        .collect::<Vec<_>>();
+                    let mut page = json!({"changes":changes});
+                    if offset + 50 < records.len() {
+                        page["nextPageToken"] = json!((offset + 50).to_string());
+                    } else {
+                        page["newStartPageToken"] = json!(records.len().to_string());
+                    }
+                    serde_json::to_vec(&page).unwrap()
                 } else if uri.path() == "/drive/v3/files" {
                     tokio::time::sleep(delay).await;
                     if fail_once {
@@ -289,6 +306,8 @@ impl Fixture {
             task,
             #[cfg(test)]
             attempts,
+            #[cfg(test)]
+            upload_failure,
         })
     }
     pub async fn connect(

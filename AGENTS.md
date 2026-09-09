@@ -58,6 +58,20 @@ field intent, including reverted edits. Never replace these patches with an old
 whole-preferences snapshot. Keep exact save ordering, canonical-value effects and
 newer UI-edit protection alongside the native enrollment and publication flows.
 
+Desktop ongoing reconciliation is being connected through `src/profiles/sync/`
+and `src/store/profile_sync.rs`; see [its current boundary](docs/agents/PROFILE_RECONCILIATION.md).
+Keep the exact staged local request until its own history receipt is saved.
+An idempotent history Edit reply reports current history, not the original field
+revision: never use that whole-history revision to acknowledge unseen remote
+intent. Scope remote record cursors to the observation history's device identity
+and reset them before replay after rebuilding that cache. Preserve the enrolled
+history identity, immutable upload reservations, atomic preferences/receipt
+transaction and newer field generations. Pausing cannot authorize a workspace
+switch. The runner alone does not authorize background work: its engine caller
+must serialize history ownership with publication/enrollment, check the active
+Google grant and own provider capacity/lifecycle locks. These controls remain
+unfinished until connected and verified through the saved native harness.
+
 ## Request tracking — required every turn
 
 `TODO.md` is the authoritative active request list. At the start of each turn, read it alongside the original goal and relevant completion evidence. When the user adds, changes or reports a requirement, add/update its TODO entry immediately, before implementation; record corrections so obsolete defaults are not restored. Check the whole conversation when auditing scope, not just the latest message.

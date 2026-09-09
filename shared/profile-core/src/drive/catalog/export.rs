@@ -8,6 +8,22 @@ pub struct Snapshot {
     pub profile: Profile,
 }
 impl Catalog {
+    pub(super) fn latest_snapshot(&mut self, profile: Uuid, generation: Uuid) -> Result<Snapshot> {
+        let summary: String = self
+            .db
+            .query_row(
+                "SELECT summary FROM profiles WHERE key=?",
+                [format!("{profile}:{generation}")],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(Error::Changed)?;
+        let latest: Profile = serde_json::from_str(&summary).map_err(|_| Error::Storage)?;
+        // Keep all completed-scan, identity and independent journal checks in
+        // the same owning command as the lookup of this exact profile.
+        self.snapshot(profile, generation, latest.revision)
+    }
+
     pub(super) fn snapshot(
         &mut self,
         profile: Uuid,
@@ -42,6 +58,18 @@ impl Catalog {
         }
         Ok(Snapshot { binding, profile })
     }
+    pub(super) fn source_device(&mut self, source: Snapshot) -> Result<Uuid> {
+        let current = self.snapshot(
+            source.profile.profile,
+            source.profile.generation,
+            source.profile.revision,
+        )?;
+        if current.binding != source.binding || current.profile != source.profile {
+            return Err(Error::Changed);
+        }
+        Ok(self.journal(current.binding)?.state()?.device)
+    }
+
     pub(super) fn export_record(
         &mut self,
         source: Snapshot,

@@ -661,3 +661,14 @@ verification. Mandatory hooks pass 471 Rust tests; all 128 native functional
 scenarios pass across the full run and corrected badge rerun. Python, parity,
 production compilation and strict docs pass. The completion log retains the
 original badge failure and test correction. No active request is removed.
+
+
+2026-09-09 ongoing-profile continuation (desktop-main:R92 / R75 / R02 / R49):
+the desktop edit ledger and bounded reconciliation runner now preserve exact
+requests, atomic remote application, independent device histories, concurrent
+values, scoped copy cursors and tracked upload recovery. Twelve new isolated
+regressions cover those contracts; the full profile-focused run passes 41 checks.
+Automatic scheduling, reviewed subscription creation, sync/conflict controls,
+account/category reconciliation and Flutter/browser equivalents remain open.
+Shipping and subsequent checks belong to the completion entry; all 40 active
+requests remain in TODO.
