@@ -58,8 +58,8 @@ the completion log for shipping. Code [`9e666a5`](https://github.com/sam-ruff/sh
 mandatory hooks pass 454 Rust tests. Desktop publication now connects saved accounts/preferences to a frozen review,
 exact staging and tracked Drive uploads. All **123 native functional flows pass**,
 including compact dark review, changed preferences/cancel, pause/browse,
-retry/reopen and account exclusion. Final hooks and shipping for this continuation
-are recorded in the completion log. Reviewed import remains next;
+retry/reopen and account exclusion. Code [`35f11ba`](https://github.com/sam-ruff/shep.so/commit/35f11ba0627621624659455dfebf6f341ea18893) is pushed and remotely verified; normal hooks pass 459 Rust tests.
+See the completion log for evidence and remaining limits. Reviewed import remains next;
 native large-page controls still need coverage beyond protocol paging.
 
 Flutter profile publication and **Use profile on this device** now have a frozen,

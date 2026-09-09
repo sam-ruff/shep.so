@@ -617,3 +617,11 @@ review/pause/retry/compact controls have evidence. Full regression and shipping
 are recorded in [completion](COMPLETION.md); desktop enrollment, continuous sync,
 credential protection and all other active requests remain unfinished. No request
 is removed by this increment.
+
+
+R08/R10/R75/R02/R49/desktop-main:R92 shipping: desktop publication [`35f11ba`](https://github.com/sam-ruff/shep.so/commit/35f11ba0627621624659455dfebf6f341ea18893)
+is pushed with exact remote verification. Normal hooks pass 459 Rust tests
+(two personal live checks ignored); 123 native flows, 41 Python checks,
+37 parity contracts, production compilation and strict docs also pass.
+All 40 active requests remain. Next is reviewed desktop enrollment/application,
+then continuous reconciliation and the remaining product/platform scope.
