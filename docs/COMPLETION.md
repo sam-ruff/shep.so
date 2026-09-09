@@ -1,5 +1,40 @@
 # Completion audit
 
+## Shared account reviews, backup formats and bounded folder deletion — integrated verification
+
+The current integration combines `18413e7` (safe shared connection choices),
+`7ef6c56` (per-destination compression/encryption), `6d7c392` + `9b300af`
+(bounded combined-folder deletion), and the staged encrypted-cache foundation
+`2890fe8`, keyed catalog `7485cfc` and temporary-storage correction `86d9c6c`.
+Normal startup remains plaintext pending guarded migration and the remaining
+sorter/recovery audit. No personal database or installed process was changed.
+
+The integrated build passes **850 Rust tests**, with three personal diagnostics
+ignored, **84 Python tests** (including actual PowerShell), the complete Windows
+GNU all-target/all-feature check and the pinned strict documentation build.
+Native SHA-256 is
+`5275064fcbd3520fba48e3082c900ba17c68b8e8744cf60a01f16bf016f1fe1e`.
+All **273 native correctness scenarios** pass across two invocations: the full
+run was terminated with exit 143 after 269 passes at 20m17s; the four unfinished
+tray scenarios then pass unchanged in 17.300s. No assertion failure occurred in
+the interrupted run. Its termination cause remains under investigation; this is
+complete scenario coverage, not one uninterrupted successful suite. Normal
+commit hooks and shipping remain pending. Logs use `artifacts/logs/profiles-formats-folders-main-*`.
+
+The preceding foundation-only native run passed 266 of 267 scenarios. Its one
+failure captured selection state before the keyboard row reveal completed.
+The saved test now observes that actual reveal while the write remains pending,
+then retains the same rollback/scroll/reader assertions. That corrected path
+passes in the new full run, with reviewed evidence in `db208df12e53`.
+Root also reviewed integrated backup options, unencrypted warning and compact
+dark passphrase controls in `cd98d8d9cb1d`, shared account review in `14a1a3bf11e1`
+and `2ce3f9442284`, and folder rollback/uncertainty in `5175f9f7afef`,
+`7c92548b3036` and `9cd2124ccb6c`. This is isolated fixture evidence;
+actual provider/platform execution and final idle-host performance gates remain
+separate.
+
+The previous `cf76976` push also has green documentation CI run `34365629009`.
+
 ## Back up included destinations — integrated checkpoint
 
 `c515b80` adds persisted Include choices and Back up all, with independent
@@ -15,7 +50,8 @@ compact dark WebPs in `artifacts/e2e/db729f04f50f`. Native SHA-256:
 `f88a3e6f515e2c831bb4719374cfec2d63213171e931277399e1bacf87cefd69`.
 All **84 Python tests**, full Windows GNU all-target/all-feature checking and
 strict Zensical pass. Lane hooks passed 811 executions with three personal
-checks ignored. Main hooks and publication are the remaining checkpoint steps.
+checks ignored. Source **`cf76976`** is pushed to main, with 843 normal hook executions
+passing and exact remote equality verified.
 Logs use `artifacts/logs/backup-all-main-*`. No live cloud or actual Windows/macOS
 verification is inferred, and the installed production app remains unchanged.
 
@@ -39,6 +75,29 @@ Logs use `artifacts/logs/ftp-credentials-main-*`. Source **`13f9c36`** is pushed
 to main with exact remote equality verified. All **834 normal hook executions**
 pass (three personal diagnostics ignored). Documentation CI **34362323848**
 is green. This source checkpoint is not a new production installation.
+
+## Shared account connection reviews — implementation checkpoint
+
+The native review offers keeping the current device connection or adding the
+reviewed shared setup. Changed endpoints get a fresh native UUID requiring
+reconnection. The previous account, cached mail, credentials and server IDs remain
+at their original endpoints as a local-only “previous setup”. Keeping local
+publishes that reviewed connection while preserving unrelated field edits.
+
+Six targeted storage/history/controller tests pass, including same remote IDs on
+old/new accounts, lost admission reply/restart, preserved unrelated preferences,
+stale native/history/Google/consent changes, remote tombstones and replaced UI
+rows. All **32 profile-related native scenarios** pass in 130.488 seconds, including
+Add/restart/sync and compact Keep/version selection. All **96 matching profile
+Rust tests** and **84 Python tests** pass. Final native SHA-256:
+`4df84fef2a8c8aaa7d506d5940c7223213c42957446fa34e00fe64fec6fefc29`.
+Reviewed final WebPs include `8b79718ab48e`, `16a1186fee12` and `31e57cf69c34`
+under the lane artifacts. The compact test reproduced
+iced's Escape picker-dismissal gap; it is retained in R15/R63 and its corrected
+mouse selection follows the actual overlay positions. Strict Zensical passes. Normal hooks, root integration and publication remain
+required. Logs use `artifacts/logs/profile-account-reviews-*`. Remote removal decisions,
+post-enrollment links, protected credential transfer and live interoperability
+stay in TODO.
 
 ## First-profile native fixture synchronization
 
@@ -75,6 +134,103 @@ Integrated source is pushed as `13f9c36`; endpoint/removal review UI
 is still open. Logs: `artifacts/logs/profile-account-credential-guards.log`.
 
 
+
+## 9 September: bounded combined-folder deletion counts
+
+The `codex/bounded-folder-delete` correction replaces the held `6d7c392`
+all-folder count map with one optional affected total/unread scalar. Exact
+reviewed folder membership and the original query stay in indexed encrypted
+scratch, using the worker-owned 2 MiB scratch cache from the R22 foundation.
+The scalar and bounded 50-row preview share one cache snapshot; confirmation
+refreshes stale reviews, including intervening mail receipts. No folder/search
+limit or truncated count is introduced.
+
+One unsubmitted review replaces abandoned reviews without letting an older read
+remove a newer snapshot. At most 32 admitted operations retain projection
+contexts. Binding is atomic with the durable folder job; completion consumes its
+scalar observation and releases scratch even if the UI disappears or the count
+read fails. Cancellation and removed accounts release snapshots too; reopening
+a cache creates empty scratch. Provider acknowledgments and accepted uncertainty
+retain their existing distinct meanings.
+
+All 47 targeted folder/cache/controller tests pass, including 4,096 unrelated
+folders, exact filtered counts, partial deletion, review/receipt ordering,
+capacity release, ciphertext and restart cleanup. Eight source-view query plans
+verify that the added affected-count query needs no temporary grouping/sorting
+B-tree or materialization. Existing workspace/group queries and automatic indexes
+in recovered views remain a separate encrypted-startup activation audit; these
+checks do not declare every existing cache query bounded.
+
+All 15 selected native flows pass on the final executable in 94.817 seconds:
+11 folder-control scenarios plus selection, bulk Undo, conversation and sidebar
+regressions. All 763 hook test executions pass (698 application Rust, two HTML
+dependency and 63 shared profile-core tests; three live diagnostics ignored),
+alongside formatting, all-target Clippy, 56 Python tests and strict docs.
+Reviewed WebPs
+show pending/success (`cbfc961d624a`), light rollback (`d5e01ad44257`), dark newer
+selection/reader (`18f6644b7e28`), accepted uncertainty with cached mail after
+restart (`caecf27b443f`), and compact dark confirmation (`76a68ae559ce`).
+The executable SHA-256 is
+`88fb775f31f121cfcfe2a494011b81d0169936757b0fe8a7a8108451b45aa182`.
+Logs are under ignored `artifacts/logs/bounded-folder-*`.
+
+This correction depends on the R22 scratch foundation (original `2890fe8`,
+isolated cherry-pick `0aeedbe`) and the held deletion commit. Primary-agent
+integration/push, aggregate account choice and broader history/scope convergence
+remain open. No live-provider, Windows/macOS execution, installed-release or
+latency claim is made. Performance gates remain for the final quiet host window.
+
+## 9 September: optimistic deletion in combined folders
+
+The original isolated `6d7c392` checkpoint below passed functional checks but was
+held from integration: its all-folder count map and grouped count query were
+unbounded. The bounded replacement is recorded separately; this original commit
+is not shipping evidence.
+
+R30/R50 deletion immediately removes the reviewed account's affected folders,
+rows and query-wide total/unread contributions from combined views. The original SQLite implementation
+returned folder counts with the same snapshot as the bounded 50-row page;
+selected membership uses the same explicit exclusions. This also preserves
+other accounts in aggregate choices and all-folder search. Cache pages arriving
+before the operation receipt cannot apply deletion twice.
+
+Rejected or unconfirmed steps restore only their affected membership. Confirmed
+steps stay removed after a partial failure. Later folder choices, surviving
+readers and unrelated mail moves remain current. A surviving reader opened after
+refill can remain outside the restored first page; its cache identity is observed
+on refresh and ordinary scope navigation releases that retention. Acknowledged
+mail flags/moves/Undo keep the group counts aligned before the next page arrives.
+Accepting uncertainty retains cached originals and the explicit unconfirmed
+status; it does not acknowledge a server deletion.
+
+Eight deterministic controller/cache cases cover counts beyond one page,
+selection capture, stale generations, receipt ordering, success/rejection,
+partial success, accepted uncertainty, aggregate account boundaries, search,
+newer choices/readers and unrelated acknowledged mail writes.
+The three saved native scenarios pass in 30.556 seconds, including light rollback
+and dark newer navigation. Their normal controls delete four fictional folders,
+retain the Inbox reader, restart after success/rejection/accepted uncertainty,
+and inspect only the owned fixture database read-only after graceful close.
+Reviewed WebPs include pending deletion (`e9bab5e2cf8d`), restored selection
+(`bf11a8c3b976`), newer dark selection (`e9eef084db5a`) and uncertainty review,
+retained cache and restart (`4ea06fbca9f4`). Logs are under ignored
+`artifacts/logs/combined-delete-*`.
+
+The complete selected folder run passes all 11 native scenarios in 86.180 seconds.
+Five related selection/Undo/conversation/sidebar checks pass in 36.328 seconds,
+including an explicit assertion that the newer reader is opened while deletion
+is still pending. These are selected reruns, not a full native-suite claim.
+All 668 Rust tests pass (three authorized-live tests remain ignored), as do
+Clippy, 56 Python tests and the strict pinned Zensical build. Normal commit hooks
+also run the HTML dependency and shared profile-core contracts. The reviewed
+native binary SHA-256 is
+`7aa7439f5aba3e61d75642cdd29673d79d003bd844a4781c70ef47ddec6ec03b`.
+
+This is the isolated `codex/combined-folder-delete` checkpoint based on 66e6cb8;
+primary-agent integration/push remains required. Aggregate common-folder account
+choice and broader mail/history/provider convergence remain in TODO. No live
+provider, other-platform or latency claim is made. Grouped cached-query and
+renderer performance gates remain for the final quiet host window.
 
 ## 9 September: combined folders during pending changes
 
@@ -311,6 +467,86 @@ was weakened. This fixture readiness follow-up remains R63. Mandatory checks and
 root integration/shipping are pending.
 Post-enrollment linking/suppression, endpoint/removal reviews, credential transfer
 and actual cross-client Google verification remain R02/R49/R92 work.
+
+## R22 foundation temporary-storage correction (awaiting shipping)
+
+The SQLCipher foundation's global TEMP_STORE=3 policy would have moved existing
+plaintext sorts into memory. This correction preserves FILE for every ordinary
+connection and enforces MEMORY for keyed main databases through the existing
+native codec lookup. Encrypted scratch attachments do not change a plaintext
+main's policy. FILE/DEFAULT resets fail after keying, including after authorizer
+replacement/removal. A fixture VFS observes actual temp opens alongside a plain
+positive control. All three targeted regressions pass; final hooks and root
+shipping remain pending. The scratch drain fixture now observes removal of the
+entire owned directory, avoiding the interval between file and directory deletion
+without relaxing its required outcome or deadline.
+
+Selection account/folder summaries, workspace DISTINCT/Inbox GROUP BY and
+recovered-view automatic indexes remain explicit encrypted-startup gates. No
+personal cache migration is activated and no timing result is claimed.
+
+## Keyed local profile routing — R22 ongoing
+
+The local profile catalog has an explicit keyed constructor. Catalog reopen,
+active-profile opening, imported-marker validation, registration, activation and
+orphan recovery propagate the same device key. A wrong key or unexpected plain
+profile fails without fallback or replacement; one damaged orphan does not hide
+other recoverable profiles. Separate catalog owners keep revision checks.
+
+All 11 catalog tests pass, including three new encrypted disk/WAL/restart,
+wrong-key/plaintext recovery and competing-owner regressions. These exercise the
+real Store/catalog workers on isolated temporary files. Bootstrap still calls the
+plain constructor; production migration, portable-copy conversion and native key
+recovery remain unfinished. Existing import UI flows therefore remain unchanged;
+this is backend fixture evidence, not an encrypted native startup claim. Final
+hooks and root shipping are recorded with the checkpoint commit.
+
+## Encrypted cache foundation — R22 ongoing
+
+The isolated `codex/encrypted-cache` lane adds SQLCipher 4.19 / SQLite 3.53.4,
+zeroizing raw keys, key creation/read-back through the bounded credential actor,
+keyed Store/backup/profile paths and a read-only encrypted candidate migration.
+Selection snapshots and frozen reviews use worker-owned encrypted scratch;
+ordering builds an on-disk index instead of an unbounded sort/window. Shared
+ancestry uses indexed database scratch and a 128-ID frontier. Normal startup
+still awaits guarded publication, recovery, remaining sorter/temp-data auditing
+and portable transfer routing. The [storage boundary](agents/CACHE_ENCRYPTION.md)
+inventories remaining paths.
+
+Actual temporary SQLite/WAL fixtures verify ciphertext, corruption/wrong-key
+failure, worker reopen, search/settings, upload-session preservation, cancellation
+without changing the source, and scratch cleanup after admitted writes drain.
+All nine selection integration tests preserve page/search/range/frozen-review
+semantics. Shared initializer, ancestry and owned-lock APIs are published and
+pinned as `e3e69a4`, with 63 isolated shared tests/all-target Clippy and 692 normal
+hook executions passing (three personal diagnostics ignored).
+
+Full desktop checks caught SQLCipher automatic process-exit cleanup racing a
+remaining cache worker. A deterministic subprocess reproduced SIGSEGV in
+`sqlite3Codec` after eviction required a disk read. The documented lifecycle
+patch disables automatic global cleanup, while explicit shutdown/reinitialization
+still works. All eight direct cipher tests and 805 complete hook executions pass
+(three personal diagnostics ignored), alongside 81 Python tests and strict docs.
+All 19 selected native selection/bulk/drag/restart flows pass through the saved
+MCP equivalents. Reviewed light, compact-dark, Undo and cross-folder search WebPs
+show readable controls and preserved selection/recovery behavior. Native binary
+SHA-256: `26df656af1ff9222746d3f4823dc137a41ab10f97d7c519995ca6c1868adf52f`.
+Full Windows GNU all-target/all-feature checking passes; actual Windows/macOS
+execution and macOS compilation remain unverified. Logs and source evidence are
+under `artifacts/logs/r22-*`; screenshots include runs `40496105fe02`,
+`04c0fb32b928`, `1062fd6439ae`, `f530cc327265` and `6e0b34ee08dc`.
+
+These native fixtures validate existing UI/storage behavior with the new SQLite
+build; keyed disk/migration behavior has separate Rust fixtures. Normal native
+startup/recovery is still unfinished. The root's newer static-libcurl dependency reproduced an earlier OpenSSL
+initialization in curl's pre-main constructor. A minimal vendored curl cfg patch
+now invokes its existing Rust OpenSSL initializer before libcurl, preserving the
+same process-lifetime policy without constructor-order assumptions or changes to
+certificate/FTP behavior. The exact curl 0.4.50 / curl-sys 0.4.90+curl-8.21.0
+subprocess fails before and passes after this patch. Existing CA-path probing is
+unchanged. Final combined hooks/platform checks, root's FTP protocol regressions
+and root shipping remain the checkpoint boundary.
+No personal cache, live credentials or installed application was changed.
 
 ## Portable preference reviews — verified integration
 

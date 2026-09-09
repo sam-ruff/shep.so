@@ -722,6 +722,11 @@ impl App {
         account: &str,
         folder: &str,
     ) -> bool {
+        if query.exclude_folders.iter().any(|excluded| {
+            excluded.account.as_deref() == Some(account) && excluded.folder == folder
+        }) {
+            return false;
+        }
         let scope = query.search_scope();
         let query = scope.as_ref();
         let contains = |selected: &Option<String>, target: &str, sent: bool| {

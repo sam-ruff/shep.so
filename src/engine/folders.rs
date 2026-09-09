@@ -10,8 +10,16 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub enum Request {
     Options(u64, String, String),
-    Review(u64, String, String, crate::folder_actions::Action),
-    Start(String, Arc<Review>),
+    Review(
+        u64,
+        String,
+        String,
+        crate::folder_actions::Action,
+        u64,
+        Box<MailQuery>,
+    ),
+    Start(String, Arc<Review>, Option<String>),
+    Release(String),
     History(u64, usize),
     Retry(String),
     Stop(String, bool),
@@ -20,7 +28,7 @@ impl Request {
     pub(super) fn is_read(&self) -> bool {
         matches!(
             self,
-            Self::Options(..) | Self::Review(..) | Self::History(..)
+            Self::Options(..) | Self::Review(..) | Self::History(..) | Self::Release(..)
         )
     }
 }
@@ -41,6 +49,8 @@ pub enum Event {
 
 #[derive(Debug, Clone)]
 pub struct Preview {
+    pub generation: u64,
+    pub projection: Option<(String, Arc<MailPage>)>,
     pub review: Arc<Review>,
     pub tree: Arc<Tree>,
     /// Projected paths still browse the original cached folder until committed.
@@ -97,17 +107,21 @@ impl Engine {
                 .map_err(|e: anyhow::Error| format!("{e:#}"));
                 Event::Options(serial, result)
             }
-            Request::Review(serial, account, source, action) => Event::Review(
+            Request::Review(serial, account, source, action, generation, query) => Event::Review(
                 serial,
-                self.folder_preview(account, source, action)
+                self.folder_preview_scoped(account, source, action, generation, *query)
                     .await
                     .map(Arc::new)
                     .map_err(|e| format!("{e:#}")),
             ),
-            Request::Start(id, review) => {
+            Request::Release(token) => {
+                self.store.release_folder_projection(token).await?;
+                return Ok(());
+            }
+            Request::Start(id, review, token) => {
                 let result = self
                     .store
-                    .start_folder_change(id.clone(), (*review).clone())
+                    .start_folder_change_scoped(id.clone(), (*review).clone(), token)
                     .await
                     .map(Arc::new)
                     .map_err(|e| format!("{e:#}"));
@@ -153,20 +167,57 @@ impl Engine {
                 Event::Finished(id, result)
             }
         };
-        output.send(super::Event::Folder(event)).await?;
+        let projection = match &event {
+            Event::Review(_, Ok(preview)) => {
+                preview.projection.as_ref().map(|(token, _)| token.clone())
+            }
+            _ => None,
+        };
+        if let Err(error) = output.send(super::Event::Folder(event)).await {
+            if let Some(token) = projection {
+                self.store.release_folder_projection(token).await?;
+            }
+            return Err(error.into());
+        }
         Ok(())
     }
+    #[cfg(test)]
     pub(super) async fn folder_preview(
         &self,
         account: String,
         source: String,
         action: crate::folder_actions::Action,
     ) -> anyhow::Result<Preview> {
+        self.folder_preview_scoped(account, source, action, 0, MailQuery::default())
+            .await
+    }
+    async fn folder_preview_scoped(
+        &self,
+        account: String,
+        source: String,
+        action: crate::folder_actions::Action,
+        generation: u64,
+        query: MailQuery,
+    ) -> anyhow::Result<Preview> {
         let review = self
             .store
             .folder_review(account.clone(), source, action)
             .await?;
         let catalog = self.store.current_folder_catalog(account).await?;
+        review.plan.revalidate(&catalog)?;
+        let projection = if review.plan.action == crate::folder_actions::Action::Delete {
+            let token = uuid::Uuid::new_v4().to_string();
+            let page = self
+                .store
+                .query_folder_projection(
+                    query,
+                    Some((token.clone(), generation, Arc::new(review.clone()))),
+                )
+                .await?;
+            Some((token, Arc::new(page)))
+        } else {
+            None
+        };
         tokio::task::spawn_blocking(move || {
             review.plan.revalidate(&catalog)?;
             let tree = Tree::new(&review.plan.project(&catalog, &review.plan.steps()));
@@ -179,6 +230,8 @@ impl Engine {
                 })
                 .collect();
             Ok(Preview {
+                generation,
+                projection,
                 review: Arc::new(review),
                 tree: Arc::new(tree),
                 originals,
@@ -213,7 +266,20 @@ impl Engine {
             let _ = output.send(super::Event::BulkStopped).await;
             return;
         }
-        let result = self.perform_folder_job(&id, &mut output).await;
+        let mut result = self.perform_folder_job(&id, &mut output).await;
+        let mut count_warning = None;
+        match self.store.finish_folder_projection(id.clone()).await {
+            Ok(counts) => {
+                if let Ok(job) = &mut result {
+                    job.query_counts = counts;
+                }
+            }
+            Err(error) => {
+                count_warning = Some(format!(
+                    "The folder result is saved, but its message counts could not be refreshed. Refresh the folder to reconcile them. {error:#}"
+                ))
+            }
+        }
         // One workspace update includes the committed catalog, Sent mapping and
         // expansion preferences. A later read failure never repeats wire work.
         let result = match self.workspace(&mut output).await {
@@ -228,6 +294,9 @@ impl Engine {
         let _ = output
             .send(super::Event::Folder(Event::Finished(id, result)))
             .await;
+        if let Some(warning) = count_warning {
+            let _ = output.send(super::Event::Error(warning)).await;
+        }
         self.bulk_control.active.set(false);
         if failed {
             self.bulk_control.stopping.set(false);

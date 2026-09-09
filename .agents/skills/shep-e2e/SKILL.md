@@ -830,3 +830,24 @@ ciphertext and reserved identity for retry/restart. Ordinary preview still canno
 back up. Observe `backup_run` rows and saved destination inclusion; never modify
 these observations to actuate the UI. Review the light progress/error and compact
 dark WebPs alongside saved native scenarios and `cargo test --all-features backup_all`.
+
+Shared account connection reviews use `profile_sync="existing-connections"`,
+`profile_login=true`, `empty_profile=true`. The owned Drive fixture exposes two
+changed endpoint versions after enrollment. Saved `test_profile_account_review_*`
+scenarios use the actual review picker and Keep/Add buttons, preserve the old
+native account through restart, and verify the durable shared mapping. Backend
+`profile_account_review` tests additionally cover cached mail with identical remote
+IDs on old/new servers, interrupted admission, stale native/history/Google/consent
+and remote removal. Keep account passwords out of this fixture. A menu that opens
+above its control can cover the Keep button: select its visible row before the
+next click; the separately tracked Escape-dismissal issue must not be hidden by
+a direct state mutation or by removing keyboard coverage elsewhere.
+
+`test_backup_formats_native_options_restore_and_restart` uses the same owned
+`backup_run` fixture to exercise actual unencrypted/encrypted copies, optional
+compression, password exclusion, restore with no password, incorrect-password
+recovery, rolling retention, independent settings after restart and a mixed-format
+Back up all. It also operates the new controls in compact dark appearance. The
+fixture's calendars use valid fictional identities so real restore validation
+runs unchanged. Ordinary preview still cannot restore. Keep the codec's independent
+libargon2/AES-GCM vector and FTPS/SFTP wire-format tests alongside this native flow.

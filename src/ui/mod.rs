@@ -208,6 +208,8 @@ pub enum Message {
     PaletteApply,
     BackupDestination(BackupDestination),
     BackupAccounts(bool),
+    BackupCompression(bool),
+    BackupEncryption(bool),
     AutoBackup(bool),
     IncludeBackup(String, bool),
     BackupAll,
@@ -748,6 +750,7 @@ impl App {
         self.fields.get(key).map(String::as_str).unwrap_or("")
     }
     fn request_page(&mut self) {
+        self.query.exclude_folders = self.pending_folder_deletions();
         self.reconcile_selection_scope();
         if self.last_list_query != self.query {
             self.mail_actions.follow = None;
@@ -762,7 +765,6 @@ impl App {
         query.project_moves = self.mail_actions.projected_moves();
         query.observe = self.mail_actions.observed_ids();
         if let Some(id) = &self.selected
-            && self.page.move_recovery.contains_key(id)
             && !query.observe.contains(id)
         {
             query.observe.push(id.clone());
@@ -1312,6 +1314,7 @@ impl App {
                             .selected
                             .as_ref()
                             .is_some_and(|id| !self.page.rows.iter().any(|m| &m.id == id))
+                            && !self.retain_folder_reader()
                         {
                             self.selected = None;
                             self.detail = None;
@@ -1935,6 +1938,11 @@ impl App {
                 }
             }
             Message::Close => {
+                if self.dialog == Some(Dialog::FolderChange) {
+                    self.release_folder_preview();
+                    self.folder_controls.serial += 1;
+                    self.request_page();
+                }
                 if self.dialog == Some(Dialog::BulkHistory) {
                     let _ = self.handle_bulk(bulk::Message::CancelResolution);
                 }
@@ -2649,6 +2657,26 @@ impl App {
                 self.sftp_host_key = None;
                 self.fields.remove("sftp_password_secret");
                 self.preferences.backup_destination = destination;
+                self.preference_sync.changed();
+            }
+            Message::BackupCompression(enabled) => {
+                self.preferences.backup_format.compression = if enabled {
+                    crate::backup::format::Compression::Zstd
+                } else {
+                    crate::backup::format::Compression::None
+                };
+                self.preference_sync.changed();
+            }
+            Message::BackupEncryption(enabled) => {
+                self.preferences.backup_format.protection = if enabled {
+                    crate::backup::format::Protection::Passphrase
+                } else {
+                    crate::backup::format::Protection::None
+                };
+                if !enabled {
+                    self.preferences.backup_accounts = false;
+                    self.fields.remove("passphrase");
+                }
                 self.preference_sync.changed();
             }
             Message::BackupAccounts(enabled) => {
@@ -4032,6 +4060,9 @@ impl App {
         data["saved_backup_destinations"] =
             serde_json::json!(self.workspace.preferences.backup_destinations);
         data["auto_backup"] = serde_json::json!(self.preferences.auto_backup);
+        data["backup_format"] = serde_json::json!(self.preferences.backup_format);
+        data["saved_backup_format"] = serde_json::json!(self.workspace.preferences.backup_format);
+        data["backup_accounts"] = serde_json::json!(self.preferences.backup_accounts);
         data["backup_ready"] = serde_json::json!(self.preferences.backup_ready);
         data["saved_backup_folder"] = serde_json::json!(self.workspace.preferences.backup_folder);
         data["saved_backup_copies"] = serde_json::json!(self.workspace.preferences.backup_copies);

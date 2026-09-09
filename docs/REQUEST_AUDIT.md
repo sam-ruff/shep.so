@@ -2,11 +2,18 @@
 
 R32: included-destination manual backup now has independent progress/recovery,
 exact staged-copy retry and close receipts. All 13 integrated native paths pass;
-archive options and persistent failure history stay in TODO. See completion.
+archive options and persistent failure history stay in TODO. Source `cf76976`
+is pushed with 843 normal hook executions passing. See completion.
 
 R63: the first-profile pending-navigation fixture is shipped in `91c59a4`.
 Eight native flows, 84 Python tests and 834 hook executions pass; owned HTTP
 release/cleanup replaces accumulated delays without changing timing budgets.
+
+R02/R49/R92: explicit shared connection reviews preserve previous native mail
+and credential identities, add changed setups with reconnect, and publish local
+choices through durable shared-history admission. Storage/controller/native
+evidence and remaining verification are recorded in completion. Removal choices,
+post-enrollment links and credential transfer remain open.
 
 
 R02/R49/R92 continuation: explicit existing-account linking during reviewed import
@@ -86,7 +93,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R19 | Double-click mail opens full-window reader; Esc/close button with remapping | Delivered |
 | R20 | Configurable collapsed replies/history instead of one continuous body; configurable separate-message conversation cards | Delivered and tested |
 | R21 | Compact inbox header rather than an excessively thick top bar | Delivered; refresh-icon replacement is R53 |
-| R22 | Encrypt local SQLite mail cache at rest | Open; keychain/backup protection is separate |
+| R22 | Encrypt local SQLite mail cache at rest | Open; keyed SQLite/journals, staged migration, encrypted selection scratch, bounded ancestry/order and verified exit-lifecycle foundation are implemented in codex/encrypted-cache; plain FILE/keyed MEMORY temp-policy correction pending shipping; guarded publication/recovery, remaining sorter/portable paths and native startup validation remain |
 | R23 | Arbitrary email length/size; remove 25 MiB incoming, 256 MiB snapshot and 32k preview limits; background large downloads so other mail proceeds | Open; no higher-cap workaround is considered completion |
 | R24 | Sidebar fits horizontally; sidebar/inbox/reader widths draggable; window dimensions persist across sessions | Delivered; long labels ellipsize and drag/layout state persists |
 | R25 | Flagged outline red and entire UI palette configurable in Preferences | Red outline delivered; independent light/dark palette model/editor and native light/dark/compact/restart scenarios implemented in the parallel lane; per-role typed save integration, twelve targeted tests and ten combined native scenarios pass; full Windows checking/strict docs pass; final hooks and shipping pending |
@@ -94,7 +101,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R27 | Add account only in Preferences; clicking account heading collapses its folders with arrow | Delivered |
 | R28 | Calendar sync refresh icon; remove Google/CalDAV sync caption and Workspace/Calendar breadcrumb; free calendar space | Delivered |
 | R29 | Persist window and pane sizes | Delivered and SQLite reopen/close-order tests |
-| R30 | Folder right-click delete/move into other folders; nested collapsible groups default collapsed | Trees delivered in 6d520e9: server delimiters/selectability, decoded labels, saved expansion, keyboard reveal and drag-hover expansion, with protocol/cache/native evidence. Backend checkpoint 5eabb52 is installed/pushed with tested mutation plans, checked provider commands and durable cache/recovery; native checkpoint 3567de2 is installed/pushed: reviewed delete/move controls, optimistic projection, local POP3 and bounded recovery/close, with seven saved native flows and final Rust/native/release evidence. Pending-rename combined Ctrl-selection and filtered headers are verified in `66e6cb8`, with root integration underway. Combined deletion scopes, aggregate account choice and wider uncertainty/history lifecycle verification remain open |
+| R30 | Folder right-click delete/move into other folders; nested collapsible groups default collapsed | Trees delivered in 6d520e9: server delimiters/selectability, decoded labels, saved expansion, keyboard reveal and drag-hover expansion, with protocol/cache/native evidence. Backend checkpoint 5eabb52 is installed/pushed with tested mutation plans, checked provider commands and durable cache/recovery; native checkpoint 3567de2 is installed/pushed: reviewed delete/move controls, optimistic projection, local POP3 and bounded recovery/close, with seven saved native flows and final Rust/native/release evidence. 97c9a9a ships retained-path Ctrl-selection during projected renames. The isolated combined-folder-delete checkpoint now has a verified bounded-folder-delete correction replacing its all-folder count map with scalar observations and indexed encrypted scratch; it projects exact deleted membership/counts, preserves remaining/newer choices and readers, restores only uncommitted membership, and retains accepted-unconfirmed cached mail, with deterministic and saved native restart evidence. Primary-agent integration/push, aggregate account choice and wider uncertainty/history lifecycle verification remain open |
 | R31 | Inbox item right-click menu | Delivered baseline; reported immediate-dismiss regression now R54 |
 | R32 | Multiple backup options simultaneously; good setup UX; Google Drive/S3/FTP/SFTP/local; compression and passcode encryption; restore password; rolling unreadable copies | Multiple Local/Drive checkpoint is pushed as `2b87db4`, with migration, independent schedules/retention/passphrases, reviewed removal, 756 hook executions and 21 integrated native scenarios verified. S3 is pushed in `4e75005`, SFTP and its setup deadline correction in `ff03b02`. FTP/FTPS, optional formats and combined manual backup remain TODO; see completion. |
 | R33 | Separate Contacts Preferences section | Delivered |
@@ -114,7 +121,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R47 | Cannot move out of A. Keep into Inbox; display Inbox rather than INBOX | In progress; local metadata confirms folders exist, native return-move and wire/logout tests exist; actual reported personal-account cause not confirmed |
 | R48 | I goes to Inbox only with sidebar focus; remappable and disableable | Delivered in 590ab10, including sidebar/list focus and native disable/remap tests |
 | R49 | Drive appDataFolder continuously syncs accounts and as many settings as possible; first-time offer/toggle; existing cloud setup automatically loads on another PC | In progress. First-device creation/recovery and reviewed existing-profile import are shipped (`071c6b0`), with shared-catalog discovery, safe local account IDs/reconnection and selected preference application; see COMPLETION. Automatic login prompts, linking existing workspaces, continuous changes, remaining portable settings and live interoperability remain. Credential-protection preference question pending. |
-| R50 | Flagging immediately reflects UI intent before database/network save; apply same treatment elsewhere appropriate | Flags/read/same-account moves delivered 742b21e; cross-account source feedback and typed results delivered 9c907d2; 90776fa adds observed pending identities and global unread count reconciliation across page scopes; the surviving conversation anchor correction is shipped in `15a4a3c`; filtered-header correction `66e6cb8` is being integrated. Broader combined/filtered scopes, ambiguous outcomes, other controls and durable recovery remain open |
+| R50 | Flagging immediately reflects UI intent before database/network save; apply same treatment elsewhere appropriate | Flags/read/same-account moves delivered 742b21e; cross-account source feedback and typed results delivered 9c907d2; 90776fa adds observed pending identities and global unread count reconciliation across page scopes; the compact-mail conversation correction is shipped as `15a4a3c` and preserves the surviving Inbox anchor and newer reader intent through moves; 97c9a9a ships filtered unread header counts when optimistic flags remove rows; the isolated combined-folder-delete checkpoint with its verified bounded scalar-count correction, adds immediate query-wide membership/counts and selective rollback with newer reader/scope preservation and accepted-uncertainty restart evidence. Integration/push and broader combined/filtered-folder reconciliation, ambiguous outcomes, other controls and durable recovery remain open |
 | R51 | Remove newly added tooltips from text-labeled controls; tooltips only on icons | Delivered in 590ab10, labeled controls unwrapped and native visual checks |
 | R52 | Tooltip shows primary shortcut only; disable all tooltips or keyboard hints independently; searchable Preferences | Delivered in 590ab10; both tooltip toggles, primary-only hints, settings index/direct section navigation and native light/dark/compact tests |
 | R53 | Sync mail becomes refresh icon at top right | Delivered in 590ab10; mouse sync/busy/navigation native tests |
@@ -210,3 +217,5 @@ R63 first-profile fixture follow-up: explicit held upload and batch release
 replace stacked record delays while preserving pending-navigation assertions
 and completion timeout. Three HTTP/isolation/cleanup tests, all 84 Python tests
 and eight integrated native scenarios pass; mandatory hooks/publication remain.
+
+Integrated foundation/account-review/backup-format/folder-deletion verification covers all273 native correctness scenarios across the interrupted269-pass run and four unchanged passing tray reruns,850 Rust tests,84 Python tests and full Windows GNU checking. Exact source, artifacts and shipping status are recorded at the top of [Completion](COMPLETION.md); normal hooks and main publication are the remaining checkpoint steps.

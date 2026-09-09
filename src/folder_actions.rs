@@ -90,6 +90,8 @@ pub struct Progress {
 
 #[derive(Debug, Clone)]
 pub struct Job {
+    /// Scalar count of remaining mail in the original reviewed UI scope.
+    pub query_counts: Option<(usize, usize)>,
     pub revision: u64,
     /// Decoded on the storage worker; retained after the source leaves LIST.
     pub label: String,

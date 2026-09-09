@@ -9,6 +9,7 @@ use std::path::PathBuf;
 #[derive(Clone, Debug)]
 pub struct Review {
     path: PathBuf,
+    key: Option<std::sync::Arc<crate::cache_cipher::Key>>,
     scope: Scope,
     revision: u64,
     pub(super) local: Snapshot,
@@ -35,7 +36,12 @@ impl Review {
                 && self.scope.principal == session.binding().identity(),
             "Google changed. Discover profiles again with the intended account."
         );
-        let catalog = Discovery::open(self.path.clone(), self.scope.clone()).await?;
+        let catalog = Discovery::open_with(
+            self.path.clone(),
+            self.scope.clone(),
+            crate::cache_cipher::profile_connections(self.key.clone()),
+        )
+        .await?;
         let result = async { self.check(&catalog.state().await?) }.await;
         catalog
             .close()
@@ -45,7 +51,12 @@ impl Review {
     }
     pub(crate) async fn page(&self, store: &Store, after: Option<String>) -> anyhow::Result<Self> {
         store.check_profile_review(self.local.clone()).await?;
-        let catalog = Discovery::open(self.path.clone(), self.scope.clone()).await?;
+        let catalog = Discovery::open_with(
+            self.path.clone(),
+            self.scope.clone(),
+            crate::cache_cipher::profile_connections(self.key.clone()),
+        )
+        .await?;
         let result = async {
             self.check(&catalog.state().await?)?;
             let profiles = catalog.profiles(after.clone()).await?;
@@ -84,7 +95,12 @@ pub(crate) async fn discover(
         principal: drive.principal().into(),
     };
     let path = paths.catalog(&scope)?;
-    let catalog = Discovery::open(path.clone(), scope.clone()).await?;
+    let catalog = Discovery::open_with(
+        path.clone(),
+        scope.clone(),
+        crate::cache_cipher::profile_connections(paths.key.clone()),
+    )
+    .await?;
     let result = async {
         let mut state = catalog.state().await?;
         if state.error.is_some() {
@@ -105,6 +121,7 @@ pub(crate) async fn discover(
         let more = has_more(&catalog, &profiles).await?;
         let review = Review {
             path,
+            key: paths.key.clone(),
             scope,
             revision: state.revision,
             local,

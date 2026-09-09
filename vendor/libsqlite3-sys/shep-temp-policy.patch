@@ -1,0 +1,43 @@
+diff --git a/sqlcipher/sqlite3.c b/sqlcipher/sqlite3.c
+index 6c987fd..136198e 100644
+--- a/sqlcipher/sqlite3.c
++++ b/sqlcipher/sqlite3.c
+@@ -150950,6 +150950,15 @@ static int invalidateTempStorage(Parse *pParse){
+ static int changeTempStorage(Parse *pParse, const char *zStorageType){
+   int ts = getTempStore(zStorageType);
+   sqlite3 *db = pParse->db;
++#ifdef SQLCIPHER_SHEP_TEMP_POLICY
++  /* Keyed main databases may not spill temporary content into plain files.
++  ** Keep this independent of the replaceable application authorizer. */
++  if( ts!=2 && db->aDb[0].pBt
++   && sqlcipherPagerGetCodec(sqlite3BtreePager(db->aDb[0].pBt)) ){
++    sqlite3ErrorMsg(pParse, "encrypted databases require memory temporary storage");
++    return SQLITE_ERROR;
++  }
++#endif
+   if( db->temp_store==ts ) return SQLITE_OK;
+   if( invalidateTempStorage( pParse ) != SQLITE_OK ){
+     return SQLITE_ERROR;
+@@ -196121,6 +196130,11 @@ SQLITE_PRIVATE int sqlite3Checkpoint(sqlite3 *db, int iDb, int eMode, int *pnLog
+ **   3                     any                memory    (return 1)
+ */
+ SQLITE_PRIVATE int sqlite3TempInMemory(const sqlite3 *db){
++#ifdef SQLCIPHER_SHEP_TEMP_POLICY
++  /* Enforce the keyed-main boundary even for connections keyed through C. */
++  if( db->aDb[0].pBt
++   && sqlcipherPagerGetCodec(sqlite3BtreePager(db->aDb[0].pBt)) ) return 1;
++#endif
+ #if SQLITE_TEMP_STORE==1
+   return ( db->temp_store==2 );
+ #endif
+@@ -196994,6 +197008,10 @@ static int openDatabase(
+                  | SQLITE_StmtScanStatus
+ #endif
+       ;
++#ifdef SQLCIPHER_SHEP_TEMP_POLICY
++  /* TEMP_STORE=2 is supported by SQLCipher; preserve legacy plain FILE sorts. */
++  db->temp_store = 1;
++#endif
+   sqlite3HashInit(&db->aCollSeq);
+ #ifndef SQLITE_OMIT_VIRTUALTABLE
+   sqlite3HashInit(&db->aModule);

@@ -35,6 +35,15 @@ pub enum Request {
     AfterLogin(u64),
     Sync(u64),
     SettingReviews(u64),
+    AccountReviews {
+        request: u64,
+        after: Option<String>,
+    },
+    ResolveAccount {
+        request: u64,
+        review: Arc<super::account_reviews::Review>,
+        choice: super::account_reviews::Choice,
+    },
     ResolveSetting {
         request: u64,
         review: Arc<super::reviews::Review>,
@@ -63,7 +72,9 @@ impl Request {
             | Self::SettingReviews(id)
             | Self::Resume(id)
             | Self::Stop(id) => *id,
-            Self::ResolveSetting { request, .. }
+            Self::AccountReviews { request, .. }
+            | Self::ResolveAccount { request, .. }
+            | Self::ResolveSetting { request, .. }
             | Self::AutoJoin { request, .. }
             | Self::JoinReview { request, .. }
             | Self::JoinAccept { request, .. }
@@ -89,6 +100,12 @@ pub enum Update {
     Published(Arc<Snapshot>),
     JoinReview(Arc<super::join::Review>),
     Joined(Arc<Snapshot>),
+    AccountReviews {
+        snapshot: Arc<Snapshot>,
+        reviews: Vec<Arc<super::account_reviews::Review>>,
+        after: Option<String>,
+        saved: bool,
+    },
     SettingReviews {
         snapshot: Arc<Snapshot>,
         reviews: Vec<Arc<super::reviews::Review>>,

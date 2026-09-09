@@ -6,17 +6,19 @@ Google is optional. Mail, CalDAV, local, S3 and SFTP backups work without it.
 
 1. Open **Preferences → Backups**.
 2. Choose **Local folder**, **Google Drive**, **S3-compatible storage**, **SFTP** or **FTP / FTPS**.
-3. Set how many copies to keep and enter a passphrase of at least 12 characters.
+3. Set how many copies to keep. Compression and passphrase encryption start enabled; choose a passphrase of at least 12 characters.
 4. Choose **Back up now**. After your first copy succeeds, enable automatic backups if wanted.
 
-Keep a separate copy of your passphrase. Shep saves it in the OS keychain for scheduled backups.
+Each destination can disable compression or encryption independently. Unencrypted copies expose mail and account settings to anyone with file access; account passwords are excluded.
+
+For encrypted copies, keep a separate copy of your passphrase. Shep saves it in the OS keychain for scheduled backups. Changing format options requires a successful first copy before automatic or combined backups resume.
 
 Use **Add destination** to keep multiple copies in different places. Each destination
 has its own name, schedule, passphrase and number of copies to keep. Select its
 row to edit it. Removing a destination keeps its existing backup files.
 
-Choose **Back up all** to save to every checked destination using its own saved
-passphrase. Each needs a successful first copy before joining. Progress and errors
+Choose **Back up all** to save to every checked destination using its own options and saved
+passphrase when encrypted. Each needs a successful first copy before joining. Progress and errors
 appear separately; **Retry** repeats only that failed destination. **Include**
 controls this action independently of automatic schedules.
 
@@ -44,12 +46,12 @@ Enter the server, an existing absolute folder, username and password, then choos
 **Test and save connection**. FTPS verifies the server certificate and encrypts
 both login and data transfers. Plain FTP is a separate, clearly labelled choice
 for servers that require it. The server must support machine-readable listings
-(MLSD). Each rolling copy occupies its own folder containing the encrypted
+(MLSD). Each rolling copy occupies its own folder containing the backup
 archive and a small commit record; unrelated folders and files are preserved.
 
 ## Restore a copy
 
-Choose a copy in **Backups** and enter its passphrase. Restore adds missing mail and connections while keeping your current messages, settings and drafts. It does not upload recovered mail to a server.
+Choose a copy in **Backups**. Enter its original passphrase if encrypted; leave it blank for an unencrypted copy. Older Shep backups remain readable. Restore adds missing mail and connections while keeping your current messages, settings and drafts. It does not upload recovered mail to a server.
 
 If password restore fails because the keychain is locked, unlock it and restore the same copy again.
 
@@ -61,7 +63,7 @@ If password restore fails because the keychain is locked, unlock it and restore 
 4. Open **Preferences → Accounts → Profiles**, choose **Use on next launch**, then close and reopen Shep.
 5. Re-enter account/calendar passwords and reconnect Google in the imported profile.
 
-The SQLite file includes cached original mail, attachments, drafts, accounts, calendars and settings. It is **unencrypted** and excludes OS-keychain passwords and Google sign-in. It has no additional 256 MiB backup limit. Use **Import database…** for this file; **Restore a copy** accepts encrypted backup archives.
+The SQLite file includes cached original mail, attachments, drafts, accounts, calendars and settings. It is **unencrypted** and excludes OS-keychain passwords and Google sign-in. It has no additional 256 MiB backup limit. Use **Import database…** for this file; **Restore a copy** accepts `.shepbackup` archives.
 
 You can keep reading mail or cancel while copying. Import checks the database before making it available and pauses unfinished provider changes for review. Check their status on the original device/server before retrying. Automatic backups start disabled in the imported profile.
 
@@ -77,3 +79,5 @@ Google setup currently requires your own Google Cloud project:
 4. Enter its client ID and secret in Preferences, save, and choose **Connect Google**.
 
 Google sign-in connects Calendar and Drive, not Gmail mail access. Drive copies live in private app storage and do not appear in My Drive. Use the same OAuth application when restoring on another machine.
+
+In **Accounts → Profiles and sync**, review shared connection changes before using them. Keep this device’s connection, or add the shared setup and reconnect it. The previous account and its mail stay available.

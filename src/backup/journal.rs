@@ -19,6 +19,12 @@ impl Journal {
             Some(path) => Connection::open(path)?,
             None => Connection::open_in_memory()?,
         };
+        Self::from_connection(connection)
+    }
+    pub fn open_encrypted(path: &Path, key: &crate::cache_cipher::Key) -> anyhow::Result<Self> {
+        Self::from_connection(key.open(path, rusqlite::OpenFlags::default())?)
+    }
+    fn from_connection(connection: Connection) -> anyhow::Result<Self> {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
@@ -151,6 +157,43 @@ mod tests {
             format!("shep-20260906T120000Z-{}.shepbackup", uuid::Uuid::nil()),
             data,
         )
+    }
+    #[tokio::test]
+    async fn encrypted_journal_retains_exact_upload_and_session_with_the_cache_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("uploads.sqlite");
+        let key = crate::cache_cipher::Key::generate().unwrap();
+        let target = BackupTarget::Local("private-fictional-destination".into());
+        let bytes = b"Fixture archive bytes which may include unencrypted backup output";
+        let mut prepared = upload("fixture", bytes);
+        let journal = Journal::open_encrypted(&path, &key).unwrap();
+        journal
+            .prepare(&target, prepared.clone(), bytes.to_vec())
+            .await
+            .unwrap();
+        prepared.session = Some("fictional-private-upload-session".into());
+        journal.checkpoint(&target, &prepared).await.unwrap();
+        drop(journal);
+        assert!(Journal::open(Some(&path)).is_err());
+        assert!(
+            Journal::open_encrypted(&path, &crate::cache_cipher::Key::generate().unwrap()).is_err()
+        );
+        let reopened = Journal::open_encrypted(&path, &key).unwrap();
+        let pending = reopened.pending(&target).await.unwrap().unwrap();
+        assert_eq!(pending.data, bytes);
+        assert_eq!(pending.upload.session, prepared.session);
+        reopened.committed(&target, "fixture").await.unwrap();
+        drop(reopened);
+        let original = std::fs::read(&path).unwrap();
+        for private in [
+            bytes.as_slice(),
+            b"private-fictional-destination",
+            b"fictional-private-upload-session",
+        ] {
+            assert!(!original.windows(private.len()).any(|part| part == private));
+        }
+        let reopened = Journal::open_encrypted(&path, &key).unwrap();
+        assert!(reopened.pending(&target).await.unwrap().unwrap().committed);
     }
     #[tokio::test]
     async fn journal_reopen_retains_exact_bytes_and_reservation_before_remote_work() {

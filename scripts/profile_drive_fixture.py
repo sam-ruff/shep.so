@@ -10,7 +10,7 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
-MODES = ("empty", "fail-once", "hold-list", "slow-upload", "held-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-updates", "existing-update-failure", "existing-upload-failure")
+MODES = ("empty", "fail-once", "hold-list", "slow-upload", "held-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-connections", "existing-updates", "existing-update-failure", "existing-upload-failure")
 
 
 class ProfileDriveFixture:
@@ -83,13 +83,15 @@ class ProfileDriveFixture:
                     owner.requests["lists"] += 1
                     if "shepProfile" in q:
                         owner.requests["scoped_lists"] += 1
-                    if "shepProfile" in q and owner.mode in ("existing-conflict", "existing-updates", "existing-update-failure", "existing-upload-failure"):
+                    if "shepProfile" in q and owner.mode in ("existing-conflict", "existing-connections", "existing-updates", "existing-update-failure", "existing-upload-failure"):
                         owner.scoped_lists += 1
                         if owner.scoped_lists >= 2 and not owner.updated:
                             if owner.mode == "existing-update-failure" and not owner.failed:
                                 owner.failed = True
                                 return self.reply(503, {"error":"Fixture is offline during a continuous check."})
-                            if owner.mode == "existing-conflict":
+                            if owner.mode == "existing-connections":
+                                owner.seed_connections()
+                            elif owner.mode == "existing-conflict":
                                 owner.seed_conflict()
                             else:
                                 owner.seed_update()
@@ -162,7 +164,7 @@ class ProfileDriveFixture:
                 smtp_auth="Automatic", smtp_separate_password=False, sent_folder="")
         if self.mode == "existing-unsupported":
             account["future_tls_requirement"] = True
-        names = ("Home",) if self.mode in ("existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-updates", "existing-update-failure", "existing-upload-failure") else ("Home", "Work")
+        names = ("Home",) if self.mode in ("existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-connections", "existing-updates", "existing-update-failure", "existing-upload-failure") else ("Home", "Work")
         for number, name in enumerate(names, start=1):
             operation = dict(original)
             for field, prefix in (("profile","1"),("generation","2"),("device","3"),("operation","4")):
@@ -215,6 +217,27 @@ class ProfileDriveFixture:
             raw = json.dumps(record).encode()
             digest = hashlib.sha256(raw).hexdigest()
             identity = f"existing-profile-1-conflict-{number}"
+            metadata = {"id":identity, "name":f"shep-profile-{operation}.json", "ownedByMe":True,
+                "trashed":False, "spaces":["appDataFolder"], "mimeType":"application/json", "size":str(len(raw)),
+                "sha256Checksum":digest, "appProperties":{"shepType":"profile", "shepFormat":"operation-v1",
+                    "shepNamespace":hashlib.sha256(b"so.shep").hexdigest(), "shepProfile":record["profile"],
+                    "shepGeneration":record["generation"], "shepOperation":operation, "shepSha256":digest}}
+            self.files[identity] = (metadata, raw)
+            self.changes.append(identity)
+        self.updated = True
+
+    def seed_connections(self):
+        original = json.loads(self.files["existing-profile-1"][1])
+        account = next(c["account"] for c in original["changes"] if c["kind"] == "account_connection").copy()
+        for number, host in enumerate(("incoming-new.example.test", "incoming-other.example.test"), start=1):
+            shared = dict(account, host=host, smtp_host="outgoing-new.example.test")
+            operation = f"50000000-0000-4000-8000-{number:012d}"
+            record = dict(original, device=f"90000000-0000-4000-8000-{number:012d}", operation=operation,
+                parents=["70000000-0000-4000-8000-000000000001"],
+                changes=[{"kind":"account_connection", "account":shared, "peer_hint":host}])
+            raw = json.dumps(record).encode()
+            digest = hashlib.sha256(raw).hexdigest()
+            identity = f"existing-profile-1-connection-{number}"
             metadata = {"id":identity, "name":f"shep-profile-{operation}.json", "ownedByMe":True,
                 "trashed":False, "spaces":["appDataFolder"], "mimeType":"application/json", "size":str(len(raw)),
                 "sha256Checksum":digest, "appProperties":{"shepType":"profile", "shepFormat":"operation-v1",

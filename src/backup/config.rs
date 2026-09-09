@@ -17,6 +17,8 @@ pub struct Destination {
     pub sftp: super::sftp::Settings,
     #[serde(default)]
     pub ftp: super::ftp::Settings,
+    #[serde(default)]
+    pub format: super::format::Options,
     pub copies: usize,
     pub hours: u64,
     pub accounts: bool,
@@ -39,6 +41,7 @@ impl Destination {
             s3: prefs.backup_s3.clone(),
             sftp: prefs.backup_sftp.clone(),
             ftp: prefs.backup_ftp.clone(),
+            format: prefs.backup_format,
             copies: prefs.backup_copies,
             hours: prefs.backup_hours,
             accounts: prefs.backup_accounts,
@@ -53,6 +56,7 @@ impl Destination {
         prefs.backup_s3 = self.s3.clone();
         prefs.backup_sftp = self.sftp.clone();
         prefs.backup_ftp = self.ftp.clone();
+        prefs.backup_format = self.format;
         prefs.backup_copies = self.copies;
         prefs.backup_hours = self.hours;
         prefs.backup_accounts = self.accounts;
@@ -145,6 +149,10 @@ pub fn remove_selected(prefs: &mut Preferences) -> anyhow::Result<()> {
 
 pub fn validate(prefs: &Preferences) -> anyhow::Result<()> {
     anyhow::ensure!(
+        prefs.backup_format.encrypted() || !prefs.backup_accounts,
+        "Account passwords require an encrypted backup."
+    );
+    anyhow::ensure!(
         prefs.backup_destinations.len() <= 32,
         "Use at most 32 backup destinations."
     );
@@ -160,6 +168,10 @@ pub fn validate(prefs: &Preferences) -> anyhow::Result<()> {
     let mut ids = std::collections::HashSet::new();
     let mut targets = std::collections::HashSet::new();
     for d in &prefs.backup_destinations {
+        anyhow::ensure!(
+            d.format.encrypted() || !d.accounts,
+            "Account passwords require an encrypted backup."
+        );
         if d.destination == BackupDestination::S3 {
             d.s3.validate_draft()?;
         }
@@ -267,7 +279,8 @@ pub fn preserve_metadata(previous: &Preferences, requested: &mut Preferences) {
             .iter()
             .find(|p| BackupTarget::from_preferences(p) == target);
         destination.last_backup = saved.and_then(|p| p.last_backup);
-        destination.ready = saved.is_some_and(|p| p.backup_ready);
+        destination.ready =
+            saved.is_some_and(|p| p.backup_ready && p.backup_format == destination.format);
         if destination.destination == BackupDestination::GoogleDrive && !google_available {
             destination.automatic = false;
             destination.ready = false;
@@ -295,6 +308,31 @@ pub fn record(prefs: &mut Preferences, target: &BackupTarget, time: i64, ready: 
     if BackupTarget::from_preferences(prefs) == *target {
         prefs.last_backup = Some(time);
         prefs.backup_ready = ready;
+    }
+}
+
+/// A late copy acknowledges its actual format, never newly edited settings.
+pub fn record_format(
+    prefs: &mut Preferences,
+    target: &BackupTarget,
+    format: super::format::Options,
+    time: i64,
+    ready: bool,
+) {
+    let context = prefs.clone();
+    for destination in &mut prefs.backup_destinations {
+        if destination.target(&context) == *target {
+            destination.last_backup = Some(time);
+            if destination.format == format {
+                destination.ready = ready;
+            }
+        }
+    }
+    if BackupTarget::from_preferences(prefs) == *target {
+        prefs.last_backup = Some(time);
+        if prefs.backup_format == format {
+            prefs.backup_ready = ready;
+        }
     }
 }
 

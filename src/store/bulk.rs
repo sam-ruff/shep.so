@@ -230,7 +230,7 @@ impl Store {
                 Action::Move{folder,..}=>anyhow::ensure!(!folder.trim().is_empty() && !folder.contains(['\r','\n','\0']),"Choose a valid destination folder"),
                 Action::Flags(flags)=>anyhow::ensure!(!flags.is_empty(),"Choose a mail action"),
             }
-            let frozen: bool = tx.query_row("SELECT frozen FROM temp.mail_selections WHERE id=?",[selection.to_string()],|r|r.get(0))?;
+            let frozen: bool = tx.query_row("SELECT frozen FROM scratch.mail_selections WHERE id=?",[selection.to_string()],|r|r.get(0))?;
             anyhow::ensure!(frozen,"Review the selected messages before changing them");
             tx.execute("INSERT INTO bulk_jobs(id,action,source,created) VALUES(?,?,?,?)",params![id,serde_json::to_string(&action)?,selection.to_string(),chrono::Utc::now().timestamp_millis()])?;
             tx.execute("INSERT INTO bulk_items(job,position,id,original,status,error)
@@ -239,7 +239,7 @@ impl Store {
                 '$.starred',json(CASE m.starred WHEN 1 THEN 'true' ELSE 'false' END)) END,
                 CASE WHEN m.id IS NULL THEN 'failed' ELSE 'queued' END,
                 CASE WHEN m.id IS NULL THEN 'This message is unavailable. Refresh its folder or review its pending move.' END
-                FROM temp.mail_selection_rows s LEFT JOIN selectable_mail m ON m.id=s.id WHERE s.selection=? AND s.selected=1",
+                FROM scratch.mail_selection_rows s LEFT JOIN selectable_mail m ON m.id=s.id WHERE s.selection=? AND s.selected=1",
                 params![id,selection.to_string()])?;
             let (account,folder,unread,starred) = match &action {
                 Action::Move{account,folder} => (account.clone(),Some(folder.clone()),None,None),
@@ -256,7 +256,7 @@ impl Store {
             bump(&tx)?;
             let result=job(&tx,&id)?;
             anyhow::ensure!(result.total>0,"Select at least one message");
-            tx.execute("DELETE FROM temp.mail_selections WHERE id=?",[selection.to_string()])?;
+            tx.execute("DELETE FROM scratch.mail_selections WHERE id=?",[selection.to_string()])?;
             tx.commit()?;
             Ok(result)
         }).await

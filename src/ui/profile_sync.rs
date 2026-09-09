@@ -1,3 +1,4 @@
+mod account_reviews;
 mod join;
 mod onboarding;
 mod reviews;
@@ -17,6 +18,16 @@ use std::time::Duration;
 pub enum Action {
     Refresh,
     Sync,
+    AccountReviews(Option<String>),
+    ResolveAccount(
+        Arc<crate::profile_sync::account_reviews::Review>,
+        crate::profile_sync::account_reviews::Choice,
+    ),
+    AccountCandidate(
+        Arc<crate::profile_sync::account_reviews::Review>,
+        account_reviews::Candidate,
+    ),
+    CloseAccountReviews,
     SettingReviews,
     ResolveSetting(
         Arc<crate::profile_sync::reviews::Review>,
@@ -72,6 +83,9 @@ pub(super) struct State {
     join_review: Option<Arc<crate::profile_sync::join::Review>>,
     join_links: crate::profile_sync::join::links::Links,
     join_offset: usize,
+    account_reviews: Option<Vec<Arc<crate::profile_sync::account_reviews::Review>>>,
+    account_after: Option<String>,
+    account_choices: std::collections::BTreeMap<String, account_reviews::Candidate>,
     setting_reviews: Option<Vec<Arc<crate::profile_sync::reviews::Review>>>,
     setting_choices: std::collections::BTreeMap<shep_profile_core::SettingKey, reviews::Candidate>,
     name: String,
@@ -81,6 +95,14 @@ pub(super) struct State {
     cycle: Option<crate::profile_sync::continuous::Report>,
 }
 impl State {
+    fn accepts_account_review(
+        &self,
+        review: &Arc<crate::profile_sync::account_reviews::Review>,
+    ) -> bool {
+        self.account_reviews
+            .as_ref()
+            .is_some_and(|current| current.iter().any(|r| Arc::ptr_eq(r, review)))
+    }
     fn accepts_setting_review(&self, review: &Arc<crate::profile_sync::reviews::Review>) -> bool {
         self.setting_reviews
             .as_ref()
@@ -118,6 +140,8 @@ impl State {
     pub fn observation(&self) -> serde_json::Value {
         serde_json::json!({"loaded":self.snapshot.is_some(),"available":self.snapshot.as_ref().is_some_and(|s|s.available),"empty_workspace":self.snapshot.as_ref().is_some_and(|s|s.empty_workspace),
             "options":self.options(),"offer":self.offer,"login_pending":self.login_pending.is_some(),"saving":self.saving.is_some(),"working":self.job.is_some(),"stopping":self.stopping.is_some(),
+            "account_reviews": self.account_reviews.as_ref().map(|r| r.iter().map(|r|serde_json::json!({"id":r.local().id,"name":r.local().name,"host":r.local().host,"versions":r.versions().iter().map(|v|&v.account.host).collect::<Vec<_>>()})).collect::<Vec<_>>()),
+            "account_after": self.account_after,
             "setting_reviews": self.setting_reviews.as_ref().map(|r|r.iter().map(|r|serde_json::json!({"label":r.label(),"local":r.local(),"versions":r.versions().iter().map(|v|&v.value).collect::<Vec<_>>()})).collect::<Vec<_>>()),
             "review":self.review.as_ref().map(|r|r.records()),
             "profiles":self.review.as_ref().map(|r|r.profiles()),
@@ -161,6 +185,22 @@ impl App {
                 {
                     self.profile_sync.join_offset = offset;
                 }
+                return;
+            }
+            Action::AccountCandidate(review, candidate) => {
+                if self.profile_sync.job.is_none()
+                    && self.profile_sync.accepts_account_review(&review)
+                {
+                    self.profile_sync
+                        .account_choices
+                        .insert(review.local().id.clone(), candidate);
+                }
+                return;
+            }
+            Action::CloseAccountReviews => {
+                self.profile_sync.account_reviews = None;
+                self.profile_sync.account_choices.clear();
+                self.profile_sync.account_after = None;
                 return;
             }
             Action::SettingCandidate(review, candidate) => {
@@ -222,6 +262,9 @@ impl App {
                     self.profile_sync.login_pending =
                         Some(self.preferences.google_lifecycle.revision);
                 }
+                self.profile_sync.account_reviews = None;
+                self.profile_sync.account_choices.clear();
+                self.profile_sync.account_after = None;
                 self.profile_sync.setting_reviews = None;
                 self.profile_sync.setting_choices.clear();
                 self.profile_sync.desired = changes;
@@ -249,6 +292,8 @@ impl App {
             }
             Action::Discover
             | Action::Sync
+            | Action::AccountReviews(_)
+            | Action::ResolveAccount(..)
             | Action::SettingReviews
             | Action::ResolveSetting(..)
             | Action::AfterLogin
@@ -266,6 +311,17 @@ impl App {
                     return;
                 }
                 match action {
+                    Action::AccountReviews(after) => Request::AccountReviews { request: id, after },
+                    Action::ResolveAccount(review, choice) => {
+                        if !self.profile_sync.accepts_account_review(&review) {
+                            return;
+                        }
+                        Request::ResolveAccount {
+                            request: id,
+                            review,
+                            choice,
+                        }
+                    }
                     Action::SettingReviews => Request::SettingReviews(id),
                     Action::ResolveSetting(review, choice) => {
                         if !self.profile_sync.accepts_setting_review(&review) {
@@ -476,6 +532,28 @@ impl App {
         }
         let mut refresh = false;
         match update {
+            Update::AccountReviews {
+                snapshot,
+                reviews,
+                after,
+                saved,
+            } => {
+                if state.accepts_snapshot(&snapshot)
+                    && state.desired.empty()
+                    && state.saving.is_none()
+                {
+                    state.snapshot = Some(snapshot);
+                    state.account_reviews = Some(reviews);
+                    state.account_after = after;
+                    state.account_choices.clear();
+                    if saved {
+                        state.next_sync = Some(Instant::now() + Duration::from_secs(2));
+                        self.notice("Account choice saved · waiting to sync", false);
+                    }
+                } else {
+                    refresh = true;
+                }
+            }
             Update::SettingReviews {
                 snapshot,
                 reviews,
@@ -586,7 +664,7 @@ impl App {
                 }
                 // A review may be scrolled below the inline error. A rejected
                 // choice must remain visible at the current viewport as well.
-                if job && state.setting_reviews.is_some() {
+                if job && (state.setting_reviews.is_some() || state.account_reviews.is_some()) {
                     self.notice(error, true);
                 }
                 self.pending_close = None;
@@ -687,6 +765,20 @@ impl App {
                     );
                     if state.setting_reviews.is_some() {
                         body = body.push(self.shared_setting_reviews(idle));
+                    }
+                }
+                if options.accounts {
+                    body = body.push(
+                        button(text("Review shared connections").size(13))
+                            .padding([12, 16])
+                            .style(outline)
+                            .on_press_maybe(
+                                (idle && available && options.enabled)
+                                    .then(|| msg(Action::AccountReviews(None))),
+                            ),
+                    );
+                    if state.account_reviews.is_some() {
+                        body = body.push(self.shared_account_reviews(idle));
                     }
                 }
                 if !self.workspace.account_reconnect.is_empty() {
@@ -931,6 +1023,60 @@ mod tests {
         app.tx = Some(sender);
         app.profile_sync.snapshot = Some(original.clone());
         (app, queue, original)
+    }
+
+    #[tokio::test]
+    async fn profile_account_review_controls_reject_replaced_rows_and_option_changes() {
+        use crate::profile_sync::account_reviews::{Choice, Review};
+        let (mut app, mut queue, _) = app().await;
+        let earlier = Arc::new(Review::fixture("Earlier"));
+        let later = Arc::new(Review::fixture("Later"));
+        app.profile_sync.account_reviews = Some(vec![earlier.clone(), later.clone()]);
+        let stale = Action::ResolveAccount(earlier.clone(), Choice::Local);
+        app.profile_sync.account_reviews = Some(vec![later.clone()]);
+        app.shared_profile_action(Action::AccountCandidate(
+            earlier.clone(),
+            account_reviews::Candidate::fixture(earlier.versions()[0].operation),
+        ));
+        app.shared_profile_action(stale);
+        assert!(queue.try_recv().is_err());
+        assert!(app.profile_sync.account_choices.is_empty());
+        app.shared_profile_action(Action::AccountCandidate(
+            later.clone(),
+            account_reviews::Candidate::fixture(later.versions()[0].operation),
+        ));
+        assert!(
+            app.profile_sync
+                .account_choices
+                .contains_key(&later.local().id)
+        );
+        app.shared_profile_action(Action::ResolveAccount(later.clone(), Choice::Local));
+        let Command::ProfileSync(Request::ResolveAccount {
+            review, request, ..
+        }) = queue.try_recv().unwrap()
+        else {
+            panic!("exact displayed review")
+        };
+        assert!(Arc::ptr_eq(&review, &later));
+        // A stale result cannot re-open a dismissed/replaced review.
+        let _ = app.shared_profile_update(
+            request + 1,
+            Update::AccountReviews {
+                snapshot: app.profile_sync.snapshot.clone().unwrap(),
+                reviews: vec![earlier],
+                after: None,
+                saved: true,
+            },
+        );
+        assert!(app.profile_sync.accepts_account_review(&later));
+        app.profile_sync.job = None;
+        app.shared_profile_action(Action::Accounts(false));
+        assert!(app.profile_sync.account_reviews.is_none());
+        app.shared_profile_action(Action::ResolveAccount(later, Choice::Local));
+        assert!(!matches!(
+            queue.try_recv(),
+            Ok(Command::ProfileSync(Request::ResolveAccount { .. }))
+        ));
     }
 
     #[tokio::test]

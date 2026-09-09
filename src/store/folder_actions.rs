@@ -242,6 +242,7 @@ fn job(c: &Connection, id: &str) -> anyhow::Result<Job> {
     let destination_label =
         Plan::wire_destination(root).map(|p| root.mailbox.encoding.display(&p).into_owned());
     Ok(Job {
+        query_counts: None,
         revision: u64::try_from(revision)?,
         label,
         destination_label,
@@ -288,6 +289,14 @@ impl Store {
         .await
     }
     pub async fn start_folder_change(&self, id: String, expected: Review) -> anyhow::Result<Job> {
+        self.start_folder_change_scoped(id, expected, None).await
+    }
+    pub(crate) async fn start_folder_change_scoped(
+        &self,
+        id: String,
+        expected: Review,
+        projection: Option<String>,
+    ) -> anyhow::Result<Job> {
         self.run(move |c| {
             let tx = c.transaction()?;
             if tx.query_row(
@@ -323,6 +332,9 @@ impl Store {
                     chrono::Utc::now().timestamp_millis()
                 ],
             )?;
+            if let Some(token) = &projection {
+                super::folder_projection::bind(&tx, token, &id)?;
+            }
             for (position, step) in expected.plan.steps().iter().enumerate() {
                 tx.execute(
                     "INSERT INTO folder_steps(job,position,step,status) VALUES(?,?,?,?)",

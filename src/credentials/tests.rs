@@ -40,6 +40,70 @@ fn fake() -> Fake {
     }
 }
 
+#[tokio::test]
+async fn cache_key_creation_is_ordered_verified_and_missing_keys_never_regenerate() {
+    let credentials = Credentials::with_backend(Scope::CacheRoot(uuid::Uuid::new_v4()), fake());
+    let keys = crate::cache_cipher::key_store::Keys::with_credentials(credentials.clone());
+    assert!(keys.load().await.is_err());
+    let (first, second) = tokio::join!(keys.create(), keys.create());
+    let first = first.unwrap().encode();
+    assert_eq!(first.as_str(), second.unwrap().encode().as_str());
+    assert_eq!(first.as_str(), keys.load().await.unwrap().encode().as_str());
+    // A portable profile's similarly named item cannot read or remove this key.
+    let profile = Credentials {
+        scope: Scope::Profile(uuid::Uuid::new_v4()),
+        ..credentials.clone()
+    };
+    assert!(
+        profile
+            .read_optional("encryption-key-v1")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    profile.delete("encryption-key-v1").await.unwrap();
+    assert_eq!(first.as_str(), keys.load().await.unwrap().encode().as_str());
+    credentials.delete("encryption-key-v1").await.unwrap();
+    assert!(keys.load().await.is_err());
+    assert!(
+        credentials
+            .read_optional("encryption-key-v1")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn cache_key_creation_does_not_bypass_locked_or_broken_credentials() {
+    let credentials = Credentials::with_backend(Scope::CacheRoot(uuid::Uuid::new_v4()), fake());
+    assert!(
+        credentials
+            .read_or_create("locked", "fixture".into())
+            .await
+            .is_err()
+    );
+    struct Broken;
+    impl Backend for Broken {
+        fn read(&mut self, _: &str) -> anyhow::Result<Option<SecretString>> {
+            Ok(None)
+        }
+        fn write(&mut self, _: &str, _: SecretString) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn delete(&mut self, _: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+    let broken = Credentials::with_backend(Scope::CacheRoot(uuid::Uuid::new_v4()), Broken);
+    assert!(
+        broken
+            .read_or_create("fixture", "value".into())
+            .await
+            .is_err()
+    );
+}
+
 #[test]
 fn portable_connections_cannot_alias_tokens_passphrases_smtp_or_each_other() {
     use crate::model::*;

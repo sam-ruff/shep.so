@@ -1,5 +1,6 @@
 mod bulk;
 mod folder_actions;
+mod folder_projection;
 mod mail_actions;
 mod mail_query;
 mod move_journal;
@@ -14,6 +15,7 @@ mod google_lifecycle;
 mod outgoing;
 mod profile_sync;
 mod restore;
+mod scratch;
 mod selection;
 pub(crate) mod worker;
 use anyhow::Context;
@@ -30,7 +32,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::{path::Path, sync::Arc};
 
 #[derive(Clone)]
-pub struct Store(Arc<worker::Worker>);
+pub struct Store(Arc<worker::Worker>, Option<Arc<crate::cache_cipher::Key>>);
 
 pub(crate) const DATABASE_VERSION: u32 = 3;
 
@@ -89,10 +91,40 @@ impl Store {
     pub fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         Self::from_connection(Connection::open(path)?)
     }
+    /// The data-root owner loads the key before opening any persisted schema.
+    /// This does not migrate plaintext data or obtain keys on the UI thread.
+    pub fn open_encrypted(
+        path: impl AsRef<Path>,
+        key: Arc<crate::cache_cipher::Key>,
+    ) -> anyhow::Result<Self> {
+        let connection = key.open(path.as_ref(), rusqlite::OpenFlags::default())?;
+        Self::from_connection_key(connection, Some(key))
+    }
+    /// Independent snapshot/journal owners share immutable key material, never
+    /// the cache connection. The key is absent from workspace serialization.
+    pub fn connection_key(&self) -> Option<Arc<crate::cache_cipher::Key>> {
+        self.1.clone()
+    }
     pub fn memory() -> anyhow::Result<Self> {
         Self::from_connection(Connection::open_in_memory()?)
     }
-    fn from_connection(mut conn: Connection) -> anyhow::Result<Self> {
+    fn from_connection(conn: Connection) -> anyhow::Result<Self> {
+        Self::from_connection_key(conn, None)
+    }
+    fn from_connection_key(
+        conn: Connection,
+        key: Option<Arc<crate::cache_cipher::Key>>,
+    ) -> anyhow::Result<Self> {
+        let scratch = scratch::attach(&conn, key.as_deref())?;
+        // The initializer owns the connection. On failure it closes that handle
+        // before this scope removes scratch, including on Windows.
+        let conn = Self::initialize_connection(conn)?;
+        Ok(Self(
+            Arc::new(worker::Worker::with_scratch(conn, scratch)?),
+            key,
+        ))
+    }
+    fn initialize_connection(mut conn: Connection) -> anyhow::Result<Connection> {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         anyhow::ensure!(
@@ -140,6 +172,7 @@ impl Store {
         connections::schema(&conn)?;
         outgoing::schema(&conn)?;
         selection::schema(&conn)?;
+        folder_projection::schema(&conn)?;
         bulk::schema(&conn)?;
         move_journal::schema(&conn)?;
         read_moves::schema(&conn)?;
@@ -172,7 +205,7 @@ impl Store {
             tx.pragma_update(None, "user_version", DATABASE_VERSION)?;
             tx.commit()?;
         }
-        Ok(Self(Arc::new(worker::Worker::new(conn)?)))
+        Ok(conn)
     }
     pub async fn run<T, F>(&self, f: F) -> anyhow::Result<T>
     where
@@ -233,7 +266,9 @@ impl Store {
             let same_target =
                 previous_target == crate::backup::BackupTarget::from_preferences(current);
             current.last_backup = if same_target { last_backup } else { None };
-            current.backup_ready = same_target && backup_ready;
+            current.backup_ready = same_target
+                && backup_ready
+                && current.backup_format == previous_backups.backup_format;
             crate::backup::config::preserve_metadata(&previous_backups, current);
             Ok(())
         })
@@ -247,6 +282,18 @@ impl Store {
     ) -> anyhow::Result<PreferenceSnapshot> {
         self.update_preferences(move |current| {
             crate::backup::config::record(current, &target, time, ready);
+        })
+        .await
+    }
+    pub async fn record_backup_format(
+        &self,
+        target: crate::backup::BackupTarget,
+        format: crate::backup::format::Options,
+        time: i64,
+        ready: bool,
+    ) -> anyhow::Result<PreferenceSnapshot> {
+        self.update_preferences(move |current| {
+            crate::backup::config::record_format(current, &target, format, time, ready)
         })
         .await
     }
@@ -378,12 +425,23 @@ impl Store {
         .await
     }
     pub async fn query(&self, query: MailQuery) -> anyhow::Result<MailPage> {
+        self.query_folder_projection(query, None).await
+    }
+    pub(crate) async fn query_folder_projection(
+        &self,
+        query: MailQuery,
+        projection: Option<(String, u64, Arc<crate::folder_actions::Review>)>,
+    ) -> anyhow::Result<MailPage> {
         self.run(move |c| {
             let transaction = c.transaction()?;
             let c = &transaction;
             read_moves::prepare(c, &query.project_moves)?;
             let plan = mail_query::Plan::new(c, &query)?;
             let (total, unread) = plan.counts(c)?;
+            let folder_count = if let Some((token, revision, review)) = &projection {
+                folder_projection::capture(c, token, review, *revision, &query)?;
+                Some(plan.affected_counts(c, token)?)
+            } else { None };
             let columns = if query.project_moves.is_empty() && !move_journal::has_projection(c)? { "data,unread,starred,folder,account,0" } else { "data,unread,starred,folder,account,messages.pending_move" };
             let (sql, mut values) = plan.ordered(columns);
             values.push((PAGE_SIZE as i64).into());
@@ -441,7 +499,14 @@ impl Store {
                 let pending: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM bulk_effects WHERE id=?)",[&mail.id],|r|r.get(0))?;
                 if pending { bulk_pending.insert(mail.id.clone()); }
             }
-            Ok(MailPage { move_pending_total:move_journal::pending(c)?, relocated, move_recovery, move_placeholders, rows, total, unread, inbox_unread, observed, bulk_pending, bulk_observed, bulk_placeholders: Default::default(), bulk_revision: get(c,"bulk_revision")? })
+            let page = MailPage { move_pending_total:move_journal::pending(c)?, relocated, move_recovery, move_placeholders, rows, total, unread, folder_count, inbox_unread, observed, bulk_pending, bulk_observed, bulk_placeholders: Default::default(), bulk_revision: get(c,"bulk_revision")? };
+            drop(stmt);
+            drop(statement);
+            if projection.is_some() {
+                read_moves::prepare(c, &[])?;
+                transaction.commit()?;
+            }
+            Ok(page)
         }).await
     }
     pub async fn detail(&self, id: String) -> anyhow::Result<MailDetail> {

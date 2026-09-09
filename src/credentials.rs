@@ -58,12 +58,15 @@ pub enum Scope {
     #[default]
     Legacy,
     Profile(uuid::Uuid),
+    /// Device-created namespace. Portable account/profile input never selects it.
+    CacheRoot(uuid::Uuid),
 }
 impl Scope {
     fn key(&self, id: &str) -> String {
         match self {
             Self::Legacy => id.to_owned(),
             Self::Profile(profile) => format!("profile:{profile}:{id}"),
+            Self::CacheRoot(root) => format!("cache-root:{root}:{id}"),
         }
     }
 }
@@ -72,6 +75,7 @@ enum Operation {
     Read,
     Write(SecretString),
     RestoreMissing(SecretString),
+    ReadOrCreate(SecretString),
     Delete,
 }
 struct Request {
@@ -155,6 +159,18 @@ impl Credentials {
         self.call(id, Operation::RestoreMissing(secret)).await?;
         Ok(())
     }
+    /// A data-root owner must exclude other processes before calling this.
+    /// One admitted worker job preserves an existing key and verifies storage
+    /// before any caller can use a newly generated key to encrypt local data.
+    pub(crate) async fn read_or_create(
+        &self,
+        id: &str,
+        candidate: SecretString,
+    ) -> anyhow::Result<SecretString> {
+        self.call(id, Operation::ReadOrCreate(candidate))
+            .await?
+            .context("The credential service did not confirm the new cache key. No database was encrypted.")
+    }
     pub async fn delete(&self, id: &str) -> anyhow::Result<()> {
         self.call(id, Operation::Delete).await?;
         Ok(())
@@ -199,6 +215,20 @@ fn execute(
             if backend.read(key)?.is_none() {
                 backend.write(key, value)?;
             }
+        }
+        Operation::ReadOrCreate(value) => {
+            if let Some(existing) = backend.read(key)? {
+                return Ok(Some(existing));
+            }
+            backend.write(key, value.clone())?;
+            let saved = backend.read(key)?.context(
+                "The cache key was not saved by the credential service. No database was encrypted.",
+            )?;
+            anyhow::ensure!(
+                saved.expose_secret() == value.expose_secret(),
+                "The credential service returned a different cache key. No database was encrypted."
+            );
+            return Ok(Some(saved));
         }
         Operation::Delete => backend.delete(key)?,
     }

@@ -129,6 +129,28 @@ The full product goal is still active. Keep [docs/COMPLETION.md](docs/COMPLETION
 
 The cache worker exposed a bundled SQLite 3.51.1 Unix WAL open/close deadlock in the existing notification restart test. A debugger trace showed opposite inode/global mutex acquisition inside SQLite itself. Use the updated bundled SQLite (3.53.2 through rusqlite 0.40.2); do not restore 3.51.1 or hide the fault with an application lock. Preserve `partial_initial_import_stays_quiet_across_restart_then_new_mail_alerts_once` and the cache/worker close tests. See SQLite's [3.51.2 deadlock fix](https://www.sqlite.org/releaselog/3_51_2.html) and [3.51.3 WAL fix](https://www.sqlite.org/releaselog/3_51_3.html). This was fixture evidence, not a diagnosis of the personal account's remaining delays.
 
+The R22 foundation uses vendored SQLCipher 4.19 / SQLite 3.53.4 without
+activating existing-cache migration yet. Preserve its source hashes, licenses and
+`vendor/libsqlite3-sys/shep-lifecycle.patch`: automatic process-exit/finalizer
+cleanup freed codec state beneath a channel-owned cache worker, reproduced as
+SIGSEGV in the saved subprocess/GDB fixture. The static build omits those global
+exit handlers and initializes OpenSSL before its first RNG call; explicit
+`sqlite3_shutdown()` still cleans up after all connections close. Keep the exit
+read, OpenSSL positive control, explicit shutdown/reinitialize, keyed WAL,
+wrong-key/corruption, staged migration and scratch drain/reopen regressions.
+Preserve the native temporary-storage policy: default/plain connections use FILE;
+a keyed main forces MEMORY even after an authorizer change, while keying scratch
+alone does not change a plain main. Keep the VFS spill positive/negative controls.
+Do not activate keyed startup before unbounded selection/catalog summaries and
+recovered-view automatic indexes have bounded encrypted scratch plans.
+Selection/frozen-review scratch lives in a private attached encrypted database;
+its connection must close before the owning temporary directory is removed.
+Shared ancestry uses transaction-cleared indexed main-database scratch with a
+bounded frontier. Finish legacy publication/recovery, remaining sorter/temp
+paths, profile catalog/portable transfer routing and native key recovery before
+activating encryption for personal data. See
+[the encryption boundary](docs/agents/CACHE_ENCRYPTION.md).
+
 The software renderer is patched through `vendor/iced_tiny_skia` (released iced 0.14.0, MIT). Cached dropdown text must intersect its own viewport with the damaged layer, and raw text must reset a shared clip mask after preceding text. Shadows must honor damage/layer clipping and include their full bounds in invalidation, including when only the shadow intersects the changed area. Otherwise moving or scrolled controls leave stray pixels that only a full repaint clears. Keep `tests/software_rendering.rs`, the filtered-preferences and scrolled mail-drag native regressions when updating iced; remove the patch only after these pass upstream. The release archive includes the vendor license and patch provenance. Do not edit the Cargo registry cache or replace partial redraws with continuous full-window redraws to hide defects.
 
 Multi-selection storage lives in `store/selection.rs`; native controls in `ui/mail_selection.rs` use their own bounded FIFO channel in `engine/selections.rs`. Native group actions use frozen reviews and the durable journal described below. Keep shipping and remaining verification status in the completion log. `store/mail_query.rs` owns the common scope/ranking plan for inbox pages and captured membership. Keep selected IDs/ranks in SQLite and return at most one metadata page to iced. The controller keeps one request in flight and at most 32 pending gestures, projects visible selection immediately, and releases an abandoned snapshot before capturing a new scope. Scope changes clear selection immediately; page changes preserve it. New arrivals do not silently join a selection, but another explicit Select All captures them. Clear unchecks messages; Done/Escape exits selection mode. Checkbox/modifier gestures must not mark mail as read. Select All is remappable and scoped to the native field focus captured with its key and the controller pane scope when dispatching that key. Preserve normal text Ctrl+A, sidebar focus and double-click reading.
@@ -187,7 +209,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 199 functional flows plus the navigation and HTML pixel performance gates; distinguish selected reruns from full-suite evidence in the completion log.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite discovers functional flows in `scripts/e2e.py` alongside separate navigation and HTML pixel performance gates; distinguish selected reruns from full-suite evidence in the completion log.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -1391,3 +1413,14 @@ advances virtual time only after the SSH handshake, verifies visible timeout and
 recovery, and must not write a backup file before setup succeeds. Keep host-key
 verification before authentication and never use keepalive activity as proof that
 a requested operation is progressing.
+
+
+Shared connection reviews live in `profile_sync/account_reviews.rs` and
+`store/profile_sync/account_reviews.rs`. Keep native account identities separate
+when adopting changed endpoints: preserve the previous account/mail/credentials
+as local-only and add a fresh account requiring reconnect. Freeze history versions,
+native edit generations and Google/consent revisions; reserve native identity and
+pending shared operation in one transaction before history admission. Preserve
+restart/lost-reply, stale native/history/Google/removal, UID collision and real
+native Keep/Add/compact review regressions. Remote removal reviews are separate;
+never revive a tombstoned account through an old connection review.

@@ -408,3 +408,78 @@ async fn multiple_backup_form_save_preserves_remote_preferences_and_other_target
     assert!(saved.backup_destinations[0].ready);
     assert_eq!(saved.backup_destinations[1].last_backup, None);
 }
+
+#[tokio::test]
+async fn backup_format_receipts_and_stale_settings_preserve_new_setup_requirements() {
+    use shep::backup::{BackupTarget, config, format};
+    for multiple in [false, true] {
+        let store = Store::memory().unwrap();
+        let mut prefs = Preferences {
+            backup_folder: "/format-race".into(),
+            ..Default::default()
+        };
+        if multiple {
+            config::add(&mut prefs).unwrap();
+            let first = prefs.backup_destinations[0].id.clone();
+            config::select(&mut prefs, &first).unwrap();
+        }
+        let target = BackupTarget::from_preferences(&prefs);
+        store.save_preferences(prefs.clone()).await.unwrap();
+        let acknowledged = store
+            .record_backup_format(target.clone(), format::Options::default(), 10, true)
+            .await
+            .unwrap();
+        prefs = acknowledged.value;
+        let old = prefs.clone();
+        prefs.backup_format.protection = format::Protection::None;
+        let edited = store.save_preferences(prefs).await.unwrap().value;
+        assert!(!edited.backup_ready);
+        let late = store
+            .record_backup_format(target.clone(), old.backup_format, 20, true)
+            .await
+            .unwrap()
+            .value;
+        assert_eq!(late.backup_format, edited.backup_format);
+        assert!(!late.backup_ready);
+        assert_eq!(late.last_backup, Some(20));
+        let ready = store
+            .record_backup_format(target.clone(), edited.backup_format, 30, true)
+            .await
+            .unwrap()
+            .value;
+        assert!(ready.backup_ready);
+        // An older receipt must not revoke setup of the currently chosen format.
+        let late = store
+            .record_backup_format(target, old.backup_format, 40, false)
+            .await
+            .unwrap()
+            .value;
+        assert!(late.backup_ready);
+        if multiple {
+            assert!(late.backup_destinations[0].ready);
+            assert_eq!(late.backup_destinations[0].format, edited.backup_format);
+        }
+    }
+}
+
+#[test]
+fn backup_format_old_scalar_and_collection_settings_keep_encrypted_compressed_defaults() {
+    let mut prefs = Preferences {
+        backup_folder: "/legacy-backup".into(),
+        ..Default::default()
+    };
+    shep::backup::config::add(&mut prefs).unwrap();
+    let mut json = serde_json::to_value(&prefs).unwrap();
+    json.as_object_mut().unwrap().remove("backup_format");
+    for d in json["backup_destinations"].as_array_mut().unwrap() {
+        d.as_object_mut().unwrap().remove("format");
+    }
+    let loaded: Preferences = serde_json::from_value(json).unwrap();
+    assert!(loaded.backup_format.encrypted() && loaded.backup_format.compressed());
+    assert!(
+        loaded
+            .backup_destinations
+            .iter()
+            .all(|d| d.format.encrypted() && d.format.compressed())
+    );
+}

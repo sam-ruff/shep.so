@@ -202,6 +202,7 @@ impl App {
 
     pub(super) fn begin_backup_request(&mut self, action: BackupAction) {
         if let BackupAction::Save(secret) = &action
+            && self.preferences.backup_format.encrypted()
             && secret.expose_secret().chars().count() < 12
         {
             self.backup_validation_error("Use a backup passphrase of at least 12 characters.");
@@ -387,12 +388,13 @@ impl App {
             self.backup_run_generation += 1;
             let target = destination.target(&self.preferences);
             let ready = crate::backup::config::resolve(&self.workspace.preferences, &target)
-                .is_ok_and(|p| p.backup_ready);
+                .is_ok_and(|p| p.backup_ready && p.backup_format == destination.format);
             let status = if ready {
                 Status::SavingPreferences
             } else {
                 Status::NeedsSetup(
-                    "Save the first copy with a passphrase in this destination's setup.".into(),
+                    "Save the first copy with the chosen options in this destination's setup."
+                        .into(),
                 )
             };
             let row = RunRow {

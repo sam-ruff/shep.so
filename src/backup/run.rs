@@ -28,7 +28,7 @@ impl Status {
         match self {
             Self::SavingPreferences => "Saving settings…",
             Self::Queued => "Queued…",
-            Self::Preparing => "Preparing encrypted copy…",
+            Self::Preparing => "Preparing copy…",
             Self::Uploading => "Uploading…",
             Self::Finishing => "Saving receipt and keeping rolling copies…",
             Self::Saved => "Backup saved",

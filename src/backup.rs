@@ -1,5 +1,6 @@
 pub mod config;
 mod drive;
+pub mod format;
 pub mod ftp;
 pub(crate) mod journal;
 pub(crate) mod restore;
@@ -245,6 +246,10 @@ pub(crate) fn verify_passphrase(bytes: &[u8], passphrase: &SecretString) -> anyh
 }
 
 pub fn decrypt(bytes: &[u8], passphrase: &SecretString) -> anyhow::Result<Snapshot> {
+    format::decode(bytes, Some(passphrase))
+}
+
+fn decrypt_legacy(bytes: &[u8], passphrase: &SecretString) -> anyhow::Result<Snapshot> {
     let compressed = decrypt_compressed(bytes, passphrase)?;
     let mut decoded = Zeroizing::new(Vec::new());
     zstd::Decoder::new(compressed.as_slice())?

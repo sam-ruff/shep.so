@@ -10,6 +10,8 @@ type Job = Box<dyn FnOnce(&mut Owner) + Send>;
 
 struct Owner {
     connection: Connection,
+    // Drop after the connection, including when the final observer cancelled.
+    _scratch: Option<tempfile::TempDir>,
     leases: HashMap<String, oneshot::Receiver<()>>,
 }
 
@@ -24,19 +26,38 @@ pub(super) struct Lease {
 }
 
 impl Worker {
+    #[cfg(test)]
     pub fn new(connection: Connection) -> anyhow::Result<Self> {
         Self::named(connection, "shep-mail-cache")
     }
 
     pub fn named(connection: Connection, name: &'static str) -> anyhow::Result<Self> {
+        Self::start(connection, name, None)
+    }
+
+    pub fn with_scratch(
+        connection: Connection,
+        scratch: Option<tempfile::TempDir>,
+    ) -> anyhow::Result<Self> {
+        Self::start(connection, "shep-mail-cache", scratch)
+    }
+
+    fn start(
+        connection: Connection,
+        name: &'static str,
+        scratch: Option<tempfile::TempDir>,
+    ) -> anyhow::Result<Self> {
         let (commands, mut input) = mpsc::channel::<Job>(CAPACITY);
+        // Bundle resources before spawning so failure to create the thread
+        // follows the same connection-before-scratch drop order as normal exit.
+        let mut owner = Owner {
+            connection,
+            _scratch: scratch,
+            leases: HashMap::new(),
+        };
         std::thread::Builder::new()
             .name(name.into())
             .spawn(move || {
-                let mut owner = Owner {
-                    connection,
-                    leases: HashMap::new(),
-                };
                 while let Some(job) = input.blocking_recv() {
                     job(&mut owner);
                 }

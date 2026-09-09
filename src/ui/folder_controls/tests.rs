@@ -4,7 +4,7 @@ use crate::{
     store::Store,
 };
 
-async fn fixture() -> (App, Store, tokio::sync::mpsc::Receiver<Command>) {
+pub(super) async fn fixture() -> (App, Store, tokio::sync::mpsc::Receiver<Command>) {
     let store = Store::memory().unwrap();
     for account in ["a", "b"] {
         let config:Account=serde_json::from_value(serde_json::json!({"id":account,"name":account,"email":format!("{account}@example.test"),"protocol":"Imap","host":"localhost","port":993,"username":account,"smtp_host":"localhost","smtp_port":465})).unwrap();
@@ -32,7 +32,7 @@ async fn fixture() -> (App, Store, tokio::sync::mpsc::Receiver<Command>) {
     app.query.folder = "Projects".into();
     (app, store, commands)
 }
-async fn prepare(app: &mut App, store: &Store, action: Change) -> Arc<Preview> {
+pub(super) async fn prepare(app: &mut App, store: &Store, action: Change) -> Arc<Preview> {
     let review = store
         .folder_review("a".into(), "Projects".into(), action.clone())
         .await
@@ -50,7 +50,25 @@ async fn prepare(app: &mut App, store: &Store, action: Change) -> Arc<Preview> {
             ))
         })
         .collect();
+    let projection = if action == Change::Delete {
+        let token = uuid::Uuid::new_v4().to_string();
+        let page = Arc::new(
+            store
+                .query_folder_projection(
+                    app.folder_count_query(),
+                    Some((token.clone(), app.generation, Arc::new(review.clone()))),
+                )
+                .await
+                .unwrap(),
+        );
+        app.set_mail_page(page.clone());
+        Some((token, page))
+    } else {
+        None
+    };
     let preview = Arc::new(Preview {
+        generation: app.generation,
+        projection,
         review: Arc::new(review),
         tree: Arc::new(tree),
         originals,
@@ -72,7 +90,7 @@ async fn move_projection_browses_original_cache_and_rolls_back_without_waiting()
     )
     .await;
     app.handle_folders(Message::Submit);
-    let Command::Folder(Request::Start(id, _)) = commands.try_recv().unwrap() else {
+    let Command::Folder(Request::Start(id, _, _)) = commands.try_recv().unwrap() else {
         panic!("Wrong queue")
     };
     assert!(app.folder_tree("a").unwrap().node("Projects").is_none());
@@ -100,7 +118,7 @@ async fn rejected_delete_restores_origin_but_preserves_later_account_navigation(
         let (mut app, store, mut commands) = fixture().await;
         prepare(&mut app, &store, Change::Delete).await;
         app.handle_folders(Message::Submit);
-        let Command::Folder(Request::Start(id, _)) = commands.try_recv().unwrap() else {
+        let Command::Folder(Request::Start(id, _, _)) = commands.try_recv().unwrap() else {
             panic!()
         };
         assert_eq!(app.query.folder, "INBOX");
@@ -202,7 +220,7 @@ async fn folder_rollback_does_not_steal_a_later_visit_to_the_same_inbox() {
     let (mut app, store, mut commands) = fixture().await;
     prepare(&mut app, &store, Change::Delete).await;
     app.handle_folders(Message::Submit);
-    let Command::Folder(Request::Start(id, _)) = commands.try_recv().unwrap() else {
+    let Command::Folder(Request::Start(id, _, _)) = commands.try_recv().unwrap() else {
         panic!()
     };
     app.query.folder = "Teams".into();
@@ -323,7 +341,7 @@ async fn combined_folder_choices_browse_pending_sources_and_follow_only_committe
         )
         .await;
         app.handle_folders(Message::Submit);
-        let Command::Folder(Request::Start(id, _)) = commands.try_recv().unwrap() else {
+        let Command::Folder(Request::Start(id, _, _)) = commands.try_recv().unwrap() else {
             panic!("Expected reviewed folder change");
         };
         let mut job = store
@@ -388,4 +406,39 @@ async fn combined_folder_choices_browse_pending_sources_and_follow_only_committe
         let page = store.query(app.query.clone()).await.unwrap();
         assert_eq!((page.total, page.unread), (3, 3));
     }
+}
+
+#[tokio::test]
+async fn delete_review_requires_current_page_and_cancel_releases_its_snapshot() {
+    let (mut app, store, _) = fixture().await;
+    let preview = prepare(&mut app, &store, Change::Delete).await;
+    let token = preview.projection.as_ref().unwrap().0.clone();
+    let (tx, mut reads) = engine::CommandSender::foreground_test_channel();
+    app.tx = Some(tx);
+    app.generation += 1;
+    app.handle_folders(Message::Submit);
+    assert!(app.folder_controls.pending.is_empty());
+    assert!(app.folder_controls.preview.is_none());
+    assert!(app.folder_controls.loading);
+    assert!(
+        matches!(reads.try_recv(), Ok(Command::Folder(Request::Release(value))) if value == token)
+    );
+    assert!(matches!(
+        reads.try_recv(),
+        Ok(Command::Folder(Request::Review(..)))
+    ));
+    app.folder_event(FolderEvent::Review(
+        app.folder_controls.serial - 1,
+        Ok(preview),
+    ));
+    assert!(app.folder_controls.preview.is_none());
+    assert!(
+        matches!(reads.try_recv(), Ok(Command::Folder(Request::Release(value))) if value == token)
+    );
+    store.release_folder_projection(token).await.unwrap();
+    let current = prepare(&mut app, &store, Change::Delete).await;
+    app.release_folder_preview();
+    assert!(
+        matches!(reads.try_recv(), Ok(Command::Folder(Request::Release(value))) if value == current.projection.as_ref().unwrap().0)
+    );
 }

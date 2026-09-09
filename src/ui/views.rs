@@ -1684,7 +1684,9 @@ impl App {
     fn backup_settings(&self) -> Element<'_, Message> {
         let target = self.configured_backup_target();
         let saved = crate::backup::config::resolve(&self.workspace.preferences, &target).ok();
-        let ready = saved.as_ref().is_some_and(|p| p.backup_ready);
+        let ready = saved
+            .as_ref()
+            .is_some_and(|p| p.backup_ready && p.backup_format == self.preferences.backup_format);
         let last_backup = saved.and_then(|p| p.last_backup);
         let mut form = column![
             row![
@@ -1718,7 +1720,8 @@ impl App {
                     .contains(&destination.target(&self.preferences).work_key())
                 {
                     "Working…"
-                } else if destination.automatic && destination.ready {
+                } else if destination.automatic && if selected { ready } else { destination.ready }
+                {
                     "Automatic"
                 } else if destination.automatic {
                     "Needs setup"
@@ -1865,18 +1868,61 @@ impl App {
                     .text_size(12),
             );
         if self.preferences.auto_backup && !ready {
-            form = form.push(container(muted("Finish setup: enter a passphrase and choose Back up now. Automatic backups start after that copy is saved and the passphrase is stored in your OS keychain.").size(12)).padding(12).style(subtle));
+            form = form.push(container(muted("Finish setup with Back up now. Automatic backups start after a copy with these options is saved.").size(12)).padding(12).style(subtle));
         }
-        form = form.push(checkbox(self.preferences.backup_accounts).label("Include account passwords in the encrypted backup").on_toggle(Message::BackupAccounts).text_size(12))
-        .push(form_field("Backup passphrase", "At least 12 characters", self.field("passphrase"), "passphrase", true))
-        .push(muted("Keep the passphrase somewhere safe for restoring. A successful copy also stores it in your OS keychain for this destination. Google tokens are never included. Current snapshot limit: 256 MiB of mail.").size(11))
-        .push(row![action("Save backup preferences", Message::SavePreferences),
-            button(text(if self.backup_busy() { "Backing up…" } else { "Back up now" }).size(12)).padding([11,17]).style(primary)
-                .on_press_maybe((!self.backup_busy() && self.pending_backup.is_none()).then_some(Message::Backup))
-        ].spacing(12))
-        .push(if let Some(time) = last_backup {
-            muted(format!("Last backup: {}", chrono::DateTime::from_timestamp(time,0).unwrap_or_default().with_timezone(&chrono::Local).format("%d %b %Y at %H:%M")))
-        } else { muted("No successful backup at this destination yet.") });
+        form = form.push(
+            row![
+                checkbox(self.preferences.backup_format.compressed())
+                    .label("Compress copies")
+                    .on_toggle(Message::BackupCompression)
+                    .text_size(12),
+                checkbox(self.preferences.backup_format.encrypted())
+                    .label("Encrypt with a passphrase")
+                    .on_toggle(Message::BackupEncryption)
+                    .text_size(12)
+            ]
+            .spacing(24),
+        );
+        if self.preferences.backup_format.encrypted() {
+            form = form.push(checkbox(self.preferences.backup_accounts).label("Include account passwords in the encrypted backup").on_toggle(Message::BackupAccounts).text_size(12))
+                .push(form_field("Backup passphrase", "At least 12 characters", self.field("passphrase"), "passphrase", true))
+                .push(muted("Keep the passphrase for restoring. A successful copy stores it in your OS keychain for this destination. Google tokens are never included.").size(11));
+        } else {
+            form = form.push(container(muted("These copies are not encrypted. Anyone with file access can read your mail and account settings. Account passwords are excluded.").size(12)).padding(12).style(subtle));
+        }
+        form = form
+            .push(muted("Current snapshot limit: 256 MiB of mail.").size(11))
+            .push(
+                row![
+                    action("Save backup preferences", Message::SavePreferences),
+                    button(
+                        text(if self.backup_busy() {
+                            "Backing up…"
+                        } else {
+                            "Back up now"
+                        })
+                        .size(12)
+                    )
+                    .padding([11, 17])
+                    .style(primary)
+                    .on_press_maybe(
+                        (!self.backup_busy() && self.pending_backup.is_none())
+                            .then_some(Message::Backup)
+                    )
+                ]
+                .spacing(12),
+            )
+            .push(if let Some(time) = last_backup {
+                muted(format!(
+                    "Last backup: {}",
+                    chrono::DateTime::from_timestamp(time, 0)
+                        .unwrap_or_default()
+                        .with_timezone(&chrono::Local)
+                        .format("%d %b %Y at %H:%M")
+                ))
+            } else {
+                muted("No successful backup at this destination yet.")
+            });
         if self.preferences.backup_destinations.is_empty() {
             form = form.push(action("Add destination", Message::AddBackupDestination));
         }
@@ -2326,7 +2372,7 @@ impl App {
                 .push(text(self.field("backup_name")).font(BOLD))
                 .push(muted("This stops its schedule and removes these settings. Saved copies and pending upload receipts are kept; adding the same destination again can recover them."))
                 .push(row![action("Keep destination", Message::Close), button(text("Remove destination").size(12)).padding([12,18]).style(destructive).on_press(Message::RemoveBackupDestination)].spacing(10)),
-            Dialog::Restore=>body=body.push(form_field("Backup passphrase","Enter the original passphrase",self.field("passphrase"),"passphrase",true)).push(muted("Existing mail, connection settings and passwords are kept. Missing account passwords are filled from the copy when available. Google sign-in and preferences stay unchanged.").size(11)).push(row![action("Cancel",Message::Close),button(text("Restore & merge").size(12)).padding([12,18]).style(primary).on_press(Message::ConfirmRestore)].spacing(10)),
+            Dialog::Restore=>body=body.push(form_field("Passphrase · encrypted copies only","Leave blank for an unencrypted copy",self.field("passphrase"),"passphrase",true)).push(muted("Existing mail, connection settings and passwords are kept. Missing account passwords are filled from the copy when available. Google sign-in and preferences stay unchanged.").size(11)).push(row![action("Cancel",Message::Close),button(text("Restore & merge").size(12)).padding([12,18]).style(primary).on_press(Message::ConfirmRestore)].spacing(10)),
         }
         if let Some((notice, true, _)) = &self.notice
             && !matches!(dialog, Dialog::BulkHistory | Dialog::MoveRecovery)

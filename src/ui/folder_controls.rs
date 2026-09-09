@@ -1,5 +1,6 @@
 //! Native folder review and durable-operation feedback. Server work stays in the engine.
 use super::*;
+mod projection;
 use crate::engine::folders::{Destination, Event as FolderEvent, Preview, Request};
 use crate::folder_actions::{Action as Change, Job, Status, Step};
 use iced::{
@@ -35,6 +36,7 @@ pub(super) struct Menu {
 struct Pending {
     preview: Arc<Preview>,
     origin: MailQuery,
+    original_page: Arc<MailPage>,
     redirect: Option<MailQuery>,
     redirect_revision: u64,
     staging: bool,
@@ -42,6 +44,7 @@ struct Pending {
 #[derive(Default)]
 pub(super) struct State {
     pub menu: Option<Menu>,
+    retained_reader: Option<(String, u64)>,
     account: String,
     source: String,
     action: Option<Change>,
@@ -49,7 +52,7 @@ pub(super) struct State {
     query: String,
     filtered: Vec<usize>,
     preview: Option<Arc<Preview>>,
-    serial: u64,
+    pub(super) serial: u64,
     loading: bool,
     pub error: Option<String>,
     pending: HashMap<String, Pending>,
@@ -146,19 +149,7 @@ impl App {
                 state.options = Arc::default();
                 state.action = (index == 1).then_some(Change::Delete);
                 state.loading = true;
-                let request = if index == 1 {
-                    Request::Review(
-                        state.serial,
-                        state.account.clone(),
-                        state.source.clone(),
-                        Change::Delete,
-                    )
-                } else {
-                    Request::Options(state.serial, state.account.clone(), state.source.clone())
-                };
-                if !self.try_command(Command::Folder(request)) {
-                    self.folder_controls.loading = false;
-                }
+                self.handle_folders(Message::RefreshReview);
             }
             Message::Back => {
                 self.folder_controls.action = None;
@@ -179,6 +170,12 @@ impl App {
                 self.handle_folders(Message::RefreshReview);
             }
             Message::RefreshReview => {
+                self.release_folder_preview();
+                if self.folder_controls.action == Some(Change::Delete) {
+                    self.invalidate_action_snapshot();
+                }
+                let query = self.folder_count_query();
+                let generation = self.generation;
                 let state = &mut self.folder_controls;
                 let action = state.action.clone();
                 state.serial += 1;
@@ -191,6 +188,8 @@ impl App {
                         state.account.clone(),
                         state.source.clone(),
                         action,
+                        generation,
+                        Box::new(query),
                     )
                 } else {
                     Request::Options(state.serial, state.account.clone(), state.source.clone())
@@ -209,33 +208,32 @@ impl App {
                     }
                     return;
                 };
+                if preview.review.plan.action == Change::Delete
+                    && (preview.generation != self.generation
+                        || self.mail_actions.base_page.folder_count.is_none())
+                {
+                    self.handle_folders(Message::RefreshReview);
+                    return;
+                }
+                if self.folder_controls.pending.len() >= 32 {
+                    self.notice("Too many folder changes are pending. Wait for one to finish and try again.", true);
+                    return;
+                }
                 let id = uuid::Uuid::new_v4().to_string();
                 if !self.try_command(Command::Folder(Request::Start(
                     id.clone(),
                     preview.review.clone(),
+                    preview.projection.as_ref().map(|(token, _)| token.clone()),
                 ))) {
                     return;
                 }
                 self.resume_folder_close_barrier();
                 let origin = self.query.clone();
-                let affected = self.query.account.as_deref() == Some(&preview.review.account)
-                    && preview
-                        .review
-                        .plan
-                        .members
-                        .iter()
-                        .any(|m| m.mailbox.name == self.query.folder);
-                let redirect = if affected && preview.review.plan.action == Change::Delete {
-                    self.query.folder = "INBOX".into();
-                    self.query.folders = None;
-                    self.query.offset = 0;
-                    self.selected = None;
-                    self.detail = None;
-                    self.request_page();
-                    Some(self.query.clone())
-                } else {
-                    None
-                };
+                let original_page = self.mail_actions.base_page.clone();
+                let deleting = preview.review.plan.action == Change::Delete;
+                if deleting {
+                    self.query = self.query_without_deleted_folders(&self.query, &preview.review);
+                }
                 let mut reveal = Vec::new();
                 if let Change::Move {
                     parent: Some(parent),
@@ -248,17 +246,39 @@ impl App {
                     }
                 }
                 let reveal_account = preview.review.account.clone();
-                let deleting = preview.review.plan.action == Change::Delete;
                 self.folder_controls.pending.insert(
-                    id,
+                    id.clone(),
                     Pending {
                         preview,
                         origin,
-                        redirect,
+                        original_page,
+                        redirect: None,
                         redirect_revision: self.list_revision,
                         staging: true,
                     },
                 );
+                if deleting {
+                    let pending = &self.folder_controls.pending[&id];
+                    let excluded = pending
+                        .preview
+                        .review
+                        .plan
+                        .members
+                        .iter()
+                        .map(|member| FolderSelection {
+                            account: Some(pending.preview.review.account.clone()),
+                            folder: member.mailbox.name.clone(),
+                            sent_only: false,
+                        })
+                        .collect::<Vec<_>>();
+                    let counts = pending.original_page.folder_count.unwrap();
+                    self.remove_folder_rows(&excluded, counts);
+                    self.request_folder_page();
+                    if let Some(pending) = self.folder_controls.pending.get_mut(&id) {
+                        pending.redirect = Some(self.query.clone());
+                        pending.redirect_revision = self.list_revision;
+                    }
+                }
                 if !reveal.is_empty() {
                     self.preferences
                         .expanded_folders
@@ -394,6 +414,13 @@ impl App {
         self.folder_controls
             .history_updates
             .retain(|j| accounts.contains(j.review.account.as_str()));
+        let abandoned: Vec<_> = self
+            .folder_controls
+            .pending
+            .values()
+            .filter(|pending| !accounts.contains(pending.preview.review.account.as_str()))
+            .map(|pending| pending.preview.clone())
+            .collect();
         self.folder_controls
             .pending
             .retain(|_, p| accounts.contains(p.preview.review.account.as_str()));
@@ -418,6 +445,10 @@ impl App {
         {
             self.dialog = None;
             self.folder_controls.serial += 1;
+            self.release_folder_preview();
+        }
+        for preview in abandoned {
+            self.release_folder_projection(&preview);
         }
     }
     pub(super) fn folder_event(&mut self, event: FolderEvent) {
@@ -464,10 +495,23 @@ impl App {
             {
                 self.folder_controls.loading = false;
                 match result {
-                    Ok(preview) => self.folder_controls.preview = Some(preview),
+                    Ok(preview) => {
+                        if preview.review.plan.action == Change::Delete
+                            && preview.generation != self.generation
+                        {
+                            self.release_folder_projection(&preview);
+                            self.handle_folders(Message::RefreshReview);
+                            return;
+                        }
+                        if let Some((_, page)) = &preview.projection {
+                            self.set_mail_page(page.clone());
+                        }
+                        self.folder_controls.preview = Some(preview);
+                    }
                     Err(e) => self.folder_controls.error = Some(e),
                 }
             }
+            FolderEvent::Review(_, Ok(preview)) => self.release_folder_projection(&preview),
             FolderEvent::Started(id, result) => match result {
                 Ok(job) => {
                     if let Some(pending) = self.folder_controls.pending.get_mut(&id) {
@@ -488,12 +532,11 @@ impl App {
                         if self.folder_controls.history_action.as_deref() == Some(&id) {
                             self.folder_controls.history_action = None;
                         }
-                        if let Some(pending) = self.folder_controls.pending.remove(&id)
-                            && pending.redirect.as_ref() == Some(&self.query)
-                            && pending.redirect_revision == self.list_revision
-                            && !job.steps.iter().any(|step| step.status == Status::Done)
-                        {
-                            self.query = pending.origin;
+                        if let Some(pending) = self.folder_controls.pending.remove(&id) {
+                            self.release_folder_projection(&pending.preview);
+                            if job.steps.iter().any(|step| step.status != Status::Done) {
+                                self.rollback_folder_projection(pending, job.query_counts);
+                            }
                         }
                         let renamed = job.steps.iter().any(|s| {
                             s.status == Status::Done && matches!(s.step, Step::Rename { .. })
@@ -527,16 +570,27 @@ impl App {
                                 destination.clone().unwrap_or_else(|| "INBOX".into());
                         }
                         if let Some(folders) = &mut self.query.folders {
-                            for folder in folders
-                                .iter_mut()
-                                .filter(|f| f.account.as_deref() == Some(&job.review.account))
-                            {
-                                if let Some(destination) = mapping.get(&folder.folder) {
-                                    folder.folder =
-                                        destination.clone().unwrap_or_else(|| "INBOX".into());
+                            folders.retain_mut(|folder| {
+                                if folder.account.as_deref() == Some(&job.review.account)
+                                    && let Some(destination) = mapping.get(&folder.folder)
+                                {
+                                    let Some(destination) = destination else {
+                                        return false;
+                                    };
+                                    folder.folder = destination.clone();
                                 }
-                            }
+                                true
+                            });
                         }
+                        let removed: Vec<_> = deleted
+                            .iter()
+                            .map(|folder| FolderSelection {
+                                account: Some(job.review.account.clone()),
+                                folder: (*folder).clone(),
+                                sent_only: false,
+                            })
+                            .collect();
+                        self.remove_folder_rows(&removed, (0, 0));
                         let affected_reader = self.detail.as_ref().is_some_and(|detail| {
                             detail.summary.account_id == job.review.account
                                 && mapping.contains_key(&detail.summary.folder)
@@ -552,7 +606,7 @@ impl App {
                         self.detail_revision += 1;
                         self.detail_cache.clear();
                         self.pending_details.clear();
-                        self.request_page();
+                        self.request_folder_page();
                         let failed = job
                             .steps
                             .iter()
@@ -621,15 +675,11 @@ impl App {
         }
     }
     fn folder_failed(&mut self, id: String, error: String) {
-        if let Some(pending) = self.folder_controls.pending.remove(&id)
-            && pending.redirect.as_ref() == Some(&self.query)
-            && pending.redirect_revision == self.list_revision
-        {
-            self.query = pending.origin;
-            self.selected = None;
-            self.detail = None;
-            self.request_page();
+        if let Some(pending) = self.folder_controls.pending.remove(&id) {
+            self.release_folder_projection(&pending.preview);
+            self.rollback_folder_projection(pending, None);
         }
+        self.request_folder_page();
         self.pending_close = None;
         self.resume_folder_close_barrier();
         if self.folder_controls.history_action.as_deref() == Some(&id) {

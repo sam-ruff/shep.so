@@ -403,7 +403,7 @@ impl Remote {
         }
         self.sftp.close(handle).await.map_err(wire)?;
         anyhow::ensure!(
-            prefix == MAGIC,
+            super::format::recognized_prefix(&prefix),
             "This SFTP file is not a Shep backup. It was kept unchanged."
         );
         Ok(true)
@@ -457,7 +457,7 @@ impl Remote {
             }
         }
         anyhow::ensure!(
-            prefix == MAGIC,
+            super::format::recognized_prefix(&prefix),
             "This SFTP file is not a Shep backup. It was kept unchanged."
         );
         anyhow::ensure!(
@@ -501,7 +501,9 @@ impl BackupProvider for SftpBackup {
     ) -> anyhow::Result<()> {
         upload.verify(data)?;
         anyhow::ensure!(
-            upload.id == upload.name && valid_name(&upload.id) && data.starts_with(MAGIC),
+            upload.id == upload.name
+                && valid_name(&upload.id)
+                && super::format::recognized_prefix(data),
             "Invalid SFTP backup reservation."
         );
         let remote = self.connect().await?;
