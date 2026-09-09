@@ -16,11 +16,20 @@ first, then platform trays). Keep each Cargo target separate. Coordinate quiet
 native windows; coding continues while builds are paused.
 
 The primary workspace connects continuous profile publication/application and
-per-field preference merging. Its native and shipping checks are underway;
+per-field preference merging, shipped in `bd50c52`. Refresh lane `f111282` was
+integrated/pushed as `d29ce06`. Native evidence and the intermittent GTK picker
+readiness issue are in the newest completion entry;
 conflict/removal/endpoint controls, account linking, incremental pulls and
 credential protection still remain. Do not discard any lane's uncommitted work.
 
 ## Current source checkpoint
+
+`bd50c52` and `d29ce06` are pushed: continuous safe profile updates, durable native
+edit generations and slower clockwise manual refresh. Root integrated the agent
+refresh commit after reviewed native evidence. R87 is complete. The next profile
+work is account linking/conflict/removal/endpoint reviews and incremental pulls;
+all active worktrees must be preserved. See the newest completion entry for exact
+checks and the isolated GTK picker failure/retries.
 
 `acb4969` is pushed to main and connects post-login discovery/enrollment. A single
 complete profile imports automatically into an untouched workspace; first setup,

@@ -2,8 +2,10 @@
 
 9 September continuous profile checkpoint (R02/R49/R92): background receipt, local
 publication and native field-generation reconciliation now have source/tests.
-Shipping and remaining interoperability/review work are recorded in the completion
-log and TODO; this is not full OAuth/profile completion.
+Source `bd50c52` is pushed; remaining interoperability/review work and the native
+picker readiness limitation are recorded in the completion log and TODO. This is
+not full OAuth/profile completion. R87 is delivered in integrated agent commit
+`d29ce06`, with direction, pacing and native-control evidence reviewed.
 
 9 September parallel delivery request (R93): independent agents now own isolated
 worktrees, with the primary agent responsible for tested integration into main.
@@ -121,7 +123,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R84 | Search should search other folders, not just Inbox | Delivered in a81d767, installed/pushed: account-scoped search across cached folders, result locations, matching selection/relevance scopes, and storage/native search/move/bulk/clear/account/compact-layout tests. All 167 native functional scenarios pass. |
 | R85 | Conserve credits: write handover.md, clean TODO and push current project changes | Completed by the handover push; verification and checkpoint identity in COMPLETION.md. Full product remains unfinished |
 | R86 | Native close-to-tray; follow-up: temporarily use tray while saving even when ordinary close-to-tray is disabled, notify and quit after saving | Initially tracked only during handover; follow-up behavior recorded in TODO with reopening/failure recovery. Not implemented yet |
-| R87 | Refresh icon should spin more slowly and clockwise; add to TODO and push | Backlog only; animation behavior unchanged in this documentation commit |
+| R87 | Refresh icon should spin more slowly and clockwise; add to TODO and push | Delivered in `d29ce06`: 2.4-second clockwise turn; renderer and seven native scenarios pass; see completion log. |
 | R88 | Remove sender icons/avatars for shorter compact email-list rows, retain action buttons; unread highlight, dot and bold subject | Recorded in TODO with the supplied horizontal-row reference described; no UI implementation yet |
 | R89 | Deleting a message should select the next message down and keep the list from snapping to the top | Recorded in TODO; preserve scroll/current ordering and selection through background completion. No behavior change yet |
 | R90 | Sync/close seems excessively slow; investigate and fix any bug | `34cfc71`: channel-owned account scheduling interrupts held read-only sync for read/flag writes while preserving cache commits; 528 Rust/adapter, 49 Python and 185/185 native functional tests. Pending-save tray and remaining personal-server diagnosis stay open |
