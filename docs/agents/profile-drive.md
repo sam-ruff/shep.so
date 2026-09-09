@@ -1,6 +1,6 @@
 # Profile records on Google Drive
 
-`profile_sync` implements transport, causal history and native first/new-device enrollment for the [shared profile format](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_FORMAT.md). Preferences supports creating a profile or reviewing/importing an existing one, with saved category choices and recovery. Continuous updates remain open in [TODO](https://github.com/sam-ruff/shep.so/blob/main/TODO.md).
+`profile_sync` implements transport, causal history and native first/new-device enrollment for the [shared profile format](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_FORMAT.md). Preferences supports creating a profile or reviewing/importing an existing one, with saved category choices and recovery. An ongoing cycle now publishes local edits and applies safe remote preferences, account names and new account definitions. Conflict/removal/endpoint reviews and other remaining work stay in [TODO](https://github.com/sam-ruff/shep.so/blob/main/TODO.md).
 
 ## Shared codec
 
@@ -98,9 +98,8 @@ and unread badges. Device fields and backend metadata stay unchanged. Shared
 preview-line values/extensions remain in history; other portable settings still
 need shared-contract support and native implementation.
 
-Ongoing account change/removal reviews, local change capture, conflict resolution
-and enrolled-device incremental polling are not connected yet. A successful initial seed is not proof that later local edits
-have synced. Password transfer still requires the outstanding protection choice.
+Account endpoint/removal reviews, conflict resolution
+and enrolled-device incremental polling remain open. Initial enrollment is separate from a verified later publication. Password transfer still requires the outstanding protection choice.
 
 ## Verification boundary
 
@@ -189,7 +188,7 @@ reconnect marker; database import archives the source-device join mapping.
 A saved review UUID makes retry after a lost acceptance acknowledgment idempotent.
 Newer local preferences/categories or Google lifecycle reject unapplied reviews.
 Read cancellation remains interruptible; admitted application commits drain before
-close. Continuous updates, account linking
+close. Account linking
 between already-populated devices, conflict/removal controls and protected password
 transfer still need implementation. Real cross-client Google visibility is unverified.
 
@@ -209,8 +208,8 @@ reply can describe newer history, so its revision alone cannot advance the local
 basis. Category pauses retain the original pending request; admitted receipts
 drain without restoring older options or local values.
 
-These APIs and their restart/conflict regressions prepare ongoing sync; the
-periodic publication/application loop and conflict controls are still unfinished.
+The periodic loop uses these APIs. Conflict controls still need implementation;
+conflicted edits retain their exact requests while unrelated fields progress.
 Old profiles without a trustworthy common basis require recovery review, not an
 assumed snapshot of today's cloud values. Existing unmapped local accounts require
 explicit linking; local-only removal must not publish a shared tombstone.
@@ -240,4 +239,31 @@ Desktop applies eight shared settings, including Tooltips. Swipe actions, sender
 pictures and preview-line count have no matching native setting yet; their
 validated values stay in history and are neither overwritten nor counted as
 applied preferences. This is format and fixture interoperability; actual
-cross-client Google OAuth/app-data access and continuous updates remain open.
+cross-client Google OAuth/app-data access remains unverified.
+
+
+## Ongoing device updates
+
+The existing bounded coordinator runs one cycle at a time. After enrollment it
+checks after two seconds, then every 30 seconds; failure backs off for 60 seconds.
+**Sync now** retries immediately. Disable the profile or either category in the
+same card; Stop pauses the current session. Read-only work cancels on close, while
+an admitted history/cache/upload write retains ownership through its receipt.
+
+Before pulling, the cache owner captures exact local field intent and the history
+owner admits it. Deferred conflicts/category pauses keep their original UUID and
+basis. Remote application rechecks the selected profile, Google lifecycle,
+category and each current native value in its transaction. A racing local edit
+keeps its earlier basis. Typed native preference writes change only touched shared
+fields, including deliberate reversions while earlier writes are pending.
+The cache also persists per-field native edit generations, including account
+names. Returning to an earlier value during a pull is still a new intent. History
+receipts acknowledge their captured generation; remote application cannot erase
+a later reversion. Database import archives these source-device generations.
+
+New shared accounts get fresh local UUIDs and require Reconnect. Names can update;
+changed existing endpoints and removals retain local accounts for review. No
+existing credential is sent to a downloaded server. Unsupported settings remain in
+history. Account linking, endpoint/removal/conflict review controls, incremental
+history downloads, remaining portable settings and protected credentials remain
+unfinished. Full-history checks and fixture success are not live Google evidence.

@@ -32,6 +32,7 @@ pub enum Request {
     },
     Discover(u64),
     AfterLogin(u64),
+    Sync(u64),
     AutoJoin {
         request: u64,
         review: Arc<Discovery>,
@@ -51,6 +52,7 @@ impl Request {
             Self::Status(id)
             | Self::Discover(id)
             | Self::AfterLogin(id)
+            | Self::Sync(id)
             | Self::Resume(id)
             | Self::Stop(id) => *id,
             Self::AutoJoin { request, .. }
@@ -78,6 +80,10 @@ pub enum Update {
     Published(Arc<Snapshot>),
     JoinReview(Arc<super::join::Review>),
     Joined(Arc<Snapshot>),
+    Synced {
+        snapshot: Arc<Snapshot>,
+        report: super::continuous::Report,
+    },
     Failed(String),
     Stopped,
 }

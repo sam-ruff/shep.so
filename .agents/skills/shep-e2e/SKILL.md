@@ -663,3 +663,16 @@ workspace review, failed discovery/retry, compact dark prompt dismissal and clos
 `options.discover_on_login` through state; all actions use real controls. An
 automatic result must not change the active tab. Review prompt and import WebPs.
 These are after-sign-in fixture tests, not live Google or cross-client evidence.
+
+
+Continuous profile scenarios use `existing-updates`, `existing-update-failure`
+and `existing-upload-failure`.
+Both seed one complete profile, then publish a fictional second-device operation
+on the next enrolled-history check: a new account and Tooltips preference. The
+failure mode rejects the first ongoing list; native Sync now retries it. This is
+an owned HTTP fixture, never a direct application-state mutation or real Google
+request. Preserve all `test_profile_continuous_native_*` equivalents: background
+application while Mail remains open, local publication/restart, offline recovery,
+and received changes remaining visible when a later upload fails. The upload
+failure retains its exact queued operation across restart. Read owned checkpoints only after graceful
+close. Review the actual Preferences/reconnect/error screenshots.

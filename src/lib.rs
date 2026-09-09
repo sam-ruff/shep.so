@@ -14,6 +14,7 @@ pub mod message_find;
 pub mod model;
 pub mod notifications;
 pub mod outgoing;
+pub mod preference_edits;
 pub mod printing;
 pub mod profile_sync;
 pub mod profiles;

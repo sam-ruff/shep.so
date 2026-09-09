@@ -9,10 +9,12 @@ use iced::{
     Alignment, Length,
     widget::{button, checkbox, column, row, space, text, text_input},
 };
+use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub enum Action {
     Refresh,
+    Sync,
     AfterLogin,
     AutoJoin,
     Automatic(bool),
@@ -49,6 +51,9 @@ pub(super) struct State {
     join_review: Option<Arc<crate::profile_sync::join::Review>>,
     name: String,
     error: Option<String>,
+    next_sync: Option<Instant>,
+    cycle_paused: bool,
+    cycle: Option<crate::profile_sync::continuous::Report>,
 }
 impl State {
     fn next(&mut self) -> u64 {
@@ -86,6 +91,7 @@ impl State {
             "review":self.review.as_ref().map(|r|r.records()),
             "profiles":self.review.as_ref().map(|r|r.profiles()),
             "join_review":self.join_review.as_ref().map(|r|serde_json::json!({"name":r.name(),"accounts":r.accounts,"settings":r.settings})),"name":self.name,"error":self.error,
+            "cycle":self.cycle.as_ref().map(|r|serde_json::json!({"applied":r.applied,"review":r.review,"published":r.published,"remaining":r.remaining})),
             "enrollment":self.snapshot.as_ref().map(|s|&s.enrollment)})
     }
 }
@@ -118,6 +124,7 @@ impl App {
                     return;
                 }
                 let mut changes = self.profile_sync.desired;
+                self.profile_sync.cycle_paused = false;
                 match action {
                     Action::Enabled(_) => changes.enabled = Some(value),
                     Action::Accounts(_) => changes.accounts = Some(value),
@@ -157,9 +164,11 @@ impl App {
                 if self.profile_sync.stopping.is_some() {
                     return;
                 }
+                self.profile_sync.cycle_paused = true;
                 Request::Stop(id)
             }
             Action::Discover
+            | Action::Sync
             | Action::AfterLogin
             | Action::AutoJoin
             | Action::Create
@@ -175,6 +184,12 @@ impl App {
                     return;
                 }
                 match action {
+                    Action::Sync => {
+                        self.profile_sync.cycle_paused = false;
+                        self.profile_sync.next_sync =
+                            Some(Instant::now() + Duration::from_secs(30));
+                        Request::Sync(id)
+                    }
                     Action::Discover => {
                         self.profile_sync.login_pending = None;
                         self.profile_sync.offer = false;
@@ -360,6 +375,20 @@ impl App {
         }
         let mut refresh = false;
         match update {
+            Update::Synced { snapshot, report } => {
+                if state.accepts_snapshot(&snapshot) {
+                    state.snapshot = Some(snapshot);
+                }
+                state.next_sync = Some(
+                    Instant::now()
+                        + Duration::from_secs(if report.remaining && report.review == 0 {
+                            2
+                        } else {
+                            30
+                        }),
+                );
+                state.cycle = Some(report);
+            }
             Update::Status(snapshot)
             | Update::Published(snapshot)
             | Update::Pending(snapshot)
@@ -427,6 +456,7 @@ impl App {
                 }
             }
             Update::Failed(error) => {
+                state.next_sync = Some(Instant::now() + Duration::from_secs(60));
                 state.error = Some(error);
                 if automatic {
                     state.offer = true;
@@ -499,8 +529,23 @@ impl App {
             body = body.push(controls);
             if selected.ready {
                 body = body.push(
-                    muted(if selected.origin == crate::profile_sync::enrollment::Origin::Join { "Initial profile imported. Continuous updates are still being implemented." } else { "Initial profile saved. Continuous updates are still being implemented." })
+                    muted(if state.cycle.as_ref().is_some_and(|r|r.review>0) {
+                        "Some shared changes need review. Existing accounts and local changes have been kept."
+                    } else if state.cycle.as_ref().is_some_and(|r|r.remaining) {
+                        "Changes are saved on this device and waiting to upload."
+                    } else if !options.enabled || state.cycle_paused {
+                        "Profile sync is paused on this device."
+                    } else if state.cycle.is_some() { "Profile checked. Changes sync automatically in the background." }
+                    else { "Ready to check for account and preference changes." })
                         .size(12),
+                );
+                body = body.push(
+                    button(text("Sync now").size(13))
+                        .padding([12, 16])
+                        .style(outline)
+                        .on_press_maybe(
+                            (idle && available && options.enabled).then(|| msg(Action::Sync)),
+                        ),
                 );
                 if !self.workspace.account_reconnect.is_empty() {
                     body = body.push(action(

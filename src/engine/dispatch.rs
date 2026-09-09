@@ -440,7 +440,8 @@ mod tests {
                 Preferences {
                     reader_font_size: 12,
                     ..Default::default()
-                },
+                }
+                .into(),
             ))
             .unwrap();
         sender
@@ -449,7 +450,8 @@ mod tests {
                 Preferences {
                     reader_font_size: 18,
                     ..Default::default()
-                },
+                }
+                .into(),
             ))
             .unwrap();
         let draft = Draft {

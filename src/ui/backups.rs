@@ -74,7 +74,7 @@ impl App {
             target,
             action,
         });
-        if !self.try_command(Command::SavePreferences(request, self.preferences.clone())) {
+        if !self.queue_preference_write(request, self.preferences.clone()) {
             self.pending_backup = None;
         }
     }

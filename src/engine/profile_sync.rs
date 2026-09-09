@@ -157,6 +157,41 @@ impl Engine {
             })
             .await?;
         match action {
+            Request::Sync(_) => {
+                let snapshot = self.store.profile_enrollment().await?;
+                let selection = snapshot
+                    .enrollment
+                    .selection
+                    .as_ref()
+                    .context("Choose a shared profile first.")?;
+                anyhow::ensure!(
+                    selection.ready && snapshot.enrollment.options.enabled,
+                    "Enable a completed shared profile before syncing."
+                );
+                let mut replica = sync::replica::Replica::open(
+                    paths.history(&selection.binding)?,
+                    selection.binding.clone(),
+                    journal,
+                )
+                .await?;
+                let result =
+                    sync::continuous::run(&self.store, &mut replica, &session, &control).await;
+                let closed = replica.close().await;
+                // A later upload error must not hide already committed remote
+                // changes from the native view. Do not reload an unchanged cache.
+                let current = self.store.profile_enrollment().await?;
+                if current.preferences_revision != snapshot.preferences_revision
+                    || current.connections_revision != snapshot.connections_revision
+                {
+                    self.workspace(&mut output).await?;
+                }
+                closed.context("Could not finish saving profile history. Keep the original workspace for recovery.")?;
+                let report = result?;
+                Ok(Update::Synced {
+                    snapshot: Arc::new(current),
+                    report,
+                })
+            }
             Request::Discover(_) | Request::AfterLogin(_) => {
                 let review = Arc::new(sync::setup::Discovery::from_catalog(
                     sync::catalog::discover(&self.store, &session, &paths, &control).await?,

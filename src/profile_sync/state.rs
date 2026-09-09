@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 pub(crate) const STORAGE_KEY: &str = "profile_replication_v1";
+pub(crate) const NATIVE_EDITS_KEY: &str = "profile_native_edits_v1";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -16,6 +17,9 @@ pub struct Field {
     pub local: Option<Change>,
     pub remote: Option<Change>,
     pub revision: u64,
+    /// Device-local intent acknowledged with this common value, never a wire clock.
+    #[serde(default)]
+    pub native_revision: u64,
 }
 
 /// One immutable native intent at a time. A stalled/conflicting field must not
@@ -27,6 +31,8 @@ pub struct Pending {
     pub expected_revision: u64,
     pub local: Change,
     pub change: Change,
+    #[serde(default)]
+    pub native_revision: u64,
 }
 impl Pending {
     pub fn edit(&self) -> history::LocalEdit {
@@ -69,6 +75,10 @@ pub struct State {
     pub suppressed: BTreeSet<Uuid>,
     pub fields: BTreeMap<String, Field>,
     pub pending: Option<Pending>,
+    /// Exact edits awaiting another category or conflict review. Other fields
+    /// can progress without changing these requests' identities or bases.
+    #[serde(default)]
+    pub deferred: BTreeMap<String, Pending>,
 }
 impl State {
     pub fn new(
@@ -92,6 +102,7 @@ impl State {
             suppressed: Default::default(),
             fields: Default::default(),
             pending: None,
+            deferred: Default::default(),
         };
         for (target, local) in state.values(accounts, prefs)? {
             state.fields.insert(
@@ -100,6 +111,7 @@ impl State {
                     local: Some(local),
                     remote: None,
                     revision,
+                    native_revision: 0,
                 },
             );
         }
@@ -128,6 +140,7 @@ impl State {
                     local: Some(local),
                     remote: Some(change),
                     revision,
+                    native_revision: 0,
                 },
             );
         }
@@ -164,9 +177,18 @@ impl State {
                 self.validate_change(change)?;
             }
         }
-        if let Some(pending) = &self.pending {
+        for (target, pending) in &self.deferred {
+            ensure!(
+                *target == pending.target()
+                    && self.pending.as_ref().is_none_or(|p| p.target() != *target),
+                "A deferred profile edit has inconsistent identity."
+            );
+        }
+        let mut operations = BTreeSet::new();
+        for pending in self.pending.iter().chain(self.deferred.values()) {
             ensure!(
                 !pending.operation.is_nil()
+                    && operations.insert(pending.operation)
                     && pending.expected_revision <= self.revision
                     && pending.target() == history::target(&pending.local.action)
                     && pending.local.extra.is_empty(),
@@ -249,12 +271,39 @@ impl State {
         prefs: &Preferences,
         options: Options,
     ) -> anyhow::Result<Option<Pending>> {
+        self.capture_except(accounts, prefs, options, &BTreeSet::new(), &BTreeMap::new())
+    }
+
+    pub(crate) fn baseline_native(&mut self, revisions: &BTreeMap<String, u64>) {
+        for (target, field) in &mut self.fields {
+            field.native_revision = revisions.get(target).copied().unwrap_or_default();
+        }
+    }
+
+    pub(crate) fn capture_except(
+        &mut self,
+        accounts: &[Account],
+        prefs: &Preferences,
+        options: Options,
+        excluded: &BTreeSet<String>,
+        native_revisions: &BTreeMap<String, u64>,
+    ) -> anyhow::Result<Option<Pending>> {
         self.validate()?;
         if !options.enabled {
             return Ok(None);
         }
         if let Some(pending) = &self.pending {
-            return Ok(allowed(&pending.change, options).then(|| pending.clone()));
+            if allowed(&pending.change, options) && !excluded.contains(&pending.target()) {
+                return Ok(Some(pending.clone()));
+            }
+            self.defer(pending.clone())?;
+        }
+        if let Some(target) = self.deferred.iter().find_map(|(target, pending)| {
+            (allowed(&pending.change, options) && !excluded.contains(target))
+                .then(|| target.clone())
+        }) {
+            self.pending = self.deferred.remove(&target);
+            return Ok(self.pending.clone());
         }
         if options.accounts {
             let local: BTreeSet<_> = accounts.iter().map(|a| a.id.as_str()).collect();
@@ -273,11 +322,17 @@ impl State {
             }
         }
         for (target, local) in self.values(accounts, prefs)? {
-            if !allowed(&local, options) {
+            if !allowed(&local, options)
+                || excluded.contains(&target)
+                || self.deferred.contains_key(&target)
+            {
                 continue;
             }
             let field = self.fields.get(&target);
-            if field.and_then(|f| f.local.as_ref()) == Some(&local) {
+            let native_revision = native_revisions.get(&target).copied().unwrap_or_default();
+            if field.and_then(|f| f.local.as_ref()) == Some(&local)
+                && native_revision <= field.map_or(0, |f| f.native_revision)
+            {
                 continue;
             }
             let mut change = local.clone();
@@ -296,12 +351,23 @@ impl State {
                 expected_revision: field.map_or(self.revision, |f| f.revision),
                 local,
                 change,
+                native_revision,
             };
             self.pending = Some(pending.clone());
             self.validate()?;
             return Ok(Some(pending));
         }
         Ok(None)
+    }
+
+    pub(crate) fn defer(&mut self, pending: Pending) -> anyhow::Result<()> {
+        ensure!(
+            self.pending.as_ref() == Some(&pending),
+            "The pending profile edit changed before deferral."
+        );
+        self.deferred.insert(pending.target(), pending);
+        self.pending = None;
+        self.validate()
     }
 
     /// Called only after the history owner acknowledges the exact saved edit.
@@ -322,6 +388,7 @@ impl State {
                 local: Some(pending.local.clone()),
                 remote: Some(pending.change.clone()),
                 revision,
+                native_revision: pending.native_revision,
             },
         );
         self.pending = None;

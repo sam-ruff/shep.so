@@ -73,7 +73,7 @@ pub enum Command {
     },
     SaveAccount(Account, SecretString, SecretString),
     TestConnection(Account, SecretString, SecretString, ConnectionTarget),
-    SavePreferences(u64, Preferences),
+    SavePreferences(u64, crate::preference_edits::Write),
     Sync,
     Move(u64, Mail, String),
     Transfer(u64, Mail, String, String),

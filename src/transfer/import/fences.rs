@@ -168,6 +168,7 @@ pub(super) fn apply(
         crate::profile_sync::enrollment::SEED_KEY,
         crate::profile_sync::join::STORAGE_KEY,
         crate::profile_sync::state::STORAGE_KEY,
+        crate::profile_sync::state::NATIVE_EDITS_KEY,
     ] {
         tx.execute("INSERT INTO imported_operations SELECT ?,'profile-enrollment',key,value FROM kv WHERE key=?",params![import_id,key])?;
         tx.execute("DELETE FROM kv WHERE key=?", [key])?;

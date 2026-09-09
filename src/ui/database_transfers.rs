@@ -105,7 +105,7 @@ impl App {
         let pending = self.database_transfer.pending.as_mut().unwrap();
         pending.path = Some(path);
         pending.preferences = Some(save);
-        if !self.try_command(Command::SavePreferences(save, self.preferences.clone())) {
+        if !self.queue_preference_write(save, self.preferences.clone()) {
             self.fail_database_preparation("Settings could not be queued. Retry the export.");
             return;
         }

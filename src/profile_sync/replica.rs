@@ -86,7 +86,7 @@ impl Replica {
                 && current.ready == 0
                 && versions.len() == 1
                 && versions[0].operation == pending.operation,
-            "The saved local edit now has other shared changes. Keep it for conflict review before advancing its checkpoint."
+            history::Error::Changed
         );
         anyhow::ensure!(
             self.value(pending.target(), pending.operation).await? == pending.change,
@@ -105,6 +105,47 @@ impl Replica {
         match self.history.request(Command::Fields { after }).await? {
             Reply::Fields(fields) => Ok(fields),
             _ => anyhow::bail!("The profile worker returned an unexpected field page."),
+        }
+    }
+    pub(crate) async fn observe(
+        &self,
+        after: Option<String>,
+    ) -> anyhow::Result<super::continuous::Observed> {
+        let fields = self.fields(after).await?;
+        let state = self.state().await?;
+        anyhow::ensure!(
+            state.initialized && !state.removed && state.ready == 0 && state.waiting == 0,
+            history::Error::Incomplete
+        );
+        let mut values = Vec::with_capacity(fields.len());
+        for field in fields {
+            let change = if field.conflict {
+                None
+            } else {
+                let versions = self.versions(field.target.clone(), None).await?;
+                anyhow::ensure!(!versions.is_empty(), "A shared field has no current value.");
+                Some(
+                    self.value(field.target.clone(), versions[0].operation)
+                        .await?,
+                )
+            };
+            values.push((field, change));
+        }
+        Ok(super::continuous::Observed {
+            binding: self.binding.clone(),
+            revision: state.revision,
+            fields: values,
+        })
+    }
+    pub(crate) async fn next_upload_changes(
+        &self,
+    ) -> anyhow::Result<Option<Vec<shep_profile_core::Change>>> {
+        match self.history.request(Command::NextUpload).await? {
+            Reply::Upload(Some(upload)) => Ok(Some(
+                shep_profile_core::Operation::decode(upload.record.as_bytes())?.changes,
+            )),
+            Reply::Upload(None) => Ok(None),
+            _ => anyhow::bail!("The profile worker returned an unexpected queued edit."),
         }
     }
     pub async fn versions(
