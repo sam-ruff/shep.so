@@ -4,6 +4,9 @@ import 'data/bootstrap_stub.dart'
 import 'data/settings_store.dart';
 import 'data/google_native.dart';
 import 'model/google_connection.dart';
+import 'model/profile_discovery.dart';
+import 'data/profile_discovery_native.dart';
+import 'data/native_repository.dart';
 import 'model/workspace.dart';
 import 'ui/app.dart';
 import 'ui/theme.dart';
@@ -31,13 +34,24 @@ class _StartupState extends State<Startup> {
   Future<void> open() async {
     setState(() => failed = false);
     try {
+      final repository = await openRepository();
+      final google = GoogleConnection(
+        NativeGoogleAuthorization(),
+        DeviceGoogleConnectionStore(),
+      );
       final next = Workspace(
-        await openRepository(),
+        repository,
         DeviceSettings(),
-        google: GoogleConnection(
-          NativeGoogleAuthorization(),
-          DeviceGoogleConnectionStore(),
-        ),
+        google: google,
+        profileDiscovery: repository is NativeRepository
+            ? ProfileDiscovery(
+                google,
+                NativeProfileDiscovery(repository),
+                namespace: const String.fromEnvironment(
+                  'SHEP_PROFILE_NAMESPACE',
+                ),
+              )
+            : null,
       );
       if (!mounted) {
         next.dispose();

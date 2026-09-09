@@ -18,6 +18,7 @@ use tokio::sync::{Mutex, Semaphore, mpsc};
 
 pub struct Operations {
     profile_history: crate::profile_history::Runtime,
+    profile_discovery: crate::profile_discovery::Runtime,
     admitted: Arc<Semaphore>,
     slots: Arc<Semaphore>,
     search: Arc<Semaphore>,
@@ -41,6 +42,7 @@ impl Operations {
     pub fn new() -> Self {
         Self {
             profile_history: crate::profile_history::Runtime::default(),
+            profile_discovery: crate::profile_discovery::Runtime::default(),
             admitted: Arc::new(Semaphore::new(40)),
             slots: Arc::new(Semaphore::new(8)),
             search: Arc::new(Semaphore::new(1)),
@@ -99,6 +101,19 @@ impl Operations {
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
+    OpenProfileDiscovery {
+        session: uuid::Uuid,
+        access_token: String,
+        namespace: String,
+        expected_principal: Option<String>,
+    },
+    ProfileDiscovery {
+        session: uuid::Uuid,
+        command: crate::profile_discovery::Command,
+    },
+    CloseProfileDiscovery {
+        session: uuid::Uuid,
+    },
     ProfileHistory {
         binding: shep_profile_core::history::Binding,
         command: Box<shep_profile_core::history::Command>,
@@ -443,6 +458,14 @@ async fn value<T: serde::Serialize>(result: Result<T>) -> Result<Value> {
 pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
     let db = &profile.database;
     match request {
+        Request::OpenProfileDiscovery { session, access_token, namespace, expected_principal } => {
+            Ok(serde_json::to_value(profile.operations.profile_discovery.open(&db.path,session,access_token,namespace,expected_principal).await?)?)
+        }
+        Request::ProfileDiscovery { session, command } => profile.operations.profile_discovery.run(session,command).await,
+        Request::CloseProfileDiscovery { session } => {
+            profile.operations.profile_discovery.close(session).await?;
+            Ok(json!({"closed":true}))
+        }
         Request::ProfileHistory { binding,command } => {
             profile.operations.profile_history.run(&db.path,binding,*command).await
         }

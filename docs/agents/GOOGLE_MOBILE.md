@@ -2,12 +2,13 @@
 
 Flutter uses the maintained Android/iOS Google Sign-In packages through their pinned platform interface. This avoids registering the combined plugin’s web SDK in the offline Flutter preview. The separate hosted browser client retains its own beta login. Preferences saves the next sign-in's
 Drive/Calendar choices separately from committed access. The SDK owns tokens;
-Shep stores only the application binding, subject, email, selected services and
+Shep stores only the application binding, subject, email, optional verified Drive principal, selected services and
 cleanup state in device secure storage. No access/refresh token is entered in
 Preferences or uploaded to the beta server.
 
-The initial connection controls do not yet run Calendar sync, Drive backups or
-continuous profiles. Those integrations, automatic session restoration, seamless
+[Profile discovery](PROFILE_MOBILE.md) now uses this saved connection and silent
+token API, with verified principal persistence and lifecycle fencing. Calendar sync,
+Drive backups, enrollment and continuous profiles remain unfinished. Those integrations, automatic session restoration, seamless
 account switching and live Android/Apple verification remain in TODO.
 
 ## Build configuration

@@ -232,3 +232,26 @@ flutter test test/google_sdk_test.dart --dart-define=SHEP_GOOGLE_SERVER_CLIENT_I
 `google_controls_scenario.dart` is shared by host and `google_android_test.dart`: saved services, denied editing that retains read access, retry, dark mode, reviewed disconnect/cleanup and browsing/changing choices during held consent. Run `python3 scripts/clients/android_e2e.py --device emulator-5554 --google-only` for this development subset. The full Android wrapper includes it. Flutter Playwright and the preview Appium script also exercise consent/cancel/retry/disconnect through actual controls. Success fixtures live only under `flutter/test/`, use fictional identities and never contact Google. SDK-boundary tests inspect exact scopes/identity, no interactive background authorization and local sign-out rather than revocation. Platform configuration, real account switching/refresh/callbacks, Apple execution and cross-client app-data visibility remain separate verification.
 
 The Flutter preview network gate rejects all external HTTP(S) requests. Native Google packages avoid web SDK registration; bundled Roboto supplies CanvasKit's otherwise downloaded fallback while the UI continues using Noto Sans. Font licenses are included as application assets. Google controls have separate semantics nodes so actual pointer/accessibility targets match the painted fields.
+
+
+### Profile discovery controls
+
+`flutter test` includes saved-identity and discovery lifecycle tests plus the
+compact retry/paging/appearance and pending-mail-navigation controls shared with
+`profile_discovery_android_test.dart`. The native bridge enables the shared Drive
+transport; Rust session tests separately exercise held operations and catalog
+ownership. UI providers are explicit fixtures, never personal Google accounts.
+
+```sh
+python3 scripts/clients/flutter_web_e2e.py --discovery
+python3 scripts/clients/android_e2e.py --device emulator-5554 --discovery-only
+```
+
+The Android subset verifies named integration reports, then rebuilds the isolated
+preview and runs Appium. `flutter/e2e/profile_discovery.mjs` runs the same real
+retry/dark/disconnect/mail flow on Chromium and UiAutomator2; it saves captures
+and refuses external browser requests or non-Shep/non-emulator native targets.
+Standalone preview entry: `test/profile_discovery_main.dart`. Use the native
+[configuration and boundaries](agents/PROFILE_MOBILE.md) for production builds.
+Browser tests here exercise the Flutter automation surface, not the separate
+hosted email client. Live Google, enrollment and Apple remain distinct work.

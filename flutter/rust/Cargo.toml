@@ -9,6 +9,7 @@ license = "MIT"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
+async-trait = "0.1"
 flutter_rust_bridge = "=2.13.0"
 shep-mail-core = { path = "../../shared/mail-core" }
 anyhow = "1"
@@ -17,7 +18,7 @@ serde_json = "1"
 secrecy = "0.10"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
-shep-profile-core = { path = "../../shared/profile-core", features = ["history"] }
+shep-profile-core = { path = "../../shared/profile-core", features = ["drive"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-native-tls"] }
@@ -31,7 +32,6 @@ libc = "0.2"
 native-tls = { version = "0.2", features = ["vendored"] }
 
 [dev-dependencies]
-async-trait = "0.1"
 tempfile = "3"
 
 [lints.rust]

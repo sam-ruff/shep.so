@@ -7,6 +7,7 @@ import 'account_setup.dart';
 import 'sent_preferences.dart';
 import '../data/accounts.dart';
 import 'google_connection.dart';
+import 'profile_discovery.dart';
 
 class PreferencesView extends StatelessWidget {
   const PreferencesView({super.key, required this.workspace});
@@ -256,6 +257,21 @@ class PreferencesView extends StatelessWidget {
               ),
             ),
         ]),
+        if (workspace.profileDiscovery case final discovery?)
+          section('Profiles and sync', [
+            ListTile(
+              leading: const Icon(Icons.cloud_sync_outlined),
+              title: const Text('Saved Google profiles'),
+              subtitle: const Text('Discover account and settings profiles'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (_) => ProfileDiscoveryScreen(discovery: discovery),
+                ),
+              ),
+            ),
+          ]),
         if (workspace.savingPreferences) const Text('Saving preferences…'),
         const SizedBox(height: 24),
       ],

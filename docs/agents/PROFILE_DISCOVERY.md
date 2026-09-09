@@ -2,8 +2,9 @@
 
 The optional native `drive` feature now includes a saved remote catalog in
 `shared/profile-core/src/drive/catalog/`. It verifies operation files, resumes
-interrupted scans and keeps small profile summaries. No desktop, Flutter or
-browser Settings screen uses it yet. Creation, enrollment and applying shared
+interrupted scans and keeps small profile summaries. The [Flutter client](PROFILE_MOBILE.md)
+now calls it from Profiles and sync through its saved Google connection. Desktop
+and separate browser integration remain open. Creation, enrollment and applying shared
 accounts/preferences remain in the [sync handover](PROFILE_SYNC_HANDOVER.md).
 
 ## Scan and recovery
@@ -77,15 +78,13 @@ conflicting names, missing parents, tombstones and 52-profile paging. A real
 SQLite trigger fails the catalog receipt after history commits. Held success and
 failure responses test revision fencing. Cancelled observers, queue saturation,
 canonical aliases and an independent child process test ownership. These are
-host protocol/storage tests; existing Android/FFI tests do not exercise discovery.
+host protocol/storage tests; Android control fixtures exercise the Flutter view; actual Google wire tests remain host-only.
 
-Connect the catalog to saved platform grants and real Profiles and sync controls.
-Flutter already has `GoogleConnectionController.accessToken` and the native SDK
-adapter. That acquisition check ends before a later provider request: new jobs
-must retain/check the exact committed identity and lifecycle generation through
-discovery and accepted storage, including disconnect or permission changes. Bind
-the verified Drive principal to that saved connection before opening its catalog;
-a caller-supplied history binding alone is not authentication.
+Flutter now binds its saved grant, verified principal and lifecycle generation
+through the native session bridge. Discovery may open its isolated local catalog
+before the secure identity save, but no profile content is displayed or discovery advanced
+until that binding is acknowledged. Continue desktop/browser integration; a
+caller-supplied history binding alone is not authentication.
 Enrollment must import original records into an independently owned local journal
 through a bounded reviewed transfer; copying observation SQLite would clone the
 device UUID. Define a causal initialization barrier before publishing a first
