@@ -841,7 +841,11 @@ IDs on old/new servers, interrupted admission, stale native/history/Google/conse
 and remote removal. Keep account passwords out of this fixture. A menu that opens
 above its control can cover the Keep button: select its visible row before the
 next click; the separately tracked Escape-dismissal issue must not be hidden by
-a direct state mutation or by removing keyboard coverage elsewhere.
+a direct state mutation or by removing keyboard coverage elsewhere. After adding
+the shared connection, the same fixture leaves two accounts with one address;
+`test_sidebar_duplicate_addresses_distinguish_saved_names_and_controls` checks
+the sidebar shows their saved names above the address, chooses each account by
+mouse and arrow/Return, and captures the 160 px sidebar and 900×640 layouts.
 
 `test_backup_formats_native_options_restore_and_restart` uses the same owned
 `backup_run` fixture to exercise actual unencrypted/encrypted copies, optional
