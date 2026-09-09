@@ -54,7 +54,8 @@ grant and shared durable catalog. Pause/retry, saved progress, reopening, rescan
 compact dark recovery and permission refusal have real iced controls; all **121
 native functional flows pass**. The horizontal tab strip preserves existing compact
 control positions. See [the desktop contract](docs/agents/PROFILE_DESKTOP.md) and
-the completion log for shipping. Desktop publication and reviewed import remain
+the completion log for shipping. Code [`9e666a5`](https://github.com/sam-ruff/shep.so/commit/9e666a55582746fa59a1849ecc2d870a4c9d4b3c) is pushed and remotely verified;
+mandatory hooks pass 454 Rust tests. Desktop publication and reviewed import remain
 next; native large-page controls still need coverage beyond protocol paging.
 
 Flutter profile publication and **Use profile on this device** now have a frozen,
