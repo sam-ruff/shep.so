@@ -31,6 +31,17 @@ input scenarios and all timeouts remain unchanged. These isolated fixtures do no
 establish live IMAP behavior or performance percentiles. Primary-agent integration
 and push are pending; TODO remains open until that shipping step.
 
+Root integration `5a85ac3` passes mandatory hooks (735 executions, three personal
+diagnostics ignored), Python57 and strict Zensical. The wider native run passed
+58 of59 scenarios and exposed a real group-Move labeling bug: the new neighboring
+reader could belong to another account, while the group consisted only of the
+original account's messages. Folder labeling used that reader's catalog, hiding
+its Japanese destination from fuzzy search. Root changed labeling to use selected
+account membership, with explicit destination choice taking precedence. A new
+real-selection-snapshot regression passes. The existing native Unicode
+move/Undo/group scenario is retained unchanged; final rerun/shipping is pending.
+Failure evidence `d338c6f4c4ce` is retained under ignored artifacts.
+
 ## 9 September: verified shared-profile record reuse
 
 R02/R49 now retains verified immutable Drive records in the separate bounded
