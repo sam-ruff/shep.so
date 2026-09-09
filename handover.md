@@ -26,6 +26,12 @@ credential protection still remain. Do not discard any lane's uncommitted work.
 
 ## Current source checkpoint
 
+`91ed9a9` is pushed: deletion follows the next displayed message without resetting
+scroll, including page boundaries and previous/empty fallback. Combined testing
+also fixed bulk Move folder labels when the reader belongs to another account.
+All 59 integrated mail scenarios and 736 hook executions pass; reviewed native
+evidence is in completion. R89 is complete; compact row styling remains in R88.
+
 `2733cc6` is pushed: shutdown continuation, interruptible queued-provider waits
 and draft-failure recovery, with 725 hook executions and 23 integrated native
 scenarios passing. Root reviewed the merged error/retry controls; docs CI passed.
