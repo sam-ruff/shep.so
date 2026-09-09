@@ -166,7 +166,7 @@ struct Catalog {
     remote_root: PathBuf,
     projection: Option<(Binding, Journal)>,
     connections: history::ConnectionFactory,
-    _lock: std::fs::File,
+    _lock: history::ownership::OwnedLock,
 }
 impl Catalog {
     #[cfg(test)]
@@ -192,6 +192,7 @@ impl Catalog {
                 Error::Storage
             }
         })?;
+        let lock = history::ownership::OwnedLock::acquired(lock);
         let mut db = connections.open(&path)?;
         db.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;",

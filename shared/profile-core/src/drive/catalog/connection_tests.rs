@@ -62,3 +62,24 @@ async fn failed_catalog_initializer_does_not_run_schema_or_fall_back() {
         .await
         .unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn catalog_drop_releases_ownership_while_a_duplicate_description_survives() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("catalog.sqlite");
+    let scope = Scope {
+        namespace: "so.shep.fixture".into(),
+        principal: "drive:fixture".into(),
+    };
+    let catalog = Catalog::open(&path, scope.clone()).unwrap();
+    let duplicate = catalog._lock.duplicate();
+    assert!(matches!(
+        Catalog::open(&path, scope.clone()),
+        Err(Error::Owned)
+    ));
+    drop(catalog);
+    let reopened = Catalog::open(&path, scope).unwrap();
+    drop(duplicate);
+    drop(reopened);
+}
