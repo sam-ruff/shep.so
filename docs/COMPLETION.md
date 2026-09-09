@@ -1,5 +1,40 @@
 # Completion audit
 
+## 9 September: explicit account choice for common folder actions
+
+The isolated `codex/aggregate-folder-choice-v2` checkpoint builds on `9b300af`.
+Move/Delete from a common folder now offers the accounts that actually contain
+it; an explicitly scoped or sole account opens its ordinary review directly.
+Sent resolves each account's configured wire path. The review names the account
+and lets an aggregate action change that choice before confirmation.
+
+Changing accounts releases the old affected-count snapshot and rejects its late
+reply. Keyboard focus follows account identity when the catalog changes; removing
+the highlighted account requires a fresh choice. Busy accounts remain protected,
+Y cannot skip account choice, and Enter reaches the same reviewed action as the
+mouse. Existing optimistic counts and remaining/newer readers survive success,
+failure, retry and normal restart.
+
+Five new deterministic controller cases cover explicit choice, configured Sent
+paths, stale reviews, removed focus and busy accounts. The 52 targeted folder
+cases pass. Three saved native flows cover mouse account changes and deletion,
+compact-dark keyboard failure/retry, nested Move and selected/aggregate Sent.
+All 18 affected native scenarios pass, including the existing folder, selection,
+bulk, conversation and sidebar regressions. Reviewed WebPs include
+`ce59cd0cd0f6` (mouse review and remaining reader), `8ef41323f24f` (compact-dark
+choice/review and failure history), and `7427e7929267` (Move/restart/Sent).
+The exact native executable SHA-256 is
+`4705bbc27658e9c4c80b9eff27242cb5c1f09273f057f8270c5f9cb19d8e13f5`.
+
+Formatting, all-target Clippy, 768 hook test executions (703 application Rust,
+two HTML dependency and 63 shared profile-core tests; three live diagnostics
+ignored), 56 Python tests and strict Zensical pass. Logs remain under ignored
+`artifacts/logs/aggregate-choice-*`. These are isolated native/provider fixtures;
+no live-provider, Windows/macOS execution or performance claim is made.
+Primary-agent integration/push and broader R30/R50 history/scope convergence
+remain open. R15 separately tracks distinguishing duplicate-address sidebar
+accounts after a reviewed profile endpoint change.
+
 ## Shared account reviews, backup formats and bounded folder deletion — integrated verification
 
 The current integration combines `18413e7` (safe shared connection choices),

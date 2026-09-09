@@ -233,7 +233,7 @@ pub(super) struct ContextArea<'a> {
     content: Element<'a, Message>,
     mail: Option<String>,
     draft: Option<String>,
-    folder: Option<(String, String)>,
+    folder: Option<FolderSelection>,
     preserve_pointer: bool,
     interface_scale: u16,
     drag: Option<drag_mail::Region>,
@@ -290,9 +290,9 @@ impl<'a> ContextArea<'a> {
             draw_witness: None,
         }
     }
-    pub fn folder(content: impl Into<Element<'a, Message>>, account: String, path: String) -> Self {
+    pub fn folder(content: impl Into<Element<'a, Message>>, target: FolderSelection) -> Self {
         let mut area = Self::sidebar(content);
-        area.folder = Some((account, path));
+        area.folder = Some(target);
         area
     }
     pub fn draft(content: impl Into<Element<'a, Message>>, id: String) -> Self {
@@ -398,10 +398,9 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
             } else if let Some(draft) = &self.draft {
                 shell.publish(Message::DraftContext(draft.clone(), position));
             }
-            if let Some((account, path)) = &self.folder {
+            if let Some(target) = &self.folder {
                 shell.publish(Message::Folders(folder_controls::Message::Context(
-                    account.clone(),
-                    path.clone(),
+                    target.clone(),
                     position,
                 )));
             }

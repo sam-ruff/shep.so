@@ -1,5 +1,6 @@
 //! Native folder review and durable-operation feedback. Server work stays in the engine.
 use super::*;
+mod accounts;
 mod projection;
 use crate::engine::folders::{Destination, Event as FolderEvent, Preview, Request};
 use crate::folder_actions::{Action as Change, Job, Status, Step};
@@ -12,7 +13,9 @@ use iced::{
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Context(String, String, Point),
+    Context(FolderSelection, Point),
+    SelectAccount(String),
+    Accounts,
     Choose(usize),
     Destination(Option<String>),
     FirstDestination,
@@ -28,8 +31,7 @@ pub enum Message {
 }
 #[derive(Debug, Clone)]
 pub(super) struct Menu {
-    pub account: String,
-    pub source: String,
+    pub target: FolderSelection,
     pub position: Point,
     pub index: usize,
 }
@@ -45,6 +47,10 @@ struct Pending {
 pub(super) struct State {
     pub menu: Option<Menu>,
     retained_reader: Option<(String, u64)>,
+    account_scope: Option<FolderSelection>,
+    pub choosing_account: bool,
+    account_index: usize,
+    account_focus: Option<String>,
     account: String,
     source: String,
     action: Option<Change>,
@@ -113,15 +119,14 @@ impl App {
     }
     pub(super) fn handle_folders(&mut self, message: Message) {
         match message {
-            Message::Context(account, source, position) => {
+            Message::Context(target, position) => {
                 if self.dialog.is_some() {
                     return;
                 }
                 self.context_menu = None;
                 self.composer.context = None;
                 self.folder_controls.menu = Some(Menu {
-                    account,
-                    source,
+                    target,
                     position,
                     index: 0,
                 });
@@ -134,23 +139,10 @@ impl App {
                     self.handle_folders(Message::History(0));
                     return;
                 }
-                if menu.source.eq_ignore_ascii_case("INBOX") || self.folder_busy(&menu.account) {
-                    self.notice("This folder cannot be changed now. Open Folder changes to review pending work.", true);
-                    return;
-                }
-                self.open(Dialog::FolderChange);
-                let state = &mut self.folder_controls;
-                state.account = menu.account;
-                state.source = menu.source;
-                state.serial += 1;
-                state.preview = None;
-                state.error = None;
-                state.query.clear();
-                state.options = Arc::default();
-                state.action = (index == 1).then_some(Change::Delete);
-                state.loading = true;
-                self.handle_folders(Message::RefreshReview);
+                self.begin_folder_accounts(menu.target, index == 1);
             }
+            Message::SelectAccount(account) => self.select_folder_account(&account),
+            Message::Accounts => self.show_folder_accounts(),
             Message::Back => {
                 self.folder_controls.action = None;
                 self.handle_folders(Message::RefreshReview);
@@ -199,7 +191,10 @@ impl App {
                 }
             }
             Message::Submit => {
-                if self.dialog != Some(Dialog::FolderChange) || self.folder_controls.loading {
+                if self.dialog != Some(Dialog::FolderChange)
+                    || self.folder_controls.loading
+                    || self.folder_controls.choosing_account
+                {
                     return;
                 }
                 let Some(preview) = self.folder_controls.preview.clone() else {
@@ -432,15 +427,16 @@ impl App {
         {
             self.folder_controls.history_action = None;
         }
-        if self
-            .folder_controls
-            .menu
-            .as_ref()
-            .is_some_and(|m| !accounts.contains(m.account.as_str()))
-        {
+        if self.folder_controls.menu.as_ref().is_some_and(|m| {
+            m.target
+                .account
+                .as_ref()
+                .is_some_and(|account| !accounts.contains(account.as_str()))
+        }) {
             self.folder_controls.menu = None;
         }
         if self.dialog == Some(Dialog::FolderChange)
+            && !self.folder_controls.choosing_account
             && !accounts.contains(self.folder_controls.account.as_str())
         {
             self.dialog = None;
@@ -449,6 +445,9 @@ impl App {
         }
         for preview in abandoned {
             self.release_folder_projection(&preview);
+        }
+        if self.folder_controls.choosing_account {
+            self.reconcile_folder_account_focus();
         }
     }
     pub(super) fn folder_event(&mut self, event: FolderEvent) {
@@ -716,8 +715,12 @@ impl App {
                 .style(if i == menu.index { selected } else { ghost })
                 .on_press_maybe(
                     (i == 2
-                        || !menu.source.eq_ignore_ascii_case("INBOX")
-                            && !self.folder_busy(&menu.account))
+                        || !menu.target.folder.eq_ignore_ascii_case("INBOX")
+                            && menu
+                                .target
+                                .account
+                                .as_ref()
+                                .is_none_or(|account| !self.folder_busy(account)))
                     .then_some(wrap(Message::Choose(i))),
                 ),
             );
@@ -746,10 +749,35 @@ impl App {
     }
     pub(super) fn folder_change_form(&self) -> Element<'_, super::Message> {
         let state = &self.folder_controls;
+        if state.choosing_account {
+            return self.folder_accounts_form();
+        }
         let label = self
             .workspace
             .folder_label(Some(&state.account), &state.source);
         let mut body = column![text(label.to_string()).size(16).font(BOLD)].spacing(14);
+        if let Some(account) = self
+            .workspace
+            .accounts
+            .iter()
+            .find(|account| account.id == state.account)
+        {
+            let mut summary = row![
+                text(format!("{} · {}", account.name, account.email))
+                    .size(13)
+                    .width(Length::Fill)
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center);
+            if state
+                .account_scope
+                .as_ref()
+                .is_some_and(|scope| scope.account.is_none())
+            {
+                summary = summary.push(action("Change account", wrap(Message::Accounts)));
+            }
+            body = body.push(summary);
+        }
         if let Some(error) = &state.error {
             body = body
                 .push(text(error).size(13))
@@ -989,8 +1017,9 @@ impl App {
     pub(super) fn folder_test_state(&self) -> serde_json::Value {
         let s = &self.folder_controls;
         serde_json::json!({
-            "menu":s.menu.as_ref().map(|m|serde_json::json!({"account":m.account,"source":m.source,"index":m.index})),
+            "menu":s.menu.as_ref().map(|m|serde_json::json!({"account":m.target.account,"source":m.target.folder,"index":m.index})),
             "loading":if self.dialog==Some(Dialog::FolderHistory) {s.history_loading || s.history_action.is_some()} else {s.loading},"error":if self.dialog==Some(Dialog::FolderChange) {s.error.as_ref()} else {s.history_error.as_ref()},"account":s.account,"source":s.source,
+            "choosing_account":s.choosing_account,"account_index":s.account_index,"account_choices":self.folder_account_choices().iter().map(|target|serde_json::json!({"account":target.account,"folder":target.folder,"busy":target.account.as_ref().is_some_and(|account|self.folder_busy(account))})).collect::<Vec<_>>(),
             "options":s.options.iter().map(|d|serde_json::json!({"path":d.path,"label":d.label})).collect::<Vec<_>>(),
             "review":s.preview.as_ref().map(|p|serde_json::json!({"folders":p.review.plan.members.len(),"messages":p.review.cached_messages,"action":p.review.plan.action})),
             "pending":s.pending.len(),"staging":self.folder_staging(),"selected":s.selected,"accepted":s.accepted,
