@@ -181,3 +181,8 @@ Account connection-reversion groundwork tracks incoming/SMTP intent independentl
 of account names, including changes reverted before a pull and after restart.
 All 102 matching profile tests pass; explicit endpoint/removal controls remain
 R02/R49, with root integration pending. See the completion log.
+
+R02/R49 reconnection follow-up: tests and saves reject saved credentials while a
+shared account requires reconnection; fresh input, separate/no-auth SMTP, cache
+preservation, failed-write restart and normal local reuse have four passing
+engine regressions. Mandatory hooks and integrated shipping remain pending.

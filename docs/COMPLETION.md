@@ -1,5 +1,21 @@
 # Completion audit
 
+## Shared account reconnection credential guard
+
+Connection tests and saves refuse old keychain credentials while an imported or
+shared account requires reconnection. Fresh explicit credentials remain usable;
+SMTP with authentication disabled needs no separate password. Saving resolves all
+required secrets before writing any, and only a successful account commit clears
+the reconnect marker. Tests alone never clear it. Connection tests now use the
+existing account coordinator, so an endpoint review can share that ordering.
+
+Four targeted tests pass through actual engine commands and an owned fake
+credential worker, covering incoming/shared/separate SMTP, failed writes and
+SQLite restart, preserved cached mail, explicit probes, and ordinary saved-secret
+reuse. No network or OS credential access is used in these fixtures. Mandatory
+hooks and root integration/shipping remain pending; endpoint/removal review UI
+is still open. Logs: `artifacts/logs/profile-account-credential-guards.log`.
+
 ## Account connection reversions — review groundwork
 
 Native incoming/SMTP connection changes now have independent durable intent
