@@ -36,8 +36,11 @@ principal/namespace binding, 50-file metadata pages, checked operation downloads
 and one journal-backed upload at a time. It persists a reserved Drive ID before
 POST and confirms actual remote bytes after response loss, conflict or restart.
 See [the wire contract and integration limits](docs/agents/PROFILE_DRIVE.md).
-The shared wire fixture and 34 core tests pass; compatibility checks and shipping
-are recorded in the completion log. The initial durability fixture queried the
+The code is pushed as [`557f8d5`](https://github.com/sam-ruff/shep.so/commit/557f8d5d1dd01ed9d2eee2decbd2a5235f036cac),
+with the exact `9289f53` remote head verified after the fixture portability fix.
+Mandatory hooks pass 428 root/shared Rust tests, including 34 core tests; mobile
+Rust 68, WASM 23, Python 41, parity 33 and strict docs also pass. See the completion
+log for their scope and retained failures. The initial durability fixture queried the
 wrong test table; that failure remains in ignored logs, corrected without changing
 the production schema. No client Settings screen uses the transport yet.
 
