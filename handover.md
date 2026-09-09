@@ -20,7 +20,9 @@ rejected, including Windows case aliases. Discovered CalDAV IDs now survive
 encrypted backup and password restore.
 
 Read [the profile reference](docs/agents/profiles.md) and the newest completion
-entry for tests and shipping status. This is a source checkpoint; the personal
+entry for tests and shipping status. Source `93d4289` is pushed to main: mandatory
+hooks passed 580 Rust + 2 adapter tests; 51 Python and 16 selected native flows,
+Windows cross-compilation and strict docs passed. This is a source checkpoint; the personal
 production installation remains unchanged. Database files are unencrypted and
 exclude OS secrets. Profile selection requires reopening; there is no hot switch.
 
