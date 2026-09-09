@@ -15,6 +15,18 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_tray_fixture_validates_mode_and_keeps_its_bus_isolated(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (True, 1, "session", "personal"):
+                with self.assertRaisesRegex(ValueError, "Unknown native tray"):
+                    desktop.start(tray=value)
+            with self.assertRaisesRegex(ValueError, "separate owned buses"):
+                desktop.start(tray="available", desktop_badges=True)
+            launch.assert_not_called()
+        tool = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["tray"]["enum"], ["available", "missing"])
+
     def test_profile_fixture_is_validated_before_launch_and_describes_owned_modes(self):
         desktop=harness.Desktop()
         with patch.object(harness.subprocess,"Popen") as launch:

@@ -523,6 +523,98 @@ class NativeFlows(unittest.TestCase):
                        check("mail_pending",0), check("mail_rows.0.starred",True),
                        check("notice","Fixture","contains"), shot("interrupted-sync-retry-failure"))
 
+    def open_tray_preferences(self, compact=False):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(650 if compact else 1150,88), type_text("system tray"), check("settings_matches", ["System tray"]),
+                       click(450,289), check("settings_group", "System tray"))
+
+    def test_tray_native_hide_restore_quit_and_saved_preference(self):
+        started = self.mcp.call("desktop.start", tray="available", persistent=True)
+        self.mcp.batch(check("tray.available", True))
+        self.open_tray_preferences()
+        self.mcp.batch(click(288,342), check("tray.saved_enabled", True), shot("tray-preferences-light"),
+                       key("ctrl+1"), check("tab", "Mail"), {"type":"close_request"},
+                       check("tray.visible", False), check("close_pending", False), shot("tray-hidden"),
+                       {"type":"tray_menu"}, check("tray_host.entries.0.label", "Open Shep"),
+                       check("tray_host.entries.1.label", "Quit Shep"), shot("tray-native-menu"),
+                       key("Down"), key("Return"), check("tray.visible", True), {"type":"focus_app"},
+                       check("tab", "Mail"), shot("tray-restored"),
+                       {"type":"tray_menu"}, key("End"), key("Return"), {"type":"wait_exit"})
+        restarted = self.mcp.call("desktop.restart")
+        self.assertNotEqual(started["pid"], restarted["pid"])
+        self.mcp.batch(check("tray.enabled", True), check("tray.available", True))
+
+    def test_tray_native_compact_dark_layout_and_background_arrival(self):
+        self.mcp.call("desktop.start", tray="available", width=900, height=640, background_sync=True)
+        self.mcp.batch(check("tray.available", True), key("ctrl+comma"), check("tab", "Preferences"),
+                       click(563,366), check("dark", True))
+        self.open_tray_preferences(compact=True)
+        self.mcp.batch(click(288,342), check("tray.saved_enabled", True), shot("tray-preferences-dark-compact"),
+                       {"type":"close_request"}, check("tray.visible", False), check("close_pending", False),
+                       check("total", 121), check("notifications.sent", 1), check("tray.visible", False),
+                       {"type":"tray_menu"}, key("Down"), key("Return"), check("tray.visible", True),
+                       {"type":"focus_app"}, key("ctrl+1"), check("tab", "Mail"),
+                       check("window_size", [900,640]), check("dark", True), shot("tray-background-arrival-dark"))
+
+    def test_tray_native_missing_host_and_host_loss_keep_app_accessible(self):
+        self.mcp.call("desktop.start", tray="missing")
+        self.open_tray_preferences()
+        self.mcp.batch(check("tray.available", False), click(288,342), check("tray.saved_enabled", True),
+                       {"type":"close_request"}, check("tray.visible", True), check("notice", "unavailable", "contains"),
+                       shot("tray-missing-host"), {"type":"tray_host_start"},
+                       {**check("tray.available", True), "timeout_ms":5000},
+                       {"type":"close_request"}, check("tray.visible", False),
+                       {"type":"tray_host_stop"}, check("tray.available", False), check("tray.visible", True),
+                       {"type":"focus_app"}, check("notice", "reopened", "contains"), shot("tray-host-loss-reopened"))
+
+    def test_tray_native_attachment_picker_stays_accessible_then_save_hides_and_recovers(self):
+        started = self.mcp.call("desktop.start", tray="available", mail_actions="fail")
+        fixture = Path(started["artifacts"]) / "tray attachment.txt"
+        fixture.write_text("Fixture bytes to retain through a failed save")
+        self.mcp.batch(check("tray.available", True), key("c"), check("composer.visible", True), wait(80),
+                       click(850,279), type_text("Keep my attachment draft"), click(750,633), check("draft_io", True),
+                       {"type":"close_request"}, check("close_pending", True), check("tray.visible", True),
+                       {"type":"choose_file", "path":str(fixture)}, check("tray.visible", False),
+                       check("tray.temporary", True), check("tray_host.notifications.0.title", "Shep is finishing your changes"),
+                       check("notice", "Choose the attachment again", "contains"), check("tray.visible", True),
+                       check("close_pending", False), {"type":"focus_app"},
+                       check("compose_fields.subject", "Keep my attachment draft"), shot("tray-attachment-failure-reopened"))
+
+    def test_tray_native_temporary_saving_notifies_and_failure_reopens_draft(self):
+        self.mcp.call("desktop.start", tray="available", mail_actions="slow")
+        self.mcp.batch(check("tray.available", True), key("r"), check("focused_input", "compose-body"),
+                       type_text("Keep this reply when sending fails."))
+        draft = self.mcp.call("desktop.state")["composer"]["id"]
+        self.mcp.batch(click(675,564), check("busy", "send:"+draft, "contains"),
+                       {"type":"close_request"}, check("tray.temporary", True), check("tray.visible", False),
+                       check("tray_host.notifications.0.title", "Shep is finishing your changes"), shot("tray-temporary-saving"),
+                       check("notice", "Sending is disabled in preview", "contains"), check("tray.visible", True),
+                       check("tray.temporary", False), check("close_pending", False),
+                       {"type":"focus_app"}, check("editor", "Keep this reply", "contains"), shot("tray-save-failure-reopened"))
+
+    def test_tray_native_temporary_saving_quits_after_durable_receipt(self):
+        started = self.mcp.call("desktop.start", tray="available", persistent=True, mail_actions="slow")
+        self.mcp.batch(check("tray.available", True))
+        self.archive_two_for_recovery()
+        self.mcp.batch({"type":"close_request"}, check("tray.temporary", True), check("tray.visible", False),
+                       check("tray_host.notifications.0.title", "Shep is finishing your changes"),
+                       shot("tray-receipt-saving"), {"type":"wait_exit"})
+        database = Path(started["artifacts"]) / "fixture.sqlite"
+        with sqlite3.connect(database.as_uri()+"?mode=ro", uri=True) as cache:
+            self.assertEqual(cache.execute("SELECT status FROM bulk_items ORDER BY position").fetchall(), [("done",),("queued",)])
+
+    def test_tray_native_open_while_saving_cancels_quit(self):
+        self.mcp.call("desktop.start", tray="available", mail_actions="slow")
+        self.mcp.batch(check("tray.available", True), key("r"), check("focused_input", "compose-body"),
+                       type_text("Continue working after reopening."))
+        draft = self.mcp.call("desktop.state")["composer"]["id"]
+        self.mcp.batch(click(675,564), check("busy", "send:"+draft, "contains"),
+                       {"type":"close_request"}, check("tray.temporary", True),
+                       {"type":"tray_menu"}, key("Down"), key("Return"), check("tray.visible", True),
+                       {"type":"focus_app"}, check("close_pending", False), check("tray.temporary", False),
+                       check("notice", "Sending is disabled in preview", "contains"),
+                       check("tray.visible", True), check("editor", "Continue working", "contains"), shot("tray-open-cancels-quit"))
+
     def test_close_during_send_failure_reopens_work_without_losing_the_reply(self):
         started = self.mcp.call("desktop.start", persistent=True, mail_actions="slow")
         print(f"Close during rejected send: {started['artifacts']}", flush=True)

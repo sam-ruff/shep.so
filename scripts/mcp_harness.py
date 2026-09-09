@@ -26,6 +26,9 @@ ARTIFACTS = ROOT / "artifacts" / "e2e"
 _profile_spec = importlib.util.spec_from_file_location("profile_drive_fixture", ROOT / "scripts/profile_drive_fixture.py")
 _profile_fixture = importlib.util.module_from_spec(_profile_spec)
 _profile_spec.loader.exec_module(_profile_fixture)
+_tray_spec = importlib.util.spec_from_file_location("tray_fixture", ROOT / "scripts/tray_fixture.py")
+_tray_fixture = importlib.util.module_from_spec(_tray_spec)
+_tray_spec.loader.exec_module(_tray_fixture)
 
 
 def request_window_close(display_name, window):
@@ -86,6 +89,7 @@ class Desktop:
         self.xvfb_log = None
         self.browser = None
         self.browser_log = None
+        self.tray_fixture = None
         self.badge_bus = None
         self.badge_monitor = None
         self.badge_log = None
@@ -98,6 +102,9 @@ class Desktop:
         atexit.register(self.stop)
 
     def stop(self):
+        if self.tray_fixture:
+            self.tray_fixture.close()
+            self.tray_fixture = None
         if self.profile_drive:
             self.profile_drive.close()
             self.profile_drive = None
@@ -184,8 +191,12 @@ class Desktop:
             time.sleep(.02)
         self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v")
 
-    def start(self, width=1440, height=920, move_recovery=False, notification_delivery=None, empty_calendars=False, conversation_mail=False, reading_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False, idle_navigation=False, folder_actions=None, held_account_sync=False, held_provider_slots=False, held_database_export=False, held_database_import=False, profile_sync=None, profile_login=False, empty_profile=False):
+    def start(self, width=1440, height=920, move_recovery=False, notification_delivery=None, empty_calendars=False, conversation_mail=False, reading_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False, idle_navigation=False, folder_actions=None, held_account_sync=False, held_provider_slots=False, held_database_export=False, held_database_import=False, profile_sync=None, profile_login=False, empty_profile=False, tray=None):
         self.stop()
+        if tray not in (None, "available", "missing"):
+            raise ValueError("Unknown native tray fixture.")
+        if tray is not None and desktop_badges:
+            raise ValueError("Tray and badge fixtures require separate owned buses.")
         if profile_sync is not None and profile_sync not in _profile_fixture.MODES:
             raise ValueError("Unknown profile sync fixture.")
         if type(profile_login) is not bool or type(empty_profile) is not bool:
@@ -272,9 +283,13 @@ class Desktop:
         self.env.pop("WAYLAND_DISPLAY", None)
         if desktop_badges:
             self.start_badge_bus()
+        if tray:
+            self.tray_fixture = _tray_fixture.TrayFixture(self, tray == "available")
         if print_browser:
             self.start_print_browser(print_browser)
-        self.launch_args = [str(binary), "--demo", *(["--held-provider-slots"] if held_provider_slots else []), *(["--hold-database-import"] if held_database_import else []), *(["--hold-database-export"] if held_database_export else []), *(["--held-account-sync", "--background-sync"] if held_account_sync else []), *(["--folder-actions=" + folder_actions] if folder_actions else []), *(["--move-recovery=" + ("committed" if move_recovery is True else move_recovery)] if move_recovery else []), *(["--notification-delivery=" + notification_delivery] if notification_delivery else []), *(["--idle-navigation"] if idle_navigation else []), *(["--nested-folders"] if nested_folders else []), *(["--pop3-personal"] if pop3_account else []), *(["--persist-demo"] if persistent else []), *(["--bulk-history"] if bulk_history else []), "--test-state", str(self.directory / "state.json"), *(["--empty-calendars"] if empty_calendars else []), *(["--conversation-mail"] if conversation_mail else []), *(["--reading-mail"] if reading_mail else []), *(["--readonly-calendars"] if readonly_calendars else []), *(["--pending-transfer"] if pending_transfer else []), *(["--outgoing-mail"] if outgoing_mail else []), *(["--long-folders"] if long_folders else []), *(["--discard-failure-once"] if discard_failure_once else []), *(["--undo-failure-once"] if undo_failure_once else []), *(["--search-mail"] if search_mail else []), *(["--html-mail"] if html_mail else []), *(["--background-sync"] if background_sync else []), *(["--sync-failure-once"] if sync_failure_once else []), *(["--mail-actions=" + mail_actions] if mail_actions in ("slow", "fail") else []), *(["--google-permissions=" + google_permissions] if google_permissions else [])]
+        self.launch_args = [str(binary), "--demo", *(["--tray-fixture"] if tray else []), *(["--held-provider-slots"] if held_provider_slots else []), *(["--hold-database-import"] if held_database_import else []), *(["--hold-database-export"] if held_database_export else []), *(["--held-account-sync", "--background-sync"] if held_account_sync else []), *(["--folder-actions=" + folder_actions] if folder_actions else []), *(["--move-recovery=" + ("committed" if move_recovery is True else move_recovery)] if move_recovery else []), *(["--notification-delivery=" + notification_delivery] if notification_delivery else []), *(["--idle-navigation"] if idle_navigation else []), *(["--nested-folders"] if nested_folders else []), *(["--pop3-personal"] if pop3_account else []), *(["--persist-demo"] if persistent else []), *(["--bulk-history"] if bulk_history else []), "--test-state", str(self.directory / "state.json"), *(["--empty-calendars"] if empty_calendars else []), *(["--conversation-mail"] if conversation_mail else []), *(["--reading-mail"] if reading_mail else []), *(["--readonly-calendars"] if readonly_calendars else []), *(["--pending-transfer"] if pending_transfer else []), *(["--outgoing-mail"] if outgoing_mail else []), *(["--long-folders"] if long_folders else []), *(["--discard-failure-once"] if discard_failure_once else []), *(["--undo-failure-once"] if undo_failure_once else []), *(["--search-mail"] if search_mail else []), *(["--html-mail"] if html_mail else []), *(["--background-sync"] if background_sync else []), *(["--sync-failure-once"] if sync_failure_once else []), *(["--mail-actions=" + mail_actions] if mail_actions in ("slow", "fail") else []), *(["--google-permissions=" + google_permissions] if google_permissions else [])]
+        if self.tray_fixture:
+            self.launch_args[self.launch_args.index("--test-state") + 1] = str(self.tray_fixture.owned_dir / "state.json")
         if profile_sync is not None:
             self.profile_drive = _profile_fixture.ProfileDriveFixture(profile_sync)
             self.launch_args.append("--profile-drive-url=" + self.profile_drive.url)
@@ -498,6 +513,13 @@ class Desktop:
         state["desktop_badge"] = self.badge_state()
         if self.profile_drive:
             state["profile_drive_requests"] = dict(self.profile_drive.requests)
+        if self.tray_fixture:
+            state["tray_host"] = self.tray_fixture.state()
+            if state.get("tray", {}).get("visible") and self.app and self.app.poll() is None:
+                try:
+                    self.window = self.command("xdotool", "search", "--onlyvisible", "--name", "Shep.*Mail").splitlines()[-1]
+                except (subprocess.SubprocessError, IndexError):
+                    pass
         return state
 
     def screenshot(self, name="screenshot"):
@@ -506,7 +528,8 @@ class Desktop:
         # State is emitted before presentation; allow the compositor one short settling interval.
         time.sleep(0.15)
         path = self.directory / f"{name}.webp"
-        self.command("import", "-window", self.window, "-quality", "90", str(path))
+        target = "root" if self.tray_fixture and not self.state().get("tray", {}).get("visible") else self.window
+        self.command("import", "-window", target, "-quality", "90", str(path))
         return path
 
     def choose_file(self, path=None, save=False):
@@ -569,7 +592,9 @@ class Desktop:
                 raise RuntimeError("The native file picker did not accept the selected file.")
             time.sleep(.05)
         # Xvfb has no window manager to return focus after closing a native dialog.
-        self.command("xdotool", "windowfocus", "--sync", self.window)
+        # A requested close may now hide Shep as soon as attachment saving starts.
+        if not (self.tray_fixture and self.state().get("close_pending")):
+            self.command("xdotool", "windowfocus", "--sync", self.window)
         return {"selected": str(path) if path else None}
 
     def enter_picker_path(self, window, path):
@@ -692,6 +717,16 @@ class Desktop:
                         raise ValueError("Test window must be 900–2560 × 640–1600.")
                     self.command("xdotool", "windowsize", self.window, str(width), str(height))
                     self.launch_size = (width,height)
+                elif kind in ("tray_menu", "tray_host_stop", "tray_host_start"):
+                    if not self.tray_fixture:
+                        raise RuntimeError("Start an owned tray fixture first")
+                    {"tray_menu": self.tray_fixture.menu, "tray_host_stop": self.tray_fixture.stop_host,
+                     "tray_host_start": self.tray_fixture.start_host}[kind]()
+                elif kind == "wait_exit":
+                    if not self.app:
+                        raise RuntimeError("Start an owned fixture first")
+                    self.app.wait(timeout=10)
+                    result = {"exited": True}
                 elif kind == "close_request":
                     request_window_close(self.env["DISPLAY"], self.window)
                     result = {"requested": True}
@@ -740,6 +775,16 @@ class Desktop:
                 elif kind == "print_output":
                     result = self.print_output(action.get("count", 1), action.get("text", ""), action.get("pages", 1), action.get("name", "printed-message"))
                 elif kind == "focus_app":
+                    if self.tray_fixture:
+                        deadline = time.monotonic() + 5
+                        while True:
+                            try:
+                                self.window = self.command("xdotool", "search", "--onlyvisible", "--name", "Shep.*Mail").splitlines()[-1]
+                                break
+                            except (subprocess.SubprocessError, IndexError):
+                                if time.monotonic() > deadline:
+                                    raise RuntimeError("The owned Shep window did not reopen")
+                                time.sleep(.02)
                     self.command("xdotool", "windowraise", self.window)
                     self.command("xdotool", "windowfocus", self.window)
                 elif kind == "cancel_print":
@@ -800,11 +845,11 @@ class Desktop:
 
 TOOLS = [
     {"name": "desktop.start", "description": "Launch an isolated Shep fixture workspace on Xvfb. Requires cargo build --profile test-ui --features test-support. No real credentials or cloud writes.",
-     "inputSchema": {"type": "object", "properties": {"profile_login":{"type":"boolean","default":False}, "empty_profile":{"type":"boolean","default":False}, "profile_sync":{"type":"string","enum":list(_profile_fixture.MODES)}, "held_database_import":{"type":"boolean","default":False}, "held_database_export":{"type":"boolean","default":False}, "held_provider_slots":{"type":"boolean","default":False}, "held_account_sync":{"type":"boolean","default":False}, "folder_actions":{"type":"string","enum":["slow","fail","uncertain"]}, "move_recovery": {"oneOf":[{"type":"boolean"},{"type":"string","enum":["committed","copied","unconfirmed","fail-once"]}],"default":False}, "notification_delivery": {"type":"string", "enum":["slow","fail-once"]}, "idle_navigation": {"type":"boolean","default":False}, "pop3_account": {"type":"boolean","default":False}, "nested_folders": {"type":"boolean","default":False}, "bulk_history": {"type": "boolean", "default": False}, "persistent": {"type": "boolean", "default": False}, "desktop_badges": {"type": "boolean", "default": False}, "html_failure_once": {"type": "boolean", "default": False}, "image_delay_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0}, "html_delay_ms": {"type": "integer", "minimum": 0, "maximum": 2000, "default": 0}, "print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "reading_mail": {"type":"boolean", "default":False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail"]}, "search_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
+     "inputSchema": {"type": "object", "properties": {"tray":{"type":"string","enum":["available","missing"]}, "profile_login":{"type":"boolean","default":False}, "empty_profile":{"type":"boolean","default":False}, "profile_sync":{"type":"string","enum":list(_profile_fixture.MODES)}, "held_database_import":{"type":"boolean","default":False}, "held_database_export":{"type":"boolean","default":False}, "held_provider_slots":{"type":"boolean","default":False}, "held_account_sync":{"type":"boolean","default":False}, "folder_actions":{"type":"string","enum":["slow","fail","uncertain"]}, "move_recovery": {"oneOf":[{"type":"boolean"},{"type":"string","enum":["committed","copied","unconfirmed","fail-once"]}],"default":False}, "notification_delivery": {"type":"string", "enum":["slow","fail-once"]}, "idle_navigation": {"type":"boolean","default":False}, "pop3_account": {"type":"boolean","default":False}, "nested_folders": {"type":"boolean","default":False}, "bulk_history": {"type": "boolean", "default": False}, "persistent": {"type": "boolean", "default": False}, "desktop_badges": {"type": "boolean", "default": False}, "html_failure_once": {"type": "boolean", "default": False}, "image_delay_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0}, "html_delay_ms": {"type": "integer", "minimum": 0, "maximum": 2000, "default": 0}, "print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "reading_mail": {"type":"boolean", "default":False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail"]}, "search_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
     {"name": "desktop.close", "description": "Close only the owned fixture app, keeping its Xvfb display and persistent fixture cache available for restart. Normally sends WM_DELETE_WINDOW; crash=true kills only the owned process for recovery tests.", "inputSchema": {"type": "object", "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.restart", "description": "Restart only the owned persistent fixture app on its existing Xvfb display. Normally sends a native window-close request; crash=true kills that owned process to exercise journal recovery. Retains the fixture SQLite cache and never changes app state directly.", "inputSchema": {"type": "object", "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.batch", "description": "Run 1–100 real mouse/keyboard actions in order, including held left-button mouse_down/mouse_up, short waits, state assertions and WebP screenshots. Stops at first failure and captures evidence. Prefer batches to one call per action.",
-     "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}, "type": {"enum": ["pixel_reference", "measure_pixels", "close_request", "restart", "click", "double_click", "mouse_down", "mouse_up", "hover", "resize", "drag", "type", "paste", "key", "key_sequence", "choose_file", "print_output", "cancel_print", "focus_app", "browser_screenshot", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "points": {"type": "array", "minItems": 8, "maxItems": 128, "items": {"type": "array", "minItems": 5, "maxItems": 5, "items": {"type": "integer"}}}, "count": {"type": "integer"}, "pages": {"type": "integer"}, "x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "button": {"type": "integer", "enum": [1, 2, 3]}, "modifiers": {"type": "array", "items": {"type": "string", "enum": ["ctrl", "shift", "alt", "super"]}}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "keys": {"type":"array","minItems":1,"maxItems":32,"items":{"type":"string","minLength":1,"maxLength":80}}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
+     "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}, "type": {"enum": ["pixel_reference", "measure_pixels", "close_request", "tray_menu", "tray_host_stop", "tray_host_start", "wait_exit", "restart", "click", "double_click", "mouse_down", "mouse_up", "hover", "resize", "drag", "type", "paste", "key", "key_sequence", "choose_file", "print_output", "cancel_print", "focus_app", "browser_screenshot", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "points": {"type": "array", "minItems": 8, "maxItems": 128, "items": {"type": "array", "minItems": 5, "maxItems": 5, "items": {"type": "integer"}}}, "count": {"type": "integer"}, "pages": {"type": "integer"}, "x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "button": {"type": "integer", "enum": [1, 2, 3]}, "modifiers": {"type": "array", "items": {"type": "string", "enum": ["ctrl", "shift", "alt", "super"]}}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "keys": {"type":"array","minItems":1,"maxItems":32,"items":{"type":"string","minLength":1,"maxLength":80}}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
     {"name": "desktop.state", "description": "Read observed UI state, cache counts, shortcuts and handler timings; does not change app state.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "desktop.screenshot", "description": "Capture the actual iced window as WebP. Returns image and artifact path.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}}},
     {"name": "desktop.stop", "description": "Stop only the isolated app and Xvfb processes created by this harness.", "inputSchema": {"type": "object", "properties": {}}},

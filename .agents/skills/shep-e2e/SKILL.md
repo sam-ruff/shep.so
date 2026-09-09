@@ -685,3 +685,25 @@ wait for a new scoped listing and completed UI work, then verify unchanged
 records were not downloaded again. This is request-count correctness evidence,
 not a latency benchmark or live Google verification. Review the saved native
 Preferences screenshots alongside the restart/corruption protocol tests.
+For native tray lifecycle use `desktop.start(tray="available" | "missing")`.
+The owned GTK host renders Shep's actual StatusNotifierItem and DBusMenu on the
+isolated X display; its separate D-Bus service records saving notifications.
+The socket uses a temporary alias to the owned artifact directory to avoid Unix
+socket path-length limits in nested worktrees. The fixture permits no personal
+bus, keychain activation or cloud access. It needs `/usr/bin/python3` with GI,
+GTK3 and dbus modules. Tray and badge fixtures intentionally own separate buses.
+
+`tray_menu` clicks the native host; use Down/Return for Open and End/Return for
+Quit. `tray_host_stop`/`tray_host_start` simulate host loss/recovery. `close_request`
+sends the native close event without waiting for process exit; `wait_exit` observes
+actual process completion. Observe `tray` and `tray_host` through state, never as
+action APIs. An allocated reopened window precedes native X11 presentation: use
+`focus_app` to await/focus the newly created owned window before more input.
+Screenshots while hidden capture the owned root display and native menu.
+
+Keep every saved `test_tray_native_*` equivalent plus existing `test_close_*`,
+held-read sync, group/folder receipt and draft failure/restart scenarios. Verify
+preference persistence, missing host fallback, Open/Quit, temporary-save notice,
+failure/retry, durable auto-exit and background arrivals. Review light and compact
+dark WebPs. These Linux native fixture checks are distinct from an actual desktop
+shell and from Windows/macOS execution; keep those limitations explicit.

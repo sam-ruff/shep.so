@@ -36,6 +36,7 @@ pub(super) struct Composer {
     pub close: Option<iced::window::Id>,
     pub dismissed_for: Option<String>,
     pub io: Option<String>,
+    pub picker: Option<String>,
     pub context: Option<DraftMenu>,
     discard: Option<Draft>,
     discard_return: Option<Dialog>,
@@ -590,6 +591,7 @@ impl App {
         }
         let draft = self.current_draft();
         self.composer.io = Some(draft.id.clone());
+        self.composer.picker = Some(draft.id.clone());
         Task::perform(
             async move {
                 let files = rfd::AsyncFileDialog::new()
@@ -610,6 +612,9 @@ impl App {
     }
 
     pub(super) fn attach_chosen(&mut self, captured: Draft, files: Vec<std::path::PathBuf>) {
+        if self.composer.picker.as_deref() == Some(&captured.id) {
+            self.composer.picker = None;
+        }
         if files.is_empty() {
             self.composer.io = None;
             return;

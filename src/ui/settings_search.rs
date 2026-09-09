@@ -12,6 +12,11 @@ pub(super) struct Setting {
 }
 const SETTINGS: &[Setting] = &[
     Setting {
+        title: "System tray",
+        tab: SettingsTab::General,
+        keywords: "tray close minimize minimise quit exit menu bar background saving",
+    },
+    Setting {
         title: "Appearance",
         tab: SettingsTab::General,
         keywords: "theme light dark system colors colour",

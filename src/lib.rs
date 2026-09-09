@@ -3,6 +3,7 @@ pub mod bulk;
 pub mod compose;
 pub mod credentials;
 pub mod desktop_badge;
+pub mod desktop_tray;
 pub mod email_content;
 pub mod engine;
 pub mod folder_actions;

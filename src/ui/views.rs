@@ -1518,6 +1518,29 @@ impl App {
                 .into()
             ),
             self.settings_card(
+                "System tray",
+                "",
+                column![
+                    checkbox(self.preferences.close_to_tray)
+                        .label("Keep Shep running in the system tray when closing the window")
+                        .on_toggle(Message::PrefCloseToTray),
+                    muted(if self.tray.available {
+                        "Open Shep or quit from the tray menu."
+                    } else {
+                        "A system tray is not currently available on this desktop."
+                    })
+                    .size(12),
+                    button(text("Quit Shep").size(13))
+                        .padding([10, 14])
+                        .style(outline)
+                        .on_press(Message::Tray(crate::desktop_tray::Event::Action(
+                            crate::desktop_tray::Action::Quit
+                        )))
+                ]
+                .spacing(14)
+                .into()
+            ),
+            self.settings_card(
                 "About Shep",
                 "",
                 row![
