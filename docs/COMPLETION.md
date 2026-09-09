@@ -1,5 +1,41 @@
 # Completion audit
 
+## Journal ownership, removal reviews and duplicate labels — integrated verification
+
+Three lanes were merged into `main` with `--no-ff` after each was rebased onto
+`c35e2b5` in its own worktree by an integration agent. `42c69b4` integrates the
+bounded backup journal owner (`d36dca8`): the journal is a named 32-slot FIFO
+worker, keyed constructors and `open_encrypted` are intact, and three ownership
+tests cover bounded admission after observer cancellation, last-handle close
+draining and non-poisoning failed transactions. `61c6dfc` integrates remote
+account-removal reviews (`ede75aa`): a shared tombstone offers Keep on this
+device or Review removal, Keep persists local suppression and stale native,
+Google, option or history changes reject the choice. `c0ebf3f` integrates
+duplicate-address sidebar labels (`d5c7683`): each duplicate shows its saved
+name with the address beneath in inbox children and account headings.
+
+Lane verification: the journal lane passes 935 hook executions, 114 backup,
+23 journal and 18 cipher tests, 84 Python tests and eight native backup
+history/all/formats scenarios (evidence `bdc0ecad2916`, `554466f91d27`,
+`025cc924046a`, `9e8faa7055c5`, `b9f487068789`, `0ffc69ca42f2`,
+`930f3dc1d1f8`, `8ce9ef2f1139`). The removal lane passes 935 hook
+executions, 104 profile tests, 84 Python tests and five native removal/review
+scenarios (`3acebfccaf97`, `e5d37c008543`, `6d2961a62066`, `b8fc277cc1bc`,
+`2c008d1829f2`) with reviewed Keep, Remove confirmation, kept and removed
+states. The sidebar lane passes 933 hook executions, six sidebar tests, 84
+Python tests and seven native scenarios (`d54ade8b16da`, `6374378f2a4e`,
+`5e5dafdd2411`, `ca32be155096`) with reviewed default, 160 px and 900x640
+captures. On `main`, the merge commits ran the full hook suite on the merged
+trees: **938** executions for `61c6dfc` and **939** for `c0ebf3f`, zero
+failures, three personal diagnostics ignored (`artifacts/logs/hooks-merge-*`).
+The combined pre-push gate on `c0ebf3f` passes: **84 Python tests** (seven
+skipped), the strict documentation build, and **18 native scenarios** in 86 s
+covering backup history/all/formats, removal and connection reviews,
+duplicate-address labels and sidebar flows (`artifacts/logs/e2e-main-c0ebf3f.log`).
+Limitations: removal rows lack light and compact-dark captures,
+duplicates with identical or empty names stay indistinguishable, and
+lifecycle/Google channel ownership remains under audit.
+
 ## Backup history, encrypted export and ranked scratch — consolidation checkpoint
 
 The session restart on 9 September 2026 resolved the interrupted cherry-pick on

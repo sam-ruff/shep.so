@@ -1,5 +1,14 @@
 # Conversation request audit
 
+9 September consolidation (R91, R02/R49/R92, R15, R22, R32): the restarted
+desktop session resolved the interrupted backup-history cherry-pick as
+`c35e2b5`, then merged bounded backup journal ownership (`42c69b4`), remote
+account-removal reviews (`61c6dfc`) and duplicate-address sidebar labels
+(`c0ebf3f`). Every other `codex/*` lane was verified byte-identical to main
+and deleted. Sam's 9 September request that closing blocked by saving is the
+first fix afterwards is recorded under R90. Hook, Python, docs and native
+counts are in completion; the push receipt follows.
+
 R32: included-destination manual backup now has independent progress/recovery,
 exact staged-copy retry and close receipts. All 13 integrated native paths pass;
 archive options and persistent failure history stay in TODO. Source `cf76976`
