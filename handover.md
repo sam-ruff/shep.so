@@ -8,11 +8,11 @@ Historical implementation notes belong there, rather than becoming new TODOs.
 
 ## Current source checkpoint
 
-The current continuation connects post-login discovery and enrollment. A single
+`acb4969` is pushed to main and connects post-login discovery/enrollment. A single
 complete profile imports automatically into an untouched workspace; first setup,
 multiple profiles and existing local data have native prompts/reviews. Not now
-persists an opt-out and Preferences can re-enable discovery. Final verification
-and the shipping receipt belong in the newest completion entry. Continuous
+persists an opt-out and Preferences can re-enable discovery. Verification and
+the shipping receipt are in the newest completion entry. Continuous
 publication/application is still the next functional priority.
 
 `9158b50` is pushed to main and adopts the shared `initialization-v1` barrier from
@@ -101,15 +101,15 @@ completion paths need automatic continuation. Preserve durable in-flight receipt
 
 ## Verification and installation
 
-The latest source commit's mandatory hooks passed **643 Rust + two renderer +
-53 shared tests (698 executions)**; three personal diagnostics remain explicitly
-ignored. **54 Python tests and 17 selected native scenarios passed**, including
-11 profile flows, five database imports and tooltip preferences. Light/dark/compact
-WebPs were reviewed. Windows GNU cross-compilation and strict Zensical passed.
+The latest source commit's mandatory hooks passed **647 Rust + two renderer +
+53 shared tests (702 executions)**; three personal diagnostics remain explicitly
+ignored. **55 Python tests and 30 selected native scenarios passed**, including
+six new login flows, 11 profile flows, eight database transfers, four Google flows
+and tooltip preferences. Light/dark/compact WebPs were reviewed. Windows GNU cross-compilation and strict Zensical passed.
 See the completion log for exact artifacts and documentation CI shipping evidence.
 
 Native test executable SHA-256:
-`709eff8bba2e270f5cb51152989e8cc4890f8d887226f2cd9a5ce266f8e1c6c4`.
+`1d6cbaec9815937101de0c07489eebc36e2a5a946e2021149b317aa053585611`.
 This is an isolated test-support executable, not an installed production release.
 The personal Linux installation remains source `3567de2`, SHA-256
 `06c0cccb3d3cc6703b143f8e7fa019c1be7032533ae6d4e776a81cc6f91ef34a`.

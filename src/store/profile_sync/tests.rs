@@ -26,7 +26,29 @@ async fn profile_login_opt_out_is_durable_before_enrollment_and_survives_reconne
     assert!(!crate::profile_sync::onboarding::eligible(&declined));
     drop(store);
     let reopened = Store::open(&path).unwrap();
-    connected(&reopened).await;
+    let prefs: Preferences = reopened.get("preferences").await.unwrap();
+    let disconnected = reopened
+        .disconnect_google(prefs.google_lifecycle.revision)
+        .await
+        .unwrap();
+    reopened
+        .finish_google_cleanup(disconnected.revision)
+        .await
+        .unwrap();
+    let prefs: Preferences = reopened.get("preferences").await.unwrap();
+    let activated = reopened
+        .activate_google(
+            prefs.clone(),
+            GoogleGrant {
+                id: "fixture-reconnected".into(),
+                ..prefs.google_grant.clone()
+            },
+            Some("drive:fixture-user".into()),
+            vec![],
+        )
+        .await
+        .unwrap();
+    assert!(activated.value.google_lifecycle.revision > disconnected.revision);
     let saved = reopened.profile_enrollment().await.unwrap();
     assert!(!saved.enrollment.options.discover_on_login && saved.enrollment.selection.is_none());
     let accepted = reopened
