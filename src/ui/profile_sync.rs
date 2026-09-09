@@ -53,7 +53,7 @@ impl State {
     }
     pub fn pending(&self) -> bool {
         self.saving.is_some()
-            || !self.desired.empty()
+            || (!self.desired.empty() && self.error.is_none())
             || self.job.is_some()
             || self.stopping.is_some()
     }
@@ -77,6 +77,13 @@ impl App {
                 return;
             }
             Action::Enabled(value) | Action::Accounts(value) | Action::Settings(value) => {
+                if self.profile_sync.snapshot.is_none() {
+                    self.profile_sync.error = Some(
+                        "Load the saved profile choices before changing them. Try Refresh status."
+                            .into(),
+                    );
+                    return;
+                }
                 let mut changes = self.profile_sync.desired;
                 match action {
                     Action::Enabled(_) => changes.enabled = Some(value),
@@ -203,6 +210,7 @@ impl App {
         }
         let pending = matches!(update, Update::Pending(_));
         let published = matches!(update, Update::Published(_));
+        let failed = matches!(update, Update::Failed(_));
         if saving {
             state.saving = None;
             state.sent = None;
@@ -253,7 +261,7 @@ impl App {
         }
         if refresh {
             self.shared_profile_action(Action::Refresh);
-        } else {
+        } else if !failed {
             self.save_profile_options();
         }
         if !self.profile_sync.pending()
@@ -278,11 +286,21 @@ impl App {
         let controls = column![
             checkbox(options.accounts)
                 .label("Account definitions")
-                .on_toggle(move |v| msg(Action::Accounts(v)))
+                .on_toggle_maybe(
+                    state
+                        .snapshot
+                        .is_some()
+                        .then_some(move |v| msg(Action::Accounts(v)))
+                )
                 .text_size(13),
             checkbox(options.settings)
                 .label("Appearance and mail preferences")
-                .on_toggle(move |v| msg(Action::Settings(v)))
+                .on_toggle_maybe(
+                    state
+                        .snapshot
+                        .is_some()
+                        .then_some(move |v| msg(Action::Settings(v)))
+                )
                 .text_size(13),
         ]
         .spacing(16);
@@ -316,7 +334,13 @@ impl App {
             }
         } else {
             body = body.push(controls);
-            if !available {
+            if state.snapshot.is_none() {
+                body = body.push(muted(if state.error.is_some() {
+                    "Saved profile choices are unavailable. Update Shep or restore a working database."
+                } else {
+                    "Loading profile choices…"
+                }).size(12));
+            } else if !available {
                 body = body
                     .push(
                         muted("Connect Google with Drive permission to share a profile.").size(12),
@@ -429,6 +453,45 @@ mod tests {
         app.tx = Some(sender);
         app.profile_sync.snapshot = Some(original.clone());
         (app, queue, original)
+    }
+
+    #[tokio::test]
+    async fn profile_load_failure_cannot_trap_close_or_drop_newer_choices_on_retry() {
+        let (mut app, mut queue, original) = app().await;
+        app.profile_sync.snapshot = None;
+        app.shared_profile_action(Action::Accounts(false));
+        assert!(app.profile_sync.desired.empty());
+        assert!(!app.profile_sync.pending());
+        assert!(app.profile_sync.error.is_some());
+        app.profile_sync.snapshot = Some(original.clone());
+        app.shared_profile_action(Action::Accounts(false));
+        let Command::ProfileSync(Request::Change { request, .. }) = queue.try_recv().unwrap()
+        else {
+            panic!("change")
+        };
+        app.shared_profile_action(Action::Settings(false));
+        let _ = app.shared_profile_update(request, Update::Failed("Could not save".into()));
+        let Command::ProfileSync(Request::Status(refresh)) = queue.try_recv().unwrap() else {
+            panic!("refresh")
+        };
+        let _ = app.shared_profile_update(refresh, Update::Failed("Could not read".into()));
+        assert!(
+            !app.profile_sync.pending(),
+            "unsent failed choices must not trap a subsequent close"
+        );
+        assert_eq!(app.profile_sync.desired.settings, Some(false));
+        app.shared_profile_action(Action::Refresh);
+        let Command::ProfileSync(Request::Status(refresh)) = queue.try_recv().unwrap() else {
+            panic!("retry")
+        };
+        let _ = app.shared_profile_update(refresh, Update::Status(original));
+        let Command::ProfileSync(Request::Change { changes, .. }) = queue.try_recv().unwrap()
+        else {
+            panic!("retained intent")
+        };
+        assert_eq!(changes.settings, Some(false));
+        assert_eq!(changes.accounts, None);
+        assert!(app.profile_sync.pending());
     }
 
     #[tokio::test]

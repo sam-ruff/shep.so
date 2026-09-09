@@ -137,3 +137,9 @@ nondefault test-support preview. Saved scenarios cover initial review/publicatio
 failure/retry/opt-out, local choices while a read is held, close/restart and compact
 dark controls. These are native-control and protocol tests, not genuine Google
 login or cross-client access evidence. Never point the harness at personal data.
+
+A failed local enrollment read keeps category controls disabled. After a write
+and subsequent status-read failure, later unsent choices remain available for
+explicit retry; they do not launch another write against the stale snapshot or
+trap a later window close. Actual admitted work still drains. The `invalid-local`
+native fixture checks the error screen, disabled controls and graceful restart.

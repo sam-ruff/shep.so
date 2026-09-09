@@ -376,6 +376,14 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
             )
             .await?;
     }
+    if std::env::args().any(|a| a == "--invalid-profile-enrollment") {
+        store
+            .put(
+                crate::profile_sync::enrollment::STORAGE_KEY,
+                serde_json::json!({"future_format":true}),
+            )
+            .await?;
+    }
     if std::env::args().any(|a| a.starts_with("--profile-drive-url=")) {
         store
             .update_preferences(|p| {

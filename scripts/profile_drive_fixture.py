@@ -9,7 +9,7 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
-MODES = ("empty", "fail-once", "hold-list", "slow-upload")
+MODES = ("empty", "fail-once", "hold-list", "slow-upload", "invalid-local")
 
 
 class ProfileDriveFixture:

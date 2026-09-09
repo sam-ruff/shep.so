@@ -1,5 +1,29 @@
 # Completion audit
 
+## 9 September: profile settings failure and close recovery
+
+The final profile-control review found that an unreadable enrollment could leave
+unsent checkbox intent blocking later close attempts. Controls now wait for their
+local snapshot; failed, unadmitted intent is retained for explicit retry without
+becoming a shutdown dependency. A failed status reload cannot silently retry a
+write against the stale snapshot. Admitted saves/uploads still drain. The error
+screen points to local data recovery instead of another Google login.
+
+A controller regression covers unavailable initial settings, failed writes,
+newer input, a failed reload and successful explicit retry. The owned
+`invalid-local` MCP fixture covers disabled controls, visible errors, normal mail
+navigation and graceful restart without replacing the opaque local record.
+**18 selected native scenarios passed** after the functional correction. All
+**six profile scenarios** passed again after the final recovery-copy change;
+the 12 database/Google flows were unchanged by that text/empty-state adjustment.
+Final invalid/reopened screenshots were reviewed (`159dcacff190`). The final
+native executable SHA-256 is
+`9944235f3c2b45ff2d35573fe5b21feb3c94041b1887ddf0b1b02ef3131dcbd0`.
+Python tests pass 54/54; final Windows GNU cross-compilation is warning-free.
+Full hooks, strict docs and the shipping commit are recorded below when complete.
+The larger sync scope, personal installation, credential-choice and performance
+limitations from the preceding setup checkpoint remain unchanged.
+
 ## 9 September: native initial-profile setup and channel ownership
 
 R02/R49/R92 now expose reviewed first-device creation, persistent category choices,
