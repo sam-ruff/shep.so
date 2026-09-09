@@ -531,3 +531,11 @@ checks are recorded in the completion log. Platform grants, initialized creation
 reviewed enrollment, own-upload identity integration, actual account/preferences
 application, protected credentials and all client/platform parity remain active.
 Prompt checkpoint shipping is recorded with the final code commit below.
+
+
+R77/R75/R02/R49/desktop-main:R92 shipping: discovery code [`3c9b98d`](https://github.com/sam-ruff/shep.so/commit/3c9b98d514bf667064f5cd92a22d4dda84998de7) is pushed on the
+review branch with exact remote verification. Mandatory hooks pass 443 Rust tests;
+49 core, 68 mobile Rust, 23 WASM, 41 Python, 34 parity contracts, strict docs and
+the unchanged storage benchmark pass as scoped in the completion log. Creation,
+enrollment, real client application and the prior native timing failure remain
+active; no main merge, personal installation or deployment occurred.

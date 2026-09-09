@@ -1996,3 +1996,14 @@ The unchanged 100,000-message storage benchmark also passes: inbox p95
 session and other applications remained open, so this is not an idle-host claim.
 This verifies mail storage budgets, not catalog latency or native presentation.
 The prior native navigation failure remains unchanged.
+
+
+Discovery code [`3c9b98d`](https://github.com/sam-ruff/shep.so/commit/3c9b98d514bf667064f5cd92a22d4dda84998de7) is **pushed to `feat/mobile-web-clients`**; the exact remote
+head was verified. Mandatory hooks pass formatting, Clippy and **443 root/shared
+Rust tests**, with two personal-account diagnostics intentionally ignored. The
+49 profile tests and all compatibility/strict-docs/storage results above cover
+this code. No client control, live Google or full parity completion is implied.
+Shipping logs are `profile-discovery-commit.log`, `profile-discovery-push.log` and
+`profile-discovery-docs-final.log` under ignored `artifacts/logs/`; the saved
+benchmark is `artifacts/profile-discovery-backend.json`. The final documentation
+checkpoint follows this code in branch history.
