@@ -159,6 +159,34 @@ impl Journal {
             Ok(records)
         }).await
     }
+
+    /// Indexed lookup prevents a recovered local edit reserving another Drive
+    /// ID when the completed listing already contains its original operation.
+    pub async fn scan_record(
+        &self,
+        expected: &Scan,
+        key: Key,
+    ) -> anyhow::Result<Option<RemoteRecord>> {
+        key.validate()?;
+        anyhow::ensure!(
+            expected.complete,
+            "Finish discovery before publishing profile edits."
+        );
+        let expected = expected.clone();
+        self.worker.run(move |c| {
+            let tx = c.transaction()?;
+            let current = load(&tx, &expected.binding, expected.profile)?
+                .context("This profile discovery is no longer current")?;
+            anyhow::ensure!(current == expected, "Profile discovery changed. Pull again before publishing.");
+            let data:Option<String> = tx.query_row("SELECT data FROM scan_files WHERE scan=? AND profile=? AND generation=? AND operation=?",params![current.id.to_string(),key.profile.to_string(),key.generation.to_string(),key.operation.to_string()],|r|r.get(0)).optional()?;
+            data.map(|data| {
+                let record:RemoteRecord = serde_json::from_str(&data)?;
+                record.validate()?;
+                anyhow::ensure!(record.key == key, "The discovered operation identity changed.");
+                Ok(record)
+            }).transpose()
+        }).await
+    }
 }
 
 fn scope(profile: Option<(Uuid, Uuid)>) -> (String, String) {

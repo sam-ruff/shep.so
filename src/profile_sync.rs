@@ -3,6 +3,7 @@
 //! applies account settings, credentials or mail actions by itself.
 pub mod drive;
 pub mod journal;
+pub mod replica;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -72,10 +73,7 @@ impl Key {
         Ok(())
     }
     fn filename(self) -> String {
-        format!(
-            "shep-profile-{}-{}-{}.json",
-            self.profile, self.generation, self.operation
-        )
+        format!("shep-profile-{}.json", self.operation)
     }
 }
 
@@ -136,6 +134,7 @@ impl RemoteRecord {
         self.key.validate()?;
         anyhow::ensure!(
             crate::providers::drive_http::valid_id(&self.id)
+                && self.id.len() <= 200
                 && self.size > 0
                 && self.size <= MAX_RECORD_BYTES as u64
                 && valid_digest(&self.sha256),

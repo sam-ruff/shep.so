@@ -4,4 +4,4 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 cargo test -p shep-html-pixbuf
-cargo test -p shep-profile-core
+python3 scripts/test_profile_core.py

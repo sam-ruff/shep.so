@@ -1,5 +1,46 @@
 # Completion audit
 
+## 9 September: shared causal pull/publish bridge
+
+R02/R49/R92 now connect the verified desktop Drive transport to the published
+shared history worker. Complete listings feed bounded, exact-byte imports;
+missing ancestry remains pending and ready work drains before publishing.
+Publishing compares discovered, shared-history and transport-journal identities,
+commits the original reservation, verifies the upload and acknowledges both
+journals in order. A newer edit, foreign device proof or replaced scan requires
+a fresh pull. Empty discovery cannot implicitly recreate an existing profile.
+
+The desktop now uses the client branch's committed Drive file convention: private
+appProperties, stable category and operation UUID filename. It consumes an
+unchanged copy of the shared metadata/operation fixtures; Git attributes preserve
+exact bytes on all platforms. This supersedes the earlier unconnected desktop
+prototype convention. The shared dependency is pinned to published `9289f53`;
+no client working changes or Cargo source cache were edited.
+
+Eight bridge tests exercise two independent stores through production HTTP:
+offline conflicts and explicit resolution, account/profile removal despite stale
+edits, lost commit replies/reopening, gaps between both journals, foreign/stale
+proofs, contradictory file identities, and 105 reverse-ordered ancestors across
+multiple pages. The shared metadata fixture test and existing transport/journal
+regressions also pass. Clippy and 53 Python tests pass. Final hooks, platform check
+and shipping are recorded below when complete.
+
+Cargo cannot directly test an external Git package with dev-dependencies. A new
+runner copies the pinned shared crate/fixtures into an isolated temporary
+workspace and uses a committed test lock. All **34 shared codec/history/Drive
+tests** pass, including worker cancellation, independent-process ownership and
+protocol failures. Hooks and disabled CI use that runner; two Python tests prove
+exact revision selection and source/fixture isolation.
+
+This is backend progress, not completed continuous sync. Persisted first/new/
+existing-device enrollment, native controls/toggles, account/settings application,
+local removal suppression, journal path protection and incremental pulls remain.
+Live same-project Google visibility is still unverified; passwords stay outside
+the metadata format pending the protection choice. No native UI, production
+installation or performance measurement changed. Evidence is under ignored
+`artifacts/logs/profile-replica-*`; see [the updated protocol reference](agents/profile-drive.md).
+OAuth implementation remains first in TODO with the Flutter handover linked.
+
 ## 9 September: Drive profile transport and durable discovery
 
 R02/R49/R92 now have a backend transport for the shared Rust/Flutter operation

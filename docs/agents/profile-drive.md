@@ -1,29 +1,32 @@
 # Profile records on Google Drive
 
-`profile_sync` implements transport and durable discovery/upload preparation for the [shared profile format](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_FORMAT.md). Enrollment, applying changes and native sync controls remain open in [TODO](https://github.com/sam-ruff/shep.so/blob/main/TODO.md). This backend alone does not provide continuous account sync.
+`profile_sync` implements transport, durable discovery/upload preparation and a bridge to causal history for the [shared profile format](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_FORMAT.md). Enrollment, applying changes and native sync controls remain open in [TODO](https://github.com/sam-ruff/shep.so/blob/main/TODO.md). This backend alone does not provide continuous account sync.
 
 ## Shared codec
 
-Cargo pins `shep-profile-core` to client commit `bae0d86949a0138b90e71348cef0ab434d022dc6`. It validates the same major-1 operations used by Flutter. The fictional `tests/support/profile-operation.json` is copied unchanged from that commit's `shared/profile-operation.json`; the HTTP round trip preserves its exact bytes, Unicode and unknown optional fields. Passwords, Google grants and device settings have no representation in this metadata format.
+Cargo pins `shep-profile-core` with its history feature to published client commit `9289f5327b71bb6aaff463ee965eab48c13df85a`. It validates the same major-1 operations used by Flutter. The fictional `tests/support/profile-operation.json` is copied unchanged from `bae0d86949a0138b90e71348cef0ab434d022dc6`'s `shared/profile-operation.json`; the HTTP round trip preserves its exact bytes, Unicode and unknown optional fields. Passwords, Google grants and device settings have no representation in this metadata format.
 
-The client branch's newer causal-history worker is the integration point for merge, conflicts, tombstones and local edits. Keep its operation/reservation identity consistent with the transport journal. Account application still needs the native account lifecycle and revision checks; decoding or downloading an operation is not permission to apply it.
+`Replica` uses the shared causal-history worker for merge, conflicts, tombstones and local edits. It retains the same operation/reservation identity in both history and transport journals. Account application still needs the native account lifecycle and revision checks; decoding or downloading an operation is not permission to apply it.
 
 ## File identity
 
-Files use `application/json`, parent/space `appDataFolder`, and the name `shep-profile-<profile UUID>-<generation UUID>-<operation UUID>.json`. The transport category marker remains stable across future payload versions so older clients discover unsupported records and request an update.
+Files use `application/json`, parent/space `appDataFolder`, and the name `shep-profile-<operation UUID>.json`. The transport category marker remains stable across future payload versions so older clients discover unsupported records and request an update.
 
 | Custom property | Value |
 | --- | --- |
-| `shepProfile` | `1`, the profile-record category |
+| `shepType` | `profile`, the stable profile-record category |
+| `shepFormat` | `operation-v1` |
 | `shepNamespace` | Lowercase SHA-256 of the exact UTF-8 application namespace |
-| `shepProfileId` | Canonical non-nil profile UUID |
+| `shepProfile` | Canonical non-nil profile UUID |
 | `shepGeneration` | Canonical non-nil generation UUID |
 | `shepOperation` | Canonical non-nil operation UUID |
 | `shepSha256` | Lowercase SHA-256 of the exact uploaded record bytes |
 
-These use Drive's `properties` map, available to callers with access to the file. The namespace hash keeps key-plus-value sizes within Google's 124-byte property limit. Files remain in hidden app storage; this does not share them through ordinary Drive permissions. See [custom properties](https://developers.google.com/workspace/drive/api/guides/properties) and [app-data restrictions](https://developers.google.com/workspace/drive/api/guides/appdata).
+These use Drive's private `appProperties` map, matching the committed client transport and `shared/profile-drive-file.json` fixture in `9289f53`. The namespace hash keeps key-plus-value sizes within Google's 124-byte property limit. Files remain in hidden app storage; this does not share them through ordinary Drive permissions. See [custom properties](https://developers.google.com/workspace/drive/api/guides/properties) and [app-data restrictions](https://developers.google.com/workspace/drive/api/guides/appdata).
 
 Bind a session to the verified `drive:<permissionId>` and configured application namespace. Each pass obtains its own token through the existing staged Google connection and checks Drive permission/account identity before accessing profiles. Do not reuse a token across connection changes or assume different OAuth projects share app data. Real visibility between all registered platform clients remains a required live check from the [handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md).
+
+The desktop consumes an unchanged copy of that metadata fixture in `tests/support/profile-drive-file.json` and verifies it against the original operation bytes. Git attributes disable newline conversion for both fixtures. This convention supersedes the earlier desktop-only `bb87ac2` transport prototype, which was never connected to user profile sync. No production cloud migration was performed. Discovery selects the stable category without hiding visible namespace/version mismatches behind its query.
 
 ## Discovery and upload
 
@@ -33,6 +36,35 @@ Reserve a Drive ID, then persist that ID and exact bytes before upload. Only the
 
 Transport has no update/delete endpoint and rolling backup retention never selects these files. Local acknowledgment is separate from remote commitment; a failed acknowledgment retries the same saved record. The journal is provider state, not an account-password cache or an enrollment choice. Its callers must still enforce sync/category toggles, current connection lifecycle, complete ancestry and local application revisions.
 
+## Causal pull and publish
+
+`Replica::pull` resumes incomplete discovery or refreshes a finished scan, then
+downloads/imports records in bounded pages. Missing parents remain pending in the
+shared journal; draining finishes ready batches before a `Pulled` proof is issued.
+Field/version reviews remain paged. Neither downloaded records nor such a proof
+automatically applies account definitions or settings.
+
+`publish_next` processes one queued edit per call. It rejects a proof from another
+device, changed history or replaced scan, and compares all known remote/core/
+transport IDs before reserving anything. Existing observed records are adopted
+only with the exact operation/content identity. Commit ordering is shared-core
+reservation, transport preparation, verified upload, transport acknowledgment,
+then shared-core confirmation. Interrupted stages retain the original ID/bytes.
+
+An empty result requires an explicitly reviewed new-profile intent and a history
+containing only unconfirmed local edits. Previously observed/uploaded profiles
+cannot use that path to recreate a missing generation. Multiple initial queued
+edits may finish on the same pass; another pass discovers those confirmed files.
+Deletion markers remain authoritative through stale/offline edits. Conflicts
+retain both values until a revision-checked explicit resolution arrives.
+
+This is a backend kernel. Enrollment must still persist consent, profile/category
+choices, local suppression and application mappings. Its coordinator must fence
+Google lifecycle changes, retain an upload task through durable acknowledgment,
+and observe stop/category changes between writes. Current pulls re-read full
+history: incremental polling/caching remains required before continuous operation
+is finished. History and Drive journal paths still need production transfer guards.
+
 ## Verification boundary
 
-Run `cargo test --all-features profile_` and `cargo test --all-features backup::drive`. Tests use production HTTP parsing against the scripted loopback server and real isolated SQLite files. They cover Unicode/extension preservation, restart/lost replies, metadata/content corruption, scope/identity rejection, pagination/revision failures, bounded reads and cancellation after queue admission. Existing Drive backup protocol tests protect the shared HTTP helper. This is protocol evidence; real Google enrollment and cross-client/native UI behavior remain unverified here.
+Run `cargo test --all-features profile_`, `python3 scripts/test_profile_core.py` and `cargo test --all-features backup::drive`. The Python runner tests a disposable copy of the exact locked Git crate with its own committed test lock, leaving dependency/client checkouts untouched. `--update-lock` is only for a reviewed dependency update. Tests use production HTTP parsing against the scripted loopback server and real isolated SQLite files. They cover Unicode/extension preservation, restart/lost replies, metadata/content corruption, scope/identity rejection, pagination/revision failures, bounded reads and cancellation after queue admission. Two independent device stores exercise actual HTTP pull/publish, offline conflicts/resolution, account/profile removal, lost upload replies, both local acknowledgment gaps, stale/foreign discovery and more than 100 reverse-ordered ancestors. Existing Drive backup protocol tests protect the shared HTTP helper. This is protocol evidence; real Google enrollment and cross-client/native UI behavior remain unverified here.

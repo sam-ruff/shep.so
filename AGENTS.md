@@ -31,7 +31,7 @@ Quality and release workflow definitions remain deliberately named `.github/work
 To enable when Sam asks:
 
 1. Provision trusted self-hosted runner labels from the CI matrix: `[self-hosted, Linux, X64]`, `[self-hosted, Windows, X64]`, `[self-hosted, macOS, ARM64]`. Adjust labels to the actual machines first. Do not run untrusted fork code on persistent self-hosted runners.
-2. Install Rust with `rustfmt` and `clippy`, CMake and a C++ compiler for vendored litehtml, Python 3, Node 24, and platform development libraries. The Linux GUI harness additionally needs `Xvfb`, `xdotool`, `zenity`, `xclip`, `dbus-daemon`, `busctl`, and ImageMagick `import` with WebP support. Print flows need Chrome/Chromium, Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and ImageMagick `convert`. Linux needs OpenSSL/dbus/X11/Wayland development packages and a Secret Service for real credentials.
+2. Install Rust with `rustfmt` and `clippy`, CMake and a C++ compiler for vendored litehtml, Python 3.11+, Node 24, and platform development libraries. The Linux GUI harness additionally needs `Xvfb`, `xdotool`, `zenity`, `xclip`, `dbus-daemon`, `busctl`, and ImageMagick `import` with WebP support. Print flows need Chrome/Chromium, Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and ImageMagick `convert`. Linux needs OpenSSL/dbus/X11/Wayland development packages and a Secret Service for real credentials.
 3. Rename both `.yml.disabled` files to `.yml`.
 4. `gh api --method PUT repos/sam-ruff/shep.so/actions/permissions -F enabled=true`
 5. Run the quality workflow manually, inspect results, then let the release workflow run only after a successful push build on `main`.
@@ -44,7 +44,7 @@ bash scripts/install-hooks.sh              # install repository Git hooks
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
-cargo test -p shep-profile-core             # shared Rust/Flutter metadata codec
+python3 scripts/test_profile_core.py # shared codec/history/Drive contracts
 cargo test -p shep-html-pixbuf             # dependency cache regressions
 python3 -m unittest discover -s tests -p 'test_*.py'
 cargo bench --bench responsiveness
@@ -1054,8 +1054,36 @@ workers. Enrollment, merge, category toggles and native controls must still be
 implemented and tested before claiming continuous profile sync.
 
 The pre-commit hook, full check script and disabled quality workflow also run
-`cargo test -p shep-profile-core`. Keep the immutable Git revision in Cargo.lock
+`python3 scripts/test_profile_core.py`. Keep the immutable Git revision in Cargo.lock
 and its fixture provenance explicit when adopting newer client history/codec
 work; never use a sibling worktree path as a shipped dependency. When the
 production enrollment chooses a Drive-journal path, protect it in database
 export/import guards alongside the other active provider journals.
+
+`profile_sync::replica::Replica` privately owns the shared history worker. Complete
+verified pulls mint revision/device/scan proofs; publishing compares core, Drive
+journal and discovered identities before reserving. Preserve core-reserve →
+transport-prepare → verified-upload → transport-ack → core-confirm ordering and
+all restart tests. A lost observer must not choose another operation/file ID.
+Keep the owner alive through upload acknowledgment; check lifecycle/category
+changes between requests. Empty discovery is not permission to recreate an
+existing profile. Account/profile tombstones and explicit conflict resolutions
+come from the shared merge worker, never timestamp-based local replacement.
+
+The shared Drive metadata fixture now fixes appProperties/category/file naming
+across implementations; preserve exact bytes with the repository Git attributes.
+The earlier bb87ac2 desktop prototype had a different unconnected wire convention.
+Real same-project cross-client visibility remains unverified. The kernel still
+needs persisted enrollment, native controls, actual account/settings application,
+production journal path guards and incremental pulls; do not call it working
+continuous sync based on two-store HTTP fixtures alone.
+
+The shared Git crate now has dev-dependencies, so Cargo cannot test it directly
+with `cargo test -p`. `scripts/test_profile_core.py` locates the exact locked Git
+revision through Cargo metadata, copies only that crate and its three fixtures
+into an ignored temporary workspace, and runs all features with the committed
+`tests/support/profile-core.Cargo.lock`. Source checkouts remain untouched.
+After reviewing a dependency change, `--update-lock` deliberately refreshes that
+isolated test lock. Ordinary hooks/CI use the locked mode; Python 3.11+ is required.
+Keep the runner's source-pin/copy-isolation tests and all shared protocol/history
+tests in addition to the desktop bridge tests.
