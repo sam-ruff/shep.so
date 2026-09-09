@@ -2072,3 +2072,14 @@ are in ignored `artifacts/profile-client-apk.json`; the build/inspection logs ha
 `profile-client-apk-` names. Dart formatting, strict pinned Zensical and diff checks
 pass. TODO cleanup preserves all **40 active request entries** in their original
 order; older completed prerequisite prose remains traceable in this log.
+
+
+Flutter discovery code [`438682e`](https://github.com/sam-ruff/shep.so/commit/438682e277c93832a95168034b9940afe8de0cc0) is **pushed to `feat/mobile-web-clients`** with
+exact remote verification. Mandatory hooks pass formatting, Clippy and **443
+root/shared Rust tests**, with two personal-account diagnostics intentionally
+ignored. The final mobile/Android/browser/APK and strict-docs evidence above
+covers this code. Shipping logs are `profile-client-commit.log` and
+`profile-client-push.log`; the remote verification record is ignored
+`artifacts/profile-client-shipping.json`. A final documentation checkpoint follows
+in branch history. Creation/enrollment, real account/preferences application and
+all remaining parity work stay active.
