@@ -1,5 +1,16 @@
 # Completion audit
 
+## Desktop catalog harness integration
+
+The optional shared `test-support` feature exposes an owned loopback connection
+with a fixed fake token. It rejects non-loopback origins, URL credentials/paths/
+queries/fragments and mismatched verified identities. Production Drive remains
+HTTPS-only without an endpoint override. Shared protocol/history/catalog tests
+pass, including the new public-entry regression. This isolated branch supports
+desktop integration without modifying the active mobile/web worktree. It does
+not establish actual Google access or complete enrollment/application parity.
+Final hook and source-pin evidence will be recorded by the desktop integration.
+
 ## 8 September: OAuth/profile implementation handover
 
 Documentation checkpoint [`02c4b32`](https://github.com/sam-ruff/shep.so/commit/02c4b32a6b380c1d5312c20bf187584c683ff10f) is pushed to `feat/mobile-web-clients` and remote equality was verified. [The handover](agents/PROFILE_SYNC_HANDOVER.md) maps existing desktop/Flutter storage and credential lifecycle code, first/new/existing-device flows, configurable profiles, the proposed versioned format, conflicts/removal, outstanding credential protection and required interoperability tests. OAuth implementation now comes first in TODO and the restart notes, as requested. Continuous profile sync and full database transfer remain unimplemented; no live Google or client UI behavior is claimed by this documentation change.

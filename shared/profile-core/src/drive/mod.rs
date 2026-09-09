@@ -124,6 +124,39 @@ pub struct Drive {
     namespace: String,
 }
 impl Drive {
+    /// Owned native test servers only. This nondefault entry point cannot receive
+    /// a real credential and retains production redirect/timeout/identity checks.
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn connect_fixture(
+        base: Url,
+        namespace: String,
+        expected_principal: Option<&str>,
+    ) -> Result<Self> {
+        if base.scheme() != "http"
+            || base.host_str() != Some("127.0.0.1")
+            || base.port().is_none()
+            || !base.username().is_empty()
+            || base.password().is_some()
+            || base.path() != "/"
+            || base.query().is_some()
+            || base.fragment().is_some()
+        {
+            return Err(Error::Invalid);
+        }
+        let http = Self::client_builder()
+            .no_proxy()
+            .build()
+            .map_err(|_| Error::Network)?;
+        Self::verify(
+            http,
+            base,
+            SecretString::from("fixture-profile-token"),
+            namespace,
+            expected_principal,
+        )
+        .await
+    }
+
     pub async fn connect(
         token: SecretString,
         namespace: String,

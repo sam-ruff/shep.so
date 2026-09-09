@@ -539,3 +539,7 @@ review branch with exact remote verification. Mandatory hooks pass 443 Rust test
 the unchanged storage benchmark pass as scoped in the completion log. Creation,
 enrollment, real client application and the prior native timing failure remain
 active; no main merge, personal installation or deployment occurred.
+
+The desktop catalog integration adds a nondefault fixed-fake-token loopback entry
+point to the shared crate. Protocol refusal and identity tests cover it; runtime
+OAuth/enrollment and account application remain tracked under profile sync.

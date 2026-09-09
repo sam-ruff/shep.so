@@ -86,3 +86,8 @@ The profile prerequisite in `shared/profile-core` adds bounded operation metadat
 
 
 Desktop scoped-consent continuation adds explicit Drive backup and Calendar off/read/read-write choices for the next sign-in. Requested permissions remain separate from the active grant, survive saves and bind pending-grant retry/activation; a broader returned Google scope does not enable an unselected service. All 118 native functional scenarios and the protocol/lifecycle checks pass; light/dark/compact captures are reviewed. Flutter native consent now has the separately recorded SDK/host/Android evidence. Browser provider consent, verified profile identity and enrollment remain active R75/R02 gaps; beta login is unchanged.
+
+
+The shared discovery catalog has a nondefault fixed-token loopback entry point
+for desktop native controls. It does not add provider access to Flutter/browser;
+actual enrollment and application remain in the active sync parity gap.
