@@ -6,6 +6,7 @@ use crate::desktop_tray::{Action, Event};
 pub(super) struct State {
     pub window: Option<iced::window::Id>,
     pub available: bool,
+    pub hidden: bool,
     pub temporary: bool,
     pub exiting: bool,
     saving_fallback: bool,
@@ -39,6 +40,7 @@ impl App {
     }
 
     fn open_main_window(&mut self) -> Task<Message> {
+        self.tray.hidden = false;
         if let Some(window) = self.tray.window {
             return iced::window::gain_focus(window);
         }
@@ -64,6 +66,7 @@ impl App {
     }
 
     fn hide_main_window(&mut self) -> Task<Message> {
+        self.tray.hidden = true;
         self.tray.ready = false;
         self.tray
             .window
@@ -85,10 +88,14 @@ impl App {
                 self.notice("The system tray is unavailable. Use Quit Shep in Preferences to close the app.", true);
                 return Task::none();
             }
+            let previous_notice = self.notice.as_ref().map(|(_, _, at)| *at);
             if self.flush_pane_resize() {
                 self.save_preferences();
             }
             self.flush_draft_saves(true);
+            if self.new_error_since(previous_notice) {
+                return Task::none();
+            }
             return self.hide_main_window();
         }
         self.quit_main(window)
@@ -163,11 +170,22 @@ impl App {
         self.open_main_window()
     }
 
-    pub(super) fn reopen_after_failed_close(&mut self) -> Task<Message> {
-        if self.tray.temporary
-            && !self.tray.exiting
-            && self.pending_close.is_none()
-            && self.composer.close.is_none()
+    pub(super) fn new_error_since(&self, previous: Option<Instant>) -> bool {
+        self.notice
+            .as_ref()
+            .is_some_and(|(_, error, at)| *error && Some(*at) != previous)
+    }
+
+    pub(super) fn reopen_after_failed_close(
+        &mut self,
+        hidden_write_failed: bool,
+        was_hidden_closing: bool,
+    ) -> Task<Message> {
+        if !self.tray.exiting
+            && (hidden_write_failed
+                || ((self.tray.temporary || was_hidden_closing)
+                    && self.pending_close.is_none()
+                    && self.composer.close.is_none()))
         {
             return self.restore_main_window();
         }
@@ -185,6 +203,101 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordinary_hidden_write_failure_reopens_but_old_errors_and_refreshes_do_not() {
+        for durable_write in [false, true] {
+            let (mut app, _) = App::new();
+            let window = iced::window::Id::unique();
+            app.tray.window = Some(window);
+            app.tray.available = true;
+            app.preferences.close_to_tray = true;
+            app.busy
+                .insert(if durable_write { "send:reply" } else { "sync" }.into());
+            app.notice("An older error", true);
+            let _ = app.update(Message::WindowCloseRequested(window));
+            assert!(
+                app.tray.window.is_none(),
+                "An old error must not prevent hiding"
+            );
+            let _ = app.update(Message::Backend(crate::engine::Event::Busy(
+                "sync".into(),
+                false,
+            )));
+            assert!(
+                app.tray.window.is_none(),
+                "An old error must not reopen on progress"
+            );
+            let _ = app.update(Message::Backend(crate::engine::Event::Error(
+                "New failure; retry".into(),
+            )));
+            assert_eq!(app.tray.window.is_some(), durable_write);
+            assert!(!app.tray.exiting);
+            assert!(app.pending_close.is_none());
+            assert_eq!(app.notice.as_ref().unwrap().0, "New failure; retry");
+        }
+    }
+
+    #[test]
+    fn quit_after_ordinary_hide_reopens_on_failure_and_late_stop_cannot_exit() {
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.tray.available = true;
+        app.preferences.close_to_tray = true;
+        app.bulk.stopped = true;
+        app.busy.insert("send:reply".into());
+        let _ = app.update(Message::WindowCloseRequested(window));
+        assert!(app.tray.hidden);
+        let _ = app.update(Message::Tray(Event::Action(Action::Quit)));
+        assert!(app.pending_close.is_some());
+        assert!(app.tray.window.is_none());
+        let pending = app.pending_close;
+        app.composer.io = Some("newer-attachment".into());
+        let _ = app.update(Message::Backend(crate::engine::Event::DraftFiles(
+            "older-attachment".into(),
+            Err("Old failure".into()),
+        )));
+        assert_eq!(app.pending_close, pending);
+        assert!(app.tray.window.is_none());
+        let _ = app.update(Message::Backend(crate::engine::Event::Error(
+            "Save failed; retry".into(),
+        )));
+        assert!(app.tray.window.is_some());
+        assert!(!app.tray.hidden);
+        assert!(app.pending_close.is_none());
+        let _ = app.update(Message::Backend(crate::engine::Event::Busy(
+            "send:reply".into(),
+            false,
+        )));
+        assert!(!app.tray.exiting);
+    }
+
+    #[test]
+    fn ordinary_hide_keeps_queue_rejected_draft_visible() {
+        let (mut app, _) = App::new();
+        let (sender, _receiver) = engine::CommandSender::persistence_test_channel();
+        for _ in 0..32 {
+            sender
+                .try_send(Command::AutoSaveDraft(Draft::default()))
+                .unwrap();
+        }
+        app.tx = Some(sender);
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.tray.available = true;
+        app.preferences.close_to_tray = true;
+        app.load_draft(Draft {
+            id: "unsaved".into(),
+            ..Default::default()
+        });
+        app.edit_compose_field("subject", "Keep these words".into());
+        let _ = app.update(Message::WindowCloseRequested(window));
+        assert_eq!(app.tray.window, Some(window));
+        assert!(app.composer.current.dirty.is_some());
+        assert!(app.composer.current.pending.is_none());
+        assert!(app.notice.as_ref().unwrap().0.contains("queue is full"));
+    }
 
     #[test]
     fn notification_failure_keeps_saving_visible_without_repeated_hiding() {

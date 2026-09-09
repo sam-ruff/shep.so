@@ -26,6 +26,13 @@ credential protection still remain. Do not discard any lane's uncommitted work.
 
 ## Current source checkpoint
 
+`6728931` is pushed: native tray, temporary-saving notification/auto-exit and
+failure recovery pass745 integrated hook executions and32 native scenarios.
+Linux menus/compact settings were reviewed; Windows GNU and exact macOS adapter
+checks do not establish actual platform runtime. Root reproduced a remaining
+ordinary-hide pending-send failure and is fixing visibility; keep R86 active.
+The tray agent is now implementing Windows/macOS unread badge adapters.
+
 `91ed9a9` is pushed: deletion follows the next displayed message without resetting
 scroll, including page boundaries and previous/empty fallback. Combined testing
 also fixed bulk Move folder labels when the reader belongs to another account.

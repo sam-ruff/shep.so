@@ -580,6 +580,27 @@ class NativeFlows(unittest.TestCase):
                        check("close_pending", False), {"type":"focus_app"},
                        check("compose_fields.subject", "Keep my attachment draft"), shot("tray-attachment-failure-reopened"))
 
+    def test_tray_native_ordinary_hide_reopens_when_pending_send_fails(self):
+        for quit_after_hiding in (False, True):
+            with self.subTest(quit_after_hiding=quit_after_hiding):
+                started = self.mcp.call("desktop.start", tray="available", mail_actions="slow")
+                print(f"Ordinary tray failure ({quit_after_hiding}): {started['artifacts']}", flush=True)
+                self.mcp.batch(check("tray.available", True))
+                self.open_tray_preferences()
+                self.mcp.batch(click(288,342), check("tray.saved_enabled", True),
+                               key("ctrl+1"), check("tab", "Mail"), key("r"),
+                               check("focused_input", "compose-body"), type_text("Keep this hidden reply after failure."))
+                draft = self.mcp.call("desktop.state")["composer"]["id"]
+                self.mcp.batch(click(675,564), check("busy", "send:"+draft, "contains"),
+                               {"type":"close_request"}, check("tray.visible", False),
+                               check("tray.temporary", False), check("close_pending", False))
+                if quit_after_hiding:
+                    self.mcp.batch({"type":"tray_menu"}, key("End"), key("Return"), check("close_pending", True))
+                self.mcp.batch(check("notice", "Sending is disabled in preview", "contains"),
+                               check("tray.visible", True), check("close_pending", False),
+                               {"type":"focus_app"}, check("editor", "Keep this hidden reply", "contains"),
+                               shot("tray-ordinary-hide-write-failure"))
+
     def test_tray_native_temporary_saving_notifies_and_failure_reopens_draft(self):
         self.mcp.call("desktop.start", tray="available", mail_actions="slow")
         self.mcp.batch(check("tray.available", True), key("r"), check("focused_input", "compose-body"),

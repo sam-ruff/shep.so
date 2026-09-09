@@ -875,10 +875,17 @@ impl App {
             };
         }
         let start = Instant::now();
+        let hidden_closing =
+            self.tray.hidden && (self.pending_close.is_some() || self.composer.close.is_some());
+        let hidden_write = self.tray.hidden && !hidden_closing && self.has_required_close_work();
+        let previous_notice = self.notice.as_ref().map(|(_, _, at)| *at);
         let task = self.handle(message);
         self.pump_bulk();
         let close = self.continue_pending_close();
-        let reopen = self.reopen_after_failed_close();
+        let reopen = self.reopen_after_failed_close(
+            hidden_write && self.new_error_since(previous_notice),
+            hidden_closing,
+        );
         let tray_close = self.continue_tray_close();
         self.update_desktop_badge();
         self.update_notification_settings();
