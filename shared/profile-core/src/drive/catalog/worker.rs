@@ -14,6 +14,14 @@ pub struct Discovery {
 }
 impl Discovery {
     pub async fn open(path: PathBuf, scope: Scope) -> Result<Self> {
+        Self::open_with(path, scope, history::ConnectionFactory::default()).await
+    }
+    /// The same factory keys the catalog and every nested observation journal.
+    pub async fn open_with(
+        path: PathBuf,
+        scope: Scope,
+        connections: history::ConnectionFactory,
+    ) -> Result<Self> {
         scope.validate()?;
         let binding = scope.clone();
         let (commands, mut requests) = mpsc::channel::<Request>(32);
@@ -22,7 +30,7 @@ impl Discovery {
         std::thread::Builder::new()
             .name("shep-profile-discovery".into())
             .spawn(move || {
-                let mut catalog = match Catalog::open(&path, binding) {
+                let mut catalog = match Catalog::open_with(&path, binding, connections) {
                     Ok(catalog) => catalog,
                     Err(error) => {
                         let _ = started.send(Err(error));

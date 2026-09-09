@@ -13,6 +13,14 @@ pub struct Worker {
 }
 impl Worker {
     pub async fn open(path: PathBuf, binding: Binding) -> Result<Self> {
+        Self::open_with(path, binding, ConnectionFactory::default()).await
+    }
+    /// Retain the connection factory on the owning worker during startup.
+    pub async fn open_with(
+        path: PathBuf,
+        binding: Binding,
+        connections: ConnectionFactory,
+    ) -> Result<Self> {
         let worker_binding = binding.clone();
         let (commands, mut input) = mpsc::channel::<Request>(32);
         let (started, ready) = oneshot::channel();
@@ -33,7 +41,7 @@ impl Worker {
                         return;
                     }
                 }
-                let mut journal = match Journal::open(&path, binding) {
+                let mut journal = match Journal::open_with(&path, binding, &connections) {
                     Ok(journal) => journal,
                     Err(error) => {
                         let _ = started.send(Err(error));

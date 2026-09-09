@@ -1,5 +1,20 @@
 # Completion audit
 
+## 9 September: injectable shared database connections for cache encryption
+
+`history::ConnectionFactory`, `Journal::open_with`, `Worker::open_with` and
+`Discovery::open_with` retain a client-owned initializer without changing the
+existing default open APIs. Initialization runs after file ownership and before
+schema reads. Failure does not fall back to an unconfigured connection. Catalogs
+retain the same initializer for every nested observation, including reopened
+histories, and preserve the configured temporary-store policy.
+
+All 57 isolated shared tests and all-target Clippy pass, including four new
+configuration/ownership/failure/retry/nested-observation regressions. These are
+connection contract tests, not evidence of production encryption. Desktop key
+management, ciphertext, safe migration and native recovery remain R22 work.
+Normal repository hooks and parent integration/shipping are still pending.
+
 ## 9 September: durable common values for later profile synchronization
 
 R02/R49/R92 enrollment now saves its original common field values and shared/local
