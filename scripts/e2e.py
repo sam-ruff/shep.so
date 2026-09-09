@@ -1414,6 +1414,80 @@ class NativeFlows(unittest.TestCase):
                        shot("outbox-empty-compact"), key("Escape"), check("dialog", None),
                        click(87, 359), check("folder", "Sent"), check("total", 2), shot("local-sent-copies-compact"))
 
+    def test_desktop_profile_enrollment_review_apply_reconnect(self):
+        result = self.mcp.call("desktop.start", google_permissions="drive", profile_discovery=True)
+        print(f"Desktop enrollment evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(956,156), check("settings_tab", "Profiles"), check("profiles.loaded",True),
+                       wait(150), click(600,390), type_text("so.shep.fixture"), click(342,441),
+                       check("profiles.error",None,"ne"), check("profiles.pending",False),
+                       click(344,601), check("profiles.discovery.state.phase","complete"),
+                       check("profiles.pending",False), wait(150), shot("enrollment-entry-light"),
+                       click(500,534), check("profiles.enrollment_visible",True),
+                       check("profiles.discovery.enrollment.review.phase","review"),
+                       check("profiles.pending",False), check("account_count",2),
+                       check("profiles.discovery.enrollment.review.rows",2),
+                       wait(150), shot("enrollment-review-light"))
+        self.mcp.batch(click(666,603), wait(150), shot("enrollment-account-details-light"),
+                       click(666,603), wait(100), click(351,543),
+                       check("profiles.discovery.enrollment.review.phase","complete"),
+                       check("profiles.pending",False), check("profiles.error",None),
+                       check("account_count",3), check("reconnect_required_count",1),
+                       check("dark",True), wait(150), shot("enrollment-complete-dark"),
+                       click(377,156), check("settings_tab","Accounts"),
+                       wait(150), shot("enrollment-reconnect-accounts-dark"),
+                       click(1042,474), check("dialog","Account"), check("fields.email","shared-0@example.test"),
+                       wait(150), shot("enrollment-reconnect-wizard-dark"))
+        saved = self.mcp.call("desktop.state")["profiles"]["discovery"]["enrollment"]["review"]["id"]
+        self.mcp.batch(click(595,364), check("fields.setup_step","1"),
+                       check("fields.host","imap.example.test"), wait(150),
+                       shot("enrollment-reconnect-incoming-dark"), key("Escape"), check("dialog",None),
+                       check("reconnect_required_count",1), key("ctrl+1"), check("tab","Mail"),
+                       key("Down"), check("selected","Your weekly workspace digest"),
+                       shot("enrollment-independent-mail-dark"), key("ctrl+comma"), check("tab","Preferences"),
+                       click(956,156), check("settings_tab","Profiles"), wait(150), click(335,333),
+                       check("profiles.enrollment_visible",False), wait(150), click(741,441),
+                       check("profiles.discovery.state",None), wait(150), click(342,441),
+                       check("profiles.discovery.state.phase","complete"), check("profiles.pending",False),
+                       check("profiles.discovery.enrollment.review.id",saved), check("account_count",3),
+                       check("reconnect_required_count",1), wait(150), click(374,776),
+                       check("profiles.enrollment_visible",True), check("profiles.pending",False),
+                       check("profiles.discovery.enrollment.review.phase","complete"),
+                       wait(150), shot("enrollment-reopened-dark"))
+
+    def test_desktop_profile_enrollment_compact_cancel_and_newer_preferences(self):
+        result = self.mcp.call("desktop.start", google_permissions="drive", profile_discovery=True)
+        print(f"Compact enrollment evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab","Preferences"), wait(150),
+                       click(725,366), check("dark",True), click(956,156), check("settings_tab","Profiles"),
+                       check("profiles.loaded",True), wait(150), click(600,390), type_text("so.shep.fixture"),
+                       click(342,441), check("profiles.error",None,"ne"), check("profiles.pending",False),
+                       click(344,601), check("profiles.discovery.state.phase","complete"), check("profiles.pending",False),
+                       wait(150), click(500,534), check("profiles.enrollment_visible",True),
+                       check("profiles.discovery.enrollment.review.phase","review"), check("profiles.pending",False),
+                       {"type":"resize","width":900,"height":640}, check("window_size",[900,640]),
+                       wait(150), shot("enrollment-review-compact-dark"))
+        self.mcp.batch(click(468,558), check("profiles.discovery.enrollment.review.phase","cancelled"),
+                       check("profiles.pending",False), check("account_count",2), check("dark",True),
+                       shot("enrollment-cancelled-compact-dark"), click(318,333),
+                       check("profiles.enrollment_visible",False),
+                       {"type":"resize","width":1440,"height":920}, check("window_size",[1440,920]),
+                       wait(150), click(500,534), check("profiles.discovery.enrollment.review.phase","review"),
+                       check("profiles.pending",False), wait(150), click(288,469),
+                       click(292,156), check("settings_tab","General"), wait(150),
+                       click(399,366), check("dark",False), check("preferences_saved",True),
+                       click(956,156), check("settings_tab","Profiles"), wait(150),
+                       shot("enrollment-newer-preference-review-light"), click(351,543),
+                       check("profiles.discovery.enrollment.review.phase","complete"),
+                       check("profiles.pending",False), check("profiles.error",None),
+                       check("profiles.discovery.enrollment.review.include_accounts",False),
+                       check("profiles.discovery.enrollment.review.settings_receipt.kept",["setting:appearance"]),
+                       check("account_count",2), check("reconnect_required_count",0), check("dark",False),
+                       {"type":"resize","width":900,"height":640}, check("window_size",[900,640]),
+                       {"type":"hover","x":750,"y":550}, {"type":"scroll","amount":25},
+                       wait(150), shot("enrollment-kept-preference-compact-light"),
+                       key("ctrl+1"), check("tab","Mail"), check("dark",False))
+
     def test_desktop_profile_publication_review_retry_reopen(self):
         result = self.mcp.call("desktop.start", google_permissions="drive", profile_discovery=True)
         print(f"Desktop publication evidence: {result['artifacts']}", flush=True)
@@ -1421,7 +1495,7 @@ class NativeFlows(unittest.TestCase):
                        click(956,156), check("settings_tab", "Profiles"), check("profiles.loaded",True),
                        wait(150), click(600,390), type_text("so.shep.fixture"), click(342,441),
                        check("profiles.error",None,"ne"), check("profiles.pending",False),
-                       click(344,629), check("profiles.discovery.state.phase","complete"),
+                       click(344,601), check("profiles.discovery.state.phase","complete"),
                        check("profiles.pending",False), wait(150), shot("publication-entry-light"),
                        click(370,725), check("profiles.publication_visible",True), check("profiles.pending",False),
                        wait(150), shot("publication-form-light"),
@@ -1463,7 +1537,7 @@ class NativeFlows(unittest.TestCase):
                        click(725,366), check("dark",True), click(956,156), check("settings_tab","Profiles"),
                        check("profiles.loaded",True), wait(150), click(600,390), type_text("so.shep.fixture"),
                        click(342,441), check("profiles.error",None,"ne"), check("profiles.pending",False),
-                       click(344,629), check("profiles.discovery.state.phase","complete"), check("profiles.pending",False),
+                       click(344,601), check("profiles.discovery.state.phase","complete"), check("profiles.pending",False),
                        wait(150), click(370,725), check("profiles.publication_visible",True), check("profiles.pending",False),
                        wait(150), click(288,499), {"type":"resize","width":900,"height":640},
                        check("window_size",[900,640]), {"type":"hover","x":750,"y":550},
@@ -1505,7 +1579,7 @@ class NativeFlows(unittest.TestCase):
                        check("profiles.namespace", "so.shep.fixture"), click(342, 441),
                        check("profiles.error", None, "ne"), check("profiles.running", False),
                        wait(150), shot("desktop-profile-failed-light"),
-                       click(344, 629), check("profiles.pending", True),
+                       click(344, 601), check("profiles.pending", True),
                        click(342, 441), check("profiles.running", False),
                        key("ctrl+1"), check("tab", "Mail"), key("Down"),
                        check("selected", "Your weekly workspace digest"), check("profiles.pending", False),

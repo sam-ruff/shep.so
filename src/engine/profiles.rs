@@ -142,6 +142,9 @@ impl Engine {
                     let binding_key = format!("profile_discovery_client:{scope_key}");
                     let previous: String = self.store.get(&binding_key).await?;
                     let client_changed = previous != request.grant.client_id();
+                    active
+                        .run_enrollment(&self.store, crate::profiles::enrollment::Command::Current)
+                        .await?;
                     let opened = active
                         .run_publication(
                             &self.store,
@@ -177,6 +180,12 @@ impl Engine {
                             .await?;
                     }
                     Ok(refreshed)
+                } else if let Action::Enrollment(command) = &request.action {
+                    session
+                        .as_mut()
+                        .context("Reopen Profiles and sync.")?
+                        .run_enrollment(&self.store, command.clone())
+                        .await
                 } else if let Action::Publication(command) = &request.action {
                     session
                         .as_mut()

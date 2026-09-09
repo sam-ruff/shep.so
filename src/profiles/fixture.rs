@@ -38,7 +38,7 @@ impl Fixture {
                     format: shep_profile_core::FORMAT.into(),
                     major: 1,
                     minor: 0,
-                    requires: vec![
+                    requires: vec!["accounts-v1".into(),
                         "causal-v1".into(),
                         "settings-v1".into(),
                         "initialization-v1".into(),
@@ -56,7 +56,9 @@ impl Fixture {
                     changes: (if phase == 0 {
                         vec![Action::ProfileSetup { complete: false }]
                     } else if phase == 1 {
-                        vec![
+                        let account:crate::model::Account=serde_json::from_value(json!({"id":format!("fixture-account-{n}"),"name":format!("Shared account {n}"),"email":format!("shared-{n}@example.test"),"protocol":"Imap","host":"imap.example.test","port":993,"username":format!("shared-{n}"),"smtp_host":"smtp.example.test","smtp_port":465}))?;
+                        let mut actions:Vec<_>=shep_mail_core::profiles::export_account(&account,Uuid::from_u128(10000+n as u128))?.into_iter().map(|c|c.action).collect();
+                        actions.extend([
                             Action::ProfileName {
                                 name: if n == 0 {
                                     "Work".into()
@@ -68,7 +70,8 @@ impl Fixture {
                                 key: SettingKey::Appearance,
                                 value: json!("Dark"),
                             },
-                        ]
+                        ]);
+                        actions
                     } else {
                         vec![Action::ProfileSetup { complete: true }]
                     })

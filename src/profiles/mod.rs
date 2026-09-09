@@ -5,3 +5,9 @@ pub mod discovery;
 pub(crate) mod fixture;
 pub mod preferences;
 pub mod publication;
+
+pub(crate) mod reconnect;
+
+pub mod preference_state;
+
+pub mod enrollment;

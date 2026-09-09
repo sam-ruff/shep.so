@@ -44,6 +44,9 @@ impl Engine {
             !self.demo,
             "Sending is disabled in preview. Your draft is saved locally."
         );
+        self.store
+            .require_profile_active(draft.account_id.clone())
+            .await?;
         let info = self.store.begin_outgoing(submission, draft.clone()).await?;
         self.outgoing_changed(output).await?;
         output
@@ -166,6 +169,9 @@ impl Engine {
                 "The previous Sent upload was not acknowledged. Check the server or confirm another copy before retrying."
             );
         }
+        self.store
+            .require_profile_active(account.id.clone())
+            .await?;
         let result=async {
             let mut connection=tokio::time::timeout(Duration::from_secs(60),self.outbound.sent(&account)).await.context("Connecting to Sent timed out")??;
             let folder=connection.folder().to_owned();
@@ -289,6 +295,9 @@ impl Engine {
                     "POP3 cannot check a server Sent folder. Review delivery with your provider."
                 );
                 let found = tokio::time::timeout(Duration::from_secs(60), async {
+                    self.store
+                        .require_profile_active(account.id.clone())
+                        .await?;
                     let mut connection = self.outbound.sent(&account).await?;
                     connection.find(&info.message_id).await
                 })

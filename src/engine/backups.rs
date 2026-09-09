@@ -170,7 +170,7 @@ impl Engine {
         Ok(())
     }
 
-    async fn encrypted_snapshot(
+    pub(super) async fn encrypted_snapshot(
         &self,
         prefs: &Preferences,
         passphrase: &SecretString,
@@ -179,7 +179,17 @@ impl Engine {
         let calendars: Vec<CalendarSource> = self.store.get("calendars").await?;
         let mut credentials = Vec::new();
         if prefs.backup_accounts {
-            for id in accounts
+            let mut active_accounts = Vec::new();
+            for account in &accounts {
+                if !self
+                    .store
+                    .profile_reconnect_required(account.id.clone())
+                    .await?
+                {
+                    active_accounts.push(account);
+                }
+            }
+            for id in active_accounts
                 .iter()
                 .map(|a| a.id.clone())
                 .chain(
@@ -189,7 +199,7 @@ impl Engine {
                         .map(|c| c.id.clone()),
                 )
                 .chain(
-                    accounts
+                    active_accounts
                         .iter()
                         .filter(|a| a.smtp_separate_password)
                         .map(|a| format!("{}:smtp", a.id)),

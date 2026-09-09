@@ -97,7 +97,9 @@ impl App {
                     ))
                     .push(self.account_field(
                         "Password / app password",
-                        if self.field("id").is_empty() {
+                        if self.field("id").is_empty()
+                            || self.workspace.profile_reconnect.contains(self.field("id"))
+                        {
                             "App password"
                         } else {
                             "Leave blank to keep the saved password"
@@ -194,7 +196,11 @@ impl App {
                 if self.field("smtp_separate") == "true" {
                     body = body.push(self.account_field(
                         "SMTP password",
-                        "Leave blank to keep a saved SMTP password",
+                        if self.workspace.profile_reconnect.contains(self.field("id")) {
+                            "Enter this device's SMTP password"
+                        } else {
+                            "Leave blank to keep a saved SMTP password"
+                        },
                         "smtp_password",
                         true,
                     ));

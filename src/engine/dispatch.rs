@@ -152,6 +152,7 @@ impl CommandSender {
             | Command::BulkJobs(..)
             | Command::BulkItems(..) => &self.reads,
             Command::SavePreferences(..)
+            | Command::SaveProfilePreferences(..)
             | Command::SaveDraft(_)
             | Command::AutoSaveDraft(_)
             | Command::DeleteDraft(_)

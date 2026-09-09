@@ -42,6 +42,21 @@ Flutter Google consent uses `model/google_connection.dart` and `data/google_nati
 
 Flutter first-profile publication uses mail schema 10 frozen reviews and exact staged requests, plus an independently owned shared history journal. Preserve the causal initialization marker and record own-upload identities in discovery before confirming the local queue. Pause/close drains an accepted step; disconnected generations cannot begin another. The complete contract and saved regressions are in [PROFILE_PUBLICATION.md](docs/agents/PROFILE_PUBLICATION.md). Publication does not authorize account application, credential import or cloning device history.
 
+## Desktop profile application
+
+Desktop enrollment lives in `src/profiles/enrollment/`, `src/store/profile_enrollment.rs`
+and `src/ui/profiles/enrollment.rs`; see [the contract](docs/agents/PROFILE_DESKTOP.md).
+Keep original records in the independent publication/history owner. Reviews and
+application receipts belong to the existing mail Store connection, through its
+background worker. Preserve 50-row paging, source/history revision checks, stable
+mappings and newer account/removal intent. Imported accounts retain a durable
+reconnect guard through both explicit password writes and checked activation;
+provider/backup/restore paths must never bypass it. Local cached actions remain usable.
+GUI preference saves pass through `App::try_command` to preserve actual portable
+field intent, including reverted edits. Never replace these patches with an old
+whole-preferences snapshot. Keep exact save ordering, canonical-value effects and
+newer UI-edit protection alongside the native enrollment and publication flows.
+
 ## Request tracking — required every turn
 
 `TODO.md` is the authoritative active request list. At the start of each turn, read it alongside the original goal and relevant completion evidence. When the user adds, changes or reports a requirement, add/update its TODO entry immediately, before implementation; record corrections so obsolete defaults are not restored. Check the whole conversation when auditing scope, not just the latest message.

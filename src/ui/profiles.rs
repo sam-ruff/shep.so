@@ -1,3 +1,4 @@
+pub mod enrollment;
 pub mod publication;
 use super::*;
 use crate::profiles::discovery::{Action as ProfileAction, Grant, Observation, Request};
@@ -11,6 +12,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub enum Message {
     Publication(publication::Message),
+    Enrollment(enrollment::Message),
     Namespace(String),
     Open,
     Pause,
@@ -23,6 +25,7 @@ pub enum Message {
 
 pub(super) struct Profiles {
     publication: publication::Publication,
+    enrollment: enrollment::Enrollment,
     panel: Uuid,
     serial: u64,
     pending: Option<(u64, ProfileAction)>,
@@ -41,6 +44,7 @@ impl Default for Profiles {
         static NEXT_PANEL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
             publication: Default::default(),
+            enrollment: Default::default(),
             panel: Uuid::from_u128(
                 NEXT_PANEL.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u128,
             ),
@@ -66,6 +70,7 @@ impl App {
     pub(super) fn pause_profiles(&mut self) {
         self.profiles.running = false;
         self.publication_pause();
+        self.enrollment_pause();
     }
     pub(super) fn profile_grant_changed(&mut self) {
         if self
@@ -117,6 +122,7 @@ impl App {
     pub(super) fn profile_message(&mut self, message: Message) {
         self.profile_grant_changed();
         match message {
+            Message::Enrollment(message) => self.enrollment_message(message),
             Message::Publication(message) => self.publication_message(message),
             Message::Namespace(value) => {
                 self.profiles.namespace = value;
@@ -230,11 +236,14 @@ impl App {
                     }
                     if self.profiles.error.is_some() {
                         self.publication_pause();
+                        self.enrollment_pause();
                     }
+                    self.enrollment_observe_local(&observation);
                     self.profiles.observation = observation;
                 }
                 self.profile_pump();
                 self.publication_pump();
+                self.enrollment_pump();
             }
             Err(error) => {
                 self.profiles.error = Some(error);
@@ -243,6 +252,9 @@ impl App {
         }
     }
     pub(super) fn profile_settings(&self) -> Element<'_, super::Message> {
+        if self.profiles.enrollment.visible {
+            return self.enrollment_view();
+        }
         if self.publication_visible() {
             return self.publication_view();
         }
@@ -348,22 +360,37 @@ impl App {
                     "Available to review"
                 };
                 body = body.push(
-                    column![
-                        row![text(name).size(14).font(BOLD), muted(status).size(12)]
+                    button(
+                        column![
+                            row![
+                                text(name).size(14).font(BOLD),
+                                muted(status).size(12),
+                                muted("Review").size(12)
+                            ]
                             .spacing(14)
                             .align_y(Alignment::Center)
                             .wrap(),
-                        muted(format!(
-                            "{} account{} · {} preference{}",
-                            profile.accounts,
-                            if profile.accounts == 1 { "" } else { "s" },
-                            profile.settings,
-                            if profile.settings == 1 { "" } else { "s" }
-                        ))
-                        .size(12),
-                    ]
-                    .spacing(6)
-                    .padding([12, 0]),
+                            muted(format!(
+                                "{} account{} · {} preference{}",
+                                profile.accounts,
+                                if profile.accounts == 1 { "" } else { "s" },
+                                profile.settings,
+                                if profile.settings == 1 { "" } else { "s" }
+                            ))
+                            .size(12),
+                        ]
+                        .spacing(6),
+                    )
+                    .padding([12, 0])
+                    .width(Length::Fill)
+                    .style(ghost)
+                    .on_press_maybe(
+                        (!busy && finished && profile.initialized && !profile.removed).then_some(
+                            super::Message::Profiles(Message::Enrollment(
+                                enrollment::Message::Review(profile.clone()),
+                            )),
+                        ),
+                    ),
                 );
             }
             body = body.push(
@@ -388,7 +415,13 @@ impl App {
                     !busy,
                 ));
             }
-            body = body.push(muted("Desktop profile import is still in development.").size(12));
+            if p.observation.enrollment.review.is_some() {
+                body = body.push(control(
+                    "Open saved enrollment",
+                    Message::Enrollment(enrollment::Message::Open),
+                    !busy,
+                ));
+            }
         }
         if let Some(error) = &p.error {
             body = body.push(text(error).size(12)).push(control(
@@ -405,7 +438,7 @@ impl App {
     }
     pub(super) fn profile_observation(&self) -> serde_json::Value {
         serde_json::json!({"pending":self.profiles.pending.is_some(), "running":self.profiles.running,
-            "publication_running":self.profiles.publication.running, "publication_visible":self.publication_visible(), "loaded":self.profiles.loaded, "namespace":self.profiles.namespace,
+            "enrollment_running":self.profiles.enrollment.running,"enrollment_visible":self.profiles.enrollment.visible,"publication_running":self.profiles.publication.running, "publication_visible":self.publication_visible(), "loaded":self.profiles.loaded, "namespace":self.profiles.namespace,
             "error":self.profiles.error, "discovery":*self.profiles.observation})
     }
 }

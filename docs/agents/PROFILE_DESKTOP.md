@@ -3,8 +3,8 @@
 Preferences → Profiles and sync discovers existing setups through the shared
 Drive catalog. Sign in with Drive access first, then enter the application
 namespace configured for the same Google Cloud project as the other devices.
-Discovery and reviewed publication use the same shared Drive format. Desktop
-account/settings import remains active work. Flutter publication and reviewed enrollment have separate
+Discovery, reviewed publication and account/preferences enrollment use the same
+shared Drive format. Flutter publication and reviewed enrollment have separate
 [contracts](PROFILE_ENROLLMENT.md).
 
 The desktop uses the saved active grant, OAuth client, Google lifecycle revision
@@ -33,9 +33,9 @@ application's private Drive space; it is not proof that another project's setup
 is absent. Profile metadata is not a credential or account-activation receipt.
 
 `src/profiles/preferences.rs` maps eight currently shared desktop fields explicitly.
-It does not apply a discovered profile to the desktop. Future reviewed application
-must preserve newer local edits, independent account mappings and credential
-activation before enabling provider work. Shortcuts, contacts, other portable
+Reviewed enrollment applies only those selected fields, preserving newer local
+edits and independent account mappings. Imported accounts require explicit
+credential activation before provider work. Shortcuts, contacts, other portable
 settings, ongoing reconciliation and protected passwords remain open.
 
 The nondefault `test-support` feature supplies a synthetic loopback Drive fixture
@@ -71,6 +71,54 @@ Store/protocol tests exercise changed reviews, 75-account paging, exact staging
 recovery, mail database reopen after a lost Drive confirmation and an independent
 catalog reading the completed profile. Native control results and shipping belong
 in the completion log. This is an initial publication, not ongoing reconciliation
-or desktop enrollment. Native large-page controls, complete settings/categories,
+for enrolled devices. Native large-page controls, complete settings/categories,
 credential protection, Apple/live Google and authenticated cross-client access
 remain active work.
+
+
+## Reviewed enrollment
+
+Click a discovered profile to prepare its review. Original immutable records enter
+an independently owned history, using the same binding path as publication; the
+catalog database, its device ID and its upload queue are never copied. Existing
+offline operations and queued uploads remain intact. Source and history revisions
+must still match before approval. Unsupported or conflicting fields stay visible
+and unavailable, with their original records retained.
+
+Reviews expose at most 50 account/preference rows, category choices and individual
+selections. Details show incoming/SMTP endpoints, TLS/authentication, usernames
+and Sent policy. Matching shared identities preserve all local metadata, mail,
+drafts and credentials. Differing connections or locally removed accounts start
+unselected and require explicit approval to add a separate connection. Email
+addresses are never used as a deduplication identity.
+
+The mail database freezes account metadata and per-field preference revisions.
+Each account step commits metadata, its mapping, reconnect guard and receipt in
+one transaction. Newer edits/removal of the original connection win, including
+when the approved choice was to create a separate account. Preference application
+and its receipt also commit together; explicit newer intent wins even when changed
+back to the original value. GUI saves carry the portable fields actually edited,
+so an older whole-window snapshot cannot undo an unrelated imported preference.
+The reader and inbox apply the accepted preference effects immediately.
+
+Imported accounts show **Reconnect required** in Preferences → Accounts. Sync,
+server mutations, sending and server Sent access check this durable guard before
+reading credentials. Reconnect requires newly entered incoming and, when separate,
+SMTP passwords. The guard remains after a partial keychain failure or changed
+account; both writes must succeed before checked activation. Local cached mail
+remains usable. Backups skip guarded password entries; restoring metadata without
+a complete password pair keeps the account guarded. Restores cannot silently
+activate an already guarded account.
+
+Preparation and application run one bounded background step at a time. Leaving
+Preferences or Pause stops further steps; reopening observes durable receipts.
+Store/protocol tests cover lost receipts and file reopen, matching/differing
+accounts, removal, newer preferences, 78-row paging, unsupported settings and
+preserved offline history. Native controls cover review/details, application,
+reconnect entry, browsing, reopen, compact cancellation and a newer theme edit.
+See the completion log for final runs and shipping.
+
+This is reviewed initial enrollment. Automatic first setup, continuous
+reconciliation, shared removal/conflict resolution, remaining categories/settings,
+protected credential transfer, native large-page controls and live Google/Apple
+verification remain active work.
