@@ -425,7 +425,7 @@ fn icon_color<'a>(
         ("chevron",r#"<path d="m9 5 7 7-7 7"/>"#),
         ("left",r#"<path d="m15 5-7 7 7 7"/>"#),
         ("down",r#"<path d="m6 9 6 6 6-6"/>"#),
-        ("sync",r#"<path d="M20 9a8.25 8.25 0 0 0-14-3L3 9m0-6v6h6M4 15a8.25 8.25 0 0 0 14 3l3-3m0 6v-6h-6"/>"#),
+        ("sync",r#"<g transform="translate(24 0) scale(-1 1)"><path d="M20 9a8.25 8.25 0 0 0-14-3L3 9m0-6v6h6M4 15a8.25 8.25 0 0 0 14 3l3-3m0 6v-6h-6"/></g>"#),
         ("settings",r#"<path d="m9 3 1-1h4l1 3 3 1 3 3-1 3 1 3-3 3-3 1-1 3h-4l-1-3-3-1-3-3 1-3-1-3 3-3 3-1V3Z"/><circle cx="12" cy="12" r="3"/>"#),
         ("shield",r#"<path d="m12 2 9 4v6c0 5-9 10-9 10S3 17 3 12V6l9-4Z"/><path d="m8 12 3 3 5-6"/>"#),
         ("cloud",r#"<path d="M6 18a5 5 0 0 1-1-10 7 7 0 0 1 13-2 6 6 0 0 1 0 12H6Z"/>"#),

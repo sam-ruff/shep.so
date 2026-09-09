@@ -76,6 +76,23 @@ fn rotating_svg(renderer: &mut Renderer, angle: f32, clip: Rectangle) {
 }
 
 #[test]
+fn positive_svg_rotation_is_clockwise_on_screen() {
+    let screen = rect(0., 0., 200., 80.);
+    let mut initial_renderer = renderer();
+    rotating_svg(&mut initial_renderer, 0., screen);
+    let initial = draw(&mut initial_renderer, screen);
+    assert!(initial.pixel(134, 32).unwrap().alpha() > 200);
+    assert_eq!(initial.pixel(146, 32).unwrap().alpha(), 0);
+
+    let mut turned_renderer = renderer();
+    rotating_svg(&mut turned_renderer, std::f32::consts::FRAC_PI_2, screen);
+    let turned = draw(&mut turned_renderer, screen);
+    // The top/left L becomes top/right after a positive quarter turn.
+    assert_eq!(turned.pixel(134, 32).unwrap().alpha(), 0);
+    assert!(turned.pixel(146, 32).unwrap().alpha() > 200);
+}
+
+#[test]
 fn rotated_svg_keeps_its_center_and_honors_viewport_at_fractional_scale() {
     for scale in [1., 1.25] {
         for angle in [
