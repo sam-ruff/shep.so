@@ -176,7 +176,7 @@ async fn prepare_controlled(
     for chunk in &seed.chunks {
         check_categories(expected.enrollment.options, chunk)?;
     }
-    for chunk in seed.chunks {
+    for chunk in &seed.chunks {
         control.check()?;
         let revision = replica.state().await?.revision;
         let chunk = store
@@ -191,6 +191,45 @@ async fn prepare_controlled(
                 changes: chunk.changes,
                 resolutions: vec![],
             })
+            .await?;
+    }
+    // Establish the last common values before any later remote pull. Replaying
+    // seed edits returns the current worker revision, so verify each field still
+    // has its seed value before using that revision as a reconciliation basis.
+    // An existing checkpoint is never replaced by retrying initial publication.
+    if store
+        .profile_replication_optional(selection.binding.clone())
+        .await?
+        .is_none()
+    {
+        let common: Vec<_> = seed
+            .chunks
+            .iter()
+            .flat_map(|c| c.changes.iter().cloned())
+            .collect();
+        let state = replica.state().await?;
+        anyhow::ensure!(
+            !state.removed && state.waiting == 0 && state.ready == 0,
+            "The initial profile history needs review before establishing ongoing sync."
+        );
+        for change in &common {
+            control.check()?;
+            let target = history::target(&change.action);
+            let versions = replica.versions(target.clone(), None).await?;
+            anyhow::ensure!(
+                versions.len() == 1
+                    && replica.value(target, versions[0].operation).await? == *change,
+                "This profile changed before its local checkpoint was saved. Keep the local values and review setup recovery."
+            );
+        }
+        control.check()?;
+        store
+            .initialize_profile_replication(
+                expected.clone(),
+                state.revision,
+                seed.account_ids,
+                common,
+            )
             .await?;
     }
     Ok(())

@@ -39,6 +39,8 @@ impl Store {
             anyhow::ensure!(values.accounts.len() == review.accounts && values.settings.len() == review.settings && (options.accounts || values.accounts.is_empty()) && (options.settings || values.settings.is_empty()),
                 "The selected profile categories changed. Review the profile again.");
             let mut accounts: Vec<Account> = get(&tx,"accounts")?;
+            let mut common = values.account_changes;
+            common.extend(values.settings.iter().cloned());
             let mut reconnect: Reconnect = get(&tx,join::RECONNECT_KEY)?;
             let mut mapping = BTreeMap::new();
             for mut account in values.accounts {
@@ -82,6 +84,14 @@ impl Store {
             enrollment.advance()?;
             enrollment.validate()?;
             put(&tx,STORAGE_KEY,&enrollment)?;
+            // The common values and native import commit together. A crash or
+            // later edit cannot turn acceptance into a new baseline snapshot.
+            let replication = crate::profile_sync::state::State::new(
+                review.selection.binding.clone(),review.revision,&accounts,&prefs,
+                mapping.iter().map(|(shared,local)|(local.clone(),*shared)).collect(),common)?;
+            anyhow::ensure!(get::<Option<crate::profile_sync::state::State>>(&tx,crate::profile_sync::state::STORAGE_KEY)?.is_none(),
+                "This workspace already has a profile checkpoint. Review its existing setup.");
+            put(&tx,crate::profile_sync::state::STORAGE_KEY,&replication)?;
             put(&tx,join::STORAGE_KEY,&Applied { review:review.id,binding:review.selection.binding,history_revision:review.revision,accounts:mapping })?;
             let result = snapshot(&tx)?;
             tx.commit()?;

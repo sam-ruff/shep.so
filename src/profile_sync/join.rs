@@ -41,6 +41,9 @@ pub(crate) struct Applied {
 pub(crate) struct Values {
     pub accounts: Vec<Account>,
     pub settings: Vec<Change>,
+    /// Exact accepted account changes, including optional operation extensions.
+    /// Native account structs alone cannot reconstruct these shared values.
+    pub account_changes: Vec<Change>,
 }
 
 /// Read only current, conflict-free visible fields, not the operation history.
@@ -48,6 +51,7 @@ async fn values(replica: &Replica, options: Options, control: &Control) -> anyho
     let mut connections = BTreeMap::new();
     let mut names = BTreeMap::new();
     let mut settings = Vec::new();
+    let mut account_changes = Vec::new();
     let mut after = None;
     loop {
         control.check()?;
@@ -71,6 +75,14 @@ async fn values(replica: &Replica, options: Options, control: &Control) -> anyho
                 "Review conflicting profile values first."
             );
             let change = replica.value(field.target, version.operation).await?;
+            if options.accounts
+                && matches!(
+                    change.action,
+                    Action::AccountConnection { .. } | Action::AccountName { .. }
+                )
+            {
+                account_changes.push(change.clone());
+            }
             match change.action {
                 Action::AccountConnection { account } if options.accounts => {
                     connections.insert(account.id, account);
@@ -111,7 +123,11 @@ async fn values(replica: &Replica, options: Options, control: &Control) -> anyho
         }
         _ => false,
     });
-    Ok(Values { accounts, settings })
+    Ok(Values {
+        accounts,
+        settings,
+        account_changes,
+    })
 }
 
 fn complete(state: &history::State) -> anyhow::Result<()> {

@@ -1,5 +1,41 @@
 # Completion audit
 
+## 9 September: durable common values for later profile synchronization
+
+R02/R49/R92 enrollment now saves its original common field values and shared/local
+account identities. Initial creation establishes this checkpoint before pulling
+later records; import commits it with the accepted accounts/settings. Setup and
+acceptance retries preserve later native edits. Database import archives the
+source checkpoint without replaying its pending profile changes.
+
+The new local capture/admission APIs reserve an exact operation UUID and the last
+common revision of its field. They preserve optional shared fields, paused
+categories and newer local values. History admission verifies the current field
+before issuing a receipt: an idempotent Edit response containing a newer whole
+history revision cannot silently acknowledge an unseen successor or conflict.
+Existing unmapped accounts stay local; local-only removals record suppression.
+
+Nine new backend regressions cover restart/lost acknowledgments, edits before
+initial upload, category pause/re-enable, disconnect, concurrent remote changes,
+stable account mapping, suppression and invalid field bases. Existing join and
+database-import tests now check atomic common values and source fencing.
+**14 native scenarios passed** (nine profile and five database import), including
+read-only SQLite assertions after native enrollment and graceful close. Reviewed
+WebPs: `f5adc93c24d1` first-device/light, `76913bfe3666` import/reconnect/dark and
+`cec12e9c521b` compact dark review. Native executable SHA-256:
+`be29388aaf1579dc24d60d8789c6e5e35e726d05972465b9df8777cddeba8097`.
+The 54 Python tests and Windows GNU all-target/all-feature cross-check passed.
+Mandatory hook results and the source shipping receipt follow after the commit;
+targeted profile tests passed 59/59.
+
+The periodic publication/application loop, conflict/removal controls and automatic
+login/enrollment remain unfinished. The newly published Flutter `184b98a` adds an
+initialization barrier that desktop's current `33d222d7` pin must adopt before
+claiming current first-device interoperability. No live Google, personal account,
+keychain or installed production data was changed. Performance remains deferred;
+quality/release CI stays disabled. OAuth with its Flutter handover reference
+remains the first TODO item; no full feature request was removed.
+
 ## 9 September: named profile discovery and existing-device import
 
 R02/R49/R92 adds a native profile picker and reviewed import of account definitions

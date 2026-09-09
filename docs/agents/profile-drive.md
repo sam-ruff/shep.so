@@ -177,3 +177,33 @@ Read cancellation remains interruptible; admitted application commits drain befo
 close. Continuous updates, automatic enrollment prompts after login, account linking
 between already-populated devices, conflict/removal controls and protected password
 transfer still need implementation. Real cross-client Google visibility is unverified.
+
+## Common values and local edits
+
+Enrollment saves a device-local `profile_replication_v1` checkpoint. Creation
+retains the original seed values before pulling later records; joining commits
+accepted raw fields and the local account mapping with the import. Retrying setup
+or acceptance cannot resnapshot newer native preferences as already-shared values.
+Database import archives this source-device state rather than replaying it.
+
+The capture API reserves one exact local operation against the last common
+revision of its field. Newer native edits remain separate, and optional shared
+fields survive export. History admission returns a sealed receipt only after
+verifying the operation is still the field's current version. An idempotent Edit
+reply can describe newer history, so its revision alone cannot advance the local
+basis. Category pauses retain the original pending request; admitted receipts
+drain without restoring older options or local values.
+
+These APIs and their restart/conflict regressions prepare ongoing sync; the
+periodic publication/application loop and conflict controls are still unfinished.
+Old profiles without a trustworthy common basis require recovery review, not an
+assumed snapshot of today's cloud values. Existing unmapped local accounts require
+explicit linking; local-only removal must not publish a shared tombstone.
+
+The newer Flutter publication checkpoint
+[`184b98a`](https://github.com/sam-ruff/shep.so/commit/184b98a) adds a required
+`initialization-v1` barrier; see [client publication](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_PUBLICATION.md).
+Desktop's current `33d222d7` pin does not implement it and refuses those required
+records. Adopt and test that immutable shared contract before claiming current
+first-device interoperability; a complete listing is not proof all setup records
+have been published.

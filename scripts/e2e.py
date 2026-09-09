@@ -1772,6 +1772,19 @@ class NativeFlows(unittest.TestCase):
                        check("fields.host","imap.example.test"),check("fields.smtp_host","smtp.example.test"),
                        check("fields.incoming_security","Tls"),check("fields.smtp_security","StartTls"),
                        shot("profile-account-reconnect-wizard"),key("Escape"),check("dialog",None))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
+        checkpoint=self.profile_checkpoint(started)
+        self.assertEqual(len(checkpoint["accounts"]),1)
+        self.assertEqual(len(checkpoint["local_only"]),2)
+        self.assertEqual(checkpoint["fields"]["setting:appearance"]["local"]["value"],"Dark")
+        self.assertIsNone(checkpoint["pending"])
+
+    def profile_checkpoint(self, started):
+        database=Path(started["artifacts"])/"fixture.sqlite"
+        with sqlite3.connect(database.as_uri()+"?mode=ro",uri=True) as cache:
+            row=cache.execute("SELECT value FROM kv WHERE key='profile_replication_v1'").fetchone()
+            self.assertIsNotNone(row,"Native enrollment must save its reconciliation checkpoint")
+            return json.loads(row[0])
 
     def test_profile_sync_native_existing_unsupported_account_keeps_local_data_and_allows_other_profile(self):
         started=self.mcp.call("desktop.start",profile_sync="existing-unsupported")
@@ -1812,7 +1825,8 @@ class NativeFlows(unittest.TestCase):
                        shot("profile-existing-disabled-reopened"))
 
     def test_profile_sync_native_first_device_review(self):
-        self.mcp.call("desktop.start", profile_sync="slow-upload")
+        started=self.mcp.call("desktop.start", profile_sync="slow-upload")
+        print(f"First profile checkpoint evidence: {started['artifacts']}",flush=True)
         self.open_shared_profiles()
         self.mcp.batch(check("profile_sync.available", True), shot("profile-sync-controls-light"),
                        click(370, 442), check("profile_sync.review", 0),
@@ -1828,6 +1842,12 @@ class NativeFlows(unittest.TestCase):
         self.open_shared_profiles()
         self.mcp.batch(check("profile_sync.enrollment.selection.name", "Personal M"),
                        check("profile_sync.enrollment.selection.ready", True), shot("profile-sync-reopened"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
+        checkpoint=self.profile_checkpoint(started)
+        self.assertEqual(len(checkpoint["accounts"]),2)
+        self.assertEqual(checkpoint["local_only"],[])
+        self.assertEqual(sum(t.startswith("setting:") for t in checkpoint["fields"]),7)
+        self.assertIsNone(checkpoint["pending"])
 
     def test_profile_sync_native_failure_retry_and_opt_out(self):
         self.mcp.call("desktop.start", profile_sync="fail-once")

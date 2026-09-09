@@ -20,6 +20,10 @@ async fn profile_enrollment_is_archived_on_database_import_without_replaying_dev
     source.put(STORAGE_KEY, value.clone()).await.unwrap();
     source.put(SEED_KEY, value.clone()).await.unwrap();
     source
+        .put(crate::profile_sync::state::STORAGE_KEY, value.clone())
+        .await
+        .unwrap();
+    source
         .put(crate::profile_sync::join::STORAGE_KEY, value.clone())
         .await
         .unwrap();
@@ -56,6 +60,7 @@ async fn profile_enrollment_is_archived_on_database_import_without_replaying_dev
         STORAGE_KEY,
         SEED_KEY,
         crate::profile_sync::join::STORAGE_KEY,
+        crate::profile_sync::state::STORAGE_KEY,
     ] {
         let archived: String = imported
             .run(move |c| {

@@ -4,7 +4,7 @@ use serde_json::json;
 use shep_profile_core::{Action, Change, SettingKey, history};
 use uuid::Uuid;
 
-async fn connected(store: &Store) {
+pub(super) async fn connected(store: &Store) {
     store
         .update_preferences(|p| {
             p.google_client_id = "fixture-client".into();
@@ -23,7 +23,7 @@ async fn connected(store: &Store) {
         .await
         .unwrap();
 }
-fn selection() -> Selection {
+pub(super) fn selection() -> Selection {
     Selection {
         binding: history::Binding {
             namespace: "so.shep.fixture".into(),

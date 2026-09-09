@@ -8,6 +8,14 @@ Historical implementation notes belong there, rather than becoming new TODOs.
 
 ## Current source checkpoint
 
+The current continuation adds `profile_replication_v1`: enrollment now saves the
+last common field values, exact raw extensions and local/shared account mapping.
+Local capture/admission APIs preserve pending UUIDs and per-field bases across
+restart, category pauses and newer native edits. A sealed history receipt verifies
+the field is still current before acknowledgment. These APIs are tested preparation
+for the continuous loop; the loop and remote application are not connected yet.
+See the newest completion entry for this continuation's verification and shipping.
+
 `071c6b0` is pushed to main. Preferences can discover named shared profiles,
 review one and import its account definitions and supported preferences. Existing
 accounts/mail stay intact. New definitions receive fresh local IDs and require
@@ -31,22 +39,33 @@ on next launch; they do not hot-swap an engine or replay another device's sends.
 
 ## Next work
 
-1. Add automatic post-login discovery/enrollment prompts, then ongoing local and
+1. Review/adopt the newly published shared initialization barrier from client
+   `184b98a` (audit `751b67b`), documented in
+   [Flutter publication](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_PUBLICATION.md).
+   Desktop still pins `33d222d7` and refuses the new required `initialization-v1`
+   records. Migrate first-device creation, enrollment checks and isolated fixtures
+   together; incomplete publication cannot look like a finished shared profile.
+2. Add automatic post-login discovery/enrollment prompts, then ongoing local and
    remote profile updates. Support first setup from either desktop or Flutter,
    new devices and already-populated workspaces, with saved enable/category choices.
-2. Connect account linking/suppression, conflict/removal reviews, offline recovery,
+3. Connect account linking/suppression, conflict/removal reviews, offline recovery,
    incremental enrolled-history pulls and the remaining portable preferences.
    Current enrolled-history pulls still read full history. The catalog's change
    stream does not by itself implement continuous account synchronization.
-3. Preserve the identity maps: first-device seeds map local IDs to shared UUIDs;
+4. Preserve the identity maps: first-device seeds map local IDs to shared UUIDs;
    `profile_join_v1` maps shared UUIDs to fresh local IDs. Future exports must use
    those durable mappings. `profile_reconnect_v1` blocks provider use until explicit
    device credential setup. Database import archives source-device enrollment,
-   seed and join mapping, preserving pending-operation reviews.
-4. The password-transfer protection question remains **unanswered**. Do not assume
+   seed, join mapping and replication checkpoint, preserving pending-operation reviews.
+   Capture/admit local edits before each pull. Keep a field's last common revision
+   when local edits race application, and merge dirty native preferences per field.
+   Older profiles without a provable basis need recovery review. Remote endpoint
+   changes need explicit fresh credentials; do not let blank Reconnect fields reuse
+   an old password against a new server. Conflict/removal controls remain unfinished.
+5. The password-transfer protection question remains **unanswered**. Do not assume
    Google-only unlocking or put account passwords in metadata/SQLite. The current
    shared format contains account definitions and selected settings, without secrets.
-5. Verify real same-project Google appDataFolder visibility and OAuth across the
+6. Verify real same-project Google appDataFolder visibility and OAuth across the
    participating clients/platforms. Fixture success is not live interoperability.
 
 The sibling `../shep-clients` is an independent active client worktree; preserve
