@@ -9,7 +9,7 @@ This handover records the credit-limited stopping point. The user explicitly res
 - Work in the `shep-clients` worktree on `feat/mobile-web-clients`. All combined Flutter, browser, Rust backend and delegated promo work is on that review branch.
 - Read `AGENTS.md`, `TODO.md`, `docs/CLIENT_PARITY.md`, `shared/client-scenarios.json` and the latest entries in `docs/COMPLETION.md`. `docs/REQUEST_AUDIT.md` preserves request traceability.
 - The root `shep.so` main worktree has independent, actively edited desktop work. Do not commit it, overwrite it, merge clients into main or replace the personal installation. The `shep-website` worktree still has the agent's original uncommitted files; its website source/assets were already copied and committed on the combined branch. Its older README is superseded; do not recopy it.
-- Latest checkpoint: [`3e1181b`](https://github.com/sam-ruff/shep.so/commit/3e1181ba68692b63104cec4f926f3391ecfab470), pushed and verified on the remote review branch. The earlier Undo/handover checkpoint is `d4da04c`; final shipping documentation follows each code checkpoint in branch history. Pushes to the review branch are authorized. Use the configured owner identity and Conventional Commits; never skip hooks.
+- Latest checkpoint: [`6c4bb65`](https://github.com/sam-ruff/shep.so/commit/6c4bb65fbc02c96dd258ed9942e64e6282bca181), pushed and verified on the remote review branch. The earlier Undo/handover checkpoint is `d4da04c`; final shipping documentation follows each code checkpoint in branch history. Pushes to the review branch are authorized. Use the configured owner identity and Conventional Commits; never skip hooks.
 
 ## Product decisions that must survive
 
@@ -31,6 +31,8 @@ R63 now has two deterministic failed-before regressions for shortcut capture/hel
 
 ## Flutter native Google consent checkpoint
 
+Shipped and verified as [`6c4bb65`](https://github.com/sam-ruff/shep.so/commit/6c4bb65fbc02c96dd258ed9942e64e6282bca181). Mandatory hooks pass formatting, Clippy and 398 root/shared Rust tests (two personal diagnostics intentionally ignored).
+
 Flutter Preferences now offers native Google sign-in with explicit Drive and Calendar permissions, separately displayed saved access, cancellation/retry and reviewed local disconnection. SDK tokens remain outside portable preferences; secure metadata records identity, enabled services and pending cleanup. Unknown device writes pause Google work until a successful read reconciles the result. Mail navigation remains available during held consent. See [mobile Google setup](docs/agents/GOOGLE_MOBILE.md).
 
 Verification passes 89 Flutter host tests, the separately configured SDK-boundary fixture, two named Android control scenarios, seven Appium flows, seven offline Flutter Playwright flows, clean analysis, 40 Python tests and 31 parity contracts. The production ARM64 release build contains the Rust bridge and bundled font/license assets, with checked preview markers absent. It is development-signed and has no registered Google client configuration; no live sign-in or new personal-phone installation is claimed. Final test evidence and shipping are recorded in the completion log. Reviewed synthetic captures are under ignored `artifacts/flutter/google-reviewed/`; initial native/browser/test-navigation failures remain recorded.
@@ -41,7 +43,7 @@ Continue Calendar/Drive provider use and verified profile identity/discovery/enr
 
 Shipped and verified on the review branch as [`3e1181b`](https://github.com/sam-ruff/shep.so/commit/3e1181ba68692b63104cec4f926f3391ecfab470). Preferences now saves separate Drive and Calendar off/read/edit choices for the next sign-in. The active grant remains usable until new consent commits; denied or changed setup preserves it. Requests, omitted-scope responses, staged retry and activation use the exact selected set, and broader returned grants cannot activate an unselected service. All 118 native functional scenarios, 398 root/shared Rust tests, 46 selected Google tests, 39 Python tests and 31 parity contracts pass. Light/dark/compact screenshots are reviewed; strict documentation and Clippy pass. Shipping is recorded in the completion log.
 
-Continue verified profile identity, mobile/browser provider consent and durable discovery/enrollment/merge. This desktop increment does not establish live Google access, mobile/Apple execution or continuous sync. Preserve the common profile format and pending credential-protection decision below.
+Continue verified cross-client profile identity, provider integration and durable discovery/enrollment/merge. This desktop increment does not establish live Google access, mobile/Apple execution or continuous sync. Preserve the common profile format and pending credential-protection decision below.
 
 ## Shared profile codec checkpoint
 
