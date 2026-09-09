@@ -1584,6 +1584,89 @@ class NativeFlows(unittest.TestCase):
                        {**check("mail_pending", 0), "timeout_ms": 5000}, click(420, 247), check("starred", starred),
                        shot("failed-flag-restored"))
 
+    def test_deletion_selection_keeps_scrolled_neighbors_through_repeated_saves(self):
+        result = self.mcp.call("desktop.start", mail_actions="slow")
+        print(f"Delete neighbor evidence: {result['artifacts']}", flush=True)
+        rows = self.mcp.call("desktop.state")["mail_rows"]
+        self.mcp.batch(click(420, 747), check("selected_id", rows[5]["id"]), keys(*(["Down"] * 7)),
+                       check("selected_id", rows[12]["id"]), check("selected", rows[12]["subject"]),
+                       check("inbox_scroll", 400, "gte"), shot("delete-scrolled-before-action"))
+        scroll = self.mcp.call("desktop.state")["inbox_scroll"]
+        self.mcp.batch(click(696, 100), check("selected_id", rows[13]["id"]),
+                       check("inbox_scroll", scroll), check("action_toast.label", "Deleted 1 message"),
+                       key("ctrl+d"), check("selected_id", rows[14]["id"]),
+                       check("inbox_scroll", scroll), check("action_toast.label", "Deleted 2 messages"),
+                       shot("delete-scrolled-neighbors-pending"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       check("selected_id", rows[14]["id"]), check("inbox_scroll", scroll),
+                       shot("delete-scrolled-neighbors-saved"))
+
+    def test_deletion_selection_failure_retains_newer_reader_and_scroll(self):
+        result = self.mcp.call("desktop.start", mail_actions="fail")
+        print(f"Delete failure neighbor evidence: {result['artifacts']}", flush=True)
+        rows = self.mcp.call("desktop.state")["mail_rows"]
+        self.mcp.batch(click(420, 747), check("selected_id", rows[5]["id"]), keys(*(["Down"] * 7)),
+                       check("selected_id", rows[12]["id"]), key("ctrl+d"),
+                       check("selected_id", rows[13]["id"]), key("Down"),
+                       check("selected_id", rows[14]["id"]))
+        scroll = self.mcp.call("desktop.state")["inbox_scroll"]
+        self.mcp.batch({**check("mail_pending", 0), "timeout_ms": 5000},
+                       check("selected_id", rows[14]["id"]), check("total", 120),
+                       check("inbox_scroll", scroll), check("notice", "restored", "contains"),
+                       shot("delete-failure-keeps-new-reader"))
+
+    def test_deletion_selection_follows_filtered_order_then_clears_empty_reader(self):
+        self.mcp.call("desktop.start", mail_actions="slow")
+        self.mcp.batch(click(350, 100), wait(100), click(350, 155), check("filter", "Unread"),
+                       click(531, 100), wait(100), click(531, 155), check("sort", "Oldest"),
+                       check("total", 4))
+        rows = self.mcp.call("desktop.state")["mail_rows"]
+        self.mcp.batch(click(420, 349), check("selected_id", rows[1]["id"]), key("ctrl+d"),
+                       check("selected_id", rows[2]["id"]), shot("delete-filtered-oldest-next"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000})
+        # Programmatic next selection is not read-on-leave; explicit clicks are.
+        # Remove the remaining displayed rows using the ordinary delete chord.
+        while self.mcp.call("desktop.state")["total"]:
+            before = self.mcp.call("desktop.state")["total"]
+            self.mcp.batch(key("ctrl+d"), check("total", before - 1),
+                           {**check("mail_pending", 0), "timeout_ms": 5000})
+        self.mcp.batch(check("selected_id", None), check("selected", None), shot("delete-filtered-empty"))
+
+    def test_deletion_selection_fetches_the_next_row_across_a_page_boundary(self):
+        result = self.mcp.call("desktop.start", mail_actions="slow")
+        print(f"Delete page boundary evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(583, 884), check("offset", 50))
+        following = self.mcp.call("desktop.state")["mail_rows"][0]
+        self.mcp.batch(click(273, 884), check("offset", 0), wait(100))
+        rows = self.mcp.call("desktop.state")["mail_rows"]
+        self.mcp.batch(click(420, 747), check("selected_id", rows[5]["id"]),
+                       keys(*(["Down"] * 25)), check("selected_id", rows[30]["id"]),
+                       keys(*(["Down"] * 19)), check("selected_id", rows[49]["id"]))
+        state = self.mcp.call("desktop.state")
+        self.assertEqual(state["selected_id"], state["mail_rows"][-1]["id"])
+        scroll = state["inbox_scroll"]
+        self.mcp.batch(key("ctrl+d"), check("selected_id", following["id"]), check("offset", 0),
+                       check("inbox_scroll", scroll), shot("delete-next-page-row"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       check("selected_id", following["id"]), check("inbox_scroll", scroll))
+
+    def test_deletion_selection_last_page_returns_to_previous_row(self):
+        result = self.mcp.call("desktop.start")
+        print(f"Delete final page evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(583, 884), check("offset", 50))
+        previous = self.mcp.call("desktop.state")["mail_rows"][-1]["id"]
+        self.mcp.batch(click(583, 884), check("offset", 100))
+        rows = self.mcp.call("desktop.state")["mail_rows"]
+        self.mcp.batch(click(420, 247), keys(*(["Down"] * (len(rows) - 1))),
+                       check("selected_id", rows[-1]["id"]), shot("delete-final-page-start"))
+        for index in reversed(range(len(rows))):
+            expected = rows[index - 1]["id"] if index else previous
+            self.mcp.batch(key("ctrl+d"), check("selected_id", expected),
+                           check("total", 119 - (len(rows) - 1 - index)),
+                           {**check("mail_pending", 0), "timeout_ms": 5000})
+        self.mcp.batch(check("offset", 50), check("inbox_scroll", 400, "gte"),
+                       check("selected_id", previous), shot("delete-final-page-previous-last"))
+
     def test_archive_hides_immediately_and_commits_while_other_mail_is_readable(self):
         self.mcp.call("desktop.start", mail_actions="slow")
         self.mcp.batch(click(652, 100), check("total", 119), check("mail_pending", 1),

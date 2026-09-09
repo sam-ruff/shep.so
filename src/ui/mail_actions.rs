@@ -1,6 +1,7 @@
 use super::*;
 use crate::mail_actions::{Flags, MoveReceipt};
 mod counts;
+mod navigation;
 mod projection;
 mod undo;
 
@@ -10,6 +11,7 @@ pub(super) struct Actions {
     pub base_page: Arc<MailPage>,
     flags: HashMap<String, PendingFlags>,
     sequence: u64,
+    pub(super) follow: Option<navigation::Follow>,
     moves: HashMap<String, PendingMove>,
     transfers: HashMap<String, PendingTransfer>,
     undo: HashMap<u64, undo::Record>,
@@ -250,6 +252,7 @@ impl App {
         {
             return;
         }
+        let neighbors = self.removal_neighbors(&mail.id);
         if self
             .mail_actions
             .read_candidate
@@ -278,14 +281,7 @@ impl App {
             self.focused_input = None;
             self.pending_focus = None;
             self.project_mail_flags();
-            if self.selected.as_ref() == Some(&id) || self.reader_id() == Some(id.as_str()) {
-                self.selected = None;
-                self.detail = None;
-                self.conversation = Default::default();
-                if let Some(next) = self.page.rows.first() {
-                    self.select(next.id.clone());
-                }
-            }
+            self.select_after_removal(&id, neighbors);
         }
     }
 
@@ -359,6 +355,7 @@ impl App {
         {
             return;
         }
+        let neighbors = self.removal_neighbors(&mail.id);
         if self
             .mail_actions
             .read_candidate
@@ -391,14 +388,7 @@ impl App {
         self.focused_input = None;
         self.pending_focus = None;
         self.project_mail_flags();
-        if self.selected.as_ref() == Some(&id) || self.reader_id() == Some(id.as_str()) {
-            self.selected = None;
-            self.detail = None;
-            self.conversation = Default::default();
-            if let Some(next) = self.page.rows.first() {
-                self.select(next.id.clone());
-            }
-        }
+        self.select_after_removal(&id, neighbors);
     }
 
     fn dispatch_move(&mut self, id: &str) {
