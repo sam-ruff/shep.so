@@ -8,7 +8,7 @@ Historical implementation notes belong there, rather than becoming new TODOs.
 
 ## Current source checkpoint
 
-The current continuation adds `profile_replication_v1`: enrollment now saves the
+`5c0e9f0` is pushed to main and adds `profile_replication_v1`: enrollment now saves the
 last common field values, exact raw extensions and local/shared account mapping.
 Local capture/admission APIs preserve pending UUIDs and per-field bases across
 restart, category pauses and newer native edits. A sealed history receipt verifies
@@ -16,7 +16,7 @@ the field is still current before acknowledgment. These APIs are tested preparat
 for the continuous loop; the loop and remote application are not connected yet.
 See the newest completion entry for this continuation's verification and shipping.
 
-`071c6b0` is pushed to main. Preferences can discover named shared profiles,
+Earlier source `071c6b0` added discovery of named shared profiles. Preferences can
 review one and import its account definitions and supported preferences. Existing
 accounts/mail stay intact. New definitions receive fresh local IDs and require
 **Reconnect** before receiving or sending mail. A saved acceptance ID makes retry
@@ -83,16 +83,16 @@ completion paths need automatic continuation. Preserve durable in-flight receipt
 
 ## Verification and installation
 
-The source commit's mandatory hooks passed **631 Rust + two renderer + 50 shared
-tests (683 executions)**; three explicitly authorized-only personal diagnostics
-remain ignored. **54 Python tests and 22 selected native scenarios passed**,
-including nine profile, eight database-transfer, two Google-disconnect and three
-account setup/removal flows. Light/dark/compact/error WebPs were reviewed. Windows
-GNU all-target/all-feature cross-compilation and strict Zensical passed. See the
-completion log for exact artifacts and documentation CI shipping evidence.
+The latest source commit's mandatory hooks passed **640 Rust + two renderer +
+50 shared tests (692 executions)**; three personal diagnostics remain explicitly
+ignored. **54 Python tests and 14 selected native scenarios passed**, including
+nine profile flows and five database imports. Native enrollment also verifies its
+saved checkpoint in the owned database after graceful close. Light/dark/compact
+WebPs were reviewed. Windows GNU cross-compilation and strict Zensical passed.
+See the completion log for exact artifacts and documentation CI shipping evidence.
 
 Native test executable SHA-256:
-`e7d39ae27f87967be4612310288b391cc5d80c92a1eb1c287ef75756004a61fb`.
+`be29388aaf1579dc24d60d8789c6e5e35e726d05972465b9df8777cddeba8097`.
 This is an isolated test-support executable, not an installed production release.
 The personal Linux installation remains source `3567de2`, SHA-256
 `06c0cccb3d3cc6703b143f8e7fa019c1be7032533ae6d4e776a81cc6f91ef34a`.

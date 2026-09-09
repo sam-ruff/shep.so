@@ -25,8 +25,13 @@ WebPs: `f5adc93c24d1` first-device/light, `76913bfe3666` import/reconnect/dark a
 `cec12e9c521b` compact dark review. Native executable SHA-256:
 `be29388aaf1579dc24d60d8789c6e5e35e726d05972465b9df8777cddeba8097`.
 The 54 Python tests and Windows GNU all-target/all-feature cross-check passed.
-Mandatory hook results and the source shipping receipt follow after the commit;
-targeted profile tests passed 59/59.
+Mandatory formatting/Clippy hooks and **640 root Rust + two renderer + 50 shared
+tests passed (692 executions)**; three personal diagnostics remain explicitly
+ignored. Strict Zensical also passed. Source
+[`5c0e9f0`](https://github.com/sam-ruff/shep.so/commit/5c0e9f06e935b3e5425ad23155ed17ea5c68e854)
+is pushed to main and exact remote equality was verified; targeted profile tests
+passed 59/59. [Source documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34317935845)
+passed both its strict build and Pages deployment.
 
 The periodic publication/application loop, conflict/removal controls and automatic
 login/enrollment remain unfinished. The newly published Flutter `184b98a` adds an
