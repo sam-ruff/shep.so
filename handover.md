@@ -2,6 +2,33 @@
 
 The user stopped feature work to conserve credits and requested this handover, a cleaned TODO and a push. **The full application goal is not complete.** Resume from [TODO.md](TODO.md), preserving the original requirements in [docs/REQUEST_AUDIT.md](docs/REQUEST_AUDIT.md). Read [AGENTS.md](AGENTS.md) for operational rules and [docs/COMPLETION.md](docs/COMPLETION.md) for evidence; do not repeat historical work based only on the latest chat message.
 
+## 9 September continuation: native initial-profile controls
+
+Preferences now has **Accounts → Profiles and sync** for explicit first-device
+review/create, saved categories, stop/resume and enable/disable. The owning
+32-command coordinator keeps local choices available during network work and
+retains admitted upload receipts through shutdown. Touched-field saves preserve
+newer choices and Google-disconnect state. Production per-workspace journal paths
+and all existing aliases are protected from database export.
+
+Five new native scenarios pass, including compact dark rapid choices,
+failure/retry/opt-out, first creation/reopen, held-read close and closing during
+upload followed by Resume. Actual WebP captures were reviewed. Relevant Rust
+ordering/protocol/export tests pass; final full checks and shipping are recorded
+in the newest completion entry. No personal installation or live Google test was
+performed. The screen labels completion as an initial copy, because continuous
+updates and joining existing profiles remain unfinished.
+
+**Next finish existing-device discovery/application, then continuous sync.** Keep
+OAuth implementation first in TODO with the Flutter handover reference, as the
+user requested. Review newer committed shared-client discovery/history support
+without touching that worktree's active files. Desktop new profiles currently use
+namespace `so.shep`; all participating clients must agree before live parity is
+claimed. Preserve saved bindings and the pinned dependency until a reviewed
+migration/update. Account reconnection/suppression, portable preferences beyond
+the seven mapped fields, conflict/removal reviews and incremental local/remote
+change capture remain open. Password-transfer protection still has no decision.
+
 ## 9 September continuation: persisted enrollment
 
 Source `6e2880b` is pushed. The backend saves profile/category choices and exact initial seeds, performs

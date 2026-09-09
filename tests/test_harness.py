@@ -15,6 +15,15 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_profile_fixture_is_validated_before_launch_and_describes_owned_modes(self):
+        desktop=harness.Desktop()
+        with patch.object(harness.subprocess,"Popen") as launch:
+            for value in (True,1,"google","https://example.test"):
+                with self.assertRaisesRegex(ValueError,"Unknown profile sync fixture"):
+                    desktop.start(profile_sync=value)
+            launch.assert_not_called()
+        tool=next(t for t in harness.TOOLS if t["name"]=="desktop.start")
+        self.assertEqual(tuple(tool["inputSchema"]["properties"]["profile_sync"]["enum"]),harness._profile_fixture.MODES)
     def test_held_database_import_fixture_is_validated_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

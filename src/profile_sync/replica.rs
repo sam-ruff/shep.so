@@ -117,6 +117,15 @@ impl Replica {
     /// after listing completes. Import one bounded record at a time; retrying
     /// after cancellation/restart replays exact bytes idempotently.
     pub async fn pull(&mut self, session: &drive::Session) -> anyhow::Result<Pulled> {
+        self.pull_controlled(session, &control::Control::default())
+            .await
+    }
+    pub async fn pull_controlled(
+        &mut self,
+        session: &drive::Session,
+        control: &control::Control,
+    ) -> anyhow::Result<Pulled> {
+        control.check()?;
         self.check_session(session)?;
         let scope = Some((self.binding.profile, self.binding.generation));
         let mut scan = match self.journal.resume_scan(session.binding(), scope).await? {
@@ -128,17 +137,18 @@ impl Replica {
             }
         };
         while !scan.complete() {
-            let page = session.page_for(&scan).await?;
+            let page = control.read(session.page_for(&scan)).await?;
             scan = self.journal.append_page(&scan, page).await?;
         }
         let mut after = None;
         loop {
+            control.check()?;
             let page = self.journal.scan_entries(&scan, after).await?;
             if page.is_empty() {
                 break;
             }
             for entry in page {
-                let record = session.download(&entry.record).await?;
+                let record = control.read(session.download(&entry.record)).await?;
                 self.history
                     .request(Command::Import {
                         record: String::from_utf8(record.bytes().to_vec())?,
@@ -149,6 +159,7 @@ impl Replica {
         }
         let mut current = self.state().await?;
         while current.ready != 0 {
+            control.check()?;
             current = state(self.history.request(Command::Drain).await?)?;
         }
         anyhow::ensure!(current.waiting == 0, history::Error::Incomplete);

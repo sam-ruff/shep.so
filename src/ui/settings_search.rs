@@ -56,6 +56,11 @@ const SETTINGS: &[Setting] = &[
         keywords: "profile workspace database import device computer switch rename launch",
     },
     Setting {
+        title: "Profiles and sync",
+        tab: SettingsTab::Accounts,
+        keywords: "cloud shared profile google drive device settings accounts sync enrollment",
+    },
+    Setting {
         title: "Connected calendars",
         tab: SettingsTab::Calendars,
         keywords: "calendar caldav homeserver ical dav add connect remove",

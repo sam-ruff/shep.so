@@ -26,6 +26,7 @@ mod outgoing;
 mod pointer;
 mod preference_sync;
 mod printing;
+mod profile_sync;
 mod profiles;
 mod read_tracking;
 mod reading;
@@ -225,6 +226,7 @@ pub enum Message {
     DatabaseExport,
     DatabaseImport(database_import::Action),
     Profiles(profiles::Action),
+    ProfileSync(profile_sync::Action),
     DatabaseExportPath(u64, Option<std::path::PathBuf>),
     CancelDatabaseTransfer,
     ChosenPath(&'static str, Option<String>),
@@ -290,6 +292,7 @@ pub struct App {
     database_transfer: database_transfers::State,
     database_import: database_import::State,
     profiles: profiles::State,
+    profile_sync: profile_sync::State,
     confirm_save: Option<u64>,
     saved_toast: Option<Instant>,
     action_toasts: action_toasts::ActionToasts,
@@ -445,6 +448,7 @@ impl App {
                 database_transfer: Default::default(),
                 database_import: Default::default(),
                 profiles: Default::default(),
+                profile_sync: Default::default(),
                 confirm_save: None,
                 saved_toast: None,
                 action_toasts: Default::default(),
@@ -1383,9 +1387,11 @@ impl App {
                     if revision == self.preferences.google_lifecycle.revision {
                         self.google_connected =
                             connected && !self.preferences.google_lifecycle.disconnected;
+                        self.shared_profile_action(profile_sync::Action::Refresh);
                     }
                 }
                 Event::GoogleDisconnected(revision, result) => {
+                    self.shared_profile_action(profile_sync::Action::Refresh);
                     if self.google_disconnect_pending == Some(revision) {
                         self.google_disconnect_pending = None;
                         match result {
@@ -1431,6 +1437,9 @@ impl App {
                     };
                 }
                 Event::Profiles(request, result) => return self.profiles_update(request, result),
+                Event::ProfileSync(request, update) => {
+                    return self.shared_profile_update(request, update);
+                }
                 Event::DraftDeleted(id, result) => self.draft_deleted(id, result),
                 Event::ForwardDraft(id, result) => return self.forward_ready(id, result),
                 Event::Print(revision, result) => return self.print_ready(revision, result),
@@ -1567,6 +1576,11 @@ impl App {
                 _ => {}
             },
             Message::WindowClose(window) => {
+                if self.profile_sync.pending() {
+                    self.pending_close = Some(window);
+                    self.shared_profile_action(profile_sync::Action::Stop);
+                    return Task::none();
+                }
                 if self.profiles.changing() {
                     self.pending_close = Some(window);
                     return Task::none();
@@ -1753,6 +1767,9 @@ impl App {
                 self.save_preferences();
             }
             Message::SettingsTab(tab) => {
+                if tab == SettingsTab::Accounts {
+                    self.shared_profile_action(profile_sync::Action::Refresh);
+                }
                 self.defer_draft_exit(composing::Exit::Tab(Tab::Preferences));
                 self.settings_search.clear();
                 self.settings_group = None;
@@ -2636,6 +2653,7 @@ impl App {
             Message::DatabaseExport => return self.begin_database_export(),
             Message::DatabaseImport(action) => return self.database_import_action(action),
             Message::Profiles(action) => self.profile_action(action),
+            Message::ProfileSync(action) => self.shared_profile_action(action),
             Message::DatabaseExportPath(request, path) => self.database_export_path(request, path),
             Message::CancelDatabaseTransfer => self.cancel_database_transfer(),
             Message::ChosenPath(key, path) => {
@@ -3516,6 +3534,7 @@ impl App {
         data["database_transfer"] = self.database_transfer.observation();
         data["database_import"] = self.database_import.observation();
         data["profiles"] = self.profiles.observation();
+        data["profile_sync"] = self.profile_sync.observation();
         data["mail_drag"] = self.mail_drag.observation();
         #[cfg(feature = "test-support")]
         {

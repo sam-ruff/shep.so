@@ -1593,6 +1593,7 @@ impl App {
                 accounts.into()
             ),
             self.google_settings(),
+            self.shared_profile_card(),
             self.profiles_card()
         ]
         .spacing(if self.settings_group.is_some() { 0 } else { 22 })

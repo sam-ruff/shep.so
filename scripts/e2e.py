@@ -1744,6 +1744,89 @@ class NativeFlows(unittest.TestCase):
                        {"type": "click", "x": 403, "y": 450, "button": 3}, check("context_subject", "Coffee next Thursday?"),
                        click(1380, 730), check("context_menu", None))
 
+    def open_shared_profiles(self, search_x=1150):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(search_x, 88), key("ctrl+a"), type_text("shared profile"),
+                       check("settings_matches", ["Profiles and sync"]), click(480, 289),
+                       check("settings_group", "Profiles and sync"),
+                       check("profile_sync.loaded", True), wait(100))
+
+    def test_profile_sync_native_first_device_review(self):
+        self.mcp.call("desktop.start", profile_sync="slow-upload")
+        self.open_shared_profiles()
+        self.mcp.batch(check("profile_sync.available", True), shot("profile-sync-controls-light"),
+                       click(370, 442), check("profile_sync.review", 0),
+                       shot("profile-sync-create-review"), click(540, 482), key("ctrl+a"),
+                       type_text("Personal M"), check("dialog", None), click(360, 570),
+                       check("profile_sync.working", True), key("ctrl+1"), check("tab", "Mail"),
+                       check("profile_sync.working", True), key("Down"),
+                       check("profile_sync.enrollment.selection.ready", True),
+                       check("profile_sync.enrollment.selection.name", "Personal M"),
+                       check("profile_sync.error", None), check("tab", "Mail"))
+        self.open_shared_profiles()
+        self.mcp.batch(shot("profile-sync-first-copy-saved"), {"type":"restart"})
+        self.open_shared_profiles()
+        self.mcp.batch(check("profile_sync.enrollment.selection.name", "Personal M"),
+                       check("profile_sync.enrollment.selection.ready", True), shot("profile-sync-reopened"))
+
+    def test_profile_sync_native_failure_retry_and_opt_out(self):
+        self.mcp.call("desktop.start", profile_sync="fail-once")
+        self.open_shared_profiles()
+        self.mcp.batch(click(370, 442), check("profile_sync.error", "503", "contains"),
+                       check("profile_sync.working", False), shot("profile-sync-discovery-failed"),
+                       click(370, 442), check("profile_sync.review", 0), check("profile_sync.error", None),
+                       click(490, 570), check("profile_sync.review", None),
+                       check("profile_sync.enrollment.selection", None), shot("profile-sync-opted-out"))
+
+    def test_profile_sync_native_stop_keeps_options_and_close_interrupts_read(self):
+        self.mcp.call("desktop.start", profile_sync="hold-list")
+        self.open_shared_profiles()
+        self.mcp.batch(click(370, 442), check("profile_sync.working", True),
+                       click(288, 371), check("profile_sync.options.accounts", False),
+                       check("profile_sync.saving", False), check("profile_sync.working", False),
+                       shot("profile-sync-options-stop"), {"type":"restart"})
+        self.open_shared_profiles()
+        self.mcp.batch(check("profile_sync.options.accounts", False),
+                       click(370, 442), check("profile_sync.working", True),
+                       {"type":"restart"})
+        self.open_shared_profiles()
+        self.mcp.batch(check("profile_sync.options.accounts", False), check("profile_sync.working", False),
+                       shot("profile-sync-close-reopened"))
+
+    def test_profile_sync_native_close_during_upload_resumes_original_profile(self):
+        self.mcp.call("desktop.start", profile_sync="slow-upload")
+        self.open_shared_profiles()
+        self.mcp.batch(click(370, 442), check("profile_sync.review", 0),
+                       click(360, 570), check("profile_sync.enrollment.options.enabled", True),
+                       check("profile_sync.working", True), {"type":"restart"})
+        self.open_shared_profiles()
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", False),
+                       check("profile_sync.working", False), shot("profile-sync-resume-after-close"),
+                       click(345, 545), check("profile_sync.enrollment.selection.ready", True),
+                       check("profile_sync.error", None), shot("profile-sync-resumed-receipt"),
+                       click(288, 408), check("profile_sync.options.enabled", False),
+                       check("profile_sync.saving", False), {"type":"restart"})
+        self.open_shared_profiles()
+        self.mcp.batch(check("profile_sync.options.enabled", False),
+                       check("profile_sync.enrollment.selection.ready", True),
+                       click(288, 408), check("profile_sync.options.enabled", True),
+                       check("profile_sync.saving", False), shot("profile-sync-enabled-again"))
+
+    def test_profile_sync_native_compact_dark_rapid_options(self):
+        self.mcp.call("desktop.start", profile_sync="empty", width=900, height=640)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366),
+                       check("dark", True), check("preferences_saved", True))
+        self.open_shared_profiles(650)
+        self.mcp.batch(shot("profile-sync-compact-dark"),
+                       click(288, 371), click(288, 371), click(288, 371),
+                       check("profile_sync.options.accounts", False), check("profile_sync.saving", False),
+                       click(370, 442), check("profile_sync.review", 0),
+                       shot("profile-sync-compact-review"), key("ctrl+1"), check("tab", "Mail"),
+                       {"type":"restart"})
+        self.open_shared_profiles(650)
+        self.mcp.batch(check("profile_sync.options.accounts", False), check("dark", True),
+                       shot("profile-sync-compact-options-reopened"))
+
     def open_database_transfer(self, search_x=1150):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
                        click(search_x, 88), type_text("database transfer"),
@@ -1759,7 +1842,7 @@ class NativeFlows(unittest.TestCase):
 
     def open_profiles(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
-                       click(1150, 88), key("ctrl+a"), type_text("profiles"),
+                       click(1150, 88), key("ctrl+a"), type_text("profile workspace"),
                        check("settings_matches", ["Profiles"]), click(480, 289),
                        check("settings_group", "Profiles"), check("profiles.busy", False), wait(100))
 

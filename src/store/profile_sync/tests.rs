@@ -422,3 +422,50 @@ async fn profile_seed_freezes_legacy_account_mapping_and_chunk_retries_across_re
         seed.account_ids
     );
 }
+
+#[tokio::test]
+async fn profile_field_choices_preserve_new_enrollment_and_disconnected_master_switch() {
+    use crate::profile_sync::enrollment::Changes;
+    let store = Store::memory().unwrap();
+    connected(&store).await;
+    let pending = begin(&store).await;
+    // An earlier UI snapshot need not know setup has just enabled the profile.
+    let edited = store
+        .change_profile_sync_options(Changes {
+            accounts: Some(false),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(edited.enrollment.options.enabled);
+    assert!(!edited.enrollment.options.accounts);
+    assert_eq!(edited.enrollment.selection, pending.enrollment.selection);
+    store
+        .disconnect_google(edited.google_revision)
+        .await
+        .unwrap();
+    let offline = store
+        .change_profile_sync_options(Changes {
+            accounts: Some(true),
+            settings: Some(false),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(!offline.enrollment.options.enabled);
+    assert!(offline.enrollment.options.accounts);
+    assert!(!offline.enrollment.options.settings);
+    assert!(
+        store
+            .change_profile_sync_options(Changes {
+                enabled: Some(true),
+                ..Default::default()
+            })
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store.profile_enrollment().await.unwrap().enrollment,
+        offline.enrollment
+    );
+}

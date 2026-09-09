@@ -1,5 +1,40 @@
 # Completion audit
 
+## 9 September: native initial-profile setup and channel ownership
+
+R02/R49/R92 now expose reviewed first-device creation, persistent category choices,
+Stop/Resume and enable/disable in Preferences. A separate bounded 32-command
+coordinator processes local controls while provider work is held. Touched-field
+changes and one in-flight UI save preserve rapid/newer choices and backend-owned
+enrollment/disconnect changes. Intermediate enrollment progress keeps the job
+owned; it is not upload success or permission to finish shutdown.
+
+Stop and close cancel read-only HTTP/provider-slot waits. Admitted cache/history
+writes and uploads remain owned through durable receipts; reopening resumes the
+same saved profile. `profile-sync/` beside each workspace cache contains its Drive
+and binding-specific history files. Database export protects the directory,
+existing members, sidecars, ownership files and hard-link/symlink aliases.
+
+Targeted Rust tests cover field ordering, stale progress, offline/disconnected
+options, held reads versus admitted uploads and real export alias protection.
+The saturated-provider dispatcher regression also saves actual profile choices
+while every provider slot and its queue remain occupied. Five new saved native
+MCP scenarios pass with an owned loopback Drive fixture: first creation/reopen,
+retry/opt-out, category changes/held-read close, compact dark rapid gestures, and
+close during upload followed by Resume and disabling/re-enabling. Reviewed WebPs:
+`a26c2d013572` compact dark/review, `c883eeb38c8d` initial saved copy,
+`b7c46dd88d3f` failed discovery and `c47727d6fb24` resume after close.
+Final verification and shipping are recorded below when complete.
+
+This checkpoint provides initial setup, not continuous sync. Joining existing
+profiles, actual account application/reconnection, conflicts, local edit capture,
+remaining portable preferences and incremental polling stay in TODO. OAuth stays
+first with its Flutter handover link. Desktop creation uses namespace `so.shep`;
+same-project cross-client access remains unverified. Credential-transfer protection
+has no recorded decision. No personal installation, live Google operation or
+performance benchmark was performed. Logs live under ignored
+`artifacts/logs/profile-controls-*`; quality/release workflows remain disabled.
+
 ## 9 September: persisted profile enrollment and first-device publication
 
 R02/R49/R92 now have backend enrollment/category revisions and a durable initial

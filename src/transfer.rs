@@ -300,6 +300,7 @@ fn checked_destination(source: &Path, destination: &Path) -> anyhow::Result<(Pat
         .context("Choose an export folder")?
         .canonicalize()?
         .join(filename);
+    crate::profile_sync::paths::protect(source_parent, &destination)?;
     let mut protected = vec![source.clone(), source_parent.join("backup-uploads.sqlite")];
     for database in protected.clone() {
         for suffix in ["-wal", "-shm", "-journal"] {

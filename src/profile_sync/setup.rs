@@ -26,6 +26,15 @@ pub async fn discover(
     session: &drive::Session,
     journal: &journal::Journal,
 ) -> anyhow::Result<Discovery> {
+    discover_controlled(store, session, journal, &control::Control::default()).await
+}
+pub async fn discover_controlled(
+    store: &Store,
+    session: &drive::Session,
+    journal: &journal::Journal,
+    control: &control::Control,
+) -> anyhow::Result<Discovery> {
+    control.check()?;
     let local = store.profile_enrollment().await?;
     anyhow::ensure!(
         local.available && local.google_identity == session.binding().identity(),
@@ -36,7 +45,7 @@ pub async fn discover(
         _ => journal.begin_scan(session.binding().clone(), None).await?,
     };
     while !scan.complete() {
-        let page = session.page_for(&scan).await?;
+        let page = control.read(session.page_for(&scan)).await?;
         scan = journal.append_page(&scan, page).await?;
     }
     // Validate local intent again before presenting the completed review.
@@ -87,6 +96,15 @@ pub async fn prepare(
     replica: &mut Replica,
     expected: &Snapshot,
 ) -> anyhow::Result<()> {
+    prepare_controlled(store, replica, expected, &control::Control::default()).await
+}
+async fn prepare_controlled(
+    store: &Store,
+    replica: &mut Replica,
+    expected: &Snapshot,
+    control: &control::Control,
+) -> anyhow::Result<()> {
+    control.check()?;
     let selection = expected
         .enrollment
         .selection
@@ -102,6 +120,7 @@ pub async fn prepare(
         check_categories(expected.enrollment.options, chunk)?;
     }
     for chunk in seed.chunks {
+        control.check()?;
         let revision = replica.state().await?.revision;
         let chunk = store
             .checkpoint_profile_seed(expected.clone(), chunk.operation, revision)
@@ -150,8 +169,26 @@ pub async fn publish(
     expected: Snapshot,
     when: i64,
 ) -> anyhow::Result<Snapshot> {
-    prepare(store, replica, &expected).await?;
-    let mut pulled = replica.pull(session).await?;
+    publish_controlled(
+        store,
+        replica,
+        session,
+        expected,
+        when,
+        &control::Control::default(),
+    )
+    .await
+}
+pub async fn publish_controlled(
+    store: &Store,
+    replica: &mut Replica,
+    session: &drive::Session,
+    expected: Snapshot,
+    when: i64,
+    control: &control::Control,
+) -> anyhow::Result<Snapshot> {
+    prepare_controlled(store, replica, &expected, control).await?;
+    let mut pulled = replica.pull_controlled(session, control).await?;
     anyhow::ensure!(
         !pulled.state().removed && pulled.state().conflicts == 0,
         "This profile changed on another device. Review its changes before completing setup."
@@ -159,6 +196,7 @@ pub async fn publish(
     let mut acknowledged = false;
     let result = async {
         loop {
+            control.check()?;
             store.check_profile_review(expected.clone()).await?;
             // publish_next includes reserved-ID recovery and both durable receipts.
             if !replica

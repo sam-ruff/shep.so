@@ -182,6 +182,32 @@ impl Options {
     }
 }
 
+/// Device-local controls change only fields the user actually touched. An older
+/// choice cannot overwrite a newer enrollment/Google lifecycle's other fields.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Changes {
+    pub enabled: Option<bool>,
+    pub accounts: Option<bool>,
+    pub settings: Option<bool>,
+}
+impl Changes {
+    pub fn apply(self, mut options: Options) -> Options {
+        if let Some(v) = self.enabled {
+            options.enabled = v;
+        }
+        if let Some(v) = self.accounts {
+            options.accounts = v;
+        }
+        if let Some(v) = self.settings {
+            options.settings = v;
+        }
+        options
+    }
+    pub fn empty(self) -> bool {
+        self == Self::default()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Origin {
     Create,

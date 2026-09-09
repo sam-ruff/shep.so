@@ -35,6 +35,33 @@ pub struct Page {
 }
 
 impl Session {
+    #[cfg(feature = "test-support")]
+    pub(crate) async fn fixture(
+        url: &str,
+        preferences: &Preferences,
+        namespace: String,
+    ) -> anyhow::Result<Self> {
+        let base = url::Url::parse(url)?;
+        anyhow::ensure!(
+            base.scheme() == "http"
+                && base.host_str() == Some("127.0.0.1")
+                && base.username().is_empty()
+                && base.password().is_none(),
+            "Profile fixtures require the owned loopback server."
+        );
+        let session = Self {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_secs(30))
+                .build()?,
+            base,
+            token: SecretString::from("fixture-profile-token"),
+            binding: Binding::new(preferences.google_connection_id.clone(), namespace)?,
+        };
+        session.verify_identity().await?;
+        Ok(session)
+    }
     pub async fn connect(
         google: &Google,
         preferences: &Preferences,
