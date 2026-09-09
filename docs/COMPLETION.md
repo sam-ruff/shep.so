@@ -20,7 +20,12 @@ Final invalid/reopened screenshots were reviewed (`159dcacff190`). The final
 native executable SHA-256 is
 `9944235f3c2b45ff2d35573fe5b21feb3c94041b1887ddf0b1b02ef3131dcbd0`.
 Python tests pass 54/54; final Windows GNU cross-compilation is warning-free.
-Full hooks, strict docs and the shipping commit are recorded below when complete.
+Source [`6860f50`](https://github.com/sam-ruff/shep.so/commit/6860f50230c6ab90a9cbae3ab9c96bca6fe5e6d2)
+was pushed to main and exact remote equality verified. Mandatory formatting,
+Clippy and full hooks passed **623 Rust + two renderer + 34 shared tests
+(659 executions)**; the three personal diagnostics remain explicitly ignored.
+Strict Zensical and [source documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34311219726)
+passed, including Pages deployment. Quality/release workflows remain deliberately disabled.
 The larger sync scope, personal installation, credential-choice and performance
 limitations from the preceding setup checkpoint remain unchanged.
 
