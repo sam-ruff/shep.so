@@ -20,9 +20,10 @@ impl Animation {
 
     pub(super) fn advance(&mut self, now: Instant) {
         if let Some(started) = self.started {
-            // One turn per second. Elapsed time avoids accumulating drift when
-            // the window is hidden or presentation skips a frame.
-            self.angle = now.saturating_duration_since(started).as_secs_f64().fract() as f32
+            // A calm clockwise turn every 2.4 seconds. Positive rotation follows
+            // screen coordinates (Y down); elapsed time avoids frame drift.
+            self.angle = (now.saturating_duration_since(started).as_secs_f64() / 2.4).fract()
+                as f32
                 * std::f32::consts::TAU;
         }
     }
@@ -52,16 +53,38 @@ mod tests {
         let start = Instant::now();
         let mut animation = Animation::default();
         animation.start(start);
-        animation.advance(start + Duration::from_millis(125));
+        animation.advance(start + Duration::from_millis(300));
         assert!((animation.angle() - std::f32::consts::FRAC_PI_4).abs() < 0.001);
-        animation.start(start + Duration::from_millis(200));
-        animation.advance(start + Duration::from_millis(250));
+        animation.start(start + Duration::from_millis(400));
+        animation.advance(start + Duration::from_millis(600));
         assert!((animation.angle() - std::f32::consts::FRAC_PI_2).abs() < 0.001);
-        animation.advance(start + Duration::from_millis(1_250));
+        animation.advance(start + Duration::from_millis(3_000));
         assert!((animation.angle() - std::f32::consts::FRAC_PI_2).abs() < 0.001);
         animation.stop();
-        animation.advance(start + Duration::from_millis(1_500));
+        animation.advance(start + Duration::from_millis(3_300));
         assert_eq!(animation.angle(), 0.);
+    }
+
+    #[test]
+    fn refresh_animation_turns_clockwise_slowly_and_wraps_without_a_jump() {
+        let start = Instant::now();
+        let mut animation = Animation::default();
+        animation.start(start);
+        let mut previous = 0.;
+        for milliseconds in [100, 600, 1_200, 1_800, 2_399] {
+            animation.advance(start + Duration::from_millis(milliseconds));
+            // SVG uses screen coordinates: increasing angles are clockwise.
+            assert!(animation.angle() > previous);
+            assert!(
+                (animation.angle() - milliseconds as f32 / 2_400. * std::f32::consts::TAU).abs()
+                    < 0.001
+            );
+            previous = animation.angle();
+        }
+        animation.advance(start + Duration::from_millis(2_400));
+        assert_eq!(animation.angle(), 0.);
+        animation.advance(start + Duration::from_millis(2_500));
+        assert!((animation.angle() - std::f32::consts::TAU / 24.).abs() < 0.001);
     }
 
     #[test]

@@ -912,6 +912,7 @@ class NativeFlows(unittest.TestCase):
                            shot("refresh-idle"),click(x,y),check("refresh_animation.running",True),
                            {"type":"hover","x":x-150,"y":y},shot("refresh-turn-one"),wait(80),
                            shot("refresh-turn-two"),check("refreshing",True),
+                           check("refresh_animation.angle",0.05,"gte"),
                            check("notice","temporarily unavailable","contains"),check("refreshing",False),
                            check("refresh_animation.running",False),check("refresh_animation.angle",0),
                            shot("refresh-stopped-after-failure"))
