@@ -29,6 +29,29 @@ async fn fixture_transport_rejects_non_loopback_and_ambiguous_endpoints_before_c
         ));
     }
 }
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn fixture_transport_uses_only_the_fake_token_and_verifies_the_owned_identity() {
+    let server = Server::start(vec![Box::new(|request| {
+        assert_eq!(
+            request.headers.get("authorization").map(String::as_str),
+            Some("Bearer synthetic-profile-fixture")
+        );
+        TestResponse::json(json!({"user":{"permissionId":"fixture-owner"}}))
+    })])
+    .await;
+    let drive = Drive::connect_fixture(server.base.clone(), NAMESPACE.into(), PRINCIPAL)
+        .await
+        .unwrap();
+    assert_eq!(drive.principal(), PRINCIPAL);
+    assert_eq!(server.finish().await.len(), 1);
+    let server = Server::start(vec![identity()]).await;
+    assert!(matches!(
+        Drive::connect_fixture(server.base.clone(), NAMESPACE.into(), "drive:another").await,
+        Err(Error::Identity)
+    ));
+    server.finish().await;
+}
 fn identity() -> Step {
     value(json!({"user":{"permissionId":"fixture-owner"}}))
 }
