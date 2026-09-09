@@ -128,6 +128,43 @@ pub struct Drive {
     namespace: String,
 }
 impl Drive {
+    /// Isolated protocol/native fixtures only. The default production build has
+    /// no endpoint override; fixtures refuse hosts, proxies and redirects.
+    #[cfg(feature = "test-support")]
+    pub async fn connect_fixture(
+        base: Url,
+        namespace: String,
+        expected_principal: &str,
+    ) -> Result<Self> {
+        if base.scheme() != "http"
+            || !base
+                .host_str()
+                .and_then(|host| {
+                    host.trim_matches(['[', ']'])
+                        .parse::<std::net::IpAddr>()
+                        .ok()
+                })
+                .is_some_and(|ip| ip.is_loopback())
+            || !base.username().is_empty()
+            || base.password().is_some()
+            || base.query().is_some()
+            || base.fragment().is_some()
+            || base.path() != "/"
+        {
+            return Err(Error::Invalid);
+        }
+        Self::verify(
+            Self::client_builder()
+                .no_proxy()
+                .build()
+                .map_err(|_| Error::Network)?,
+            base,
+            SecretString::from("synthetic-profile-fixture"),
+            namespace,
+            Some(expected_principal),
+        )
+        .await
+    }
     pub async fn connect(
         token: SecretString,
         namespace: String,

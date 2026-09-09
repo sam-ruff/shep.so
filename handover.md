@@ -49,6 +49,14 @@ store submissions in TODO.
 
 ## Current continuation
 
+Desktop **Profiles and sync** now binds read-only discovery to the active Google
+grant and shared durable catalog. Pause/retry, saved progress, reopening, rescan,
+compact dark recovery and permission refusal have real iced controls; all **121
+native functional flows pass**. The horizontal tab strip preserves existing compact
+control positions. See [the desktop contract](docs/agents/PROFILE_DESKTOP.md) and
+the completion log for shipping. Desktop publication and reviewed import remain
+next; native large-page controls still need coverage beyond protocol paging.
+
 Flutter profile publication and **Use profile on this device** now have a frozen,
 paged account/settings review, original-record transfer and durable application
 receipts. Imported accounts receive independent credential slots and show
@@ -83,7 +91,8 @@ also remain R63.
 ## Restart order
 
 1. **Highest priority:** continue [OAuth and shared profiles](docs/agents/PROFILE_SYNC_HANDOVER.md).
-   Continue desktop publication/enrollment and Flutter ongoing reconciliation,
+   Build desktop publication/enrollment on `src/profiles/discovery.rs` and
+   `src/engine/profiles.rs`; then continue Flutter ongoing reconciliation,
    category controls and automatic restoration. Close the authenticated-source to
    actual Flutter FFI integration gap without adding a production login bypass. Preserve tracked own-upload identities and the causal completion barrier for
    multi-record setup.

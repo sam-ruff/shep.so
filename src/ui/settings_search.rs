@@ -12,6 +12,11 @@ pub(super) struct Setting {
 }
 const SETTINGS: &[Setting] = &[
     Setting {
+        title: "Profiles and sync",
+        tab: SettingsTab::Profiles,
+        keywords: "google drive accounts preferences shared setup device discovery namespace",
+    },
+    Setting {
         title: "Appearance",
         tab: SettingsTab::General,
         keywords: "theme light dark system colors colour",

@@ -1414,6 +1414,79 @@ class NativeFlows(unittest.TestCase):
                        shot("outbox-empty-compact"), key("Escape"), check("dialog", None),
                        click(87, 359), check("folder", "Sent"), check("total", 2), shot("local-sent-copies-compact"))
 
+    def test_desktop_profile_discovery_pause_retry_reopen(self):
+        result = self.mcp.call("desktop.start", google_permissions="drive", profile_discovery=True)
+        print(f"Desktop profile evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(956, 156), check("settings_tab", "Profiles"),
+                       check("profiles.loaded", True), wait(150), shot("desktop-profile-initial-light"),
+                       click(600, 390), type_text("so.shep.fixture"),
+                       check("profiles.namespace", "so.shep.fixture"), click(342, 441),
+                       check("profiles.error", None, "ne"), check("profiles.running", False),
+                       wait(150), shot("desktop-profile-failed-light"),
+                       click(344, 629), check("profiles.pending", True),
+                       click(342, 441), check("profiles.running", False),
+                       key("ctrl+1"), check("tab", "Mail"), key("Down"),
+                       check("selected", "Your weekly workspace digest"), check("profiles.pending", False),
+                       shot("desktop-profile-paused-browsing"),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(150),
+                       shot("desktop-profile-paused-light"), click(342, 441),
+                       check("profiles.discovery.state.phase", "complete"), check("profiles.pending", False),
+                       check("profiles.discovery.state.profiles", 2), check("profiles.error", None),
+                       check("profiles.discovery.rows.0.name", "Work"),
+                       check("profiles.discovery.rows.1.initialized", True),
+                       wait(150), shot("desktop-profile-complete-light"))
+        revision = self.mcp.call("desktop.state")["profiles"]["discovery"]["state"]["revision"]
+        self.mcp.batch(click(497, 441), check("profiles.discovery.state.revision", revision + 1, "gte"),
+                       check("profiles.discovery.state.phase", "complete"), check("profiles.pending", False),
+                       click(741, 441), check("profiles.discovery.state", None), wait(100),
+                       click(342, 441), check("profiles.discovery.state.profiles", 2),
+                       check("profiles.discovery.state.phase", "complete"), check("profiles.pending", False),
+                       wait(100), shot("desktop-profile-reopened-light"),
+                       click(620, 441), check("profiles.discovery.state.phase", "files"),
+                       key("ctrl+1"), check("tab", "Mail"), check("profiles.running", False),
+                       check("profiles.pending", False), key("ctrl+comma"), check("tab", "Preferences"),
+                       wait(100), click(342, 441), check("profiles.discovery.state.phase", "complete"),
+                       check("profiles.discovery.state.profiles", 2), check("profiles.pending", False),
+                       shot("desktop-profile-rescanned-light"))
+
+    def test_desktop_profile_discovery_compact_dark_search(self):
+        result = self.mcp.call("desktop.start", width=900, height=640,
+                               google_permissions="drive", profile_discovery=True)
+        print(f"Compact profile evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(563,366), check("dark", True),
+                       click(650,88), type_text("profiles"), check("settings_matches", ["Profiles and sync"]),
+                       click(450,289), check("settings_group", "Profiles and sync"),
+                       check("profiles.loaded", True), wait(150), shot("desktop-profile-search-dark"),
+                       click(300,239), check("settings_group", None), wait(150), shot("desktop-profile-initial-dark"),
+                       click(550,405), type_text("so.shep.fixture"), click(320,455),
+                       check("profiles.error", None, "ne"), check("profiles.pending", False),
+                       {"type":"hover", "x":750, "y":550}, {"type":"scroll", "amount":8},
+                       wait(150), shot("desktop-profile-failed-dark"), click(319,568),
+                       check("profiles.discovery.state.phase", "complete"), check("profiles.pending", False),
+                       check("profiles.discovery.state.profiles", 2), check("profiles.error", None),
+                       {"type":"hover", "x":750, "y":550}, {"type":"scroll", "amount":-30},
+                       wait(150), shot("desktop-profile-complete-dark"),
+                       {"type":"scroll", "amount":30}, wait(150), shot("desktop-profile-footer-dark"),
+                       {"type":"scroll", "amount":-30}, wait(150), click(718,455),
+                       check("profiles.discovery.state", None), key("ctrl+1"), check("tab", "Mail"),
+                       check("dark", True))
+
+    def test_desktop_profile_discovery_requires_active_drive_permission(self):
+        result = self.mcp.call("desktop.start", google_permissions="calendar")
+        print(f"Profile consent evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(956,156), check("settings_tab", "Profiles"), check("profiles.loaded", True),
+                       wait(100), click(600,390), type_text("so.shep.fixture"), click(342,441),
+                       check("profiles.error", "Sign in to Google with Drive access", "contains"),
+                       check("profiles.discovery.state", None), check("google_grant.access.drive", False),
+                       wait(100), shot("desktop-profile-needs-permission"),
+                       click(477,441), check("settings_group", "Google connection"),
+                       check("settings_tab", "Accounts"), check("google_grant.access.calendar_write", True),
+                       key("ctrl+1"), check("tab", "Mail"), key("Down"),
+                       check("selected", "Your weekly workspace digest"))
+
     def test_google_requested_permissions_are_saved_separately_from_the_active_grant(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
                        click(375, 156), check("settings_tab", "Accounts"),
