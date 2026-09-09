@@ -4,6 +4,16 @@ A calm, native email and calendar app built with Rust and iced. Comfortable with
 
 [Documentation](https://sam-ruff.github.io/shep.so/) · [Install](docs/installation.md) · [Agent docs](docs/agents/index.md)
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sam-ruff/shep.so/main/scripts/install-release-linux.sh | bash
+```
+
+The Linux installer downloads a published release, verifies its checksum, and adds Shep to your applications menu. It defaults to your home directory; an interactive prompt also offers all-user installation or cancellation. Requires curl and Python 3.
+
+**No binary releases are published yet while release CI is paused.** The installer reports this clearly; use [the source instructions](#get-started) until a release is available. Windows/macOS download installers are being added.
+
 ![Shep in light mode, with a unified inbox and an open email](docs/images/mail-light.webp)
 
 - **Mail in one place.** Multiple accounts, a unified inbox, search across folders, conversation reading and bulk actions with Undo.

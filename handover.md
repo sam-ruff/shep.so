@@ -26,19 +26,23 @@ credential protection still remain. Do not discard any lane's uncommitted work.
 
 ## Current source checkpoint
 
-`1595fb3` is pushed: Windows/macOS badge adapters,751 hook executions,12 native
+`2b87db4` is pushed: multiple Local/Drive destinations, 756 hook executions and
+21 integrated native backup/preferences/profile/import scenarios pass. The merge
+preserves typed preference intent and per-destination metadata, including a new
+remote-setting/upload-receipt race regression. The backup lane continues S3.
+Linux raw installer `f3785ec` is being integrated while its agent adds native
+macOS/Windows wrappers.
+
+`1595fb3` is pushed: Windows/macOS badge adapters, 751 hook executions, 12 native
 Linux scenarios, full merged Windows checking and exact macOS adapter checking.
-Actual Windows/macOS desktop execution remains open. Multiple Local/Drive backup
-checkpoint `3f00292` is now being integrated; preserve typed preference writes and
-per-destination metadata when resolving its older-base changes.
+Actual Windows/macOS desktop execution remains open.
 
 `6728931` is pushed: native tray, temporary-saving notification/auto-exit and
 failure recovery pass 745 integrated hook executions and32 native scenarios.
 Linux menus/compact settings were reviewed; Windows GNU and exact macOS adapter
 checks do not establish actual platform runtime. Ordinary-hide pending-send failure recovery is pushed in b8eafde, with 748 hook
 executions and 16 native scenarios passing. Keep R86 active for actual platform
-verification. Badge adapter checkpoint66222f6 is being integrated; the tray
-agent has moved to direct-download installers.
+verification. The tray agent has moved to direct-download installers.
 
 `91ed9a9` is pushed: deletion follows the next displayed message without resetting
 scroll, including page boundaries and previous/empty fallback. Combined testing

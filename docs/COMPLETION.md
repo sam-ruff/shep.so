@@ -1,6 +1,6 @@
 # Completion audit
 
-## Multiple Local/Drive backups — integration in progress
+## Multiple Local/Drive backups — shipped checkpoint
 
 Agent checkpoint `3f00292` adds named Local/Drive destinations, independent
 schedules, retention/passphrases and history, switching and reviewed removal.
@@ -17,7 +17,16 @@ light, red removal and compact dark WebPs under `3ee3c19c5507`; final equivalent
 run is `c023ba64588f`. Root integration preserves main's typed portable preference
 intent and native edit generations; a new regression combines a stale backup form,
 a remote setting change and another destination's completed upload. Merged checks
-and shipping remain pending. Logs use `artifacts/logs/multiple-backups-*`.
+pass: ten preferences tests, 756 mandatory hook executions (three personal
+diagnostics ignored), 59 Python tests and strict Zensical. All 21 integrated
+backup/preferences/profile/import native scenarios pass in 95.559 seconds. Root
+reviewed removal and compact dark WebPs in `ffa204429d56`. Native SHA-256:
+`73617db5e8a89119e7f055623e061fb55ee16e7e6b6bf72ad135b36403ac14bb`.
+Source [`2b87db4`](https://github.com/sam-ruff/shep.so/commit/2b87db4) is pushed,
+with exact remote equality verified.
+[Documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34342193801)
+passed. Logs use `artifacts/logs/multiple-backups-*`. No live cloud or installed
+production update is claimed.
 
 ## Windows/macOS badges — shipped integration
 
@@ -34,6 +43,30 @@ Logs: `artifacts/logs/badge-main-*`. Actual Windows/macOS rendering and shell
 execution remain R70 verification work; production installation is unchanged.
 
 
+
+## Raw Linux release installer — R61 checkpoint
+
+README's first install option and the installation guide now show the standalone
+GitHub raw Bash entry point. Its standard-library helper resolves a published
+Linux archive and checksum, stages/validates files before installation and delegates
+to the existing atomic binary/native-menu installer. Per-user installation remains
+the default; interactive scope offers all users or cancel, and only an explicitly
+selected system install invokes sudo. Updates leave already-open executables and
+user data alone. Version selection, prompt-free user installs, custom paths and
+optional GNOME pinning are supported.
+
+Nine isolated tests exercise actual loopback metadata/archive/checksum downloads,
+installation and atomic update in temporary prefixes, native launcher identity,
+checksum/asset/archive rejection, scope/sudo cancellation, interrupted downloads,
+unsafe paths/links, raw-wrapper argument quoting and staging cleanup. All 68 Python
+tests pass; Bash syntax and strict pinned documentation checking pass. No native
+UI changed. Mandatory hook results and source shipping are recorded during root
+integration. No release was published and no developer installation was changed.
+
+A read-only public release API check returned no published releases. The README
+and installer explain that state without claiming a working public binary download;
+quality/release CI stays disabled. Windows/macOS scripts, platform execution and
+actual published-archive installation remain in R61 for the next checkpoints.
 
 ## Windows/macOS unread badges — integration checkpoint
 

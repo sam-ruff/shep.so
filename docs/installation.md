@@ -2,6 +2,34 @@
 
 Linux is the currently verified platform. Windows and macOS still need testing.
 
+## Download a release
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sam-ruff/shep.so/main/scripts/install-release-linux.sh | bash
+```
+
+The Linux installer requires curl and Python 3. It verifies `SHA256SUMS` before
+installing to `~/.local/bin` and adding the native applications-menu entry.
+On an interactive terminal, choose your user (default), all users, or cancel.
+All-user installation uses `/usr/local` and asks through sudo when needed.
+The installer never stops an open Shep window; reopen it after an update.
+
+Release CI is currently paused and no binary releases are published yet. The
+installer reports missing releases or platform assets without changing installed
+files. Use the source instructions below until an archive is available;
+Windows/macOS download installers and release packaging remain in development.
+
+For a particular release, a prompt-free user install or optional GNOME pinning:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sam-ruff/shep.so/main/scripts/install-release-linux.sh | bash -s -- --version 1.2.3 --user --pin
+```
+
+Replace `1.2.3` with an actually published version. `--system` explicitly selects
+all users; `--yes` uses the user default without prompting. Custom user locations
+use `--prefix PATH` and `--data-dir PATH`. No Rust checkout is required for a
+published archive.
+
 ## Run from source
 
 Install stable Rust (1.88 or newer) and Python 3. On Debian or Ubuntu, add these build dependencies:
