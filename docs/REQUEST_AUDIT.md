@@ -1,5 +1,11 @@
 # Conversation request audit
 
+R02/R49/R92: explicit shared connection reviews preserve previous native mail
+and credential identities, add changed setups with reconnect, and publish local
+choices through durable shared-history admission. Storage/controller/native
+evidence and remaining verification are recorded in completion. Removal choices,
+post-enrollment links and credential transfer remain open.
+
 
 R02/R49/R92 continuation: explicit existing-account linking during reviewed import
 now retains native mail/identity and requires exactly matching connection fields.

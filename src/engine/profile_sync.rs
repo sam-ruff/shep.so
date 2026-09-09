@@ -179,6 +179,64 @@ impl Engine {
                 saved,
             });
         }
+        if matches!(
+            action,
+            Request::AccountReviews { .. } | Request::ResolveAccount { .. }
+        ) {
+            let before = self.store.profile_enrollment().await?;
+            let binding = before
+                .enrollment
+                .selection
+                .as_ref()
+                .context("Choose a shared profile first.")?
+                .binding
+                .clone();
+            let mut replica = sync::replica::Replica::open(
+                paths.history(&binding)?,
+                binding,
+                paths.journal().await?,
+            )
+            .await?;
+            let saved = matches!(action, Request::ResolveAccount { .. });
+            let result = async {
+                control.check()?;
+                let after = match action {
+                    Request::ResolveAccount { review, choice, .. } => {
+                        let _account = control
+                            .read(async { Ok(self.account_access(&review.local().id).await) })
+                            .await?;
+                        control.check()?;
+                        sync::account_reviews::accept(
+                            &self.store,
+                            &mut replica,
+                            (*review).clone(),
+                            choice,
+                        )
+                        .await?;
+                        None
+                    }
+                    Request::AccountReviews { after, .. } => after,
+                    _ => unreachable!(),
+                };
+                sync::account_reviews::prepare(&self.store, &replica, after).await
+            }
+            .await;
+            let closed = replica.close().await;
+            let snapshot = self.store.profile_enrollment().await?;
+            // A reserved identity survives admission failure and must be visible
+            // for reconnect/recovery without losing the previous account.
+            if snapshot.connections_revision != before.connections_revision {
+                self.workspace(&mut output).await?;
+            }
+            closed.context("Could not finish saving the account review. Reopen it to recover.")?;
+            let page = result?;
+            return Ok(Update::AccountReviews {
+                snapshot: Arc::new(snapshot),
+                reviews: page.reviews.into_iter().map(Arc::new).collect(),
+                after: page.after,
+                saved,
+            });
+        }
         let journal = paths.journal().await?;
         let _slot = control
             .read(async { Ok(self.provider_slots.acquire().await) })

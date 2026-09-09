@@ -1,5 +1,28 @@
 # Completion audit
 
+## Shared account connection reviews — implementation checkpoint
+
+The native review offers keeping the current device connection or adding the
+reviewed shared setup. Changed endpoints get a fresh native UUID requiring
+reconnection. The previous account, cached mail, credentials and server IDs remain
+at their original endpoints as a local-only “previous setup”. Keeping local
+publishes that reviewed connection while preserving unrelated field edits.
+
+Six targeted storage/history/controller tests pass, including same remote IDs on
+old/new accounts, lost admission reply/restart, preserved unrelated preferences,
+stale native/history/Google/consent changes, remote tombstones and replaced UI
+rows. All **32 profile-related native scenarios** pass in 130.488 seconds, including
+Add/restart/sync and compact Keep/version selection. All **96 matching profile
+Rust tests** and **84 Python tests** pass. Final native SHA-256:
+`4df84fef2a8c8aaa7d506d5940c7223213c42957446fa34e00fe64fec6fefc29`.
+Reviewed final WebPs include `8b79718ab48e`, `16a1186fee12` and `31e57cf69c34`
+under the lane artifacts. The compact test reproduced
+iced's Escape picker-dismissal gap; it is retained in R15/R63 and its corrected
+mouse selection follows the actual overlay positions. Strict Zensical passes. Normal hooks, root integration and publication remain
+required. Logs use `artifacts/logs/profile-account-reviews-*`. Remote removal decisions,
+post-enrollment links, protected credential transfer and live interoperability
+stay in TODO.
+
 ## First-profile native fixture synchronization
 
 The first-device scenario now waits for a loopback upload to be held, navigates

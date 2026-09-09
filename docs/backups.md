@@ -43,3 +43,5 @@ Google setup currently requires your own Google Cloud project:
 4. Enter its client ID and secret in Preferences, save, and choose **Connect Google**.
 
 Google sign-in connects Calendar and Drive, not Gmail mail access. Drive copies live in private app storage and do not appear in My Drive. Use the same OAuth application when restoring on another machine.
+
+In **Accounts → Profiles and sync**, review shared connection changes before using them. Keep this device’s connection, or add the shared setup and reconnect it. The previous account and its mail stay available.

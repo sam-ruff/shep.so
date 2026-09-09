@@ -1,6 +1,7 @@
 //! Continuous-profile transport primitives. Operations use the same pinned codec
 //! as Flutter. Enrollment/merge owns application decisions; transport never
 //! applies account settings, credentials or mail actions by itself.
+pub mod account_reviews;
 pub mod commands;
 pub mod continuous;
 pub mod control;
