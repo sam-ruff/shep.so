@@ -1804,3 +1804,21 @@ scopes. Existing search/selection/bulk tests pass (21 tests), plus the plan guar
 Mobile/browser fuzzy-ranking parity remains explicitly open in TODO and the shared
 scenario matrix. Final native controls and unchanged performance budgets are
 verified below before shipping.
+
+
+The first complete benchmark after materializing exact ranks measured search at
+68.94 ms against the unchanged 50 ms gate (Inbox 33.38 ms, account page 30.47 ms).
+It failed before body/navigation measurements, and remains preserved as
+`artifacts/logs/profile-history-backend-benchmark-final.log`. A separate pinned
+SQLite diagnostic isolated the per-page unread badge query: the original plan
+looked up message rows and sorted account groups. A covering
+`(folder, unread, account)` index removes both steps. On that synthetic database,
+the diagnostic component measured 45.204 ms before and 4.668 ms after; those are
+diagnostic component timings, not final release benchmark results.
+
+The cache now creates the covering index on open, including existing caches. A
+reopen/plan regression protects that path; existing unread projection, search,
+selection and bulk tests retain their behavioral assertions. Full native
+verification before this additional index passed all 118 functional scenarios;
+final targeted controls and fresh performance evidence follow below. No query
+predicate, result ordering or budget was weakened.

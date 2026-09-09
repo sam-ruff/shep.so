@@ -190,7 +190,7 @@
     },
     {
       "id": "ranked-mail-search",
-      "contract": "An exact short-body match ranks before weaker/newer typo alternatives; retain Unicode, literal query safety, folder/flag scopes and stable 50-row paging. Captured selection uses the same order. Compute exact FTS ranking once per query, with SQLite owning intermediate rows instead of UI arrays.",
+      "contract": "An exact short-body match ranks before weaker/newer typo alternatives; retain Unicode, literal query safety, folder/flag scopes and stable 50-row paging. Captured selection uses the same order. Compute exact FTS ranking once per query, with SQLite owning intermediate rows instead of UI arrays. Global unread-account counts should use a covering index without loading mail rows or sorting account groups.",
       "mobile": "OPEN: full desktop fuzzy/relevance behavior and bounded cache/performance parity. Current native prefix FTS/paging remains covered by Rust cache tests; desktop query-plan guard, tests/search.rs, tests/selections.rs and native search/sort controls cover the reference.",
       "browser": "OPEN: full fuzzy/relevance parity. Keep current worker query/paging and captured-selection controls; the native SQLite materialization change does not implement browser ranking."
     }

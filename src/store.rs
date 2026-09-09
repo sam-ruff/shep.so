@@ -72,6 +72,7 @@ impl Store {
             CREATE INDEX IF NOT EXISTS mail_folder_time ON messages(folder, timestamp DESC);
             CREATE INDEX IF NOT EXISTS mail_account_folder_time ON messages(account, folder, timestamp DESC);
             CREATE INDEX IF NOT EXISTS mail_folder_unread ON messages(folder,unread);
+            CREATE INDEX IF NOT EXISTS mail_inbox_badge_counts ON messages(folder,unread,account);
             CREATE INDEX IF NOT EXISTS mail_account_unread ON messages(account,folder,unread);
             CREATE INDEX IF NOT EXISTS mail_flagged ON messages(starred,folder);
             CREATE INDEX IF NOT EXISTS mail_sender ON messages(sender COLLATE NOCASE,timestamp DESC);
