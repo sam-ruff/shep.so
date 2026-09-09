@@ -826,3 +826,199 @@ async fn ftp_verified_connection_stores_keys_only_after_success_and_keeps_later_
     );
     fixture.finish().await;
 }
+
+#[tokio::test]
+async fn backup_all_saved_secrets_work_without_enabling_schedules_and_fail_independently() {
+    use backup::{PassphraseStore, config, run::Status};
+    let secrets = Arc::new(Secrets::default());
+    let engine = engine(secrets.clone());
+    let directory = tempfile::tempdir().unwrap();
+    let mut prefs = Preferences {
+        backup_folder: directory.path().join("first").to_string_lossy().into(),
+        ..Default::default()
+    };
+    config::add(&mut prefs).unwrap();
+    prefs.backup_folder = directory.path().join("second").to_string_lossy().into();
+    config::capture_editor(&mut prefs);
+    let targets: Vec<_> = prefs
+        .backup_destinations
+        .iter()
+        .map(|d| (d.id.clone(), d.target(&prefs)))
+        .collect();
+    engine.store.save_preferences(prefs).await.unwrap();
+    for (_, target) in &targets {
+        engine
+            .store
+            .record_backup(target.clone(), 1, true)
+            .await
+            .unwrap();
+    }
+    secrets.write(&targets[0].1, passphrase()).await.unwrap();
+    // A missing second passphrase must not prevent the first from uploading.
+    let (mut output, events) = futures::channel::mpsc::channel(32);
+    let observer = tokio::spawn(async move { events.collect::<Vec<_>>().await });
+    let mut second_output = output.clone();
+    let (first, second) = tokio::join!(
+        engine.backup_included(1, targets[0].0.clone(), targets[0].1.clone(), &mut output),
+        engine.backup_included(
+            2,
+            targets[1].0.clone(),
+            targets[1].1.clone(),
+            &mut second_output
+        )
+    );
+    first.unwrap();
+    second.unwrap();
+    drop(second_output);
+    drop(output);
+    let events = observer.await.unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::BackupRun(1, _, Status::Saved)))
+    );
+    assert!(events.iter().any(|e| matches!(e, Event::BackupRun(2, _, Status::Failed(message)) if message.contains("keychain"))));
+    let provider = backup::LocalBackup {
+        directory: directory.path().join("first"),
+    };
+    let copies = provider.list().await.unwrap();
+    assert_eq!(copies.len(), 1);
+    backup::decrypt(
+        &provider.download(&copies[0].id).await.unwrap(),
+        &passphrase(),
+    )
+    .unwrap();
+    let second_secret = SecretString::from("separate second passphrase");
+    secrets
+        .write(&targets[1].1, second_secret.clone())
+        .await
+        .unwrap();
+    let (mut output, events) = futures::channel::mpsc::channel(32);
+    let observer = tokio::spawn(async move { events.collect::<Vec<_>>().await });
+    engine
+        .backup_included(3, targets[1].0.clone(), targets[1].1.clone(), &mut output)
+        .await
+        .unwrap();
+    drop(output);
+    assert!(
+        observer
+            .await
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, Event::BackupRun(3, _, Status::Saved)))
+    );
+    assert_eq!(
+        provider.list().await.unwrap()[0].id,
+        copies[0].id,
+        "Retry must not touch the successful target"
+    );
+    let provider = backup::LocalBackup {
+        directory: directory.path().join("second"),
+    };
+    let copies = provider.list().await.unwrap();
+    assert_eq!(copies.len(), 1);
+    let bytes = provider.download(&copies[0].id).await.unwrap();
+    backup::decrypt(&bytes, &second_secret).unwrap();
+    assert!(backup::decrypt(&bytes, &passphrase()).is_err());
+    let saved: Preferences = engine.store.get("preferences").await.unwrap();
+    assert!(
+        config::configurations(&saved)
+            .iter()
+            .all(|p| !p.auto_backup)
+    );
+}
+
+#[test]
+fn backup_all_rechecks_included_identity_and_first_copy_after_queueing() {
+    let mut prefs = Preferences {
+        backup_folder: "/first".into(),
+        ..Default::default()
+    };
+    backup::config::add(&mut prefs).unwrap();
+    let destination = prefs.backup_destinations[0].clone();
+    let target = destination.target(&prefs);
+    assert!(
+        Engine::check_included(&prefs, &destination.id, &target)
+            .unwrap_err()
+            .to_string()
+            .contains("first copy")
+    );
+    prefs.backup_destinations[0].ready = true;
+    Engine::check_included(&prefs, &destination.id, &target).unwrap();
+    prefs.backup_destinations[0].included = false;
+    assert!(Engine::check_included(&prefs, &destination.id, &target).is_err());
+    prefs.backup_destinations[0].included = true;
+    prefs.backup_destinations[0].folder = "/changed".into();
+    assert!(Engine::check_included(&prefs, &destination.id, &target).is_err());
+    prefs.backup_destinations.remove(0);
+    assert!(Engine::check_included(&prefs, &destination.id, &target).is_err());
+}
+
+#[tokio::test]
+async fn backup_all_exclusion_while_keychain_waits_prevents_a_late_upload() {
+    struct HeldSecrets(tokio::sync::mpsc::Sender<tokio::sync::oneshot::Sender<SecretString>>);
+    #[async_trait]
+    impl backup::PassphraseStore for HeldSecrets {
+        async fn read(&self, _: &BackupTarget) -> anyhow::Result<SecretString> {
+            let (reply, result) = tokio::sync::oneshot::channel();
+            self.0.send(reply).await?;
+            Ok(result.await?)
+        }
+        async fn write(&self, _: &BackupTarget, _: SecretString) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+    let (queries, mut reads) = tokio::sync::mpsc::channel(1);
+    let mut engine = engine(Arc::new(Secrets::default()));
+    engine.passphrases = Arc::new(HeldSecrets(queries));
+    let directory = tempfile::tempdir().unwrap();
+    let mut prefs = Preferences {
+        backup_folder: directory.path().join("first").to_string_lossy().into(),
+        ..Default::default()
+    };
+    backup::config::add(&mut prefs).unwrap();
+    let destination = prefs.backup_destinations[0].clone();
+    let target = destination.target(&prefs);
+    engine.store.save_preferences(prefs).await.unwrap();
+    engine
+        .store
+        .record_backup(target.clone(), 1, true)
+        .await
+        .unwrap();
+    let (mut output, events) = futures::channel::mpsc::channel(32);
+    let observed = tokio::spawn(async move { events.collect::<Vec<_>>().await });
+    let worker = engine.clone();
+    let id = destination.id.clone();
+    let target_clone = target.clone();
+    let running = tokio::spawn(async move {
+        worker
+            .backup_included(1, id, target_clone, &mut output)
+            .await
+    });
+    let reply = reads.recv().await.unwrap();
+    engine
+        .store
+        .update_preferences(move |p| {
+            p.backup_destinations
+                .iter_mut()
+                .find(|d| d.id == destination.id)
+                .unwrap()
+                .included = false
+        })
+        .await
+        .unwrap();
+    reply.send(passphrase()).unwrap();
+    running.await.unwrap().unwrap();
+    assert!(observed.await.unwrap().iter().any(|e| matches!(e, Event::BackupRun(1, _, backup::run::Status::Failed(error)) if error.contains("excluded"))));
+    assert!(
+        engine
+            .backup_journal()
+            .await
+            .unwrap()
+            .pending(&target)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(!directory.path().join("first").exists());
+}

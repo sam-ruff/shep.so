@@ -19,6 +19,15 @@ pub(super) enum BackupAction {
     Restore(String, SecretString),
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub(super) struct RunRow {
+    pub id: String,
+    pub name: String,
+    pub target: BackupTarget,
+    pub request: u64,
+    pub status: crate::backup::run::Status,
+}
+
 pub(super) struct PendingBackup {
     request: u64,
     target: BackupTarget,
@@ -69,8 +78,12 @@ impl App {
     }
 
     pub(super) fn backup_busy(&self) -> bool {
-        self.busy
-            .contains(&self.configured_backup_target().work_key())
+        self.backup_run
+            .iter()
+            .any(|row| row.target == self.configured_backup_target() && row.status.pending())
+            || self
+                .busy
+                .contains(&self.configured_backup_target().work_key())
     }
 
     pub(super) fn s3_form_settings(&self) -> crate::backup::s3::Settings {
@@ -245,6 +258,16 @@ impl App {
     }
 
     pub(super) fn cancel_backup_save(&mut self, request: u64) {
+        if self.pending_backup_all == Some(request) {
+            self.pending_backup_all = None;
+            for row in &mut self.backup_run {
+                if row.status == crate::backup::run::Status::SavingPreferences {
+                    row.status = crate::backup::run::Status::Failed(
+                        "Settings could not be saved. Retry after correcting the error.".into(),
+                    );
+                }
+            }
+        }
         if self
             .pending_backup
             .as_ref()
@@ -255,6 +278,10 @@ impl App {
     }
 
     pub(super) fn continue_backup_request(&mut self, request: u64) {
+        if self.pending_backup_all == Some(request) {
+            self.pending_backup_all = None;
+            self.dispatch_backup_run();
+        }
         if self
             .pending_backup
             .as_ref()
@@ -299,6 +326,154 @@ impl App {
         }
     }
 
+    pub(super) fn include_backup(&mut self, id: String, included: bool) {
+        if let Err(error) = self.read_preferences() {
+            self.backup_validation_error(error.to_string());
+            return;
+        }
+        if let Some(destination) = self
+            .preferences
+            .backup_destinations
+            .iter_mut()
+            .find(|d| d.id == id)
+        {
+            destination.included = included;
+            self.save_preferences();
+        }
+    }
+
+    pub(super) fn begin_backup_all(&mut self, retry: Option<String>) {
+        use crate::backup::run::Status;
+        if self.pending_backup_all.is_some()
+            || self.pending_backup.is_some()
+            || (retry.is_none() && self.backup_run.iter().any(|row| row.status.pending()))
+        {
+            return;
+        }
+        if retry.as_ref().is_some_and(|id| {
+            !self
+                .backup_run
+                .iter()
+                .any(|row| &row.id == id && matches!(row.status, Status::Failed(_)))
+        }) {
+            return;
+        }
+        if let Err(error) = self.read_preferences() {
+            self.backup_validation_error(error.to_string());
+            return;
+        }
+        let destinations: Vec<_> = self
+            .preferences
+            .backup_destinations
+            .iter()
+            .filter(|d| d.included && retry.as_ref().is_none_or(|id| id == &d.id))
+            .cloned()
+            .collect();
+        if destinations.is_empty() {
+            self.backup_validation_error("Include at least one destination in Back up all.");
+            return;
+        }
+        if retry.is_none() {
+            self.backup_run.clear();
+        }
+        for destination in destinations {
+            if self
+                .backup_run
+                .iter()
+                .any(|row| row.id == destination.id && row.status.pending())
+            {
+                continue;
+            }
+            self.backup_run_generation += 1;
+            let target = destination.target(&self.preferences);
+            let ready = crate::backup::config::resolve(&self.workspace.preferences, &target)
+                .is_ok_and(|p| p.backup_ready);
+            let status = if ready {
+                Status::SavingPreferences
+            } else {
+                Status::NeedsSetup(
+                    "Save the first copy with a passphrase in this destination's setup.".into(),
+                )
+            };
+            let row = RunRow {
+                id: destination.id,
+                name: destination.name,
+                target,
+                request: self.backup_run_generation,
+                status,
+            };
+            if let Some(index) = self.backup_run.iter().position(|old| old.id == row.id) {
+                self.backup_run[index] = row;
+            } else {
+                self.backup_run.push(row);
+            }
+        }
+        self.clear_backup_validation();
+        if self
+            .backup_run
+            .iter()
+            .any(|row| row.status == Status::SavingPreferences)
+        {
+            let request = self.preference_sync.changed();
+            self.pending_backup_all = Some(request);
+            if !self.queue_preference_write(request, self.preferences.clone()) {
+                self.cancel_backup_save(request);
+            }
+        }
+    }
+
+    fn dispatch_backup_run(&mut self) {
+        use crate::backup::run::Status;
+        for index in 0..self.backup_run.len() {
+            if self.backup_run[index].status != Status::SavingPreferences {
+                continue;
+            }
+            let row = self.backup_run[index].clone();
+            let current = self
+                .preferences
+                .backup_destinations
+                .iter()
+                .find(|d| d.id == row.id);
+            let matches_current = current
+                .is_some_and(|d| d.included && d.target(&self.preferences) == row.target)
+                && (self.preferences.backup_selected.as_ref() != Some(&row.id)
+                    || self.configured_backup_target() == row.target);
+            if !matches_current {
+                self.backup_run[index].status = Status::Failed("This destination changed or was excluded while settings were saving. Review it before retrying.".into());
+            } else if self.busy.contains(&row.target.work_key()) {
+                self.backup_run[index].status = Status::Failed(
+                    "This destination is already working. Wait for it to finish, then retry."
+                        .into(),
+                );
+            } else if !self.try_command(Command::BackupIncluded(row.request, row.id, row.target)) {
+                self.backup_run[index].status = Status::Failed(
+                    "The work queue is full. Retry this destination in a moment.".into(),
+                );
+            } else {
+                self.backup_run[index].status = Status::Queued;
+            }
+        }
+    }
+
+    pub(super) fn observe_backup_run(
+        &mut self,
+        request: u64,
+        target: BackupTarget,
+        status: crate::backup::run::Status,
+    ) {
+        if let Some(row) = self
+            .backup_run
+            .iter_mut()
+            .find(|row| row.request == request && row.target == target)
+        {
+            if let crate::backup::run::Status::Failed(error) = &status {
+                self.pending_close = None;
+                self.notice = Some((format!("{}: {error}", row.name), true, Instant::now()));
+            }
+            row.status = status;
+        }
+    }
+
     pub(super) fn request_backup_copies(&mut self, target: BackupTarget) {
         self.backups_generation += 1;
         self.send(Command::ListBackups(self.backups_generation, target));
@@ -308,6 +483,162 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn group_app() -> App {
+        let (mut app, _) = App::new();
+        app.preferences.backup_folder = "/first".into();
+        crate::backup::config::add(&mut app.preferences).unwrap();
+        app.preferences.backup_folder = "/second".into();
+        app.preferences.backup_ready = true;
+        crate::backup::config::capture_editor(&mut app.preferences);
+        app.preferences.backup_destinations[0].ready = true;
+        Arc::make_mut(&mut app.workspace).preferences = app.preferences.clone();
+        app.settings_fields();
+        app
+    }
+
+    #[test]
+    fn backup_all_waits_for_save_admits_once_and_retries_only_failed_rows() {
+        use crate::backup::run::Status;
+        let mut app = group_app();
+        let (sender, mut saves, mut commands) = engine::CommandSender::backup_test_channels();
+        app.tx = Some(sender);
+        app.begin_backup_all(None);
+        let Command::SavePreferences(request, _) = saves.try_recv().unwrap() else {
+            panic!("save first")
+        };
+        assert!(commands.try_recv().is_err());
+        app.begin_backup_all(None);
+        assert!(saves.try_recv().is_err());
+        app.continue_backup_request(request + 1);
+        assert!(commands.try_recv().is_err());
+        app.continue_backup_request(request);
+        let first = app.backup_run[0].clone();
+        let second = app.backup_run[1].clone();
+        for row in [&first, &second] {
+            assert!(
+                matches!(commands.try_recv(), Ok(Command::BackupIncluded(id, _, target)) if id == row.request && target == row.target)
+            );
+            assert!(
+                app.busy.contains(&row.target.work_key()),
+                "queued copies must block exit before backend Busy arrives"
+            );
+        }
+        app.observe_backup_run(
+            second.request,
+            second.target.clone(),
+            Status::Failed("offline".into()),
+        );
+        app.busy.remove(&second.target.work_key());
+        app.begin_backup_all(Some(second.id));
+        let Command::SavePreferences(retry, _) = saves.try_recv().unwrap() else {
+            panic!("save retry")
+        };
+        app.continue_backup_request(retry);
+        assert!(
+            matches!(commands.try_recv(), Ok(Command::BackupIncluded(_, _, target)) if target == second.target)
+        );
+        assert!(
+            commands.try_recv().is_err(),
+            "first queued copy must not be repeated"
+        );
+        app.observe_backup_run(second.request, second.target, Status::Saved);
+        assert_eq!(
+            app.backup_run[1].status,
+            Status::Queued,
+            "old attempt cannot finish a retry"
+        );
+        app.observe_backup_run(first.request, first.target, Status::Saved);
+        assert_eq!(app.backup_run[0].status, Status::Saved);
+    }
+
+    #[test]
+    fn backup_all_backpressure_and_save_failure_remain_recoverable_per_destination() {
+        use crate::backup::run::Status;
+        let mut app = group_app();
+        let (sender, mut saves, mut commands) = engine::CommandSender::backup_test_channels();
+        for _ in 0..32 {
+            sender.try_send(Command::LoadImages(vec![])).unwrap();
+        }
+        app.tx = Some(sender);
+        app.begin_backup_all(None);
+        let Command::SavePreferences(request, _) = saves.try_recv().unwrap() else {
+            panic!("save")
+        };
+        app.continue_backup_request(request);
+        assert!(
+            app.backup_run
+                .iter()
+                .all(|row| matches!(&row.status, Status::Failed(error) if error.contains("queue")))
+        );
+        while commands.try_recv().is_ok() {}
+        app.begin_backup_all(None);
+        let Command::SavePreferences(request, _) = saves.try_recv().unwrap() else {
+            panic!("save")
+        };
+        app.cancel_backup_save(request);
+        app.continue_backup_request(request);
+        assert!(commands.try_recv().is_err());
+        assert!(
+            app.backup_run.iter().all(
+                |row| matches!(&row.status, Status::Failed(error) if error.contains("Settings"))
+            )
+        );
+    }
+
+    #[test]
+    fn backup_all_latest_exclusion_wins_before_its_first_settings_acknowledgment() {
+        let mut app = group_app();
+        let (sender, mut saves, mut commands) = engine::CommandSender::backup_test_channels();
+        app.tx = Some(sender);
+        app.begin_backup_all(None);
+        let Command::SavePreferences(request, _) = saves.try_recv().unwrap() else {
+            panic!("save")
+        };
+        let id = app.preferences.backup_destinations[1].id.clone();
+        app.include_backup(id, false);
+        app.continue_backup_request(request);
+        assert!(
+            matches!(commands.try_recv(), Ok(Command::BackupIncluded(_, _, target)) if target == app.backup_run[0].target)
+        );
+        assert!(commands.try_recv().is_err());
+        assert!(
+            matches!(&app.backup_run[1].status, crate::backup::run::Status::Failed(error) if error.contains("excluded"))
+        );
+    }
+
+    #[test]
+    fn backup_all_include_saves_other_form_edits_in_the_same_write() {
+        let mut app = group_app();
+        let (sender, mut saves, _commands) = engine::CommandSender::backup_test_channels();
+        app.tx = Some(sender);
+        app.fields.insert("copies", "17".into());
+        let id = app.preferences.backup_destinations[1].id.clone();
+        app.include_backup(id, false);
+        let Command::SavePreferences(_, saved) = saves.try_recv().unwrap() else {
+            panic!("save")
+        };
+        assert_eq!(saved.backup_copies, 17);
+        assert_eq!(saved.backup_destinations[1].copies, 17);
+        assert!(!saved.backup_destinations[1].included);
+    }
+
+    #[test]
+    fn backup_all_exclusion_survives_editor_capture_and_first_copy_stays_explicit() {
+        use crate::backup::run::Status;
+        let mut app = group_app();
+        app.preferences.backup_destinations[1].included = false;
+        app.preferences.backup_destinations[0].ready = false;
+        Arc::make_mut(&mut app.workspace).preferences = app.preferences.clone();
+        app.begin_backup_all(None);
+        assert_eq!(app.backup_run.len(), 1);
+        assert!(matches!(app.backup_run[0].status, Status::NeedsSetup(_)));
+        assert!(!app.preferences.backup_destinations[1].included);
+        let mut legacy = serde_json::to_value(&app.preferences.backup_destinations[1]).unwrap();
+        legacy.as_object_mut().unwrap().remove("included");
+        let restored: crate::backup::config::Destination = serde_json::from_value(legacy).unwrap();
+        assert!(restored.included);
+    }
 
     fn copy(id: &str) -> BackupCopy {
         BackupCopy {

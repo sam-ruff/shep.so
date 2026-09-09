@@ -1,4 +1,5 @@
 use crate::{model::*, store::Store};
+pub mod backups;
 mod bulk_history;
 #[path = "html_mail.rs"]
 mod html_mail;
@@ -33,6 +34,7 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
             .finish_notification_sync(account.id, epoch.into())
             .await?;
     }
+    backups::seed(store).await?;
     store.put("fixture_seeded", true).await
 }
 

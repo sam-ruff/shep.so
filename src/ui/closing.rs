@@ -27,6 +27,7 @@ impl App {
                     || key.starts_with("send:")
                     || key.starts_with("event:")
                     || key.starts_with("account:")
+                    || key.starts_with("backup:")
             })
     }
 
@@ -56,6 +57,7 @@ mod tests {
             "send:one",
             "event:one",
             "account:one",
+            "backup:one",
         ] {
             let (mut app, _) = App::new();
             let window = iced::window::Id::unique();

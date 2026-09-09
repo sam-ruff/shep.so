@@ -15,6 +15,11 @@ Use **Add destination** to keep multiple copies in different places. Each destin
 has its own name, schedule, passphrase and number of copies to keep. Select its
 row to edit it. Removing a destination keeps its existing backup files.
 
+Choose **Back up all** to save to every checked destination using its own saved
+passphrase. Each needs a successful first copy before joining. Progress and errors
+appear separately; **Retry** repeats only that failed destination. **Include**
+controls this action independently of automatic schedules.
+
 For S3, enter the HTTPS endpoint, bucket, signing region and folder prefix, then
 choose **Test and save connection** with your access key and secret key. Keys stay
 in your OS keychain. The test checks read access; your first backup checks upload

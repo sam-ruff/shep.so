@@ -1,6 +1,6 @@
 # Multiple backup destinations
 
-Preferences → Backups can keep several local folders, S3/SFTP destinations and one
+Preferences → Backups can keep several local folders, S3/SFTP/FTP destinations and one
 Google Drive destination active together. Add destination preserves the existing setup. Select
 its named row to change its schedule, retention, account-password inclusion or
 passphrase. Removing a destination keeps its saved copies and upload receipts.
@@ -19,11 +19,12 @@ same login and aliases of a local folder. Lexical checks run without filesystem
 access; real folder identity checks run on the storage worker. Imported database
 profiles clear these device-local destinations and schedules.
 
-This checkpoint does not add FTP or FTPS, optional archive-format
-compression/encryption, a combined manual Back up all action, or live cloud
-verification. R32 remains active for those features and their tests. Local/Drive
-protocol and encrypted-file tests are separate from native fixture tests, which
-cannot create backups or access credentials.
+The provider checkpoints below cover Local, Drive, S3, SFTP and FTP/FTPS.
+Optional archive-format compression/encryption controls, richer persistent
+failure history and live cloud verification remain unfinished. R32 stays active.
+Ordinary preview cannot create backups or access credentials. The explicit
+combined-backup native fixture uses only owned local directories and an isolated
+credential worker, with no real account passwords or network connections.
 
 Verification is recorded by the integrating agent in the completion log. New
 regressions cover migration, switching/removal, independent encrypted uploads,
@@ -220,3 +221,46 @@ and strict documentation building passes. This is selected correctness evidence;
 no performance measurements, actual Windows/macOS execution or live server
 verification is claimed. Mandatory hooks and main integration remain the final
 shipping receipts.
+
+
+## Back up all included destinations
+
+Each named destination has an **Include** checkbox for **Back up all**. This
+selection is independent of its automatic schedule and is saved on this device.
+Existing destinations are included when migrating; excluding one keeps its
+settings, individual controls and schedule intact. A destination needs its first
+successful password-protected copy and saved OS-keychain passphrase before it
+can join a combined run. **Setup** opens an unfinished destination's own form.
+
+The action waits for settings persistence, then admits at most 32 independent
+jobs to the existing bounded provider queue. The eight provider slots remain
+shared with other provider work; UI sends never block. Rows show preparing,
+uploading, receipt/retention completion, success or a specific failure. **Retry**
+only requeues that failed destination. Old attempt results cannot overwrite a
+new retry, and overlapping provider work returns an explicit busy result. Close
+waits for admitted backup jobs, including before their first worker event.
+
+Each destination reads its own saved passphrase and rechecks inclusion, identity
+and first-copy readiness after credential access. Recovery uses the original
+journal reservation and exact encrypted bytes. An unresolved upload cannot be
+silently replaced by a new snapshot. Exclusion/removal prevents queued work from
+starting; it does not interrupt an already accepted remote write. Individual
+Back up now and Restore controls remain available.
+
+Run results remain visible for this session. Last successful backup, inclusion,
+schedules and unresolved upload journals survive restart; a persistent multi-run
+failure history is a separate follow-up. Snapshots are prepared independently per
+destination and may reflect mail arriving between their capture times. Compression
+and encryption formats are unchanged.
+
+
+The combined-run correctness suite covers independent actual encrypted local
+copies with distinct saved passphrases, first-copy gating, queue saturation,
+settings acknowledgment and edit/exclusion races, held credential access,
+duplicate admission, failed-only retry and stale completion rejection. Saved
+native `test_backup_all_native_*` flows use the same upload and journal paths;
+they verify exact ciphertext/filename preservation after a lost acknowledgment,
+retry and restart, saved inclusion choices, Setup, navigation during upload and
+close waiting until both copies and metadata are durable. Light progress/error
+and compact dark controls are reviewed. These are fixture correctness checks,
+not live provider or performance measurements.

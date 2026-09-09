@@ -1,5 +1,13 @@
 # Conversation request audit
 
+R32: included-destination manual backup now has independent progress/recovery,
+exact staged-copy retry and close receipts. All 13 integrated native paths pass;
+archive options and persistent failure history stay in TODO. See completion.
+
+R63: the first-profile pending-navigation fixture is shipped in `91c59a4`.
+Eight native flows, 84 Python tests and 834 hook executions pass; owned HTTP
+release/cleanup replaces accumulated delays without changing timing budgets.
+
 
 R02/R49/R92 continuation: explicit existing-account linking during reviewed import
 now retains native mail/identity and requires exactly matching connection fields.

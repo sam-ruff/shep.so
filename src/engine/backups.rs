@@ -159,13 +159,47 @@ impl Engine {
         Ok(())
     }
 
+    pub(super) fn allow_backup(&self) -> anyhow::Result<()> {
+        #[cfg(feature = "test-support")]
+        if self.demo && crate::test_support::backups::active() {
+            return Ok(());
+        }
+        anyhow::ensure!(!self.demo, "Backup is disabled in preview.");
+        Ok(())
+    }
+
     pub(super) async fn run_backup(
         &self,
         target: BackupTarget,
         supplied: Option<SecretString>,
         output: &mut Output,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(!self.demo, "Backup is disabled in preview.");
+        self.run_backup_observed(target, supplied, output, None)
+            .await
+    }
+
+    async fn backup_progress(
+        output: &mut Output,
+        request: Option<u64>,
+        target: &BackupTarget,
+        status: backup::run::Status,
+    ) -> anyhow::Result<()> {
+        if let Some(request) = request {
+            output
+                .send(Event::BackupRun(request, target.clone(), status))
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn run_backup_observed(
+        &self,
+        target: BackupTarget,
+        supplied: Option<SecretString>,
+        output: &mut Output,
+        request: Option<u64>,
+    ) -> anyhow::Result<()> {
+        self.allow_backup()?;
         let _guard = self.backup_connection_guard(&target).await;
         let saved: Preferences = self.store.get("preferences").await?;
         Self::check_backup_target(&target, &saved)?;
@@ -213,6 +247,8 @@ impl Engine {
         let pending = match pending {
             Some(pending) => pending,
             None => {
+                Self::backup_progress(output, request, &target, backup::run::Status::Preparing)
+                    .await?;
                 let bytes = self.encrypted_snapshot(&prefs, &passphrase).await?;
                 let name = format!(
                     "shep-{}-{}.shepbackup",
@@ -232,6 +268,7 @@ impl Engine {
         })
         .await??;
         if !pending.committed {
+            Self::backup_progress(output, request, &target, backup::run::Status::Uploading).await?;
             let checkpoint = backup::journal::Checkpoint {
                 journal: journal.clone(),
                 target: target.clone(),
@@ -239,6 +276,7 @@ impl Engine {
             provider.upload_prepared(&mut pending.upload, &pending.data, &checkpoint).await
                 .context("The pending encrypted copy was kept. Retry Back up now with its original passphrase to resume")?;
         }
+        Self::backup_progress(output, request, &target, backup::run::Status::Finishing).await?;
         let upload = pending.upload;
         let marked = journal.committed(&target, &upload.id).await;
         let created_at = upload
@@ -262,9 +300,11 @@ impl Engine {
                 output,
             )
             .await?;
+        let mut fully_finished = clean && marked.is_ok();
         match marked {
             Ok(()) if clean => {
                 if let Err(error) = journal.remove(&target, &upload.id).await {
+                    fully_finished = false;
                     output.send(Event::Error(format!("Encrypted backup saved. Could not clear its completed upload record: {error}"))).await?;
                 }
             }
@@ -273,7 +313,74 @@ impl Engine {
             }
             _ => {}
         }
+        Self::backup_progress(output, request, &target, if fully_finished {
+            backup::run::Status::Saved
+        } else {
+            backup::run::Status::SavedWithWarning("Copy saved; cleanup or keychain setup needs attention. Open this destination to review the error before retrying.".into())
+        }).await?;
         Ok(())
+    }
+
+    pub(super) async fn backup_included(
+        &self,
+        request: u64,
+        id: String,
+        target: BackupTarget,
+        output: &mut Output,
+    ) -> anyhow::Result<()> {
+        Self::backup_progress(
+            output,
+            Some(request),
+            &target,
+            backup::run::Status::Preparing,
+        )
+        .await?;
+        let result: anyhow::Result<()> = async {
+            self.allow_backup()?;
+            let current: Preferences = self.store.get("preferences").await?;
+            Self::check_included(&current, &id, &target)?;
+            let secret = self.passphrases.read(&target).await.context("Unlock your OS keychain, or enter this destination's original passphrase and choose Back up now")?;
+            // Credential access may have been held while the user edited or removed the target.
+            let current: Preferences = self.store.get("preferences").await?;
+            Self::check_included(&current, &id, &target)?;
+            self.run_backup_observed(target.clone(), Some(secret), output, Some(request)).await
+        }.await;
+        if let Err(error) = result {
+            output
+                .send(Event::Error(format!(
+                    "Backup destination needs attention: {error:#}"
+                )))
+                .await?;
+            Self::backup_progress(
+                output,
+                Some(request),
+                &target,
+                backup::run::Status::Failed(format!("{error:#}")),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn check_included(
+        prefs: &Preferences,
+        id: &str,
+        target: &BackupTarget,
+    ) -> anyhow::Result<()> {
+        let destination = prefs
+            .backup_destinations
+            .iter()
+            .find(|d| d.id == id)
+            .context("This destination was removed. Review the current backup destinations.")?;
+        anyhow::ensure!(
+            destination.included && destination.target(prefs) == *target,
+            "This destination changed or was excluded. Review its settings before retrying."
+        );
+        anyhow::ensure!(
+            destination.ready,
+            "Finish setup: open this destination, enter its passphrase and save the first copy with Back up now."
+        );
+        Self::check_backup_target(target, prefs)
     }
 
     async fn encrypted_snapshot(

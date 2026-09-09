@@ -60,6 +60,13 @@ impl CommandSender {
         (sender, inputs.database, inputs.persistence)
     }
     #[cfg(test)]
+    pub(crate) fn backup_test_channels() -> (Self, mpsc::Receiver<Command>, mpsc::Receiver<Command>)
+    {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.persistence, inputs.network)
+    }
+
+    #[cfg(test)]
     pub(crate) fn network_test_channel() -> (Self, mpsc::Receiver<Command>) {
         let (sender, inputs) = Self::channel();
         (sender, inputs.network)
@@ -287,7 +294,12 @@ impl Engine {
                 command=input.recv(),if jobs.len()<NETWORK_CONCURRENCY=>{
                     let Some(command)=command else{break;};
                     let key=command.key();
-                    if key.as_ref().is_some_and(|k|busy.contains(k)){continue;}
+                    if key.as_ref().is_some_and(|k|busy.contains(k)){
+                        if let Command::BackupIncluded(request, _, target) = command {
+                            let _ = output.send(Event::BackupRun(request, target, backup::run::Status::Failed("This destination is already working. Wait for it to finish, then retry.".into()))).await;
+                        }
+                        continue;
+                    }
                     if let Some(key)=&key{busy.insert(key.clone());let _=output.send(Event::Busy(key.clone(),true)).await;}
                     let engine=engine.clone();let output=output.clone();
                     jobs.spawn(async move {
@@ -297,7 +309,7 @@ impl Engine {
                         // merely because the whole archive takes over ten minutes.
                         // Restore also must observe its blocking SQLite commit;
                         // dropping its future cannot cancel that transaction.
-                        let result = if matches!(&command, Command::Move(..) | Command::Transfer(..) | Command::UndoMove(..) | Command::RecoverMailMove(..) | Command::Flags(..) | Command::Backup(..) | Command::AutomaticBackup(_) | Command::ConnectS3(..) | Command::ConnectSftp(..) | Command::ConnectFtp(..) | Command::Restore(..) | Command::Send(_) | Command::DisconnectGoogle(_) | Command::CleanupGoogle | Command::GoogleLogin(..) | Command::ResolveOutgoing(..) | Command::RepairOutgoing | Command::IndexConversations | Command::ConnectCalendars(..) | Command::SaveAccount(..) | Command::RemoveConnection(..) | Command::CleanupCredentials | Command::RestoreGoogleCalendars) {
+                        let result = if matches!(&command, Command::Move(..) | Command::Transfer(..) | Command::UndoMove(..) | Command::RecoverMailMove(..) | Command::Flags(..) | Command::Backup(..) | Command::AutomaticBackup(_) | Command::BackupIncluded(..) | Command::ConnectS3(..) | Command::ConnectSftp(..) | Command::ConnectFtp(..) | Command::Restore(..) | Command::Send(_) | Command::DisconnectGoogle(_) | Command::CleanupGoogle | Command::GoogleLogin(..) | Command::ResolveOutgoing(..) | Command::RepairOutgoing | Command::IndexConversations | Command::ConnectCalendars(..) | Command::SaveAccount(..) | Command::RemoveConnection(..) | Command::CleanupCredentials | Command::RestoreGoogleCalendars) {
                             engine.execute(command, output).await
                         } else {
                             tokio::time::timeout(Duration::from_secs(600), engine.execute(command, output)).await
@@ -346,6 +358,60 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn backup_all_busy_destination_acknowledges_each_attempt_without_duplicate_work() {
+        let engine = super::super::calendar_tests::engine();
+        let mut held = Vec::new();
+        for _ in 0..NETWORK_CONCURRENCY {
+            held.push(engine.provider_slots.acquire().await);
+        }
+        let (commands, input) = mpsc::channel(4);
+        let (output, mut events) = futures::channel::mpsc::channel(16);
+        let worker = Running(tokio::spawn(engine.run_network(input, output)));
+        let target = BackupTarget::Local("/fixture-only".into());
+        commands
+            .send(Command::BackupIncluded(1, "first".into(), target.clone()))
+            .await
+            .unwrap();
+        assert!(matches!(events.next().await, Some(Event::Busy(_, true))));
+        commands
+            .send(Command::BackupIncluded(2, "first".into(), target))
+            .await
+            .unwrap();
+        let duplicate = tokio::time::timeout(Duration::from_secs(5), events.next())
+            .await
+            .unwrap();
+        assert!(
+            matches!(duplicate, Some(Event::BackupRun(2, _, backup::run::Status::Failed(message))) if message.contains("already working"))
+        );
+        // The duplicate result is delivered while the original remains held.
+        drop(held);
+        let result = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut observations = Vec::new();
+            while let Some(event) = events.next().await {
+                let finished = matches!(event, Event::Busy(_, false));
+                observations.push(event);
+                if finished {
+                    break;
+                }
+            }
+            observations
+        })
+        .await
+        .unwrap();
+        assert!(
+            result
+                .iter()
+                .any(|e| matches!(e, Event::BackupRun(1, _, backup::run::Status::Failed(_))))
+        );
+        assert!(
+            !result
+                .iter()
+                .any(|e| matches!(e, Event::BackupRun(2, _, _) | Event::Busy(_, true)))
+        );
+        drop(worker);
+    }
 
     #[tokio::test]
     async fn failed_write_reports_error_before_releasing_its_close_dependency() {

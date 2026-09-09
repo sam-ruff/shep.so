@@ -1,5 +1,24 @@
 # Completion audit
 
+## Back up included destinations — integrated checkpoint
+
+`c515b80` adds persisted Include choices and Back up all, with independent
+progress, Retry and Setup controls. Each destination uses its own saved key,
+reserved upload and retention rules. Lost acknowledgments and restart retain the
+same encrypted bytes and filename; closing waits for durable receipts. Optional
+archive formats and persistent destination failure history remain open.
+
+All **13 integrated native scenarios** pass in 69.878 seconds, including actual
+isolated encrypted Local copies, two-destination progress, exclusion/restart,
+first-copy setup, lost-reply retry and close. Root reviewed light progress and
+compact dark WebPs in `artifacts/e2e/db729f04f50f`. Native SHA-256:
+`f88a3e6f515e2c831bb4719374cfec2d63213171e931277399e1bacf87cefd69`.
+All **84 Python tests**, full Windows GNU all-target/all-feature checking and
+strict Zensical pass. Lane hooks passed 811 executions with three personal
+checks ignored. Main hooks and publication are the remaining checkpoint steps.
+Logs use `artifacts/logs/backup-all-main-*`. No live cloud or actual Windows/macOS
+verification is inferred, and the installed production app remains unchanged.
+
 ## FTP/FTPS and shared credential guards — shipped checkpoint
 
 FTP/FTPS checkpoint `17de158` uses verified TLS by default, clearly selectable
@@ -34,8 +53,10 @@ post-login profile choices. All **84 Python tests** pass, including actual
 PowerShell execution. Root reviewed the saved/reopened profile WebP in
 `artifacts/e2e/7299297b2b38`. The native binary remains the verified
 `ccb2b2672ded47898d260cd93104546f09df834fbfe48816024f6065c9201d29`.
-Logs use `artifacts/logs/profile-held-upload-main-*`; normal hooks and publication
-remain the checkpoint steps. The broader functionality audit stays open.
+Logs use `artifacts/logs/profile-held-upload-main-*`. Source **`91c59a4`** is
+pushed with 834 normal hook executions passing and exact remote equality
+verified. Documentation CI **34363018089** is green. The broader functionality
+audit stays open.
 
 ## Shared account reconnection credential guard
 

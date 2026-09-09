@@ -4414,6 +4414,119 @@ class NativeFlows(unittest.TestCase):
             self.assertNotIn("fixture-access-key", values)
             self.assertNotIn("fixture-secret-key", values)
 
+    def test_backup_all_native_independent_progress_exclusion_and_restart(self):
+        result = self.mcp.call("desktop.start", backup_run="ready")
+        root = Path(result["artifacts"]) / "backup-targets"
+        print(f"Combined backup evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), shot("backup-all-ready"),
+                       click(1080, 334), click(1080, 334),
+                       check("backup_run.0.status", "Saved"),
+                       check("backup_run.1.status", "Uploading"),
+                       shot("backup-all-independent-progress"),
+                       click(82, 110), check("tab", "Mail"),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       check("backup_run.1.status", "Saved"), shot("backup-all-saved"))
+        first = list((root / "first").glob("*.shepbackup"))
+        second = list((root / "second").glob("*.shepbackup"))
+        self.assertEqual((len(first), len(second)), (1, 1))
+        for copy in first + second:
+            self.assertTrue(copy.read_bytes().startswith(b"SHEPBK01"))
+            self.assertNotIn(b"A little more room to think", copy.read_bytes())
+        self.mcp.batch({"type": "restart"}, check("ready", True),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), click(327, 439),
+                       check("saved_backup_destinations.1.included", False),
+                       click(1080, 334), check("backup_run.0.status", "Saved"))
+        self.assertEqual(len(self.mcp.call("desktop.state")["backup_run"]), 1)
+        self.assertEqual(len(list((root / "first").glob("*.shepbackup"))), 2)
+        self.assertEqual(list((root / "second").glob("*.shepbackup")), second)
+        self.mcp.batch({"type": "restart"}, check("ready", True),
+                       check("saved_backup_destinations.1.included", False),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(290, 156), check("settings_tab", "General"),
+                       click(690, 366), check("dark", True), click(559, 156),
+                       check("settings_tab", "Backups"),
+                       {"type": "resize", "width": 900, "height": 640},
+                       shot("backup-all-compact-dark"))
+
+    def test_backup_all_native_unfinished_destination_keeps_setup_explicit(self):
+        result = self.mcp.call("desktop.start", backup_run="ready")
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), click(340, 334),
+                       check("backup_destinations.2.name", "Backup 3"),
+                       check("preferences_saved", True), click(1080, 334),
+                       check("backup_run.2.status.NeedsSetup", "first copy", "contains"),
+                       check("backup_run.0.status", "Saved"), check("backup_run.1.status", "Saved"),
+                       shot("backup-all-unfinished-setup"))
+        state = self.mcp.call("desktop.state")
+        third = state["backup_destinations"][2]["id"]
+        first = state["backup_destinations"][0]["id"]
+        self.mcp.batch(click(420, 389), check("backup_selected", first),
+                       click(1125, 617), check("backup_selected", third),
+                       shot("backup-all-setup-selected"))
+        self.assertFalse(self.mcp.call("desktop.state")["backup_ready"])
+        self.assertEqual(len(list((Path(result["artifacts"]) / "backup-targets").glob("*/*.shepbackup"))), 2)
+
+    def test_backup_all_native_close_waits_for_receipts(self):
+        result = self.mcp.call("desktop.start", backup_run="ready")
+        directory = Path(result["artifacts"])
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), click(1080, 334),
+                       check("backup_run.0.status", "Saved"),
+                       check("backup_run.1.status", "Uploading"),
+                       {"type": "close_request"}, check("close_pending", True),
+                       shot("backup-all-closing-pending-receipt"), {"type": "wait_exit"})
+        self.assertEqual(len(list((directory / "backup-targets" / "first").glob("*.shepbackup"))), 1)
+        self.assertEqual(len(list((directory / "backup-targets" / "second").glob("*.shepbackup"))), 1)
+        with sqlite3.connect(f"file:{directory / 'fixture.sqlite'}?mode=ro", uri=True) as db:
+            prefs = json.loads(db.execute("SELECT value FROM kv WHERE key='preferences'").fetchone()[0])
+            self.assertTrue(all(d["last_backup"] and d["ready"] for d in prefs["backup_destinations"]))
+        with sqlite3.connect(f"file:{directory / 'backup-uploads.sqlite'}?mode=ro", uri=True) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0], 0)
+
+    def test_backup_all_native_lost_ack_retry_and_restart(self):
+        result = self.mcp.call("desktop.start", backup_run="recover")
+        root = Path(result["artifacts"]) / "backup-targets"
+        print(f"Combined backup recovery evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), click(1080, 334),
+                       check("backup_run.0.status", "Saved"),
+                       check("backup_run.1.status.Failed", "acknowledgment was lost", "contains"),
+                       shot("backup-all-recoverable-error"))
+        first = list((root / "first").glob("*.shepbackup"))
+        second = list((root / "second").glob("*.shepbackup"))
+        self.assertEqual((len(first), len(second)), (1, 1))
+        original = second[0].read_bytes()
+        self.mcp.batch(click(1050, 535), check("backup_run.1.status", "Saved"),
+                       check("backup_run.0.status", "Saved"), shot("backup-all-retried-only-failed"))
+        self.assertEqual(list((root / "first").glob("*.shepbackup")), first)
+        self.assertEqual(list((root / "second").glob("*.shepbackup")), second)
+        self.assertEqual(second[0].read_bytes(), original)
+        self.mcp.batch({"type": "restart"}, check("ready", True))
+        self.assertEqual(list((root / "second").glob("*.shepbackup")), second)
+
+    def test_backup_all_native_restart_recovers_same_reserved_copy(self):
+        result = self.mcp.call("desktop.start", backup_run="recover")
+        root = Path(result["artifacts"]) / "backup-targets"
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), click(1080, 334),
+                       check("backup_run.0.status", "Saved"),
+                       check("backup_run.1.status.Failed", "acknowledgment was lost", "contains"),
+                       shot("backup-all-before-recovery-restart"))
+        first = list((root / "first").glob("*.shepbackup"))
+        second = list((root / "second").glob("*.shepbackup"))
+        self.assertEqual((len(first), len(second)), (1, 1))
+        original = second[0].read_bytes()
+        self.mcp.batch({"type": "restart"}, check("ready", True),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), click(327, 389),
+                       check("saved_backup_destinations.0.included", False),
+                       click(1080, 334), check("backup_run.0.status", "Saved"),
+                       shot("backup-all-recovered-after-restart"))
+        self.assertEqual(list((root / "first").glob("*.shepbackup")), first)
+        self.assertEqual(list((root / "second").glob("*.shepbackup")), second)
+        self.assertEqual(second[0].read_bytes(), original)
+
     def test_multiple_backup_destinations_setup_and_restart(self):
         result = self.mcp.call("desktop.start", persistent=True)
         print(f"Multiple backup evidence: {result['artifacts']}", flush=True)
