@@ -381,3 +381,39 @@ Full Windows GNU checking, Python's 81 tests (seven platform skips), and strict
 documentation builds pass. Logs use `artifacts/logs/backup-history-*`; normal hooks
 and root integration remain the shipping receipts. This does not complete the
 journal-channel migration, large snapshots or actual remote-provider/OS testing.
+
+
+## Journal channel ownership
+
+The upload journal now uses a dedicated `store::worker::Worker` named
+`shep-backup-journal`. Its 32-command FIFO owns the connection, separate from mail
+cache reads and settings writes. Per-operation `spawn_blocking` jobs and the
+shared journal connection mutex are removed. Connection creation, keyed factory
+policy, WAL and synchronous FULL durability stay at the constructor boundary.
+
+Cancelling before admission prevents that request from becoming a later write.
+Once admitted, a job drains even if its observer or the last journal handle is
+dropped. Provider checkpoints still await their durable acknowledgments. A failed
+transaction rolls back without replacing the reserved archive or stopping later
+work. Target/object/session matching and explicit committed-copy removal are
+unchanged; channel ownership does not create a second retry authority.
+
+Deterministic tests hold the owner while filling all 32 slots, cancel the overflow
+request and admitted observers, then verify the last accepted session and original
+archive after restart. A separate close test drops every handle with preparation
+and its commit receipt queued, waits for their owner-side barrier, and reopens the
+actual database to verify exact bytes and the receipt. The ordinary provider,
+retention, lost-acknowledgment, restore and native close/recovery flows remain the
+regression contract. Large archive buffers remain R23 work.
+
+
+Owner checkpoint verification on the integrated tree: all 114 backup-filter
+checks pass, including the three deterministic owner tests and the keyed
+encrypted-journal test, which now runs through the same worker. All eight
+selected native combined backup, history retry/restart and format restore
+scenarios pass in 44.089 seconds. Light and compact-dark WebPs in ignored
+`artifacts/e2e/0e89116c39b8` and `artifacts/e2e/dfd12e41b5da` were reviewed.
+Tested binary SHA-256:
+`7cffc2f20e6e20c79d187be0f578e72343af0027d7246a488744650098afccf1`.
+Logs use `artifacts/logs/e2e-journal-owner.log` and `artifacts/logs/test-*.log`.
+Normal hooks and root integration are the final shipping receipts.

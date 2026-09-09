@@ -1,13 +1,10 @@
-//! Durable encrypted upload records, on a connection separate from the mail cache.
+//! Durable upload records owned by a bounded FIFO worker, separate from the mail cache.
 use super::*;
 use rusqlite::{Connection, OptionalExtension, params};
-use std::{
-    path::Path,
-    sync::{Arc, Mutex},
-};
+use std::{path::Path, sync::Arc};
 
 #[derive(Clone)]
-pub(crate) struct Journal(Arc<Mutex<Connection>>);
+pub(crate) struct Journal(Arc<crate::store::worker::Worker>);
 pub(crate) struct Pending {
     pub upload: PreparedUpload,
     pub data: Vec<u8>,
@@ -33,20 +30,18 @@ impl Journal {
                 size INTEGER NOT NULL, sha256 TEXT NOT NULL, session TEXT,
                 committed INTEGER NOT NULL DEFAULT 0, archive BLOB NOT NULL);",
         )?;
-        Ok(Self(Arc::new(Mutex::new(connection))))
+        Ok(Self(Arc::new(crate::store::worker::Worker::named(
+            connection,
+            "shep-backup-journal",
+        )?)))
     }
     async fn run<T: Send + 'static>(
         &self,
         job: impl FnOnce(&mut Connection) -> anyhow::Result<T> + Send + 'static,
     ) -> anyhow::Result<T> {
-        let inner = self.0.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut connection = inner
-                .lock()
-                .map_err(|_| anyhow::anyhow!("Backup journal is unavailable"))?;
-            job(&mut connection)
-        })
-        .await?
+        // Worker admission is bounded at 32 commands. Accepted SQL jobs drain
+        // even if this observation is cancelled or the final handle is dropped.
+        self.0.run(job).await
     }
     pub async fn pending(&self, target: &BackupTarget) -> anyhow::Result<Option<Pending>> {
         let target = serde_json::to_string(target)?;
@@ -158,6 +153,8 @@ mod tests {
             data,
         )
     }
+    mod ownership;
+
     #[tokio::test]
     async fn encrypted_journal_retains_exact_upload_and_session_with_the_cache_key() {
         let directory = tempfile::tempdir().unwrap();
