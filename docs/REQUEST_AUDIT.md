@@ -502,3 +502,17 @@ failed at 68.94 ms. A covering unread-account index removes per-page mail-row
 lookups/sorting; reopen/projection and native badge verification accompany the
 final performance gate. Full timing evidence and shipping remain explicit in the
 completion log; no threshold or scope entry was removed.
+
+
+R75/R02/R49/desktop-main:R92/R03/R09/R18/R44/R42/R67/R69/R73/R77 checkpoint:
+`e9115f9` adds native causal history; `e568c84` and `da6f2e8` fix repeated FTS work
+and per-page unread-count lookups. Final root/native/Flutter/Android checks and
+native functional controls pass as scoped in the completion log. Storage budgets
+pass; the combined performance gate still fails navigation at 154.81–162.33 ms,
+with failures also on the earlier cached test build. R03/R09 and R63 remain active,
+as do enrollment, real provider/application work, credentials and client/platform
+parity. Shipping does not complete those requests.
+
+R77 prompt checkpoint shipping: all three code commits are pushed, with the exact
+remote `da6f2e8` head verified. The handover preserves next steps and the failing
+native timing gate; this is review-branch progress, not full product completion.

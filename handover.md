@@ -9,7 +9,7 @@ This handover records the credit-limited stopping point. The user explicitly res
 - Work in the `shep-clients` worktree on `feat/mobile-web-clients`. All combined Flutter, browser, Rust backend and delegated promo work is on that review branch.
 - Read `AGENTS.md`, `TODO.md`, `docs/CLIENT_PARITY.md`, `shared/client-scenarios.json` and the latest entries in `docs/COMPLETION.md`. `docs/REQUEST_AUDIT.md` preserves request traceability.
 - The root `shep.so` main worktree has independent, actively edited desktop work. Do not commit it, overwrite it, merge clients into main or replace the personal installation. The `shep-website` worktree still has the agent's original uncommitted files; its website source/assets were already copied and committed on the combined branch. Its older README is superseded; do not recopy it.
-- Latest code checkpoint: [`e9115f9`](https://github.com/sam-ruff/shep.so/commit/e9115f978d6753fb66400178927ffb5b4bd61c97), native causal profile history. Final gates and review-branch shipping are recorded in the completion log. The earlier Undo/handover checkpoint is `d4da04c`; final shipping documentation follows each code checkpoint in branch history. Pushes to the review branch are authorized. Use the configured owner identity and Conventional Commits; never skip hooks.
+- Latest code checkpoint: [`da6f2e8`](https://github.com/sam-ruff/shep.so/commit/da6f2e803fbddf1e485418b925923eeeb08afd1e), covering unread-account counts, following native profile history `e9115f9` and search materialization `e568c84`. The code head is pushed and verified on the remote review branch; final evidence and limitations are recorded in the completion log. The earlier Undo/handover checkpoint is `d4da04c`; final shipping documentation follows each code checkpoint in branch history. Pushes to the review branch are authorized. Use the configured owner identity and Conventional Commits; never skip hooks.
 
 ## Product decisions that must survive
 
@@ -36,8 +36,15 @@ immutable operations, causal field merge, explicit conflict reviews, account/pro
 tombstones and reserved upload identities. One background connection owns each
 journal; the Flutter production bridge and shared host/Android FFI scenario exercise
 two isolated stores without credentials. Root/native SQLite is updated to 3.53.2;
-main's separate mail-cache worker migration is not included. Final checks, retained
-failures and checkpoint shipping belong in the completion log.
+main's separate mail-cache worker migration is not included. Final checks pass 411 root/shared and 68 mobile Rust tests, 90 Flutter host tests,
+Android history integration, 41 Python checks, 32 parity contracts and strict docs.
+Full native functional verification passes 118 flows before the final index and
+14 relevant flows afterward without compilation. The earlier under-load 12/14
+run retains two input failures in R63. The final backend budgets pass (search
+35.537 ms); **native navigation and the combined gate still fail** at 154.81–162.33
+ms against 150 ms. A previous cached test build also fails; do not claim the
+responsiveness issue fixed or weaken the gate. The new ARM64 APK is unsigned;
+no personal app was replaced. Detailed logs/shipping remain in the completion log.
 
 Restart with verified Google identity/owned-file transport and durable
 creation/discovery/enrollment, then category controls and actual account/settings
