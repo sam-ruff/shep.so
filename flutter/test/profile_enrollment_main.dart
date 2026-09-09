@@ -27,7 +27,9 @@ void main() {
   final mail = EnrollmentMail();
   final discovery = ProfileDiscovery(
     google,
-    FixtureProfileEnrollment(mail)..lostAccountReplyOnce = true,
+    FixtureProfileEnrollment(mail)
+      ..lostAccountReplyOnce = true
+      ..lostSettingsReplyOnce = true,
     namespace: 'so.shep.fixture',
   );
   final workspace = Workspace(

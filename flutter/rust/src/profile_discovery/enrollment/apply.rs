@@ -130,6 +130,7 @@ pub(super) fn confirm(
     id: Uuid,
     applied: Vec<String>,
     kept: Vec<String>,
+    revisions: Option<BTreeMap<String, u64>>,
 ) -> Result<Review> {
     ensure!(
         applied.len() + kept.len() <= SETTINGS.len(),
@@ -137,7 +138,25 @@ pub(super) fn confirm(
     );
     let tx = db.transaction()?;
     let mut review = read(&tx, key, id)?;
-    let receipt = serde_json::json!({"applied": applied, "kept": kept});
+    let mut receipt = serde_json::json!({"applied": applied, "kept": kept});
+    if let Some(revisions) = revisions {
+        ensure!(
+            revisions.len() == SETTINGS.len()
+                && SETTINGS
+                    .iter()
+                    .all(
+                        |field| revisions.get(*field).is_some_and(|revision| *revision
+                            <= 9_007_199_254_740_991
+                            && review
+                                .baseline
+                                .revisions
+                                .get(*field)
+                                .is_some_and(|before| revision >= before))
+                    ),
+            "Invalid original preference revisions. Resume with the saved device receipt."
+        );
+        receipt["revisions"] = serde_json::to_value(revisions)?;
+    }
     if review.phase == "complete" {
         ensure!(
             review.settings_receipt.as_ref() == Some(&receipt),

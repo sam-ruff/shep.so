@@ -215,6 +215,7 @@ extension ProfileEnrollmentActions on ProfileDiscovery {
           'id': current.id,
           'applied': receipt.applied,
           'kept': receipt.kept,
+          if (receipt.revisions.isNotEmpty) 'revisions': receipt.revisions,
         });
       } else {
         value = await _enrollment(session, {'kind': 'step', 'id': current.id});

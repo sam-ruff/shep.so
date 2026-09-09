@@ -268,7 +268,10 @@ The Android wrapper runs two saved integration scenarios, rebuilds the explicit
 `test/profile_creation_main.dart` preview, then runs four UiAutomator2/Appium flows.
 The Flutter web wrapper runs the same four flows through Playwright. Both use
 `flutter/e2e/profile_harness.mjs`, also used by discovery. Re-run discovery controls
-after changing this harness. Profile providers are isolated fixtures.
+after changing this harness. Profile providers are isolated fixtures. In web mode a
+control label may match the start of a clickable name or follow whitespace, because
+Flutter web merges a list tile's title and subtitle into one node; Android already
+uses contains-selectors.
 
 `profile_creation_controls_test.dart` shares the Android review/paging/retry/
 appearance and pause/browse/resume controls. Native Rust tests separately execute
@@ -282,10 +285,10 @@ these checks do not establish live Google, enrollment or continuous sync.
 Run `python3 scripts/clients/android_e2e.py --device emulator-5554 --enrollment-only`
 for the two saved native review/application and pause/browse/resume scenarios, including
 two Preferences taps before the next repaint, then
-the four shared Appium flows. The wrapper requires the exact two completion names
+the five shared Appium flows. The wrapper requires the exact two completion names
 in `integration-enrollment-result.json`; teardown callbacks and an interrupted
 driver are not additional passes. Run
-`python3 scripts/clients/flutter_web_e2e.py --enrollment` for the matching four
+`python3 scripts/clients/flutter_web_e2e.py --enrollment` for the matching five
 Playwright flows. Both use an isolated profile source and the real Flutter controls.
 
 `profile_settings_test.dart` and `profile_application_test.dart` use production
@@ -296,6 +299,12 @@ disconnect while one accepted step is pending. Native Rust tests copy original
 records into independent journals, review 75 accounts in bounded pages, apply
 credentialless accounts, preserve mail/drafts and newer local metadata, reopen
 receipts, activate Reconnect credentials and keep local removal suppression.
+Original platform receipt revisions are checked independently of newer display
+values, with failed native commits, restart, legacy receipts and changed retries.
+The saved UI flow leaves a lost settings acknowledgment, changes appearance and
+resumes the same application; its original receipt and newer local theme survive.
+Preferences retain their scroll position, so the native/browser flow scrolls to
+Theme after returning to that page.
 
 The authenticated catalog export has separate scripted protocol tests. These
 combined tests do not establish fully authenticated Google-to-Flutter interchange

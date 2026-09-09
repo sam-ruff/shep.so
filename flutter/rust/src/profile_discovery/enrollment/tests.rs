@@ -124,12 +124,19 @@ fn source(accounts: usize) -> Source {
     }
 }
 async fn prepared(profile: &MobileProfile, source: &Source) -> Review {
+    prepared_preferences(profile, source, preferences()).await
+}
+async fn prepared_preferences(
+    profile: &MobileProfile,
+    source: &Source,
+    preferences: Preferences,
+) -> Review {
     let id = Uuid::new_v4();
     let snapshot = source.snapshot.clone();
     let key = scope().storage_key().unwrap();
     let mut review = profile
         .database
-        .write(move |db| store::prepare(db, &key, id, snapshot, preferences()))
+        .write(move |db| store::prepare(db, &key, id, snapshot, preferences))
         .await
         .unwrap();
     let history = worker(&profile.database, review.binding.clone())
@@ -278,6 +285,7 @@ async fn enrollment_copies_original_history_pages_accounts_and_applies_reconnect
                 id,
                 vec!["appearance".into()],
                 vec!["preview_lines".into()],
+                None,
             )
         })
         .await
@@ -292,7 +300,8 @@ async fn enrollment_copies_original_history_pages_accounts_and_applies_reconnect
                 &k,
                 id,
                 vec!["appearance".into()],
-                vec!["preview_lines".into()]
+                vec!["preview_lines".into()],
+                None
             ))
             .await
             .unwrap()
@@ -308,7 +317,8 @@ async fn enrollment_copies_original_history_pages_accounts_and_applies_reconnect
                 &k,
                 id,
                 vec!["appearance".into(), "preview_lines".into()],
-                vec![]
+                vec![],
+                None
             ))
             .await
             .is_err()
@@ -446,7 +456,7 @@ async fn reconnect_activation_clears_import_guard_and_newer_local_account_change
     let k = key.clone();
     profile
         .database
-        .write(move |db| apply::confirm(db, &k, id, vec![], vec![]))
+        .write(move |db| apply::confirm(db, &k, id, vec![], vec![], None))
         .await
         .unwrap();
     profile
@@ -535,7 +545,7 @@ async fn removed_device_mapping_stays_unselected_and_unknown_connection_fields_c
     let k = key.clone();
     profile
         .database
-        .write(move |db| apply::confirm(db, &k, id, vec![], vec![]))
+        .write(move |db| apply::confirm(db, &k, id, vec![], vec![], None))
         .await
         .unwrap();
     profile
@@ -620,6 +630,251 @@ async fn removed_device_mapping_stays_unselected_and_unknown_connection_fields_c
         other
             .database
             .write(move |db| store::choose(db, &k, id, 1, true))
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn original_platform_revisions_survive_failed_native_receipts_restart_and_changed_retries() {
+    let (dir, profile) = profile().await;
+    let mut baseline = preferences();
+    baseline.revisions.values_mut().for_each(|value| *value = 3);
+    let mut review = prepared_preferences(&profile, &source(0), baseline.clone()).await;
+    let key = scope().storage_key().unwrap();
+    let id = review.id;
+    let k = key.clone();
+    review = profile
+        .database
+        .write(move |db| store::approve(db, &k, id, false, true))
+        .await
+        .unwrap();
+    review = apply::step(&profile, &key, review).await.unwrap();
+    assert_eq!(review.phase, "settings");
+    let mut revisions = baseline.revisions.clone();
+    revisions.insert("appearance".into(), 4);
+    // Decode through the production command boundary, including missing legacy proof.
+    let command = serde_json::json!({"kind":"confirm_settings", "id":id,
+        "applied":["appearance"], "kept":["preview_lines"], "revisions":revisions});
+    let Command::ConfirmSettings {
+        revisions: decoded, ..
+    } = serde_json::from_value(command.clone()).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(decoded.as_ref(), Some(&revisions));
+    for malformed in [
+        serde_json::json!({}),
+        serde_json::json!({"appearance":-1}),
+        serde_json::json!({"appearance":1.5}),
+    ] {
+        let mut invalid = command.clone();
+        invalid["revisions"] = malformed;
+        if let Ok(Command::ConfirmSettings { revisions, .. }) = serde_json::from_value(invalid) {
+            let k = key.clone();
+            assert!(
+                profile
+                    .database
+                    .write(move |db| apply::confirm(
+                        db,
+                        &k,
+                        id,
+                        vec!["appearance".into()],
+                        vec!["preview_lines".into()],
+                        revisions
+                    ))
+                    .await
+                    .is_err()
+            );
+        }
+    }
+    let mut missing = revisions.clone();
+    missing.remove("tooltips");
+    let mut unknown = revisions.clone();
+    unknown.remove("tooltips");
+    unknown.insert("future_field".into(), 3);
+    let mut exhausted = revisions.clone();
+    exhausted.insert("tooltips".into(), 9_007_199_254_740_992);
+    let mut older = revisions.clone();
+    older.insert("tooltips".into(), 2);
+    for invalid in [missing, unknown, exhausted, older] {
+        let k = key.clone();
+        assert!(
+            profile
+                .database
+                .write(move |db| apply::confirm(
+                    db,
+                    &k,
+                    id,
+                    vec!["appearance".into()],
+                    vec!["preview_lines".into()],
+                    Some(invalid)
+                ))
+                .await
+                .is_err()
+        );
+    }
+    profile
+        .database
+        .write(|db| {
+            db.execute_batch(
+                "CREATE TRIGGER fail_settings_receipt BEFORE UPDATE ON profile_enrollments
+            WHEN NEW.phase='complete' BEGIN SELECT RAISE(ABORT,'isolated receipt failure'); END;",
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let original = revisions.clone();
+    let k = key.clone();
+    assert!(
+        profile
+            .database
+            .write(move |db| apply::confirm(
+                db,
+                &k,
+                id,
+                vec!["appearance".into()],
+                vec!["preview_lines".into()],
+                Some(original)
+            ))
+            .await
+            .is_err()
+    );
+    let k = key.clone();
+    let pending = profile
+        .database
+        .read(move |db| read(db, &k, id))
+        .await
+        .unwrap();
+    assert_eq!(pending.phase, "settings");
+    assert!(pending.settings_receipt.is_none());
+    profile
+        .database
+        .write(|db| {
+            db.execute_batch("DROP TRIGGER fail_settings_receipt")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    drop(profile);
+    let reopened = MobileProfile::open(dir.path().join("mail.sqlite3").to_str().unwrap().into())
+        .await
+        .unwrap();
+    // Confirm the original proof after a lost application reply; newer local
+    // platform state is deliberately not an argument to this native command.
+    let original = revisions.clone();
+    let k = key.clone();
+    let completed = reopened
+        .database
+        .write(move |db| {
+            apply::confirm(
+                db,
+                &k,
+                id,
+                vec!["appearance".into()],
+                vec!["preview_lines".into()],
+                Some(original),
+            )
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        completed.settings_receipt.as_ref().unwrap()["revisions"],
+        serde_json::json!(revisions)
+    );
+    let original = revisions.clone();
+    let k = key.clone();
+    assert_eq!(
+        reopened
+            .database
+            .write(move |db| apply::confirm(
+                db,
+                &k,
+                id,
+                vec!["appearance".into()],
+                vec!["preview_lines".into()],
+                Some(original)
+            ))
+            .await
+            .unwrap()
+            .settings_receipt,
+        completed.settings_receipt
+    );
+    let mut newer = revisions;
+    newer.insert("appearance".into(), 5);
+    for changed in [Some(newer), None] {
+        let k = key.clone();
+        assert!(
+            reopened
+                .database
+                .write(move |db| apply::confirm(
+                    db,
+                    &k,
+                    id,
+                    vec!["appearance".into()],
+                    vec!["preview_lines".into()],
+                    changed
+                ))
+                .await
+                .is_err()
+        );
+    }
+    let k = key;
+    assert_eq!(
+        reopened
+            .database
+            .read(move |db| read(db, &k, id))
+            .await
+            .unwrap()
+            .settings_receipt,
+        completed.settings_receipt
+    );
+}
+
+#[tokio::test]
+async fn legacy_platform_receipts_cannot_acquire_later_current_revisions() {
+    let (_dir, profile) = profile().await;
+    let review = prepared(&profile, &source(0)).await;
+    let key = scope().storage_key().unwrap();
+    let id = review.id;
+    let k = key.clone();
+    let review = profile
+        .database
+        .write(move |db| store::approve(db, &k, id, false, false))
+        .await
+        .unwrap();
+    apply::step(&profile, &key, review).await.unwrap();
+    let command = serde_json::json!({"kind":"confirm_settings", "id":id, "applied":[], "kept":[]});
+    let Command::ConfirmSettings { revisions, .. } = serde_json::from_value(command).unwrap()
+    else {
+        panic!()
+    };
+    assert!(revisions.is_none());
+    let k = key.clone();
+    let complete = profile
+        .database
+        .write(move |db| apply::confirm(db, &k, id, vec![], vec![], None))
+        .await
+        .unwrap();
+    assert!(
+        complete
+            .settings_receipt
+            .unwrap()
+            .get("revisions")
+            .is_none()
+    );
+    assert!(
+        profile
+            .database
+            .write(move |db| apply::confirm(
+                db,
+                &key,
+                id,
+                vec![],
+                vec![],
+                Some(preferences().revisions)
+            ))
             .await
             .is_err()
     );

@@ -28,6 +28,7 @@ Every desktop feature/default/provider change must update this matrix and the co
 | Month/agenda, edit/read-only calendar | Implemented | Preview month/agenda, title/location edits preserve event identity/times/source | Preview month, title/location edits preserve event identity/times/source |
 | Calendar providers, ETags, recurrence, source lifecycle | Implemented with documented limits | Open | Open |
 | Light/Dark/System, approved logo | Implemented | Implemented; saved device preferences | Implemented; saved browser preferences |
+| Visual likeness to the desktop (R80) | Reference shadcn-style palette, typography, spacing, controls and states | Open: reviewed side-by-side captures against the desktop are required; Material chips, icons, bottom bar and row separators still differ | Open: close to desktop; native selects/icons need the reviewed comparison |
 | Pane resizing, shortcuts and capture safety | Implemented | Touch layout; full shortcut parity open | Saved sidebar/list resizing; remapping/disable, retained shortcut capture/held presses through background completion, conflict/cancel/current-setting preservation, native action Enter/Space and focused-row reader bindings verified; complete keymap/focus behavior open |
 | Contacts, remote-image exceptions and safe HTML | Selectable HTML integrated from upstream 1968e37 | Shared confined HTML implemented; external images blocked; contacts/exceptions/loading open | Sender active content removed, resources converted off-thread, inherited CSP permits only the fixed runtime, opaque sandbox denies app access; automatic remote images blocked, contacts/exceptions/loading open |
 | Google OAuth/refresh/grants and keychain lifecycle | Feature-scoped Drive/Calendar consent, staged activation and refresh tested; live audit remains | Native SDK sign-in, requested/saved permissions and durable local disconnect pass host, Android, Appium and offline preview-browser checks. Safe account switching, automatic session restore, provider integration and live/Apple execution remain open; SDK tokens stay outside preferences | Google beta gate tested in Rust and real HTTPS browser flow; provider grants/credential lifecycle open |
@@ -118,3 +119,10 @@ complete settings/categories/accounts and ongoing Flutter/browser equivalents OP
 shared-core changes. The additional history export command changes local APIs,
 not the portable operation format. Existing mobile discovery/publication/enrollment
 contracts remain required.
+
+
+Flutter enrollment now preserves original platform preference revisions through
+native acknowledgment and exact retry. Later or reverted local edits remain local
+intent, including before the storage reply paints. Native and browser control
+verification and shipping are recorded in [completion](COMPLETION.md); this is a
+recovery prerequisite for ongoing Flutter synchronization, which remains open.

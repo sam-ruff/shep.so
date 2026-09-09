@@ -24,10 +24,15 @@ class ProfileSettingsReceipt {
     required this.preferences,
     required this.applied,
     required this.kept,
+    this.revisions = const {},
   });
   final String id;
   final Preferences preferences;
   final List<String> applied, kept;
+
+  /// Revisions at the original application, never a later retry's current state.
+  /// Empty for legacy receipts whose exact applied revisions are unknown.
+  final Map<String, int> revisions;
 }
 
 /// Device-local receipts protect newer edits when native enrollment resumes
