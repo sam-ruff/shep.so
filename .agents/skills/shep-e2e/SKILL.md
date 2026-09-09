@@ -861,3 +861,11 @@ Use real Recent activity and Retry controls after restart. Observe
 SavedWithWarning stay distinct. Compare the owned reserved filename and archive
 bytes before/after Retry, restart again, and review light/compact-dark WebPs.
 Activity reads are observation-only and must not become a fixture action API.
+
+
+`profile_sync="existing-removal"` delivers an owned remote account tombstone
+after enrollment. The saved `test_profile_account_removal_*` flows operate
+Keep on this device and the actual local-data removal dialog. Preserve Cancel,
+confirmation, restart/no-reimport and stale-card disappearance assertions.
+`profile_account_review` Rust tests retain real cached fixture mail and reject
+changed history/account/Google/consent. UI observations never trigger actions.

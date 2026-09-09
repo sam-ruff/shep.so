@@ -34,6 +34,18 @@ impl Store {
             let mut prefs_changed = false;
             let mut enrollment_changed = false;
             for (field, change) in fields {
+                // Suppressed accounts are a resolved device-local choice, even
+                // when a concurrent connection/name value still needs review
+                // elsewhere. Do not keep reporting their hidden fields here.
+                if field
+                    .target
+                    .strip_prefix("account:")
+                    .and_then(|target| target.split_once(':'))
+                    .and_then(|(id, _)| uuid::Uuid::parse_str(id).ok())
+                    .is_some_and(|id| state.suppressed.contains(&id))
+                {
+                    continue;
+                }
                 let Some(change) = change else {
                     report.review += 1;
                     continue;
