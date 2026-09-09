@@ -20,28 +20,19 @@ impl SidebarItem {
     }
 }
 impl App {
-    pub(super) fn sidebar_folder_context(&self, action: &Message) -> Option<(String, String)> {
+    pub(super) fn sidebar_folder_context(&self, action: &Message) -> Option<FolderSelection> {
+        // Context actions use the displayed wire path; pending folders remain
+        // protected by the ordinary per-account busy guard.
         if let Message::AccountFolder(account, path) | Message::ToggleFolderGroup(account, path) =
             action
         {
-            return Some((account.clone(), path.clone()));
+            return Some(FolderSelection {
+                account: Some(account.clone()),
+                folder: path.clone(),
+                sent_only: false,
+            });
         }
-        let account = self
-            .query
-            .account
-            .as_deref()
-            .and_then(|id| self.workspace.accounts.iter().find(|a| a.id == id))
-            .or_else(|| {
-                (self.workspace.accounts.len() == 1).then(|| &self.workspace.accounts[0])
-            })?;
-        let path = match action {
-            Message::Folder(folder) => folder.clone(),
-            Message::SentFolder if !account.sent_folder.is_empty() => account.sent_folder.clone(),
-            Message::SentFolder => "Sent".into(),
-            Message::AccountFolderUnified => "INBOX".into(),
-            _ => return None,
-        };
-        Some((account.id.clone(), path))
+        self.sidebar_folder(action)
     }
     pub(super) fn reveal_sidebar_focus(&self) -> Task<Message> {
         self.sidebar_items()
@@ -412,8 +403,8 @@ impl App {
             let reveal = self.sidebar_drag_reveal(&item.action);
             let control = if let Message::Draft(id) = item.action {
                 super::context_menu::ContextArea::draft(control, id)
-            } else if let Some((account, path)) = self.sidebar_folder_context(&item.action) {
-                super::context_menu::ContextArea::folder(control, account, path)
+            } else if let Some(target) = self.sidebar_folder_context(&item.action) {
+                super::context_menu::ContextArea::folder(control, target)
             } else {
                 super::context_menu::ContextArea::sidebar(control)
             };

@@ -140,6 +140,106 @@ class NativeFlows(unittest.TestCase):
             self.assertEqual({mail["subject"] for mail in self.mcp.call("desktop.state")["mail_rows"]},
                              {"Project overview", "Design brief"})
 
+    def aggregate_folder_setup(self, mode):
+        result = self.mcp.call("desktop.start", nested_folders=True, persistent=True, folder_actions=mode)
+        print(f"Aggregate folder evidence: {result['artifacts']}", flush=True)
+        # Populate both accounts through ordinary native mail actions.
+        for subject in ("A little more room to think", "Coffee next Thursday?"):
+            state = self.mcp.call("desktop.state")
+            index = next(index for index, mail in enumerate(state["mail_rows"]) if mail["subject"] == subject)
+            self.mcp.batch(click(400, mail_row_y(index)), check("selected", subject),
+                           key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
+                           type_text("Archive"), key("Return"), check("dialog", None), check("mail_pending", 0))
+        self.mcp.batch(click(90, 400), check("folder", "Archive"), check("total", 2),
+                       click(400, mail_row_y(0)), check("selected", "A little more room to think"))
+        return result, self.mcp.call("desktop.state")
+
+    def test_folder_controls_aggregate_account_mouse_delete_restart(self):
+        result, before = self.aggregate_folder_setup("slow")
+        self.mcp.batch({**click(95, 400), "button": 3}, check("folder_changes.menu.source", "Archive"),
+                       click(170, 460), check("dialog", "FolderChange"),
+                       check("folder_changes.choosing_account", True), check("folder_changes.account_choices.0.account", "preview-work"),
+                       check("folder_changes.account_choices.1.account", "preview-personal"), shot("aggregate-account-picker"),
+                       click(710, 475), check("folder_changes.account", "preview-work"),
+                       check("folder_changes.review.messages", 1), shot("aggregate-first-account-review"),
+                       click(915, 450), check("folder_changes.choosing_account", True),
+                       check("folder_changes.review", None), click(710, 540),
+                       check("folder_changes.account", "preview-personal"), check("folder_changes.review.messages", 1),
+                       shot("aggregate-changed-account-review"), click(925, 583), check("dialog", None),
+                       check("folder_changes.pending", 1), check("total", 1),
+                       check("mail_rows.0.account_id", "preview-work"), check("selected_id", before["selected_id"]),
+                       shot("aggregate-one-account-delete-pending"), check("folder_changes.jobs.0.status", "Completed"),
+                       check("folder_changes.jobs.0.account", "preview-personal"), check("total", 1),
+                       check("loaded_message_id", before["selected_id"]), {"type": "restart"},
+                       check("folder_changes.jobs.0.status", "Completed"), click(90, 400), check("total", 1),
+                       check("selected", "A little more room to think"), shot("aggregate-one-account-delete-restarted"),
+                       {**click(95, 400), "button": 3}, click(170, 460), check("folder_changes.review.messages", 1),
+                       check("folder_changes.account", "preview-work"), check("folder_changes.choosing_account", False),
+                       key("Escape"), check("dialog", None))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        with sqlite3.connect((Path(result["artifacts"]) / "fixture.sqlite").as_uri() + "?mode=ro", uri=True) as cache:
+            self.assertEqual(cache.execute("SELECT account,count(*) FROM messages WHERE folder='Archive' GROUP BY account").fetchall(), [("preview-work", 1)])
+
+    def test_folder_controls_aggregate_account_keyboard_failure_retry(self):
+        result, before = self.aggregate_folder_setup("fail")
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(690, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"), {"type": "resize", "width": 900, "height": 640},
+                       click(90, 400), key("shift+F10"), check("folder_changes.menu.source", "Archive"),
+                       key("Down"), key("Return"), check("folder_changes.choosing_account", True),
+                       key("y"), check("folder_changes.choosing_account", True), check("folder_changes.pending", 0),
+                       shot("aggregate-compact-keyboard-accounts"), key("Down"), check("folder_changes.account_index", 1),
+                       key("Return"), check("folder_changes.account", "preview-personal"),
+                       check("folder_changes.review.messages", 1), shot("aggregate-compact-keyboard-review"),
+                       key("y"), check("dialog", None), check("folder_changes.pending", 1), check("total", 1),
+                       check("selected_id", before["selected_id"]), click(90, 278), check("folder", "INBOX"), check("total", 118))
+        state = self.mcp.call("desktop.state")
+        index, reader = next((index, mail) for index, mail in enumerate(state["mail_rows"]) if not mail["unread"])
+        self.mcp.batch(click(400, mail_row_y(index, state)), check("selected_id", reader["id"]),
+                       {"type": "assert", "path": "folder_changes.pending", "value": 1},
+                       check("folder_changes.jobs.0.status", "Could not finish"), check("folder_changes.jobs.0.account", "preview-personal"),
+                       check("folder", "INBOX"), check("total", 118), check("loaded_message_id", reader["id"]),
+                       shot("aggregate-failure-keeps-newer-reader"), {"type": "resize", "width": 1440, "height": 920},
+                       click(90, 477), check("dialog", "FolderHistory"), check("folder_changes.loading", False),
+                       shot("aggregate-account-history-retry"), click(490, 541), check("folder_changes.jobs.0.status", "Completed"),
+                       check("folder_changes.jobs.0.account", "preview-personal"), key("Escape"), check("dialog", None),
+                       check("folder", "INBOX"), check("total", 118), {"type": "restart"},
+                       check("folder_changes.jobs.0.status", "Completed"), click(90, 400), check("total", 1),
+                       check("selected", "A little more room to think"), shot("aggregate-account-retry-restarted"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        with sqlite3.connect((Path(result["artifacts"]) / "fixture.sqlite").as_uri() + "?mode=ro", uri=True) as cache:
+            self.assertEqual(cache.execute("SELECT account,count(*) FROM messages WHERE folder='Archive' GROUP BY account").fetchall(), [("preview-work", 1)])
+
+    def test_folder_controls_aggregate_account_move_and_sent_scope(self):
+        result, before = self.aggregate_folder_setup("slow")
+        self.mcp.batch(click(90, 400), key("shift+F10"), check("folder_changes.menu.source", "Archive"),
+                       key("Return"), check("folder_changes.choosing_account", True), key("Down"), key("Return"),
+                       check("folder_changes.account", "preview-personal"), check("focused_input", "folder-parent-search"),
+                       check("folder_changes.loading", False), type_text("Home"), key("Return"),
+                       check("folder_changes.review.messages", 1), shot("aggregate-personal-move-review"),
+                       key("Return"), check("dialog", None), check("folder_changes.pending", 1),
+                       check("selected_id", before["selected_id"]), check("folder_changes.jobs.0.status", "Completed"),
+                       check("folder_changes.jobs.0.account", "preview-personal"), check("total", 1),
+                       check("mail_rows.0.account_id", "preview-work"), check("loaded_message_id", before["selected_id"]),
+                       shot("aggregate-other-account-remains-after-move"), {"type": "restart"},
+                       check("folder_changes.jobs.0.status", "Completed"),
+                       check("expanded_folders.preview-personal", "Home", "contains"),
+                       click(95, 807), check("folder", "Home.Archive"), check("account", "preview-personal"),
+                       check("selected", "Coffee next Thursday?"), shot("aggregate-personal-move-restarted"),
+                       {**click(95, 360), "button": 3}, key("Return"),
+                       check("folder_changes.choosing_account", False), check("folder_changes.account", "preview-personal"),
+                       check("folder_changes.source", "Sent"), check("focused_input", "folder-parent-search"),
+                       shot("aggregate-selected-account-sent"), key("Escape"), check("dialog", None),
+                       click(90, 278), check("folder", "INBOX"), {**click(95, 360), "button": 3}, key("Return"),
+                       check("folder_changes.choosing_account", True), check("folder_changes.account_choices.0.folder", "Sent"),
+                       check("folder_changes.account_choices.1.folder", "Sent"), shot("aggregate-common-sent-accounts"),
+                       key("Down"), key("Return"), check("folder_changes.account", "preview-personal"),
+                       check("folder_changes.source", "Sent"), check("focused_input", "folder-parent-search"),
+                       key("Escape"), check("dialog", None))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        with sqlite3.connect((Path(result["artifacts"]) / "fixture.sqlite").as_uri() + "?mode=ro", uri=True) as cache:
+            self.assertEqual(cache.execute("SELECT account,folder,count(*) FROM messages WHERE folder IN ('Archive','Home.Archive') GROUP BY account,folder ORDER BY account").fetchall(),
+                             [("preview-personal", "Home.Archive", 1), ("preview-work", "Archive", 1)])
+
     def combined_delete_setup(self, mode, dark=False):
         result = self.mcp.call("desktop.start", nested_folders=True, persistent=True, folder_actions=mode)
         print(f"Combined deletion evidence: {result['artifacts']}", flush=True)
