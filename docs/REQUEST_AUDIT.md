@@ -689,3 +689,10 @@ controls cover background application, local edits, pause/resume, lost-upload
 retry and published seven-field choices. The completion entry records final
 checks/shipping. Conflict resolution, remaining categories/settings/accounts and
 Flutter/browser equivalents stay open. No active request is removed.
+
+
+Connected-control shipping: [`13e056d`](https://github.com/sam-ruff/shep.so/commit/13e056dcc836fbf41e418de220085540fe174dbc) is pushed and remotely verified.
+Mandatory hooks pass 490 Rust tests; 22 native regressions and both final sync
+control flows pass, alongside 16 Flutter Rust bridge checks, 43 Python checks,
+37 parity contracts, production compilation and strict docs. The completion log
+retains failed-before evidence and reviewed captures. All 40 requests stay active.

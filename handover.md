@@ -49,14 +49,15 @@ store submissions in TODO.
 
 ## Current continuation
 
-The current working tree connects reviewed desktop ongoing preference sync:
+Connected desktop code [`13e056d`](https://github.com/sam-ruff/shep.so/commit/13e056dcc836fbf41e418de220085540fe174dbc) is pushed and remotely verified:
 completed publication/enrollment offers **Sync these preferences**, explicit
 master/field controls, background scheduling outside Preferences, status and
 retry. Native controls verify a remote change while searching Mail, local edits
 with a field paused, lost-upload recovery and compact layouts. A seven-preference
 publication has its own real controls. The surrounding 22 profile/Google/
 Preferences flows pass (221.987 seconds), and both final wording/control flows
-pass (39.962 seconds). Mandatory gates and shipping are pending; see [completion](docs/COMPLETION.md) for the final receipts.
+pass (39.962 seconds). Normal hooks pass 490 Rust tests, with two opt-in live
+diagnostics ignored; strict docs and production compilation pass; see [completion](docs/COMPLETION.md) for the final receipts.
 
 Recovery now proves acknowledged originals after partial catalog loss, with a
 full inventory scan whenever an owner opens/reconnects. A changed Google project's
@@ -124,8 +125,7 @@ also remain R63.
 
 ## Restart order
 
-1. **Highest priority:** finish recording and pushing the current verified
-   ongoing-sync controls, then continue [OAuth/shared profiles](docs/agents/PROFILE_SYNC_HANDOVER.md).
+1. **Highest priority:** continue [OAuth/shared profiles](docs/agents/PROFILE_SYNC_HANDOVER.md).
    Implement checked, paged conflict resolution with durable exact requests and
    newer local intent protection; extend Flutter reconciliation with native and
    Playwright controls. Continue automatic restoration/first setup, complete
