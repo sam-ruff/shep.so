@@ -28,8 +28,11 @@ and `407fa9f5b9c7` (unsupported account/recovery). Native executable SHA-256:
 `e7d39ae27f87967be4612310288b391cc5d80c92a1eb1c287ef75756004a61fb`.
 The pinned shared suite passes 50 tests; Python passes 54 tests. Windows GNU
 all-target/all-feature cross-compilation and strict Zensical pass. Mandatory
-formatting/Clippy/Rust hooks remain required for the source commit; shipping is
-recorded by the following audit.
+formatting/Clippy/Rust hooks passed **631 Rust + two renderer + 50 shared tests
+(683 executions)**; three personal diagnostics remain explicitly ignored.
+Source [`071c6b0`](https://github.com/sam-ruff/shep.so/commit/071c6b065cd236d1c821aa60734f635fca2541e2)
+was pushed to main and exact remote equality verified. [Source documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34315151637) passed its build and Pages deployment. The final Reconnect navigation also passed through its native
+button and the populated wizard was visually reviewed (`768ac1756273`).
 
 This is an initial metadata/settings import, not continuous sync. Automatic
 post-login enrollment, linking already-populated devices, local/remote changes,
