@@ -158,6 +158,7 @@ impl CommandSender {
             Command::BulkRun(_) => &self.bulk,
             Command::Query(_, _, true) | Command::Detail { prefetch: true, .. } => &self.prefetch,
             Command::Query(..)
+            | Command::Profiles(..)
             | Command::MoveRecoveries(..)
             | Command::Detail { .. }
             | Command::Conversation(..)
@@ -348,6 +349,11 @@ mod tests {
         let id = mail.summary.id.clone();
         store.upsert(vec![mail]).await.unwrap();
         let engine = Engine {
+            profiles: Some(crate::profiles::Session {
+                catalog: crate::profiles::Catalog::open(directory.path(), "cache.sqlite").unwrap(),
+                current: crate::profiles::Id::Legacy,
+            }),
+            credentials: Default::default(),
             store: store.clone(),
             google: Default::default(),
             demo: true,
@@ -355,11 +361,11 @@ mod tests {
             calendar_work: Default::default(),
             calendar_setup_lock: Default::default(),
             connection_lifecycle_lock: Default::default(),
-            secret_remover: Arc::new(removals::OsSecretRemover),
-            outbound: Arc::new(providers::outgoing::Servers),
+            secret_remover: Arc::new(removals::OsSecretRemover::default()),
+            outbound: Arc::new(providers::outgoing::Servers::default()),
             google_connection_lock: Default::default(),
-            passphrases: Arc::new(backup::OsPassphraseStore),
-            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
+            passphrases: Arc::new(backup::OsPassphraseStore::default()),
+            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer::default()),
             backup_uploads: Default::default(),
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),
@@ -550,6 +556,48 @@ mod tests {
                 }
             }
         }).await.expect("Database export waited for blocked provider jobs");
+        // The isolated import path accepts only explicitly marked fixtures.
+        // The exact same saved export can be reviewed while every provider is
+        // held and the provider queue remains full.
+        {
+            let exported = rusqlite::Connection::open(&destination).unwrap();
+            exported
+                .pragma_update(None, "application_id", 0x5348_5054)
+                .unwrap();
+        }
+        sender
+            .try_send(Command::Database(crate::transfer::Request::Import {
+                request: 79,
+                source: destination,
+            }))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Event::Database(79, crate::transfer::Update::Review(review)) =
+                    events.next().await.unwrap()
+                {
+                    assert_eq!(review.messages, 1);
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("Database import waited for blocked provider jobs");
+        sender
+            .try_send(Command::Database(crate::transfer::Request::Cancel(79)))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Event::Database(79, crate::transfer::Update::ImportFinished(result)) =
+                    events.next().await.unwrap()
+                {
+                    assert!(result.unwrap().is_none());
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("Cancelling a reviewed import waited for blocked provider jobs");
         sender
             .try_send(Command::Print(77, id, Default::default()))
             .unwrap();

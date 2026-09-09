@@ -1,6 +1,39 @@
-# Shep handover — 2026-09-08
+# Shep handover — 2026-09-09
 
 The user stopped feature work to conserve credits and requested this handover, a cleaned TODO and a push. **The full application goal is not complete.** Resume from [TODO.md](TODO.md), preserving the original requirements in [docs/REQUEST_AUDIT.md](docs/REQUEST_AUDIT.md). Read [AGENTS.md](AGENTS.md) for operational rules and [docs/COMPLETION.md](docs/COMPLETION.md) for evidence; do not repeat historical work based only on the latest chat message.
+
+## 9 September continuation: full database import and local profiles
+
+R83 now has native **Database transfer → Import database** with a private schema/
+integrity-checked copy, account/count review, profile naming and cancellation.
+Pending sends and provider changes require acknowledgment and remain review work
+instead of replaying on another device. **Accounts → Profiles** lists/renames
+profiles and selects one for the next launch, keeping the original workspace.
+The engine's current Store and credentials never change under in-flight work.
+
+The catalog, database-transfer controller and OS-credential worker use bounded
+channels. Imported profiles receive a fresh local credential namespace and require
+reconnection. Export protects every profile's cache/journals and the catalog.
+Interrupted registration recovers the same published file; cancellation before
+publication removes the private copy. Reserved/colliding credential IDs are
+rejected, including Windows case aliases. Discovered CalDAV IDs now survive
+encrypted backup and password restore.
+
+Read [the profile reference](docs/agents/profiles.md) and the newest completion
+entry for tests and shipping status. This is a source checkpoint; the personal
+production installation remains unchanged. Database files are unencrypted and
+exclude OS secrets. Profile selection requires reopening; there is no hot switch.
+
+**OAuth account/profile sync stays the top TODO priority**, as the user requested,
+with the [Flutter handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md)
+as its implementation reference. Use the client branch's shared profile-core
+operation format and fixtures; a desktop local UUID is not its shared profile ID.
+The sibling worktree has independent active client work: do not overwrite it.
+First/new/existing-device enrollment, continuous merge and live interoperability
+remain open. The separate credential-protection question has no recorded answer.
+
+The export-only and earlier foundation notes below are historical; their open
+import statements are superseded by this continuation.
 
 ## 8 September continuation: database export
 

@@ -578,4 +578,23 @@ restart. The hold owns the real copy connection/file until ordinary cancellation
 it is unavailable outside test-support demo mode. Assert cleanup only after the
 completion acknowledgment or exit, and inspect exported databases read-only.
 Do not use the state file to finish the hold or access personal data. Review the
-light/dark/pending/error WebPs. Import and Google profile sync remain separate work.
+light/dark/pending/error WebPs. Google profile sync remains separate work.
+
+For full database import, export an owned persistent fixture through the native
+UI, then use Import database and the native file chooser. The preview importer
+requires the test-support database application ID; it refuses personal files even
+if copied into an artifact directory. Import/profile state is observation-only.
+
+Keep all five `test_database_import_*` equivalents: review/name/rename and restart
+between both preserved profiles; chooser cancellation, invalid/reserved credential
+IDs and review cleanup; pending outgoing review with no automatic send; held copy
+with navigation/draft save/cancel-on-close; and compact dark review plus protected
+catalog export. Inspect owned SQLite copies read-only after ordinary UI actions.
+
+`held_database_import=true` holds the real private copy until Cancel/close; it
+cannot run outside isolated preview mode. A profile choice applies on next launch,
+so assert the current workspace stays unchanged before graceful `restart`.
+Import completion publishes a new profile, not a hot engine switch. At 900×640,
+scroll the Preferences panel to reach the name/review controls and inspect WebPs
+before assuming coordinates. Search `database transfer` or `profiles` to target
+the intended card; the broader `database` query legitimately finds both.

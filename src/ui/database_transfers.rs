@@ -60,7 +60,10 @@ impl State {
 
 impl App {
     pub(super) fn begin_database_export(&mut self) -> Task<Message> {
-        if self.database_transfer.pending.is_some() || self.tx.is_none() {
+        if self.database_transfer.pending.is_some()
+            || self.database_import.pending()
+            || self.tx.is_none()
+        {
             return Task::none();
         }
         let request = self.database_transfer.begin();
@@ -110,6 +113,7 @@ impl App {
     }
 
     pub(super) fn database_preferences_saved(&mut self, request: u64) {
+        self.import_preferences_saved(request);
         if let Some(pending) = self.database_transfer.pending.as_mut()
             && pending.preferences == Some(request)
         {
@@ -119,6 +123,7 @@ impl App {
     }
 
     pub(super) fn database_preferences_failed(&mut self, request: u64, error: &str) {
+        self.import_preferences_failed(request, error);
         if self
             .database_transfer
             .pending
@@ -204,6 +209,11 @@ impl App {
             return Task::none();
         };
         match update {
+            Update::ImportProgress(_)
+            | Update::Review(_)
+            | Update::ReviewError(_)
+            | Update::Installing(_)
+            | Update::ImportFinished(_) => {}
             Update::Progress(progress) => pending.progress = progress,
             Update::Finished(result) => {
                 self.database_transfer.pending = None;
@@ -277,7 +287,14 @@ impl App {
                 );
             }
         } else {
-            content = content.push(action("Export database…", Message::DatabaseExport));
+            content = content.push(
+                iced::widget::button(text("Export database…").size(12))
+                    .padding([11, 14])
+                    .style(components::outline)
+                    .on_press_maybe(
+                        (!self.database_import.pending()).then_some(Message::DatabaseExport),
+                    ),
+            );
         }
         if let Some((path, bytes)) = &state.saved {
             content = content.push(
@@ -292,9 +309,12 @@ impl App {
         if let Some(error) = &state.error {
             content = content.push(text(error).size(12));
         }
+        content = content
+            .push(components::line())
+            .push(self.database_import_controls());
         self.settings_card(
             "Database transfer",
-            "Save a complete SQLite copy.",
+            "Move a complete workspace between computers.",
             content.into(),
         )
     }

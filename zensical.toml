@@ -23,6 +23,7 @@ nav = [
     { "Mail contracts" = "agents/mail.md" },
     { "Calendar contracts" = "agents/calendar.md" },
     { "Google and backup contracts" = "agents/backups.md" },
+    { "Database transfer and profiles" = "agents/profiles.md" },
     { "Detailed limits" = "agents/limits.md" },
     { "Performance evidence" = "PERFORMANCE.md" },
     { "Completion audit" = "COMPLETION.md" },

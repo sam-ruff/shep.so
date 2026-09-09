@@ -197,7 +197,8 @@ impl Engine {
             {
                 credentials.push((
                     id.clone(),
-                    providers::read_secret(&id)
+                    self.credentials
+                        .read(&id)
                         .await?
                         .expose_secret()
                         .to_string(),

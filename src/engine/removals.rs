@@ -5,18 +5,12 @@ use crate::store::{ConnectionKind, ConnectionRef, RemovalPreview};
 pub(super) trait SecretRemover: Send + Sync {
     async fn remove(&self, key: &str) -> anyhow::Result<()>;
 }
-pub(super) struct OsSecretRemover;
+#[derive(Default)]
+pub(super) struct OsSecretRemover(pub crate::credentials::Credentials);
 #[async_trait::async_trait]
 impl SecretRemover for OsSecretRemover {
     async fn remove(&self, key: &str) -> anyhow::Result<()> {
-        let key = key.to_owned();
-        tokio::task::spawn_blocking(move || {
-            match keyring::Entry::new("so.shep.desktop", &key)?.delete_credential() {
-                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-                Err(error) => Err(error.into()),
-            }
-        })
-        .await?
+        self.0.delete(key).await
     }
 }
 impl Engine {

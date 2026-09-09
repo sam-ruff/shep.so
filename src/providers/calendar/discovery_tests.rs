@@ -29,10 +29,13 @@ async fn discovers_through_well_known_principal_and_multiple_calendar_homes() {
         Reply::new(207, xml(&(calendar("/home/me/events/", "My &amp; Home", "<d:privilege><d:all/></d:privilege>", "VEVENT") + &calendar("/home/me/tasks/", "Tasks", "", "VTODO")))),
         Reply::new(207, xml(&calendar("/shared/team/", "Team holidays", "<d:privilege><d:read/></d:privilege>", "VEVENT"))),
     ]).await;
-    let found = CalDav { http: client() }
-        .discover(server.url.as_str(), "alice", "fixture-secret")
-        .await
-        .unwrap();
+    let found = CalDav {
+        http: client(),
+        credentials: Default::default(),
+    }
+    .discover(server.url.as_str(), "alice", "fixture-secret")
+    .await
+    .unwrap();
     server.finish().await;
     assert_eq!(found.len(), 2);
     assert_eq!(found[0].name, "My & Home");
@@ -72,10 +75,13 @@ async fn direct_collection_preserves_canonical_url_and_partial_permissions() {
     )])
     .await;
     let input = server.url.as_str().trim_end_matches('/');
-    let found = CalDav { http: client() }
-        .discover(input, "alice", "secret")
-        .await
-        .unwrap();
+    let found = CalDav {
+        http: client(),
+        credentials: Default::default(),
+    }
+    .discover(input, "alice", "secret")
+    .await
+    .unwrap();
     server.finish().await;
     assert_eq!(found[0].url, server.url.as_str());
     assert_eq!(
@@ -111,10 +117,13 @@ async fn direct_home_lists_children_and_well_known_can_fall_back_to_root() {
         ),
     ])
     .await;
-    let found = CalDav { http: client() }
-        .discover(server.url.as_str(), "alice", "secret")
-        .await
-        .unwrap();
+    let found = CalDav {
+        http: client(),
+        credentials: Default::default(),
+    }
+    .discover(server.url.as_str(), "alice", "secret")
+    .await
+    .unwrap();
     server.finish().await;
     assert_eq!(found.len(), 1);
     assert_eq!(server.requests().last().unwrap().headers["depth"], "1");
@@ -134,10 +143,13 @@ async fn never_forwards_credentials_across_origins_and_rejects_redirect_loops() 
     ] {
         let mut server = Server::start(replies).await;
         assert!(
-            CalDav { http: client() }
-                .discover(server.url.as_str(), "alice", "secret")
-                .await
-                .is_err()
+            CalDav {
+                http: client(),
+                credentials: Default::default()
+            }
+            .discover(server.url.as_str(), "alice", "secret")
+            .await
+            .is_err()
         );
         server.finish().await;
         assert_eq!(server.requests().len(), 1);
@@ -168,10 +180,13 @@ async fn invalid_or_partial_properties_never_become_successful_discovery() {
         Reply::new(207, "").header("Content-Length", "16777217"),
     ] {
         let mut server = Server::start(vec![reply]).await;
-        let error = CalDav { http: client() }
-            .discover(server.url.as_str(), "alice", "secret")
-            .await
-            .unwrap_err();
+        let error = CalDav {
+            http: client(),
+            credentials: Default::default(),
+        }
+        .discover(server.url.as_str(), "alice", "secret")
+        .await
+        .unwrap_err();
         assert!(!format!("{error:#}").contains("secret from remote"));
         server.finish().await;
     }

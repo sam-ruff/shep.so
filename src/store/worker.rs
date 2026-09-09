@@ -13,7 +13,7 @@ struct Owner {
     leases: HashMap<String, oneshot::Receiver<()>>,
 }
 
-pub(super) struct Worker {
+pub(crate) struct Worker {
     commands: mpsc::Sender<Job>,
 }
 
@@ -25,9 +25,13 @@ pub(super) struct Lease {
 
 impl Worker {
     pub fn new(connection: Connection) -> anyhow::Result<Self> {
+        Self::named(connection, "shep-mail-cache")
+    }
+
+    pub fn named(connection: Connection, name: &'static str) -> anyhow::Result<Self> {
         let (commands, mut input) = mpsc::channel::<Job>(CAPACITY);
         std::thread::Builder::new()
-            .name("shep-mail-cache".into())
+            .name(name.into())
             .spawn(move || {
                 let mut owner = Owner {
                     connection,
@@ -66,7 +70,7 @@ impl Worker {
         self.request(move |owner| job(&mut owner.connection)).await
     }
 
-    pub async fn lease(&self, id: String) -> anyhow::Result<Lease> {
+    pub(super) async fn lease(&self, id: String) -> anyhow::Result<Lease> {
         self.request(move |owner| {
             owner.leases.retain(|_, release| {
                 matches!(release.try_recv(), Err(oneshot::error::TryRecvError::Empty))

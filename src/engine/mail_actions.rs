@@ -201,10 +201,10 @@ impl Engine {
             let record = self.store.begin_mail_move_lookup(saved, now).await?;
             let result = async {
                 let source = self.account(&record.original.account_id).await?;
-                let secret = providers::read_secret(&source.id).await?;
+                let secret = self.credentials.read(&source.id).await?;
                 let destination = if source.id != record.receipt.account {
                     let account = self.account(&record.receipt.account).await?;
-                    let secret = providers::read_secret(&account.id).await?;
+                    let secret = self.credentials.read(&account.id).await?;
                     Some((account, secret))
                 } else {
                     None
@@ -238,9 +238,9 @@ impl Engine {
         use crate::mail_actions::{journal::MoveRecord, runner};
         use providers::mail::moves::ImapMoveConnection;
         let target = destination.unwrap_or(source);
-        let source_secret = providers::read_secret(&source.id).await?;
+        let source_secret = self.credentials.read(&source.id).await?;
         let destination_connection = match destination {
-            Some(account) => Some((account.clone(), providers::read_secret(&account.id).await?)),
+            Some(account) => Some((account.clone(), self.credentials.read(&account.id).await?)),
             None => None,
         };
         let mut connection =
@@ -365,7 +365,7 @@ impl Engine {
                     .context("The account is still busy. Retry Undo.")?;
             self.store.ensure_folder_idle(account.id.clone()).await?;
             let mut resolved = tokio::time::timeout(Duration::from_secs(120), async {
-                let secret = providers::read_secret(&account.id).await?;
+                let secret = self.credentials.read(&account.id).await?;
                 providers::mail::recovery::resolve(&account, &secret, receipt).await
             })
             .await
@@ -490,7 +490,7 @@ impl Engine {
             let account = self.account(&mail.account_id).await?;
             if account.protocol == Protocol::Imap {
                 tokio::time::timeout(Duration::from_secs(45), async {
-                    let password = providers::read_secret(&account.id).await?;
+                    let password = self.credentials.read(&account.id).await?;
                     providers::mail::provider(account.protocol)
                         .set_flags(&account, &password, mail, changes)
                         .await

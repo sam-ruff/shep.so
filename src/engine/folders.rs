@@ -284,7 +284,7 @@ impl Engine {
                     anyhow::bail!("Folder preview is unavailable in this build.");
                 }
             } else if account.protocol == Protocol::Imap {
-                let password = providers::read_secret(&account.id).await?;
+                let password = self.credentials.read(&account.id).await?;
                 Some(Box::new(
                     providers::mail::folders::ImapFolders::open(&account, &password).await?,
                 ))
