@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'data/bootstrap_stub.dart'
     if (dart.library.io) 'data/bootstrap_native.dart';
 import 'data/settings_store.dart';
+import 'data/google_native.dart';
+import 'model/google_connection.dart';
 import 'model/workspace.dart';
 import 'ui/app.dart';
 import 'ui/theme.dart';
@@ -29,7 +31,14 @@ class _StartupState extends State<Startup> {
   Future<void> open() async {
     setState(() => failed = false);
     try {
-      final next = Workspace(await openRepository(), DeviceSettings());
+      final next = Workspace(
+        await openRepository(),
+        DeviceSettings(),
+        google: GoogleConnection(
+          NativeGoogleAuthorization(),
+          DeviceGoogleConnectionStore(),
+        ),
+      );
       if (!mounted) {
         next.dispose();
         return;

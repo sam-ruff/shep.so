@@ -196,7 +196,15 @@ def native_automation(device,env,formatted_reader=False):
             try: process.wait(timeout=10)
             except subprocess.TimeoutExpired: process.kill();process.wait()
 
-def main(device, flutter='flutter', compose_only=False, outbox_only=False, incoming_only=False, appium_only=False, formatted_only=False, forward_only=False, print_only=False):
+def google(device, flutter, env):
+    test_env = env.copy(); test_env['SHEP_NATIVE_REPORT'] = 'integration-google-result'
+    report = ROOT/'artifacts/flutter/native/integration-google-result.json'
+    report.unlink(missing_ok=True)
+    run('android-google-integration', [flutter, 'drive', '--driver', 'test_driver/native_driver.dart', '--target', 'integration_test/google_android_test.dart', '-d', device, '--flavor', 'preview'], ROOT/'flutter', env=test_env)
+    if not report.exists() or json.loads(report.read_text()).get('google_controls') != ['consent-cancel-retry-cleanup', 'pending-browse-changed-choices']:
+        raise RuntimeError('Google native scenarios did not report completion; an interrupted driver is not a pass')
+
+def main(device, flutter='flutter', compose_only=False, outbox_only=False, incoming_only=False, appium_only=False, formatted_only=False, forward_only=False, print_only=False, google_only=False):
     if not device.startswith('emulator-') or not device.removeprefix('emulator-').isdigit():
         raise ValueError('Only an explicit Android emulator is allowed; personal devices are refused')
     avd = subprocess.check_output(['adb', '-s', device, 'emu', 'avd', 'name'], text=True).splitlines()[0]
@@ -205,6 +213,10 @@ def main(device, flutter='flutter', compose_only=False, outbox_only=False, incom
     env = os.environ.copy()
     env['ANDROID_SERIAL'] = device
     env['APPIUM_HOME'] = str(ROOT / 'artifacts/appium')
+    if google_only:
+        google(device, flutter, env)
+        print('Android Google consent controls passed; other scenarios were not rerun.')
+        return
     if print_only:
         printing(device,flutter,env)
         print('Android native Print/PDF scenario passed; other scenarios were not rerun.')
@@ -236,6 +248,7 @@ def main(device, flutter='flutter', compose_only=False, outbox_only=False, incom
         return
     run('android-integration', [flutter,'test','integration_test/mail_test.dart','-d',device,'--flavor','preview'], ROOT/'flutter')
     run('android-native-integration', [flutter,'drive','--driver','test_driver/native_driver.dart','--target','integration_test/native_mail_test.dart','-d',device,'--flavor','preview'], ROOT/'flutter')
+    google(device,flutter,env)
     compose(device,flutter,env)
     forward(device,flutter,env)
     printing(device,flutter,env)
@@ -261,6 +274,7 @@ if __name__=='__main__':
     parser.add_argument('--formatted-only',action='store_true',help='Run the actual native formatted-reader and selection scenario')
     parser.add_argument('--forward-only',action='store_true',help='Run complete-source Forward and independent-draft controls')
     parser.add_argument('--print-only',action='store_true',help='Run the actual native printer cancel/retry and PDF scenario')
+    parser.add_argument('--google-only',action='store_true',help='Run saved native Google consent/cancellation/cleanup controls')
     args=parser.parse_args()
-    if sum([args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only,args.forward_only,args.print_only])>1: parser.error('Choose only one targeted scenario')
-    main(args.device,args.flutter,args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only,args.forward_only,args.print_only)
+    if sum([args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only,args.forward_only,args.print_only,args.google_only])>1: parser.error('Choose only one targeted scenario')
+    main(args.device,args.flutter,args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only,args.forward_only,args.print_only,args.google_only)

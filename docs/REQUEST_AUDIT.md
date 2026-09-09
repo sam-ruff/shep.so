@@ -468,3 +468,11 @@ desktop-main:R92/R75/R02/R49/R63/R67/R73/R77 continuation: desktop explicit next
 
 
 desktop-main:R92/R75/R02/R49/R63/R67/R73/R77: desktop feature-scoped consent shipped as [`3e1181b`](https://github.com/sam-ruff/shep.so/commit/3e1181ba68692b63104cec4f926f3391ecfab470); exact remote SHA verified. Mandatory hooks pass 398 Rust tests and all 118 native functional scenarios pass, with reviewed light/dark/compact controls. The full OAuth/profile request remains active for mobile/browser consent, verified cross-client identity, enrollment/merge, remaining settings and protected credentials.
+
+
+R75/R02/R49/desktop-main:R92/R63/R67/R69/R73 continuation: native Flutter Google SDK sign-in and Preferences permissions are being verified. Existing committed access survives changed choices, denial and failed metadata saves. Local disconnection persists before retryable SDK cleanup; SDK signOut does not revoke other devices. Seamless switching, automatic session restore, actual Calendar/Drive/profile integration and live/Apple verification remain open.
+
+R75/R63 continuation: the native-only SDK package selection prevents unsolicited Google web SDK loading in previews; Playwright now rejects external requests. Unconfirmed device writes/readbacks pause Google operations until explicit reconciliation instead of claiming rollback. These changes are included in final verification; no scope item is removed.
+
+
+R75/R02/R49/desktop-main:R92/R63/R67/R69/R73/R77: Flutter native consent now passes 89 host tests, the configured SDK fixture, two Android Google scenarios and seven Appium/offline Playwright flows. Production ARM64 packaging, analysis, Python/parity and strict documentation pass; reviewed captures and retained intermediate failures are recorded in the completion log. Full OAuth/provider/profile parity and live/Apple verification remain active; checkpoint shipping follows.

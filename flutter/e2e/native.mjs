@@ -47,9 +47,9 @@ async function waitText(text) {
 }
 async function tap(text) {
   for (const selector of [
-    `android=new UiSelector().description("${text}")`,
-    `android=new UiSelector().text("${text}")`,
-    `android=new UiSelector().descriptionStartsWith("${text}")`,
+    `android=new UiSelector().description("${text}").clickable(true)`,
+    `android=new UiSelector().text("${text}").clickable(true)`,
+    `android=new UiSelector().descriptionStartsWith("${text}").clickable(true)`,
   ]) {
     const node = await driver.$(selector);
     if (await node.isExisting()) {
@@ -61,7 +61,7 @@ async function tap(text) {
 }
 async function openDropdown(label) {
   const node = await driver.$(
-    `android=new UiSelector().descriptionStartsWith("${label}")`,
+    `android=new UiSelector().descriptionContains("${label}")`,
   );
   const pos = await node.getLocation();
   const size = await node.getSize();
@@ -83,6 +83,45 @@ async function openDropdown(label) {
     },
   ]);
   await driver.releaseActions();
+}
+async function scrollToText(label) {
+  const { width, height } = await driver.getWindowSize();
+  for (let i = 0; i < 12; i++) {
+    const before = await driver.getPageSource();
+    if (before.includes(label)) return;
+    await driver.performActions([
+      {
+        type: "pointer",
+        id: "settings-scroll",
+        parameters: { pointerType: "touch" },
+        actions: [
+          {
+            type: "pointerMove",
+            duration: 0,
+            x: Math.round(width / 2),
+            y: Math.round(height * 0.7),
+          },
+          { type: "pointerDown", button: 0 },
+          {
+            type: "pointerMove",
+            duration: 450,
+            x: Math.round(width / 2),
+            y: Math.round(height * 0.3),
+          },
+          { type: "pointerUp", button: 0 },
+        ],
+      },
+    ]);
+    await driver.releaseActions();
+    await driver.waitUntil(
+      async () => (await driver.getPageSource()) !== before,
+      {
+        timeout: 15000,
+        timeoutMsg: "Preferences did not scroll after a native touch gesture",
+      },
+    );
+  }
+  throw new Error(`Missing scrolled native label: ${label}`);
 }
 async function step(name, fn) {
   await fn();
@@ -189,7 +228,34 @@ try {
     await waitText("No matches");
     await tap("Close Find");
   });
-  assert.equal(steps.length, 6);
+  await step(
+    "native Google consent, cancellation and local disconnect",
+    async () => {
+      await driver.back();
+      await waitText("A little room for good ideas");
+      await tap("Preferences");
+      await waitText("Swipe left");
+      await scrollToText("Sign in with Google");
+      await openDropdown("Calendar access");
+      await tap("Read calendars");
+      await tap("Sign in with Google");
+      await scrollToText("Google connection saved on this device.");
+      await openDropdown("Calendar access");
+      await tap("Read and edit calendars");
+      await tap("Reconnect Google");
+      await scrollToText("was cancelled");
+      await waitText("Saved access: Drive off · Calendar read only");
+      await driver.saveScreenshot(path.join(out, "google-cancelled-dark.png"));
+      await tap("Reconnect Google");
+      await waitText("Calendar read and edit");
+      await tap("Disconnect…");
+      await tap("Cancel");
+      await tap("Disconnect…");
+      await tap("Disconnect");
+      await scrollToText("Google disconnected on this device.");
+    },
+  );
+  assert.equal(steps.length, 7);
   await writeFile(
     path.join(out, "result.json"),
     JSON.stringify({ passed: true, serial, steps }, null, 2),

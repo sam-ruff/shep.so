@@ -202,3 +202,17 @@ Cases retain unknown optional fields, reject unsupported versions/capabilities/s
 The saved `test_google_requested_permissions_*` native scenarios use actual Drive checkbox/Calendar menu controls, saved/reopened settings and fixture-only sign-in refusal. A compact dark flow requests broader next-sign-in permissions, then opens an existing read-only event and verifies access is unchanged. Existing partial-grant/disconnect tests remain. Use explicit fictional `SHEP_GOOGLE_CLIENT_ID` and `SHEP_GOOGLE_CLIENT_SECRET` values for these fixture runs; no real credentials or Google authorization is used.
 
 `cargo test --all-features google` covers exact requested URL scopes/PKCE, omitted-scope fallback, broader-grant restriction, refresh after editing choices, scope-bound candidate retry before/after restart, changed-settings activation refusal and UI save acknowledgment ordering. Native fixtures establish controls only; the real provider path remains covered by isolated protocol tests, with live Google and mobile/browser consent separate.
+
+
+## Mobile Google consent
+
+[Google configuration and current limits](agents/GOOGLE_MOBILE.md) distinguish native SDK sign-in from the still-open Calendar/Drive/profile integrations. Run `flutter test` for controller, compact controls and secure-store lost-reply cases. Run the actual SDK-adapter contract with fictional build configuration:
+
+```sh
+cd flutter
+flutter test test/google_sdk_test.dart --dart-define=SHEP_GOOGLE_SERVER_CLIENT_ID=fixture-client.apps.googleusercontent.com
+```
+
+`google_controls_scenario.dart` is shared by host and `google_android_test.dart`: saved services, denied editing that retains read access, retry, dark mode, reviewed disconnect/cleanup and browsing/changing choices during held consent. Run `python3 scripts/clients/android_e2e.py --device emulator-5554 --google-only` for this development subset. The full Android wrapper includes it. Flutter Playwright and the preview Appium script also exercise consent/cancel/retry/disconnect through actual controls. Success fixtures live only under `flutter/test/`, use fictional identities and never contact Google. SDK-boundary tests inspect exact scopes/identity, no interactive background authorization and local sign-out rather than revocation. Platform configuration, real account switching/refresh/callbacks, Apple execution and cross-client app-data visibility remain separate verification.
+
+The Flutter preview network gate rejects all external HTTP(S) requests. Native Google packages avoid web SDK registration; bundled Roboto supplies CanvasKit's otherwise downloaded fallback while the UI continues using Noto Sans. Font licenses are included as application assets. Google controls have separate semantics nodes so actual pointer/accessibility targets match the painted fields.

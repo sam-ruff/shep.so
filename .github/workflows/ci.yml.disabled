@@ -115,6 +115,7 @@ jobs:
           dart format --output=none --set-exit-if-changed lib test integration_test test_driver hook
           flutter analyze
           flutter test
+          flutter test test/google_sdk_test.dart --dart-define=SHEP_GOOGLE_SERVER_CLIENT_ID=fixture-client.apps.googleusercontent.com
           cd ..
           npm --prefix flutter/e2e ci
           npm --prefix flutter/e2e exec -- playwright install chromium
