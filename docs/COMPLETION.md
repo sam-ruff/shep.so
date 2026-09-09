@@ -41,6 +41,16 @@ installation or performance measurement changed. Evidence is under ignored
 `artifacts/logs/profile-replica-*`; see [the updated protocol reference](agents/profile-drive.md).
 OAuth implementation remains first in TODO with the Flutter handover linked.
 
+Source [`ace653b`](https://github.com/sam-ruff/shep.so/commit/ace653b1d466d0126a063bdda2c186644bd3a4d2)
+was pushed to main; exact remote equality was verified. Mandatory hooks passed
+**605 Rust tests, two renderer tests and 34 shared tests**, including the ordinary
+locked isolated-runner path. Three personal-data diagnostics remain ignored.
+Windows GNU cross-compilation, all 53 Python tests and strict Zensical passed.
+[Documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34303450475) also passed.
+This is not Windows/macOS execution, a native UI run or live Google verification.
+Quality/release workflows remain deliberately disabled. No root runtime artifacts
+were present after testing.
+
 ## 9 September: Drive profile transport and durable discovery
 
 R02/R49/R92 now have a backend transport for the shared Rust/Flutter operation

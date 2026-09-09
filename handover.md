@@ -4,12 +4,13 @@ The user stopped feature work to conserve credits and requested this handover, a
 
 ## 9 September continuation: causal profile bridge
 
-The latest backend work uses the published shared history worker for verified
+Source `ace653b` is pushed and uses the published shared history worker for verified
 Drive pull/publish. It retains exact reservations across both journals, refuses
 stale/foreign proofs and ambiguous duplicate IDs, and preserves conflicts/removal
 markers. Two isolated devices exercise the real HTTP/SQLite path. The desktop
 file convention now matches the client branch's committed metadata fixture.
-Read the newest completion entry for final verification and shipping.
+Hooks passed 605 Rust, two renderer and 34 shared tests. Windows cross-compilation,
+53 Python tests and strict docs also passed; see the completion log.
 
 Cargo pins `9289f53`; `python3 scripts/test_profile_core.py` runs all 34 shared
 codec/history/Drive tests from an isolated copy with a committed test lock.
