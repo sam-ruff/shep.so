@@ -11,6 +11,7 @@ pub mod metadata;
 pub(crate) mod paths;
 pub mod replica;
 pub mod setup;
+pub mod state;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};

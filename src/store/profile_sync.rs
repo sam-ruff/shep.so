@@ -34,6 +34,7 @@ fn review_matches(c: &Connection, expected: &Snapshot) -> anyhow::Result<Enrollm
 }
 
 pub(super) mod join;
+mod state;
 
 impl Store {
     pub async fn change_profile_sync_options(

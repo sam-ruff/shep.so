@@ -67,6 +67,33 @@ impl Replica {
         state(self.history.request(Command::Edit { edit }).await?)
     }
 
+    /// Own local admission through its field check. A replay cannot upgrade the
+    /// native baseline past an unseen remote edit merely because Edit succeeded.
+    pub async fn admit_local(
+        &mut self,
+        pending: super::state::Pending,
+    ) -> anyhow::Result<super::state::Admitted> {
+        let current = self.edit(pending.edit()).await?;
+        let versions = self.versions(pending.target(), None).await?;
+        anyhow::ensure!(
+            !current.removed
+                && current.waiting == 0
+                && current.ready == 0
+                && versions.len() == 1
+                && versions[0].operation == pending.operation,
+            "The saved local edit now has other shared changes. Keep it for conflict review before advancing its checkpoint."
+        );
+        anyhow::ensure!(
+            self.value(pending.target(), pending.operation).await? == pending.change,
+            "The admitted profile edit differs from its saved local request."
+        );
+        Ok(super::state::Admitted {
+            binding: self.binding.clone(),
+            pending,
+            revision: current.revision,
+        })
+    }
+
     /// Review pages stay bounded. Callers must not apply a partial/conflicted
     /// history to accounts; retain State/revision through the application review.
     pub async fn fields(&self, after: Option<String>) -> anyhow::Result<Vec<history::Field>> {

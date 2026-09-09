@@ -124,6 +124,24 @@ async fn profile_join_applies_reviewed_values_once_preserves_local_accounts_and_
     let snapshot = accept(&store, &paths, review.clone(), &Control::default())
         .await
         .unwrap();
+    let baseline = store
+        .profile_replication(review.selection.binding.clone())
+        .await
+        .unwrap();
+    assert_eq!(baseline.revision, review.revision);
+    assert_eq!(
+        baseline.local_only,
+        BTreeSet::from([local_account.id.clone()])
+    );
+    assert_eq!(
+        baseline.fields["setting:appearance"]
+            .remote
+            .as_ref()
+            .unwrap(),
+        &record.record.operation().changes[2]
+    );
+    assert!(!baseline.fields.contains_key("setting:preview_lines"));
+    assert!(store.capture_profile_change().await.unwrap().is_none());
     assert_eq!(snapshot.enrollment.selection.unwrap().origin, Origin::Join);
     let workspace = store.workspace().await.unwrap();
     assert_eq!(workspace.accounts.len(), 2);
@@ -131,6 +149,7 @@ async fn profile_join_applies_reviewed_values_once_preserves_local_accounts_and_
     assert_eq!(workspace.preferences.backup_folder, "/device-only");
     assert_eq!(workspace.accounts[0].name, local_account.name);
     let added = &workspace.accounts[1];
+    assert_eq!(baseline.accounts.get(&added.id), Some(&connection.id));
     assert_ne!(added.id, connection.id.to_string());
     assert_eq!(added.smtp_username, connection.smtp_username);
     assert!(workspace.account_reconnect.contains(&added.id));
@@ -147,9 +166,21 @@ async fn profile_join_applies_reviewed_values_once_preserves_local_accounts_and_
         .unwrap();
     drop(store);
     let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
-    accept(&store, &paths, review, &Control::default())
+    accept(&store, &paths, review.clone(), &Control::default())
         .await
         .unwrap();
+    let preserved = store
+        .profile_replication(review.selection.binding)
+        .await
+        .unwrap();
+    assert_eq!(preserved.fields, baseline.fields);
+    let next = store.capture_profile_change().await.unwrap().unwrap();
+    assert_eq!(next.expected_revision, baseline.revision);
+    assert_eq!(
+        next.change.extra,
+        record.record.operation().changes[2].extra
+    );
+    assert!(matches!(next.change.action,Action::Setting {value,..} if value == "System"));
     let reopened = store.workspace().await.unwrap();
     assert_eq!(
         reopened.accounts.len(),
@@ -389,6 +420,7 @@ async fn profile_join_rolls_back_accounts_if_settings_fail_and_rejects_changed_h
     };
     let values = Values {
         accounts: vec![metadata::review_account(account, "Cloud").unwrap()],
+        account_changes: vec![record.record.operation().changes[0].clone()],
         settings: vec![Change {
             action: Action::Setting {
                 key: shep_profile_core::SettingKey::Appearance,

@@ -1146,3 +1146,29 @@ unknown-connection and native review/import/restart regressions. Joining is an
 initial import; continuous polling, existing-device changes, automatic login
 prompts and credential transfer remain TODO work. The protection choice is still
 unanswered. Follow the shared handover before extending the format.
+
+Enrollment saves `profile_replication_v1` on the cache owner. First-device setup
+verifies the seed's current field values and saves their common basis before any
+remote pull; retries must not replace it with newer native settings. Existing
+profile import commits raw accepted fields, local/shared mappings and that basis
+in the same transaction. Database import archives/removes the source checkpoint.
+Never infer an old missing basis from a history that has since changed.
+
+Local capture retains one exact operation UUID, field revision, native value and
+portable value until acknowledgment. Preserve optional change/connection fields.
+`Replica::admit_local` checks the actual current field after Edit (including an
+idempotent retry) before minting the receipt accepted by the Store. A newer whole
+history revision alone is not proof the local edit is still current. Acknowledging
+admitted work must not restore old preferences, category choices or Google state.
+Existing unmapped accounts stay local; local removal records suppression, not a
+profile-wide tombstone. Keep restart, category pause, concurrent successor/conflict,
+seed, native enrollment and import-fence tests when connecting the continuous loop.
+
+Continuous polling/application and conflict controls remain TODO. Capture/admit
+pending local changes before pulling remote records, and preserve per-field common
+revisions when local edits race remote application. Dirty UI preferences also need
+per-field merging so a later whole-form save cannot erase untouched remote changes.
+The newly published client `184b98a` adds the required `initialization-v1` capability
+and profile setup barrier. Desktop still pins `33d222d7`: review/adopt the immutable
+contract before claiming current Flutter profile interoperability. Preserve active
+sibling work; no shared target directory across differing vendor worktrees.

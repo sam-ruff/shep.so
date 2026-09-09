@@ -406,6 +406,131 @@ async fn profile_setup_disabled_categories_and_newer_local_edits_stop_before_net
 }
 
 #[tokio::test]
+async fn profile_setup_checkpoints_original_seed_before_upload_and_preserves_later_native_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = local(dir.path()).await;
+    let journal = journal::Journal::open(None).unwrap();
+    let pending = initial(&store, &journal).await;
+    let binding = pending
+        .enrollment
+        .selection
+        .as_ref()
+        .unwrap()
+        .binding
+        .clone();
+    store
+        .update_preferences(|p| p.appearance = Appearance::Light)
+        .await
+        .unwrap();
+    let current = store.profile_enrollment().await.unwrap();
+    let mut replica = open(dir.path(), &current, &journal).await;
+    prepare(&store, &mut replica, &current).await.unwrap();
+    let baseline = store.profile_replication(binding.clone()).await.unwrap();
+    assert!(
+        matches!(&baseline.fields["setting:appearance"].local.as_ref().unwrap().action,
+        shep_profile_core::Action::Setting {value,..} if value == "Dark")
+    );
+    assert_eq!(
+        store
+            .get::<Preferences>("preferences")
+            .await
+            .unwrap()
+            .appearance,
+        Appearance::Light
+    );
+    // A retry after another local edit retains the exact first common values.
+    store
+        .update_preferences(|p| p.appearance = Appearance::System)
+        .await
+        .unwrap();
+    let current = store.profile_enrollment().await.unwrap();
+    prepare(&store, &mut replica, &current).await.unwrap();
+    assert_eq!(
+        store
+            .profile_replication(binding.clone())
+            .await
+            .unwrap()
+            .fields,
+        baseline.fields
+    );
+    replica.close().await.unwrap();
+    let saved = upload(dir.path(), &current).await;
+    let mut replica = open(dir.path(), &current, &journal).await;
+    let mut server = Server::start(vec![
+        Reply::new(200, r#"{"files":[]}"#),
+        Reply::new(200, r#"{"ids":["seed-file"],"space":"appDataFolder"}"#),
+        Reply::new(404, ""),
+        Reply::new(201, file(&saved).to_string()),
+    ])
+    .await;
+    publish(&store, &mut replica, &session(&server), current, 123)
+        .await
+        .unwrap();
+    server.finish().await;
+    let pending = store.capture_profile_change().await.unwrap().unwrap();
+    assert!(
+        matches!(pending.change.action,shep_profile_core::Action::Setting {value,..} if value == "System")
+    );
+    assert_eq!(pending.expected_revision, baseline.revision);
+    replica.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn profile_setup_without_checkpoint_refuses_to_infer_common_values_from_changed_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = local(dir.path()).await;
+    let journal = journal::Journal::open(None).unwrap();
+    let pending = initial(&store, &journal).await;
+    let mut replica = open(dir.path(), &pending, &journal).await;
+    prepare(&store, &mut replica, &pending).await.unwrap();
+    // An older installation has the seed/history but no reconciliation record.
+    store
+        .run(|c| {
+            c.execute(
+                "DELETE FROM kv WHERE key=?",
+                [super::super::state::STORAGE_KEY],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let revision = replica.state().await.unwrap().revision;
+    replica
+        .edit(history::LocalEdit {
+            operation: Uuid::new_v4(),
+            expected_revision: revision,
+            changes: vec![shep_profile_core::Change {
+                action: shep_profile_core::Action::Setting {
+                    key: shep_profile_core::SettingKey::Appearance,
+                    value: json!("Light"),
+                },
+                extra: Default::default(),
+            }],
+            resolutions: vec![],
+        })
+        .await
+        .unwrap();
+    assert!(prepare(&store, &mut replica, &pending).await.is_err());
+    let binding = pending.enrollment.selection.unwrap().binding;
+    assert!(
+        store
+            .profile_replication_optional(binding)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .get::<Preferences>("preferences")
+            .await
+            .unwrap()
+            .appearance,
+        Appearance::Dark
+    );
+    replica.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn profile_setup_keeps_inflight_receipt_but_never_reenables_a_disabled_or_disconnected_profile()
  {
     for disconnect in [false, true] {
