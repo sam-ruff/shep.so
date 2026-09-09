@@ -55,8 +55,9 @@ The 23 surrounding native flows pass (219.995 seconds), and all three final
 affected flows pass (64.050 seconds). The conflict flow includes compact dark
 pages, Back/reopen and light recovery while searching Mail; final captures in
 `artifacts/e2e/b5255ffe7d09/` were reviewed. The 54 profile Rust checks, 44 Python
-checks and 37 parity contracts pass. Hook-checked shipping is being completed;
-read the newest completion entry before proceeding. Next continue ongoing Flutter
+checks and 37 parity contracts pass. Code [`28c2884`](https://github.com/sam-ruff/shep.so/commit/28c288448842b7d09543fc28ef1f2f14bf36f142) is pushed and remotely verified;
+mandatory hooks pass 498 Rust tests. Read the newest completion entry before
+proceeding. Next continue ongoing Flutter
 reconciliation and its native/Playwright controls, then all fields/categories,
 account lifecycle, automatic setup/restoration and authenticated interchange.
 

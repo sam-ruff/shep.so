@@ -152,3 +152,14 @@ recovery, acknowledged-history export, atomic reviewed baselines, rapid native
 choice ordering and the background owner's saturation/reconnect/project checks.
 Native control evidence and shipping are recorded in [completion](../COMPLETION.md).
 Fixture success does not prove live Google, Apple or full cross-client parity.
+
+
+The checked-decision continuation adds six storage/history regressions for paged
+review, restart, stale/newer intent, exact pending-request inspection and atomic
+receipt failure. Engine controls verify active-grant/lifecycle checks alongside
+disconnected cached review/cancellation. The UI regression preserves page/choice,
+waits for the preference-save acknowledgment and rejects late panel reopening.
+The existing two-device runner test now resolves/uploads/receives a conflict
+decision through the loopback Drive transport. Final native evidence and verified
+shipping are recorded in completion. These are fixture contracts, not live Google
+or Flutter/Apple interchange verification.

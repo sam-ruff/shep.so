@@ -2718,3 +2718,13 @@ Final conflict Back/reopen, compact footer and lost-receipt captures in
 `artifacts/e2e/b5255ffe7d09/` were reviewed. Normal commit hooks and remote shipping
 are the remaining checkpoint steps. The full native suite and performance gates
 were not rerun; their earlier limits remain active.
+
+
+Decision code [`28c2884`](https://github.com/sam-ruff/shep.so/commit/28c288448842b7d09543fc28ef1f2f14bf36f142) is pushed to `feat/mobile-web-clients`, with exact remote SHA
+verification. Normal hooks pass formatting, Clippy with warnings denied and
+**498 Rust tests**; two opt-in personal live diagnostics remain ignored. Strict
+documentation and final production checks pass. The shipping receipt is
+`artifacts/profile-resolution-shipping.json`. Source/UI files, tests, request
+tracking, parity notes and handover are included; the main worktree and installed
+phone/desktop were not changed. Quality/release CI remains disabled. Next continue
+Flutter ongoing reconciliation and its native/Playwright conflict controls.

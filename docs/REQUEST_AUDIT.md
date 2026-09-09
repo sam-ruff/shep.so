@@ -706,3 +706,9 @@ reverted intent, restart, rejected versus accepted pending requests, atomic
 receipt failure and disconnected cached reviews. Final shipping evidence belongs
 in completion; ongoing Flutter/browser equivalents and complete profile scope
 remain active. This does not remove any of the 40 active requests.
+
+Decision shipping: [`28c2884`](https://github.com/sam-ruff/shep.so/commit/28c288448842b7d09543fc28ef1f2f14bf36f142) is pushed and remotely verified. Mandatory hooks pass
+498 Rust tests; 23 surrounding native flows plus the three final affected flows,
+54 targeted profile checks, 44 Python checks, 37 parity contracts, final production
+compilation and strict docs pass. Reviewed captures, failed-before ordering/input
+evidence and remaining full-profile/client scope are retained in completion.
