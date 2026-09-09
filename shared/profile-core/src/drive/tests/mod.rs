@@ -1,5 +1,7 @@
 use super::*;
 use crate::{Action, Change, SettingKey};
+mod changes;
+mod discovery;
 mod server;
 use server::{Response as TestResponse, *};
 

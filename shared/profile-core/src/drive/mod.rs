@@ -1,9 +1,12 @@
 //! Native Google Drive profile transport. Call from an owned background task.
 //! A verified session retains one short-lived access token, never refresh tokens.
 //! Listing a page is not enrollment or proof of a complete cloud snapshot.
+pub mod catalog;
+mod changes;
 #[cfg(test)]
 mod tests;
 mod wire;
+pub use changes::{ChangeCursor, ChangePage, FileChange};
 
 use crate::{Operation, history};
 use history::{Command, Reply, Worker};

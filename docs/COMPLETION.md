@@ -1948,3 +1948,51 @@ durable catalog/enrollment, real client application, live access and the previou
 native performance failure are not completed by this push.
 
 Final review also shares the HTTP client policy between production and loopback tests, so redirect rejection is verified through the same builder instead of a duplicated fixture policy. Production keeps its fixed HTTPS endpoint; the fixture changes only local connection settings and its deadline. The final mandatory-hook result and push cover this refinement with the existing redirect cases.
+
+
+## 2026-09-09 — Durable remote profile discovery
+
+R75/R02/R49/desktop-main:R92/R67/R69/R73/R77 continuation adds a per-principal,
+application-scoped catalog under the optional shared native Drive feature. Saved
+metadata pages, file identities and change replay preserve progress across
+interruption. Prepared file identities commit before remote history import, so a
+failed later receipt cannot hide a file disappearing during a full rescan.
+Missing/reclassified files and pagination conflicts retain explicit errors and
+cached observations. Profile summaries preserve missing ancestry, concurrent names,
+setting reset intents and tombstones. Remote observation journals remain separate
+from enrolled local history and offline edits. See [the contract](agents/PROFILE_DISCOVERY.md).
+
+**49 shared core tests pass**: 32 unit/protocol/worker, 6 codec and 11 history.
+New scenarios cover held success/error results after a rescan, retry/reopen,
+arrivals and repeated changes, long cycles, duplicate IDs, 52-profile paging,
+conflicts, missing parents, removal and a real SQLite receipt failure after history
+commits. Queue saturation, cancelled observations, canonical aliases and an
+independent child process verify ownership. An overview test initially treated an
+explicit reset as no setting; the final test verifies the retained reset intent
+and zero visible settings only after a profile tombstone. Failed compile/fixture
+logs remain in ignored `artifacts/logs/profile-discovery-*`; no production
+history semantics or test budget was weakened.
+
+Compatibility checks pass **68 mobile Rust tests**, **23 WASM fixtures** plus
+malformed-record checks, **41 Python tests**, **34 parity contracts**, the backend
+locked dependency check and strict pinned Zensical. Core Clippy passes. Final
+mandatory-hook results and the code commit are recorded in the shipping entry.
+Logs use the `profile-discovery-` prefix, including `final-core`, `native`, `wasm`,
+`python`, `backend`, `clippy` and `docs` under ignored `artifacts/logs/`.
+
+This optional catalog has no client Settings caller or live Google grant. Actual
+creation/enrollment, platform lifecycle binding, own-upload identity integration,
+first-setup publication completeness, account/preferences application, category
+controls and credential protection remain open. A caught-up scan is not proof of
+complete ancestry, successful enrollment or shared Google-project visibility.
+Browser/Apple/Android discovery and catalog performance are unverified. No new UI,
+E2E or APK result is claimed. The earlier native navigation/combined timing gate
+still fails. Main, installed desktop and personal phone are untouched; quality
+and release workflows remain disabled. The full product goal remains active.
+
+The unchanged 100,000-message storage benchmark also passes: inbox p95
+6.101 ms, account 3.007 ms, search 36.017 ms and cached body 0.074 ms, with
+60 query samples. The optimized build finished before measurement; the desktop
+session and other applications remained open, so this is not an idle-host claim.
+This verifies mail storage budgets, not catalog latency or native presentation.
+The prior native navigation failure remains unchanged.

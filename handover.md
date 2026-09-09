@@ -9,7 +9,7 @@ This handover records the credit-limited stopping point. The user explicitly res
 - Work in the `shep-clients` worktree on `feat/mobile-web-clients`. All combined Flutter, browser, Rust backend and delegated promo work is on that review branch.
 - Read `AGENTS.md`, `TODO.md`, `docs/CLIENT_PARITY.md`, `shared/client-scenarios.json` and the latest entries in `docs/COMPLETION.md`. `docs/REQUEST_AUDIT.md` preserves request traceability.
 - The root `shep.so` main worktree has independent, actively edited desktop work. Do not commit it, overwrite it, merge clients into main or replace the personal installation. The `shep-website` worktree still has the agent's original uncommitted files; its website source/assets were already copied and committed on the combined branch. Its older README is superseded; do not recopy it.
-- Latest code checkpoint: [`da6f2e8`](https://github.com/sam-ruff/shep.so/commit/da6f2e803fbddf1e485418b925923eeeb08afd1e), covering unread-account counts, following native profile history `e9115f9` and search materialization `e568c84`. The code head is pushed and verified on the remote review branch; final evidence and limitations are recorded in the completion log. The earlier Undo/handover checkpoint is `d4da04c`; final shipping documentation follows each code checkpoint in branch history. Pushes to the review branch are authorized. Use the configured owner identity and Conventional Commits; never skip hooks.
+- Latest shipped head: [`c1305a6`](https://github.com/sam-ruff/shep.so/commit/c1305a6fde21f68941b9c2f0f7074f1c4043c774), verifying the shared Drive HTTP policy, following profile transport `557f8d5`, fixture portability `9289f53` and evidence `d7f262d`. The code head is pushed and verified on the remote review branch; final evidence and limitations are recorded in the completion log. The earlier Undo/handover checkpoint is `d4da04c`; final shipping documentation follows each code checkpoint in branch history. Pushes to the review branch are authorized. Use the configured owner identity and Conventional Commits; never skip hooks.
 
 ## Product decisions that must survive
 
@@ -29,6 +29,26 @@ The user resumed development after the credit-limited handover. R79 then authori
 
 R63 now has two deterministic failed-before regressions for shortcut capture/held presses interrupted by background mail completion. Mounted capture state and retained controls fix the failures, with an additional saved cancellation/current-setting scenario. Final Chromium regression passes 133/133 scenarios, all 123 unit tests and 15 targeted History/Find/Preferences controls pass, and light/dark/History WebP captures are reviewed. All 56 production HTTPS fixture stages, strict documentation and mandatory hooks (381 Rust tests) pass. Shipping is verified in [`1ea12a6`](https://github.com/sam-ruff/shep.so/commit/1ea12a677829dcd71c4246b87cae46327f9c749f); see the completion log. The full run also exposed History waiting for Undo preview preparation after the durable group had completed. Independent preparation tokens and persistent Refresh recovery now pass deterministic held-result and failed-preview controls. Keep the earlier failing evidence below as historical evidence.
 
+## Current profile discovery checkpoint
+
+The optional native catalog now persists staged pages and known file identities,
+replays changes captured before listing, and keeps independent remote history
+summaries. Failed receipts after a history commit cannot hide a subsequently
+missing file. Retry/rescan, long pagination cycles, arrival replay, conflicts,
+missing ancestry, cancelled observers and process ownership have host tests.
+See [the discovery contract](docs/agents/PROFILE_DISCOVERY.md) and latest completion
+entry for final gates and shipping. Core tests pass 49 cases; this is not a new
+Android/browser UI or live Google result.
+
+Next bind saved platform grants and implement creation/enrollment with real
+Profiles and sync controls. Define a causal completion barrier for multi-record
+first setup and integrate acknowledged own-upload identities into discovery.
+Copy original immutable records into independently owned local history, never the
+observation SQLite/device UUID. Apply account metadata through reviewed lifecycle
+operations; changed endpoints cannot silently reuse credentials. Preserve local
+mail/drafts, category generations and explicit reconnect state. Browser/Apple,
+legacy backup migration, the password-protection choice and full sync remain open.
+
 ## Current profile Drive checkpoint
 
 The optional native `drive` feature in `shared/profile-core` adds verified Google
@@ -44,9 +64,9 @@ log for their scope and retained failures. The initial durability fixture querie
 wrong test table; that failure remains in ignored logs, corrected without changing
 the production schema. No client Settings screen uses the transport yet.
 
-Continue with a durable per-principal/application discovery catalog, visited
-file/token tracking, profile creation/enrollment and actual Preferences/account
-application. Bind calls to the platform's saved Google connection and own pending
+The durable discovery catalog above now supplies visited file/token tracking
+and arrival replay. Continue with profile creation/enrollment and actual
+Preferences/account application. Bind calls to the platform's saved Google connection and own pending
 work through lifecycle changes. A final page or complete received ancestry is not
 an atomic cloud snapshot. Same-project registered-client visibility is still
 unverified; a namespace hash cannot detect a different OAuth project's empty app
@@ -70,8 +90,8 @@ ms against 150 ms. A previous cached test build also fails; do not claim the
 responsiveness issue fixed or weaken the gate. The new ARM64 APK is unsigned;
 no personal app was replaced. Detailed logs/shipping remain in the completion log.
 
-The optional Drive provider is now implemented above. Restart with durable
-creation/discovery/enrollment, then category controls and actual account/settings
+The optional Drive provider is now implemented above. Restart with
+creation/enrollment using the separate discovery catalog, then category controls and actual account/settings
 application. Received ancestry is not a complete cloud listing. Keep upload bytes
 and reserved IDs, stale-review checks and device-local journal identity through
 retries; full database import needs explicit device/ownership rebinding. No profile
@@ -118,7 +138,7 @@ Preserve existing mail schema 12/journal schema 6 lineage, canonical-alias proof
 
 ## Restart order
 
-1. **Highest priority:** implement Google OAuth and shared account/settings profiles using [the interoperability handover](docs/agents/PROFILE_SYNC_HANDOVER.md), as requested in desktop-main:R92/R75/R02/R49. Cover first setup on desktop or Flutter, new/existing devices, configurable sync and scoped authorization. Preserve the pending credential-protection choice and verify complete database transfer independently. The handover is the full contract. The initial shared metadata codec/account mappings and native/Dart/WASM fixtures are documented in [the format subset](docs/agents/PROFILE_FORMAT.md); they do not implement enrollment or causal sync. Scoped desktop/Flutter consent and native causal history are now implemented prerequisites. The optional Drive transport now verifies identity and immutable files. Next connect it to platform grants, durable discovery/enrollment and actual account/preferences application, preserving the original operation bytes and all remaining settings/credential requirements.
+1. **Highest priority:** implement Google OAuth and shared account/settings profiles using [the interoperability handover](docs/agents/PROFILE_SYNC_HANDOVER.md), as requested in desktop-main:R92/R75/R02/R49. Cover first setup on desktop or Flutter, new/existing devices, configurable sync and scoped authorization. Preserve the pending credential-protection choice and verify complete database transfer independently. The handover is the full contract. The initial shared metadata codec/account mappings and native/Dart/WASM fixtures are documented in [the format subset](docs/agents/PROFILE_FORMAT.md); they do not implement enrollment or causal sync. Scoped desktop/Flutter consent and native causal history are now implemented prerequisites. The optional Drive transport now verifies identity and immutable files. The durable catalog now resumes scans and replays arrivals. Next connect saved platform grants, creation/enrollment and actual account/preferences application, preserving the original operation bytes and all remaining settings/credential requirements.
 2. Finish remaining browser Undo lifecycle and abandoned review/staging cleanup. Saved-group startup notices now have compact light/dark controls, older-group targeting, inspection retry, acknowledged-cache recovery and live-owner/tab-loss evidence. All 137 Chromium scenarios, 127 units and 56 production HTTPS stages pass; shipping is verified in [`df4f29c`](https://github.com/sam-ruff/shep.so/commit/df4f29c2e12d21fc71353920696dd4958cde363a). Preserve `artifacts/browser-recovery-visuals/` and the failed stale-observation unit baseline.
 3. Connect Flutter’s native SQLite capture and Dart controller to exact durable group execution, then Select/Done/Clear/all, review, Undo, History and recovery controls. Current loaded-row actions are **not** full-mailbox parity.
 4. Continue account/calendar/backup, composition, cache/large-message, remote-image, keymap, lifecycle and platform gaps in TODO. Port later committed desktop work deliberately, preserving both request histories and `desktop-main:` identifier collisions.

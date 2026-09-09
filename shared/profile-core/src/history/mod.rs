@@ -158,6 +158,18 @@ pub struct State {
     pub conflicts: u64,
     pub removed: bool,
 }
+
+/// Small projection for profile discovery and enrollment reviews. Counts describe
+/// account definitions and setting intents (including explicit resets), not
+/// credential availability or successful local application.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Overview {
+    pub state: State,
+    pub name: Option<String>,
+    pub name_conflict: bool,
+    pub accounts: u64,
+    pub settings: u64,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Field {
     pub target: String,
@@ -286,6 +298,31 @@ impl Journal {
             })?
             .collect::<std::result::Result<_,_>>()?)
     }
+    pub fn overview(&self) -> Result<Overview> {
+        let state = self.state()?;
+        let names = self.versions("profile:name", None)?;
+        let name = if names.len() == 1 {
+            match self.value("profile:name", names[0].operation)?.action {
+                Action::ProfileName { name } => Some(name),
+                _ => return Err(Error::Storage),
+            }
+        } else {
+            None
+        };
+        // Indexed visible-field ranges, independent of the operation history's
+        // length. No full profile values or account arrays leave SQLite here.
+        let accounts = self.db.query_row(
+            "SELECT count(*) FROM targets WHERE visible=1 AND target>='account:' AND target<'account;' AND target GLOB '*:connection'", [], |r| count(r, 0))?;
+        let settings = self.db.query_row(
+            "SELECT count(*) FROM targets WHERE visible=1 AND target>='setting:' AND target<'setting;'", [], |r| count(r, 0))?;
+        Ok(Overview {
+            state,
+            name,
+            name_conflict: names.len() > 1,
+            accounts,
+            settings,
+        })
+    }
     pub fn versions(&self, target: &str, after: Option<Uuid>) -> Result<Vec<Version>> {
         self.db.prepare("SELECT v.operation,o.device FROM versions v JOIN operations o ON o.id=v.operation JOIN targets t ON t.target=v.target WHERE t.visible=1 AND v.target=?1 AND v.operation>?2 ORDER BY v.operation LIMIT 50")?
             .query_map(params![target,after.map(|u|u.to_string()).unwrap_or_default()], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?
@@ -354,7 +391,7 @@ impl Journal {
 fn parse_uuid(value: &str) -> Result<Uuid> {
     Uuid::parse_str(value).map_err(|_| Error::Storage)
 }
-fn count(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
+pub(crate) fn count(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
     u64::try_from(row.get::<_, i64>(index)?).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
             index,
