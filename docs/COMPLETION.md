@@ -1946,3 +1946,5 @@ Final shipping logs are `profile-drive-commit.log`,
 evidence follows these code checkpoints. The full product goal remains active;
 durable catalog/enrollment, real client application, live access and the previous
 native performance failure are not completed by this push.
+
+Final review also shares the HTTP client policy between production and loopback tests, so redirect rejection is verified through the same builder instead of a duplicated fixture policy. Production keeps its fixed HTTPS endpoint; the fixture changes only local connection settings and its deadline. The final mandatory-hook result and push cover this refinement with the existing redirect cases.

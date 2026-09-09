@@ -135,9 +135,8 @@ impl Server {
     }
     pub async fn connect(&self, expected: Option<&str>) -> Result<Drive> {
         Drive::verify(
-            Client::builder()
+            Drive::client_builder()
                 .no_proxy()
-                .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(5))
                 .build()
                 .unwrap(),
