@@ -56,11 +56,13 @@ operation and grant generations preserve pause/retry/cleanup through late result
 50-row paging keeps observations bounded. Configuration, ownership and verification
 limits are in [the mobile contract](docs/agents/PROFILE_MOBILE.md).
 
-The final host/native/browser checks, retained failures, APK and shipping commit
-belong in the latest completion entry. UI providers are isolated fixtures; no live
-Google or Apple result is implied. The existing catalog code `3c9b98d` and earlier
-codec/history/Drive/consent checkpoints are pushed; the Flutter client continuation
-is being verified and shipped. Do not confuse discovery with enrollment or sync.
+Flutter discovery code [`438682e`](https://github.com/sam-ruff/shep.so/commit/438682e277c93832a95168034b9940afe8de0cc0) is pushed with exact remote verification.
+Mandatory hooks pass 443 root/shared tests; 71 mobile Rust, 104 Flutter host,
+five named Android scenarios, four Appium and four Flutter Playwright flows,
+41 Python checks, 35 parity contracts and strict docs pass. The unsigned ARM64
+APK builds and passes scoped fixture-isolation inspection. Detailed evidence,
+retained failures and limitations are in the latest completion entry. UI providers
+are isolated fixtures; no live Google, Apple or enrollment/sync success is implied.
 
 The last unchanged 100,000-message storage benchmark passes, but the earlier native
 navigation and combined performance gate still fail at 154.81–162.33 ms against
