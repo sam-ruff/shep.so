@@ -38,6 +38,35 @@ uncommitted removal-review work, 782 hook executions passing on the lane) and
 duplicate-address labels, 916 hook executions passing on the lane). This is a
 local checkpoint; the push receipt follows in the next entry.
 
+## Shared account-removal review — worktree verification
+
+Remote account tombstones now offer Keep on this device or Review removal.
+Keep preserves the original account, mail and credential identity and persists
+local suppression; changed local endpoints then remain local. The other action
+opens the existing local-data confirmation. Cancel preserves everything; an
+explicit confirmed removal survives restart and does not import the account
+again. Successful removal clears stale shared-account review controls.
+
+Keep validates exact remote history and current binding, consent, Google,
+account and native edit generations. It never revives the remote tombstone or
+issues a new remote connection. Existing endpoint-choice checks also continue to
+reject a review invalidated by a remote removal. The ordinary local-data dialog
+retains its existing draft/mail-change/credential-cleanup contracts.
+
+The initial eight targeted tests, all 98 matching profile tests, 84 Python tests
+and three saved native Keep/Cancel/Remove/restart flows pass. Visual review then
+caught the already-removed account card remaining visible; the final source
+clears it and adds a controller/native assertion. All 35 final native profile
+scenarios pass in 171.199 seconds, including the corrected stale-card assertion;
+root reviewed the final Keep and Remove WebPs in `be426d49a6b1` and
+`52457d6367e4`. Normal hooks and main integration remain pending. Final native
+SHA-256:
+`5530a6ebc51207a0be89efc6c48c83f440dd2760b9514ff6c5a6bff808ead354`.
+Logs use `artifacts/logs/profile-account-removals-*` in the isolated worktree.
+No live Google access, real account removal, password transfer or main shipping
+is claimed. Global account removal and post-enrollment linking controls remain
+separate work.
+
 ## Shared account reviews, backup formats and bounded folder deletion — integrated verification
 
 The current integration combines `18413e7` (safe shared connection choices),

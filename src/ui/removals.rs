@@ -117,6 +117,7 @@ impl App {
                     .as_ref()
                     .is_some_and(|t| t.kind == ConnectionKind::Account)
                 {
+                    self.profile_sync.connection_removed();
                     if let Some(target) = &self.removal.target {
                         self.composer
                             .parked

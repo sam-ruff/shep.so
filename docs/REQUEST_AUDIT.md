@@ -219,3 +219,11 @@ and completion timeout. Three HTTP/isolation/cleanup tests, all 84 Python tests
 and eight integrated native scenarios pass; mandatory hooks/publication remain.
 
 Integrated foundation/account-review/backup-format/folder-deletion verification covers all 273 native correctness scenarios across the interrupted 269-pass run and four unchanged passing tray reruns, 850 Rust tests, 84 Python tests and full Windows GNU checking. Exact source, artifacts and shipping status are recorded at the top of [Completion](COMPLETION.md); 915 normal hook executions pass and the checkpoint is pushed as `1c0fc45`.
+
+R02/R49 shared account-removal review is in `codex/profile-account-removals`:
+Keep suppression preserves local account/mail identity; reviewed local removal
+uses the normal confirmation and clears stale controls. Eight initial targeted
+Rust tests, all 98 profile tests and three native flows pass; the final source
+adds a stale-card controller regression and passes all 35 native profile
+scenarios in 171.199 seconds with reviewed final screenshots. Main integration,
+normal hooks and shipping remain pending.
