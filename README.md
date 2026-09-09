@@ -36,7 +36,7 @@ Uses built-in PowerShell and Windows `tar.exe`. Installs under your user profile
 - **Everyday essentials.** Replies, forwarding, printing, attachments, autosaved drafts and recovery for interrupted sends.
 - **Calendars alongside.** Google Calendar and CalDAV, with a month view and agenda.
 - **Make it yours.** Light, Dark or System appearance, editable color palettes, resizable panes, configurable shortcuts and new-mail popup/sound controls.
-- **Encrypted backups.** Save to multiple local folders, Google Drive, S3-compatible storage or SFTP. Google is optional.
+- **Encrypted backups.** Save to multiple local folders, Google Drive, S3-compatible storage, SFTP or FTP/FTPS. Google is optional.
 
 ![Shep's calendar in dark mode, showing the month and upcoming events](docs/images/calendar-dark.webp)
 

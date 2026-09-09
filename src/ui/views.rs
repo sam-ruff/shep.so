@@ -1695,7 +1695,8 @@ impl App {
                         BackupDestination::Local,
                         BackupDestination::GoogleDrive,
                         BackupDestination::S3,
-                        BackupDestination::Sftp
+                        BackupDestination::Sftp,
+                        BackupDestination::Ftp
                     ],
                     Some(self.preferences.backup_destination),
                     Message::BackupDestination
@@ -1771,6 +1772,8 @@ impl App {
                 .spacing(12)
                 .align_y(Alignment::End),
             );
+        } else if self.preferences.backup_destination == BackupDestination::Ftp {
+            form = form.push(self.ftp_backup_settings());
         } else if self.preferences.backup_destination == BackupDestination::Sftp {
             form = form.push(self.sftp_backup_settings());
         } else if self.preferences.backup_destination == BackupDestination::S3 {
@@ -1871,6 +1874,87 @@ impl App {
         .spacing(if self.settings_group.is_some() { 0 } else { 22 })
         .into()
     }
+    fn ftp_backup_settings(&self) -> Element<'_, Message> {
+        use crate::backup::ftp::Security;
+        let testing = self
+            .ftp_connection
+            .as_ref()
+            .is_some_and(|(_, target, result)| {
+                *target == self.configured_backup_target() && result.is_none()
+            });
+        let mut form = column![
+            row![
+                form_field(
+                    "FTP server",
+                    "backup.example.test",
+                    self.field("ftp_host"),
+                    "ftp_host",
+                    false
+                ),
+                container(form_field(
+                    "Port",
+                    "21",
+                    self.field("ftp_port"),
+                    "ftp_port",
+                    false
+                ))
+                .width(100)
+            ]
+            .spacing(18),
+            column![
+                text("Connection security").size(12),
+                pick_list(
+                    [
+                        Security::ExplicitTls,
+                        Security::ImplicitTls,
+                        Security::Plain
+                    ],
+                    Some(self.preferences.backup_ftp.security),
+                    Message::FtpSecurity
+                )
+                .width(Length::Fill)
+                .padding(11)
+                .text_size(12)
+                .style(select_input)
+                .menu_style(select_menu)
+            ]
+            .spacing(7),
+            row![
+                form_field(
+                    "Username",
+                    "backup-user",
+                    self.field("ftp_username"),
+                    "ftp_username",
+                    false
+                ),
+                form_field(
+                    "Remote folder",
+                    "/backups/shep",
+                    self.field("ftp_directory"),
+                    "ftp_directory",
+                    false
+                )
+            ]
+            .spacing(18),
+        ]
+        .spacing(18);
+        if self.preferences.backup_ftp.security == Security::Plain {
+            form=form.push(text("Plain FTP sends your login and transferred data without connection encryption. Choose FTPS when your server supports it.").size(12));
+        }
+        form=form.push(form_field("Password", "Leave blank to reuse the saved password", self.field("ftp_password_secret"), "ftp_password_secret", true))
+            .push(button(text(if testing {"Testing connection…"} else {"Test and save connection"}).size(12)).padding([11,17]).style(outline).on_press_maybe((!self.backup_busy() && self.pending_backup.is_none()).then_some(Message::TestFtpConnection)))
+            .push(muted("The test checks read access. Your first backup checks upload permissions. Passwords are saved in your OS keychain only after a successful test.").size(11));
+        if let Some((_, target, Some(result))) = &self.ftp_connection
+            && *target == self.configured_backup_target()
+        {
+            form = form.push(match result {
+                Ok(()) => text("Connected · password saved").size(12),
+                Err(error) => text(error).size(12),
+            });
+        }
+        form.into()
+    }
+
     fn sftp_backup_settings(&self) -> Element<'_, Message> {
         let probing = self
             .sftp_host_key

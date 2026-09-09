@@ -78,7 +78,7 @@ const SETTINGS: &[Setting] = &[
     Setting {
         title: "Backups",
         tab: SettingsTab::Backups,
-        keywords: "backup drive s3 sftp ssh host fingerprint username bucket endpoint region access key destination folder rolling copies retention schedule passphrase password encryption",
+        keywords: "backup drive s3 sftp ssh host fingerprint username ftp ftps tls bucket endpoint region access key destination folder rolling copies retention schedule passphrase password encryption",
     },
     Setting {
         title: "Restore a copy",

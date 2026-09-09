@@ -800,3 +800,13 @@ values; password authentication stays disabled. `cargo test --all-features sftp_
 uses real loopback SSH/SFTP peers for authentication, staged upload/journal
 recovery, retention, restore and keychain ownership. Never substitute preview
 status for actual provider success or introduce real credentials in either layer.
+
+The saved `test_ftp_backup_security_setup_retry_and_restart` scenario verifies
+secure defaults, explicit/implicit FTPS and clearly labelled plain FTP, default
+versus custom ports, masked passwords, retry, persistence and compact dark
+layout through native controls. Preview connection attempts remain disabled.
+Actual protocol tests use bounded loopback FTP/FTPS peers and fixture CAs; an
+untrusted certificate must fail before sending credentials. Preserve interrupted
+archive/manifest append, reserved-directory/journal recovery, complete listing,
+owned retention and foreign-file refusal tests (`cargo test --all-features
+backup::ftp::tests`) alongside the native scenario.

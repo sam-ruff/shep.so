@@ -1,5 +1,42 @@
 # Completion audit
 
+## FTP/FTPS and shared credential guards — integration in progress
+
+FTP/FTPS checkpoint `17de158` uses verified TLS by default, clearly selectable
+plain FTP, per-destination keychain setup and owned resumable uploads/retention.
+All 28 FTP/SFTP lane regressions and six lane native flows pass; normal hooks
+passed 802 executions with three personal diagnostics ignored. Main protocol
+checks pass. Root preserves the current symbolic launcher release asset alongside
+the new libcurl licenses. Optional archive formats, Back up all, richer history,
+actual platforms and live providers remain open.
+
+Integrated verification passes: all **13 native scenarios** in 60.678 seconds,
+all **81 Python tests** with actual PowerShell, full Windows GNU all-target and
+all-feature checking, and strict Zensical. Root reviewed FTP’s plain-connection
+warning and compact credentials WebPs in `artifacts/e2e/3baf8f15714b`.
+Final native SHA-256:
+`ccb2b2672ded47898d260cd93104546f09df834fbfe48816024f6065c9201d29`.
+Logs use `artifacts/logs/ftp-credentials-main-*`. Normal hooks and publication
+are the remaining checkpoint steps.
+
+## Shared account reconnection credential guard
+
+Connection tests and saves refuse old keychain credentials while an imported or
+shared account requires reconnection. Fresh explicit credentials remain usable;
+SMTP with authentication disabled needs no separate password. Saving resolves all
+required secrets before writing any, and only a successful account commit clears
+the reconnect marker. Tests alone never clear it. Connection tests now use the
+existing account coordinator, so an endpoint review can share that ordering.
+
+Four targeted tests pass through actual engine commands and an owned fake
+credential worker, covering incoming/shared/separate SMTP, failed writes and
+SQLite restart, preserved cached mail, explicit probes, and ordinary saved-secret
+reuse. No network or OS credential access is used in these fixtures. All **773 lane hook executions** pass (three personal diagnostics ignored).
+Root integration/shipping remain pending; endpoint/removal review UI
+is still open. Logs: `artifacts/logs/profile-account-credential-guards.log`.
+
+
+
 ## 9 September: combined folders during pending changes
 
 R30 Ctrl-click now uses the same retained cache path as a plain click while a
@@ -57,8 +94,9 @@ all **81 Python tests** (including actual PowerShell), full Windows GNU checking
 and strict Zensical. Root reviewed dark filtered rollback (`2203398171a1`) and
 committed combined-folder selection (`cf775ebcb960`). Final native SHA-256:
 `e0462c9fbec8bec58798cf2122a3fa1c6a5c222df3a3bc931c5673b0fc2295a0`.
-Root logs use `artifacts/logs/folder-counts-main-*`. Normal hooks and publication
-are the remaining checkpoint steps; the broader TODO items remain open.
+Root logs use `artifacts/logs/folder-counts-main-*`. Source **`97c9a9a`** is
+pushed to main with exact remote equality verified; **818 normal hook executions**
+pass (three personal diagnostics ignored). The broader TODO items remain open.
 
 ## SFTP and connection-intent integration — shipped checkpoint
 
@@ -3022,3 +3060,7 @@ live personal-provider or Windows/macOS execution. Performance measurements
 remain deferred, and quality/release workflows remain disabled.
 Documentation CI run **34091152799** completed build and deploy successfully for
 source/testing head **f1a6a63e18992e13f9655a61f47226b8da8944c3**.
+
+SFTP checkpoint `ff03b02` has green documentation CI **34359867454**.
+
+Folder checkpoint `97c9a9a` has green documentation CI **34360832298**.

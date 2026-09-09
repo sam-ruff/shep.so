@@ -190,6 +190,8 @@ pub enum Message {
     Appearance(Appearance),
     TestS3Connection,
     TestSftpConnection,
+    TestFtpConnection,
+    FtpSecurity(crate::backup::ftp::Security),
     ProbeSftpFingerprint,
     VerifySftpFingerprint(bool),
     AcceptSftpFingerprint,
@@ -421,6 +423,7 @@ pub struct App {
     backups_generation: u64,
     s3_connection: Option<backups::ConnectionCheck>,
     sftp_connection: Option<backups::ConnectionCheck>,
+    ftp_connection: Option<backups::ConnectionCheck>,
     sftp_host_key: Option<backups::HostKeyReview>,
     restore_id: String,
     restore_target: Option<BackupTarget>,
@@ -587,6 +590,7 @@ impl App {
                 backups_generation: 0,
                 s3_connection: None,
                 sftp_connection: None,
+                ftp_connection: None,
                 sftp_host_key: None,
                 restore_id: String::new(),
                 restore_target: None,
@@ -1639,6 +1643,19 @@ impl App {
                         }
                     }
                 }
+                Event::FtpConnection(request, target, result) => {
+                    if self
+                        .ftp_connection
+                        .as_ref()
+                        .is_some_and(|(id, previous, _)| *id == request && *previous == target)
+                        && target == self.configured_backup_target()
+                    {
+                        if result.is_ok() {
+                            self.fields.remove("ftp_password_secret");
+                        }
+                        self.ftp_connection = Some((request, target, Some(result)));
+                    }
+                }
                 Event::SftpConnection(request, target, result) => {
                     if self
                         .sftp_connection
@@ -2302,8 +2319,16 @@ impl App {
                         );
                     }
                 }
+                if key.starts_with("ftp_") {
+                    self.ftp_connection = None;
+                    if key != "ftp_password_secret" {
+                        self.fields.remove("ftp_password_secret");
+                    }
+                }
                 if key.starts_with("sftp_") {
                     self.sftp_connection = None;
+                    self.ftp_connection = None;
+                    self.fields.remove("ftp_password_secret");
                     if matches!(key, "sftp_host" | "sftp_port" | "sftp_fingerprint") {
                         self.sftp_host_key = None;
                     }
@@ -2517,6 +2542,32 @@ impl App {
                 self.preferences.appearance = appearance;
                 self.save_preferences();
             }
+            Message::TestFtpConnection => {
+                let secret = self.field("ftp_password_secret");
+                let supplied =
+                    (!secret.is_empty()).then(|| secrecy::SecretString::from(secret.to_owned()));
+                self.begin_backup_request(backups::BackupAction::ConnectFtp(supplied));
+            }
+            Message::FtpSecurity(security) => {
+                let previous = self.preferences.backup_ftp.security;
+                self.preferences.backup_ftp.security = security;
+                let port = self.field("ftp_port");
+                if (previous == crate::backup::ftp::Security::ImplicitTls && port == "990")
+                    || (previous != crate::backup::ftp::Security::ImplicitTls && port == "21")
+                {
+                    self.fields.insert(
+                        "ftp_port",
+                        if security == crate::backup::ftp::Security::ImplicitTls {
+                            "990".into()
+                        } else {
+                            "21".into()
+                        },
+                    );
+                }
+                self.fields.remove("ftp_password_secret");
+                self.ftp_connection = None;
+                self.preference_sync.changed();
+            }
             Message::TestSftpConnection => {
                 let secret = self.field("sftp_password_secret");
                 let supplied =
@@ -2560,6 +2611,8 @@ impl App {
                             self.fields.remove("s3_key_secret");
                             self.s3_connection = None;
                             self.sftp_connection = None;
+                            self.ftp_connection = None;
+                            self.fields.remove("ftp_password_secret");
                             self.sftp_host_key = None;
                             self.fields.remove("sftp_password_secret");
                             self.save_preferences();
@@ -2577,6 +2630,8 @@ impl App {
                 self.fields.remove("s3_key_secret");
                 self.s3_connection = None;
                 self.sftp_connection = None;
+                self.ftp_connection = None;
+                self.fields.remove("ftp_password_secret");
                 self.sftp_host_key = None;
                 self.fields.remove("sftp_password_secret");
                 self.preferences.backup_destination = destination;
@@ -3261,6 +3316,13 @@ impl App {
                     .unwrap_or_else(|| "Main backup".into()),
             ),
             ("backup_folder", self.preferences.backup_folder.clone()),
+            ("ftp_host", self.preferences.backup_ftp.host.clone()),
+            ("ftp_port", self.preferences.backup_ftp.port.to_string()),
+            ("ftp_username", self.preferences.backup_ftp.username.clone()),
+            (
+                "ftp_directory",
+                self.preferences.backup_ftp.directory.clone(),
+            ),
             ("sftp_host", self.preferences.backup_sftp.host.clone()),
             ("sftp_port", self.preferences.backup_sftp.port.to_string()),
             (
@@ -3304,6 +3366,7 @@ impl App {
             next.backup_folder = self.field("backup_folder").into();
             next.backup_s3 = self.s3_form_settings();
             next.backup_sftp = self.sftp_form_settings();
+            next.backup_ftp = self.ftp_form_settings();
             next.backup_copies = self.field("copies").parse()?;
             next.backup_hours = self.field("hours").parse()?;
             next.mail_check_seconds = self.field("mail_check_seconds").parse()?;
@@ -3941,6 +4004,8 @@ impl App {
         data["backup_destination"] =
             serde_json::json!(format!("{:?}", self.preferences.backup_destination));
         data["saved_backup_sftp"] = serde_json::json!(self.workspace.preferences.backup_sftp);
+        data["saved_backup_ftp"] = serde_json::json!(self.preferences.backup_ftp);
+        data["ftp_connection"] = serde_json::json!(self.ftp_connection.as_ref().map(|(_,target,result)|serde_json::json!({"current":*target==self.configured_backup_target(),"pending":result.is_none(),"connected":result.as_ref().is_some_and(|r|r.is_ok()),"error":result.as_ref().and_then(|r|r.as_ref().err())})));
         data["sftp_connection"] = serde_json::json!(self.sftp_connection.as_ref().map(|(_, target, result)| serde_json::json!({"current": *target == self.configured_backup_target(), "pending": result.is_none(), "connected": result.as_ref().is_some_and(|r| r.is_ok()), "error": result.as_ref().and_then(|r| r.as_ref().err()) })));
         data["sftp_host_key"] = serde_json::json!(self.sftp_host_key.as_ref().map(|review| serde_json::json!({"pending": review.result.is_none(), "verified":review.verified, "fingerprint": review.result.as_ref().and_then(|r| r.as_ref().ok()), "error": review.result.as_ref().and_then(|r| r.as_ref().err()) })));
         data["saved_backup_s3"] = serde_json::json!(self.workspace.preferences.backup_s3);

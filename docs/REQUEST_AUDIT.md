@@ -187,3 +187,8 @@ Palette editing (R25), S3 setup/recovery (R32) and matching native account impor
 (R02/R49) are integrated and pushed as `4e75005`: 798 root hook executions, all
 81 Python and 88 selected native scenarios pass. R25 is complete; the remaining
 provider, shared palette, endpoint/removal and credential work stays in TODO.
+
+R30/R50 folder selection and filtered-header fixes are pushed as `97c9a9a`,
+with 818 hook executions, 81 Python and 19 integrated native scenarios passing.
+FTP/FTPS `17de158` and shared account credential guards `442b45b` are being
+integrated; remaining backend/options and account review work stays in TODO.

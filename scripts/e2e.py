@@ -4252,6 +4252,50 @@ class NativeFlows(unittest.TestCase):
                            click(87, 159), check("tab", "Calendar"),
                            shot(f"responsive-during-sync-{appearance}"), check("busy", []))
 
+    def test_ftp_backup_security_setup_retry_and_restart(self):
+        result = self.mcp.call("desktop.start", persistent=True)
+        print(f"FTP backup evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(559, 156), check("settings_tab", "Backups"),
+                       click(1100, 339), wait(80), click(1080, 523),
+                       check("backup_destination", "Ftp"), check("saved_backup_ftp.security", "ExplicitTls"),
+                       shot("ftp-secure-default"), click(385, 711),
+                       check("notice", "FTP hostname", "contains"),
+                       click(440, 414), type_text("backup.example.test"),
+                       click(440, 574), type_text("fixture-user"),
+                       click(900, 574), type_text("/archive"),
+                       click(1100, 494), wait(80), shot("ftp-security-menu"), click(1080, 417),
+                       check("saved_backup_ftp.security", "ImplicitTls"), check("fields.ftp_port", "990"),
+                       click(1100, 414), key("ctrl+a"), type_text("2121"),
+                       click(1100, 494), wait(80), click(1080, 455),
+                       check("saved_backup_ftp.security", "Plain"), check("fields.ftp_port", "2121"),
+                       shot("ftp-plain-connection-warning"),
+                       click(1100, 494), wait(80), click(1080, 380),
+                       check("saved_backup_ftp.security", "ExplicitTls"), check("fields.ftp_port", "2121"),
+                       click(440, 654), type_text("fixture-ftp-password"), shot("ftp-masked-password"),
+                       click(385, 711), check("ftp_connection.error", "disabled in preview", "contains"),
+                       check("ftp_connection.pending", False), check("preferences_saved", True),
+                       check("saved_backup_ftp.username", "fixture-user"), check("saved_backup_ftp.directory", "/archive"),
+                       click(440, 414), key("ctrl+a"), type_text("retry.example.test"),
+                       check("ftp_connection", None), click(440, 654), type_text("fixture-ftp-password"),
+                       click(385, 711), check("ftp_connection.error", "disabled in preview", "contains"),
+                       check("preferences_saved", True), shot("ftp-connection-retry"))
+        self.assertNotIn("fixture-ftp-password", json.dumps(self.mcp.call("desktop.state")))
+        self.mcp.batch({"type": "restart"}, check("ready", True),
+                       check("saved_backup_ftp.host", "retry.example.test"), check("saved_backup_ftp.security", "ExplicitTls"),
+                       check("saved_backup_ftp.port", 2121), key("ctrl+comma"), check("tab", "Preferences"),
+                       click(559, 156), check("settings_tab", "Backups"), check("ftp_connection", None),
+                       check("fields.ftp_username", "fixture-user"), shot("ftp-settings-reopened"),
+                       click(290, 156), check("settings_tab", "General"), click(690, 366), check("dark", True),
+                       click(559, 156), check("settings_tab", "Backups"),
+                       {"type": "resize", "width": 900, "height": 640}, wait(150), shot("ftp-compact-dark"),
+                       {"type": "hover", "x": 780, "y": 510}, {"type": "scroll", "amount": 3},
+                       wait(100), shot("ftp-compact-dark-credentials"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        with sqlite3.connect(f"file:{Path(result['artifacts']) / 'fixture.sqlite'}?mode=ro", uri=True) as saved:
+            values = " ".join(str(row) for row in saved.execute("SELECT value FROM kv"))
+            self.assertNotIn("fixture-ftp-password", values)
+
     def test_sftp_backup_host_identity_setup_and_restart(self):
         result = self.mcp.call("desktop.start", persistent=True)
         print(f"SFTP backup evidence: {result['artifacts']}", flush=True)

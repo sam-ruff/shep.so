@@ -39,6 +39,8 @@ lettre = { version = "0.11", default-features = false, features = ["builder", "s
 rusty-s3 = { version = "0.10.2", default-features = false, features = ["rustcrypto", "xml"] }
 russh = { version = "0.63.2", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "3.0.0"
+curl = { version = "0.4.50", features = ["protocol-ftp", "static-curl"] }
+curl-sys = "0.4.89"
 tokio-util = { version = "0.7", features = ["codec", "io"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
@@ -86,6 +88,7 @@ winreg = "0.55"
 same-file = "1"
 
 [dev-dependencies]
+rcgen = "0.14.10"
 rand_sftp = { package = "rand", version = "0.10" }
 ab_glyph = "=0.2.32"
 shep-profile-core = { git = "https://github.com/sam-ruff/shep.so", rev = "43cdcf0f70f7dbff2f80b7828eb7e570d025b09a", features = ["test-support"] }
