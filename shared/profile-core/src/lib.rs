@@ -1,8 +1,10 @@
-//! Portable profile metadata with an optional native causal-history worker.
-//! No network, credential or mail-action API.
+//! Portable profile metadata, optional native causal history and Drive transport.
+//! Platform OAuth grants and account/settings application belong to each client.
 //! Decoding is only structural validation: enrollment must separately verify the
 //! Google identity/namespace, causal ancestry, immutable IDs and local revisions.
 pub mod account;
+#[cfg(all(feature = "drive", not(target_arch = "wasm32")))]
+pub mod drive;
 #[cfg(all(feature = "history", not(target_arch = "wasm32")))]
 pub mod history;
 mod json;

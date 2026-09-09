@@ -7,11 +7,13 @@ type Request = Box<dyn FnOnce(&mut Journal) + Send>;
 /// cancelled observation never cancels an accepted write or releases its lock.
 #[derive(Clone)]
 pub struct Worker {
+    binding: Binding,
     commands: mpsc::Sender<Request>,
     finished: watch::Receiver<bool>,
 }
 impl Worker {
     pub async fn open(path: PathBuf, binding: Binding) -> Result<Self> {
+        let worker_binding = binding.clone();
         let (commands, mut input) = mpsc::channel::<Request>(32);
         let (started, ready) = oneshot::channel();
         let (finished, done) = watch::channel(false);
@@ -50,9 +52,14 @@ impl Worker {
             .map_err(|_| Error::Stopped)?;
         ready.await.map_err(|_| Error::Stopped)??;
         Ok(Self {
+            binding: worker_binding,
             commands,
             finished: done,
         })
+    }
+    /// Immutable device-local binding; provider calls must independently verify it.
+    pub fn binding(&self) -> &Binding {
+        &self.binding
     }
     pub async fn request(&self, command: Command) -> Result<Reply> {
         self.submit(command)?.await.map_err(|_| Error::Stopped)?
@@ -91,6 +98,7 @@ impl Worker {
         let Self {
             commands,
             mut finished,
+            ..
         } = self;
         drop(commands);
         while !*finished.borrow() {
