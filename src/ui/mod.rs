@@ -38,6 +38,7 @@ mod removals;
 mod selectable;
 mod settings_search;
 mod sidebar;
+mod tray;
 mod views;
 
 use crate::{
@@ -256,6 +257,10 @@ pub enum Message {
     PrefUnified(bool),
     PrefTooltips(bool),
     PrefUnreadBadge(bool),
+    PrefCloseToTray(bool),
+    Tray(crate::desktop_tray::Event),
+    MainWindowOpened(iced::window::Id),
+    WindowCloseRequested(iced::window::Id),
     DesktopBadge(crate::desktop_badge::Event),
     Notification(notifications::Message),
     PrefShortcutTooltips(bool),
@@ -290,6 +295,7 @@ pub struct App {
     layout_generation: u64,
     pending_preference_save: Option<(u64, crate::preference_edits::Write)>,
     pending_close: Option<iced::window::Id>,
+    tray: tray::State,
     database_transfer: database_transfers::State,
     database_import: database_import::State,
     profiles: profiles::State,
@@ -401,28 +407,21 @@ pub struct App {
 }
 
 pub fn run() -> iced::Result {
-    iced::application(App::new, App::update, App::view)
+    iced::daemon(App::boot, App::update, App::window_view)
         .title("Shep — Mail & Calendar")
-        .theme(App::theme)
-        .scale_factor(|app: &App| app.preferences.interface_scale as f32 / 100.)
+        .theme(|app: &App, _| app.theme())
+        .scale_factor(|app: &App, _| app.preferences.interface_scale as f32 / 100.)
         .subscription(App::subscription)
-        .window(iced::window::Settings {
-            size: Size::new(1440., 920.),
-            exit_on_close_request: false,
-            min_size: Some(Size::new(900., 640.)),
-            #[cfg(target_os = "linux")]
-            platform_specific: iced::window::settings::PlatformSpecific {
-                application_id: "so.shep.Shep".into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
         .default_font(iced::Font::with_name("Noto Sans"))
         .font(include_bytes!("../../assets/NotoSans-Regular.ttf").as_slice())
         .font(include_bytes!("../../assets/NotoSans-SemiBold.ttf").as_slice())
         .run()
 }
 impl App {
+    fn window_view(&self, _window: iced::window::Id) -> Element<'_, Message> {
+        self.view()
+    }
+
     fn new() -> (Self, Task<Message>) {
         let args: Vec<_> = std::env::args().collect();
         let demo = cfg!(feature = "test-support") && args.iter().any(|a| a == "--demo");
@@ -446,6 +445,7 @@ impl App {
                 layout_generation: 0,
                 pending_preference_save: None,
                 pending_close: None,
+                tray: Default::default(),
                 database_transfer: Default::default(),
                 database_import: Default::default(),
                 profiles: Default::default(),
@@ -603,6 +603,7 @@ impl App {
         Subscription::batch([
             Subscription::run_with(self.demo, engine::subscription).map(Message::Backend),
             Subscription::run(crate::desktop_badge::subscription).map(Message::DesktopBadge),
+            Subscription::run_with(self.demo, crate::desktop_tray::subscription).map(Message::Tray),
             Subscription::run_with(self.demo, crate::notifications::subscription)
                 .map(|event| Message::Notification(notifications::Message::Backend(event))),
             Subscription::run(crate::html_render::subscription)
@@ -618,7 +619,7 @@ impl App {
             iced::system::theme_changes().map(Message::SystemTheme),
             iced::event::listen_with(|e, _status, id| match e {
                 iced::Event::Window(iced::window::Event::CloseRequested) => {
-                    Some(Message::WindowClose(id))
+                    Some(Message::WindowCloseRequested(id))
                 }
                 iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
                     Some(Message::Modifiers(modifiers))
@@ -877,11 +878,15 @@ impl App {
         let task = self.handle(message);
         self.pump_bulk();
         let close = self.continue_pending_close();
+        let reopen = self.reopen_after_failed_close();
+        let tray_close = self.continue_tray_close();
         self.update_desktop_badge();
         self.update_notification_settings();
         let task = Task::batch([
             task,
             close,
+            reopen,
+            tray_close,
             self.prepare_reader_selection(),
             self.prepare_html(),
             self.prepare_find(),
@@ -942,6 +947,13 @@ impl App {
             Message::Notification(message) => self.handle_notification(message),
             Message::DesktopBadge(crate::desktop_badge::Event::Ready(sender)) => {
                 self.desktop_badge = Some(sender);
+            }
+            Message::Tray(event) => return self.tray_event(event),
+            Message::MainWindowOpened(window) => return self.main_window_opened(window),
+            Message::WindowCloseRequested(window) => return self.request_main_close(window),
+            Message::PrefCloseToTray(value) => {
+                self.preferences.close_to_tray = value;
+                self.save_preferences();
             }
             Message::PrefUnreadBadge(value) => {
                 self.preferences.unread_badge = value;
@@ -1697,7 +1709,7 @@ impl App {
                         self.save_preferences();
                     } else if !self.defer_draft_exit(composing::Exit::Window(window)) {
                         self.pending_close = None;
-                        return iced::window::close(window);
+                        return self.finish_exit();
                     }
                 }
             }
@@ -3597,6 +3609,10 @@ impl App {
                 .collect::<Vec<_>>()
         );
         data["inbox_unread"] = serde_json::json!(self.page.inbox_unread);
+        data["tray"] = serde_json::json!({"available": self.tray.available,
+            "visible": self.tray.window.is_some(), "ready": self.tray.ready, "temporary": self.tray.temporary,
+            "exiting": self.tray.exiting, "enabled": self.preferences.close_to_tray,
+            "saved_enabled": self.workspace.preferences.close_to_tray});
         data["close_pending"] =
             serde_json::json!(self.pending_close.is_some() || self.composer.close.is_some());
         data["unread_badge"] = serde_json::json!(self.preferences.unread_badge);

@@ -1,5 +1,46 @@
 # Completion audit
 
+## Native tray and window lifecycle — integration checkpoint
+
+Preferences → System tray controls close-to-tray, off by default, with an
+accessible Quit Shep button. The native tray offers Open Shep and Quit Shep.
+Closing to tray keeps engine subscriptions and background arrivals alive; opening
+recreates the window with its current size, theme, reader and drafts. An iced
+daemon owns the process so a closed native window is separate from actual Quit.
+
+Actual Quit retains the durable-close barriers. With ordinary close-to-tray off,
+required saves temporarily hide the window and request a native saving notice;
+completion exits, while failed saves or Open cancel close and restore the window.
+Missing/lost tray support keeps or restores an accessible window. A native file
+chooser stays visible; once selection finishes its attachment write can hide and
+recover normally. Notification-service failure falls back to visible saving.
+Read-only synchronization is not a shutdown dependency; the idle bulk-stop
+handshake alone does not create a saving notification.
+
+Linux uses StatusNotifierItem/DBusMenu with independent capacity-one coalescing
+action and availability channels. Native callbacks retain the latest Open/Quit
+intent when the UI is busy; a deterministic full-signal test covers this.
+Windows/macOS create native icons/menus on iced's window event thread. The approved logo loads once
+on a background worker. Native fixtures own their D-Bus/GTK tray and notification
+services on Xvfb; they never access the user's session bus, mail, keychain or Drive.
+
+Nine targeted lifecycle/controller regressions and 58 Python tests pass.
+**All 26 selected native correctness scenarios pass**, including seven tray flows
+plus existing draft, bulk/folder receipts, profile, database transfer, held-sync
+and preferences flows. Reviewed WebPs cover compact dark preferences
+(`a605cc916d14`), native menu (`0b42e6ef0f7d`), missing host (`29c90843c818`),
+send failure (`fed756dada64`) and attachment-picker failure (`c92068817f79`).
+These retain clear controls, recoverable errors and draft contents. Native binary
+SHA-256: `4fb723a05a5573147627fb58297b92ec065ea93f3710b0fc4cc379802f2fc087`.
+Mandatory hook results and accepted commit/shipping are recorded during root integration. Full Windows GNU all-target/all-feature checking passes; the exact
+macOS tray adapter compiles for aarch64-apple-darwin using the reproducible
+`scripts/check_tray_adapters.py`. That macOS check does not compile/link the full
+app. Neither cross-check proves actual Windows/macOS execution. Actual desktop
+shell review, personal-server diagnosis, root integration/shipping and a production
+installation remain distinct unfinished work; no performance claim is made.
+
+
+
 ## 9 September: adjacent selection after deleting mail
 
 R89 now selects the following displayed message immediately after a move/delete,

@@ -127,7 +127,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R83 | Preferences export of the complete SQL database, including all emails, configuration and accounts, for moving to another PC | Delivered by export `3927053` and import/profile checkpoint `93d4289`, pushed to main. Complete validated import, pending-operation review/fencing, isolated profiles, rename and next-launch selection pass Rust/native tests; see COMPLETION. Passwords require reconnection; separately protected credential sharing remains R49. |
 | R84 | Search should search other folders, not just Inbox | Delivered in a81d767, installed/pushed: account-scoped search across cached folders, result locations, matching selection/relevance scopes, and storage/native search/move/bulk/clear/account/compact-layout tests. All 167 native functional scenarios pass. |
 | R85 | Conserve credits: write handover.md, clean TODO and push current project changes | Completed by the handover push; verification and checkpoint identity in COMPLETION.md. Full product remains unfinished |
-| R86 | Native close-to-tray; follow-up: temporarily use tray while saving even when ordinary close-to-tray is disabled, notify and quit after saving | Initially tracked only during handover; follow-up behavior recorded in TODO with reopening/failure recovery. Not implemented yet |
+| R86 | Native close-to-tray; follow-up: temporarily use tray while saving even when ordinary close-to-tray is disabled, notify and quit after saving | Native tray, temporary saving notice, durable auto-quit and failure/Open recovery are implemented in the parallel lane; nine targeted Rust, 58 Python and all 26 selected native scenarios pass with reviewed WebPs. Full Windows GNU and exact macOS adapter checks pass; actual Windows/macOS execution, full macOS app checking and root integration/shipping remain open. See completion. |
 | R87 | Refresh icon should spin more slowly and clockwise; add to TODO and push | Delivered in `d29ce06`: 2.4-second clockwise turn; renderer and seven native scenarios pass; see completion log. |
 | R88 | Remove sender icons/avatars for shorter compact email-list rows, retain action buttons; unread highlight, dot and bold subject | Recorded in TODO with the supplied horizontal-row reference described; no UI implementation yet |
 | R89 | Deleting a message should select the next message down and keep the list from snapping to the top | Shipped in 5a85ac3 and 91ed9a9: adjacent optimistic selection, stable scroll, previous/empty fallback and bounded page refill; six controller tests and 59 integrated native scenarios pass. Selected-account Unicode Move correction included; see completion evidence |
@@ -153,3 +153,12 @@ cover both result identities and late BulkStopped. Nine selected native scenario
 pass, including three saved failure/close/retry flows with reviewed WebPs. The
 close filter passes 32 Rust tests; Python passes 57. Awaiting mandatory hooks and
 root integration/shipping; native tray and personal-server diagnosis remain open.
+
+R86 native-tray checkpoint: searchable persisted close preference, native Open/Quit,
+background daemon/window ownership, temporary-saving notice and durable auto-exit,
+reopening on failure/host loss, and native attachment-chooser safety are implemented.
+Nine targeted Rust and 58 Python tests pass; all 26 selected native scenarios pass,
+including final picker coverage and reviewed light/compact-dark/native menu WebPs. Full Windows GNU checking and exact macOS adapter checking
+pass, with actual OS execution and full macOS app checking explicitly outstanding.
+See the completion log; root integration/shipping and mandatory hook recording
+remain pending, so R86/R90 are retained in TODO.

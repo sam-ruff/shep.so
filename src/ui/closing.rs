@@ -3,17 +3,13 @@
 use super::*;
 
 impl App {
-    pub(super) fn continue_pending_close(&mut self) -> Task<Message> {
-        let Some(window) = self.pending_close else {
-            return Task::none();
-        };
-        if self.profile_sync.pending()
+    pub(super) fn has_required_close_work(&self) -> bool {
+        self.profile_sync.pending()
             || self.profiles.changing()
             || self.database_import.pending()
             || self.database_transfer.pending.is_some()
             || self.folder_staging()
             || self.bulk.staging.is_some()
-            || (self.tx.is_some() && !self.bulk.stopped)
             || self.mail_actions.pending() > 0
             || !self.move_recovery.pending.is_empty()
             || self.removal.removing.is_some()
@@ -32,7 +28,13 @@ impl App {
                     || key.starts_with("event:")
                     || key.starts_with("account:")
             })
-        {
+    }
+
+    pub(super) fn continue_pending_close(&mut self) -> Task<Message> {
+        let Some(window) = self.pending_close else {
+            return Task::none();
+        };
+        if self.has_required_close_work() || (self.tx.is_some() && !self.bulk.stopped) {
             return Task::none();
         }
         self.pending_close = None;

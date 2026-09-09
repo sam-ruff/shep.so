@@ -179,3 +179,16 @@ async fn drive<F, Fut>(
         }
     }
 }
+
+pub(crate) async fn saving_notification() -> anyhow::Result<()> {
+    native::deliver(Delivery {
+        through: 0,
+        count: 0,
+        popups: true,
+        sound: false,
+        title: "Shep is finishing your changes".into(),
+        body: "Shep will quit when your changes are saved. Open it from the tray to keep working."
+            .into(),
+    })
+    .await
+}

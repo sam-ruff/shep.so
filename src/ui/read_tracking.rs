@@ -74,12 +74,17 @@ impl App {
                 | Message::ReplyAll
                 | Message::ClosePreview
                 | Message::WindowClose(_)
+                | Message::WindowCloseRequested(_)
                 | Message::WindowUnfocused
                 | Message::Focus("search", 0)
         ) || matches!(message, Message::MailContext(id, _) if id != &candidate.id);
         if leaves {
             let accepted = self.finish_read();
-            if matches!(message, Message::WindowClose(_)) && !accepted {
+            if matches!(
+                message,
+                Message::WindowClose(_) | Message::WindowCloseRequested(_)
+            ) && !accepted
+            {
                 return false;
             }
         }

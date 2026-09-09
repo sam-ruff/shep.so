@@ -1246,3 +1246,21 @@ in a current complete scan; decode/hash/namespace checks run on its bounded owne
 Corrupt or oversized cache bytes are misses, repaired only by verified downloads.
 Never turn a missing/failed listing into success because old bytes are cached.
 Incremental change-token pulls and conflict/link/removal controls remain TODO.
+
+Native tray/window lifecycle uses an iced daemon: destroying the visible native
+window must leave engine subscriptions running, while final Quit uses
+`iced::exit()` only after required saves/receipts acknowledge. Close-to-tray is a
+local preference, off by default. With it off, pending writes can temporarily hide
+behind the tray with a saving notification; failure, Open or tray loss restores
+an accessible window and cancels close intent. Do not wait for optional read-only
+sync or notify for an idle bulk-stop handshake. Preserve per-operation error
+ownership and late-acknowledgment tests.
+
+Tray callback actions use a capacity-one watch retaining the latest Open/Quit; Linux watcher availability
+uses a separate coalescing watch value so saturated actions cannot discard host
+loss. Linux uses StatusNotifierItem/DBusMenu, Windows/macOS use their native event
+thread. Cross-compilation does not establish actual platform/menu-bar execution.
+`desktop.start(tray="available" | "missing")` owns its own D-Bus socket, GTK host
+and notification service; Python GI/GTK3 and python3-dbus are harness dependencies,
+not production requirements. Never use the user's desktop session bus for these
+tests. Keep normal non-tray close/restart native flows alongside tray regressions.
