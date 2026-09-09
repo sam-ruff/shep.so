@@ -1,5 +1,78 @@
 # Completion audit
 
+## 9 September: compact inbox rows and unread hierarchy
+
+R88 replaces the 104-pixel avatar rows with 60-pixel conversation rows. Wide lists
+show sender, subject, snippet and time in one horizontal line; narrower lists use
+two bounded lines. Unread messages have a subtle surface tint, a dot and bold
+subject. Selected and hovered surfaces remain distinct in both themes. Existing
+measured Ellipsis widgets keep long labels inside their actual space. Flag and
+checkbox controls retain 40×44-pixel targets, with a scrollbar gutter protecting
+the flag outline. Navigation, deletion reveal and virtualization share ROW_HEIGHT.
+
+All-target/all-feature checking and Clippy pass. The unread-surface regression
+passes. Eight selected native scenarios pass: light/dark/wide/900×640 layouts,
+flag/read/additive checkbox and row selection, double-click reading, all five
+adjacent-deletion scenarios, and filtering/sorting/paging. Twenty further saved
+selection/context/move/drag scenarios pass after migrating their intended row
+coordinates to `mail_row_y`, which accepts observed scroll and interface scale.
+No existing assertion or timeout was weakened. Earlier runs found seven stale
+coordinate failures; one rerun still had the old script loaded before the actual
+migration. The final corrected group passes all 20 in 54.803 seconds.
+
+Logs: `artifacts/logs/compact-mail-refined-native.log` and
+`artifacts/logs/compact-mail-migrated-controls.log`. Reviewed WebPs in
+`623901bc29bf` show clean ellipsis, the inset flag border, compact unread styling
+and wide horizontal rows; `2f8cd446e903` records actual row controls.
+Native binary SHA-256:
+`03417e33e3cade88ad6108144f74946ca9dfee051a20816cc3759c046f3be854`.
+These are selected Linux fixture checks, not full-suite, live-provider or latency
+claims. Primary-agent integration, broader merged mail/HTML coordinate migration
+and push remain pending. Keep R88 in TODO until that shipping step is complete.
+
+### Integrated compact inbox, icons and conversation refresh
+
+Main integrates the compact rows and transparent icons with the selected-account
+Move changes and current profile/backup controls. Keyboard reveal now uses the
+actual native viewport, rejects superseded scope/selection results, and keeps
+whole rows visible at 120% and 900×640. The controller and layout-operation tests
+cover delayed results, visible rows, clamping and previous-page selection.
+
+Refreshing a thread after moving an expanded older reply now retains its surviving
+selected Inbox anchor. Explicit conversation paging still opens the new page's
+first row; newer expanded focus and body revisions remain protected. Five
+controller tests and the saved slow-success/failure/newer-focus native matrix
+cover this correction (agent checkpoint `279a72a`). Mail control coordinates in
+34 existing scenarios and all three HTML timing scripts now share compact row
+geometry. Deliberately rapid keyboard sequences remain rapid.
+
+The complete **248 functional native scenarios** ran on SHA-256
+`e038afe69e484f0354b0d5086a118fd973ac12c4f48357391be9560b89f1d49c`:
+246 passed and two test setup failures remained. The cross-page deletion test had
+captured an earlier key's scroll offset before the last-row layout operation; it
+now awaits actual last-row visibility before keeping the unchanged post-delete
+scroll assertion. Its corrected native run passes. The other failure was the
+known unpainted GTK file picker. The isolated Xvfb harness now selects GTK's
+[Cairo renderer](https://docs.gtk.org/gtk4/running.html), keeping production
+rendering, path confinement, clipboard ownership proof and deadlines unchanged.
+All **19 affected picker, database, attachment, print and clipboard scenarios**
+pass in 94.308 seconds. This removes a GPU startup dependency in the fixture; it
+does not prove the cause of every earlier GTK startup failure. All 248 paths have
+passing coverage across the full run and these corrected reruns; this is not
+reported as a clean single full-suite run.
+
+All **81 Python tests**, including actual isolated PowerShell execution, pass.
+Full Windows GNU all-target/all-feature checking passes. Reviewed WebPs include
+compact scaled reveal (`3fb5b229091e`), deletion across a page boundary
+(`570985938292`), and the rendered native picker plus import/restart
+(`a6de9837219d`). Logs: `artifacts/logs/compact-icons-final-native.log`,
+`compact-final-boundary-reveal.log`, `compact-cairo-picker-native.log`,
+`compact-final-python.log`, `compact-icons-final-windows.log` and the targeted
+navigation/reveal logs. Normal hooks, strict documentation and main publication
+are the remaining checkpoint steps. Production installation and actual desktop
+shell/platform review remain R64/R08 work; no personal data was changed.
+Performance measurements remain deferred while parallel builds run.
+
 ## Portable preference reviews — verified integration
 
 A local history review can compare this device's preference with current shared
@@ -30,9 +103,9 @@ final control-identity guard: all pass in 90.568 seconds. All 81 integrated Pyth
 tests and Clippy pass. Light/shared-choice, compact-dark and stale-choice error
 WebPs were reviewed in `ae0d1e6a4ee3`, `8df28384ff98` and `d9bce3c1db21`.
 Native SHA-256: `d85786600d99d32e2e18633e48a294350ded4780bae938acea8756172c31850b`.
-The lane's normal hooks pass 762 executions (three personal diagnostics ignored).
-Root hooks and push are the remaining shipping step; installed production is
-unchanged. Integrated logs use `artifacts/logs/profile-reviews-main-*`.
+Both lane and root normal hooks pass 762 executions (three personal diagnostics
+ignored). Source is pushed as `22a3af5`, with exact remote equality verified.
+Installed production is unchanged. Integrated logs use `artifacts/logs/profile-reviews-main-*`.
 This does not complete account linking, endpoint/removal reviews, credential
 transfer or live Google verification.
 
@@ -78,6 +151,56 @@ and failed-archive recovery (`96a237e88cf1`) WebPs. Native SHA-256:
 `aa9145b440fa98d69b9d69fa93d95fe92882c7e19374961e8df38d6755ae9b22`.
 Logs: `artifacts/logs/badge-main-*`. Actual Windows/macOS rendering and shell
 execution remain R70 verification work; production installation is unchanged.
+
+## Transparent native Shepherd icons — R64 checkpoint
+
+The approved source PNGs remain unchanged. Built-in imagegen background extraction
+was applied, and the ragged dark result was rejected. The user-authorized Vectorizer
+service then traced the light extraction and approved dark reference into clean
+editable vectors; its keys stayed only in the original tooling configuration and
+request memory. Light interior opacity was corrected after the regression test
+caught the trace's slight translucency. Prompts, provenance and export instructions
+are in `assets/README.md`. The shipped light/dark WebP now has true exterior alpha,
+fully opaque flat-color interiors, and the approved Shepherd contour/details.
+The compatibility launcher PNG is transparent too.
+
+Linux installs the traced symbolic SVG alongside the full-color PNG, retaining
+`so.shep.Shep.desktop` and StartupWMClass. Its symbolic foreground follows native
+GTK/system styling without an app-owned theme watcher or filesystem writes during
+theme changes. The StatusNotifier adapter supplies the same symbolic name with a
+transparent full-color pixmap fallback. macOS requests native template treatment
+for its symbolic WebP mask; Windows retains a transparent full-color tray icon.
+The development-only export script uses CairoSVG/Pillow and makes no network call.
+
+All three targeted tray Rust tests pass, including real alpha/opaque-interior/clean
+margin checks. All 81 Python tests pass, including actual isolated installer
+update/uninstall and raw Linux/macOS/Windows package paths. Full Windows GNU
+all-target/all-feature checking and exact macOS native tray adapter checking pass.
+Nine saved native MCP scenarios pass on binary SHA-256
+`6ec92da765e6f99f13b9fd3c1794b8151784148df8c79bded5433ea0b3d16a68`:
+hidden-app icon light/dark, tray lifecycle/host loss/background mail, appearance,
+and all four unread badge scenarios. The new flow observes real X11 WM_CLASS and
+actual SNI IconName, then clicks the owned GTK host's theme button while Shep is
+hidden. It never changes the personal desktop theme.
+
+Reviewed WebPs include `artifacts/e2e/c7d083fec4d5/symbolic-tray-light.webp`,
+`symbolic-tray-dark.webp`, `transparent-logo-restored.webp`, the compact dark tray
+preferences in `fee7caa42dcf/`, and dark Calendar in `f2c81dda84df/`. The contour is
+clean and the symbolic foreground changes visibly. These are GTK/native-protocol
+fixtures, not an actual GNOME Shell session or Windows/macOS runtime review.
+Strict docs, mandatory hooks and root source integration are recorded with the
+checkpoint; personal installation and live shell/panel review remain open in R64.
+No installed application, personal icon, desktop favorite or secret was changed.
+
+The first mandatory hook hit an unrelated shared-core history reopen failure:
+`reserved_upload_identity_and_exact_bytes_survive_lost_replies_and_reopening`
+returned `Owned` at history.rs:482 after dropping its Journal. The exact unchanged
+pinned binary test and all 11 history tests passed on rerun. The retained File lock
+and another parallel test's child-process spawn suggest transient fork/exec
+inheritance, but that cause is not proven. No dependency checkout/assertion changed;
+the full mandatory hook is rerun normally. Evidence is retained in
+`r64-commit.log` and `r64-profile-ownership-rerun.log`; follow-up remains in R91.
+
 ## Native PowerShell Windows raw installer — R61 checkpoint
 
 README and the install guide now include the GitHub raw PowerShell command.

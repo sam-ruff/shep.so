@@ -30,23 +30,36 @@ class Host(dbus.service.Object):
         self.service = ""
         self.menu_path = ""
         self.menu_entries = []
+        self.icon_name = ""
+        self.icon_symbolic = False
         self.notifications = []
         self.notification_service = Notifications(bus, self)
         self.name = dbus.service.BusName(WATCHER, bus=bus, do_not_queue=True)
         super().__init__(self.name, "/StatusNotifierWatcher")
         self.window = Gtk.Window(title="Shep tray test host")
-        self.window.set_default_size(170, 48)
+        Gtk.IconTheme.get_default().append_search_path(str(output.parent / "icon-theme"))
+        Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", False)
+        self.window.set_default_size(200, 110)
         self.window.set_resizable(False)
         self.button = Gtk.Button(label="Waiting for Shep")
         self.button.connect("clicked", self.open_menu)
-        self.window.add(self.button)
+        layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.button.set_size_request(200,48)
+        self.theme_button = Gtk.Button(label="Switch system icon theme")
+        self.theme_button.set_size_request(200,48)
+        self.theme_button.connect("clicked", self.toggle_theme)
+        layout.pack_start(self.button,True,True,0)
+        layout.pack_start(self.theme_button,True,True,0)
+        self.window.add(layout)
         self.window.connect("destroy", lambda *_: Gtk.main_quit())
         self.window.show_all()
         self.record()
 
     def record(self, **extra):
         value = {"service": self.service, "menu_path": self.menu_path,
-                 "entries": self.menu_entries, "notifications": self.notifications, **extra}
+                 "entries": self.menu_entries, "notifications": self.notifications,
+                 "icon_name": self.icon_name, "icon_symbolic": self.icon_symbolic,
+                 "dark": bool(Gtk.Settings.get_default().get_property("gtk-application-prefer-dark-theme")), **extra}
         pending = self.output.with_suffix(".tmp")
         pending.write_text(json.dumps(value))
         pending.replace(self.output)
@@ -78,8 +91,13 @@ class Host(dbus.service.Object):
         try:
             props = dbus.Interface(self.item, PROPERTIES)
             self.menu_path = str(props.Get(SNI, "Menu"))
+            self.icon_name = str(props.Get(SNI,"IconName"))
+            self.icon_symbolic = Gtk.IconTheme.get_default().has_icon(self.icon_name)
             pixmaps = props.Get(SNI, "IconPixmap")
-            if pixmaps:
+            if self.icon_symbolic:
+                self.button.set_image(Gtk.Image.new_from_icon_name(self.icon_name, Gtk.IconSize.DIALOG))
+                self.button.set_always_show_image(True)
+            elif pixmaps:
                 width, height, raw = pixmaps[0]
                 rgba = bytearray(bytes(raw))
                 for offset in range(0, len(rgba), 4):
@@ -95,6 +113,12 @@ class Host(dbus.service.Object):
         except dbus.DBusException as error:
             self.record(error=str(error))
         return False
+
+    def toggle_theme(self, _button):
+        settings = Gtk.Settings.get_default()
+        settings.set_property("gtk-application-prefer-dark-theme",
+                              not settings.get_property("gtk-application-prefer-dark-theme"))
+        self.record()
 
     def open_menu(self, _button):
         if self.item is None:

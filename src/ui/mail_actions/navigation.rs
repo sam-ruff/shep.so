@@ -89,23 +89,7 @@ impl App {
         else {
             return Task::none();
         };
-        let viewport =
-            (self.size.height / (self.preferences.interface_scale as f32 / 100.) - 220.).max(104.);
-        let top = index as f32 * 104.;
-        self.inbox_scroll = if top < self.inbox_scroll {
-            top
-        } else if top + 104. > self.inbox_scroll + viewport {
-            top + 104. - viewport
-        } else {
-            self.inbox_scroll
-        };
-        widget::operation::scroll_to(
-            "inbox-list",
-            widget::scrollable::AbsoluteOffset {
-                x: 0.,
-                y: self.inbox_scroll,
-            },
-        )
+        self.reveal_inbox_selection(index)
     }
 
     pub(in crate::ui) fn finish_removal_selection(&mut self) -> bool {
@@ -276,6 +260,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stale_native_reveal_result_cannot_replace_newer_navigation_scroll() {
+        let (mut app, _commands) = fixture(3).await;
+        let old_context = app.inbox_context();
+        app.select("message-1".into());
+        app.inbox_scroll = 45.;
+        let _ = app.handle(Message::InboxRevealed(
+            crate::ui::mail_list::reveal::Revealed {
+                context: old_context,
+                offset: 1200.,
+                height: 668.,
+            },
+        ));
+        assert_eq!(app.selected.as_deref(), Some("message-1"));
+        assert_eq!(app.inbox_scroll, 45.);
+    }
+
+    #[tokio::test]
     async fn emptied_final_page_returns_to_previous_last_row() {
         let (mut app, _commands) = fixture(1).await;
         app.query.offset = PAGE_SIZE;
@@ -291,12 +292,24 @@ mod tests {
             page.rows.push(mail);
         }
         page.total = PAGE_SIZE;
-        let _ = app.handle(Message::Backend(Event::Page(
+        let reveal = app.handle(Message::Backend(Event::Page(
             app.generation,
             Arc::new(page),
             false,
         )));
+        assert!(reveal.units() > 0);
         assert_eq!(app.selected.as_deref(), Some("previous-49"));
-        assert!(app.inbox_scroll > 0.);
+        // Native layout now owns the scroll offset; the returned task reveals
+        // the selected row once the preceding page has actually been laid out.
+        assert_eq!(app.inbox_scroll, 0.);
+        let context = app.inbox_context();
+        let _ = app.handle(Message::InboxRevealed(
+            crate::ui::mail_list::reveal::Revealed {
+                context,
+                offset: 2332.,
+                height: 668.,
+            },
+        ));
+        assert_eq!(app.inbox_scroll, 2332.);
     }
 }

@@ -139,8 +139,21 @@ impl App {
                     .iter()
                     .any(|mail| Some(mail.id.as_str()) == self.reader_id())
                 {
-                    if let Some(first) = self.conversation.page.rows.first() {
-                        self.focus_conversation_message(first.id.clone());
+                    // A move can replace an expanded reply's server identity while
+                    // the selected Inbox anchor remains in this thread. Keep that
+                    // anchor on refresh; explicit paging still opens its first row.
+                    let fallback = (!changed_page)
+                        .then(|| {
+                            self.conversation
+                                .page
+                                .rows
+                                .iter()
+                                .find(|mail| mail.id == anchor)
+                        })
+                        .flatten()
+                        .or_else(|| self.conversation.page.rows.first());
+                    if let Some(mail) = fallback {
+                        self.focus_conversation_message(mail.id.clone());
                     }
                 } else if let Some(id) = self.reader_id().map(str::to_owned) {
                     // Warm adjacent messages without resetting the open body or quote state.

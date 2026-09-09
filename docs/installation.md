@@ -13,6 +13,9 @@ installing to `~/.local/bin` and adding the native applications-menu entry.
 On an interactive terminal, choose your user (default), all users, or cancel.
 All-user installation uses `/usr/local` and asks through sudo when needed.
 The installer never stops an open Shep window; reopen it after an update.
+The transparent Shepherd launcher uses the native symbolic icon style, so GTK/
+GNOME can match its foreground to the system theme without a running Shep process.
+The full-color transparent PNG remains available for desktop compatibility.
 
 Release CI is currently paused and no binary releases are published yet. The
 installer reports missing releases or platform assets without changing installed

@@ -8,13 +8,13 @@ from pathlib import Path
 import statistics
 import time
 
-from e2e import McpClient, click, check, wait, shot, ROOT
+from e2e import McpClient, click, check, wait, shot, mail_row_y, ROOT
 
 MAIL = {
-    "styled": (245, "Styled sign-in sample"),
-    "xhtml": (351, "Mislabeled XHTML request"),
-    "escaped": (454, "Escaped HTML request"),
-    "long": (558, "Long formatted letter"),
+    "styled": (mail_row_y(0), "Styled sign-in sample"),
+    "xhtml": (mail_row_y(1), "Mislabeled XHTML request"),
+    "escaped": (mail_row_y(2), "Escaped HTML request"),
+    "long": (mail_row_y(3), "Long formatted letter"),
 }
 
 

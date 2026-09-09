@@ -65,6 +65,13 @@ def check(path, value, op="eq"): return {"type": "wait_for", "path": path, "valu
 def shot(name): return {"type": "screenshot", "name": name}
 
 
+def mail_row_y(index, state=None):
+    """Center an intended metadata row using observed logical scroll and scale."""
+    state = state or {}
+    scale = state.get("interface_scale", 100) / 100
+    return round((194 + (index + .5) * 60 - state.get("inbox_scroll", 0)) * scale)
+
+
 class NativeFlows(unittest.TestCase):
     def setUp(self):
         self.mcp = McpClient()
@@ -184,7 +191,7 @@ class NativeFlows(unittest.TestCase):
     def test_folder_controls_pop3_local_move_retains_mail_across_restart(self):
         result=self.mcp.call("desktop.start",pop3_account=True,persistent=True)
         print(f"POP3 folder controls evidence: {result['artifacts']}",flush=True)
-        self.hold_mail_over(402,450,95,636)
+        self.hold_mail_over(402,mail_row_y(2),95,636)
         self.mcp.batch({"type":"mouse_up"},check("total",119),check("mail_pending",0),
                        click(95,636),check("folder","Projects"),check("selected","Coffee next Thursday?"),
                        {"type":"click","x":95,"y":636,"button":3},key("Return"),
@@ -241,14 +248,14 @@ class NativeFlows(unittest.TestCase):
     def test_native_text_field_chords_cannot_mutate_a_later_clicked_message(self):
         self.mcp.batch(check("reader_text_ready",True))
         for shortcut,field in (("ctrl+k","search"),("ctrl+f","find-message")):
-            for y,subject in ((350,"Your weekly workspace digest"),(245,"A little more room to think"))*2:
+            for y,subject in ((mail_row_y(1),"Your weekly workspace digest"),(mail_row_y(0),"A little more room to think"))*2:
                 # Alternate rows so repeated clicks cannot become a double-click
                 # that replaces the inbox with the full-window reader.
                 self.mcp.batch(key(shortcut),check("focused_input",field),
                                key("ctrl+d"),click(400,y),check("selected",subject),
                                wait(80),check("full_reader",False),check("total",120),check("mail_pending",0))
         self.mcp.batch(shot("native-search-find-delete-isolation"),key("Escape"),check("find_open",False))
-        self.mcp.batch(double_click(400,245),check("full_reader",True),key("ctrl+f"),
+        self.mcp.batch(double_click(400,mail_row_y(0)),check("full_reader",True),key("ctrl+f"),
                        check("find_open",True),check("focused_input","find-message"))
         for _ in range(4):
             self.mcp.batch(click(400,150),key("ctrl+d"),click(700,400),wait(80),
@@ -299,7 +306,7 @@ class NativeFlows(unittest.TestCase):
     def test_nested_folder_drag_reveals_containers_and_undo(self):
         result=self.mcp.call("desktop.start",nested_folders=True,mail_actions="slow")
         print(f"Nested folder drag evidence: {result['artifacts']}",flush=True)
-        self.hold_mail_over(402,347,85,584)
+        self.hold_mail_over(402,mail_row_y(1),85,584)
         self.mcp.batch(check("expanded_folders.preview-work","Teams","contains"),
                        check("mail_drag.target",None),shot("nested-drag-container-expanded"),
                        {"type":"hover","x":95,"y":626},
@@ -314,13 +321,13 @@ class NativeFlows(unittest.TestCase):
     def test_nested_folder_unicode_move_review_and_combined_selection(self):
         result=self.mcp.call("desktop.start",nested_folders=True)
         print(f"Nested folder Move evidence: {result['artifacts']}",flush=True)
-        self.mcp.batch(click(402,347),key("m"),check("dialog","Move"),check("focused_input","folder-search"),paste_text("日本語"),
+        self.mcp.batch(click(402,mail_row_y(1)),key("m"),check("dialog","Move"),check("focused_input","folder-search"),paste_text("日本語"),
                        check("move_enter_destination","Projects/Design/&ZeVnLIqe-"),shot("nested-unicode-move-search"),
                        key("Return"),check("total",119),check("mail_pending",0),
                        check("action_toast.label","Moved 1 message to Projects/Design/日本語"),shot("nested-unicode-move-toast"),
                        click(1340,874),check("total",120),check("mail_pending",0),
                        click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
-                       click(274,218),click(274,322),check("mail_selection.count",2),check("mail_selection.pending",False),
+                       click(274,mail_row_y(0)),click(274,mail_row_y(1)),check("mail_selection.count",2),check("mail_selection.pending",False),
                        key("m"),check("dialog","Move"),check("focused_input","folder-search"),paste_text("日本語"),
                        check("move_enter_destination","Projects/Design/&ZeVnLIqe-"),key("Return"),
                        check("dialog","BulkReview"),check("bulk.action","Move to Projects/Design/日本語"),
@@ -358,7 +365,7 @@ class NativeFlows(unittest.TestCase):
         started=self.mcp.call("desktop.start",mail_actions="slow")
         print(f"Single mail drag evidence: {started['artifacts']}",flush=True)
         self.mcp.batch(check("selected","A little more room to think"))
-        self.hold_mail_over(402,347,85,399)
+        self.hold_mail_over(402,mail_row_y(1),85,399)
         self.mcp.batch(check("mail_drag.count",1),check("mail_drag.target","Archive"),check("mail_drag.valid",True),
                        shot("drag-single-archive-hover"),{"type":"mouse_up"},check("total",119),
                        check("selected","A little more room to think"),check("mail_pending",1),
@@ -368,42 +375,42 @@ class NativeFlows(unittest.TestCase):
 
     def test_drag_group_review_cancel_and_mixed_account_trash(self):
         self.mcp.batch(click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
-                       click(274,218),click(274,426),check("mail_selection.count",2),check("mail_selection.pending",False))
-        self.hold_mail_over(402,245,85,399)
+                       click(274,mail_row_y(0)),click(274,mail_row_y(2)),check("mail_selection.count",2),check("mail_selection.pending",False))
+        self.hold_mail_over(402,mail_row_y(0),85,399)
         self.mcp.batch(check("mail_drag.count",2),check("mail_drag.valid",True),shot("drag-group-archive-hover"),
                        {"type":"mouse_up"},check("dialog","BulkReview"),check("bulk.review_count",2),
                        check("total",120),shot("drag-group-review"),key("n"),check("dialog",None),
                        check("mail_selection.count",2),check("mail_rows.0.unread",True),check("mail_rows.2.unread",True))
-        self.hold_mail_over(402,245,85,438)
+        self.hold_mail_over(402,mail_row_y(0),85,438)
         self.mcp.batch(check("mail_drag.target","Trash"),{"type":"mouse_up"},check("dialog","BulkReview"),
                        check("bulk.review_count",2),shot("drag-group-trash-review"),key("y"),
                        check("total",118),check("bulk.jobs.0.completed",2),shot("drag-group-trash-complete"))
 
     def test_drag_escape_outside_and_same_folder_preserve_selection(self):
         self.mcp.batch(click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
-                       click(274,218),click(274,322),check("mail_selection.count",2),check("mail_selection.pending",False))
-        self.hold_mail_over(402,245,85,399)
+                       click(274,mail_row_y(0)),click(274,mail_row_y(1)),check("mail_selection.count",2),check("mail_selection.pending",False))
+        self.hold_mail_over(402,mail_row_y(0),85,399)
         self.mcp.batch(key("Escape"),check("mail_drag.active",False),check("mail_selection.count",2),
                        {"type":"mouse_up"},check("total",120),check("dialog",None))
-        self.hold_mail_over(402,245,402,255)
-        self.mcp.batch({"type":"click","x":402,"y":255,"button":3},check("mail_drag.active",False),
+        self.hold_mail_over(402,mail_row_y(0),402,255)
+        self.mcp.batch({"type":"click","x":402,"y":mail_row_y(0),"button":3},check("mail_drag.active",False),
                        check("context_menu",None),{"type":"mouse_up"},check("mail_selection.count",2))
-        self.hold_mail_over(402,245,800,500)
+        self.hold_mail_over(402,mail_row_y(0),800,500)
         self.mcp.batch(check("mail_drag.target",None),{"type":"mouse_up"},check("mail_selection.count",2),check("total",120))
-        self.hold_mail_over(402,245,85,278)
+        self.hold_mail_over(402,mail_row_y(0),85,278)
         self.mcp.batch(check("mail_drag.target","INBOX"),check("mail_drag.valid",False),
                        check("mail_drag.reason","already","contains"),shot("drag-already-in-inbox"),
                        {"type":"mouse_up"},check("notice","already","contains"),check("dialog",None),
                        check("total",120),check("mail_selection.count",2),check("mail_pending",0))
 
     def test_drag_cross_account_preference_rejection_and_enabled_transfer(self):
-        self.hold_mail_over(402,245,95,636)
+        self.hold_mail_over(402,mail_row_y(0),95,636)
         self.mcp.batch(check("mail_drag.account","preview-personal"),check("mail_drag.valid",False),
                        check("mail_drag.reason","Preferences","contains"),shot("drag-cross-account-disabled"),
                        {"type":"mouse_up"},check("total",120),check("mail_pending",0),check("notice","Preferences","contains"),
                        key("ctrl+comma"),check("tab","Preferences"),wait(80),click(286,773),
                        check("cross_account_moves",True),key("ctrl+1"),check("tab","Mail"),wait(80))
-        self.hold_mail_over(402,245,95,636)
+        self.hold_mail_over(402,mail_row_y(0),95,636)
         self.mcp.batch(check("mail_drag.valid",True),shot("drag-cross-account-enabled"),{"type":"mouse_up"},
                        check("total",119),check("mail_pending",0),click(95,636),check("folder","Projects"),
                        check("selected","A little more room to think"),check("mail_rows.0.account_id","preview-personal"),
@@ -411,20 +418,20 @@ class NativeFlows(unittest.TestCase):
 
     def test_drag_hover_expands_accounts_and_unified_inbox(self):
         self.mcp.batch(click(85,497),check("collapsed_accounts","preview-work","contains"),wait(80))
-        self.hold_mail_over(402,245,85,497)
+        self.hold_mail_over(402,mail_row_y(0),85,497)
         self.mcp.batch(check("collapsed_accounts",[]),shot("drag-account-expanded"),
                        {"type":"hover","x":85,"y":536},check("mail_drag.target","Projects"),
                        check("mail_drag.account","preview-work"),check("mail_drag.valid",True),
                        {"type":"mouse_up"},check("total",119),check("mail_pending",0),
                        click(85,536),check("folder","Projects"),check("selected","A little more room to think"))
-        self.hold_mail_over(402,245,85,278)
+        self.hold_mail_over(402,mail_row_y(0),85,278)
         self.mcp.batch(check("inbox_expanded",True),check("mail_drag.target","INBOX"),
                        check("mail_drag.valid",True),shot("drag-unified-expanded"),{"type":"mouse_up"},
                        check("total",0),check("mail_pending",0),click(85,278),check("folder","INBOX"),check("total",120))
 
     def test_drag_failure_rolls_back_and_keeps_other_navigation_usable(self):
         self.mcp.call("desktop.start",mail_actions="fail")
-        self.hold_mail_over(402,347,85,399)
+        self.hold_mail_over(402,mail_row_y(1),85,399)
         self.mcp.batch({"type":"mouse_up"},check("total",119),check("mail_pending",1),
                        check("action_toast.label","Archived 1 message"),
                        key("ctrl+comma"),check("tab","Preferences"),shot("drag-failure-preferences-usable"),
@@ -436,10 +443,10 @@ class NativeFlows(unittest.TestCase):
         self.mcp.call("desktop.start",pop3_account=True)
         self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),click(286,773),
                        check("cross_account_moves",True),key("ctrl+1"),check("tab","Mail"),wait(80))
-        self.hold_mail_over(402,245,95,636)
+        self.hold_mail_over(402,mail_row_y(0),95,636)
         self.mcp.batch(check("mail_drag.valid",False),check("mail_drag.reason","IMAP","contains"),
                        shot("drag-pop3-cross-account-rejected"),{"type":"mouse_up"},check("total",120),check("mail_pending",0))
-        self.hold_mail_over(402,450,95,636)
+        self.hold_mail_over(402,mail_row_y(2),95,636)
         self.mcp.batch(check("mail_drag.valid",True),shot("drag-pop3-local-folder"),{"type":"mouse_up"},
                        check("total",119),check("mail_pending",0),click(95,636),check("folder","Projects"),
                        check("selected","Coffee next Thursday?"),shot("drag-pop3-local-moved"))
@@ -448,7 +455,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.call("desktop.start",mail_actions="slow")
         self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),click(690,366),check("dark",True),
                        key("ctrl+1"),check("tab","Mail"),{"type":"resize","width":900,"height":640},wait(120))
-        self.hold_mail_over(370,245,85,399)
+        self.hold_mail_over(370,mail_row_y(0),85,399)
         self.mcp.batch(check("mail_drag.valid",True),shot("drag-compact-dark-hover"),{"type":"mouse_up"},
                        check("total",119),check("mail_pending",1),click(800,594),check("total",120),
                        {**check("mail_pending",0),"timeout_ms":5000},{"type":"resize","width":1440,"height":920},
@@ -462,7 +469,7 @@ class NativeFlows(unittest.TestCase):
         result = self.mcp.call("desktop.start",width=900,height=640,long_folders=True)
         directory = Path(result["artifacts"])
         print(f"Scrolled drag rendering evidence: {directory}", flush=True)
-        self.hold_mail_over(370,245,110,520)
+        self.hold_mail_over(370,mail_row_y(0),110,520)
         self.mcp.batch({"type":"scroll","amount":4},wait(120),shot("drag-scrolled-folder-list"),
                        {"type":"hover","x":85,"y":438},check("mail_drag.target","家族のカレンダーと旅行の計画と写真"),
                        check("mail_drag.valid",True),shot("drag-unicode-folder-hover"))
@@ -476,10 +483,10 @@ class NativeFlows(unittest.TestCase):
                        check("folder","家族のカレンダーと旅行の計画と写真"),check("total",2),shot("drag-unicode-folder-moved"))
 
     def test_drag_selection_across_pages_moves_the_entire_reviewed_group(self):
-        self.mcp.batch(click(402,245),key("ctrl+a"),check("mail_selection.count",120),
+        self.mcp.batch(click(402,mail_row_y(0)),key("ctrl+a"),check("mail_selection.count",120),
                        check("mail_selection.pending",False),click(583,884),check("offset",50),
                        check("mail_selection.pending",False),wait(80))
-        self.hold_mail_over(402,245,85,399)
+        self.hold_mail_over(402,mail_row_y(0),85,399)
         self.mcp.batch(check("mail_drag.count",120),check("mail_drag.valid",True),shot("drag-all-pages-hover"),
                        {"type":"mouse_up"},check("dialog","BulkReview"),check("bulk.review_count",120),
                        shot("drag-all-pages-review"),key("Return"),check("total",0),
@@ -527,6 +534,21 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
                        click(650 if compact else 1150,88), type_text("system tray"), check("settings_matches", ["System tray"]),
                        click(450,289), check("settings_group", "System tray"))
+
+    def test_tray_native_symbolic_icon_follows_host_theme_while_app_is_hidden(self):
+        started = self.mcp.call("desktop.start", tray="available")
+        print(f"Symbolic icon evidence: {started['artifacts']}", flush=True)
+        self.assertIn("so.shep.Shep", started["window_class"])
+        self.mcp.batch(check("tray.available", True), check("tray_host.icon_name", "so.shep.Shep-symbolic"),
+                       check("tray_host.icon_symbolic", True), check("tray_host.dark", False))
+        self.open_tray_preferences()
+        self.mcp.batch(click(288,342), check("tray.saved_enabled", True), {"type":"close_request"},
+                       check("tray.visible", False), {"type":"tray_menu"}, key("Escape"),
+                       {"type":"wait","ms":150}, shot("symbolic-tray-light"),
+                       {"type":"tray_theme"}, check("tray_host.dark",True),
+                       {"type":"wait","ms":150}, shot("symbolic-tray-dark"),
+                       {"type":"tray_menu"}, key("Down"), key("Return"),
+                       check("tray.visible",True), {"type":"focus_app"}, shot("transparent-logo-restored"))
 
     def test_tray_native_hide_restore_quit_and_saved_preference(self):
         started = self.mcp.call("desktop.start", tray="available", persistent=True)
@@ -817,13 +839,13 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(click(85,355), check("selected","Dispatch update"), check("html_view_current",True),
                        click(1115,376), check("images_allowed",True), check("html_rendered_images",12),
                        check("html_view_current",True), wait(100), shot("visited-dispatch"),
-                       click(400,349), check("selected","Delivery update"), check("html_view_current",True))
+                       click(400,mail_row_y(1)), check("selected","Delivery update"), check("html_view_current",True))
         if not self.mcp.call("desktop.state")["images_allowed"]:
             self.mcp.batch(click(1115,376),check("images_allowed",True))
         self.mcp.batch(check("html_rendered_images",12),check("html_view_current",True),wait(100),shot("visited-delivery"))
         for index in range(4):
             before = self.mcp.call("desktop.state")["html_cache_hits"]
-            self.mcp.batch(click(400,245 if index % 2 == 0 else 349),
+            self.mcp.batch(click(400,mail_row_y(index % 2)),
                            {**check("html_cache_hits",before+1,"gte"),"timeout_ms":700},
                            {"type":"assert","path":"html_rendered_images","op":"eq","value":12},
                            check("html_view_current",True),shot(f"visited-images-reopen-{index}"))
@@ -847,11 +869,11 @@ class NativeFlows(unittest.TestCase):
         started=self.mcp.call("desktop.start",reading_mail=True)
         print(f"Reading column evidence: {started['artifacts']}",flush=True)
         self.mcp.batch(check("selected","Reading style plain letter"),check("reader_text_ready",True),
-                       double_click(400,245),check("full_reader",True),wait(120),shot("plain-letter-full"),
+                       double_click(400,mail_row_y(0)),check("full_reader",True),wait(120),shot("plain-letter-full"),
                        click(500,410),key("ctrl+a"),check("reader_selected_text","Column marker","contains"),
                        key("ctrl+f"),check("focused_input","find-message"),key("ctrl+a"),type_text("selectable"),check("find_count",1),
                        key("Escape"),check("find_open",False),key("Escape"),check("full_reader",False),
-                       double_click(400,349),check("selected","Reading style HTML letter"),check("full_reader",True),
+                       double_click(400,mail_row_y(1)),check("selected","Reading style HTML letter"),check("full_reader",True),
                        check("html_view_current",True),wait(120),shot("html-letter-full"))
         self.assert_letter_column_pixels(started["artifacts"],"html-letter-full")
         state=self.mcp.call("desktop.state")
@@ -862,7 +884,7 @@ class NativeFlows(unittest.TestCase):
                        key("Escape"),check("find_open",False),
                        {"type":"resize","width":900,"height":640},check("html_view_current",True),wait(150),shot("html-letter-compact"))
         self.assert_letter_column_pixels(started["artifacts"],"html-letter-compact")
-        self.mcp.batch(key("Escape"),check("full_reader",False),click(400,245),
+        self.mcp.batch(key("Escape"),check("full_reader",False),click(400,mail_row_y(0)),
                        check("selected","Reading style plain letter"),check("reader_text_ready",True),shot("plain-letter-compact"))
 
     def test_conversation_surfaces_follow_each_message_background_without_losing_scroll(self):
@@ -873,7 +895,7 @@ class NativeFlows(unittest.TestCase):
             if dark:
                 self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(690,366),
                                check("dark",True),key("ctrl+1"),check("tab","Mail"))
-            self.mcp.batch(click(400,453),check("conversation_total",2),check("html_view_current",True),
+            self.mcp.batch(click(400,mail_row_y(2)),check("conversation_total",2),check("html_view_current",True),
                            check("html_background",[255,255,255,255]),wait(120),shot(f"conversation-white-{dark}"))
             state=self.mcp.call("desktop.state")
             x,y,_,height=state["html_body_visible"]
@@ -1066,7 +1088,7 @@ class NativeFlows(unittest.TestCase):
             self.assert_refresh_pixels_change(result["artifacts"],"refresh-turn-one","refresh-turn-two",(x,y),True)
             self.assert_refresh_pixels_change(result["artifacts"],"refresh-idle","refresh-stopped-after-failure",(x,y),False)
             self.mcp.batch(key("F5"),check("refresh_animation.running",True),
-                           click(300 if compact else 400,350),check("selected","Your weekly workspace digest"),
+                           click(300 if compact else 400,mail_row_y(1)),check("selected","Your weekly workspace digest"),
                            key("ctrl+2"),check("tab","Calendar"),check("refresh_animation.running",False),
                            check("refreshing",True),key("ctrl+1"),check("tab","Mail"),
                            check("refresh_animation.running",True),check("refreshing",False),
@@ -1110,13 +1132,13 @@ class NativeFlows(unittest.TestCase):
         state = self.mcp.call("desktop.state")
         second = state["mail_rows"][1]["id"]
         self.mcp.batch(check("html_cache_ids",second,"contains"),
-                       click(400,351), check("selected","Mislabeled XHTML request"),
+                       click(400,mail_row_y(1)), check("selected","Mislabeled XHTML request"),
                        check("html_cache_hits",state["html_cache_hits"] + 1,"gte"),
                        check("html_view_current",True), wait(120), shot("html-prepared-neighbor"),
-                       click(400,452), check("selected","Escaped HTML request"),
-                       click(400,558), check("selected","Long formatted letter"),
-                       click(400,245), check("selected","Styled sign-in sample"),
-                       click(400,558),
+                       click(400,mail_row_y(2)), check("selected","Escaped HTML request"),
+                       click(400,mail_row_y(3)), check("selected","Long formatted letter"),
+                       click(400,mail_row_y(0)), check("selected","Styled sign-in sample"),
+                       click(400,mail_row_y(3)),
                        check("selected","Long formatted letter"), check("html_view_current",True),
                        check("html_height",6000,"gte"), wait(100),
                        click(850,440), key("ctrl+a"), check("html_selected_text","Last visible paragraph.","contains"),
@@ -1137,7 +1159,7 @@ class NativeFlows(unittest.TestCase):
                        check("print_pending",False), click(772,320), check("html_formatted",False),
                        key("ctrl+p"), check("print_revision",2),
                        {"type":"print_output", "count":2, "text":"This is the plain text alternative.", "name":"print-plain"},
-                       click(400,558), check("selected","Long formatted letter"), check("html_ready",True),
+                       click(400,mail_row_y(3)), check("selected","Long formatted letter"), check("html_ready",True),
                        key("ctrl+p"), check("print_revision",3),
                        {"type":"print_output", "count":3, "text":"Last visible paragraph.", "pages":3, "name":"print-long"},
                        check("print_pending",False), shot("print-returned-to-mail"))
@@ -1146,10 +1168,10 @@ class NativeFlows(unittest.TestCase):
         result = self.mcp.call("desktop.start", html_mail=True, print_browser="pdf", mail_actions="fail")
         print(f"Print evidence: {result['artifacts']}", flush=True)
         self.mcp.batch(check("html_ready",True), key("ctrl+p"), check("print_pending",True),
-                       click(400,351), check("selected","Mislabeled XHTML request"),
+                       click(400,mail_row_y(1)), check("selected","Mislabeled XHTML request"),
                        check("print_pending",False), check("notice","Try Print again","contains"),
                        check("html_ready",True), key("ctrl+p"), check("print_pending",True),
-                       click(400,558), check("selected","Long formatted letter"),
+                       click(400,mail_row_y(3)), check("selected","Long formatted letter"),
                        {"type":"print_output", "text":"Mislabeled XHTML request", "name":"print-original-target"},
                        check("print_pending",False), check("selected","Long formatted letter"), check("notice","restored","contains"))
 
@@ -1202,7 +1224,7 @@ class NativeFlows(unittest.TestCase):
     def test_forward_preparation_keeps_navigation_available_and_does_not_replace_newer_edits(self):
         self.mcp.call("desktop.start", mail_actions="slow")
         self.mcp.batch(key("f"), check("forward_pending", True), check("dialog", None),
-                       key("f"), click(400,350), check("selected", "Your weekly workspace digest"),
+                       key("f"), click(400,mail_row_y(1)), check("selected", "Your weekly workspace digest"),
                        key("c"), check("composer.visible", True), wait(100),
                        click(850,279), type_text("A different draft"),
                        {**check("forward_pending", False), "timeout_ms":5000},
@@ -1295,7 +1317,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_find_formatted_message_navigation_and_keyboard_isolation(self):
         self.mcp.call("desktop.start", html_mail=True)
-        self.mcp.batch(click(400,558), check("selected", "Long formatted letter"), check("html_ready", True),
+        self.mcp.batch(click(400,mail_row_y(3)), check("selected", "Long formatted letter"), check("html_ready", True),
                        key("ctrl+f"), check("find_open", True), check("focused_input", "find-message"),
                        type_text("Paragraph"), check("find_count", 201), check("find_pending", False),
                        check("find_active", 0), shot("find-html-first"),
@@ -1306,18 +1328,18 @@ class NativeFlows(unittest.TestCase):
                        key("shift+Return"), check("find_active", 200), check("html_scroll", 5000, "gte"),
                        shot("find-html-last"), key("ctrl+d"), check("total", 124),
                        key("Escape"), check("find_open", False), check("full_reader", False),
-                       double_click(400,555), check("full_reader", True), key("ctrl+f"),
+                       double_click(400,mail_row_y(3)), check("full_reader", True), key("ctrl+f"),
                        check("find_open", True), check("find_count", 201), key("Escape"),
                        check("find_open", False), check("full_reader", True), key("Escape"), check("full_reader", False))
 
     def test_find_plain_message_and_switching_messages_discards_old_results(self):
         self.mcp.call("desktop.start", html_mail=True)
-        self.mcp.batch(click(400,558), check("selected", "Long formatted letter"), check("html_ready", True),
+        self.mcp.batch(click(400,mail_row_y(3)), check("selected", "Long formatted letter"), check("html_ready", True),
                        click(770,320), check("html_formatted", False), check("reader_text_ready", True),
                        key("ctrl+f"), check("focused_input", "find-message"), type_text("Paragraph"),
                        check("find_count", 201), check("find_pending", False), check("find_error", None),
                        shot("find-plain-first"), key("shift+Return"), check("find_active", 200),
-                       shot("find-plain-last"), click(400,450), check("selected", "Escaped HTML request"), check("focused_input", None),
+                       shot("find-plain-last"), click(400,mail_row_y(2)), check("selected", "Escaped HTML request"), check("focused_input", None),
                        check("find_count", 0), check("find_pending", False), key("ctrl+f"),
                        check("focused_input", "find-message"), key("ctrl+a"), type_text("Readable content"),
                        check("find_count", 1), check("find_pending", False), shot("find-new-message"),
@@ -1376,18 +1398,18 @@ class NativeFlows(unittest.TestCase):
                        check("images_allowed", False), wait(200), shot("html-styled-blocked"),
                        click(772, 320), check("html_formatted", False), check("reader_text_ready", True),
                        shot("html-plain-alternative"), click(685, 320), check("html_ready", True),
-                       click(400, 351), check("selected", "Mislabeled XHTML request"), check("html_ready", True),
+                       click(400,mail_row_y(1)), check("selected", "Mislabeled XHTML request"), check("html_ready", True),
                        wait(100), shot("html-mislabeled-xhtml"), click(800, 402), key("ctrl+a"),
                        check("html_selected_text", "SAMPLE-ONLY", "contains"), key("ctrl+c"),
                        key("ctrl+k"), check("focused_input", "search"), key("ctrl+v"),
                        check("query", "SAMPLE-ONLY", "contains"), key("ctrl+a"), key("BackSpace"),
-                       check("total", 124), key("Escape"), click(400, 452),
+                       check("total", 124), key("Escape"), click(400,mail_row_y(2)),
                        check("selected", "Escaped HTML request"), check("html_ready", True), wait(100),
                        shot("html-escaped-tags"))
 
     def test_html_selection_scrolling_and_pending_mail_actions(self):
         self.mcp.call("desktop.start", html_mail=True, mail_actions="slow")
-        self.mcp.batch(check("html_ready", True), click(400, 558), check("selected", "Long formatted letter"),
+        self.mcp.batch(check("html_ready", True), click(400,mail_row_y(3)), check("selected", "Long formatted letter"),
                        check("html_ready", True), check("html_height", 6000, "gte"),
                        wait(100), {"type": "hover", "x": 1100, "y": 600}, {"type": "scroll", "amount": 12},
                        check("html_scroll", 1, "gte"), wait(100), shot("html-long-scrolled"),
@@ -1428,12 +1450,12 @@ class NativeFlows(unittest.TestCase):
 
     def test_html_keyboard_scroll_is_scoped_to_the_focused_reader(self):
         self.mcp.call("desktop.start", html_mail=True)
-        self.mcp.batch(click(400,558), check("selected", "Long formatted letter"), check("html_ready", True),
+        self.mcp.batch(click(400,mail_row_y(3)), check("selected", "Long formatted letter"), check("html_ready", True),
                        wait(100), click(850,440), key("Next"), check("html_scroll", 1, "gte"),
                        key("Down"), check("selected", "Long formatted letter"), key("End"),
                        check("html_scroll", 5000, "gte"), wait(100), shot("html-keyboard-bottom"),
                        key("Home"), check("html_scroll", 0), check("selected", "Long formatted letter"),
-                       click(400,555), key("Up"), check("selected", "Escaped HTML request"),
+                       click(400,mail_row_y(3)), key("Up"), check("selected", "Escaped HTML request"),
                        check("html_ready", True), wait(100), shot("html-inbox-arrows-after-reader-focus"))
 
     def test_search_best_match_beats_newer_mail_and_sort_can_be_overridden(self):
@@ -1544,7 +1566,7 @@ class NativeFlows(unittest.TestCase):
         self.open_notification_preferences()
         self.mcp.batch(click(350,499),check("notifications.testing",True),
                        key("ctrl+2"),check("tab","Calendar"),check("notifications.testing",True),
-                       key("ctrl+1"),check("tab","Mail"),click(420,350),
+                       key("ctrl+1"),check("tab","Mail"),click(420,mail_row_y(1)),
                        check("selected","Your weekly workspace digest"),
                        check("notifications.error","Fixture notification service unavailable","contains"),
                        check("notifications.testing",False),check("notifications.sent",0),
@@ -1580,12 +1602,12 @@ class NativeFlows(unittest.TestCase):
         self.mcp.call("desktop.start", desktop_badges=True)
         self.mcp.batch(check("desktop_badge.visible",True))
         count = self.mcp.call("desktop.state")["desktop_badge"]["count"]
-        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),click(1150,88),type_text("badge"),
-                       check("settings_matches",["Mail & performance"]),click(500,289),
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),click(1150,88),key("ctrl+a"),type_text("badge"),
+                       check("settings_matches",["Mail & performance"]),wait(80),click(500,289),
                        check("settings_group","Mail & performance"), shot("badge-preference"),
                        click(340,431),check("desktop_badge.count",0),check("desktop_badge.visible",False),
-                       check("preferences_saved",True),key("ctrl+1"),key("ctrl+comma"),
-                       click(1150,88),type_text("badge"),click(500,289),wait(),click(340,431),
+                       check("preferences_saved",True),key("ctrl+1"),check("tab","Mail"),key("ctrl+comma"),check("tab","Preferences"),wait(80),
+                       click(1150,88),key("ctrl+a"),type_text("badge"),check("settings_matches",["Mail & performance"]),wait(80),click(500,289),wait(),click(340,431),
                        check("desktop_badge.count",count),check("desktop_badge.visible",True),
                        click(300,239),check("settings_group",None),click(286,737),check("unified",False),
                        key("ctrl+1"),check("account","preview-work"),check("desktop_badge.count",count),
@@ -1662,7 +1684,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_mail_check_interval_uses_seconds_and_validates_before_saving(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
-                       click(1150, 88), type_text("background"), check("settings_matches", ["Mail & performance"]),
+                       click(1150, 88), type_text("interval"), check("settings_matches", ["Mail & performance"]),
                        click(500, 289), check("settings_group", "Mail & performance"), shot("mail-check-seconds-setting"),
                        click(1110, 364), key("ctrl+a"), type_text("0"), click(1350, 88),
                        check("notice", "5–3600 seconds", "contains"), check("mail_check_seconds", 15),
@@ -1693,38 +1715,72 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(click(740, 100), check("unread", not initial), check("mail_pending", 1),
                        {**check("mail_pending", 0), "timeout_ms": 5000}, check("unread", initial), check("notice", "restored", "contains"),
                        shot("failed-read-restored"), click(784, 100), check("starred", not starred),
-                       click(420, 349), check("selected", "Your weekly workspace digest"),
-                       {**check("mail_pending", 0), "timeout_ms": 5000}, click(420, 247), check("starred", starred),
+                       click(420,mail_row_y(1)), check("selected", "Your weekly workspace digest"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000}, click(420,mail_row_y(0)), check("starred", starred),
                        shot("failed-flag-restored"))
+
+    def test_compact_mail_rows_appearance_and_resizing(self):
+        result = self.mcp.call("desktop.start")
+        print(f"Compact rows evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(shot("compact-rows-light"),
+                       drag(616, 500, 1000, 500), check("reader_split", .60, "gte"),
+                       shot("compact-rows-wide-light"),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(100),
+                       click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
+                       shot("compact-rows-wide-dark"),
+                       {"type":"resize", "width":900, "height":640}, check("window_size", [900,640]),
+                       shot("compact-rows-small-dark"))
+
+    def test_compact_mail_rows_flag_read_selection_and_double_click(self):
+        result = self.mcp.call("desktop.start", mail_actions="slow")
+        print(f"Compact row controls evidence: {result['artifacts']}", flush=True)
+        rows = self.mcp.call("desktop.state")["mail_rows"]
+        self.mcp.batch(click(575,224), check("mail_rows.0.starred",False),
+                       check("selected_id",rows[0]["id"]), click(575,284),
+                       check("mail_rows.1.starred",True), check("selected_id",rows[0]["id"]),
+                       click(420,284), check("selected_id",rows[1]["id"]),
+                       click(740,100), check("mail_rows.1.unread",False),
+                       click(740,100), check("mail_rows.1.unread",True),
+                       shot("compact-row-flags-unread"),
+                       click(575,154),check("mail_selection.mode",True),
+                       click(270,224),check("mail_selection.count",1),
+                       click(270,284),check("mail_selection.count",2),
+                       click(420,344),check("mail_selection.count",3),
+                       click(420,284),check("mail_selection.count",2),
+                       shot("compact-row-additive-selection"),
+                       key("Escape"),check("mail_selection.mode",False),
+                       double_click(420,344),check("full_reader",True),
+                       check("selected_id",rows[2]["id"]),key("Escape"),check("full_reader",False),
+                       shot("compact-row-return-from-full-reader"))
 
     def test_deletion_selection_keeps_scrolled_neighbors_through_repeated_saves(self):
         result = self.mcp.call("desktop.start", mail_actions="slow")
         print(f"Delete neighbor evidence: {result['artifacts']}", flush=True)
         rows = self.mcp.call("desktop.state")["mail_rows"]
-        self.mcp.batch(click(420, 747), check("selected_id", rows[5]["id"]), keys(*(["Down"] * 7)),
-                       check("selected_id", rows[12]["id"]), check("selected", rows[12]["subject"]),
+        self.mcp.batch(click(420, 524), check("selected_id", rows[5]["id"]), keys(*(["Down"] * 15)),
+                       check("selected_id", rows[20]["id"]), check("selected", rows[20]["subject"]),
                        check("inbox_scroll", 400, "gte"), shot("delete-scrolled-before-action"))
         scroll = self.mcp.call("desktop.state")["inbox_scroll"]
-        self.mcp.batch(click(696, 100), check("selected_id", rows[13]["id"]),
+        self.mcp.batch(click(696, 100), check("selected_id", rows[21]["id"]),
                        check("inbox_scroll", scroll), check("action_toast.label", "Deleted 1 message"),
-                       key("ctrl+d"), check("selected_id", rows[14]["id"]),
+                       key("ctrl+d"), check("selected_id", rows[22]["id"]),
                        check("inbox_scroll", scroll), check("action_toast.label", "Deleted 2 messages"),
                        shot("delete-scrolled-neighbors-pending"),
                        {**check("mail_pending", 0), "timeout_ms": 5000},
-                       check("selected_id", rows[14]["id"]), check("inbox_scroll", scroll),
+                       check("selected_id", rows[22]["id"]), check("inbox_scroll", scroll),
                        shot("delete-scrolled-neighbors-saved"))
 
     def test_deletion_selection_failure_retains_newer_reader_and_scroll(self):
         result = self.mcp.call("desktop.start", mail_actions="fail")
         print(f"Delete failure neighbor evidence: {result['artifacts']}", flush=True)
         rows = self.mcp.call("desktop.state")["mail_rows"]
-        self.mcp.batch(click(420, 747), check("selected_id", rows[5]["id"]), keys(*(["Down"] * 7)),
-                       check("selected_id", rows[12]["id"]), key("ctrl+d"),
-                       check("selected_id", rows[13]["id"]), key("Down"),
-                       check("selected_id", rows[14]["id"]))
+        self.mcp.batch(click(420, 524), check("selected_id", rows[5]["id"]), keys(*(["Down"] * 15)),
+                       check("selected_id", rows[20]["id"]), key("ctrl+d"),
+                       check("selected_id", rows[21]["id"]), key("Down"),
+                       check("selected_id", rows[22]["id"]))
         scroll = self.mcp.call("desktop.state")["inbox_scroll"]
         self.mcp.batch({**check("mail_pending", 0), "timeout_ms": 5000},
-                       check("selected_id", rows[14]["id"]), check("total", 120),
+                       check("selected_id", rows[22]["id"]), check("total", 120),
                        check("inbox_scroll", scroll), check("notice", "restored", "contains"),
                        shot("delete-failure-keeps-new-reader"))
 
@@ -1734,7 +1790,7 @@ class NativeFlows(unittest.TestCase):
                        click(531, 100), wait(100), click(531, 155), check("sort", "Oldest"),
                        check("total", 4))
         rows = self.mcp.call("desktop.state")["mail_rows"]
-        self.mcp.batch(click(420, 349), check("selected_id", rows[1]["id"]), key("ctrl+d"),
+        self.mcp.batch(click(420, 284), check("selected_id", rows[1]["id"]), key("ctrl+d"),
                        check("selected_id", rows[2]["id"]), shot("delete-filtered-oldest-next"),
                        {**check("mail_pending", 0), "timeout_ms": 5000})
         # Programmatic next selection is not read-on-leave; explicit clicks are.
@@ -1752,12 +1808,16 @@ class NativeFlows(unittest.TestCase):
         following = self.mcp.call("desktop.state")["mail_rows"][0]
         self.mcp.batch(click(273, 884), check("offset", 0), wait(100))
         rows = self.mcp.call("desktop.state")["mail_rows"]
-        self.mcp.batch(click(420, 747), check("selected_id", rows[5]["id"]),
+        self.mcp.batch(click(420, 524), check("selected_id", rows[5]["id"]),
                        keys(*(["Down"] * 25)), check("selected_id", rows[30]["id"]),
                        keys(*(["Down"] * 19)), check("selected_id", rows[49]["id"]))
         state = self.mcp.call("desktop.state")
         self.assertEqual(state["selected_id"], state["mail_rows"][-1]["id"])
-        scroll = state["inbox_scroll"]
+        # Selection is immediate; the layout operation then reveals the row.
+        # Capture the actual final-row position, not an earlier rapid key's offset.
+        self.assertGreater(state["inbox_reveal_height"], 0)
+        self.mcp.batch(check("inbox_scroll", len(rows) * 60 - state["inbox_reveal_height"] - .01, "gte"))
+        scroll = self.mcp.call("desktop.state")["inbox_scroll"]
         self.mcp.batch(key("ctrl+d"), check("selected_id", following["id"]), check("offset", 0),
                        check("inbox_scroll", scroll), shot("delete-next-page-row"),
                        {**check("mail_pending", 0), "timeout_ms": 5000},
@@ -1929,15 +1989,15 @@ class NativeFlows(unittest.TestCase):
         self.mcp.call("desktop.start", mail_actions="slow")
         self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), key("ctrl+1"), check("tab", "Mail"), wait(80),
                        check("mail_rows.0.unread", True), check("mail_pending", 0),
-                       click(420,246), check("selected", "A little more room to think"), check("unread", True), check("read_candidate", "A little more room to think"),
-                       click(420,345), check("selected", "Your weekly workspace digest"),
+                       click(420,mail_row_y(0)), check("selected", "A little more room to think"), check("unread", True), check("read_candidate", "A little more room to think"),
+                       click(420,mail_row_y(1)), check("selected", "Your weekly workspace digest"),
                        check("mail_rows.0.unread", False), check("mail_rows.1.unread", True),
                        check("mail_pending", 1), shot("read-on-leave-before-save"),
                        {**check("mail_pending", 0), "timeout_ms":5000},
-                       click(420,246), check("selected", "A little more room to think"),
+                       click(420,mail_row_y(0)), check("selected", "A little more room to think"),
                        {**check("mail_pending", 0), "timeout_ms":5000},
                        click(740,100), check("unread", True), check("mail_pending",1),
-                       click(420,345), check("selected", "Your weekly workspace digest"),
+                       click(420,mail_row_y(1)), check("selected", "Your weekly workspace digest"),
                        {**check("mail_pending", 0), "timeout_ms":5000}, check("mail_rows.0.unread",True),
                        key("ctrl+r"), check("refreshing", True), check("refreshing", False),
                        check("mail_rows.0.unread",True), shot("explicit-unread-survives-leaving"))
@@ -1963,14 +2023,14 @@ class NativeFlows(unittest.TestCase):
 
     def test_context_read_and_inbox_flag_use_the_clicked_message_during_slow_save(self):
         self.mcp.call("desktop.start", mail_actions="slow")
-        self.mcp.batch({"type": "click", "x": 403, "y": 450, "button": 3},
+        self.mcp.batch({"type": "click", "x": 403, "y": mail_row_y(2), "button": 3},
                        check("context_subject", "Coffee next Thursday?"),
                        key("Down"), key("Down"), key("Down"), key("Return"),
                        check("mail_rows.2.unread", False), check("mail_pending", 1),
                        check("mail_rows.0.unread", True), shot("context-read-pending-correct-row"),
-                       click(568, 425), check("mail_rows.2.starred", True),
+                       click(568, mail_row_y(2)), check("mail_rows.2.starred", True),
                        {**check("mail_pending", 0), "timeout_ms": 5000},
-                       click(420, 450), check("selected", "Coffee next Thursday?"),
+                       click(420, mail_row_y(2)), check("selected", "Coffee next Thursday?"),
                        check("unread", False), check("starred", True),
                        shot("context-read-row-flag-committed"))
 
@@ -2006,13 +2066,13 @@ class NativeFlows(unittest.TestCase):
 
     def test_context_menu_survives_mouse_release_and_sync_refresh(self):
         self.mcp.batch(key("ctrl+r"), check("busy", "sync", "contains"),
-                       {"type": "click", "x": 403, "y": 450, "button": 3}, check("context_subject", "Coffee next Thursday?"),
+                       {"type": "click", "x": 403, "y": mail_row_y(2), "button": 3}, check("context_subject", "Coffee next Thursday?"),
                        wait(100), check("context_subject", "Coffee next Thursday?"), check("busy", []),
                        check("context_subject", "Coffee next Thursday?"), shot("context-after-background-refresh"),
-                       click(485, 624), check("context_menu", None), check("starred", True),
-                       {"type": "click", "x": 403, "y": 450, "button": 3}, check("context_subject", "Coffee next Thursday?"),
+                       click(485, 528), check("context_menu", None), check("starred", True),
+                       {"type": "click", "x": 403, "y": mail_row_y(2), "button": 3}, check("context_subject", "Coffee next Thursday?"),
                        key("Escape"), check("context_menu", None),
-                       {"type": "click", "x": 403, "y": 450, "button": 3}, check("context_subject", "Coffee next Thursday?"),
+                       {"type": "click", "x": 403, "y": mail_row_y(2), "button": 3}, check("context_subject", "Coffee next Thursday?"),
                        click(1380, 730), check("context_menu", None))
 
     def open_shared_profiles(self, search_x=1150):
@@ -2242,7 +2302,7 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+1"),check("tab","Mail"),shot("profile-login-compact-dark"),
                        click(668,586),check("profile_sync.offer",False),
                        check("profile_sync.options.discover_on_login",False),check("profile_sync.saving",False),
-                       click(380,330),check("selected","Your weekly workspace digest"),
+                       click(380,mail_row_y(1)),check("selected","Your weekly workspace digest"),
                        shot("profile-login-compact-dismissed"))
 
     def test_profile_login_native_failure_retry_and_close_during_discovery(self):
@@ -2255,7 +2315,7 @@ class NativeFlows(unittest.TestCase):
                        shot("profile-login-retried"))
         started=self.mcp.call("desktop.start",profile_sync="hold-list",profile_login=True)
         print(f"Held login discovery evidence: {started['artifacts']}",flush=True)
-        self.mcp.batch(check("profile_sync.working",True),click(400,330),
+        self.mcp.batch(check("profile_sync.working",True),click(400,mail_row_y(1)),
                        check("selected","Your weekly workspace digest"),shot("profile-login-held-navigation"))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
 
@@ -2412,7 +2472,7 @@ class NativeFlows(unittest.TestCase):
                        wait(100), click(288, 371), check("profile_sync.options.accounts", True),
                        check("profile_sync.saving", False), shot("profile-sync-invalid-local"),
                        {"type":"restart"}, check("tab", "Mail"),
-                       click(400, 330), check("selected", "Your weekly workspace digest"),
+                       click(400,mail_row_y(1)), check("selected", "Your weekly workspace digest"),
                        shot("profile-sync-invalid-reopened-mail"), key("ctrl+comma"),
                        check("tab", "Preferences"), wait(80), click(1150, 88),
                        key("ctrl+a"), type_text("shared profile"),
@@ -2574,7 +2634,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(click(373, 527), check("database_import.phase", "Choosing"),
                        {"type":"choose_file", "path":str(source)}, check("database_import.phase", "Copying"),
                        shot("database-import-copying"), key("ctrl+1"), check("tab", "Mail"), wait(100),
-                       click(400, 330), check("selected", "Your weekly workspace digest"), key("r"),
+                       click(400,mail_row_y(1)), check("selected", "Your weekly workspace digest"), key("r"),
                        check("composer.visible", True), check("focused_input", "compose-body"),
                        type_text("Keep editing while importing."), check("draft_count", 1),
                        check("database_import.phase", "Copying"), shot("database-import-pending-editor"),
@@ -2660,7 +2720,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(click(379, 433), check("database_transfer.phase", "Choosing"),
                        {"type": "choose_file", "save": True, "path": str(destination)},
                        check("database_transfer.phase", "Copying"), shot("database-export-pending"),
-                       key("ctrl+1"), check("tab", "Mail"), wait(100), click(400, 330), check("selected", "Your weekly workspace digest"),
+                       key("ctrl+1"), check("tab", "Mail"), wait(100), click(400,mail_row_y(1)), check("selected", "Your weekly workspace digest"),
                        key("r"), check("composer.visible", True), check("focused_input", "compose-body"),
                        type_text("Keep editing while exporting."), check("draft_count", 1),
                        check("database_transfer.phase", "Copying"), shot("database-export-pending-editor"),
@@ -2695,20 +2755,20 @@ class NativeFlows(unittest.TestCase):
                        click(450, 289), check("settings_group", "Reading and layout"), shot("settings-font-search-destination"))
 
     def test_inbox_context_menu_targets_clicked_message(self):
-        self.mcp.batch({"type": "click", "x": 403, "y": 450, "button": 3},
+        self.mcp.batch({"type": "click", "x": 403, "y": mail_row_y(2), "button": 3},
                        check("context_subject", "Coffee next Thursday?"), shot("inbox-context-light"),
-                       click(485, 624), check("context_menu", None),
-                       click(403, 450), check("selected", "Coffee next Thursday?"), check("starred", True),
-                       {"type": "click", "x": 403, "y": 450, "button": 3}, check("context_subject", "Coffee next Thursday?"),
+                       click(485, 518), check("context_menu", None),
+                       click(403, mail_row_y(2)), check("selected", "Coffee next Thursday?"), check("starred", True),
+                       {"type": "click", "x": 403, "y": mail_row_y(2), "button": 3}, check("context_subject", "Coffee next Thursday?"),
                        key("Escape"), check("context_menu", None),
                        key("shift+F10"), check("context_subject", "Coffee next Thursday?"),
                        key("Return"), check("full_reader", True), key("Escape"), check("full_reader", False),
-                       {"type": "click", "x": 403, "y": 450, "button": 3}, check("context_subject", "Coffee next Thursday?"),
-                       click(486, 664), check("dialog", "Move"), check("focused_input", "folder-search"),
+                       {"type": "click", "x": 403, "y": mail_row_y(2), "button": 3}, check("context_subject", "Coffee next Thursday?"),
+                       click(486, 558), check("dialog", "Move"), check("focused_input", "folder-search"),
                        type_text("Archive"), key("Return"), check("dialog", None), check("total", 119),
                        click(85, 398), check("folder", "Archive"), check("selected", "Coffee next Thursday?"),
                        key("ctrl+comma"), check("tab", "Preferences"), click(690, 366), check("dark", True),
-                       key("ctrl+1"), check("tab", "Mail"), wait(80), click(403,245),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80), click(403,mail_row_y(0)),
                        check("sidebar_focus",False), key("shift+F10"),
                        check("context_subject", "Coffee next Thursday?"), shot("inbox-context-dark"),
                        click(1400, 700), check("context_menu", None))
@@ -2716,7 +2776,7 @@ class NativeFlows(unittest.TestCase):
     def test_inbox_context_compact_and_reply_target(self):
         self.mcp.call("desktop.stop")
         self.mcp.call("desktop.start", width=900, height=640)
-        self.mcp.batch({"type": "click", "x": 357, "y": 450, "button": 3},
+        self.mcp.batch({"type": "click", "x": 357, "y": mail_row_y(2), "button": 3},
                        check("context_subject", "Coffee next Thursday?"), shot("inbox-context-compact"),
                        click(442, 275), check("composer.visible", True), check("compose_fields.to", "Sophie Williams <hello2@example.com>"),
                        check("compose_fields.subject", "Re: Coffee next Thursday?"), shot("context-reply-target"),
@@ -2777,23 +2837,23 @@ class NativeFlows(unittest.TestCase):
                        check("total",120), shot("bulk-undo-complete"))
 
     def test_bulk_flags_read_and_move_use_the_selected_messages(self):
-        self.mcp.batch(click(584,164), check("mail_selection.mode",True), check("mail_selection.drawn",True), click(274,218), click(274,322),
+        self.mcp.batch(click(584,164), check("mail_selection.mode",True), check("mail_selection.drawn",True), click(274,mail_row_y(0)), click(274,mail_row_y(1)),
                        check("mail_selection.count",2), check("mail_selection.pending",False),
                        key("s"), check("dialog","BulkReview"), check("bulk.action","Flag"),
                        check("bulk.review_count",2), key("Return"), check("dialog",None),
                        check("bulk.jobs.0.remaining",0), check("mail_rows.0.starred",True),
                        check("mail_rows.1.starred",True), shot("bulk-flagged"),
-                       click(584,164), check("mail_selection.mode",True), check("mail_selection.drawn",True), click(274,218), click(274,322),
+                       click(584,164), check("mail_selection.mode",True), check("mail_selection.drawn",True), click(274,mail_row_y(0)), click(274,mail_row_y(1)),
                        check("mail_selection.pending",False), click(732,100),
                        check("dialog","BulkReview"), check("bulk.action","Mark as read"),
                        key("Return"), check("dialog",None), check("bulk.jobs.0.remaining",0),
                        check("mail_rows.0.unread",False), check("mail_rows.1.unread",False),
                        check("inbox_unread.preview-work",1), check("inbox_unread.preview-personal",1), shot("bulk-read"),
-                       click(584,164), check("mail_selection.mode",True), check("mail_selection.drawn",True), click(274,218), click(274,322),
+                       click(584,164), check("mail_selection.mode",True), check("mail_selection.drawn",True), click(274,mail_row_y(0)), click(274,mail_row_y(1)),
                        check("mail_selection.pending",False), click(732,100),
                        check("dialog","BulkReview"), check("bulk.action","Mark as unread"),
                        key("Return"), check("dialog",None), check("bulk.jobs.0.remaining",0),
-                       check("inbox_unread.preview-work",3), click(584,164), check("mail_selection.mode",True), check("mail_selection.drawn",True), click(274,218), click(274,426),
+                       check("inbox_unread.preview-work",3), click(584,164), check("mail_selection.mode",True), check("mail_selection.drawn",True), click(274,mail_row_y(0)), click(274,mail_row_y(2)),
                        check("mail_selection.count",2), check("mail_selection.pending",False), key("m"), check("dialog","Move"),
                        check("focused_input","folder-search"), type_text("Projects"),
                        key("Return"), check("dialog","BulkReview"), check("bulk.review_count",2),
@@ -2847,55 +2907,55 @@ class NativeFlows(unittest.TestCase):
         result=self.mcp.call("desktop.start", mail_actions="slow")
         print(f"Bulk conflict evidence: {result['artifacts']}", flush=True)
         self.mcp.batch(click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
-                       click(274,322),click(274,426),check("mail_selection.count",2),
+                       click(274,mail_row_y(1)),click(274,mail_row_y(2)),check("mail_selection.count",2),
                        check("mail_selection.pending",False),key("s"),check("dialog","BulkReview"),
                        key("Return"),check("dialog",None),check("bulk.jobs.0.running",1),
                        check("mail_rows.1.group_pending",True),check("selected","A little more room to think"),
-                       click(568,322),check("mail_pending",0),check("selected","A little more room to think"),
-                       {"type":"click","x":400,"y":350,"button":3},check("context_menu",None,"ne"),
+                       click(568,mail_row_y(1)),check("mail_pending",0),check("selected","A little more room to think"),
+                       {"type":"click","x":400,"y":mail_row_y(1),"button":3},check("context_menu",None,"ne"),
                        key("Down"),key("Down"),key("Down"),key("Return"),check("context_menu",None),
                        check("notice","part of a group change","contains"),check("mail_pending",0),
                        shot("bulk-row-conflict-keeps-group"),
                        {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
                        check("bulk.jobs.0.failed",0),check("mail_rows.1.group_pending",False),wait(80),
-                       click(568,322),check("mail_rows.1.starred",False),check("mail_pending",1),
+                       click(568,mail_row_y(1)),check("mail_rows.1.starred",False),check("mail_pending",1),
                        check("mail_pending",0),shot("bulk-row-controls-restored"))
 
     def test_selection_mode_row_clicks_toggle_without_clearing_other_pages(self):
         self.mcp.batch(check("selected", "A little more room to think"),
                        click(574,155), check("mail_selection.mode",True),
                        check("mail_selection.drawn",True),
-                       click(400,245), click(400,453),
+                       click(400,mail_row_y(0)), click(400,mail_row_y(2)),
                        check("mail_selection.count",2), check("mail_selection.pending",False),
-                       click(400,245), check("mail_selection.count",1),
-                       click(400,349), check("mail_selection.count",2),
-                       {"type":"click","x":400,"y":245,"modifiers":["shift"]},
+                       click(400,mail_row_y(0)), check("mail_selection.count",1),
+                       click(400,mail_row_y(1)), check("mail_selection.count",2),
+                       {"type":"click","x":400,"y":mail_row_y(0),"modifiers":["shift"]},
                        check("mail_selection.count",3), check("mail_selection.pending",False),
                        check("selected", "A little more room to think"),
                        shot("selection-additive-row-range"),
                        click(586,884), check("offset",50), check("mail_selection.pending",False),
-                       click(400,245), check("mail_selection.count",4),
-                       click(400,453), check("mail_selection.count",5),
-                       click(400,245), check("mail_selection.count",4),
+                       click(400,mail_row_y(0)), check("mail_selection.count",4),
+                       click(400,mail_row_y(2)), check("mail_selection.count",5),
+                       click(400,mail_row_y(0)), check("mail_selection.count",4),
                        check("mail_selection.pending",False),
                        key("BackSpace"), check("dialog","BulkReview"),
                        check("bulk.review_count",4), shot("selection-additive-cross-page-review"),
                        key("Escape"), check("dialog",None),
                        key("Escape"), check("mail_selection.mode",False),
-                       click(400,349), check("mail_selection.mode",False))
+                       click(400,mail_row_y(1)), check("mail_selection.mode",False))
 
     def test_mail_selection_mouse_ranges_and_focus(self):
-        self.mcp.batch(click(400, 255), check("selected", "A little more room to think"),
-                       {"type":"click", "x":400, "y":360, "modifiers":["ctrl"]},
+        self.mcp.batch(click(400, mail_row_y(0)), check("selected", "A little more room to think"),
+                       {"type":"click", "x":400, "y":mail_row_y(1), "modifiers":["ctrl"]},
                        check("mail_selection.count", 2), check("mail_selection.pending", False),
-                       {"type":"click", "x":400, "y":568, "modifiers":["shift"]},
+                       {"type":"click", "x":400, "y":mail_row_y(3), "modifiers":["shift"]},
                        check("mail_selection.count", 4), check("mail_selection.pending", False),
                        shot("selection-range"),
-                       {"type":"click", "x":400, "y":450, "modifiers":["ctrl"]},
+                       {"type":"click", "x":400, "y":mail_row_y(2), "modifiers":["ctrl"]},
                        check("mail_selection.count", 3),
-                       {"type":"click", "x":400, "y":450, "modifiers":["ctrl"]},
+                       {"type":"click", "x":400, "y":mail_row_y(2), "modifiers":["ctrl"]},
                        check("mail_selection.count", 4), check("full_reader", False),
-                       double_click(400, 250), check("full_reader", True),
+                       double_click(400, mail_row_y(0)), check("full_reader", True),
                        key("Escape"), check("full_reader", False), key("ctrl+a"),
                        check("mail_selection.count", 120), check("mail_selection.pending", False),
                        key("Escape"), check("mail_selection.mode", False),
@@ -2908,10 +2968,10 @@ class NativeFlows(unittest.TestCase):
         print(f"Arrival checkbox evidence: {result['artifacts']}", flush=True)
         self.mcp.batch(check("background_sync", True), click(584,164),
                        check("mail_selection.mode",True), check("mail_selection.drawn",True),
-                       click(274,218), check("mail_selection.count",1), check("mail_selection.pending",False),
+                       click(274,mail_row_y(0)), check("mail_selection.count",1), check("mail_selection.pending",False),
                        check("total",121), check("mail_rows.0.subject","New mail from the background"),
                        check("mail_selection.count",1), check("mail_selection.pending",False),
-                       shot("selection-arrival-unselected"), click(274,218),
+                       shot("selection-arrival-unselected"), click(274,mail_row_y(0)),
                        check("mail_selection.count",2), check("mail_selection.pending",False),
                        check("mail_selection.available",2), shot("selection-arrival-checkbox"),
                        key("BackSpace"), check("dialog","BulkReview"), check("bulk.review_count",2),
@@ -2922,13 +2982,13 @@ class NativeFlows(unittest.TestCase):
         print(f"Arrival range evidence: {result['artifacts']}", flush=True)
         self.mcp.batch(check("background_sync",True), click(584,164),
                        check("mail_selection.mode",True), check("mail_selection.drawn",True),
-                       click(274,218), check("mail_selection.count",1), check("mail_selection.pending",False),
+                       click(274,mail_row_y(0)), check("mail_selection.count",1), check("mail_selection.pending",False),
                        check("total",121), check("mail_rows.0.subject","New mail from the background"),
                        check("mail_selection.count",1),
-                       {"type":"click","x":400,"y":250,"modifiers":["ctrl"]},
+                       {"type":"click","x":400,"y":mail_row_y(0),"modifiers":["ctrl"]},
                        check("mail_selection.count",2), check("mail_selection.pending",False),
                        shot("selection-arrival-ctrl"),
-                       {"type":"click","x":400,"y":460,"modifiers":["shift"]},
+                       {"type":"click","x":400,"y":mail_row_y(2),"modifiers":["shift"]},
                        check("mail_selection.count",3), check("mail_selection.pending",False),
                        check("mail_selection.available",3), shot("selection-arrival-range"),
                        key("m"), check("dialog","Move"), key("Escape"), check("dialog",None),
@@ -2936,11 +2996,11 @@ class NativeFlows(unittest.TestCase):
 
     def test_mail_selection_checkboxes_pages_scope_and_compact(self):
         self.mcp.batch(click(584, 164), check("mail_selection.mode", True), check("mail_selection.drawn", True),
-                       click(274, 218), check("mail_selection.count", 1),
-                       click(274, 322), check("mail_selection.count", 2),
+                       click(274, mail_row_y(0)), check("mail_selection.count", 1),
+                       click(274, mail_row_y(1)), check("mail_selection.count", 2),
                        check("mail_selection.pending", False),
                        click(260, 218), check("mail_selection.count", 1),
-                       click(274, 218), check("mail_selection.count", 2),
+                       click(274, mail_row_y(0)), check("mail_selection.count", 2),
                        check("selected", "A little more room to think"), shot("selection-checkboxes"),
                        key("ctrl+a"), check("mail_selection.count", 120),
                        check("mail_selection.pending", False), click(586, 884), check("offset", 50),
@@ -2951,7 +3011,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_mail_selection_remap_reader_isolation_and_dark(self):
         self.mcp.batch(click(950, 325), check("mail_selection.list_focus", False), key("ctrl+a"), wait(80), check("mail_selection.mode", False),
-                       click(400, 250), key("Tab"), check("sidebar_focus", True),
+                       click(400, mail_row_y(0)), key("Tab"), check("sidebar_focus", True),
                        key("ctrl+a"), wait(80), check("mail_selection.mode", False),
                        key("Tab"), check("sidebar_focus", False), key("ctrl+a"),
                        check("mail_selection.count", 120), check("mail_selection.pending", False),
@@ -2962,7 +3022,7 @@ class NativeFlows(unittest.TestCase):
                        {"type":"hover", "x":1200, "y":700}, {"type":"scroll", "amount":30}, wait(150),
                        click(920, 480), key("alt+a"), check("shortcuts.SelectAll", "Alt+A"),
                        check("preferences_saved", True), shot("selection-shortcut-remapped"),
-                       key("ctrl+1"), check("tab", "Mail"), wait(80), click(400, 250),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80), click(400, mail_row_y(0)),
                        key("ctrl+a"), check("mail_selection.mode", False), key("alt+a"),
                        check("mail_selection.count", 120), check("mail_selection.pending", False),
                        shot("selection-dark"), {"type":"resize", "width":900, "height":640},
@@ -2971,7 +3031,7 @@ class NativeFlows(unittest.TestCase):
     def test_read_search_preload_and_mouse_navigation(self):
         self.mcp.batch(check("selected", "A little more room to think"), check("cache_entries", 3, "gte"),
                        check("page_prefetched", True), shot("mail-light"),
-                       click(403, 450), check("selected", "Coffee next Thursday?"),
+                       click(403,mail_row_y(2)), check("selected", "Coffee next Thursday?"),
                        key("ctrl+k"), check("focused_input", "search"), type_text("prototype"), check("total", 1),
                        check("selected", "Re: A few thoughts on the prototype"), shot("search-results"),
                        key("ctrl+a"), type_text("no-match-938481"), check("total", 0),
@@ -3349,16 +3409,16 @@ class NativeFlows(unittest.TestCase):
     def test_inline_reply_find_scroll_and_switch_preserve_draft_focus(self):
         started = self.mcp.call("desktop.start",html_mail=True)
         print(f"Inline Find and scrolling: {started['artifacts']}", flush=True)
-        self.mcp.batch(click(400,558),check("selected","Long formatted letter"),check("html_ready",True),
+        self.mcp.batch(click(400,mail_row_y(3)),check("selected","Long formatted letter"),check("html_ready",True),
                        key("r"),check("composer.visible",True),check("focused_input","compose-body"),
                        type_text("A reply above the long original."), key("ctrl+f"),check("focused_input","find-message"),
                        type_text("Paragraph"),check("find_count",201),check("find_pending",False),key("Return"),
                        check("find_active",1),check("html_view_current",True),shot("inline-find-original"),
                        key("Escape"),check("find_open",False),check("composer.visible",True),
-                       click(350,230),check("composer.visible",False),key("r"),check("composer.visible",True),
+                       click(350,mail_row_y(0)),check("composer.visible",False),key("r"),check("composer.visible",True),
                        check("focused_input","compose-body"),type_text("A second draft starts at its editor."),
                        check("editor","A second draft starts at its editor.","contains"),shot("inline-switch-resets-reader-scroll"),
-                       click(350,558),check("selected","Long formatted letter"),check("composer.visible",True),
+                       click(350,mail_row_y(3)),check("selected","Long formatted letter"),check("composer.visible",True),
                        check("editor","A reply above the long original.","contains"),shot("inline-long-reply-restored"))
 
     def test_inline_composer_send_preparation_allows_another_reply_and_preserves_failure(self):
@@ -3626,8 +3686,34 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+comma"), check("tab", "Preferences"), click(286, 809), check("group_conversations", True),
                        click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
                        check("conversation_total", 3), shot("conversation-dark"),
-                       double_click(400, 244), check("full_reader", True), shot("conversation-full-reader"),
+                       double_click(400,mail_row_y(0)), check("full_reader", True), shot("conversation-full-reader"),
                        key("Escape"), check("full_reader", False))
+
+    def test_conversation_move_keeps_anchor_after_slow_success_or_failure(self):
+        for mode in ("slow", "fail"):
+            for newer_focus in (False, True):
+                self.mcp.call("desktop.start", conversation_mail=True, mail_actions=mode)
+                anchor = "preview-work:INBOX:launch-2"
+                older = "preview-work:Sent:launch-1"
+                first = "preview-work:Archive:launch-0"
+                self.mcp.batch(check("loaded_message_id", anchor), check("conversation_total", 3),
+                               wait(150), click(800, 344), check("loaded_message_id", older),
+                               key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
+                               type_text("Projects"), key("Return"), check("dialog", None),
+                               {"type":"assert", "path":"mail_pending", "value":1},
+                               {"type":"assert", "path":"reader_message_id", "value":older},
+                               check("selected_id", anchor))
+                if newer_focus:
+                    self.mcp.batch(click(800, 258), check("loaded_message_id", first),
+                                   {"type":"assert", "path":"mail_pending", "value":1})
+                expected = first if newer_focus else (anchor if mode == "slow" else older)
+                self.mcp.batch(check("mail_pending", 0), check("loaded_message_id", expected),
+                               check("selected_id", anchor),
+                               check("conversation_rows.1.folder", "Projects" if mode == "slow" else "Sent"),
+                               shot(f"conversation-move-{mode}-newer-{newer_focus}"))
+                if mode == "fail":
+                    self.mcp.batch(check("notice", "restored", "contains"))
+
 
     def test_conversation_paging(self):
         self.mcp.call("desktop.start", conversation_mail=True)
@@ -3853,13 +3939,35 @@ class NativeFlows(unittest.TestCase):
     def test_keyboard_pane_navigation_and_full_reader(self):
         self.mcp.batch(key("Down"), check("selected", "Your weekly workspace digest"),
                        key("Up"), check("selected", "A little more room to think"),
-                       double_click(420, 243), check("full_reader", True), shot("full-reader"),
+                       double_click(420,mail_row_y(0)), check("full_reader", True), shot("full-reader"),
                        key("Escape"), check("full_reader", False),
                        key("Tab"), check("sidebar_focus", True), key("Down"), check("filter", "Flagged"),
                        key("Tab"), check("sidebar_focus", False), click(80, 278), check("filter", "All"),
-                       check("selected", "A little more room to think"), click(420, 244), check("sidebar_focus", False))
+                       check("selected", "A little more room to think"), click(420,mail_row_y(0)), check("sidebar_focus", False))
         for _ in range(12): self.mcp.batch(key("Down"), wait(25))
-        self.mcp.batch(check("inbox_scroll", 200, "gte"), shot("keyboard-scrolled-inbox"))
+        self.mcp.batch(check("inbox_scroll", 1, "gte"), shot("keyboard-scrolled-inbox"))
+        state = self.mcp.call("desktop.state")
+        index = next(i for i, row in enumerate(state["mail_rows"]) if row["id"] == state["selected_id"])
+        self.assertEqual(index, 12)
+        self.assertGreaterEqual(index * 60, state["inbox_scroll"])
+        self.assertLessEqual((index + 1) * 60, state["inbox_scroll"] + state["inbox_reveal_height"])
+
+    def test_keyboard_inbox_reveal_uses_compact_and_scaled_native_bounds(self):
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(120),
+                       click(690,366),check("dark",True),click(1145,623),wait(80),click(1140,509),
+                       check("interface_scale",120),check("preferences_saved",True),
+                       key("ctrl+1"),check("tab","Mail"),wait(120),
+                       {"type":"resize","width":900,"height":640},check("window_size.0",750),check("window_size.1",534,"lte"),wait(120))
+        for _ in range(14): self.mcp.batch(key("Down"),wait(25))
+        self.mcp.batch(check("inbox_scroll",1,"gte"),shot("keyboard-compact-scaled-row-visible"))
+        state=self.mcp.call("desktop.state")
+        index=next(i for i,row in enumerate(state["mail_rows"]) if row["id"]==state["selected_id"])
+        self.assertEqual(index,14)
+        self.assertGreaterEqual(index*60,state["inbox_scroll"])
+        self.assertLessEqual((index+1)*60,state["inbox_scroll"]+state["inbox_reveal_height"]+.01)
+        for _ in range(14): self.mcp.batch(key("Up"),wait(25))
+        self.mcp.batch(check("selected_id",state["mail_rows"][0]["id"]),check("inbox_scroll",0),
+                       shot("keyboard-compact-scaled-first-row"))
 
     def test_sidebar_combined_folders_and_account_collapse(self):
         self.mcp.call("desktop.start", long_folders=True)

@@ -28,6 +28,9 @@ class Installation(unittest.TestCase):
                 self.assertIn("StartupWMClass=so.shep.Shep", content)
                 self.assertIn("Icon=so.shep.Shep", content)
                 self.assertTrue(icon.is_file())
+                symbolic = data / "icons/hicolor/scalable/apps/so.shep.Shep-symbolic.svg"
+                self.assertTrue(symbolic.is_file())
+                self.assertIn("Icon=so.shep.Shep-symbolic\n", content)
                 binary.write_bytes(b"updated release")
                 installer.install(binary, prefix, data)
                 self.assertEqual(executable.read_bytes(), b"updated release")
@@ -37,6 +40,7 @@ class Installation(unittest.TestCase):
                 self.assertFalse(executable.exists())
                 self.assertFalse(desktop.exists())
                 self.assertFalse(icon.exists())
+                self.assertFalse(symbolic.exists())
                 self.assertEqual(vault.read_bytes(), b"personal mail")
 
     def test_desktop_exec_escapes_reserved_characters(self):

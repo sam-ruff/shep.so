@@ -1335,3 +1335,24 @@ confirmed Google success. Preserve the `profile_setting_review_*` Rust and saved
 native scenarios, including compact dropdown/mouse choices, restart and stale
 native preference recovery. Account endpoint/removal/linking reviews remain
 separate unfinished work.
+
+Transparent icon sources live in `assets/shepherd-{light,dark,symbolic}.svg`;
+approved original PNG references stay unchanged. Regenerate WebP/launcher PNGs
+with `uv run --with cairosvg --with pillow python scripts/build_icons.py`.
+The Linux installer ships `so.shep.Shep-symbolic.svg` for native system-theme
+recoloring and keeps the application/desktop/StartupWMClass identity unchanged.
+The StatusNotifier IconName uses that symbolic asset with transparent full-color
+pixmap fallback; macOS uses the symbolic raster as a native template. Never add
+an app-owned theme watcher that rewrites personal icons on every frame.
+Keep alpha/interior regressions, installer update/uninstall checks and the saved
+native GTK tray-theme flow. Its `tray_theme` action clicks the owned GTK host's
+button; it cannot change the user's desktop theme. Distinguish GTK fixture evidence
+from actual GNOME shell, Windows and macOS review.
+
+Compact mail rows share `ui/mail_list::ROW_HEIGHT` (60 logical pixels). Native
+keyboard reveal must use actual scrollable layout bounds and reject stale
+scope/selection results; do not restore estimated window-height offsets. Tests
+use `mail_row_y` and await the layout observation before comparing scroll after
+deleting the last visible row. The isolated Xvfb harness uses GTK's Cairo picker
+renderer; clipboard ownership and exact path validation remain mandatory. This
+setting does not alter production rendering.

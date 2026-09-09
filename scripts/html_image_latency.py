@@ -6,11 +6,11 @@ import json
 import math
 import statistics
 from pathlib import Path
-from e2e import McpClient, click, check, wait, shot, ROOT
+from e2e import McpClient, click, check, wait, shot, mail_row_y, ROOT
 
 
 def opened(mcp, index):
-    mcp.batch(click(400, 245 + index * 104), check('selected', ['Dispatch update', 'Delivery update'][index]),
+    mcp.batch(click(400, mail_row_y(index)), check('selected', ['Dispatch update', 'Delivery update'][index]),
               check('html_view_current', True), check('html_loaded_images', 12),
               check('remote_image_pending', 0), check('html_rendered_images', 12), wait(250))
 
@@ -24,7 +24,7 @@ def measure(samples):
         mcp.batch(click(85, 355), check('selected', 'Dispatch update'), check('html_view_current', True),
                   click(1115, 376), check('images_allowed', True), check('html_loaded_images', 12))
         # The permission is per message; give the second its own explicit grant.
-        mcp.batch(click(400, 349), check('selected', 'Delivery update'), check('html_view_current', True))
+        mcp.batch(click(400, mail_row_y(1)), check('selected', 'Delivery update'), check('html_view_current', True))
         if not mcp.call('desktop.state')['images_allowed']:
             mcp.batch(click(1115, 376), check('images_allowed', True))
         references = []
@@ -34,7 +34,7 @@ def measure(samples):
             references.append(mcp.batch({'type': 'pixel_reference'})['actions'][0]['result']['points'])
         for cycle in range(samples):
             for index in range(2):
-                result = mcp.batch({'type': 'measure_pixels', 'x': 400, 'y': 245+index*104,
+                result = mcp.batch({'type': 'measure_pixels', 'x': 400, 'y': mail_row_y(index),
                                     'points': references[index], 'timeout_ms': 5000},
                                    check('html_view_current', True))
                 reading = {'case': ['warm_images_return', 'warm_images_repeat'][index], 'cycle': cycle, 'message': index, **result['actions'][0]['result'],

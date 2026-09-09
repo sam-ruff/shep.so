@@ -29,7 +29,11 @@ pub struct Icon {
 }
 impl Icon {
     fn load() -> anyhow::Result<Self> {
-        let source = image::load_from_memory(include_bytes!("../../assets/logo-light.webp"))?;
+        #[cfg(target_os = "macos")]
+        let bytes = include_bytes!("../../assets/logo-symbolic.webp").as_slice();
+        #[cfg(not(target_os = "macos"))]
+        let bytes = include_bytes!("../../assets/logo-light.webp").as_slice();
+        let source = image::load_from_memory(bytes)?;
         let resized = source.resize_exact(32, 32, image::imageops::FilterType::Lanczos3);
         Ok(Self {
             rgba: resized.into_rgba8().into_raw(),
@@ -162,6 +166,33 @@ pub async fn saving_notification(demo: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn approved_icons_have_real_transparency_and_clean_outer_margins() {
+        for bytes in [
+            include_bytes!("../../assets/logo-light.webp").as_slice(),
+            include_bytes!("../../assets/logo-dark.webp").as_slice(),
+            include_bytes!("../../assets/launcher.png").as_slice(),
+        ] {
+            let image = image::load_from_memory(bytes).unwrap().into_rgba8();
+            assert_eq!(image.dimensions(), (128, 128));
+            let mut visible = 0;
+            let mut opaque = 0;
+            for (x, y, pixel) in image.enumerate_pixels() {
+                if !(20..=112).contains(&x) || !(4..=124).contains(&y) {
+                    assert_eq!(pixel[3], 0, "fringe at {x},{y}");
+                }
+                visible += usize::from(pixel[3] > 0);
+                opaque += usize::from(pixel[3] == 255);
+            }
+            assert!((4500..6000).contains(&visible));
+            assert!(opaque > 3500, "The dog's interior must remain opaque");
+        }
+        let icon = Icon::load().unwrap();
+        assert_eq!(icon.rgba.len(), 32 * 32 * 4);
+        assert_eq!(icon.rgba[3], 0);
+        assert_eq!(icon.rgba[31 * 4 + 3], 0);
+    }
+
     #[tokio::test]
     async fn native_action_signal_keeps_final_intent_when_receiver_is_busy() {
         let (actions, mut receiver) = watch::channel(None);
