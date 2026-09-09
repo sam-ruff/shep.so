@@ -476,3 +476,6 @@ R75/R63 continuation: the native-only SDK package selection prevents unsolicited
 
 
 R75/R02/R49/desktop-main:R92/R63/R67/R69/R73/R77: Flutter native consent now passes 89 host tests, the configured SDK fixture, two Android Google scenarios and seven Appium/offline Playwright flows. Production ARM64 packaging, analysis, Python/parity and strict documentation pass; reviewed captures and retained intermediate failures are recorded in the completion log. Full OAuth/provider/profile parity and live/Apple verification remain active; checkpoint shipping follows.
+
+
+Flutter scoped consent is shipped in [`6c4bb65`](https://github.com/sam-ruff/shep.so/commit/6c4bb65fbc02c96dd258ed9942e64e6282bca181), with exact remote verification and mandatory hooks passing 398 root/shared Rust tests. Client/platform test counts, reviewed evidence and limitations are in [the completion log](COMPLETION.md). R77 prompt shipping is fulfilled for this increment; full R75/R02/R49 and client/platform parity stay in TODO.
