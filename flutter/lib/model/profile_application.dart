@@ -17,19 +17,26 @@ extension _ProfilePreferenceMerge on Workspace {
 class WorkspaceProfileApplication implements ProfileEnrollmentDevice {
   WorkspaceProfileApplication(this.workspace);
   final Workspace workspace;
+  ProfileSettingsSnapshot? _reviewed;
+  Map<String, int> _reviewedGenerations = const {};
+  String? _receiptId;
   ProfileSettingsStore get store => workspace.settings as ProfileSettingsStore;
   @override
   Future<ProfileSettingsSnapshot> captureProfilePreferences() async {
     await workspace._settingsQueue;
+    final generations = Map<String, int>.of(workspace._preferenceFields);
     final snapshot = await store.profileSnapshot();
-    if (!mapEquals(
-      snapshot.preferences.profileSettings(),
-      workspace.preferences.profileSettings(),
-    )) {
+    if (!mapEquals(generations, workspace._preferenceFields) ||
+        !mapEquals(
+          snapshot.preferences.profileSettings(),
+          workspace.preferences.profileSettings(),
+        )) {
       throw const DiscoveryFailure(
         'Save your current preferences before preparing a profile review.',
       );
     }
+    _reviewed = snapshot;
+    _reviewedGenerations = generations;
     return snapshot;
   }
 
@@ -48,9 +55,22 @@ class WorkspaceProfileApplication implements ProfileEnrollmentDevice {
     final before = Map<String, int>.of(workspace._preferenceFields);
     final current = prior.profileSettings(),
         original = baseline.preferences.profileSettings();
+    // Immediate projection requires the same captured local intent. Values alone
+    // cannot distinguish an untouched field from an edit changed back. A resumed
+    // review after restart has no UI proof: show progress until storage checks its
+    // durable revisions/receipt, keeping navigation and local editing available.
+    final reviewed = _reviewed;
+    final canProject =
+        _receiptId != id &&
+        reviewed != null &&
+        mapEquals(reviewed.revisions, baseline.revisions) &&
+        mapEquals(reviewed.preferences.profileSettings(), original);
     workspace.preferences = prior.applyProfile({
       for (final entry in changes.entries)
-        if (current[entry.key] == original[entry.key]) entry.key: entry.value,
+        if (canProject &&
+            current[entry.key] == original[entry.key] &&
+            (before[entry.key] ?? 0) == (_reviewedGenerations[entry.key] ?? 0))
+          entry.key: entry.value,
     });
     workspace._changed();
     final result = workspace._settingsQueue.then((_) async {
@@ -60,6 +80,7 @@ class WorkspaceProfileApplication implements ProfileEnrollmentDevice {
           baseline: baseline,
           changes: changes,
         );
+        _receiptId = receipt.id;
         workspace._mergeProfilePreferences(receipt.preferences, before);
         workspace._changed();
         return receipt;

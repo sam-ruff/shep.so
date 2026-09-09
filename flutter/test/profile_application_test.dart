@@ -105,14 +105,45 @@ void main() {
         workspace.preferences.copy(appearance: ThemeMode.dark),
       );
       await workspace.savePreferences(const Preferences());
-      final receipt = await application.applyProfilePreferences({
+      final pending = application.applyProfilePreferences({
         'id': 'aba',
         'baseline': baseline.toJson(),
         'changes': {'appearance': 'Light', 'sender_pictures': false},
       });
+      expect(workspace.preferences.appearance, ThemeMode.system);
+      expect(workspace.preferences.avatars, false);
+      final receipt = await pending;
       expect(receipt.kept, ['appearance']);
       expect(workspace.preferences.appearance, ThemeMode.system);
       expect(workspace.preferences.avatars, false);
+    },
+  );
+
+  test(
+    'reopened receipt retries never project over newer reverted local intent',
+    () async {
+      final store = DeviceSettings(storage: Bytes());
+      final workspace = Workspace(PreviewRepository(), store);
+      addTearDown(workspace.dispose);
+      final application = WorkspaceProfileApplication(workspace);
+      final baseline = await application.captureProfilePreferences();
+      final request = <String, dynamic>{
+        'id': 'receipt-retry',
+        'baseline': baseline.toJson(),
+        'changes': {'appearance': 'Dark'},
+      };
+      final original = await application.applyProfilePreferences(request);
+      await workspace.savePreferences(const Preferences());
+      for (final owner in [
+        application,
+        WorkspaceProfileApplication(workspace),
+      ]) {
+        final retry = owner.applyProfilePreferences(request);
+        expect(workspace.preferences.appearance, ThemeMode.system);
+        final receipt = await retry;
+        expect(receipt.revisions, original.revisions);
+        expect(workspace.preferences.appearance, ThemeMode.system);
+      }
     },
   );
 }

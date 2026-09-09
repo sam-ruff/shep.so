@@ -83,6 +83,7 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R75 | Replace manual Google tokens with OAuth “Sign in with Google”; maintain parity across clients | Recorded, open; beta access login is separate from Google provider authorization |
 | R76 | Preferences out-of-office replies for individual/all accounts and separate groups, reusable messages, start/end times and easy assignment UX | Recorded, open; named Automatic replies entries, reusable messages/schedules, searchable account selection, saved groups/Select all and per-account provider results |
 | R79 | Install the current app on the owner’s Android phone using authorized wireless ADB | Production-flavor 0.1.0 ARM64 release built, development-signed and installed without clearing data; Android launch/package/process verified. Final screen check found the phone locked; evidence shipped in [`1ea12a6`](https://github.com/sam-ruff/shep.so/commit/1ea12a677829dcd71c4246b87cae46327f9c749f). |
+| R80 | Make sure visually that the app looks like the desktop app (9 September 2026) | Recorded, open: side-by-side reviewed screenshot comparison of Flutter and browser screens against the installed iced desktop in light/dark, fixing palette, typography, spacing, control and state differences while keeping touch-adapted mobile layout |
 | desktop-main:R67 | Select an inbox message, then click away to count it as read | Delivered 9c907d2: deliberate selection, immediate read-on-leave, explicit-unread protection, rollback and native navigation tests |
 | desktop-main:R68 | Refreshing counted toast with Undo for archive, delete and move | Delivered 9c907d2 / 551f86c: immediate counted feedback and grouped Undo before/after acknowledgment, original-account/folder restoration, verified server identities and persistent failed-reversal retry; 81 native functional flows pass, including immediate toasts and Undo while mail saves remain pending |
 | desktop-main:R69 | HTML layout moves during rendering, visual artifacts and slow readiness; investigate more pre-caching/rendering | Delivered across cd8f732, 6d83b72 and cc38af9: actual viewport loading, stale-frame isolation, retained fonts, bounded adjacent-frame preparation, stable controls, compact attachments/Find, late-image text anchoring and native Retry. All 104 native functional scenarios and 305 Rust/27 Python tests pass; release installed and pushed. Final idle-host timing remains R03/R09 |
@@ -712,3 +713,13 @@ Decision shipping: [`28c2884`](https://github.com/sam-ruff/shep.so/commit/28c288
 54 targeted profile checks, 44 Python checks, 37 parity contracts, final production
 compilation and strict docs pass. Reviewed captures, failed-before ordering/input
 evidence and remaining full-profile/client scope are retained in completion.
+
+
+R75/R02/R49/desktop-main:R92/R63/R67/R69/R73/R08/R10 continuation: Flutter
+profile application now carries the original platform field revisions into its
+native receipt, retains explicit reverted intent after failed saves, and prevents
+an obsolete optimistic repaint during retry. The existing saved enrollment flow
+now changes preferences after a lost acknowledgment and resumes the same import.
+Validation, retained failures and shipping are recorded in [completion](COMPLETION.md).
+All 40 active requests remain; ongoing Flutter reconciliation and full parity are
+not completed by this receipt prerequisite.

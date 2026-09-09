@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shep_mobile/data/settings_store.dart';
+import 'package:shep_mobile/data/profile_settings.dart';
 import 'package:shep_mobile/model/google_connection.dart';
 import 'package:shep_mobile/model/profile_discovery.dart';
 import 'package:shep_mobile/model/workspace.dart';
@@ -60,6 +61,8 @@ void main() {
       await d.resumeEnrollment(device);
       expect(d.error, contains('Preferences were saved'));
       expect(workspace.preferences.appearance, ThemeMode.dark);
+      final store = workspace.settings as ProfileSettingsStore;
+      final original = await store.profileSnapshot();
       await workspace.savePreferences(
         workspace.preferences.copy(
           appearance: ThemeMode.light,
@@ -73,6 +76,14 @@ void main() {
       expect(repository.mail.imported.length, 51);
       expect(repository.prepared, 1);
       expect(repository.settingsCalls, 2);
+      expect(
+        repository.job!['settings_receipt']['revisions'],
+        original.revisions,
+      );
+      expect(
+        (await store.profileSnapshot()).revisions['appearance'],
+        greaterThan(original.revisions['appearance']!),
+      );
       expect(workspace.preferences.appearance, ThemeMode.light);
       expect(workspace.preferences.previewLines, 4);
       expect(

@@ -145,6 +145,9 @@ pub(crate) enum Command {
         id: Uuid,
         applied: Vec<String>,
         kept: Vec<String>,
+        // Missing on legacy platform receipts; never infer their original revision
+        // from the current preferences after a lost reply.
+        revisions: Option<BTreeMap<String, u64>>,
     },
     Cancel {
         id: Uuid,
@@ -258,7 +261,7 @@ pub(super) async fn run(
             serde_json::to_value(db.write(move |db| store::approve(db, &key, id, accounts, settings)).await?)?
         }
         Command::Settings { id } => db.read(move |db| apply::settings(db, &key, id)).await?,
-        Command::ConfirmSettings { id, applied, kept } => serde_json::to_value(db.write(move |db| apply::confirm(db, &key, id, applied, kept)).await?)?,
+        Command::ConfirmSettings { id, applied, kept, revisions } => serde_json::to_value(db.write(move |db| apply::confirm(db, &key, id, applied, kept, revisions)).await?)?,
         Command::Cancel { id } => serde_json::to_value(db.write(move |db| {
             let mut review = read(db, &key, id)?;
             ensure!(matches!(review.phase.as_str(), "copying" | "draining" | "fields" | "planning" | "review" | "cancelled"), "This enrollment has approved changes. Pause and resume it to retain its receipts.");

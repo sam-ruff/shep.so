@@ -31,6 +31,87 @@ class Bytes implements PreferenceStorage {
 
 void main() {
   test(
+    'reverted intent after a failed save remains newer than a frozen profile',
+    () async {
+      final bytes = Bytes();
+      final store = DeviceSettings(storage: bytes);
+      final baseline = await store.profileSnapshot();
+      bytes.failBefore = true;
+      await expectLater(
+        store.saveLocal({'appearance': 'Dark'}),
+        throwsStateError,
+      );
+      await store.saveLocal({'appearance': 'System'});
+      final local = await store.profileSnapshot();
+      expect(
+        local.revisions['appearance'],
+        greaterThan(baseline.revisions['appearance']!),
+      );
+      expect(local.revisions['tooltips'], baseline.revisions['tooltips']);
+      final receipt = await store.applyProfile(
+        id: 'reverted',
+        baseline: baseline,
+        changes: {'appearance': 'Light'},
+      );
+      expect(receipt.kept, ['appearance']);
+      expect(receipt.preferences.appearance, ThemeMode.system);
+    },
+  );
+
+  test(
+    'receipt revisions belong to the original apply across newer edits and reopen',
+    () async {
+      final bytes = Bytes();
+      final store = DeviceSettings(storage: bytes);
+      final baseline = await store.profileSnapshot();
+      final first = await store.applyProfile(
+        id: 'original',
+        baseline: baseline,
+        changes: {'appearance': 'Light'},
+      );
+      expect(
+        first.revisions['appearance'],
+        greaterThan(baseline.revisions['appearance']!),
+      );
+      await store.saveLocal({'appearance': 'Dark'});
+      final current = await store.profileSnapshot();
+      final retry = await DeviceSettings(storage: bytes).applyProfile(
+        id: 'original',
+        baseline: baseline,
+        changes: {'appearance': 'Light'},
+      );
+      expect(retry.preferences.appearance, ThemeMode.dark);
+      expect(retry.revisions, first.revisions);
+      expect(
+        retry.revisions['appearance'],
+        lessThan(current.revisions['appearance']!),
+      );
+      expect(() => retry.revisions['appearance'] = 99, throwsUnsupportedError);
+      final saved = bytes.value!;
+      final data = jsonDecode(saved) as Map<String, dynamic>;
+      (data['_profile_preferences']['receipt'] as Map).remove('revisions');
+      bytes.value = jsonEncode(data);
+      final legacy = await DeviceSettings(storage: bytes).applyProfile(
+        id: 'original',
+        baseline: baseline,
+        changes: {'appearance': 'Light'},
+      );
+      expect(legacy.revisions, isEmpty);
+      expect(legacy.preferences.appearance, ThemeMode.dark);
+      final invalid = jsonDecode(saved) as Map<String, dynamic>;
+      invalid['_profile_preferences']['receipt']['revisions']['appearance'] =
+          99999;
+      bytes.value = jsonEncode(invalid);
+      await expectLater(store.read(), throwsFormatException);
+      // A revision below the global clock can still be impossible for its field.
+      final forged = jsonDecode(saved) as Map<String, dynamic>;
+      forged['_profile_preferences']['receipt']['revisions']['tooltips'] = 1;
+      bytes.value = jsonEncode(forged);
+      await expectLater(store.read(), throwsFormatException);
+    },
+  );
+
+  test(
     'legacy preferences, field ABA and unrelated edits survive profile application',
     () async {
       final bytes = Bytes()

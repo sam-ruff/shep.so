@@ -192,6 +192,8 @@ class FixtureProfileEnrollment extends FixtureProfileDiscovery
         job!['settings_receipt'] = {
           'applied': command['applied'],
           'kept': command['kept'],
+          if (command.containsKey('revisions'))
+            'revisions': command['revisions'],
         };
         job!['phase'] = 'complete';
         return copy();

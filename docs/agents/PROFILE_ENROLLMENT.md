@@ -53,6 +53,20 @@ then changed back. UI generations also protect edits made while storage is pendi
 callbacks read current state so two changes before repaint retain both edits.
 Only one enrollment can await a preference receipt across Google scopes.
 
+Each platform receipt now freezes the eight field revisions from the original
+application. Retrying returns current preferences for display and those original
+revisions for native acknowledgment. Rust validates and saves the exact receipt;
+a different retry cannot replace it. Legacy receipts omit the revision map: a
+later current snapshot must never be substituted as proof of the original write.
+Explicit local save intent advances its field revision even when an earlier failed
+save left the same value in storage. Receipt revisions cannot exceed the current
+revision of their own field.
+
+Immediate painting also requires the local UI generations captured with the
+review. A reverted edit or an already applied receipt does not briefly repaint an
+obsolete imported value. After restart, progress remains visible while storage
+checks the durable receipt; reading and preference editing stay available.
+
 Receipt metadata, local mappings and platform credential slots stay on the device.
 Unknown optional operation fields remain in original history; unsupported account
 extensions cannot silently become a reduced connection definition.
@@ -61,9 +75,12 @@ extensions cannot silently become a reduced connection definition.
 
 Saved host/native tests cover paged reviews, original-record retries, account
 receipts, cached mail/draft preservation, changed connections, Reconnect activation,
-newer preferences and account edits, pause and disconnect. Actual Flutter control
+newer preferences and account edits, pause and disconnect. Receipt checks cover
+failed native commits, exact retry after restart, invalid or legacy revisions,
+reverted intent after a failed save and the immediate UI before persistence. Actual Flutter control
 scenarios cover review pages, connection details, category/row choices, application
-retry, appearance, Reconnect status, independent mail browsing, rapid preference
+retry, leaving a lost settings acknowledgment to change appearance, retaining that
+newer choice on Resume, Reconnect status, independent mail browsing, rapid preference
 changes and footer clearance above the device navigation inset.
 
 The Android and Flutter Playwright/Appium runners include enrollment scenarios:

@@ -63,7 +63,10 @@ class DeviceSettings implements SettingsStore, ProfileSettingsStore {
     final selected = Map<String, Object?>.unmodifiable(changes);
     return _ordered(() async {
       final current = await _read();
-      final next = current.update(current.preferences.applyProfile(selected));
+      final next = current.update(
+        current.preferences.applyProfile(selected),
+        intent: selected.keys.toSet(),
+      );
       await _storage.write(next.encode());
       return next.preferences;
     });
@@ -133,6 +136,7 @@ class DeviceSettings implements SettingsStore, ProfileSettingsStore {
         'request': request,
         'applied': applied.keys.toList(),
         'kept': kept,
+        'revisions': Map<String, int>.of(next.revisions),
       };
       try {
         await _storage.write(next.encode());
@@ -208,11 +212,28 @@ class _Ledger {
             'Invalid saved profile preference receipt.',
           );
         }
+        final originalRevisions = receipt['revisions'];
+        if (originalRevisions != null) {
+          if (originalRevisions is! Map ||
+              originalRevisions.length != revisions.length ||
+              originalRevisions.entries.any(
+                (entry) =>
+                    !revisions.containsKey(entry.key) ||
+                    entry.value is! int ||
+                    entry.value < 0 ||
+                    entry.value > revisions[entry.key]!,
+              )) {
+            throw const FormatException(
+              'Invalid original preference receipt revisions.',
+            );
+          }
+        }
+        final seen = <String>{};
         for (final key in [
           ...receipt['applied'] as List,
           ...receipt['kept'] as List,
         ]) {
-          if (key is! String || !revisions.containsKey(key)) {
+          if (key is! String || !revisions.containsKey(key) || !seen.add(key)) {
             throw const FormatException('Invalid saved preference field.');
           }
         }
@@ -223,7 +244,7 @@ class _Ledger {
     return _Ledger(preferences, revisions, clock, data, receipt);
   }
 
-  _Ledger update(Preferences value) {
+  _Ledger update(Preferences value, {Set<String> intent = const {}}) {
     if (clock == maximumRevision) {
       throw const FormatException('Device preference revision is exhausted.');
     }
@@ -233,7 +254,9 @@ class _Ledger {
       value,
       {
         for (final key in before.keys)
-          key: before[key] == after[key] ? revisions[key]! : clock + 1,
+          key: before[key] == after[key] && !intent.contains(key)
+              ? revisions[key]!
+              : clock + 1,
       },
       clock + 1,
       extra,
@@ -256,5 +279,8 @@ class _Ledger {
     preferences: preferences,
     applied: (receipt!['applied'] as List).cast<String>(),
     kept: (receipt!['kept'] as List).cast<String>(),
+    revisions: Map<String, int>.unmodifiable(
+      (receipt!['revisions'] as Map?)?.cast<String, int>() ?? const {},
+    ),
   );
 }

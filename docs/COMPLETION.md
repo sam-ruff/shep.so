@@ -2728,3 +2728,58 @@ documentation and final production checks pass. The shipping receipt is
 tracking, parity notes and handover are included; the main worktree and installed
 phone/desktop were not changed. Quality/release CI remains disabled. Next continue
 Flutter ongoing reconciliation and its native/Playwright conflict controls.
+
+
+## Flutter original preference receipts — 2026-09-09
+
+Platform profile applications now save the original eight field revisions alongside
+their values and receipt. Native enrollment validates and durably acknowledges
+that exact map. A retry still returns current preferences for display, while newer
+local revisions cannot replace the original proof. Legacy receipts omit the map
+and cannot acquire fabricated current revisions. Explicit same-value local intent
+advances its field generation after a failed intermediate save.
+
+The UI now checks the generations captured with the review before optimistic
+painting. A changed-and-reverted preference, an already applied receipt or a
+reopened application cannot briefly repaint obsolete imported values. Unchanged
+reviewed fields still project immediately. Navigation and local editing stay
+available while a reopened receipt is checked.
+
+All **129 Flutter host tests** and **81 mobile Rust tests** pass, with formatting,
+Flutter analysis and Clippy clean. The **two named Android integration scenarios**
+pass (43 seconds reported by the integration suite; teardown is not a third flow).
+New Rust checks cover failed native receipt transactions, original revisions after
+restart, malformed/missing/older revisions, exact retry and legacy proof. Saved
+controls cover losing the native acknowledgment, leaving to change appearance,
+resuming and preserving the newer Light theme. Its original revision map is
+asserted separately from current display preferences.
+
+Retained evidence: `mobile-sync-optimism-before.log` reproduces the obsolete
+optimistic repaint; the fixed host suite passes. `mobile-sync-receipt-controls-host.log`
+records a test using the pending label after completion; it now opens **Profile
+applied on this device**. `artifacts/mobile-sync-appium-system-ui-failure/` retains
+Android's System UI ANR over the initial mailbox. The existing dedicated-emulator
+Wait helper recovered it without changing deadlines. The next Appium run retained
+an off-screen Appearance expectation after returning to scrolled Preferences in
+`artifacts/mobile-sync-appium-scroll-failure/`; the flow now waits for Preferences
+and uses its existing real-scroll Theme helper.
+
+Final verification on the resumed session, 9 September evening: the Flutter web
+enrollment flow first failed at **Resume profile review and application** because
+Flutter web merges a list tile's title and subtitle into one clickable node and the
+Playwright harness anchored its name match at the start; `artifacts/flutter/enrollment-web/failure.txt`
+retains that tree. The shared harness now matches a label at the start of a name or
+after whitespace, matching Android's contains-selectors. After the fix all **5 web
+enrollment flows**, **5 native Appium flows** and the **two Android integration
+scenarios** pass, and the harness-sharing web discovery and creation flows pass
+again. Root hooks (formatting, Clippy, tests) pass with `artifacts/root-target`;
+44 Python tests and 37 parity contracts pass. Lane `codex/profile-catalog-harness`
+(`33d222d`) was superseded by the stricter fixture transport in `9e666a5`; its
+positive-path regression is ported as a shared `test-support` test, the local branch
+and desktop-side worktree are removed, and the origin branch waits for Sam.
+
+This increment is a prerequisite for ongoing Flutter reconciliation, not its
+completion. The native sync ledger/runner, SDK scheduler, field/conflict controls,
+all settings/categories, accounts, automatic setup/restoration, authenticated
+interchange, live Google and Apple execution remain open. All 40 active requests
+remain; no performance budget or CI enablement changed.

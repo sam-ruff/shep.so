@@ -49,91 +49,40 @@ store submissions in TODO.
 
 ## Current continuation
 
-Current continuation adds checked desktop preference decisions: durable 50-row
-reviews, local/shared choices, cancellation and exact retry after a lost receipt.
-The 23 surrounding native flows pass (219.995 seconds), and all three final
-affected flows pass (64.050 seconds). The conflict flow includes compact dark
-pages, Back/reopen and light recovery while searching Mail; final captures in
-`artifacts/e2e/b5255ffe7d09/` were reviewed. The 54 profile Rust checks, 44 Python
-checks and 37 parity contracts pass. Code [`28c2884`](https://github.com/sam-ruff/shep.so/commit/28c288448842b7d09543fc28ef1f2f14bf36f142) is pushed and remotely verified;
-mandatory hooks pass 498 Rust tests. Read the newest completion entry before
-proceeding. Next continue ongoing Flutter
-reconciliation and its native/Playwright controls, then all fields/categories,
-account lifecycle, automatic setup/restoration and authenticated interchange.
+Flutter preference receipt recovery is the current checkpoint. The platform write
+now retains the original field revisions and forwards them to native enrollment;
+exact retries cannot substitute later local revisions. Legacy receipts remain
+explicitly unproven. Local reverted intent survives an earlier failed save, and
+optimistic painting checks the UI generations captured with the review. Reopened
+receipts do not flash an obsolete imported value.
 
-Connected desktop code [`13e056d`](https://github.com/sam-ruff/shep.so/commit/13e056dcc836fbf41e418de220085540fe174dbc) is pushed and remotely verified:
-completed publication/enrollment offers **Sync these preferences**, explicit
-master/field controls, background scheduling outside Preferences, status and
-retry. Native controls verify a remote change while searching Mail, local edits
-with a field paused, lost-upload recovery and compact layouts. A seven-preference
-publication has its own real controls. The surrounding 22 profile/Google/
-Preferences flows pass (221.987 seconds), and both final wording/control flows
-pass (39.962 seconds). Normal hooks pass 490 Rust tests, with two opt-in live
-diagnostics ignored; strict docs and production compilation pass; see [completion](docs/COMPLETION.md) for the final receipts.
+All 129 Flutter host tests, 81 mobile Rust tests, static analysis and the two
+Android integration scenarios pass. The saved controls leave a lost acknowledgment,
+change appearance and resume while preserving the newer choice. Appium/Playwright,
+visual evidence and exact shipping are recorded next in [completion](docs/COMPLETION.md).
+Keep the retained failure evidence there; do not count an interrupted wrapper or
+integration teardown as another passing scenario.
 
-Recovery now proves acknowledged originals after partial catalog loss, with a
-full inventory scan whenever an owner opens/reconnects. A changed Google project's
-empty inventory cannot authorize upload from old cached proof. Tests preserve
-reverted edits, queued identities, provider saturation and Pause during Google
-lifecycle changes. See [the contract](docs/agents/PROFILE_RECONCILIATION.md).
-All 40 requests remain active. Complete fields/
-categories/accounts, ongoing Flutter/browser integration and automatic setup/
-restoration are still unfinished.
+Desktop ongoing synchronization and paged conflict reviews are already pushed in
+[`28c2884`](https://github.com/sam-ruff/shep.so/commit/28c288448842b7d09543fc28ef1f2f14bf36f142).
+Preserve their shared-owner, active-grant, full-rescan, original-record, durable
+receipt and newer-intent checks. Their 23 surrounding native flows, three final
+reruns, 54 profile checks and 498 mandatory hook tests are recorded in completion.
+Do not replace them with Flutter-only evidence.
 
-Desktop **Profiles and sync** now connects durable discovery, reviewed publication
-and account/preferences enrollment through actual iced controls. It retains
-independent histories, upload identities, frozen reviews, durable receipts,
-reconnect guards and newer local account/preference intent. The latest page
-checkpoint [`0b0ffcb`](https://github.com/sam-ruff/shep.so/commit/0b0ffcbf4bdb4e6501cf3d098d7691d4c9eef497) is pushed with exact remote verification; mandatory hooks pass
-471 Rust tests. Evidence and limits are in [completion](docs/COMPLETION.md).
+**Next implementation:** connect Flutter's ongoing native subscription/edit ledger,
+platform application requests and exact receipts, then SDK-owned scheduling and
+per-field/conflict controls. The platform store currently retains one receipt;
+new sync work must serialize with enrollment before another application can replace
+it. Seed only from proven original revisions; publication and legacy receipts
+without that proof require conservative pending state. Never acknowledge a later
+local edit merely because its current value matches the imported value.
 
-The page continuation fixes choices/errors returning a review to page one. Actual
-controls cover 51 profiles and 75 accounts, First/Next/More, second-page exclusion,
-74 guarded imports, details, cancellation and light/compact dark layouts. **128
-native functional scenarios pass across the full run and focused badge rerun**:
-the full run passed 127; the badge test had retained an initial count despite
-read-on-leave changing it. Its corrected current-count check and all four badge
-flows pass. The failed evidence, exact durations and reviewed captures remain in
-completion and `artifacts/logs/profile-pages-*`. Python's 42 checks and the 37
-parity contracts pass, alongside production compilation and strict docs.
-The shipping receipt is `artifacts/profile-pages-shipping.json`.
-
-Next: ongoing Flutter/desktop reconciliation, automatic restoration and first
-setup, complete portable settings/categories and authenticated cross-client
-access. Credential protection remains an unanswered product choice. Keep all 40
-active requests, the earlier performance failure and missing deployment/platform
-configuration visible; this checkpoint does not finish the full product goal.
-
-Flutter profile publication and **Use profile on this device** now have a frozen,
-paged account/settings review, original-record transfer and durable application
-receipts. Imported accounts receive independent credential slots and show
-**Reconnect required**; matching accounts preserve their credentials, mail and
-drafts. Changed endpoints require an explicitly selected separate account. Device
-preference revisions and UI generations preserve newer edits. See the
-[publication contract](docs/agents/PROFILE_PUBLICATION.md) and
-[enrollment contract](docs/agents/PROFILE_ENROLLMENT.md).
-
-Enrollment code [`9d6a6c6`](https://github.com/sam-ruff/shep.so/commit/9d6a6c6df644d340c1192ba13215c298ce8ac8b0) is pushed with exact remote verification.
-Mandatory hooks pass 448 root/shared Rust tests.
-
-The enrollment checkpoint passes 126 Flutter host tests, 79 mobile Rust tests,
-54 shared-profile tests, the configured SDK fixture, 28 WASM cases, 41 Python
-checks and 37 parity contracts. Final controls pass five named Android scenarios
-(enrollment, publication and actual native history/restart), eight Appium flows
-and eight Flutter Playwright flows. The emulator and preview servers are stopped.
-The completion log records reviewed captures, retained failures, packaging and
-shipping evidence. All providers in control fixtures are isolated. No live Google,
-Apple, continuous sync or fully authenticated cross-client interchange is implied.
-
-The production ARM64 APK passes scoped fixture/library/package inspection. It is
-unsigned, has no registered Google project and was not installed on the phone.
-New storage timing is deferred while unrelated compilations saturate the host;
-the benchmark compiled successfully, which is not timing evidence. Rerun it after the host settles.
-
-The earlier native navigation and combined performance gate still fail at
-154.81–162.33 ms against 150 ms. Do not weaken that budget or claim a storage
-benchmark fixes it. Earlier native input failures during concurrent compilation
-also remain R63.
+All 40 requests remain active. Automatic restoration/setup, complete fields and
+categories, accounts, authenticated interchange, protected credentials and browser
+reconciliation remain unfinished. The earlier native navigation result is still
+154.81–162.33 ms against 150 ms, and the combined performance gate remains failing.
+No new performance measurement is claimed on this shared, busy host.
 
 ## Restart order
 

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shep_mobile/data/settings_store.dart';
+import 'package:shep_mobile/data/profile_settings.dart';
 import 'package:shep_mobile/model/google_connection.dart';
 import 'package:shep_mobile/model/preferences.dart';
 import 'package:shep_mobile/model/profile_discovery.dart';
@@ -114,7 +115,8 @@ Future<void> profileEnrollmentReviewControls(
   Future<void> Function(String)? capture,
 }) async {
   final fixture = FixtureProfileEnrollment(EnrollmentMail(), accounts: 52)
-    ..lostAccountReplyOnce = true;
+    ..lostAccountReplyOnce = true
+    ..lostSettingsReplyOnce = true;
   final (workspace, d, cleanup) = await mountEnrollment(tester, fixture);
   try {
     expect(d.enrollment!.needsReview, true);
@@ -151,7 +153,73 @@ Future<void> profileEnrollmentReviewControls(
     await showEnrollmentControl(tester, find.textContaining('reply was lost'));
     await capture?.call('profile-enrollment-retry');
     await tapEnrollmentControl(tester, find.text('Resume enrollment'));
+    expect(d.error, contains('Preferences were saved'));
+    final store = workspace.settings as ProfileSettingsStore;
+    final original = await store.profileSnapshot();
+    await showEnrollmentControl(
+      tester,
+      find.textContaining('Preferences were saved'),
+    );
+    await capture?.call('profile-enrollment-settings-retry-dark');
+    await tapEnrollmentControl(tester, find.byTooltip('Back'));
+    await tapEnrollmentControl(tester, find.byTooltip('Back'));
+    await tapEnrollmentControl(
+      tester,
+      find.byType(DropdownButton<ThemeMode>),
+      list: 'preferences-list',
+      delta: -300,
+    );
+    await tapEnrollmentControl(
+      tester,
+      find.text('Light').last,
+      list: 'preferences-list',
+    );
+    await tapEnrollmentControl(
+      tester,
+      find.text('Saved Google profiles'),
+      list: 'preferences-list',
+    );
+    await tapEnrollmentControl(
+      tester,
+      find.text('Resume profile review and application'),
+      list: 'profile-discovery-list',
+    );
+    await tapEnrollmentControl(tester, find.text('Resume enrollment'));
     expect(d.enrollment!.complete, true);
+    expect(workspace.preferences.appearance, ThemeMode.light);
+    expect(fixture.job!['settings_receipt']['revisions'], original.revisions);
+    expect(
+      (await store.profileSnapshot()).revisions['appearance'],
+      greaterThan(original.revisions['appearance']!),
+    );
+    await showEnrollmentControl(
+      tester,
+      find.textContaining('Profile applied ·'),
+    );
+    await capture?.call('profile-enrollment-newer-preference-kept-light');
+    await tapEnrollmentControl(tester, find.text('Done'));
+    await tapEnrollmentControl(tester, find.byTooltip('Back'));
+    await tapEnrollmentControl(
+      tester,
+      find.byType(DropdownButton<ThemeMode>),
+      list: 'preferences-list',
+      delta: -300,
+    );
+    await tapEnrollmentControl(
+      tester,
+      find.text('Dark').last,
+      list: 'preferences-list',
+    );
+    await tapEnrollmentControl(
+      tester,
+      find.text('Saved Google profiles'),
+      list: 'preferences-list',
+    );
+    await tapEnrollmentControl(
+      tester,
+      find.text('Profile applied on this device'),
+      list: 'profile-discovery-list',
+    );
     expect(fixture.mail.imported.length, 51);
     expect(fixture.mail.imported.map((a) => a.id).toSet().length, 51);
     expect(workspace.preferences.appearance, ThemeMode.dark);

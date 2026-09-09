@@ -36,8 +36,10 @@ export async function withProfileHarness(mode, name, run) {
   }
   async function node(label, button = false) {
     if (mode === "web") {
+      // Flutter web joins a list tile's title and subtitle in one clickable
+      // node, so a subtitle label may start after whitespace-normalised text.
       const name = new RegExp(
-        `^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|\\s)`,
+        `(?:^|\\s)${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|\\s)`,
       );
       return button
         ? page
