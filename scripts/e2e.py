@@ -2608,15 +2608,18 @@ class NativeFlows(unittest.TestCase):
                        shot("profile-existing-disabled-reopened"))
 
     def test_profile_sync_native_first_device_review(self):
-        started=self.mcp.call("desktop.start", profile_sync="slow-upload")
+        started=self.mcp.call("desktop.start", profile_sync="held-upload")
         print(f"First profile checkpoint evidence: {started['artifacts']}",flush=True)
         self.open_shared_profiles()
         self.mcp.batch(check("profile_sync.available", True), shot("profile-sync-controls-light"),
                        click(370, 442), check("profile_sync.review", 0),
                        shot("profile-sync-create-review"), click(540, 482), key("ctrl+a"),
                        type_text("Personal M"), check("dialog", None), click(360, 570),
-                       check("profile_sync.working", True), key("ctrl+1"), check("tab", "Mail"),
+                       check("profile_sync.working", True), check("profile_upload_held", True),
+                       key("ctrl+1"), check("tab", "Mail"),
                        check("profile_sync.working", True), key("Down"),
+                       {"type":"assert", "path":"profile_upload_held", "value":True},
+                       {"type":"release_profile_upload"},
                        check("profile_sync.enrollment.selection.ready", True),
                        check("profile_sync.enrollment.selection.name", "Personal M"),
                        check("profile_sync.error", None), check("tab", "Mail"))
