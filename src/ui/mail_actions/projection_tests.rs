@@ -393,3 +393,97 @@ async fn keeping_local_copy_retires_original_server_undo_and_rekeys_the_reader()
     assert!(app.action_mail().unwrap().is_local_copy());
     assert_eq!(app.page.inbox_unread.get("fixture"), Some(&1));
 }
+
+#[tokio::test]
+async fn combined_filtered_counts_exclude_pending_removed_rows_before_and_after_receipts() {
+    for marking_unread in [false, true] {
+        for success in [false, true] {
+            for cache_first in [false, true] {
+                let (mut app, mut commands, detail) = super::super::tests::fixture().await;
+                let store = stored_original().await;
+                let mut original = detail.summary.clone();
+                original.unread = !marking_unread;
+                original.starred = true;
+                store.flags(original.clone()).await.unwrap();
+                app.query.folder.clear();
+                app.query.folders = Some(vec![
+                    FolderSelection {
+                        account: None,
+                        folder: "INBOX".into(),
+                        sent_only: false,
+                    },
+                    FolderSelection {
+                        account: Some("fixture".into()),
+                        folder: "INBOX".into(),
+                        sent_only: false,
+                    },
+                    FolderSelection {
+                        account: Some("fixture".into()),
+                        folder: "Keep".into(),
+                        sent_only: false,
+                    },
+                ]);
+                app.query.read_only = marking_unread;
+                app.query.starred_only = !marking_unread;
+                app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
+                assert_eq!(
+                    app.page.total, 1,
+                    "Overlapping folder selections must count once"
+                );
+                app.toggle_mail_flag(original.clone(), marking_unread);
+                let Command::Flags(request, sent, _) = commands.try_recv().unwrap() else {
+                    panic!("Expected pending flags");
+                };
+                assert_eq!(
+                    (app.page.rows.len(), app.page.total, app.page.unread),
+                    (0, 0, 0),
+                    "Removed unread rows cannot remain in the filtered header count"
+                );
+                assert_eq!(
+                    app.page.inbox_unread["fixture"], 1,
+                    "The global Inbox badge remains independent of filtered membership"
+                );
+                if cache_first && success {
+                    store.flags(sent.clone()).await.unwrap();
+                }
+                // A combined-scope refresh can arrive before the write's receipt.
+                let mut query = app.query.clone();
+                query.observe = app.mail_actions.observed_ids();
+                app.set_mail_page(Arc::new(store.query(query).await.unwrap()));
+                assert_eq!(
+                    (app.page.rows.len(), app.page.total, app.page.unread),
+                    (0, 0, 0)
+                );
+                if success && !cache_first {
+                    store.flags(sent.clone()).await.unwrap();
+                }
+                let _ = app.flags_finished(
+                    request,
+                    sent,
+                    if success {
+                        Ok(())
+                    } else {
+                        Err("Fixture rejected flags".into())
+                    },
+                );
+                let expected = usize::from(!success);
+                assert_eq!(
+                    (app.page.total, app.page.unread),
+                    (expected, expected * usize::from(!marking_unread))
+                );
+                app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
+                assert_eq!(
+                    (app.page.rows.len(), app.page.total, app.page.unread),
+                    (expected, expected, expected * usize::from(!marking_unread))
+                );
+                if !success {
+                    assert!(
+                        app.notice.as_ref().is_some_and(
+                            |(message, error, _)| *error && message.contains("restored")
+                        )
+                    );
+                }
+            }
+        }
+    }
+}

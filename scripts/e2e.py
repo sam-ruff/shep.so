@@ -109,6 +109,37 @@ class NativeFlows(unittest.TestCase):
                        check("selected","Project overview"),shot("folder-move-complete"),
                        {"type":"restart"},check("folder_changes.jobs.0.status","Completed"),shot("folder-move-restarted"))
 
+    def test_folder_controls_combined_choices_during_pending_rename(self):
+        for mode in ("slow", "fail"):
+            result = self.mcp.call("desktop.start", nested_folders=True, folder_actions=mode)
+            print(f"Combined folder evidence: {result['artifacts']}", flush=True)
+            self.mcp.batch(click(95, 540), check("selected", "Project overview"),
+                           click(188, 540), check("sidebar_labels", "Design", "contains"),
+                           {**click(95, 584), "modifiers": ["ctrl"]}, check("total", 2),
+                           {**click(95, 540), "button": 3}, check("folder_changes.menu.source", "Projects"),
+                           key("Return"), check("dialog", "FolderChange"),
+                           check("focused_input", "folder-parent-search"),
+                           check("folder_changes.loading", False), type_text("Archive"), key("Return"),
+                           check("folder_changes.review.folders", 4), key("Return"),
+                           check("dialog", None), check("folder_changes.pending", 1), wait(80),
+                           {**click(95, 624), "modifiers": ["ctrl"]}, check("total", 1),
+                           check("selected_folders", [{"account": "preview-work", "folder": "Projects/Design", "sent_only": False}]),
+                           check("mail_rows.0.subject", "Design brief"),
+                           {"type": "assert", "path": "folder_changes.pending", "value": 1},
+                           shot(f"folder-combined-pending-{mode}"),
+                           {**click(95, 624), "modifiers": ["ctrl"]}, check("total", 2),
+                           {"type": "assert", "path": "folder_changes.pending", "value": 1},
+                           check("folder_changes.pending", 0))
+            prefix = "Archive/Projects" if mode == "slow" else "Projects"
+            self.mcp.batch(check("selected_folders", [
+                               {"account": "preview-work", "folder": f"{prefix}/Design", "sent_only": False},
+                               {"account": "preview-work", "folder": prefix, "sent_only": False}]),
+                           check("total", 2),
+                           check("folder_changes.jobs.0.status", "Completed" if mode == "slow" else "Could not finish"),
+                           shot(f"folder-combined-result-{mode}"))
+            self.assertEqual({mail["subject"] for mail in self.mcp.call("desktop.state")["mail_rows"]},
+                             {"Project overview", "Design brief"})
+
     def test_folder_controls_delete_failure_review(self):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True,folder_actions="fail")
         print(f"Folder delete failure evidence: {result['artifacts']}",flush=True)
@@ -4441,6 +4472,38 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+2"), check("tab", "Calendar"), key("ctrl+1"), check("tab", "Mail"),
                        check("reader_split", .44, "gte"),
                        wait(400), drag(785, 500, 450, 500), check("reader_split", .3, "lte"), shot("narrow-inbox"))
+
+    def test_combined_filtered_unread_count_during_slow_flag_success_or_failure(self):
+        for mode in ("slow", "fail"):
+            result = self.mcp.call("desktop.start", mail_actions=mode)
+            print(f"Combined flag evidence: {result['artifacts']}", flush=True)
+            if mode == "fail":
+                self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                               click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"))
+            self.mcp.batch({**click(95, 540), "modifiers": ["ctrl"]},
+                           check("selected_folders", [
+                               {"account": None, "folder": "INBOX", "sent_only": False},
+                               {"account": "preview-work", "folder": "Projects", "sent_only": False}]),
+                           click(350, 100), wait(100), click(350, 233), check("filter", "Flagged"),
+                           check("mail_rows.0.starred", True), check("mail_rows.0.unread", True))
+            before = self.mcp.call("desktop.state")
+            self.mcp.batch(click(570, mail_row_y(0)), check("mail_pending", 1),
+                           check("total", before["total"] - 1), check("page_unread", before["page_unread"] - 1),
+                           check("inbox_unread", before["inbox_unread"]),
+                           shot(f"combined-flag-pending-{mode}"),
+                           {**click(95, 540), "modifiers": ["ctrl"]},
+                           check("selected_folders", [{"account": None, "folder": "INBOX", "sent_only": False}]),
+                           check("page_unread", before["page_unread"] - 1),
+                           {"type": "assert", "path": "mail_pending", "value": 1},
+                           check("mail_pending", 0))
+            delta = 1 if mode == "slow" else 0
+            self.mcp.batch(check("total", before["total"] - delta),
+                           check("page_unread", before["page_unread"] - delta),
+                           check("inbox_unread", before["inbox_unread"]),
+                           check("selected_folders", [{"account": None, "folder": "INBOX", "sent_only": False}]),
+                           shot(f"combined-flag-result-{mode}"))
+            if mode == "fail":
+                self.mcp.batch(check("notice", "restored", "contains"))
 
     def test_flag_filter_sort_and_paging(self):
         self.mcp.batch(key("s"), check("starred", False), key("s"), check("starred", True), shot("flagged-message"),

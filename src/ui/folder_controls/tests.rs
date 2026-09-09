@@ -284,3 +284,108 @@ async fn stale_workspace_cannot_restore_a_committed_folder_tree() {
     );
     assert!(app.workspace.account_folders["a"].contains(&"Archive/Projects".into()));
 }
+
+#[tokio::test]
+async fn combined_folder_choices_browse_pending_sources_and_follow_only_committed_renames() {
+    for success in [false, true] {
+        let (mut app, store, mut commands) = fixture().await;
+        let mail = [
+            ("parent", "Projects"),
+            ("child", "Projects/Design"),
+            ("other", "Teams"),
+        ]
+        .into_iter()
+        .map(|(id, folder)| {
+            parse_mail(
+                "a",
+                id,
+                folder,
+                format!("Subject: {id}\r\n\r\nCached {id}").into_bytes(),
+                true,
+                false,
+            )
+            .unwrap()
+        })
+        .collect();
+        store.upsert(mail).await.unwrap();
+        app.toggle_folder_selection(FolderSelection {
+            account: Some("a".into()),
+            folder: "Projects/Design".into(),
+            sent_only: false,
+        });
+        assert_eq!(store.query(app.query.clone()).await.unwrap().total, 2);
+        let preview = prepare(
+            &mut app,
+            &store,
+            Change::Move {
+                parent: Some("Archive".into()),
+            },
+        )
+        .await;
+        app.handle_folders(Message::Submit);
+        let Command::Folder(Request::Start(id, _)) = commands.try_recv().unwrap() else {
+            panic!("Expected reviewed folder change");
+        };
+        let mut job = store
+            .start_folder_change(id.clone(), (*preview.review).clone())
+            .await
+            .unwrap();
+        app.folder_event(FolderEvent::Started(id.clone(), Ok(Arc::new(job.clone()))));
+        let action = super::super::Message::AccountFolder("a".into(), "Archive/Projects".into());
+        let choice = app.sidebar_folder(&action).unwrap();
+        assert_eq!(
+            choice.folder, "Projects",
+            "Ctrl-click must query the same cached source as plain click"
+        );
+        assert!(app.sidebar_items().iter().any(|item| matches!(&item.action,
+            super::super::Message::AccountFolder(account, folder)
+                if account == "a" && folder == "Archive/Projects")
+            && item.active));
+        app.toggle_folder_selection(choice.clone());
+        assert_eq!(app.query.folders.as_ref().unwrap().len(), 1);
+        assert_eq!(store.query(app.query.clone()).await.unwrap().total, 1);
+        app.toggle_folder_selection(choice);
+        let page = store.query(app.query.clone()).await.unwrap();
+        assert_eq!((page.total, page.unread), (2, 2));
+        // A newer choice outside the changed subtree must survive its receipt.
+        app.toggle_folder_selection(FolderSelection {
+            account: Some("a".into()),
+            folder: "Teams".into(),
+            sent_only: false,
+        });
+        let lease = store.folder_lease(id.clone()).await.unwrap();
+        store.claim_folder_step(&lease).await.unwrap();
+        store
+            .record_folder_outcome(
+                &lease,
+                0,
+                if success {
+                    crate::folder_actions::Outcome::Applied
+                } else {
+                    crate::folder_actions::Outcome::Rejected("Fixture rejected rename".into())
+                },
+            )
+            .await
+            .unwrap();
+        if success {
+            store.commit_folder_step(&lease, 0).await.unwrap();
+        }
+        job = store.folder_job(id.clone()).await.unwrap();
+        app.folder_event(FolderEvent::Finished(id, Ok(Arc::new(job))));
+        let folders = app.query.folders.as_ref().unwrap();
+        let parent = if success {
+            "Archive/Projects"
+        } else {
+            "Projects"
+        };
+        assert!(folders.iter().any(|f| f.folder == parent));
+        assert!(
+            folders
+                .iter()
+                .any(|f| f.folder == format!("{parent}/Design"))
+        );
+        assert!(folders.iter().any(|f| f.folder == "Teams"));
+        let page = store.query(app.query.clone()).await.unwrap();
+        assert_eq!((page.total, page.unread), (3, 3));
+    }
+}

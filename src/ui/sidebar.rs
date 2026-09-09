@@ -449,7 +449,13 @@ impl App {
     pub(super) fn sidebar_folder(&self, action: &Message) -> Option<FolderSelection> {
         let (account, folder, sent_only) = match action {
             Message::AccountFolder(account, folder) => {
-                (Some(account.clone()), folder.clone(), false)
+                // Ctrl-selection and active highlights use the same cache
+                // identity as ordinary clicks while a folder rename is pending.
+                (
+                    Some(account.clone()),
+                    self.original_folder(account, folder),
+                    false,
+                )
             }
             Message::AccountFolderUnified => (None, "INBOX".into(), false),
             Message::Folder(folder) => (self.query.account.clone(), folder.clone(), false),

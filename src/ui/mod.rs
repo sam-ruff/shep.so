@@ -3819,6 +3819,7 @@ impl App {
                 .map(|s| s.title)
                 .collect::<Vec<_>>()
         );
+        data["page_unread"] = serde_json::json!(self.page.unread);
         data["inbox_unread"] = serde_json::json!(self.page.inbox_unread);
         data["tray"] = serde_json::json!({"available": self.tray.available,
             "visible": self.tray.window.is_some(), "ready": self.tray.ready, "temporary": self.tray.temporary,

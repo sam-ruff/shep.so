@@ -1,6 +1,66 @@
 # Completion audit
 
-## SFTP and connection-intent integration — verification in progress
+## 9 September: combined folders during pending changes
+
+R30 Ctrl-click now uses the same retained cache path as a plain click while a
+folder rename is pending. Selected-folder highlighting follows that identity.
+Removing and restoring a folder in a combined selection keeps its actual mail
+and counts; committed renames update the selected paths, rejected renames retain
+the sources, and newer unrelated folder choices survive either result.
+
+R50/R60 removes an excluded row's unread contribution from the filtered header
+immediately. This covers unflagging unread mail in Flagged and marking a Read
+result unread. Global Inbox unread badges remain independent of that filter.
+The test-support `page_unread` observation reports the actual header value.
+
+Two new controller tests pass: production SQLite rename/rejection with combined
+selection, and eight filtered success/failure/cache-before-receipt cases with
+an overlapping aggregate/account selection. The first rename regression failed
+against the previous code as expected. Both new native scenarios pass in
+12.199 seconds, covering slow rename success/rejection, real Ctrl-clicks,
+filtered headers and newer choices while flag writes are pending. The first
+filter setup used the Read menu row; inspection corrected it to the actual
+Flagged row without changing assertions or timeouts.
+
+Reviewed WebPs under `artifacts/e2e/` include pending filtered counts
+(`c660b422247c`), dark rollback (`9136758288da`), renamed combined selection
+(`1e6c3bdabd36`) and rejected rename (`c9ca6a0ada10`). Logs remain under
+`artifacts/logs/combined-folder-{before,unit,native-corrected}.log`.
+The first broader native run passed 11 of 13 scenarios. Its POP3 drag still used
+an inherited 104-pixel row coordinate; this lane now copies main's existing
+`mail_row_y(2)` correction. The badge fixture failed before app launch because
+the deep worktree exceeded the Unix socket path limit. Its socket now uses an
+owned private short directory, cleaned after the bus and observer stop; logs stay
+in artifacts. The Python harness regression exercises a long artifact path,
+actual bus access, private permissions and process/directory cleanup.
+
+The corrected complete selected run passes all **13 native scenarios** in
+90.117 seconds (`artifacts/logs/combined-folder-native-final.log`), including
+folder review/retry/uncertainty/close/POP3 restart, combined choices, filters,
+read-on-leave and badge failure/recovery. All **56 Python tests** pass
+(`artifacts/logs/combined-folder-python.log`), including 44 harness tests.
+These are selected scenarios, not a full native-suite result.
+
+Native test executable SHA-256:
+`ede4d68a35d6fbfe4f2c09123ab9cf6eb606f3e2133d46299539c283efdcd771`.
+This lane checkpoint awaits primary-agent integration and push. Combined-folder
+delete projection, broader page/scope reconciliation, aggregate account choice,
+uncertainty/history lifecycle and live-provider/platform verification remain
+open. No latency or performance measurements were run; quality/release workflows
+remain disabled.
+
+Root integration preserves main’s already-tested short private socket alias and
+its actual bus/cleanup regression; the lane’s alternative socket directory is
+not needed. Main’s owned GTK Cairo fixture setting is retained. Integrated
+verification passes: all **19 selected native scenarios** in 104.376 seconds,
+all **81 Python tests** (including actual PowerShell), full Windows GNU checking
+and strict Zensical. Root reviewed dark filtered rollback (`2203398171a1`) and
+committed combined-folder selection (`cf775ebcb960`). Final native SHA-256:
+`e0462c9fbec8bec58798cf2122a3fa1c6a5c222df3a3bc931c5673b0fc2295a0`.
+Root logs use `artifacts/logs/folder-counts-main-*`. Normal hooks and publication
+are the remaining checkpoint steps; the broader TODO items remain open.
+
+## SFTP and connection-intent integration — shipped checkpoint
 
 Root integrates SFTP checkpoint `f60dac0` and account connection-reversion
 checkpoint `85b2fd0`. SFTP uses verified SHA-256 host keys before password
@@ -16,8 +76,19 @@ now releases it with an actionable error; retry succeeds without any backup
 file write. All 16 SFTP tests pass, with the original failure retained in
 `artifacts/logs/sftp-channel-before-fix.log` and corrected provider tests in
 `sftp-channel-and-provider-tests.log`. No production timeout or performance
-budget was shortened for this test. Native, Windows and hook integration checks
-are still running; this paragraph is not yet a shipping receipt.
+budget was shortened for this test.
+
+Source **`ff03b02`** is pushed to main with exact remote equality verified.
+All **816 normal hook test executions** pass (three personal diagnostics ignored),
+all **81 Python tests** pass with actual PowerShell execution, full Windows GNU
+all-target/all-feature checking and strict Zensical pass. All **18 integrated
+native scenarios** pass in 80.717 seconds, covering SFTP host verification/retry,
+setup/restart, backup controls, account links, palette preservation and compact
+layouts. Root reviewed the changed-host and compact-dark credentials WebPs in
+`artifacts/e2e/06f30faf0d64`. Native executable SHA-256:
+`17eaed92862af43fcc45ff4fd9a93ac487dfa06e801a92603f8e1a8f97c978f9`.
+Logs use `artifacts/logs/sftp-reversions-main-*`. This is a source checkpoint;
+production installation and genuine provider/platform verification remain open.
 
 ## Palette, S3 and matching-account links — shipped integration
 
