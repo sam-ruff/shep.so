@@ -857,3 +857,309 @@ fn profile_checkpoint_capture_retains_field_basis_and_blocks_unsupported_state()
     state.fields.get_mut(&key).unwrap().revision = 9;
     assert!(state.validate().is_err());
 }
+
+#[tokio::test]
+async fn profile_setting_review_resolves_deferred_choice_without_overwriting_other_settings() {
+    use crate::profile_sync::reviews::{self, Choice};
+    for keep_local in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, mut replica, binding, _) = fixture(dir.path()).await;
+        store
+            .update_preferences(|p| p.appearance = Appearance::Dark)
+            .await
+            .unwrap();
+        let stale = store.capture_profile_change().await.unwrap().unwrap();
+        remote_appearance(&mut replica, "System").await;
+        assert!(replica.admit_local(stale.clone()).await.is_err());
+        store
+            .defer_profile_change(binding.clone(), stale)
+            .await
+            .unwrap();
+        let mut reviews = reviews::prepare(&store, &replica).await.unwrap();
+        assert_eq!(reviews.len(), 1);
+        let review = reviews.pop().unwrap();
+        assert_eq!(review.local(), &json!("Dark"));
+        assert_eq!(review.versions()[0].value, json!("System"));
+        // An unrelated preference edit after opening the review stays local.
+        store
+            .update_preferences(|p| p.tooltips = false)
+            .await
+            .unwrap();
+        let choice = if keep_local {
+            Choice::Local
+        } else {
+            Choice::Shared(review.versions()[0].operation)
+        };
+        reviews::accept(&store, &mut replica, review, choice)
+            .await
+            .unwrap();
+        let prefs: Preferences = store.get("preferences").await.unwrap();
+        assert_eq!(
+            prefs.appearance,
+            if keep_local {
+                Appearance::Dark
+            } else {
+                Appearance::System
+            }
+        );
+        assert!(!prefs.tooltips);
+        let state = store.profile_replication(binding).await.unwrap();
+        assert!(state.pending.is_none() && state.deferred.is_empty());
+        let target = history::target(&appearance("Light").action);
+        let version = replica.versions(target.clone(), None).await.unwrap();
+        assert_eq!(version.len(), 1);
+        assert_eq!(
+            replica
+                .value(target, version[0].operation)
+                .await
+                .unwrap()
+                .extra["future_hint"],
+            json!({"keep":"opaque"})
+        );
+        assert!(reviews::prepare(&store, &replica).await.unwrap().is_empty());
+        replica.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn profile_setting_review_rejects_native_reversion_remote_edit_and_disabled_consent() {
+    use crate::profile_sync::reviews::{self, Choice};
+    for race in ["native", "remote", "disabled"] {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, mut replica, binding, _) = fixture(dir.path()).await;
+        store
+            .update_preferences(|p| p.appearance = Appearance::Dark)
+            .await
+            .unwrap();
+        remote_appearance(&mut replica, "System").await;
+        let review = reviews::prepare(&store, &replica)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        match race {
+            "native" => {
+                store
+                    .update_preferences(|p| p.appearance = Appearance::Light)
+                    .await
+                    .unwrap();
+                store
+                    .update_preferences(|p| p.appearance = Appearance::Dark)
+                    .await
+                    .unwrap();
+            }
+            "remote" => remote_appearance(&mut replica, "Light").await,
+            _ => {
+                store
+                    .change_profile_sync_options(crate::profile_sync::enrollment::Changes {
+                        settings: Some(false),
+                        ..Default::default()
+                    })
+                    .await
+                    .unwrap();
+            }
+        }
+        assert!(
+            reviews::accept(&store, &mut replica, review, Choice::Local)
+                .await
+                .is_err(),
+            "{race}"
+        );
+        assert_eq!(
+            store
+                .get::<Preferences>("preferences")
+                .await
+                .unwrap()
+                .appearance,
+            Appearance::Dark
+        );
+        assert!(
+            store
+                .profile_replication(binding)
+                .await
+                .unwrap()
+                .pending
+                .is_none()
+        );
+        replica.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn profile_setting_review_reset_is_durable_and_replays_exactly_after_lost_ack() {
+    use crate::profile_sync::reviews;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, mut replica, binding, _) = fixture(dir.path()).await;
+    store
+        .update_preferences(|p| p.appearance = Appearance::Dark)
+        .await
+        .unwrap();
+    let reset = Change {
+        action: Action::SettingRemoved {
+            key: SettingKey::Appearance,
+        },
+        extra: Default::default(),
+    };
+    edit_remote(&mut replica, vec![reset.clone()]).await;
+    let review = reviews::prepare(&store, &replica)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(review.versions()[0].reset);
+    let pending = store
+        .reserve_profile_setting_review(review, reset)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get::<Preferences>("preferences")
+            .await
+            .unwrap()
+            .appearance,
+        Preferences::default().appearance
+    );
+    // The operation was committed but the native receipt was lost.
+    replica.edit(pending.edit()).await.unwrap();
+    replica.close().await.unwrap();
+    drop(store);
+    let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    let mut replica = Replica::open(
+        dir.path().join("history.sqlite"),
+        binding.clone(),
+        Journal::open(None).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        store.capture_profile_change().await.unwrap(),
+        Some(pending.clone())
+    );
+    let revision = replica.state().await.unwrap().revision;
+    let receipt = replica.admit_local(pending).await.unwrap();
+    store.acknowledge_profile_change(receipt).await.unwrap();
+    assert_eq!(replica.state().await.unwrap().revision, revision);
+    assert!(store.capture_profile_change().await.unwrap().is_none());
+    replica.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn profile_setting_review_resolves_real_concurrent_history_and_retains_extensions() {
+    use crate::profile_sync::reviews::{self, Choice};
+    let dir = tempfile::tempdir().unwrap();
+    let (store, replica, binding, initial) = fixture(dir.path()).await;
+    replica.close().await.unwrap();
+    let worker = Worker::open(dir.path().join("history.sqlite"), binding.clone())
+        .await
+        .unwrap();
+    let mut selected = Uuid::nil();
+    for value in ["Dark", "System"] {
+        let operation = Uuid::new_v4();
+        let mut change = appearance(value);
+        change.extra.insert("peer_hint".into(), json!(value));
+        let remote = shep_profile_core::Operation {
+            format: shep_profile_core::FORMAT.into(),
+            major: 1,
+            minor: 0,
+            requires: vec![
+                "causal-v1".into(),
+                "settings-v1".into(),
+                "initialization-v1".into(),
+            ],
+            namespace: binding.namespace.clone(),
+            profile: binding.profile,
+            generation: binding.generation,
+            device: Uuid::new_v4(),
+            operation,
+            parents: vec![initial],
+            changes: vec![change],
+            extra: Default::default(),
+        };
+        worker
+            .request(Command::Import {
+                record: String::from_utf8(remote.encode().unwrap()).unwrap(),
+            })
+            .await
+            .unwrap();
+        if value == "Dark" {
+            selected = operation;
+        }
+    }
+    worker.close().await.unwrap();
+    let mut replica = Replica::open(
+        dir.path().join("history.sqlite"),
+        binding.clone(),
+        Journal::open(None).unwrap(),
+    )
+    .await
+    .unwrap();
+    let review = reviews::prepare(&store, &replica)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(review.versions().len(), 2);
+    reviews::accept(&store, &mut replica, review, Choice::Shared(selected))
+        .await
+        .unwrap();
+    let target = history::target(&appearance("Light").action);
+    let versions = replica.versions(target.clone(), None).await.unwrap();
+    assert_eq!(versions.len(), 1);
+    let winner = replica.value(target, versions[0].operation).await.unwrap();
+    assert_eq!(winner.extra["peer_hint"], json!("Dark"));
+    assert_eq!(
+        store
+            .get::<Preferences>("preferences")
+            .await
+            .unwrap()
+            .appearance,
+        Appearance::Dark
+    );
+    assert!(reviews::prepare(&store, &replica).await.unwrap().is_empty());
+    replica.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn profile_setting_review_acknowledgment_preserves_later_native_intent() {
+    use crate::profile_sync::reviews;
+    let dir = tempfile::tempdir().unwrap();
+    let (store, mut replica, _, _) = fixture(dir.path()).await;
+    store
+        .update_preferences(|p| p.appearance = Appearance::Dark)
+        .await
+        .unwrap();
+    remote_appearance(&mut replica, "System").await;
+    let review = reviews::prepare(&store, &replica)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    let target = history::target(&appearance("Light").action);
+    let change = replica
+        .value(target, review.versions()[0].operation)
+        .await
+        .unwrap();
+    let pending = store
+        .reserve_profile_setting_review(review, change)
+        .await
+        .unwrap();
+    store
+        .update_preferences(|p| p.appearance = Appearance::Light)
+        .await
+        .unwrap();
+    let receipt = replica.admit_local(pending.clone()).await.unwrap();
+    store.acknowledge_profile_change(receipt).await.unwrap();
+    assert_eq!(
+        store
+            .get::<Preferences>("preferences")
+            .await
+            .unwrap()
+            .appearance,
+        Appearance::Light
+    );
+    let next = store.capture_profile_change().await.unwrap().unwrap();
+    assert_ne!(next.operation, pending.operation);
+    assert_eq!(next.local, appearance("Light"));
+    assert!(next.native_revision > pending.native_revision);
+    replica.close().await.unwrap();
+}

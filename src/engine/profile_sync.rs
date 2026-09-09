@@ -132,6 +132,47 @@ impl Engine {
             )?;
             return Ok(Update::Joined(Arc::new(saved)));
         }
+        if matches!(
+            action,
+            Request::SettingReviews(_) | Request::ResolveSetting { .. }
+        ) {
+            let before = self.store.profile_enrollment().await?;
+            let binding = before
+                .enrollment
+                .selection
+                .as_ref()
+                .context("Choose a shared profile first.")?
+                .binding
+                .clone();
+            let mut replica = sync::replica::Replica::open(
+                paths.history(&binding)?,
+                binding,
+                paths.journal().await?,
+            )
+            .await?;
+            let saved = matches!(action, Request::ResolveSetting { .. });
+            let result = async {
+                control.check()?;
+                if let Request::ResolveSetting { review, choice, .. } = action {
+                    sync::reviews::accept(&self.store, &mut replica, (*review).clone(), choice)
+                        .await?;
+                }
+                sync::reviews::prepare(&self.store, &replica).await
+            }
+            .await;
+            let closed = replica.close().await;
+            let snapshot = self.store.profile_enrollment().await?;
+            if snapshot.preferences_revision != before.preferences_revision {
+                self.workspace(&mut output).await?;
+            }
+            closed
+                .context("Could not finish saving the preference review. Reopen it to recover.")?;
+            return Ok(Update::SettingReviews {
+                snapshot: Arc::new(snapshot),
+                reviews: result?.into_iter().map(Arc::new).collect(),
+                saved,
+            });
+        }
         let journal = paths.journal().await?;
         let _slot = control
             .read(async { Ok(self.provider_slots.acquire().await) })

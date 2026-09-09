@@ -6,21 +6,6 @@ use crate::profile_sync::{
 };
 use shep_profile_core::{Action, Change, history};
 
-fn normalized(mut change: Change) -> anyhow::Result<Change> {
-    change.extra.clear();
-    if let Action::AccountConnection { account } = &mut change.action {
-        account.extra.clear();
-    }
-    if let Action::SettingRemoved { key } = change.action {
-        if let Some(value) = metadata::setting_value(key, &Preferences::default()) {
-            change.action = Action::Setting { key, value };
-        } else {
-            change.action = Action::SettingRemoved { key };
-        }
-    }
-    Ok(change)
-}
-
 impl Store {
     pub(crate) async fn apply_profile_observation(
         &self,
@@ -74,7 +59,7 @@ impl Store {
                     report.review += 1;
                     continue;
                 }
-                let local = normalized(change.clone())?;
+                let local = crate::profile_sync::state::normalized(change.clone());
                 let before = values.get(&target);
                 let basis = state.fields.get(&target);
                 let base = basis.and_then(|f| f.local.as_ref());

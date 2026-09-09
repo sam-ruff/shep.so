@@ -33,6 +33,9 @@ pub struct Pending {
     pub change: Change,
     #[serde(default)]
     pub native_revision: u64,
+    /// Exact concurrent versions explicitly reviewed before reserving this edit.
+    #[serde(default)]
+    pub resolutions: Vec<Uuid>,
 }
 impl Pending {
     pub fn edit(&self) -> history::LocalEdit {
@@ -40,7 +43,14 @@ impl Pending {
             operation: self.operation,
             expected_revision: self.expected_revision,
             changes: vec![self.change.clone()],
-            resolutions: vec![],
+            resolutions: if self.resolutions.is_empty() {
+                vec![]
+            } else {
+                vec![history::Resolution {
+                    target: self.target(),
+                    versions: self.resolutions.clone(),
+                }]
+            },
         }
     }
     pub fn target(&self) -> String {
@@ -194,11 +204,16 @@ impl State {
                     && pending.local.extra.is_empty(),
                 "The saved profile edit has invalid identity or revision."
             );
-            let mut normalized = pending.change.clone();
-            normalized.extra.clear();
-            if let Action::AccountConnection { account } = &mut normalized.action {
-                account.extra.clear();
-            }
+            let normalized = normalized(pending.change.clone());
+            ensure!(
+                pending.resolutions.is_empty()
+                    || (pending.resolutions.len() > 1
+                        && pending.resolutions.len() <= shep_profile_core::MAX_PARENTS
+                        && pending.resolutions.iter().all(|id| !id.is_nil())
+                        && pending.resolutions.iter().collect::<BTreeSet<_>>().len()
+                            == pending.resolutions.len()),
+                "The reviewed profile versions are invalid."
+            );
             ensure!(
                 normalized == pending.local,
                 "The saved local intent differs from its shared edit."
@@ -352,6 +367,7 @@ impl State {
                 local,
                 change,
                 native_revision,
+                resolutions: vec![],
             };
             self.pending = Some(pending.clone());
             self.validate()?;
@@ -405,4 +421,19 @@ pub fn allowed(change: &Change, options: Options) -> bool {
             Action::Setting { .. } | Action::SettingRemoved { .. } => options.settings,
             _ => true,
         }
+}
+
+/// Native comparison strips opaque wire extensions and maps a setting reset to
+/// this client's default. The original change remains intact for publication.
+pub(crate) fn normalized(mut change: Change) -> Change {
+    change.extra.clear();
+    if let Action::AccountConnection { account } = &mut change.action {
+        account.extra.clear();
+    }
+    if let Action::SettingRemoved { key } = change.action
+        && let Some(value) = metadata::setting_value(key, &Preferences::default())
+    {
+        change.action = Action::Setting { key, value };
+    }
+    change
 }

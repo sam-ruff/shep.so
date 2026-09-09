@@ -735,3 +735,17 @@ appearance. `backup_destinations`, `backup_selected` and
 `saved_backup_destinations` are observation-only. Normal preview cannot upload,
 restore, read the keychain or contact Google; actual isolated encrypted local
 uploads and passphrase/retention isolation have Rust coverage.
+
+
+For portable-setting conflict reviews, use the isolated
+`profile_sync="existing-conflict", profile_login=true, empty_profile=true` fixture.
+Its second complete profile pull adds two actual concurrent setting operations.
+Open Preferences → Profiles and sync, Sync now, then Review shared preferences.
+Observe `profile_sync.setting_reviews` (labels/scalar local/current values),
+`working`, `error`, and normal appearance state. Choose a shared version with the
+real dropdown/mouse control, or keep this device's value. The saved scenarios
+verify compact dark layout, Light application, immutable extension preservation,
+restart and upload convergence. A separate native flow changes Appearance while
+a review is open, rejects the stale action, refreshes and retries. Read-only
+SQLite assertions inspect the closed fixture's durable checkpoint; they never
+actuate the UI. These are fixture/history contracts, not live Google evidence.

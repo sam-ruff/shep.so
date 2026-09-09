@@ -12,6 +12,7 @@ pub mod metadata;
 pub(crate) mod onboarding;
 pub(crate) mod paths;
 pub mod replica;
+pub mod reviews;
 pub mod setup;
 pub mod state;
 

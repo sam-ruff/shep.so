@@ -1,5 +1,42 @@
 # Completion audit
 
+## Portable preference reviews — verified integration
+
+A local history review can compare this device's preference with current shared
+versions. Choosing a value reserves one durable operation and the exact concurrent
+version set before history admission; the existing sync worker publishes it later.
+Opaque shared extensions remain in history and survive the selected resolution.
+The UI receives scalar values and IDs for at most eight supported settings and
+256 versions per field, not complete operation payloads.
+
+Acceptance checks enrollment/Google lifecycle, current field values, native edit
+generations and the reviewed history revision. Changes or reversions while a
+review is open require refreshing; unrelated local preferences remain intact.
+Reset-to-default requests retain their original wire action while using the
+native default for comparison. Admitted receipts are acknowledged through close
+and newer native edits remain pending for subsequent publication.
+
+Six targeted store/history/controller regressions pass, covering deferred
+local/shared choices, concurrent causal records, stale local/remote/consent
+reviews, restart after lost acknowledgment, newer native intent and stale control
+events after a row disappears. All 86 matching profile tests pass (one personal
+diagnostic ignored). The lane also passes 59 Python tests and all-target,
+all-feature Clippy. All 25 selected native profile flows pass, including three
+saved resolution/restart/stale-choice scenarios; reviewed light/compact-dark WebPs
+include visible error feedback when an old choice is rejected. Logs are under
+`artifacts/logs/profile-reviews-*`; error feedback evidence is `8e903b30229c`.
+Root integrated source `713f96e` and repeated all 25 native profile flows on the
+final control-identity guard: all pass in 90.568 seconds. All 81 integrated Python
+tests and Clippy pass. Light/shared-choice, compact-dark and stale-choice error
+WebPs were reviewed in `ae0d1e6a4ee3`, `8df28384ff98` and `d9bce3c1db21`.
+Native SHA-256: `d85786600d99d32e2e18633e48a294350ded4780bae938acea8756172c31850b`.
+The lane's normal hooks pass 762 executions (three personal diagnostics ignored).
+Root hooks and push are the remaining shipping step; installed production is
+unchanged. Integrated logs use `artifacts/logs/profile-reviews-main-*`.
+This does not complete account linking, endpoint/removal reviews, credential
+transfer or live Google verification.
+
+
 ## Multiple Local/Drive backups — shipped checkpoint
 
 Agent checkpoint `3f00292` adds named Local/Drive destinations, independent
@@ -71,8 +108,11 @@ operations against temporary destinations and an owned loopback release server,
 with explicit environment, COM, transport and UAC boundary fixtures. These do not
 claim actual Windows PowerShell 5.1, COM, UAC or Start-menu rendering verification.
 
-Strict docs and mandatory hooks are recorded with the source checkpoint. Actual
-Windows/macOS execution, platform distribution and published binary assets remain
+Root integrated and pushed Windows source as `ce4a2a6`, with 81 Python tests,
+756 mandatory hook executions (three personal diagnostics ignored), strict docs
+and [green documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34344920136).
+Exact remote equality was verified. Actual Windows/macOS execution, platform
+distribution and published binary assets remain
 open in R61. No developer installation or public release was changed; quality and
 release CI remain disabled.
 
