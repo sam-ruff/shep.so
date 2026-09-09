@@ -41,6 +41,40 @@ and failed-archive recovery (`96a237e88cf1`) WebPs. Native SHA-256:
 `aa9145b440fa98d69b9d69fa93d95fe92882c7e19374961e8df38d6755ae9b22`.
 Logs: `artifacts/logs/badge-main-*`. Actual Windows/macOS rendering and shell
 execution remain R70 verification work; production installation is unchanged.
+## Native PowerShell Windows raw installer — R61 checkpoint
+
+README and the install guide now include the GitHub raw PowerShell command.
+The script requires built-in PowerShell 5.1 and Windows 10/11 tar.exe, defaults to
+LocalAppData/Programs/Shep, and stages a native ICO and Start-menu shortcut.
+Archive selection/checksums reject missing or ambiguous platform assets; only
+exact unique regular binary/icon members stream out through binary process stdout.
+An application marker prevents overwriting an unrelated installation. Directory
+replacement and the shortcut commit preserve/restore the previous application
+when a step fails. Updates never kill an open app or change mail/configuration.
+
+Explicit all-user installation uses a data manifest, prepared fixed script and
+quoted encoded invocation for [native RunAs elevation](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/start-process).
+Only that installer process permits script execution; no system execution policy
+changes. Cancellation happens before installed files change. The shortcut follows
+[Microsoft's WScript contract](https://learn.microsoft.com/en-us/powershell/scripting/samples/creating-.net-and-com-objects--new-object-).
+The PNG-backed ICO contains the unchanged approved 128px launcher image.
+
+Seven isolated PowerShell execution tests pass: binary-safe install/update and
+native metadata/icon contract, invalid checksums and links, failed shortcut commit
+rollback, cancelled and successful staged elevation with spaces/apostrophes,
+user/default/custom scope, pre-download cancellation, HTTPS-only transport,
+invalid version, missing platform/release, duplicate members and unrelated apps.
+All 81 Python tests pass. PowerShell 7.6.6 was downloaded from Microsoft's release
+into ignored artifacts and verified against its published checksum; no runtime
+was installed globally. Tests use actual PowerShell, tar, hashing and filesystem
+operations against temporary destinations and an owned loopback release server,
+with explicit environment, COM, transport and UAC boundary fixtures. These do not
+claim actual Windows PowerShell 5.1, COM, UAC or Start-menu rendering verification.
+
+Strict docs and mandatory hooks are recorded with the source checkpoint. Actual
+Windows/macOS execution, platform distribution and published binary assets remain
+open in R61. No developer installation or public release was changed; quality and
+release CI remain disabled.
 
 ## Native-tool macOS raw installer — R61 checkpoint
 
@@ -66,6 +100,13 @@ All 74 Python tests pass; Bash syntax, strict documentation and mandatory hooks
 are recorded with this checkpoint. Windows PowerShell implementation, actual
 macOS desktop execution, notarization/distribution and published release assets
 remain open. No installed user application was changed and no release was created.
+
+Root integrated and pushed macOS source as `0f2af1f`, verifying exact remote
+equality. Mandatory hooks pass 756 executions (three personal diagnostics
+ignored), all 74 Python tests and strict Zensical pass.
+[Documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34343891835)
+passed. Linux source `3676dad` also has
+[green documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34342832313).
 
 
 ## Raw Linux release installer — R61 checkpoint

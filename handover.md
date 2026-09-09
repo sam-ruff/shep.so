@@ -31,8 +31,10 @@ credential protection still remain. Do not discard any lane's uncommitted work.
 preserves typed preference intent and per-destination metadata, including a new
 remote-setting/upload-receipt race regression. The backup lane continues S3.
 Linux raw installer is pushed as `3676dad`, with 68 Python tests and mandatory
-hooks passing. macOS wrapper `d52f54b` is being integrated; the agent continues
-Windows PowerShell. Actual published assets and platform execution remain open.
+hooks passing. macOS wrapper is pushed as `0f2af1f`, with 74 Python tests, mandatory hooks and
+green docs CI. Windows `ccbc1e0` is being integrated; the agent continues the
+transparent themed launcher (R64). Actual published assets and platform execution
+remain open.
 
 `1595fb3` is pushed: Windows/macOS badge adapters, 751 hook executions, 12 native
 Linux scenarios, full merged Windows checking and exact macOS adapter checking.
