@@ -52,9 +52,9 @@ store submissions in TODO.
 Desktop **Profiles and sync** now connects durable discovery, reviewed publication
 and account/preferences enrollment through actual iced controls. It retains
 independent histories, upload identities, frozen reviews, durable receipts,
-reconnect guards and newer local account/preference intent. The previous enrolled
-source checkpoint is [`8f969cd`](https://github.com/sam-ruff/shep.so/commit/8f969cd91d45ac2e4a821c927c360a86e64569cd);
-full evidence and current shipping are in [completion](docs/COMPLETION.md).
+reconnect guards and newer local account/preference intent. The latest page
+checkpoint [`0b0ffcb`](https://github.com/sam-ruff/shep.so/commit/0b0ffcbf4bdb4e6501cf3d098d7691d4c9eef497) is pushed with exact remote verification; mandatory hooks pass
+471 Rust tests. Evidence and limits are in [completion](docs/COMPLETION.md).
 
 The page continuation fixes choices/errors returning a review to page one. Actual
 controls cover 51 profiles and 75 accounts, First/Next/More, second-page exclusion,
@@ -64,7 +64,8 @@ the full run passed 127; the badge test had retained an initial count despite
 read-on-leave changing it. Its corrected current-count check and all four badge
 flows pass. The failed evidence, exact durations and reviewed captures remain in
 completion and `artifacts/logs/profile-pages-*`. Python's 42 checks and the 37
-parity contracts pass; final mandatory hooks and shipping are recorded there.
+parity contracts pass, alongside production compilation and strict docs.
+The shipping receipt is `artifacts/profile-pages-shipping.json`.
 
 Next: ongoing Flutter/desktop reconciliation, automatic restoration and first
 setup, complete portable settings/categories and authenticated cross-client

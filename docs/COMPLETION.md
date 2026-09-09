@@ -2514,3 +2514,14 @@ rerun**; this is not a claim that the initial full invocation had no failure.
 The other 127 scenarios already passed on the same production source; only that
 test's stale baseline/navigation checks changed before the rerun. Final mandatory
 Rust hooks and remote shipping are recorded below.
+
+
+Profile page code [`0b0ffcb`](https://github.com/sam-ruff/shep.so/commit/0b0ffcbf4bdb4e6501cf3d098d7691d4c9eef497) is pushed to `feat/mobile-web-clients`; the exact
+remote SHA matches and the source worktree was clean after shipping. Mandatory
+hooks pass formatting, Clippy and **471 Rust tests**, with only the two opt-in
+personal live diagnostics ignored. Production compilation without test-support,
+42 Python checks, 37 parity contracts and strict Zensical pass. Native results
+are the 127-pass full run plus the corrected four-flow badge rerun described
+above, covering all 128 scenarios. The receipt is
+`artifacts/profile-pages-shipping.json`. All 40 active requests remain; next is
+ongoing Flutter/desktop reconciliation and automatic first setup/restoration.

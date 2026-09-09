@@ -654,3 +654,10 @@ connection details and publication cancellation. R63's badge check now uses the
 current unread count after read-on-leave, preserving actual private-bus controls.
 Final checks and shipping are in [completion](COMPLETION.md). No active request
 is removed; continuous reconciliation and the other parity gaps remain open.
+
+
+R77/R63/R02/R49/R75/desktop-main:R92 shipping: [`0b0ffcb`](https://github.com/sam-ruff/shep.so/commit/0b0ffcbf4bdb4e6501cf3d098d7691d4c9eef497) is pushed with exact remote
+verification. Mandatory hooks pass 471 Rust tests; all 128 native functional
+scenarios pass across the full run and corrected badge rerun. Python, parity,
+production compilation and strict docs pass. The completion log retains the
+original badge failure and test correction. No active request is removed.
