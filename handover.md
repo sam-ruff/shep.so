@@ -68,9 +68,10 @@ require reconnect; matching accounts preserve their mail, drafts and passwords.
 Newer local edits/removal win. Backups and credential fallback preserve the guard.
 The current source passes **470 Rust tests**, Clippy, production compilation,
 41 Python checks, 37 parity contracts, strict documentation and all **125 native
-functional flows** (477.553 seconds). Reviewed final captures and the shipping
-receipt follow in the completion log; verify the recorded remote commit before
-claiming this checkpoint is pushed.
+functional flows** (477.553 seconds). Code [`8f969cd`](https://github.com/sam-ruff/shep.so/commit/8f969cd91d45ac2e4a821c927c360a86e64569cd)
+is pushed with exact remote verification; mandatory hooks pass all 470 Rust
+tests. Reviewed captures and shipping evidence are in the completion log and
+`artifacts/desktop-enrollment-shipping.json`.
 
 Next: native large-page controls, then ongoing Flutter/desktop reconciliation,
 automatic first setup, complete portable settings/categories and authenticated

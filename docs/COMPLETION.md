@@ -2452,3 +2452,13 @@ Apple and live Google/cross-client verification remain open. The earlier
 performance gate still fails; new timing is deferred on the busy host. Quality
 and release CI remain disabled. No main merge, phone reinstall or VPS deployment
 accompanies this worktree increment.
+
+
+Desktop enrollment code [`8f969cd`](https://github.com/sam-ruff/shep.so/commit/8f969cd91d45ac2e4a821c927c360a86e64569cd) is pushed to
+`feat/mobile-web-clients`; its exact remote SHA matches. Mandatory hooks pass
+formatting, Clippy and **470 Rust tests**, with only the two opt-in personal live
+diagnostics ignored. The source worktree was clean after shipping. All **125
+native functional flows**, 41 Python checks, 37 parity contracts, production
+compilation and strict docs pass as recorded above. The shipping receipt is
+`artifacts/desktop-enrollment-shipping.json`. This completes reviewed initial
+desktop enrollment; the full product goal and all 40 active requests remain open.
