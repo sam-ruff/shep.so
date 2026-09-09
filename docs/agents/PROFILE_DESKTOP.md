@@ -1,10 +1,10 @@
-# Desktop profile discovery
+# Desktop profiles
 
 Preferences → Profiles and sync discovers existing setups through the shared
 Drive catalog. Sign in with Drive access first, then enter the application
 namespace configured for the same Google Cloud project as the other devices.
-Discovery is read-only: desktop publication and reviewed account/settings import
-remain active work. Flutter publication and reviewed enrollment have separate
+Discovery and reviewed publication use the same shared Drive format. Desktop
+account/settings import remains active work. Flutter publication and reviewed enrollment have separate
 [contracts](PROFILE_ENROLLMENT.md).
 
 The desktop uses the saved active grant, OAuth client, Google lifecycle revision
@@ -43,3 +43,34 @@ for the real desktop controls. Its endpoint constructor rejects non-loopback
 addresses, hostname resolution, credentials, query/fragment overrides and redirects;
 production has no endpoint override. Fixture tests establish protocol/controller
 behavior, not live Google consent or same-project cross-client access.
+
+## Reviewed publication
+
+**Publish this device's setup** offers a named profile, account inclusion and eight
+individual preference choices. **Review profile** saves the displayed preferences
+first, then freezes the account list and selected values in the mail database.
+Preparation and review return at most 50 account rows. Connection details expose
+the actual endpoints and usernames; passwords, tokens, mail and drafts are excluded.
+Approval rejects changed accounts or selected preference values.
+
+The database stores exact planned operations and stable local/shared account IDs.
+Each staging step saves its exact revision and operation UUID before writing the
+separate history journal. Each upload uses the shared tracked uploader, retaining
+its reserved Drive file ID and confirming exact media before advancing the receipt.
+The causal completion marker follows every account/settings record. A failed
+confirmation remains pending; retry checks the reserved file before another POST.
+The history owner closes after each accepted step. Pause, leaving Preferences and
+changed grants stop scheduling further work; reopening retains the saved review.
+
+Changing the active OAuth client forces a full scan while retaining known records.
+A missing record remains a failure, including when another Google project's app
+space is empty. The client ID itself does not identify a Google Cloud project.
+Completed discovery is required before preparing, approving, staging or uploading.
+
+Store/protocol tests exercise changed reviews, 75-account paging, exact staging
+recovery, mail database reopen after a lost Drive confirmation and an independent
+catalog reading the completed profile. Native control results and shipping belong
+in the completion log. This is an initial publication, not ongoing reconciliation
+or desktop enrollment. Native large-page controls, complete settings/categories,
+credential protection, Apple/live Google and authenticated cross-client access
+remain active work.

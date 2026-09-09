@@ -6,8 +6,9 @@ chooses accounts and settings, reviews the frozen values, then publishes. Accoun
 reviews page through 50 rows; each row opens connection details. Passwords, OAuth
 grants, mail, drafts, device paths and window geometry are excluded.
 
-This is publication only. Applying a profile on another device, ongoing sync,
-complete desktop preference categories and credential portability remain open.
+Flutter now supports [reviewed enrollment on another device](PROFILE_ENROLLMENT.md).
+[Desktop publication](PROFILE_DESKTOP.md) shares the format and tracked uploader.
+Ongoing sync, complete preference categories and credential portability remain open.
 The [sync handover](PROFILE_SYNC_HANDOVER.md) remains the full product contract.
 Existing profiles and legacy backups are retained separately.
 

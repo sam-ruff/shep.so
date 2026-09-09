@@ -1,3 +1,4 @@
+pub mod publication;
 use super::*;
 use crate::profiles::discovery::{Action as ProfileAction, Grant, Observation, Request};
 use iced::{
@@ -9,6 +10,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Publication(publication::Message),
     Namespace(String),
     Open,
     Pause,
@@ -20,6 +22,7 @@ pub enum Message {
 }
 
 pub(super) struct Profiles {
+    publication: publication::Publication,
     panel: Uuid,
     serial: u64,
     pending: Option<(u64, ProfileAction)>,
@@ -37,6 +40,7 @@ impl Default for Profiles {
         // randomness and other credential/crypto work out of iced updates.
         static NEXT_PANEL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
+            publication: Default::default(),
             panel: Uuid::from_u128(
                 NEXT_PANEL.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u128,
             ),
@@ -61,6 +65,7 @@ impl App {
     }
     pub(super) fn pause_profiles(&mut self) {
         self.profiles.running = false;
+        self.publication_pause();
     }
     pub(super) fn profile_grant_changed(&mut self) {
         if self
@@ -105,13 +110,14 @@ impl App {
             self.profiles.grant = Some(grant);
             self.profiles.error = None;
         } else {
-            self.profiles.running = false;
+            self.pause_profiles();
             self.profiles.error = Some("Profile work could not be queued. Retry shortly.".into());
         }
     }
     pub(super) fn profile_message(&mut self, message: Message) {
         self.profile_grant_changed();
         match message {
+            Message::Publication(message) => self.publication_message(message),
             Message::Namespace(value) => {
                 self.profiles.namespace = value;
                 self.profiles.edited = true;
@@ -158,7 +164,7 @@ impl App {
                 self.request_profile(ProfileAction::Page { after });
             }
             Message::Close => {
-                self.profiles.running = false;
+                self.pause_profiles();
                 self.request_profile(ProfileAction::Close);
             }
         }
@@ -213,17 +219,33 @@ impl App {
                     {
                         self.profiles.running = false;
                     }
+                    if matches!(
+                        action,
+                        ProfileAction::Publication(
+                            crate::profiles::publication::Command::Prepare { .. }
+                        )
+                    ) && self.profiles.error.is_none()
+                    {
+                        self.profiles.publication.new_form = false;
+                    }
+                    if self.profiles.error.is_some() {
+                        self.publication_pause();
+                    }
                     self.profiles.observation = observation;
                 }
                 self.profile_pump();
+                self.publication_pump();
             }
             Err(error) => {
                 self.profiles.error = Some(error);
-                self.profiles.running = false;
+                self.pause_profiles();
             }
         }
     }
     pub(super) fn profile_settings(&self) -> Element<'_, super::Message> {
+        if self.publication_visible() {
+            return self.publication_view();
+        }
         let p = &self.profiles;
         let busy = p.pending.is_some();
         let open = p.observation.state.is_some();
@@ -359,12 +381,14 @@ impl App {
                 ]
                 .spacing(8),
             );
-            body = body.push(
-                muted(
-                    "Profile import and publication are not available in this desktop version yet.",
-                )
-                .size(12),
-            );
+            if finished {
+                body = body.push(control(
+                    "Publish this device's setup",
+                    Message::Publication(publication::Message::Open),
+                    !busy,
+                ));
+            }
+            body = body.push(muted("Desktop profile import is still in development.").size(12));
         }
         if let Some(error) = &p.error {
             body = body.push(text(error).size(12)).push(control(
@@ -381,7 +405,7 @@ impl App {
     }
     pub(super) fn profile_observation(&self) -> serde_json::Value {
         serde_json::json!({"pending":self.profiles.pending.is_some(), "running":self.profiles.running,
-            "loaded":self.profiles.loaded, "namespace":self.profiles.namespace,
+            "publication_running":self.profiles.publication.running, "publication_visible":self.publication_visible(), "loaded":self.profiles.loaded, "namespace":self.profiles.namespace,
             "error":self.profiles.error, "discovery":*self.profiles.observation})
     }
 }

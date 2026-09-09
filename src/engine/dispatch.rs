@@ -53,6 +53,13 @@ impl CommandSender {
     }
 
     #[cfg(test)]
+    pub(crate) fn profile_save_test_channels()
+    -> (Self, mpsc::Receiver<Command>, mpsc::Receiver<Command>) {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.profiles, inputs.persistence)
+    }
+
+    #[cfg(test)]
     pub(crate) fn network_test_channel() -> (Self, mpsc::Receiver<Command>) {
         let (sender, inputs) = Self::channel();
         (sender, inputs.network)

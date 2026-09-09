@@ -1034,6 +1034,7 @@ impl App {
                         self.pending_google_login = None;
                     }
                     self.cancel_backup_save(request);
+                    self.publication_save_failed(request);
                     if self.confirm_save == Some(request) {
                         self.confirm_save = None;
                     }
@@ -1066,6 +1067,7 @@ impl App {
                         }
                     }
                     self.continue_backup_request(request);
+                    self.publication_saved(request);
                     if self
                         .pending_google_login
                         .as_ref()
