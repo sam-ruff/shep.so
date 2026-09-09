@@ -189,6 +189,10 @@ pub enum Message {
     SavePreferences,
     Appearance(Appearance),
     TestS3Connection,
+    TestSftpConnection,
+    ProbeSftpFingerprint,
+    VerifySftpFingerprint(bool),
+    AcceptSftpFingerprint,
     S3PathStyle(bool),
     AddBackupDestination,
     SelectBackupDestination(String),
@@ -416,6 +420,8 @@ pub struct App {
     backups_target: Option<BackupTarget>,
     backups_generation: u64,
     s3_connection: Option<backups::ConnectionCheck>,
+    sftp_connection: Option<backups::ConnectionCheck>,
+    sftp_host_key: Option<backups::HostKeyReview>,
     restore_id: String,
     restore_target: Option<BackupTarget>,
     export_index: Option<usize>,
@@ -580,6 +586,8 @@ impl App {
                 backups_target: None,
                 backups_generation: 0,
                 s3_connection: None,
+                sftp_connection: None,
+                sftp_host_key: None,
                 restore_id: String::new(),
                 restore_target: None,
                 export_index: None,
@@ -1631,6 +1639,30 @@ impl App {
                         }
                     }
                 }
+                Event::SftpConnection(request, target, result) => {
+                    if self
+                        .sftp_connection
+                        .as_ref()
+                        .is_some_and(|(id, previous, _)| *id == request && *previous == target)
+                        && target == self.configured_backup_target()
+                    {
+                        if result.is_ok() {
+                            self.fields.remove("sftp_password_secret");
+                        }
+                        self.sftp_connection = Some((request, target, Some(result)));
+                    }
+                }
+                Event::SftpFingerprint(request, settings, result) => {
+                    let current = self.sftp_form_settings();
+                    if let Some(review) = &mut self.sftp_host_key
+                        && review.request == request
+                        && review.settings == settings
+                        && current.host == settings.host
+                        && current.port == settings.port
+                    {
+                        review.result = Some(result);
+                    }
+                }
                 Event::S3Connection(request, target, result) => {
                     if self
                         .s3_connection
@@ -2270,6 +2302,22 @@ impl App {
                         );
                     }
                 }
+                if key.starts_with("sftp_") {
+                    self.sftp_connection = None;
+                    if matches!(key, "sftp_host" | "sftp_port" | "sftp_fingerprint") {
+                        self.sftp_host_key = None;
+                    }
+                    if matches!(
+                        key,
+                        "sftp_host"
+                            | "sftp_port"
+                            | "sftp_username"
+                            | "sftp_directory"
+                            | "sftp_fingerprint"
+                    ) {
+                        self.fields.remove("sftp_password_secret");
+                    }
+                }
                 if key.starts_with("s3_") {
                     self.s3_connection = None;
                     if matches!(key, "s3_endpoint" | "s3_bucket" | "s3_prefix") {
@@ -2469,6 +2517,19 @@ impl App {
                 self.preferences.appearance = appearance;
                 self.save_preferences();
             }
+            Message::TestSftpConnection => {
+                let secret = self.field("sftp_password_secret");
+                let supplied =
+                    (!secret.is_empty()).then(|| secrecy::SecretString::from(secret.to_owned()));
+                self.begin_backup_request(backups::BackupAction::ConnectSftp(supplied));
+            }
+            Message::ProbeSftpFingerprint => self.probe_sftp_fingerprint(),
+            Message::VerifySftpFingerprint(verified) => {
+                if let Some(review) = &mut self.sftp_host_key {
+                    review.verified = verified;
+                }
+            }
+            Message::AcceptSftpFingerprint => self.accept_sftp_fingerprint(),
             Message::TestS3Connection => {
                 let key = self.field("s3_access_secret").trim();
                 let secret = self.field("s3_key_secret");
@@ -2498,6 +2559,9 @@ impl App {
                             self.fields.remove("s3_access_secret");
                             self.fields.remove("s3_key_secret");
                             self.s3_connection = None;
+                            self.sftp_connection = None;
+                            self.sftp_host_key = None;
+                            self.fields.remove("sftp_password_secret");
                             self.save_preferences();
                             self.notice(
                                 "Backup destination removed. Saved copies are kept.",
@@ -2512,6 +2576,9 @@ impl App {
                 self.fields.remove("s3_access_secret");
                 self.fields.remove("s3_key_secret");
                 self.s3_connection = None;
+                self.sftp_connection = None;
+                self.sftp_host_key = None;
+                self.fields.remove("sftp_password_secret");
                 self.preferences.backup_destination = destination;
                 self.preference_sync.changed();
             }
@@ -3194,6 +3261,20 @@ impl App {
                     .unwrap_or_else(|| "Main backup".into()),
             ),
             ("backup_folder", self.preferences.backup_folder.clone()),
+            ("sftp_host", self.preferences.backup_sftp.host.clone()),
+            ("sftp_port", self.preferences.backup_sftp.port.to_string()),
+            (
+                "sftp_username",
+                self.preferences.backup_sftp.username.clone(),
+            ),
+            (
+                "sftp_directory",
+                self.preferences.backup_sftp.directory.clone(),
+            ),
+            (
+                "sftp_fingerprint",
+                self.preferences.backup_sftp.fingerprint.clone(),
+            ),
             ("s3_endpoint", self.preferences.backup_s3.endpoint.clone()),
             ("s3_region", self.preferences.backup_s3.region.clone()),
             ("s3_bucket", self.preferences.backup_s3.bucket.clone()),
@@ -3222,6 +3303,7 @@ impl App {
         if self.fields.contains_key("copies") {
             next.backup_folder = self.field("backup_folder").into();
             next.backup_s3 = self.s3_form_settings();
+            next.backup_sftp = self.sftp_form_settings();
             next.backup_copies = self.field("copies").parse()?;
             next.backup_hours = self.field("hours").parse()?;
             next.mail_check_seconds = self.field("mail_check_seconds").parse()?;
@@ -3857,6 +3939,9 @@ impl App {
         data["s3_connection"] = serde_json::json!(self.s3_connection.as_ref().map(|(_, target, result)| serde_json::json!({"current": *target == self.configured_backup_target(), "pending": result.is_none(), "connected": result.as_ref().is_some_and(|r| r.is_ok()), "error": result.as_ref().and_then(|r| r.as_ref().err()) })));
         data["backup_destination"] =
             serde_json::json!(format!("{:?}", self.preferences.backup_destination));
+        data["saved_backup_sftp"] = serde_json::json!(self.workspace.preferences.backup_sftp);
+        data["sftp_connection"] = serde_json::json!(self.sftp_connection.as_ref().map(|(_, target, result)| serde_json::json!({"current": *target == self.configured_backup_target(), "pending": result.is_none(), "connected": result.as_ref().is_some_and(|r| r.is_ok()), "error": result.as_ref().and_then(|r| r.as_ref().err()) })));
+        data["sftp_host_key"] = serde_json::json!(self.sftp_host_key.as_ref().map(|review| serde_json::json!({"pending": review.result.is_none(), "verified":review.verified, "fingerprint": review.result.as_ref().and_then(|r| r.as_ref().ok()), "error": review.result.as_ref().and_then(|r| r.as_ref().err()) })));
         data["saved_backup_s3"] = serde_json::json!(self.workspace.preferences.backup_s3);
         data["backup_destinations"] = serde_json::json!(self.preferences.backup_destinations);
         data["backup_selected"] = serde_json::json!(self.preferences.backup_selected);

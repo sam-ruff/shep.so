@@ -36,7 +36,9 @@ Compact rows, actual-layout keyboard reveal, conversation-anchor refresh and
 transparent icons are pushed as `15a4a3c`; R88 is complete. The 248 native paths
 have passing coverage across the full run and corrected setup reruns, with 769
 hook executions, 81 Python tests and strict docs passing. Production remains on
-the earlier installed build. Palette/S3/account-import links are being integrated.
+the earlier installed build. Palette/S3/account-import links are pushed in `4e75005`: 798 root hook executions,
+81 Python and all 88 integrated native scenarios pass. R25 is complete; SFTP and
+connection-reversion tracking are the next root integration checkpoint.
 
 The encrypted-storage lane may consume shared initializer API
 `8588c21b4785cca6951bdc335ca938580ae60f1e`, published separately on

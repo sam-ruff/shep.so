@@ -1,6 +1,6 @@
 # Multiple backup destinations
 
-Preferences → Backups can keep several local folders, S3 destinations and one
+Preferences → Backups can keep several local folders, S3/SFTP destinations and one
 Google Drive destination active together. Add destination preserves the existing setup. Select
 its named row to change its schedule, retention, account-password inclusion or
 passphrase. Removing a destination keeps its saved copies and upload receipts.
@@ -19,7 +19,7 @@ same login and aliases of a local folder. Lexical checks run without filesystem
 access; real folder identity checks run on the storage worker. Imported database
 profiles clear these device-local destinations and schedules.
 
-This checkpoint does not add FTP, FTPS or SFTP, optional archive-format
+This checkpoint does not add FTP or FTPS, optional archive-format
 compression/encryption, a combined manual Back up all action, or live cloud
 verification. R32 remains active for those features and their tests. Local/Drive
 protocol and encrypted-file tests are separate from native fixture tests, which
@@ -90,3 +90,65 @@ The S3 adaptation to main also drives its actual setup-save queue while an
 unrelated shared preference changes and a backup receipt arrives. Its typed
 save preserves both newer values and its edited retention. Keep this regression
 alongside the existing multi-destination metadata/remote-settings race test.
+
+
+## SFTP
+
+SFTP uses [russh](https://docs.rs/russh/0.63.2/russh/client/index.html) and the
+[raw russh-sftp requests](https://docs.rs/russh-sftp/3.0.0/russh_sftp/client/struct.RawSftpSession.html).
+Rust 1.89 is the minimum for the maintained SSH library. Production traffic uses
+the configured host/port, a pinned SHA256 host key and password authentication.
+A fingerprint probe deliberately rejects the offered key and never sends a
+password. The native review requires an explicit verification checkbox before
+using a probed fingerprint; changed-host results cannot authorize another server.
+Host-key or username changes identify a new authenticated destination and cannot
+reuse the old keychain password, passphrase or automatic-backup readiness.
+Duplicate effective host/port/folder locations remain rejected across usernames
+and key changes, preventing overlapping retention policies.
+
+Passwords are saved through the existing profile-owned credential worker only
+after a successful read-only connection test. Rechecking current settings before
+saving keeps a late result from reviving a removed connection. The folder must
+already exist at its absolute canonical path; symbolic-link aliases are rejected.
+User-visible errors omit server-controlled status bodies.
+
+The existing upload journal reserves the final filename and encrypted bytes.
+An exclusive staging file receives a persisted creation receipt before bytes are
+written. Retry verifies its already written prefix and resumes at that offset;
+unexpected contents are kept untouched. Fsync runs when the server advertises it.
+SFTP v3 rename commits the copy without replacing an existing destination; the
+POSIX overwrite extension is never used. An uncertain rename is recovered by
+verifying the original final filename's size and streamed checksum. An existing
+unconfirmed staging file without its creation receipt requires inspection and is
+not overwritten automatically.
+
+Directory listings have bounded pages/entries and validate Shep filename, regular
+file type and archive header before retention. A failed or repeated listing keeps
+all old copies. Only the header is downloaded while listing; restore and upload
+verification stream bounded chunks. The raw SFTP dependency currently ignores its
+Config packet-size limit, so a length-delimited stream guard rejects oversized
+announcements before its parser can allocate their payloads. Requests are issued
+one at a time, and the SSH channel has a bounded eight-message buffer.
+
+SSH/SFTP regression peers listen only on loopback with generated fixture keys.
+Their file state uses a bounded 32-job owner. Tests cover changed-key refusal
+before authentication, incomplete/fractured packets, partial upload continuation,
+uncertain commit/journal reopen, byte-preserving restore, foreign files and
+credential-saving races. Native preview supplies fictional fingerprint reviews
+and disables password authentication/cloud writes. These tests are separate from
+live server, real OS-keychain and Windows/macOS verification. SFTP private-key and
+agent authentication, automatic remote folder creation, FTP/FTPS and the other
+remaining R32 options are follow-up work.
+
+The SFTP source checkpoint passes 15 targeted Rust cases, including successful
+rolling retention, refusal to overwrite foreign final or unconfirmed staged
+files, IPv6 aliases, and redacted server errors. The saved native scenario passes
+host failure/retry, copied fingerprint review, disabled unverified replacement,
+changed-key confirmation, persisted settings and compact dark layout. Reviewed
+WebPs are under ignored `artifacts/e2e/6a585034d0e2`. The final binary passes all
+five selected SFTP, S3, multiple-destination, existing setup and compact-layout
+flows in 19.489 seconds; its SHA-256 is
+`817f02150a35386039904ae0a0ab14b630b229dfa199bc013d45c62ecf171d92`.
+Hook and integrated shipping receipts belong in the completion log. Python checks passed with seven
+platform-dependent skips; strict Zensical building passed. No performance
+measurements or live server writes were performed.

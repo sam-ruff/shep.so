@@ -11,6 +11,8 @@ pub struct Destination {
     pub folder: String,
     #[serde(default)]
     pub s3: super::s3::Settings,
+    #[serde(default)]
+    pub sftp: super::sftp::Settings,
     pub copies: usize,
     pub hours: u64,
     pub accounts: bool,
@@ -26,6 +28,7 @@ impl Destination {
             destination: prefs.backup_destination,
             folder: prefs.backup_folder.clone(),
             s3: prefs.backup_s3.clone(),
+            sftp: prefs.backup_sftp.clone(),
             copies: prefs.backup_copies,
             hours: prefs.backup_hours,
             accounts: prefs.backup_accounts,
@@ -38,6 +41,7 @@ impl Destination {
         prefs.backup_destination = self.destination;
         prefs.backup_folder = self.folder.clone();
         prefs.backup_s3 = self.s3.clone();
+        prefs.backup_sftp = self.sftp.clone();
         prefs.backup_copies = self.copies;
         prefs.backup_hours = self.hours;
         prefs.backup_accounts = self.accounts;
@@ -49,6 +53,7 @@ impl Destination {
         match self.destination {
             BackupDestination::Local => BackupTarget::Local(self.folder.clone()),
             BackupDestination::S3 => BackupTarget::S3(self.s3.identity()),
+            BackupDestination::Sftp => BackupTarget::Sftp(self.sftp.identity()),
             BackupDestination::GoogleDrive => BackupTarget::GoogleDrive {
                 client_id: prefs.active_google_client().to_owned(),
                 connection_id: prefs.google_connection_id.clone(),
@@ -132,11 +137,17 @@ pub fn validate(prefs: &Preferences) -> anyhow::Result<()> {
     if prefs.backup_destination == BackupDestination::S3 {
         prefs.backup_s3.validate_draft()?;
     }
+    if prefs.backup_destination == BackupDestination::Sftp {
+        prefs.backup_sftp.validate_draft()?;
+    }
     let mut ids = std::collections::HashSet::new();
     let mut targets = std::collections::HashSet::new();
     for d in &prefs.backup_destinations {
         if d.destination == BackupDestination::S3 {
             d.s3.validate_draft()?;
+        }
+        if d.destination == BackupDestination::Sftp {
+            d.sftp.validate_draft()?;
         }
         let target = match d.destination {
             BackupDestination::Local if d.folder.trim().is_empty() => None,
@@ -144,6 +155,16 @@ pub fn validate(prefs: &Preferences) -> anyhow::Result<()> {
                 Some(format!("local:{}", lexical_path(&d.folder).display()))
             }
             BackupDestination::GoogleDrive => Some("google-drive".to_string()),
+            BackupDestination::Sftp if d.sftp.host.is_empty() || d.sftp.directory.is_empty() => {
+                None
+            }
+            BackupDestination::Sftp => {
+                let id = d.sftp.identity();
+                Some(format!(
+                    "sftp:{}",
+                    serde_json::to_string(&(id.host, id.port, id.directory))?
+                ))
+            }
             BackupDestination::S3 if d.s3.bucket.is_empty() => None,
             BackupDestination::S3 => {
                 Some(format!("s3:{}", serde_json::to_string(&d.s3.identity())?))

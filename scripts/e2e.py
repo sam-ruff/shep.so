@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Deterministic, non-AI equivalents of the native MCP interaction scenarios."""
+import base64
 import argparse
 import json
 from pathlib import Path
@@ -4219,6 +4220,64 @@ class NativeFlows(unittest.TestCase):
                            shot(f"compact-header-syncing-{appearance}"),
                            click(87, 159), check("tab", "Calendar"),
                            shot(f"responsive-during-sync-{appearance}"), check("busy", []))
+
+    def test_sftp_backup_host_identity_setup_and_restart(self):
+        result = self.mcp.call("desktop.start", persistent=True)
+        print(f"SFTP backup evidence: {result['artifacts']}", flush=True)
+        first = "SHA256:" + base64.b64encode(bytes([1] * 32)).decode().rstrip("=")
+        changed = "SHA256:" + base64.b64encode(bytes([2] * 32)).decode().rstrip("=")
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(559, 156), check("settings_tab", "Backups"),
+                       click(1100, 339), wait(80), click(1080, 484),
+                       check("backup_destination", "Sftp"), shot("sftp-backup-setup"),
+                       click(440, 414), type_text("offline.example.test"),
+                       click(440, 494), type_text("fixture-user"),
+                       click(900, 494), type_text("/archive"),
+                       click(385, 630), check("sftp_host_key.error", "unavailable", "contains"),
+                       shot("sftp-host-retry"), click(440, 414), key("ctrl+a"),
+                       type_text("backup.example.test"), click(385, 630),
+                       check("sftp_host_key.fingerprint", "SHA256:", "contains"),
+                       check("sftp_host_key.verified", False), shot("sftp-host-review"),
+                       click(390, 836), check("fields.sftp_fingerprint", ""),
+                       click(1135, 730), click(440, 494), key("ctrl+a"), key("ctrl+v"),
+                       check("fields.sftp_username", first), key("ctrl+a"), type_text("fixture-user"),
+                       click(302, 798), check("sftp_host_key.verified", True),
+                       click(390, 836), check("sftp_host_key", None),
+                       check("preferences_saved", True), check("saved_backup_sftp.fingerprint", first),
+                       click(440, 710), type_text("fixture-sftp-password"),
+                       click(385, 767), check("sftp_connection.error", "disabled in preview", "contains"),
+                       check("sftp_connection.pending", False), check("preferences_saved", True),
+                       check("saved_backup_sftp.username", "fixture-user"),
+                       check("saved_backup_sftp.directory", "/archive"), shot("sftp-connection-settings-saved"),
+                       click(440, 414), key("ctrl+a"), type_text("changed.example.test"),
+                       click(385, 630), check("sftp_host_key.fingerprint", changed),
+                       check("sftp_host_key.verified", False), check("fields.sftp_fingerprint", first),
+                       shot("sftp-host-changed-review"), click(390, 836),
+                       check("fields.sftp_fingerprint", first), click(302, 798),
+                       check("sftp_host_key.verified", True), click(390, 836),
+                       check("sftp_host_key", None), check("preferences_saved", True),
+                       check("saved_backup_sftp.fingerprint", changed),
+                       check("saved_backup_sftp.host", "changed.example.test"),
+                       check("backup_ready", False), shot("sftp-host-change-saved"))
+        self.assertNotIn("fixture-sftp-password", json.dumps(self.mcp.call("desktop.state")))
+        self.mcp.batch({"type": "restart"}, check("ready", True),
+                       check("saved_backup_sftp.fingerprint", changed),
+                       check("saved_backup_sftp.host", "changed.example.test"),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       click(559, 156), check("settings_tab", "Backups"),
+                       check("sftp_host_key", None), check("sftp_connection", None),
+                       check("fields.sftp_username", "fixture-user"), shot("sftp-settings-reopened"),
+                       click(290, 156), check("settings_tab", "General"),
+                       click(690, 366), check("dark", True),
+                       click(559, 156), check("settings_tab", "Backups"),
+                       {"type": "resize", "width": 900, "height": 640}, wait(150),
+                       shot("sftp-compact-dark"), {"type": "hover", "x": 780, "y": 510},
+                       {"type": "scroll", "amount": 3}, wait(100), shot("sftp-compact-dark-credentials"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        with sqlite3.connect(f"file:{Path(result['artifacts']) / 'fixture.sqlite'}?mode=ro", uri=True) as saved:
+            values = " ".join(str(row) for row in saved.execute("SELECT value FROM kv"))
+            self.assertNotIn("fixture-sftp-password", values)
+
 
     def test_s3_backup_setup_native_validation_and_saved_target(self):
         result = self.mcp.call("desktop.start", persistent=True)

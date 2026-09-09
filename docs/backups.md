@@ -1,11 +1,11 @@
 # Backups and Google
 
-Google is optional. Mail, CalDAV, local backups and S3 backups work without it.
+Google is optional. Mail, CalDAV, local, S3 and SFTP backups work without it.
 
 ## Make a backup
 
 1. Open **Preferences → Backups**.
-2. Choose **Local folder**, **Google Drive** or **S3-compatible storage**.
+2. Choose **Local folder**, **Google Drive**, **S3-compatible storage** or **SFTP**.
 3. Set how many copies to keep and enter a passphrase of at least 12 characters.
 4. Choose **Back up now**. After your first copy succeeds, enable automatic backups if wanted.
 
@@ -24,6 +24,15 @@ older object versions under their own lifecycle rules.
 
 
 Backups include downloaded original mail, account and calendar settings, and preferences. Account passwords are optional; Google tokens are never included. Calendar events download again from their providers. Backups are limited to **256 MiB of original mail**.
+
+For SFTP, enter the server, port, username and an existing absolute backup folder.
+Choose **Check server fingerprint**, compare it with your server's trusted
+settings, then check **I verified this fingerprint** and use it. You can also
+paste a SHA256 fingerprint you already verified. Enter your password and choose
+**Test and save connection**. A changed host key requires verification again;
+previous credentials and automatic-backup readiness are not reused for it.
+SFTP currently supports password authentication. Private keys and SSH agents
+are not supported yet.
 
 ## Restore a copy
 

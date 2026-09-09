@@ -4,17 +4,26 @@ use shep_profile_core::history;
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-pub(in crate::store) fn record_native_account_name(
+pub(in crate::store) fn record_native_account_fields(
     c: &Connection,
     account: &Account,
-    previous: Option<&str>,
+    previous: Option<&Account>,
 ) -> anyhow::Result<()> {
-    if previous != Some(account.name.as_str()) {
+    let name_changed = previous.is_none_or(|old| old.name != account.name);
+    let connection_changed = previous.is_none_or(|old| {
+        let mut before = old.clone();
+        before.name.clone_from(&account.name);
+        before != *account
+    });
+    if name_changed || connection_changed {
         let mut revisions: BTreeMap<String, u64> = get(c, state::NATIVE_EDITS_KEY)?;
-        revisions.insert(
-            format!("local-account-name:{}", account.id),
-            get(c, "connections_revision")?,
-        );
+        let revision = get(c, "connections_revision")?;
+        if name_changed {
+            revisions.insert(format!("local-account-name:{}", account.id), revision);
+        }
+        if connection_changed {
+            revisions.insert(format!("local-account-connection:{}", account.id), revision);
+        }
         put(c, state::NATIVE_EDITS_KEY, &revisions)?;
     }
     Ok(())
@@ -26,6 +35,9 @@ pub(super) fn native_revisions(
 ) -> anyhow::Result<BTreeMap<String, u64>> {
     let mut revisions: BTreeMap<String, u64> = get(c, state::NATIVE_EDITS_KEY)?;
     for (local, shared) in &state.accounts {
+        if let Some(revision) = revisions.remove(&format!("local-account-connection:{local}")) {
+            revisions.insert(format!("account:{shared}:connection"), revision);
+        }
         if let Some(revision) = revisions.remove(&format!("local-account-name:{local}")) {
             revisions.insert(
                 history::target(&shep_profile_core::Action::AccountName {

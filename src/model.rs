@@ -601,6 +601,7 @@ pub enum BackupDestination {
     Local,
     GoogleDrive,
     S3,
+    Sftp,
 }
 impl fmt::Display for BackupDestination {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -608,6 +609,7 @@ impl fmt::Display for BackupDestination {
             Self::Local => "Local folder",
             Self::GoogleDrive => "Google Drive",
             Self::S3 => "S3-compatible storage",
+            Self::Sftp => "SFTP",
         })
     }
 }
@@ -650,6 +652,7 @@ pub struct Preferences {
     pub backup_selected: Option<String>,
     pub backup_destination: BackupDestination,
     pub backup_s3: crate::backup::s3::Settings,
+    pub backup_sftp: crate::backup::sftp::Settings,
     pub backup_folder: String,
     pub backup_copies: usize,
     pub backup_hours: u64,
@@ -698,6 +701,7 @@ impl Default for Preferences {
             backup_selected: None,
             backup_destination: BackupDestination::Local,
             backup_s3: Default::default(),
+            backup_sftp: Default::default(),
             backup_folder: String::new(),
             backup_copies: 7,
             backup_hours: 24,

@@ -1694,7 +1694,8 @@ impl App {
                     [
                         BackupDestination::Local,
                         BackupDestination::GoogleDrive,
-                        BackupDestination::S3
+                        BackupDestination::S3,
+                        BackupDestination::Sftp
                     ],
                     Some(self.preferences.backup_destination),
                     Message::BackupDestination
@@ -1770,6 +1771,8 @@ impl App {
                 .spacing(12)
                 .align_y(Alignment::End),
             );
+        } else if self.preferences.backup_destination == BackupDestination::Sftp {
+            form = form.push(self.sftp_backup_settings());
         } else if self.preferences.backup_destination == BackupDestination::S3 {
             form = form.push(self.s3_backup_settings());
         } else if !self.google_connected || !self.preferences.google_grant.access.drive_allowed() {
@@ -1868,6 +1871,108 @@ impl App {
         .spacing(if self.settings_group.is_some() { 0 } else { 22 })
         .into()
     }
+    fn sftp_backup_settings(&self) -> Element<'_, Message> {
+        let probing = self
+            .sftp_host_key
+            .as_ref()
+            .is_some_and(|review| review.result.is_none());
+        let testing = self
+            .sftp_connection
+            .as_ref()
+            .is_some_and(|(_, target, result)| {
+                *target == self.configured_backup_target() && result.is_none()
+            });
+        let mut form = column![
+            row![
+                form_field(
+                    "SFTP server",
+                    "backup.example.com",
+                    self.field("sftp_host"),
+                    "sftp_host",
+                    false
+                ),
+                container(form_field(
+                    "Port",
+                    "22",
+                    self.field("sftp_port"),
+                    "sftp_port",
+                    false
+                ))
+                .width(100),
+            ]
+            .spacing(18),
+            row![
+                form_field(
+                    "Username",
+                    "Your server login",
+                    self.field("sftp_username"),
+                    "sftp_username",
+                    false
+                ),
+                form_field(
+                    "Remote folder",
+                    "/home/user/backups",
+                    self.field("sftp_directory"),
+                    "sftp_directory",
+                    false
+                ),
+            ]
+            .spacing(18),
+            form_field(
+                "Verified server fingerprint",
+                "SHA256:… from your trusted server settings",
+                self.field("sftp_fingerprint"),
+                "sftp_fingerprint",
+                false
+            ),
+            button(
+                text(if probing {
+                    "Checking server identity…"
+                } else {
+                    "Check server fingerprint"
+                })
+                .size(12)
+            )
+            .padding([11, 17])
+            .style(outline)
+            .on_press_maybe((!probing).then_some(Message::ProbeSftpFingerprint)),
+        ]
+        .spacing(18);
+        if let Some(review) = &self.sftp_host_key
+            && let Some(result) = &review.result
+        {
+            let review_panel: Element<'_, Message> = match result {
+                Err(error) => text(error).size(12).into(),
+                Ok(fingerprint) => {
+                    let changed = !self.field("sftp_fingerprint").is_empty()
+                        && self.field("sftp_fingerprint") != fingerprint;
+                    container(column![
+                        text(if changed { "The server key differs from your saved key" } else { "Verify this server key" }).font(BOLD).size(13),
+                        row![text(fingerprint).font(iced::Font::MONOSPACE).size(11), space().width(Length::Fill), self.icon_action("copy", "Copy fingerprint", Message::CopyAddress(fingerprint.clone()))].align_y(Alignment::Center).spacing(12),
+                        muted("Compare this fingerprint with your server's trusted settings before sending a password.").size(12),
+                        checkbox(review.verified).label("I verified this fingerprint").text_size(12).on_toggle(Message::VerifySftpFingerprint),
+                        button(text(if changed { "Replace verified fingerprint" } else { "Use verified fingerprint" }).size(12)).padding([11,17]).style(primary)
+                            .on_press_maybe(review.verified.then_some(Message::AcceptSftpFingerprint)),
+                    ].spacing(12)).padding(14).style(subtle).into()
+                }
+            };
+            form = form.push(review_panel);
+        }
+        form = form.push(form_field("Password", "Leave blank to reuse the saved password", self.field("sftp_password_secret"), "sftp_password_secret", true))
+            .push(button(text(if testing { "Testing connection…" } else { "Test and save connection" }).size(12)).padding([11,17]).style(outline)
+                .on_press_maybe((!self.backup_busy() && self.pending_backup.is_none()).then_some(Message::TestSftpConnection)))
+            .push(muted("The test checks read access. Your first backup checks upload permissions. Passwords are saved in your OS keychain only after a successful test.").size(11));
+        if let Some((_, target, Some(result))) = &self.sftp_connection
+            && *target == self.configured_backup_target()
+        {
+            form = form.push(match result {
+                Ok(()) => text("Connected · password saved").size(12),
+                Err(error) => text(error).size(12),
+            });
+        }
+        form.into()
+    }
+
     fn s3_backup_settings(&self) -> Element<'_, Message> {
         let testing = self
             .s3_connection
