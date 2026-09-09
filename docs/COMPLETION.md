@@ -21,13 +21,29 @@ The ongoing-update UI and protocol checkpoint passed 34 native scenarios,
 including four new automatic-receipt, publication/restart, offline-retry and
 partial-upload-failure paths. Reviewed WebPs include `8a68015b56c6` (received
 accounts while Mail remains open) and `184fead95e69` (received accounts alongside
-an explicit upload error). Final native verification after generation tracking
-and source integration is pending; this entry is not yet a shipping receipt.
+an explicit upload error). After generation tracking and refresh integration, the combined run passed 40
+of 41 scenarios. The remaining database-export setup failed because the native
+GTK picker's location field did not accept its path (unpainted picker evidence
+`ee7f4ccad7e2`); three unchanged, fresh reruns passed (`5301b548bd0c`,
+`5a38e38e1f9c`, `5bd787f589d4`). This intermittent picker readiness issue remains
+in R63; no timeout or performance gate was weakened. Final reviewed native
+screens include `4feda00dae1e` and compact dark refresh `aeec46d6a1df`.
+Integrated binary SHA-256:
+`92e957553a9bc375dc81651c120d379ece51cdbcbd955a6c1edb431bfb7e5d48`.
+The integrated hooks pass **713 executions**, three personal diagnostics ignored;
+Windows GNU all-target/all-feature checking and strict Zensical also pass.
+Source [`bd50c52`](https://github.com/sam-ruff/shep.so/commit/bd50c52)
+and [`d29ce06`](https://github.com/sam-ruff/shep.so/commit/d29ce06)
+are pushed to main; exact remote equality was verified.
 
 R93 assigns three isolated worktree lanes to compact mail/deletion/refresh,
 multiple backups and shutdown/tray, with the primary agent integrating tested
-commits. Agent refresh checkpoint `f111282` passed seven native scenarios and
-renderer-direction checks; integration is pending. All existing TODOs remain
+commits. Agent refresh checkpoint `f111282` was integrated as `d29ce06`. R87 is
+complete: the icon turns clockwise every 2.4 seconds, matching its arrowheads,
+only during manual refresh. Four animation tests, 14 renderer tests and seven
+native refresh/background scenarios pass, including light, compact dark and
+scaled rendering, F5 remapping/restart, failure/retry and navigation. Root reviewed
+its visual evidence before integration. R87 leaves TODO; remaining requests stay
 tracked. Incremental history pulls, account linking, conflict/removal/endpoint
 reviews, remaining portable settings, credential transfer and real cross-client
 Google access remain unfinished. Personal mail, OS credentials and the installed
