@@ -44,6 +44,47 @@ fn index(app: &App, account: &str, path: &str) -> usize {
     app.sidebar_items().iter().position(|item|matches!(&item.action,Message::AccountFolder(a,p)|Message::ToggleFolderGroup(a,p) if a==account && p==path)).unwrap()
 }
 #[tokio::test]
+async fn duplicate_address_sidebar_names_preserve_account_navigation_and_collapse() {
+    for unified in [true, false] {
+        let (mut app, _, _commands) = fixture().await;
+        let accounts = &mut Arc::make_mut(&mut app.workspace).accounts;
+        accounts[0].email = "alex@example.test".into();
+        accounts[0].name = "Cloud account (previous setup)".into();
+        accounts[1].email = "alex@example.test".into();
+        accounts[1].name = "Cloud account".into();
+        app.preferences.unified_inbox = unified;
+        app.inbox_expanded = true;
+        for (id, name) in [
+            ("a", "Cloud account (previous setup)"),
+            ("b", "Cloud account"),
+        ] {
+            let items = app.sidebar_items();
+            let heading = items.iter().position(|item| matches!(&item.action, Message::ToggleAccountFolders(account) if account == id)).unwrap();
+            assert_eq!(items[heading].label, name);
+            let _ = app.handle(Message::SidebarAction(heading));
+            assert_eq!(app.preferences.collapsed_accounts, [id]);
+            let _ = app.handle(Message::SidebarAction(heading));
+            assert!(app.preferences.collapsed_accounts.is_empty());
+            let inbox = index(&app, id, "INBOX");
+            assert_eq!(
+                app.sidebar_items()[inbox].label,
+                if unified { name } else { "Inbox" }
+            );
+            let _ = app.handle(Message::SidebarAction(inbox));
+            assert_eq!(app.query.account.as_deref(), Some(id));
+            assert_eq!(app.query.folder, "INBOX");
+        }
+        Arc::make_mut(&mut app.workspace).accounts[1].email = "other@example.test".into();
+        let labels: Vec<_> = app
+            .sidebar_items()
+            .into_iter()
+            .filter(|item| item.section)
+            .map(|item| item.label)
+            .collect();
+        assert_eq!(labels, ["alex@example.test", "other@example.test"]);
+    }
+}
+#[tokio::test]
 async fn mail_navigation_clears_previous_folder_focus_and_retargets_sidebar_keys() {
     for unified in [true, false] {
         let (mut app, _, _commands) = fixture().await;
