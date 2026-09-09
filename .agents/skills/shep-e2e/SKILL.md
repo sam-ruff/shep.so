@@ -676,3 +676,12 @@ application while Mail remains open, local publication/restart, offline recovery
 and received changes remaining visible when a later upload fails. The upload
 failure retains its exact queued operation across restart. Read owned checkpoints only after graceful
 close. Review the actual Preferences/reconnect/error screenshots.
+
+
+The saved `test_profile_continuous_native_reuses_verified_downloads_after_restart`
+uses `existing-single` and ordinary Sync now/restart controls. Read-only
+`profile_drive_requests` reports counters from the owned loopback HTTP server;
+wait for a new scoped listing and completed UI work, then verify unchanged
+records were not downloaded again. This is request-count correctness evidence,
+not a latency benchmark or live Google verification. Review the saved native
+Preferences screenshots alongside the restart/corruption protocol tests.

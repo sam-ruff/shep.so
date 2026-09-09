@@ -1240,5 +1240,9 @@ the same cache transaction as their writes. Initial reviews fence those baseline
 an acknowledgment records only its captured generation. Remote applies never
 record themselves as native edits. Database import archives source generations.
 Keep the race, restart, category, deferred-conflict and native continuous-update
-regressions. Polling currently downloads full history; incremental pulls and
-conflict/link/removal controls remain TODO. Do not claim those are finished.
+regressions. Polling lists full history and reuses verified immutable records
+from the separate profile journal. Cache hits require the exact record metadata
+in a current complete scan; decode/hash/namespace checks run on its bounded owner.
+Corrupt or oversized cache bytes are misses, repaired only by verified downloads.
+Never turn a missing/failed listing into success because old bytes are cached.
+Incremental change-token pulls and conflict/link/removal controls remain TODO.

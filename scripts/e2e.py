@@ -1826,6 +1826,28 @@ class NativeFlows(unittest.TestCase):
                        check("settings_group", "Profiles and sync"),
                        check("profile_sync.loaded", True), wait(100))
 
+    def test_profile_continuous_native_reuses_verified_downloads_after_restart(self):
+        started = self.mcp.call("desktop.start", profile_sync="existing-single", profile_login=True, empty_profile=True)
+        print(f"Profile cache evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True),
+                       check("profile_sync.working", False), check("account_count", 1))
+        self.open_shared_profiles()
+        before = self.mcp.call("desktop.state")["profile_drive_requests"]
+        self.assertGreater(before["media"], 0)
+        self.mcp.batch(click(340, 548), check("profile_drive_requests.scoped_lists", before["scoped_lists"] + 1, "gte"),
+                       check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_drive_requests.media", before["media"]),
+                       check("profile_drive_requests.metadata", before["metadata"]),
+                       shot("profile-cache-manual-check"), {"type": "restart"},
+                       check("profile_sync.enrollment.selection.ready", True), check("account_count", 1))
+        self.open_shared_profiles()
+        reopened = self.mcp.call("desktop.state")["profile_drive_requests"]
+        self.mcp.batch(click(340, 548), check("profile_drive_requests.scoped_lists", reopened["scoped_lists"] + 1, "gte"),
+                       check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_drive_requests.media", before["media"]),
+                       check("profile_drive_requests.metadata", before["metadata"]),
+                       check("account_reconnect_count", 1), shot("profile-cache-reopened-check"))
+
     def test_profile_continuous_native_receives_new_account_and_preferences_in_background(self):
         started=self.mcp.call("desktop.start",profile_sync="existing-updates",profile_login=True,empty_profile=True)
         print(f"Continuous remote evidence: {started['artifacts']}",flush=True)

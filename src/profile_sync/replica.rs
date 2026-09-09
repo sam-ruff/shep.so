@@ -221,7 +221,15 @@ impl Replica {
                 break;
             }
             for entry in page {
-                let record = control.read(session.download(&entry.record)).await?;
+                let record = match self.journal.cached_download(&scan, &entry.record).await? {
+                    Some(record) => record,
+                    None => {
+                        let record = control.read(session.download(&entry.record)).await?;
+                        self.journal
+                            .cache_download(&scan, &entry.record, record)
+                            .await?
+                    }
+                };
                 self.history
                     .request(Command::Import {
                         record: String::from_utf8(record.bytes().to_vec())?,

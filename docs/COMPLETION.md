@@ -1,5 +1,30 @@
 # Completion audit
 
+## 9 September: verified shared-profile record reuse
+
+R02/R49 now retains verified immutable Drive records in the separate bounded
+profile journal. Every poll still completes and validates a fresh listing; only
+records with matching identity, namespace, operation, size and digest reuse bytes.
+Corrupt/oversized cache entries are repaired through verified downloads. Missing,
+changed or incomplete listings cannot be hidden by cached history. No wire-format
+or credential-storage changes are involved.
+
+The profile-filtered Rust suite passes 80 tests with one personal diagnostic
+ignored. New protocol checks prove unchanged polls and restarts use one listing
+request with no repeated metadata/body downloads; adding a record downloads only
+that record. Journal tests cover restart, stale scans, replacement identities,
+corruption and bounded allocation. All 55 Python tests and six selected native
+scenarios pass. The new saved native Sync now/restart scenario observes actual
+owned HTTP request counters, with reviewed Preferences evidence in `16ce5ad1b34f`.
+It runs alongside automatic account receipt, local publication, offline retry,
+partial failure and enrollment. These are correctness/request-count checks, not
+latency or live Google claims. Worktree commit `654a90e` passes mandatory hooks
+(717 executions, three personal diagnostics ignored), Clippy and strict Zensical.
+Native binary SHA-256:
+`5873fc7eb7093c8538416941e9243253f3d225a89190f1d508b4fcf109060a66`.
+Main integration/shipping remains to be recorded. Change-token incremental polling
+and account/conflict review controls remain active TODOs.
+
 ## 9 September: shutdown failure ownership
 
 Attachment storage, draft discard and forward preparation cancel automatic close
@@ -17,9 +42,16 @@ red discard control and visible recovery errors. Native binary SHA-256:
 These are fixture correctness checks, not live server or timing measurements.
 Agent commits `9c2e84c` and `e30c174` pass all mandatory hooks (711 and 714
 executions respectively, with three personal diagnostics ignored). The root
-reviewed the failure WebPs and integrated both checkpoints together; combined
-checks and shipping are recorded below when complete. All injected delays and
-failures require the isolated preview feature.
+reviewed the failure WebPs and integrated both checkpoints together as
+[`2733cc6`](https://github.com/sam-ruff/shep.so/commit/2733cc6), pushed to main
+with exact remote equality verified. Integrated mandatory hooks pass 725 executions
+(three personal diagnostics ignored), Python passes 57, strict Zensical passes,
+and all 23 selected native scenarios pass. The combined suite includes ongoing
+profile sync, database transfers, group/folder close, composition and failure
+recovery. Root reviewed the merged discard-error screenshot `83ea39e4a99e`.
+Integrated native SHA-256:
+`dbe6de7e2e80a196697559b9accf703c6f131e2386365d59bff4dbb84d419783`.
+All injected delays and failures require the isolated preview feature.
 
 ## 9 September: close continuation and interruptible provider waits
 
@@ -49,9 +81,8 @@ and database-transfer close scenarios also pass. Reviewed WebPs are in
 `8eb9fafec14de5bde0338967b6c7cdd42bfc7389feb7e3aecc07e795cd42eafe`.
 These are fictional native/protocol fixtures; no personal account, credentials
 or installed executable changed. Native tray integration and live personal-server
-close diagnosis remain open. Integration, mandatory hooks and shipping evidence
-will be recorded with the accepted commit; this checkpoint does not finish R86
-or the full product goal.
+close diagnosis remain open. The integrated shipping receipt is above; this
+checkpoint does not finish R86 or the full product goal.
 
 ## 9 September: ongoing profile updates and parallel feature delivery
 

@@ -23,6 +23,7 @@ class ProfileDriveFixture:
         self.changes = []
         self.failed = False
         self.scoped_lists = 0
+        self.requests = {"lists": 0, "scoped_lists": 0, "metadata": 0, "media": 0}
         self.updated = False
         self.release = threading.Event()
         if mode.startswith("existing"):
@@ -78,6 +79,9 @@ class ProfileDriveFixture:
                         owner.failed = True
                         return self.reply(503, {"error": "Fixture offline; retry discovery."})
                     q = query.get("q", [""])[0]
+                    owner.requests["lists"] += 1
+                    if "shepProfile" in q:
+                        owner.requests["scoped_lists"] += 1
                     if "shepProfile" in q and owner.mode in ("existing-updates", "existing-update-failure", "existing-upload-failure"):
                         owner.scoped_lists += 1
                         if owner.scoped_lists >= 2 and not owner.updated:
@@ -99,6 +103,7 @@ class ProfileDriveFixture:
                 identity = url.path.removeprefix("/drive/v3/files/")
                 if identity not in owner.files:
                     return self.reply(404, {})
+                owner.requests["media" if query.get("alt") == ["media"] else "metadata"] += 1
                 metadata, raw = owner.files[identity]
                 return self.reply(200, raw if query.get("alt") == ["media"] else metadata)
 

@@ -14,6 +14,31 @@ pub struct Scan {
     complete: bool,
 }
 impl Scan {
+    pub(super) fn require_record(
+        &self,
+        c: &Connection,
+        remote: &RemoteRecord,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.complete,
+            "Finish discovery before reusing profile records."
+        );
+        let current = load(c, &self.binding, self.profile)?
+            .context("This profile discovery is no longer current")?;
+        anyhow::ensure!(
+            &current == self,
+            "Profile discovery changed. Resume its current completed list."
+        );
+        let data: Option<String> = c.query_row("SELECT data FROM scan_files WHERE scan=? AND profile=? AND generation=? AND operation=?",params![self.id.to_string(),remote.key.profile.to_string(),remote.key.generation.to_string(),remote.key.operation.to_string()],|r|r.get(0)).optional()?;
+        let actual: RemoteRecord = serde_json::from_str(
+            &data.context("This record is absent from the current profile discovery")?,
+        )?;
+        anyhow::ensure!(
+            actual == *remote,
+            "The discovered profile record changed. Pull again before continuing."
+        );
+        remote.validate()
+    }
     pub fn binding(&self) -> &Binding {
         &self.binding
     }
