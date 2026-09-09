@@ -2022,6 +2022,54 @@ class NativeFlows(unittest.TestCase):
                        check("settings_group", "Profiles and sync"),
                        check("profile_sync.loaded", True), wait(100))
 
+    def test_profile_account_review_native_adds_shared_connection_and_preserves_previous_setup(self):
+        started = self.mcp.call("desktop.start", profile_sync="existing-connections", profile_login=True, empty_profile=True)
+        print(f"Account connection review evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("account_count", 1), check("profile_sync.working", False))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
+                       click(375, 665), check("profile_sync.account_reviews.0.name", "Cloud account"), check("profile_sync.working", False),
+                       {"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":8}, wait(100), shot("profile-account-review-choices"),
+                       click(368, 698), check("account_count", 2), check("profile_sync.account_reviews", []),
+                       check("profile_sync.working", False), shot("profile-account-review-added"),
+                       {"type":"restart"}, check("account_count", 2))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_sync.cycle.review", 0), check("profile_sync.cycle.remaining", False), shot("profile-account-review-reopened"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        checkpoint = self.profile_checkpoint(started)
+        with sqlite3.connect((Path(started["artifacts"])/"fixture.sqlite").as_uri()+"?mode=ro", uri=True) as cache:
+            accounts = json.loads(cache.execute("SELECT value FROM kv WHERE key='accounts'").fetchone()[0])
+        previous = next(a for a in accounts if a["name"].endswith("(previous setup)"))
+        current = next(a for a in accounts if a["id"] != previous["id"])
+        self.assertEqual(previous["host"], "imap.example.test")
+        self.assertEqual(current["host"], "incoming-new.example.test")
+        self.assertIn(previous["id"], checkpoint["local_only"])
+        self.assertEqual(list(checkpoint["accounts"]), [current["id"]])
+        self.assertIsNone(checkpoint["pending"])
+
+    def test_profile_account_review_native_keeps_local_connection_in_compact_window(self):
+        started = self.mcp.call("desktop.start", profile_sync="existing-connections", profile_login=True, empty_profile=True)
+        print(f"Compact account connection review evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("account_count", 1), check("profile_sync.working", False))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
+                       click(375, 665), check("profile_sync.account_reviews.0.name", "Cloud account"), check("profile_sync.working", False),
+                       {"type":"resize", "width":900, "height":640}, wait(100),
+                       {"type":"hover", "x":780, "y":500}, {"type":"scroll", "amount":14}, wait(100), shot("profile-account-review-compact-dark"),
+                       {"type":"scroll", "amount":-2}, wait(100), shot("profile-account-review-compact-current"),
+                       click(550, 490), wait(80), shot("profile-account-review-compact-versions"),
+                       click(470, 452), wait(80), shot("profile-account-review-second-version"),
+                       click(365, 445), check("profile_sync.account_reviews", []), check("account_count", 1),
+                       check("profile_sync.working", False), shot("profile-account-review-local-saved"),
+                       {"type":"restart"}, check("account_count", 1))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        checkpoint = self.profile_checkpoint(started)
+        connection = next(value for target, value in checkpoint["fields"].items() if target.endswith(":connection"))
+        self.assertEqual(connection["remote"]["account"]["host"], "imap.example.test")
+        self.assertIsNone(checkpoint["pending"])
+
+
     def test_profile_setting_review_native_chooses_shared_conflict_and_keeps_choice_after_restart(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-conflict", profile_login=True, empty_profile=True)
         print(f"Profile setting review evidence: {started['artifacts']}", flush=True)
@@ -2032,7 +2080,7 @@ class NativeFlows(unittest.TestCase):
                        click(370, 607), check("profile_sync.setting_reviews.0.label", "Appearance"),
                        check("profile_sync.working", False), shot("profile-setting-review-dark"))
         self.mcp.batch({"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":4}, wait(100),
-                       shot("profile-setting-review-choices"), click(355, 700),
+                       shot("profile-setting-review-choices"), click(355, 643),
                        check("profile_sync.setting_reviews", []), check("dark", False),
                        check("profile_sync.working", False), shot("profile-setting-review-saved-light"),
                        {"type":"restart"}, check("dark", False), check("account_count", 1))
@@ -2057,8 +2105,8 @@ class NativeFlows(unittest.TestCase):
                        {"type":"resize", "width":900, "height":640}, wait(100),
                        {"type":"hover", "x":780, "y":500}, {"type":"scroll", "amount":12}, wait(100),
                        shot("profile-setting-review-compact-dark"),
-                       click(530, 375), wait(80), click(510, 337), shot("profile-setting-review-dropdown"),
-                       click(350, 330), check("profile_sync.setting_reviews", []), check("dark", True),
+                       click(530, 317), wait(80), click(510, 243), shot("profile-setting-review-dropdown"),
+                       click(350, 273), check("profile_sync.setting_reviews", []), check("dark", True),
                        check("profile_sync.working", False), shot("profile-setting-review-local-saved"),
                        {"type":"restart"}, check("dark", True))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
@@ -2079,13 +2127,13 @@ class NativeFlows(unittest.TestCase):
         self.open_shared_profiles()
         self.mcp.batch(check("profile_sync.setting_reviews.0.local", "Dark"),
                        {"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":4}, wait(100),
-                       click(355, 700), check("profile_sync.error", None, "ne"), check("profile_sync.working", False),
+                       click(355, 643), check("profile_sync.error", None, "ne"), check("profile_sync.working", False),
                        check("dark", False), check("notice", "This preference changed while the review was open. Refresh it to keep your newer choice."),
                        shot("profile-setting-review-newer-local-kept"))
         self.assertIn("changed while the review was open", self.mcp.call("desktop.state")["profile_sync"]["error"])
-        self.mcp.batch(click(370, 445), check("profile_sync.setting_reviews.0.local", "Light"),
+        self.mcp.batch(click(370, 387), check("profile_sync.setting_reviews.0.local", "Light"),
                        check("profile_sync.working", False), shot("profile-setting-review-refreshed"),
-                       click(355, 700), check("profile_sync.setting_reviews", []),
+                       click(355, 643), check("profile_sync.setting_reviews", []),
                        check("profile_sync.error", None), check("dark", False))
 
     def test_profile_continuous_native_reuses_verified_downloads_after_restart(self):
@@ -2359,7 +2407,7 @@ class NativeFlows(unittest.TestCase):
         self.open_shared_profiles()
         self.mcp.batch(check("profile_sync.enrollment.selection.name","Home"),check("account_count",3),
                        check("account_reconnect_count",1),check("dark",True),shot("profile-existing-reopened"),
-                       click(350,662),check("settings_group","Your accounts"),shot("profile-account-reconnect"),
+                       click(350,720),check("settings_group","Your accounts"),shot("profile-account-reconnect"),
                        click(1065,520),check("dialog","Account"),check("fields.email","cloud@example.test"),
                        check("fields.host","imap.example.test"),check("fields.smtp_host","smtp.example.test"),
                        check("fields.incoming_security","Tls"),check("fields.smtp_security","StartTls"),

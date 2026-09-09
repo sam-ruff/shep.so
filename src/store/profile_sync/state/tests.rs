@@ -1275,3 +1275,6 @@ async fn profile_native_rename_and_unchanged_save_do_not_create_connection_edits
     );
     replica.close().await.unwrap();
 }
+
+#[path = "account_review_tests.rs"]
+mod account_review_tests;

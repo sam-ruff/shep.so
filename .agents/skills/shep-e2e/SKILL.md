@@ -767,3 +767,15 @@ navigation while work is pending, assert it is still held, then release it.
 This only controls the fictional transport; it cannot mutate application state
 or contact Google. Keep the existing completion deadline and saved automated
 first-device scenario. Fixture shutdown also releases the response.
+
+Shared account connection reviews use `profile_sync="existing-connections"`,
+`profile_login=true`, `empty_profile=true`. The owned Drive fixture exposes two
+changed endpoint versions after enrollment. Saved `test_profile_account_review_*`
+scenarios use the actual review picker and Keep/Add buttons, preserve the old
+native account through restart, and verify the durable shared mapping. Backend
+`profile_account_review` tests additionally cover cached mail with identical remote
+IDs on old/new servers, interrupted admission, stale native/history/Google/consent
+and remote removal. Keep account passwords out of this fixture. A menu that opens
+above its control can cover the Keep button: select its visible row before the
+next click; the separately tracked Escape-dismissal issue must not be hidden by
+a direct state mutation or by removing keyboard coverage elsewhere.

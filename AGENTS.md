@@ -1351,3 +1351,14 @@ Native account connection edits have their own durable profile field generation,
 separate from name changes. Keep incoming/SMTP/security/auth/sent-copy reversions
 through pulls and restart. Rename/no-op saves must not create connection intent.
 Do not turn these generations into permission to retarget saved credentials.
+
+
+Shared connection reviews live in `profile_sync/account_reviews.rs` and
+`store/profile_sync/account_reviews.rs`. Keep native account identities separate
+when adopting changed endpoints: preserve the previous account/mail/credentials
+as local-only and add a fresh account requiring reconnect. Freeze history versions,
+native edit generations and Google/consent revisions; reserve native identity and
+pending shared operation in one transaction before history admission. Preserve
+restart/lost-reply, stale native/history/Google/removal, UID collision and real
+native Keep/Add/compact review regressions. Remote removal reviews are separate;
+never revive a tombstoned account through an old connection review.
