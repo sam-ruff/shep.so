@@ -42,6 +42,19 @@ real-selection-snapshot regression passes. The existing native Unicode
 move/Undo/group scenario is retained unchanged; final rerun/shipping is pending.
 Failure evidence `d338c6f4c4ce` is retained under ignored artifacts.
 
+Final corrected source [`91ed9a9`](https://github.com/sam-ruff/shep.so/commit/91ed9a9)
+is pushed to main with exact remote equality verified. Mandatory hooks pass 736
+executions, zero failures and three personal diagnostics ignored. All 59 selected
+native mail scenarios pass in 258.950 seconds; strict Zensical passes. The final
+native binary SHA-256 is
+`9f542c54cde33fe9f7bc92b17092f7a0ed3f160f6f7512ca0b11e4dc5fe33884`.
+Log: `artifacts/logs/delete-navigation-final-main-native.log`. Root reviewed
+`aa1c77b3323d/nested-unicode-bulk-review.webp`,
+`93a9f3fbf44a/delete-scrolled-neighbors-saved.webp` and
+`eed86f7250b8/delete-final-page-previous-last.webp` under `artifacts/e2e/`.
+R89 is complete and removed from the active TODO. Compact row styling remains
+separate R88 work; production installation and final performance gates remain open.
+
 ## 9 September: verified shared-profile record reuse
 
 R02/R49 now retains verified immutable Drive records in the separate bounded
