@@ -122,6 +122,7 @@ jobs:
           python3 scripts/clients/android_e2e.py --device emulator-5554
           python3 scripts/clients/flutter_web_e2e.py
           python3 scripts/clients/flutter_web_e2e.py --formatted
+          python3 scripts/clients/flutter_web_e2e.py --discovery
           cd flutter
           flutter build apk --debug --flavor production
           cd ..

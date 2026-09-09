@@ -2007,3 +2007,68 @@ Shipping logs are `profile-discovery-commit.log`, `profile-discovery-push.log` a
 `profile-discovery-docs-final.log` under ignored `artifacts/logs/`; the saved
 benchmark is `artifacts/profile-discovery-backend.json`. The final documentation
 checkpoint follows this code in branch history.
+
+
+## 2026-09-09 — Flutter Google profile discovery controls
+
+R75/R02/R49/desktop-main:R92/R67/R69/R73/R77 continuation connects Flutter's saved
+Google grant to the shared Drive catalog. Preferences now offers discovery,
+retry/rescan, pause/resume and 50-summary paging with explicit missing/conflicting
+history. The verified principal commits to device secure metadata before profile
+contents appear. Same-account re-consent retains it; stale grants, failed writes
+and unconfirmed storage cannot silently replace the binding. The native session
+owns accepted work through close, and both old data and errors are fenced from
+replacement sessions. See [the client contract](agents/PROFILE_MOBILE.md).
+
+Verification passes **71 mobile Rust tests** and native Clippy, **104 Flutter host
+tests**, clean analysis and the separately configured SDK-boundary test. Android
+executes two discovery control scenarios (retry, 52-profile pagination, appearance,
+pause while reading mail, resume), the existing two Google consent scenarios and
+the real native two-store history/conflict/restart scenario. The same four saved
+flows pass with **UiAutomator2/Appium and Flutter Playwright**: failed discovery and
+retry, dark appearance, local disconnect and return to mail. UI providers are
+isolated fixtures; Rust session/catalog tests exercise actual native ownership
+separately. These results do not establish live Google or separate browser-client
+profile integration. **41 Python tests** and **35 parity contracts** pass.
+
+Final synthetic WebP captures are under ignored
+`artifacts/profile-client-reviewed/final/`: browser and Android light/dark profile
+rows, persistent errors, disconnected recovery, pagination and paused discovery
+were reviewed. Singular/plural labels and row spacing were corrected. The first
+Android Appium run was obstructed by a System UI unresponsive dialog; its capture
+and diagnostics are retained, with no claimed root cause. After choosing the OS
+Wait control, later tests ran without that dialog. Further failures exposed a tap
+on Theme's trailing padding and a Back-transition accessibility race. The saved
+flow now targets the painted dropdown and waits for the actual clickable control
+under its existing deadline. No forced clicks, hidden ANR handler or relaxed
+functional/performance thresholds were added. Failed web accessible-name matching,
+widget scrolling and the initially misplaced native async-trait dependency are
+also retained under `artifacts/profile-client-failures/` and
+`artifacts/logs/profile-client-*`.
+
+Result logs include `profile-client-native-fixed`, `native-clippy`, `analyze-final`,
+`host-final`, `sdk-final`, `android-history-final`, `android-google-final`,
+`web-final`, `appium-final`, `python-final` and `parity-final` under
+`artifacts/logs/` (each has the `profile-client-` prefix). Named Android reports are
+under `artifacts/flutter/native/`; the Appium/browser results are in
+`artifacts/flutter/discovery-native/` and `discovery-web/`. Production build,
+mandatory hooks, strict documentation and shipping are recorded below when verified.
+
+Initialized first-profile publication, own-upload receipts, reviewed enrollment,
+real account/preferences application, complete category mappings, credentials,
+legacy migration and desktop/browser/Apple/live Google integration remain active.
+The unanswered password-protection choice is preserved. The prior native timing
+failure remains; no new latency claim is made. Main, installed desktop and personal
+phone are untouched. The new flows are wired into the **disabled** quality
+workflow; documentation publishing remains enabled. The full product goal is open.
+
+The production ARM64 release APK builds successfully with the Rust and Flutter
+libraries, bundled fonts/licenses, production package identity and Internet
+permission. The inspected fixture markers are absent, including the new discovery
+entrypoint/provider markers. It is **unsigned**, has no registered Google project
+configuration and was not installed on the personal phone. This ARM64-only check
+does not satisfy the all-architecture distribution gate. Inspection and SHA-256
+are in ignored `artifacts/profile-client-apk.json`; the build/inspection logs have
+`profile-client-apk-` names. Dart formatting, strict pinned Zensical and diff checks
+pass. TODO cleanup preserves all **40 active request entries** in their original
+order; older completed prerequisite prose remains traceable in this log.

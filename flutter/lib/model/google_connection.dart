@@ -48,20 +48,32 @@ class GoogleConnectionRecord {
     this.subject,
     this.email,
     this.permissions,
-    this.application,
-  );
+    this.application, {
+    this.drivePrincipal,
+  });
   final String subject, email, application;
+  final String? drivePrincipal;
+  GoogleConnectionRecord withDrivePrincipal(String? principal) =>
+      GoogleConnectionRecord(
+        subject,
+        email,
+        permissions,
+        application,
+        drivePrincipal: principal,
+      );
   final GooglePermissions permissions;
   Map<String, Object> toJson() => {
     'subject': subject,
     'email': email,
     'application': application,
     'permissions': permissions.toJson(),
+    'drive_principal': ?drivePrincipal,
   };
   factory GoogleConnectionRecord.fromJson(Map<String, dynamic> json) {
     final subject = json['subject'],
         email = json['email'],
-        application = json['application'];
+        application = json['application'],
+        principal = json['drive_principal'];
     if (subject is! String ||
         subject.isEmpty ||
         subject.length > 255 ||
@@ -71,6 +83,8 @@ class GoogleConnectionRecord {
         application is! String ||
         application.isEmpty ||
         application.length > 255 ||
+        (principal != null &&
+            (principal is! String || !_validDrivePrincipal(principal))) ||
         RegExp(r'[\x00-\x1f\x7f]').hasMatch('$subject$email$application')) {
       throw const FormatException();
     }
@@ -79,9 +93,13 @@ class GoogleConnectionRecord {
       email,
       GooglePermissions.fromJson(json['permissions'] as Map<String, dynamic>),
       application,
+      drivePrincipal: principal as String?,
     );
   }
 }
+
+bool _validDrivePrincipal(String value) =>
+    RegExp(r'^drive:[A-Za-z0-9_-]{1,200}$').hasMatch(value);
 
 class GoogleConnectionState {
   const GoogleConnectionState({
@@ -168,6 +186,8 @@ class GoogleConnection extends ChangeNotifier {
   bool _disposed = false;
   bool _preserveRequestedOnLoad = false;
   int _revision = 0;
+  int _grantGeneration = 0;
+  int get grantGeneration => _grantGeneration;
   String? error, notice;
   Future<void>? _writer;
 
@@ -242,6 +262,7 @@ class GoogleConnection extends ChangeNotifier {
   Future<void> connect() async {
     if (!loaded || busy || cleanupPending || _disposed) return;
     busy = true;
+    _grantGeneration++;
     error = null;
     notice = null;
     _changed();
@@ -272,7 +293,7 @@ class GoogleConnection extends ChangeNotifier {
       _changed();
       final next = GoogleConnectionState(
         requested: requested,
-        active: candidate,
+        active: candidate.withDrivePrincipal(active?.drivePrincipal),
       );
       GoogleConnectionState.decode(next.encode());
       await store.write(next);
@@ -298,6 +319,7 @@ class GoogleConnection extends ChangeNotifier {
     error = null;
     notice = null;
     _revision++;
+    _grantGeneration++;
     _changed();
     try {
       await saveChoices();
@@ -365,7 +387,67 @@ class GoogleConnection extends ChangeNotifier {
     }
   }
 
+  /// Save the provider-verified identity only against this exact committed grant.
+  /// This is device metadata, never a portable account or an OAuth credential.
+  Future<void> bindDrivePrincipal(int generation, String principal) async {
+    if (!_validDrivePrincipal(principal) ||
+        !loaded ||
+        busy ||
+        _disposed ||
+        generation != _grantGeneration ||
+        cleanupPending ||
+        active?.permissions.drive != true) {
+      throw const GoogleConnectionFailure(
+        'Google changed. Reopen Profiles and sync before continuing.',
+      );
+    }
+    final savedPrincipal = active!.drivePrincipal;
+    if (savedPrincipal != null && savedPrincipal != principal) {
+      throw const GoogleConnectionFailure(
+        'Drive returned a different account. Your saved connection was kept. Reconnect Google before trying again.',
+      );
+    }
+    if (savedPrincipal == principal) return;
+    busy = true;
+    _changed();
+    try {
+      await saveChoices();
+      if (_disposed ||
+          !loaded ||
+          generation != _grantGeneration ||
+          choicesUnsaved) {
+        throw const GoogleConnectionFailure(
+          'Google changed before its profile identity could be saved. Retry discovery.',
+        );
+      }
+      committing = true;
+      _changed();
+      final next = GoogleConnectionState(
+        requested: requested,
+        active: active!.withDrivePrincipal(principal),
+      );
+      await store.write(next);
+      _saved = next;
+    } on GoogleStorageUnconfirmed {
+      _unconfirmedStorage();
+      throw const GoogleConnectionFailure(
+        'Could not confirm the saved Drive identity. Unlock device storage and retry reading Google.',
+      );
+    } on GoogleConnectionFailure {
+      rethrow;
+    } catch (_) {
+      throw const GoogleConnectionFailure(
+        'Could not save the Drive identity. Unlock device storage, then retry discovery.',
+      );
+    } finally {
+      busy = false;
+      committing = false;
+      _changed();
+    }
+  }
+
   void _unconfirmedStorage() {
+    _grantGeneration++;
     loaded = false;
     _preserveRequestedOnLoad = true;
     error =
@@ -376,6 +458,7 @@ class GoogleConnection extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _revision++;
+    _grantGeneration++;
     super.dispose();
   }
 }

@@ -10,6 +10,7 @@ import 'mail.dart';
 import 'move_feedback.dart';
 import 'preferences.dart';
 import 'google_connection.dart';
+import 'profile_discovery.dart';
 
 class Workspace extends ChangeNotifier {
   Workspace(
@@ -17,11 +18,13 @@ class Workspace extends ChangeNotifier {
     this.settings, {
     this.printer = const SystemMessagePrinter(),
     this.google,
+    this.profileDiscovery,
   }) : _mail = List.of(repository.cached),
        _confirmed = {for (final mail in repository.cached) mail.id: mail},
        events = List.of(repository.events);
   final MessagePrinter printer;
   final GoogleConnection? google;
+  final ProfileDiscovery? profileDiscovery;
   final MailRepository repository;
   final SettingsStore settings;
   List<Mail> _mail;
@@ -1056,6 +1059,7 @@ class Workspace extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    profileDiscovery?.dispose();
     google?.dispose();
     moves.dispose();
     _searchTimer?.cancel();

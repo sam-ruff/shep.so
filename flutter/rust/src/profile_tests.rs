@@ -110,3 +110,42 @@ async fn profile_history_bridges_two_native_devices_with_provider_capacity_occup
     )
     .await;
 }
+
+#[tokio::test]
+async fn discovery_bridge_rejects_invalid_sessions_without_credentials_or_mail_changes() {
+    let (_directory, profile) = profile().await;
+    seed(&profile, 3).await;
+    let original = request(&profile, json!({"op":"accounts"})).await;
+    let _held = profile.operations.hold_network_capacity().await;
+    let session = "00000000-0000-0000-0000-000000000091";
+    for input in [
+        json!({"op":"open_profile_discovery","session":"00000000-0000-0000-0000-000000000000","access_token":"fixture-secret-not-for-output","namespace":"so.shep.fixture"}),
+        // Namespace validation precedes any HTTP request, including about.
+        json!({"op":"open_profile_discovery","session":session,"access_token":"fixture-secret-not-for-output","namespace":""}),
+        json!({"op":"profile_discovery","session":session,"command":{"kind":"state"}}),
+    ] {
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            profile.request(input.to_string()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let result: Value = serde_json::from_str(&output).unwrap();
+        assert!(result["error"].as_str().is_some());
+        assert!(!output.contains("fixture-secret-not-for-output"));
+    }
+    assert_eq!(
+        request(
+            &profile,
+            json!({"op":"close_profile_discovery","session":session})
+        )
+        .await["closed"],
+        true
+    );
+    assert_eq!(request(&profile, json!({"op":"accounts"})).await, original);
+    assert_eq!(
+        request(&profile, json!({"op":"page","folder":"Inbox","offset":0})).await["total"],
+        3
+    );
+}

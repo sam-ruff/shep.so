@@ -539,3 +539,14 @@ review branch with exact remote verification. Mandatory hooks pass 443 Rust test
 the unchanged storage benchmark pass as scoped in the completion log. Creation,
 enrollment, real client application and the prior native timing failure remain
 active; no main merge, personal installation or deployment occurred.
+
+
+R75/R02/R49/desktop-main:R92/R67/R69/R73/R77 continuation: Flutter now binds saved
+Google grants to the shared native catalog and offers actual Preferences discovery,
+retry/rescan, pause, bounded pagination and disconnect recovery. Verified identity
+must commit before profile content appears, and stale grant results cannot update
+a replacement session. Final host/native/Android/Appium/Playwright evidence and
+retained failures are in the latest completion entry. TODO/handover cleanup removes
+repeated checkpoint prose only; creation/enrollment, account/preferences application,
+credential policy, all original parity requests and the prior timing failure remain
+active. Prompt review-branch shipping is recorded with the verified commit below.
