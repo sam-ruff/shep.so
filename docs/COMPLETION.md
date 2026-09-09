@@ -1888,3 +1888,42 @@ remote head `da6f2e803fbddf1e485418b925923eeeb08afd1e` verified. This fulfills p
 review-branch shipping for the profile-history/storage increment, with the native
 navigation failure explicitly retained. Full goal completion and release readiness
 are not claimed. Final handover/evidence documentation follows this code head.
+
+
+## 2026-09-09 — Shared Google profile transport
+
+The optional native `drive` feature in `shared/profile-core` now verifies the
+Drive principal, validates owned app-data operation metadata and exact media,
+returns bounded 50-file pages and connects immutable uploads/imports to the
+existing owning journal. Reserved IDs persist before POST; a lost response or
+restart reconciles the same file, and only matching remote bytes acknowledge it.
+Conflicting files cannot be overwritten or deleted. The wire format and remaining
+integration are in [Google profile files](agents/PROFILE_DRIVE.md).
+
+The shared metadata/media fixture and **34 profile core tests** pass. The scripted
+production-transport tests cover identity and namespace refusal, access failures
+and redirects, invalid/partial/oversized pages, byte/metadata mismatches, separate
+real journals, missing ancestry, persisted reservation before POST, response loss,
+409 verification, exact-ID retry, cancellation and restart. The first durability
+fixture queried a nonexistent table; its failed log is retained, and the corrected
+assertion reads the real operations table through an independent connection. No
+production schema or safeguard was weakened to fix the fixture.
+
+Compatibility checks pass **68 mobile Rust tests**, **23 shared WASM fixtures**
+plus malformed-record checks, **41 Python tests**, **33 parity contracts**, and
+the backend's locked dependency check. Mandatory hooks, strict documentation and
+exact shipping confirmation are recorded with the code commit below. Logs remain
+in ignored `artifacts/logs/profile-drive-*`. No personal data or credentials are
+used by these tests.
+
+This transport is optional infrastructure, not yet enabled/called by desktop or
+Flutter Settings. It has no durable discovery catalog, enrollment/category UI or
+real account/preferences application. Its bounded page API cannot prove an atomic
+cloud snapshot; a configured namespace cannot prove cross-client Google-project
+visibility. Live registered Google, browser transport, Android/Apple provider
+execution, protected credentials and full sync remain active TODOs. Existing
+Android/UI evidence belongs to earlier increments, not this HTTP fixture suite.
+No UI/E2E, APK or timing rerun is claimed for this provider-only change. The prior
+combined performance gate still fails native navigation. Main, installed desktop
+and personal phone were untouched. Quality/release CI remains disabled; re-enable
+when trusted runners are ready and the user requests it.

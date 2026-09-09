@@ -9,6 +9,12 @@
       "browser": "Shared Rust WASM metadata contract via scripts/clients/test_profile_codec.mjs (Node ABI, not browser controls). OPEN: integrate browser provider consent/profile state/Settings with the same codec; beta identity does not grant Drive access. Full lifecycle and live cross-client verification remain open."
     },
     {
+      "id": "profile-drive-immutable-files",
+      "contract": "Verify Drive permissionId against the saved principal and keep application namespace separate from OAuth client IDs. Read at most 50 owned appData operation files per page; incomplete, repeated, foreign or invalid results must not become empty profiles. Persist one reserved file ID and exact operation bytes before upload; only verified matching remote media acknowledges the queue. Reconcile uncertain replies with the same ID, and never overwrite/delete conflicting records or reuse backup retention. Full discovery needs durable cross-page token/file tracking and arrival reconciliation.",
+      "mobile": "Optional shared native drive feature: scripted HTTP tests with real owning history workers cover identity, scopes/errors/redirect refusal, ownership, common profile-drive-file.json bytes, bounds, malformed/partial pages, two isolated journals, missing ancestry, reservation-before-POST, response loss/restart, cancellation, same-ID retries and corrupt media. Existing Flutter bridge keeps its immutable worker binding. OPEN: platform authorization/Settings integration, durable discovery/catalog/enrollment and application, native controls/Android/Apple/live same-project execution. These are host protocol tests, not a working mobile sync claim.",
+      "browser": "OPEN: implement provider consent, bounded browser Drive transport and durable history/catalog using the same operation/file contract. The shared default WASM codec remains compatible; beta login and Node codec tests do not verify browser Drive access or enrollment."
+    },
+    {
       "id": "mail-list",
       "contract": "sender, subject, preview, account, unread and attachment indicators",
       "mobile": "preview inbox",

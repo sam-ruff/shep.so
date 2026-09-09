@@ -2,8 +2,9 @@
 
 The optional native `history` feature in `shared/profile-core` stores immutable
 account/settings operations and merges their causal history. It is a foundation
-for [continuous profiles](PROFILE_SYNC_HANDOVER.md). Google discovery, enrollment,
-transport, category switches and application to real accounts/preferences remain
+for [continuous profiles](PROFILE_SYNC_HANDOVER.md). The optional [Drive transport](PROFILE_DRIVE.md) now verifies provider identity
+and immutable files against this journal. Client integration, durable discovery,
+enrollment, category switches and real account/preferences application remain
 unfinished. The browser currently shares the codec, not this SQLite journal.
 
 ## Ownership and bounds
@@ -23,8 +24,8 @@ entire mail-cache owning-worker migration.
 
 `Binding` separates application namespace, verified provider principal, profile
 UUID and generation. Its hash addresses local files; its input strings are not
-authentication. Future transport must verify identity and file ownership before
-importing anything. A fresh journal generates its device UUID and retains it on
+authentication. Transport must verify identity and file ownership before importing anything;
+the optional Drive implementation enforces both independently of this binding. A fresh journal generates its device UUID and retains it on
 reopen. This is device-local state, not a portable database: installation/import
 rebinding must prevent cloning that UUID or replaying queued uploads elsewhere.
 
@@ -60,7 +61,7 @@ versions and counters commit atomically.
 Local operations keep exact upload bytes and SHA-256. Reserve a provider file ID
 durably before sending; a retry cannot replace it. `Confirm` accepts only the
 reserved identity/digest, but does not perform HTTP or prove Google committed it.
-The future transport must verify that exact owned immutable file before calling
+Transport must verify that exact owned immutable file before calling
 it. Discovery checkpoints and acknowledged local application need separate
 durable state; the journal's derived fields do not update mail accounts/settings.
 

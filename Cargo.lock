@@ -4570,7 +4570,9 @@ name = "shep-profile-core"
 version = "0.1.0"
 dependencies = [
  "fs2",
+ "reqwest",
  "rusqlite",
+ "secrecy",
  "serde",
  "serde_json",
  "sha2",

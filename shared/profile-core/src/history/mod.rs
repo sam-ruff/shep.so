@@ -65,7 +65,7 @@ impl From<rusqlite::Error> for Error {
 }
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Provider identity/namespace are trusted inputs from the future authenticated
+/// Provider identity/namespace are trusted inputs from the authenticated
 /// transport, never a user-entered email or portable OAuth client/grant ID.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
