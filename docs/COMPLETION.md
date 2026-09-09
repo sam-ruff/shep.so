@@ -1,5 +1,22 @@
 # Completion audit
 
+## 9 September: explicit shared ownership release
+
+A Linux child-process regression reproduces the OS descriptor behavior behind
+a possible transient ownership delay: closing the original flock descriptor
+leaves the lock held while its duplicate remains in a child. Explicit unlock
+releases it immediately. Journal and discovery now retain an owned lock wrapper
+after their database fields, so connection teardown finishes before unlock.
+Failure paths also release ownership. Separate Journal/Catalog duplicate tests
+and existing independent-process ownership checks pass. This confirms the
+descriptor mechanism; it does not establish that every prior transient Owned
+failure came from a fork.
+
+All 63 isolated shared tests and all-target Clippy pass on Linux; the inherited
+file-descriptor regressions are Unix-only. Strict docs and normal hooks remain
+pending for this separate source checkpoint. The ancestry checkpoint3ce3d5b
+previously passed692 normal-hook executions, with3 personal diagnostics ignored.
+
 ## 9 September: bounded profile ancestry scratch
 
 The shared history implementation now keeps ancestry in an indexed internal

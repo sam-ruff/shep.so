@@ -46,6 +46,24 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn journal_drop_releases_ownership_while_a_duplicate_description_survives() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.sqlite");
+        let binding = binding();
+        let journal = Journal::open(&path, binding.clone()).unwrap();
+        let duplicate = journal._lock.as_ref().unwrap().duplicate();
+        assert!(matches!(
+            Journal::open(&path, binding.clone()),
+            Err(Error::Owned)
+        ));
+        drop(journal);
+        let reopened = Journal::open(&path, binding).unwrap();
+        drop(duplicate);
+        drop(reopened);
+    }
+
     #[test]
     fn default_open_keeps_the_existing_file_temporary_store_policy() {
         let dir = tempfile::tempdir().unwrap();

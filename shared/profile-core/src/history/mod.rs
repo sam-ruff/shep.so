@@ -3,6 +3,7 @@
 //! authenticate Google, apply accounts, or acknowledge a network upload itself.
 mod connection;
 mod merge;
+pub(crate) mod ownership;
 mod schema;
 pub use connection::ConnectionFactory;
 mod worker;
@@ -209,7 +210,7 @@ pub struct Journal {
     db: Connection,
     binding: Binding,
     device: Uuid,
-    _lock: Option<File>,
+    _lock: Option<ownership::OwnedLock>,
 }
 impl Journal {
     pub fn open(path: &Path, binding: Binding) -> Result<Self> {
@@ -237,6 +238,7 @@ impl Journal {
                 Error::Storage
             }
         })?;
+        let lock = ownership::OwnedLock::acquired(lock);
         let db = connections.open(&path)?;
         Self::initialize(db, binding, Some(lock))
     }
@@ -245,7 +247,11 @@ impl Journal {
         connection.pragma_update(None, "temp_store", "FILE")?;
         Self::initialize(connection, binding, None)
     }
-    fn initialize(mut db: Connection, binding: Binding, lock: Option<File>) -> Result<Self> {
+    fn initialize(
+        mut db: Connection,
+        binding: Binding,
+        lock: Option<ownership::OwnedLock>,
+    ) -> Result<Self> {
         binding.validate()?;
         db.execute_batch(
             "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;",
