@@ -2,6 +2,17 @@
 
 The user stopped feature work to conserve credits and requested this handover, a cleaned TODO and a push. **The full application goal is not complete.** Resume from [TODO.md](TODO.md), preserving the original requirements in [docs/REQUEST_AUDIT.md](docs/REQUEST_AUDIT.md). Read [AGENTS.md](AGENTS.md) for operational rules and [docs/COMPLETION.md](docs/COMPLETION.md) for evidence; do not repeat historical work based only on the latest chat message.
 
+## Final profile-controls failure-path review
+
+Unreadable local enrollment now disables its controls and shows recovery advice.
+Failed writes/status reloads retain newer choices for explicit retry, without
+trapping later close or launching another save against stale settings. Native
+invalid-state restart/navigation and controller ordering regressions pass.
+Eighteen affected native scenarios passed after the functional fix; all six
+profile flows passed again after final error-copy review. See the newest
+completion entry for final hooks and shipping. OAuth remains first in TODO;
+existing-device enrollment and continuous updates are the next implementation.
+
 ## 9 September continuation: native initial-profile controls
 
 Source `488a9ec` is pushed. Preferences now has **Accounts → Profiles and sync** for explicit first-device

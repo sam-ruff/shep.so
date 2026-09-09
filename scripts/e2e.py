@@ -1793,6 +1793,23 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(check("profile_sync.options.accounts", False), check("profile_sync.working", False),
                        shot("profile-sync-close-reopened"))
 
+    def test_profile_sync_native_invalid_local_state_keeps_close_and_navigation_available(self):
+        self.mcp.call("desktop.start", profile_sync="invalid-local")
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(1150, 88), type_text("shared profile"),
+                       check("settings_matches", ["Profiles and sync"]), click(480, 289),
+                       check("profile_sync.error", None, "ne"), check("profile_sync.loaded", False),
+                       wait(100), click(288, 371), check("profile_sync.options.accounts", True),
+                       check("profile_sync.saving", False), shot("profile-sync-invalid-local"),
+                       {"type":"restart"}, check("tab", "Mail"),
+                       click(400, 330), check("selected", "Your weekly workspace digest"),
+                       shot("profile-sync-invalid-reopened-mail"), key("ctrl+comma"),
+                       check("tab", "Preferences"), wait(80), click(1150, 88),
+                       key("ctrl+a"), type_text("shared profile"),
+                       check("settings_matches", ["Profiles and sync"]), click(480, 289),
+                       check("profile_sync.loaded", False), check("profile_sync.error", None, "ne"),
+                       shot("profile-sync-invalid-reopened"))
+
     def test_profile_sync_native_close_during_upload_resumes_original_profile(self):
         self.mcp.call("desktop.start", profile_sync="slow-upload")
         self.open_shared_profiles()

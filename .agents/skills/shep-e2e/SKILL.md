@@ -603,7 +603,9 @@ the intended card; the broader `database` query legitimately finds both.
 For shared-profile setup, `desktop.start(profile_sync="empty")` owns a loopback
 Drive HTTP server and isolated persistent workspace. Modes `fail-once`,
 `hold-list` and `slow-upload` exercise retry, cancellation and navigation during
-upload. The fake token/endpoint exist only in the test-support preview; neither
+upload. `invalid-local` seeds an opaque invalid enrollment only in the owned
+workspace; controls must remain disabled until settings load, while navigation
+and graceful restart keep working. The fake token/endpoint exist only in the test-support preview; neither
 fixture nor harness reads real Google credentials. Restart preserves the owned
 server/files; Stop releases held requests and closes the fixture.
 

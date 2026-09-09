@@ -1117,3 +1117,9 @@ this value aligned with the participating clients and the live OAuth project.
 Initial publication is explicitly labeled; do not claim continuous updates or
 existing-device account application until those TODO paths are implemented.
 The new native fixture modes/scenarios are documented in the E2E skill.
+
+Profile controls remain disabled until their local enrollment snapshot loads.
+Keep newer unsent choices after failed writes/status reads for explicit retry,
+but do not treat failed, unadmitted intent as a shutdown dependency. An actual
+admitted save/upload still drains. Preserve the controller ordering test and
+`invalid-local` native fixture's disabled controls, navigation and graceful restart.
