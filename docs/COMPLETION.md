@@ -1,5 +1,36 @@
 # Completion audit
 
+## 9 September: adjacent selection after deleting mail
+
+R89 now selects the following displayed message immediately after a move/delete,
+keeps the list scroll position, falls back to the previous row at the end, and
+clears the reader when empty. This also applies to same-account and cross-account
+moves. Cross-folder search retains the current reader when the moved row remains
+in the result. Page-boundary refill uses the foreground query channel; a short
+projected page retains its pending successor until refill arrives or its total
+proves no successor remains. Explicit newer selection cancels that follow-up.
+
+Six controller regressions pass, covering repeated removal, sorted/filtered order,
+empty/previous-page fallback, rollback with newer navigation and short-page then
+full-refill ordering with cancellation. Five saved native scenarios pass against
+the final binary: scrolled mouse/keyboard deletion while saves are pending,
+failure without losing newer navigation, unread/oldest filtering and an empty
+reader, next-page refill, and deleting the final page back to the previous last
+row. Final native log: `artifacts/logs/delete-navigation-final-native.log`;
+25.623 seconds, five passed. Native SHA-256:
+`0f87954d654b735751cb9598b0f7d0f0701ea5ecaa1da003841b35a88679258c`.
+Reviewed WebPs show adjacent selection and retained scroll; final runs include
+`4ccfdb9160d6` (pending repeated deletes) and `8e52d2ba69fc` (previous-page fallback).
+
+The initial native run exposed test setup issues: read-on-leave generated several
+serialized slow writes, a page assertion preceded completion of injected keys,
+and mouse Delete preceded presentation of the selected reader. Focused tests now
+start on already-read rows and await the intended selection/presentation; the
+unread-filter scenario preserves read-on-leave/deletion coverage. Existing rapid
+input scenarios and all timeouts remain unchanged. These isolated fixtures do not
+establish live IMAP behavior or performance percentiles. Primary-agent integration
+and push are pending; TODO remains open until that shipping step.
+
 ## 9 September: verified shared-profile record reuse
 
 R02/R49 now retains verified immutable Drive records in the separate bounded
@@ -22,8 +53,14 @@ latency or live Google claims. Worktree commit `654a90e` passes mandatory hooks
 (717 executions, three personal diagnostics ignored), Clippy and strict Zensical.
 Native binary SHA-256:
 `5873fc7eb7093c8538416941e9243253f3d225a89190f1d508b4fcf109060a66`.
-Main integration/shipping remains to be recorded. Change-token incremental polling
-and account/conflict review controls remain active TODOs.
+Root integrated this as [`e77eabc`](https://github.com/sam-ruff/shep.so/commit/e77eabc)
+and pushed to main with exact remote equality verified. All 729 integrated hook
+executions pass (three personal diagnostics ignored), Python passes 57 and strict
+Zensical passes. All nine integrated native cache/profile/close scenarios pass;
+merged binary SHA-256:
+`22285ff1b50ce5f124234f9200ffa15d859419b57600988980481fa1fc6f9933`.
+Change-token incremental polling and account/conflict review controls remain active
+TODOs.
 
 ## 9 September: shutdown failure ownership
 

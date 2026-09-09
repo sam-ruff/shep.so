@@ -712,6 +712,7 @@ impl App {
     fn request_page(&mut self) {
         self.reconcile_selection_scope();
         if self.last_list_query != self.query {
+            self.mail_actions.follow = None;
             self.inbox_scroll = 0.;
             self.list_revision += 1;
             self.last_list_query = self.query.clone();
@@ -782,6 +783,7 @@ impl App {
         });
     }
     fn select(&mut self, id: String) {
+        self.mail_actions.follow = None;
         self.pending_mail_action = None;
         if self.selected.as_deref() != Some(&id) {
             self.park_composer();
@@ -1226,6 +1228,7 @@ impl App {
                             self.initial_page_loaded = true;
                         }
                         self.set_mail_page(page);
+                        let reveal_after_removal = self.finish_removal_selection();
                         if let Some(id) = self.bulk.waiting_reader.clone()
                             && !self.page.is_transient_placeholder(&id)
                         {
@@ -1280,6 +1283,9 @@ impl App {
                             .collect();
                         for id in ids {
                             self.preload(id);
+                        }
+                        if reveal_after_removal {
+                            return self.reveal_selected_mail();
                         }
                     }
                 }

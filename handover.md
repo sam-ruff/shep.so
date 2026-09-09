@@ -26,6 +26,14 @@ credential protection still remain. Do not discard any lane's uncommitted work.
 
 ## Current source checkpoint
 
+`2733cc6` is pushed: shutdown continuation, interruptible queued-provider waits
+and draft-failure recovery, with 725 hook executions and 23 integrated native
+scenarios passing. Root reviewed the merged error/retry controls; docs CI passed.
+Native/temporary tray and personal-account close diagnosis remain unfinished.
+`e77eabc` is pushed: verified Drive record caching passes 729 integrated hook
+executions and nine native cache/profile/close scenarios. Full change-token polling and profile review controls
+remain separate work. The installed personal app is unchanged.
+
 `bd50c52` and `d29ce06` are pushed: continuous safe profile updates, durable native
 edit generations and slower clockwise manual refresh. Root integrated the agent
 refresh commit after reviewed native evidence. R87 is complete. The next profile
