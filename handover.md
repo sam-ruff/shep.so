@@ -9,7 +9,7 @@ This handover records the credit-limited stopping point. The user explicitly res
 - Work in the `shep-clients` worktree on `feat/mobile-web-clients`. All combined Flutter, browser, Rust backend and delegated promo work is on that review branch.
 - Read `AGENTS.md`, `TODO.md`, `docs/CLIENT_PARITY.md`, `shared/client-scenarios.json` and the latest entries in `docs/COMPLETION.md`. `docs/REQUEST_AUDIT.md` preserves request traceability.
 - The root `shep.so` main worktree has independent, actively edited desktop work. Do not commit it, overwrite it, merge clients into main or replace the personal installation. The `shep-website` worktree still has the agent's original uncommitted files; its website source/assets were already copied and committed on the combined branch. Its older README is superseded; do not recopy it.
-- Latest shipped head: [`c1305a6`](https://github.com/sam-ruff/shep.so/commit/c1305a6fde21f68941b9c2f0f7074f1c4043c774), verifying the shared Drive HTTP policy, following profile transport `557f8d5`, fixture portability `9289f53` and evidence `d7f262d`. The code head is pushed and verified on the remote review branch; final evidence and limitations are recorded in the completion log. The earlier Undo/handover checkpoint is `d4da04c`; final shipping documentation follows each code checkpoint in branch history. Pushes to the review branch are authorized. Use the configured owner identity and Conventional Commits; never skip hooks.
+- Latest shipped code head: [`3c9b98d`](https://github.com/sam-ruff/shep.so/commit/3c9b98d514bf667064f5cd92a22d4dda84998de7), the durable profile discovery catalog and change replay. Exact review-branch shipping and 443-test mandatory hooks are verified; final evidence documentation follows this code in branch history. Earlier Drive transport/policy head: `c1305a6`. Pushes to the review branch remain authorized. Use the configured owner identity and Conventional Commits; never skip hooks.
 
 ## Product decisions that must survive
 
@@ -37,7 +37,8 @@ summaries. Failed receipts after a history commit cannot hide a subsequently
 missing file. Retry/rescan, long pagination cycles, arrival replay, conflicts,
 missing ancestry, cancelled observers and process ownership have host tests.
 See [the discovery contract](docs/agents/PROFILE_DISCOVERY.md) and latest completion
-entry for final gates and shipping. Core tests pass 49 cases; this is not a new
+entry for final gates and shipping. Code `3c9b98d` is pushed; mandatory hooks pass
+443 root/shared tests including 49 core cases. This is not a new
 Android/browser UI or live Google result.
 
 Next bind saved platform grants and implement creation/enrollment with real
