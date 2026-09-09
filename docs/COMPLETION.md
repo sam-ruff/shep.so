@@ -2399,3 +2399,56 @@ flows, 41 Python checks, 37 parity contracts and strict docs build are recorded
 above. Shipping evidence is `artifacts/desktop-publication-shipping.json`; logs
 remain under `artifacts/logs/desktop-publication-*`. This completes the publication
 increment, not desktop enrollment, continuous sync, live Google or full parity.
+
+
+## Desktop reviewed enrollment continuation — 2026-09-09
+
+Preferences → Profiles and sync now prepares and applies an existing shared
+profile. Original records enter independently owned local history without taking
+the catalog's device identity or upload queue. Source/history revisions fence
+approval. Reviews page 50 items, show account connection details and offer category
+and individual choices. Matching identities preserve local metadata, mail, drafts
+and credentials; different connections require explicit selection as a separate
+account. Unsupported fields stay unavailable and retain their original history.
+
+Account metadata, mappings, reconnect guards and receipts commit atomically.
+Imported accounts cannot use saved password entries or server operations until
+explicit reconnect succeeds. Incoming and separate SMTP writes must both succeed;
+partial failure, changed metadata and removal retain the guard. Backups skip those
+password entries, and restore cannot silently activate guarded metadata. Local
+cached actions remain available. Profile preferences use per-field revisions and
+explicit GUI edit masks, preserving newer/reverted intent and unrelated settings.
+Accepted values update inbox/reader behavior without another preference save.
+
+The source passes **470 Rust tests**, with the two opt-in personal live diagnostics
+ignored; Clippy and production compilation without test-support pass. **41 Python
+checks**, **37 parity contracts** and all **seven targeted native profile flows**
+pass. Tests include lost copy/application receipts and database reopen, matching
+mail/draft preservation, differing connections, removal after approval, an
+independent offline journal, 78 items in 50/28-row pages, unsupported settings,
+partial keychain failure, protected backup/restore and exact preference-save
+ordering. Google/layout controller tests now assert the actual preference-patch
+command while retaining their ordering and queue-saturation assertions.
+
+Native evidence includes final targeted runs `d9ba56c8abe3` and `e5d8cef42318`:
+review/details, application, Reconnect required, incoming setup with an empty
+password, independent mail navigation, saved enrollment reopen, compact dark
+cancellation and a newer Light preference kept during application. Reviewed
+captures also include `eae4d48e8e4c`, `5ec88fd015d2`, `03000c59bea5`,
+`c662aa276e45` and `0015523d36da`. Initial failures `68c8715e7d2e` and
+`5bf106e8feb5` caught Retry moving after removal of obsolete explanatory text;
+`ea3479414d09` caught a profile row whose click area was too narrow. Final rows
+span the available width and saved controls target the actual Retry position.
+All artifacts/logs stay ignored under `artifacts/desktop-enrollment-*`,
+`artifacts/logs/desktop-enrollment-*` and `artifacts/e2e/`.
+
+The full **125-flow native functional suite passes** in 477.553 seconds
+(`artifacts/logs/desktop-enrollment-native-full.log`); the strict Zensical build
+also passes. Final-suite captures `bb572a9ac551` and `8df5119fca63` were reviewed.
+The mandatory-hook and shipping receipt follows below. All 40 active requests
+remain. Automatic setup, ongoing reconciliation, full categories/settings,
+credential protection/transfer, browser application, native large-page controls,
+Apple and live Google/cross-client verification remain open. The earlier
+performance gate still fails; new timing is deferred on the busy host. Quality
+and release CI remain disabled. No main merge, phone reinstall or VPS deployment
+accompanies this worktree increment.

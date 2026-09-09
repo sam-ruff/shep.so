@@ -59,8 +59,22 @@ mandatory hooks pass 454 Rust tests. Desktop publication now connects saved acco
 exact staging and tracked Drive uploads. All **123 native functional flows pass**,
 including compact dark review, changed preferences/cancel, pause/browse,
 retry/reopen and account exclusion. Code [`35f11ba`](https://github.com/sam-ruff/shep.so/commit/35f11ba0627621624659455dfebf6f341ea18893) is pushed and remotely verified; normal hooks pass 459 Rust tests.
-See the completion log for evidence and remaining limits. Reviewed import remains next;
-native large-page controls still need coverage beyond protocol paging.
+See the completion log for evidence and remaining limits.
+
+Desktop reviewed enrollment is now connected through actual iced controls. It
+copies original records into independently owned history, reviews 50-row pages
+and applies chosen accounts/preferences with durable receipts. Imported accounts
+require reconnect; matching accounts preserve their mail, drafts and passwords.
+Newer local edits/removal win. Backups and credential fallback preserve the guard.
+The current source passes **470 Rust tests**, Clippy, production compilation,
+41 Python checks, 37 parity contracts, strict documentation and all **125 native
+functional flows** (477.553 seconds). Reviewed final captures and the shipping
+receipt follow in the completion log; verify the recorded remote commit before
+claiming this checkpoint is pushed.
+
+Next: native large-page controls, then ongoing Flutter/desktop reconciliation,
+automatic first setup, complete portable settings/categories and authenticated
+cross-client access. Credential protection remains an unanswered product choice.
 
 Flutter profile publication and **Use profile on this device** now have a frozen,
 paged account/settings review, original-record transfer and durable application

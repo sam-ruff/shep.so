@@ -1,6 +1,6 @@
 //! One desktop discovery owner. The provider queue drives one bounded step at a
 //! time; cached mail, drafts and preferences use their existing independent queues.
-use super::publication;
+use super::{enrollment, publication};
 use crate::model::Preferences;
 use anyhow::{Result, ensure};
 use serde::Serialize;
@@ -60,6 +60,7 @@ pub enum Action {
     Retry { revision: u64 },
     Refresh { revision: u64, full: bool },
     Publication(publication::Command),
+    Enrollment(enrollment::Command),
     Close,
 }
 #[derive(Clone, Debug)]
@@ -77,6 +78,7 @@ pub struct Observation {
     pub after: Option<String>,
     pub error: Option<String>,
     pub publication: publication::Observation,
+    pub enrollment: enrollment::Observation,
 }
 pub struct Session {
     pub panel: Uuid,
@@ -86,6 +88,7 @@ pub struct Session {
     after: Option<String>,
     history_root: PathBuf,
     publication: publication::Observation,
+    enrollment: enrollment::Observation,
 }
 impl Session {
     pub async fn open(root: PathBuf, panel: Uuid, grant: Grant, drive: &Drive) -> Result<Self> {
@@ -107,6 +110,10 @@ impl Session {
                 next_id: Some(Uuid::new_v4()),
                 ..Default::default()
             },
+            enrollment: enrollment::Observation {
+                next_id: Some(Uuid::new_v4()),
+                ..Default::default()
+            },
             catalog: Discovery::open(path, scope).await?,
             after: None,
         })
@@ -119,6 +126,7 @@ impl Session {
             after: self.after.clone(),
             error,
             publication: self.publication.clone(),
+            enrollment: self.enrollment.clone(),
         })
     }
     pub async fn run(&mut self, action: Action, drive: Option<&Drive>) -> Result<Observation> {
@@ -225,6 +233,66 @@ impl Session {
         self.publication.review = review;
         self.publication.rows = rows;
         self.publication.after = after;
+        self.observe(error).await
+    }
+    pub async fn run_enrollment(
+        &mut self,
+        store: &crate::store::Store,
+        command: enrollment::Command,
+    ) -> Result<Observation> {
+        use crate::store::profile_enrollment as sql;
+        let after = if let enrollment::Command::Rows { after, .. } = &command {
+            *after
+        } else {
+            0
+        };
+        let prepare = if let enrollment::Command::Prepare { id, .. } = &command {
+            Some(*id)
+        } else {
+            None
+        };
+        let key = self.scope().storage_key()?;
+        let result = enrollment::run(
+            store,
+            self.scope(),
+            &self.history_root,
+            &self.catalog,
+            command,
+        )
+        .await;
+        let (review, error) = match result {
+            Ok(review) => (review, None),
+            Err(error) => {
+                let key = key.clone();
+                (
+                    store.run(move |db| sql::current(db, &key)).await?,
+                    Some(error.to_string()),
+                )
+            }
+        };
+        if prepare.is_some()
+            && prepare == self.enrollment.next_id
+            && review.as_ref().is_some_and(|r| Some(r.id) == prepare)
+        {
+            self.enrollment.next_id = Some(Uuid::new_v4());
+        }
+        let after = if error.is_none() { after } else { 0 };
+        self.enrollment.rows = if let Some(review) = &review {
+            let id = review.id;
+            store.run(move |db| sql::rows(db, &key, id, after)).await?
+        } else {
+            vec![]
+        };
+        self.enrollment.local = if review
+            .as_ref()
+            .is_some_and(|r| matches!(r.phase.as_str(), "applying" | "settings" | "complete"))
+        {
+            Some(store.run(|db| sql::local(db)).await?)
+        } else {
+            None
+        };
+        self.enrollment.review = review;
+        self.enrollment.after = after;
         self.observe(error).await
     }
     pub async fn close(self) -> Result<()> {

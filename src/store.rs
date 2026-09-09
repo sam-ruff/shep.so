@@ -8,6 +8,9 @@ pub use connections::{ConnectionKind, ConnectionRef, CredentialCleanup, RemovalP
 mod drafts;
 mod google_lifecycle;
 mod outgoing;
+pub(crate) mod profile_enrollment;
+pub(crate) mod profile_preferences;
+pub(crate) mod profile_reconnect;
 pub(crate) mod profiles;
 mod restore;
 mod selection;
@@ -41,6 +44,7 @@ pub struct Workspace {
     pub drafts_revision: u64,
     pub connections_revision: u64,
     pub credential_cleanup: usize,
+    pub profile_reconnect: std::collections::HashSet<String>,
     pub outgoing_pending: usize,
     pub outgoing_revision: u64,
     pub outgoing_drafts: std::collections::HashSet<String>,
@@ -103,6 +107,9 @@ impl Store {
         conversations::schema(&conn)?;
         connections::schema(&conn)?;
         profiles::schema(&conn)?;
+        profile_enrollment::schema(&conn)?;
+        profile_reconnect::schema(&conn)?;
+        profile_preferences::schema(&conn)?;
         outgoing::schema(&conn)?;
         selection::schema(&conn)?;
         bulk::schema(&conn)?;
@@ -171,29 +178,8 @@ impl Store {
         &self,
         requested: Preferences,
     ) -> anyhow::Result<PreferenceSnapshot> {
-        self.update_preferences(move |current| {
-            let last_backup = current.last_backup;
-            let backup_ready = current.backup_ready;
-            let previous_target = crate::backup::BackupTarget::from_preferences(current);
-            let connection = current.google_connection_id.clone();
-            let lifecycle = current.google_lifecycle;
-            let grant = current.google_grant.clone();
-            *current = requested;
-            // These are backend-owned metadata, not user preferences.
-            current.google_connection_id = connection;
-            current.google_lifecycle = lifecycle;
-            current.google_grant = grant;
-            if (lifecycle.disconnected || !current.google_grant.access.drive_allowed())
-                && current.backup_destination == BackupDestination::GoogleDrive
-            {
-                current.auto_backup = false;
-            }
-            let same_target =
-                previous_target == crate::backup::BackupTarget::from_preferences(current);
-            current.last_backup = if same_target { last_backup } else { None };
-            current.backup_ready = same_target && backup_ready;
-        })
-        .await
+        self.update_preferences(move |current| profile_preferences::merge(current, requested))
+            .await
     }
     pub async fn record_backup(
         &self,
@@ -283,6 +269,7 @@ impl Store {
                 outgoing_revision: get(c, "outgoing_revision")?,
                 google_archived: get(c, "google_archived")?,
                 outgoing_drafts:c.prepare("SELECT draft FROM outgoing WHERE stage IN ('Submitting','Uncertain','Accepted')")?.query_map([],|r|r.get::<_,String>(0))?.collect::<Result<_,_>>()?,
+                profile_reconnect:c.prepare("SELECT account_id FROM profile_reconnect ORDER BY account_id")?.query_map([],|r|r.get::<_,String>(0))?.collect::<Result<_,_>>()?,
                 credential_cleanup: c.query_row(
                     "SELECT COUNT(*) FROM credential_cleanup",
                     [],
@@ -736,9 +723,16 @@ fn get<T: DeserializeOwned + Default>(c: &Connection, key: &str) -> anyhow::Resu
     .unwrap_or_else(|| Ok(T::default()))
 }
 fn put<T: Serialize>(c: &Connection, key: &str, value: &T) -> anyhow::Result<()> {
+    let encoded = serde_json::to_string(value)?;
+    if key == "preferences" {
+        let revision = get::<u64>(c, "preferences_revision")?
+            .checked_add(1)
+            .context("Preferences revision overflow")?;
+        profile_preferences::changed(c, &serde_json::from_str(&encoded)?, revision)?;
+    }
     c.execute(
         "INSERT INTO kv VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        params![key, serde_json::to_string(value)?],
+        params![key, encoded],
     )?;
     if key == "preferences" {
         let revision: u64 = get(c, "preferences_revision")?;

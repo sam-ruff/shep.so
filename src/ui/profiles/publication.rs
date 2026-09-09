@@ -49,7 +49,7 @@ impl Default for Publication {
         }
     }
 }
-fn label(key: SettingKey) -> &'static str {
+pub(super) fn label(key: SettingKey) -> &'static str {
     match key {
         SettingKey::Appearance => "Appearance",
         SettingKey::ReplyDisplay => "Quoted history",
@@ -62,7 +62,7 @@ fn label(key: SettingKey) -> &'static str {
         _ => "Unsupported preference",
     }
 }
-fn formatted_value(key: SettingKey, value: &serde_json::Value) -> String {
+pub(super) fn formatted_value(key: SettingKey, value: &serde_json::Value) -> String {
     if let Some(enabled) = value.as_bool() {
         return if enabled { "On" } else { "Off" }.into();
     }
@@ -491,7 +491,7 @@ mod tests {
                 ..Default::default()
             });
             app.publication_message(Message::Prepare);
-            let Command::SavePreferences(request, _) = saves.try_recv().unwrap() else {
+            let Command::SaveProfilePreferences(request, _, _) = saves.try_recv().unwrap() else {
                 panic!()
             };
             assert!(profiles.try_recv().is_err());

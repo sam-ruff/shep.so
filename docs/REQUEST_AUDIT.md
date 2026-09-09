@@ -625,3 +625,18 @@ is pushed with exact remote verification. Normal hooks pass 459 Rust tests
 37 parity contracts, production compilation and strict docs also pass.
 All 40 active requests remain. Next is reviewed desktop enrollment/application,
 then continuous reconciliation and the remaining product/platform scope.
+
+
+R02/R49/R75/desktop-main:R92 continuation: desktop enrollment now applies reviewed
+account metadata and eight selected preferences through the real iced controls.
+Independent history, paged choices, exact application receipts, reconnect guards,
+newer local intent and guarded backup/restore behavior have targeted
+store/protocol/controller/native evidence. R08/R10 validation and shipping status
+are recorded in the completion log. All 40 requests remain active; this increment
+does not deliver continuous sync, protected credential transfer, browser
+application, automatic first setup or live cross-client verification.
+
+Desktop enrollment final validation: 470 Rust tests (two opt-in personal live
+checks ignored), 125 native functional flows, 41 Python checks, 37 parity
+contracts, production compilation, Clippy and strict docs pass. Reviewed final
+compact/reopen captures and the shipping receipt are in the completion log.

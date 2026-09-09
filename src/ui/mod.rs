@@ -18,6 +18,7 @@ mod mail_selection;
 mod outgoing;
 mod preference_sync;
 mod printing;
+mod profile_preferences;
 mod profiles;
 mod read_tracking;
 mod reading;
@@ -307,6 +308,7 @@ pub struct App {
     workspace: Arc<Workspace>,
     preferences: Preferences,
     preference_sync: preference_sync::PreferenceSync,
+    portable_preferences: profile_preferences::Edits,
     pending_google_login: Option<(u64, Preferences, bool)>,
     pending_backup: Option<backups::PendingBackup>,
     tab: Tab,
@@ -452,6 +454,7 @@ impl App {
                 workspace: Arc::new(Workspace::default()),
                 preferences: Preferences::default(),
                 preference_sync: Default::default(),
+                portable_preferences: Default::default(),
                 pending_google_login: None,
                 pending_backup: None,
                 tab: Tab::Mail,
@@ -589,10 +592,20 @@ impl App {
         self.try_command(command);
     }
     fn try_command(&mut self, command: Command) -> bool {
-        let preferences_request = if let Command::SavePreferences(request, _) = &command {
-            Some(*request)
+        let mut portable_save = false;
+        let command = if let Command::SavePreferences(request, prefs) = command {
+            let fields = self
+                .portable_preferences
+                .prepare(&prefs, &self.preference_sync.saved.value);
+            portable_save = true;
+            Command::SaveProfilePreferences(request, prefs, fields)
         } else {
-            None
+            command
+        };
+        let preferences_request = match &command {
+            Command::SavePreferences(request, _)
+            | Command::SaveProfilePreferences(request, _, _) => Some(*request),
+            _ => None,
         };
         if let Some(tx) = &self.tx {
             if let Err(error) = tx.try_send(command) {
@@ -613,6 +626,9 @@ impl App {
         } else {
             self.notice("Opening your local workspace…", false);
             return false;
+        }
+        if portable_save {
+            self.portable_preferences.accepted();
         }
         if preferences_request.is_some_and(|request| {
             self.pending_preference_save
@@ -957,6 +973,7 @@ impl App {
                     let mut workspace = (*workspace).clone();
                     if workspace.connections_revision < self.workspace.connections_revision {
                         workspace.accounts = self.workspace.accounts.clone();
+                        workspace.profile_reconnect = self.workspace.profile_reconnect.clone();
                         workspace.calendars = self.workspace.calendars.clone();
                         workspace.account_folders = self.workspace.account_folders.clone();
                         workspace.folders = self.workspace.folders.clone();
@@ -1035,6 +1052,7 @@ impl App {
                     }
                     self.cancel_backup_save(request);
                     self.publication_save_failed(request);
+                    self.enrollment_save_failed(request);
                     if self.confirm_save == Some(request) {
                         self.confirm_save = None;
                     }
@@ -1046,11 +1064,14 @@ impl App {
                     self.preference_notice = self.notice.as_ref().map(|notice| notice.2);
                 }
                 Event::PreferencesSaved(request, snapshot) => {
+                    let effects = profile_preferences::Effects::from(&self.preferences);
                     self.preference_sync.acknowledge(
                         request,
                         (*snapshot).clone(),
                         &mut self.preferences,
                     );
+                    self.apply_profile_preference_effects(effects);
+                    self.portable_preferences.observed(&self.preferences);
                     self.update_saved_preferences();
                     if !self.preference_sync.dirty() {
                         if self.confirm_save.is_some_and(|id| request >= id) {
@@ -1068,6 +1089,7 @@ impl App {
                     }
                     self.continue_backup_request(request);
                     self.publication_saved(request);
+                    self.enrollment_saved(request);
                     if self
                         .pending_google_login
                         .as_ref()
@@ -3344,6 +3366,8 @@ impl App {
         data["removing"] = serde_json::json!(self.removal.removing.is_some());
         data["removal_cancel_transfers"] = serde_json::json!(self.removal.cancel_transfers);
         data["account_count"] = serde_json::json!(self.workspace.accounts.len());
+        data["reconnect_required_count"] =
+            serde_json::json!(self.workspace.profile_reconnect.len());
         data["calendar_count"] = serde_json::json!(self.workspace.calendars.len());
         data["removed_google_calendars"] =
             serde_json::json!(self.workspace.removed_google_calendars);

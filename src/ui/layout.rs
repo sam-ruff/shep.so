@@ -255,9 +255,10 @@ mod tests {
         while let Ok(command) = receiver.try_recv() {
             last = Some(command);
         }
-        let Some(Command::SavePreferences(request, prefs)) = last else {
+        let Some(Command::SaveProfilePreferences(request, prefs, fields)) = last else {
             panic!("Missing retried settings");
         };
+        assert!(fields.is_empty());
         assert_eq!(request, app.preference_sync.generation());
         assert_eq!(prefs.sidebar_width, Some(340.));
     }

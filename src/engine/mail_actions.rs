@@ -63,8 +63,8 @@ impl Engine {
             crate::test_support::mail_action_delay().await?;
             remote_id = Some(format!("preview-moved-{}", uuid::Uuid::new_v4()));
         } else {
-            let source_secret = providers::read_secret(&source.id).await?;
-            let destination_secret = providers::read_secret(&destination.id).await?;
+            let source_secret = self.read_account_secret(&source.id, false).await?;
+            let destination_secret = self.read_account_secret(&destination.id, false).await?;
             let journal_key = format!("transfer:{}", mail.id);
             let journal: Option<(String, String, String)> = self.store.get(&journal_key).await?;
             if let Some((account, target, stage)) = &journal {
@@ -184,7 +184,7 @@ impl Engine {
             if account.protocol == Protocol::Imap {
                 let fingerprint = self.store.message_fingerprint(mail.id.clone()).await?;
                 let remote_id = tokio::time::timeout(Duration::from_secs(45), async {
-                    let password = providers::read_secret(&account.id).await?;
+                    let password = self.read_account_secret(&account.id, false).await?;
                     providers::mail::provider(account.protocol)
                         .move_mail(&account, &password, mail, folder)
                         .await
@@ -305,7 +305,7 @@ impl Engine {
                     .await
                     .context("The account is still busy. Retry Undo.")?;
             let mut resolved = tokio::time::timeout(Duration::from_secs(120), async {
-                let secret = providers::read_secret(&account.id).await?;
+                let secret = self.read_account_secret(&account.id, false).await?;
                 providers::mail::recovery::resolve(&account, &secret, receipt).await
             })
             .await
@@ -403,7 +403,7 @@ impl Engine {
             let account = self.account(&mail.account_id).await?;
             if account.protocol == Protocol::Imap {
                 tokio::time::timeout(Duration::from_secs(45), async {
-                    let password = providers::read_secret(&account.id).await?;
+                    let password = self.read_account_secret(&account.id, false).await?;
                     providers::mail::provider(account.protocol)
                         .set_flags(&account, &password, mail, changes)
                         .await

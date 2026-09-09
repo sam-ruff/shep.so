@@ -479,3 +479,56 @@ async fn in_memory_test_workspaces_have_independent_upload_journals() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn profile_reconnect_backup_preserves_metadata_without_reading_passwords_and_restore_stays_guarded()
+ {
+    let engine = engine(Arc::new(Secrets::default()));
+    let account:Account=serde_json::from_value(serde_json::json!({"id":"guarded-backup","name":"Imported","email":"shared@example.test","protocol":"Imap","host":"imap.example.test","port":993,"username":"shared","smtp_host":"smtp.example.test","smtp_port":465,"smtp_separate_password":true})).unwrap();
+    engine.store.save_account(account.clone()).await.unwrap();
+    engine
+        .store
+        .run(|db| crate::store::profile_reconnect::mark(db, "guarded-backup"))
+        .await
+        .unwrap();
+    let prefs = Preferences {
+        backup_accounts: true,
+        ..Default::default()
+    };
+    let encrypted = engine
+        .encrypted_snapshot(&prefs, &passphrase())
+        .await
+        .unwrap();
+    let snapshot = backup::decrypt(&encrypted, &passphrase()).unwrap();
+    assert_eq!(snapshot.accounts, vec![account.clone()]);
+    assert!(snapshot.credentials.is_empty());
+    let restored = Store::memory().unwrap();
+    let result = restored.restore_snapshot(snapshot).await.unwrap();
+    assert!(result.credentials.is_empty());
+    assert!(
+        restored
+            .require_profile_active(account.id.clone())
+            .await
+            .is_err()
+    );
+    // Even a later approved archive cannot silently fill a guarded device's slots.
+    let mut snapshot = backup::decrypt(&encrypted, &passphrase()).unwrap();
+    snapshot.credentials = vec![
+        (account.id.clone(), "synthetic incoming".into()),
+        (format!("{}:smtp", account.id), "synthetic smtp".into()),
+    ];
+    assert!(
+        restored
+            .restore_snapshot(snapshot)
+            .await
+            .unwrap()
+            .credentials
+            .is_empty()
+    );
+    assert!(
+        restored
+            .profile_reconnect_required(account.id)
+            .await
+            .unwrap()
+    );
+}

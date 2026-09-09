@@ -58,6 +58,11 @@ pub enum Command {
     SaveAccount(Account, SecretString, SecretString),
     TestConnection(Account, SecretString, SecretString, ConnectionTarget),
     SavePreferences(u64, Preferences),
+    SaveProfilePreferences(
+        u64,
+        Preferences,
+        std::collections::BTreeSet<shep_profile_core::SettingKey>,
+    ),
     Sync,
     Move(u64, Mail, String),
     Transfer(u64, Mail, String, String),
@@ -368,6 +373,15 @@ impl Engine {
             .await?;
         Ok(())
     }
+    async fn read_account_secret(&self, id: &str, smtp: bool) -> anyhow::Result<SecretString> {
+        self.store.require_profile_active(id.into()).await?;
+        providers::read_secret(&if smtp {
+            format!("{id}:smtp")
+        } else {
+            id.into()
+        })
+        .await
+    }
     async fn account(&self, id: &str) -> anyhow::Result<Account> {
         self.store
             .get::<Vec<Account>>("accounts")
@@ -641,8 +655,8 @@ impl Engine {
                     anyhow::ensure!(!self.demo, "Connection tests require a real account. Test workspaces do not connect to mail servers.");
                     let secret = if target == ConnectionTarget::Smtp && account.smtp_auth == SmtpAuth::None { SecretString::from("") }
                     else if target == ConnectionTarget::Smtp && account.smtp_separate_password {
-                        if smtp_password.expose_secret().is_empty() { providers::read_secret(&format!("{}:smtp", account.id)).await? } else { smtp_password }
-                    } else if password.expose_secret().is_empty() { providers::read_secret(&account.id).await.context("Enter a password before testing a new account")? } else { password };
+                        if smtp_password.expose_secret().is_empty() { self.read_account_secret(&account.id,true).await? } else { smtp_password }
+                    } else if password.expose_secret().is_empty() { self.read_account_secret(&account.id,false).await.context("Enter a password before testing a new account")? } else { password };
                     match target { ConnectionTarget::Incoming => providers::mail::test_incoming(&account, &secret).await, ConnectionTarget::Smtp => providers::mail::test_smtp(&account, &secret).await }
                 }.await;
                 output
@@ -667,6 +681,28 @@ impl Engine {
                     })
                     .await?;
                 let saved_id = account.id.clone();
+                if self
+                    .store
+                    .profile_reconnect_required(account.id.clone())
+                    .await?
+                {
+                    crate::profiles::reconnect::reconnect(
+                        &self.store,
+                        account,
+                        password,
+                        smtp_password,
+                        &crate::profiles::reconnect::OsSecrets,
+                    )
+                    .await?;
+                    self.workspace(&mut output).await?;
+                    output.send(Event::AccountSaved(saved_id)).await?;
+                    output
+                        .send(Event::Notice(
+                            "Account reconnected. Use Sync to receive your mail.".into(),
+                        ))
+                        .await?;
+                    return Ok(());
+                }
                 let password = if password.expose_secret().is_empty() {
                     providers::read_secret(&account.id)
                         .await
@@ -696,6 +732,17 @@ impl Engine {
                         "Account saved. Use Sync to receive your mail.".into(),
                     ))
                     .await?;
+            }
+            Command::SaveProfilePreferences(request, prefs, fields) => {
+                let event = match self.store.save_profile_preferences(prefs, fields).await {
+                    Ok(snapshot) => {
+                        self.mail_sync_settings
+                            .set(snapshot.value.mail_check_seconds);
+                        Event::PreferencesSaved(request, Arc::new(snapshot))
+                    }
+                    Err(error) => Event::PreferencesSaveFailed(request, error.to_string()),
+                };
+                output.send(event).await?;
             }
             Command::SavePreferences(request, prefs) => {
                 let event = match self.store.save_preferences(prefs).await {
@@ -1199,7 +1246,7 @@ impl Engine {
     async fn sync_account(&self, account: Account, mut output: Output) -> anyhow::Result<()> {
         let _guard = self.account_lock(&account.id).await;
         let account = self.account(&account.id).await?;
-        let password = providers::read_secret(&account.id).await?;
+        let password = self.read_account_secret(&account.id, false).await?;
         let known = self.store.known(account.id.clone()).await?;
         let (tx, mut rx) = mpsc::channel(8);
         let store = self.store.clone();
