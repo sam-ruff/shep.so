@@ -7,7 +7,10 @@ account-removal reviews (`61c6dfc`) and duplicate-address sidebar labels
 (`c0ebf3f`). Every other `codex/*` lane was verified byte-identical to main
 and deleted. Sam's 9 September request that closing blocked by saving is the
 first fix afterwards is recorded under R90. Hook, Python, docs and native
-counts are in completion; the push receipt follows.
+counts are in completion. Sam confirmed the push at 22:00; source `c414227`
+is on `origin/main` with remote equality verified. The aggregate folder account
+chooser (`1abc4b9`, R30) is merged locally as `d99b111` and held unpushed
+while the mobile branch merges `main`.
 
 R32: included-destination manual backup now has independent progress/recovery,
 exact staged-copy retry and close receipts. All 13 integrated native paths pass;
