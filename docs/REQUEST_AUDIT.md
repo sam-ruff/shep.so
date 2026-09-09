@@ -197,3 +197,11 @@ R63 first-profile fixture follow-up: explicit held upload and batch release
 replace stacked record delays while preserving pending-navigation assertions
 and completion timeout. Three HTTP/isolation/cleanup tests pass; native
 integration remains pending.
+
+
+R02/R49 shared account-removal review is in `codex/profile-account-removals`:
+Keep suppression preserves local account/mail identity; reviewed local removal
+uses the normal confirmation and clears stale controls. Eight initial targeted
+Rust tests, all 98 profile tests and three native flows pass; the final source adds a stale-card controller regression and passes all 35
+native profile scenarios in 171.199 seconds with reviewed final screenshots.
+Main integration, normal hooks and shipping remain pending.

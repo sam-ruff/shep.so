@@ -779,3 +779,11 @@ and remote removal. Keep account passwords out of this fixture. A menu that open
 above its control can cover the Keep button: select its visible row before the
 next click; the separately tracked Escape-dismissal issue must not be hidden by
 a direct state mutation or by removing keyboard coverage elsewhere.
+
+
+`profile_sync="existing-removal"` delivers an owned remote account tombstone
+after enrollment. The saved `test_profile_account_removal_*` flows operate
+Keep on this device and the actual local-data removal dialog. Preserve Cancel,
+confirmation, restart/no-reimport and stale-card disappearance assertions.
+`profile_account_review` Rust tests retain real cached fixture mail and reject
+changed history/account/Google/consent. UI observations never trigger actions.

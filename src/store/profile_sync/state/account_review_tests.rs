@@ -292,8 +292,8 @@ async fn profile_account_review_rejects_removed_remote_account_and_new_google_id
                 reviews::prepare(&store, &replica, None)
                     .await
                     .unwrap()
-                    .reviews
-                    .is_empty()
+                    .reviews[0]
+                    .removed()
             );
         }
         assert!(
@@ -306,6 +306,153 @@ async fn profile_account_review_rejects_removed_remote_account_and_new_google_id
             1
         );
         assert_eq!(store.query(MailQuery::default()).await.unwrap().total, 1);
+        replica.close().await.unwrap();
+    }
+}
+
+async fn removed_account(path: &std::path::Path) -> (Store, Replica, history::Binding, Account) {
+    let (store, mut replica, binding, original) = changed(path).await;
+    let shared = store
+        .profile_replication(binding.clone())
+        .await
+        .unwrap()
+        .accounts[&original.id];
+    edit_remote(
+        &mut replica,
+        vec![Change {
+            action: Action::AccountRemoved { id: shared },
+            extra: Default::default(),
+        }],
+    )
+    .await;
+    assert!(apply_observed(&store, &replica).await.review > 0);
+    (store, replica, binding, original)
+}
+
+#[tokio::test]
+async fn profile_account_review_keeps_remote_removed_account_and_mail_without_republishing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, replica, binding, original) = removed_account(dir.path()).await;
+    let mut replica = replica;
+    let review = reviews::prepare(&store, &replica, None)
+        .await
+        .unwrap()
+        .reviews
+        .remove(0);
+    assert!(review.removed());
+    assert!(review.versions().is_empty());
+    let shared = review.basis.shared;
+    let before = replica.state().await.unwrap();
+    reviews::accept(&store, &mut replica, review, Choice::KeepRemovedLocal)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get::<Vec<Account>>("accounts").await.unwrap(),
+        vec![original.clone()]
+    );
+    assert_eq!(store.query(MailQuery::default()).await.unwrap().total, 1);
+    store
+        .require_account_reconnected(original.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(replica.state().await.unwrap().queued, before.queued);
+    let state = store.profile_replication(binding.clone()).await.unwrap();
+    assert!(state.suppressed.contains(&shared));
+    assert_eq!(state.accounts[&original.id], shared);
+    assert!(
+        reviews::prepare(&store, &replica, None)
+            .await
+            .unwrap()
+            .reviews
+            .is_empty()
+    );
+    assert_eq!(apply_observed(&store, &replica).await.review, 0);
+    let mut edited = original;
+    edited.host = "kept-local.example.test".into();
+    store.save_account(edited.clone()).await.unwrap();
+    assert!(store.capture_profile_change().await.unwrap().is_none());
+    assert_eq!(apply_observed(&store, &replica).await.review, 0);
+    assert_eq!(
+        store.get::<Vec<Account>>("accounts").await.unwrap(),
+        vec![edited]
+    );
+    replica.close().await.unwrap();
+    // The owned Store's saved replication state is the restart contract; reopen
+    // after all acknowledged work and verify its original account identity.
+    drop(store);
+    let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    assert!(
+        store
+            .profile_replication(binding)
+            .await
+            .unwrap()
+            .suppressed
+            .contains(&shared)
+    );
+    assert_eq!(store.query(MailQuery::default()).await.unwrap().total, 1);
+}
+
+#[tokio::test]
+async fn profile_account_review_removal_rejects_stale_choices_without_hiding_local_mail() {
+    for change in ["native", "google", "options", "history"] {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, mut replica, binding, mut original) = removed_account(dir.path()).await;
+        let review = reviews::prepare(&store, &replica, None)
+            .await
+            .unwrap()
+            .reviews
+            .remove(0);
+        match change {
+            "native" => {
+                original.host = "newer-local.example.test".into();
+                store.save_account(original.clone()).await.unwrap();
+            }
+            "google" => {
+                store
+                    .update_preferences(|p| p.google_lifecycle.revision += 1)
+                    .await
+                    .unwrap();
+            }
+            "options" => {
+                let snapshot = store.profile_enrollment().await.unwrap();
+                let mut options = snapshot.enrollment.options;
+                options.accounts = false;
+                store
+                    .set_profile_sync_options(snapshot.enrollment.revision, options)
+                    .await
+                    .unwrap();
+            }
+            _ => {
+                edit_remote(
+                    &mut replica,
+                    vec![Change {
+                        action: Action::ProfileName {
+                            name: "A newer shared title".into(),
+                        },
+                        extra: Default::default(),
+                    }],
+                )
+                .await;
+            }
+        }
+        assert!(
+            reviews::accept(&store, &mut replica, review, Choice::KeepRemovedLocal)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            store.get::<Vec<Account>>("accounts").await.unwrap(),
+            vec![original]
+        );
+        assert_eq!(store.query(MailQuery::default()).await.unwrap().total, 1);
+        assert!(
+            store
+                .profile_replication(binding)
+                .await
+                .unwrap()
+                .suppressed
+                .is_empty()
+        );
         replica.close().await.unwrap();
     }
 }

@@ -1362,3 +1362,12 @@ pending shared operation in one transaction before history admission. Preserve
 restart/lost-reply, stale native/history/Google/removal, UID collision and real
 native Keep/Add/compact review regressions. Remote removal reviews are separate;
 never revive a tombstoned account through an old connection review.
+
+
+Shared remote account removals never delete local mail automatically. A reviewed
+Keep choice suppresses that shared identity durably without moving credentials
+or publishing another connection. The ordinary local-data removal dialog retains
+its current draft/receipt guards and clears stale shared review cards after a
+successful local removal. Keep exact history and local lifecycle validation,
+`profile_account_review` Rust tests and the saved `profile_account_removal`
+native flows when changing these paths.
