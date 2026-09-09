@@ -132,13 +132,14 @@ async fn values(replica: &Replica, options: Options, control: &Control) -> anyho
 
 fn complete(state: &history::State) -> anyhow::Result<()> {
     anyhow::ensure!(
-        !state.removed
+        state.initialized
+            && !state.removed
             && state.operations > 0
             && state.waiting == 0
             && state.ready == 0
             && state.conflicts == 0
             && state.queued == 0,
-        "This profile is incomplete, removed or has conflicting changes. Review it on its original device before joining."
+        "This profile has not finished setup, is removed or has conflicting changes. Finish or review it on its original device before joining."
     );
     Ok(())
 }
@@ -162,7 +163,8 @@ pub(crate) async fn prepare(
         .find(|p| p.cursor() == cursor)
         .context("Choose a profile from the current discovery page.")?;
     anyhow::ensure!(
-        !profile.removed
+        profile.initialized
+            && !profile.removed
             && profile.waiting == 0
             && profile.conflicts == 0
             && !profile.name_conflict,

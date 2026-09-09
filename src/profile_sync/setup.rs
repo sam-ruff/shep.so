@@ -171,12 +171,15 @@ async fn prepare_controlled(
         &selection.binding == replica.binding(),
         "The saved setup belongs to another history."
     );
-    let seed = store.profile_seed(expected.clone()).await?;
+    let history_empty = replica.state().await?.operations == 0;
+    let seed = store
+        .prepare_profile_seed(expected.clone(), history_empty)
+        .await?;
     seed.validate(selection)?;
-    for chunk in &seed.chunks {
+    for chunk in seed.operations() {
         check_categories(expected.enrollment.options, chunk)?;
     }
-    for chunk in &seed.chunks {
+    for chunk in seed.operations() {
         control.check()?;
         let revision = replica.state().await?.revision;
         let chunk = store
@@ -209,7 +212,7 @@ async fn prepare_controlled(
             .collect();
         let state = replica.state().await?;
         anyhow::ensure!(
-            !state.removed && state.waiting == 0 && state.ready == 0,
+            state.initialized && !state.removed && state.waiting == 0 && state.ready == 0,
             "The initial profile history needs review before establishing ongoing sync."
         );
         for change in &common {
@@ -286,7 +289,7 @@ pub async fn publish_controlled(
     prepare_controlled(store, replica, &expected, control).await?;
     let mut pulled = replica.pull_controlled(session, control).await?;
     anyhow::ensure!(
-        !pulled.state().removed && pulled.state().conflicts == 0,
+        pulled.state().initialized && !pulled.state().removed && pulled.state().conflicts == 0,
         "This profile changed on another device. Review its changes before completing setup."
     );
     let mut acknowledged = false;

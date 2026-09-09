@@ -49,7 +49,52 @@ fn download(record: &ReservedUpload) -> Vec<Reply> {
         Reply::binary(200, record.record.bytes().to_vec()),
     ]
 }
+fn wrapped(record: &ReservedUpload) -> Vec<ReservedUpload> {
+    let op = record.record.operation().clone();
+    let root = Uuid::from_u128(op.operation.as_u128() ^ (1_u128 << 120));
+    let end = Uuid::from_u128(op.operation.as_u128() ^ (2_u128 << 120));
+    [
+        (root, None, Some(false), "-start"),
+        (op.operation, Some(root), None, ""),
+        (end, Some(op.operation), Some(true), "-complete"),
+    ]
+    .into_iter()
+    .map(|(id, parent, setup, suffix)| {
+        let mut op = op.clone();
+        op.operation = id;
+        op.parents = parent.into_iter().collect();
+        op.requires.push("initialization-v1".into());
+        if let Some(complete) = setup {
+            op.changes = vec![Change {
+                action: Action::ProfileSetup { complete },
+                extra: Default::default(),
+            }];
+        }
+        let raw = Record::decode(binding().namespace(), op.encode().unwrap()).unwrap();
+        ReservedUpload {
+            binding: binding(),
+            remote: RemoteRecord {
+                id: format!("{}{suffix}", record.remote.id),
+                key: raw.key(),
+                size: raw.bytes().len() as u64,
+                sha256: raw.sha256.clone(),
+            },
+            record: raw,
+        }
+    })
+    .collect()
+}
+fn listing(records: &[ReservedUpload]) -> Reply {
+    Reply::new(
+        200,
+        json!({"files":records.iter().map(file).collect::<Vec<_>>(),"incompleteSearch":false})
+            .to_string(),
+    )
+}
 fn scan(record: &ReservedUpload) -> Vec<Reply> {
+    scan_records(&wrapped(record))
+}
+fn scan_records(records: &[ReservedUpload]) -> Vec<Reply> {
     let mut replies = vec![
         Reply::new(
             200,
@@ -58,10 +103,13 @@ fn scan(record: &ReservedUpload) -> Vec<Reply> {
         Reply::new(200, json!({"startPageToken":"before"}).to_string()),
         Reply::new(
             200,
-            json!({"files":[file(record)],"incompleteSearch":false}).to_string(),
+            json!({"files":records.iter().map(file).collect::<Vec<_>>(),"incompleteSearch":false})
+                .to_string(),
         ),
     ];
-    replies.extend(download(record));
+    for record in records {
+        replies.extend(download(record));
+    }
     replies.push(Reply::new(
         200,
         json!({"changes":[],"newStartPageToken":"after"}).to_string(),
@@ -70,8 +118,10 @@ fn scan(record: &ReservedUpload) -> Vec<Reply> {
 }
 async fn reviewed(store: &Store, paths: &Paths, record: &ReservedUpload) -> Review {
     let mut replies = scan(record);
-    replies.push(Reply::new(200, json!({"files":[file(record)]}).to_string()));
-    replies.extend(download(record));
+    replies.push(listing(&wrapped(record)));
+    for record in wrapped(record) {
+        replies.extend(download(&record));
+    }
     let mut server = Server::start(replies).await;
     let session = session(&server);
     let discovery = setup::Discovery::from_catalog(
@@ -97,6 +147,115 @@ async fn reviewed(store: &Store, paths: &Paths, record: &ReservedUpload) -> Revi
     server.finish().await;
     assert!(server.requests().iter().all(|r| r.method == "GET"));
     review
+}
+
+#[tokio::test]
+async fn profile_join_requires_completion_even_when_listing_contains_a_name_and_all_visible_settings()
+ {
+    for mode in ["legacy", "preparing", "missing-middle"] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = local(dir.path()).await;
+        let paths = Paths::for_cache(&dir.path().join("cache.sqlite")).unwrap();
+        let all = wrapped(&record());
+        let records = match mode {
+            "legacy" => vec![record()],
+            "preparing" => all.into_iter().take(2).collect(),
+            _ => all
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, r)| (i != 1).then_some(r))
+                .collect(),
+        };
+        let mut server = Server::start(scan_records(&records)).await;
+        let session = session(&server);
+        let discovery = setup::Discovery::from_catalog(
+            catalog::discover(&store, &session, &paths, &Control::default())
+                .await
+                .unwrap(),
+        );
+        assert_eq!(discovery.profiles().len(), 1);
+        assert!(!discovery.profiles()[0].initialized, "{mode}");
+        assert!(
+            prepare(
+                &store,
+                &session,
+                &paths,
+                paths.journal().await.unwrap(),
+                &discovery,
+                &discovery.profiles()[0].cursor(),
+                &Control::default()
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            store
+                .profile_enrollment()
+                .await
+                .unwrap()
+                .enrollment
+                .selection
+                .is_none()
+        );
+        assert!(store.workspace().await.unwrap().accounts.is_empty());
+        assert_eq!(
+            store
+                .get::<Preferences>("preferences")
+                .await
+                .unwrap()
+                .appearance,
+            Appearance::Light
+        );
+        server.finish().await;
+        assert!(server.requests().iter().all(|r| r.method == "GET"));
+    }
+}
+
+#[tokio::test]
+async fn profile_join_accepts_completed_setup_arriving_out_of_order_with_a_fresh_device_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = local(dir.path()).await;
+    let paths = Paths::for_cache(&dir.path().join("cache.sqlite")).unwrap();
+    let mut records = wrapped(&record());
+    records.reverse();
+    let mut replies = scan_records(&records);
+    replies.push(listing(&records));
+    for r in &records {
+        replies.extend(download(r));
+    }
+    let mut server = Server::start(replies).await;
+    let session = session(&server);
+    let discovery = setup::Discovery::from_catalog(
+        catalog::discover(&store, &session, &paths, &Control::default())
+            .await
+            .unwrap(),
+    );
+    assert!(discovery.profiles()[0].initialized);
+    let review = prepare(
+        &store,
+        &session,
+        &paths,
+        paths.journal().await.unwrap(),
+        &discovery,
+        &discovery.profiles()[0].cursor(),
+        &Control::default(),
+    )
+    .await
+    .unwrap();
+    assert_ne!(review.device, records[0].record.operation().device);
+    accept(&store, &paths, review, &Control::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get::<Preferences>("preferences")
+            .await
+            .unwrap()
+            .appearance,
+        Appearance::Dark
+    );
+    assert_eq!(store.workspace().await.unwrap().account_reconnect.len(), 1);
+    server.finish().await;
 }
 
 #[tokio::test]
@@ -521,11 +680,27 @@ async fn profile_join_does_not_apply_unknown_connection_fields_or_resurrect_remo
             },
             record: raw,
         };
-        let records = previous
-            .iter()
-            .chain(std::iter::once(&record))
-            .collect::<Vec<_>>();
-        let metadata = records.iter().map(|r| file(r)).collect::<Vec<_>>();
+        let records = if let Some(previous) = previous {
+            let mut records = wrapped(&previous);
+            let mut op = record.record.operation().clone();
+            op.parents = vec![records.last().unwrap().record.key().operation];
+            op.requires.push("initialization-v1".into());
+            let raw = Record::decode(binding().namespace(), op.encode().unwrap()).unwrap();
+            records.push(ReservedUpload {
+                binding: binding(),
+                remote: RemoteRecord {
+                    id: record.remote.id,
+                    key: raw.key(),
+                    size: raw.bytes().len() as u64,
+                    sha256: raw.sha256.clone(),
+                },
+                record: raw,
+            });
+            records
+        } else {
+            wrapped(&record)
+        };
+        let metadata = records.iter().map(file).collect::<Vec<_>>();
         let listing = json!({"files":metadata,"incompleteSearch":false});
         let mut replies = vec![
             Reply::new(

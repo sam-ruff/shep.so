@@ -15,6 +15,7 @@ pub const SETTINGS: &[codec::SettingKey] = &[
     codec::SettingKey::CrossAccountMoves,
     codec::SettingKey::GroupConversations,
     codec::SettingKey::DesktopBadges,
+    codec::SettingKey::Tooltips,
 ];
 
 /// Export only fields the native client actually implements. In particular,
@@ -33,7 +34,8 @@ pub fn setting_value(
         CrossAccountMoves => serde_json::json!(preferences.cross_account_moves),
         GroupConversations => serde_json::json!(preferences.group_conversations),
         DesktopBadges => serde_json::json!(preferences.unread_badge),
-        PreviewLines => return None,
+        Tooltips => serde_json::json!(preferences.tooltips),
+        PreviewLines | LeftSwipe | RightSwipe | SenderPictures => return None,
     })
 }
 
@@ -62,6 +64,24 @@ pub fn apply_setting(preferences: &mut Preferences, change: &Change) -> Result<b
         CrossAccountMoves => preferences.cross_account_moves = serde_json::from_value(value)?,
         GroupConversations => preferences.group_conversations = serde_json::from_value(value)?,
         DesktopBadges => preferences.unread_badge = serde_json::from_value(value)?,
+        Tooltips => preferences.tooltips = serde_json::from_value(value)?,
+        LeftSwipe | RightSwipe => {
+            ensure!(
+                value.as_str().is_some_and(|s| [
+                    "none", "archive", "trash", "read", "star", "select", "move", "spam"
+                ]
+                .contains(&s)),
+                "The shared swipe setting is invalid."
+            );
+            return Ok(false);
+        }
+        SenderPictures => {
+            ensure!(
+                value.is_boolean(),
+                "The shared sender-picture setting is invalid."
+            );
+            return Ok(false);
+        }
         PreviewLines => {
             ensure!(
                 value.as_u64().is_some_and(|v| v <= 4),

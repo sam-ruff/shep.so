@@ -8,6 +8,13 @@ Historical implementation notes belong there, rather than becoming new TODOs.
 
 ## Current source checkpoint
 
+The current continuation adopts the shared `initialization-v1` setup barrier from
+Flutter publication. Desktop creation writes stable start/data/completion records;
+import requires the shared worker to verify completion. Unstarted legacy seeds
+upgrade without changing their metadata/UUIDs; already-admitted legacy records
+remain untouched for recovery. Eight settings now include Tooltips. Verification
+and the source shipping receipt are in the newest completion entry.
+
 `5c0e9f0` is pushed to main and adds `profile_replication_v1`: enrollment now saves the
 last common field values, exact raw extensions and local/shared account mapping.
 Local capture/admission APIs preserve pending UUIDs and per-field bases across
@@ -23,7 +30,8 @@ accounts/mail stay intact. New definitions receive fresh local IDs and require
 after a lost acknowledgment safe; stale reviews and later local choices cannot
 partially apply. The screen explicitly identifies this as an initial import.
 
-Desktop now pins the shared Drive/catalog/history crate at `33d222d7`. Discovery
+Desktop now pins the shared Drive/catalog/history crate at `43cdcf0f`, which
+copies published client `184b98a` and retains the fixed-token loopback harness. Discovery
 retains its progress and change token in a separate owning catalog; enrolled
 histories and local edits remain separate. Read
 [the desktop contract](docs/agents/profile-drive.md) and
@@ -39,12 +47,11 @@ on next launch; they do not hot-swap an engine or replay another device's sends.
 
 ## Next work
 
-1. Review/adopt the newly published shared initialization barrier from client
-   `184b98a` (audit `751b67b`), documented in
-   [Flutter publication](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_PUBLICATION.md).
-   Desktop still pins `33d222d7` and refuses the new required `initialization-v1`
-   records. Migrate first-device creation, enrollment checks and isolated fixtures
-   together; incomplete publication cannot look like a finished shared profile.
+1. Finish explicit recovery/migration for already-admitted legacy profiles;
+   never insert new ancestry into immutable uploaded records. Fresh setups now
+   use the shared initialization barrier and incomplete profiles cannot be imported.
+   Preserve its start/data/end, partial upload/retry, out-of-order, independent
+   device identity, native disabled-review and valid-alternative scenarios.
 2. Add automatic post-login discovery/enrollment prompts, then ongoing local and
    remote profile updates. Support first setup from either desktop or Flutter,
    new devices and already-populated workspaces, with saved enable/category choices.
@@ -69,8 +76,9 @@ on next launch; they do not hot-swap an engine or replay another device's sends.
    participating clients/platforms. Fixture success is not live interoperability.
 
 The sibling `../shep-clients` is an independent active client worktree; preserve
-its changes. Shared catalog harness support was published through an isolated
-`codex/profile-catalog-harness` branch. Consume immutable reviewed revisions;
+its changes. Shared initialization/harness support was published through the isolated
+`codex/profile-initialization-harness` branch. The shared source is copied from
+immutable client `184b98a`; its active uncommitted enrollment work was not used. Consume immutable reviewed revisions;
 do not merge unrelated client changes into desktop. Do not share a Cargo target
 directory between worktrees with different vendored renderer sources.
 

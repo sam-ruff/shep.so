@@ -1125,7 +1125,7 @@ admitted save/upload still drains. Preserve the controller ordering test and
 `invalid-local` native fixture's disabled controls, navigation and graceful restart.
 
 
-Native profile discovery now uses the shared durable catalog pinned at `33d222d7`.
+Native profile discovery uses the shared durable catalog pinned at `43cdcf0f`.
 The extra shared `test-support` feature exposes only an owned loopback transport
 with a fixed fake token; normal releases cannot use it. Keep nested catalog
 observations and directory/hard-link aliases protected during database transfer.
@@ -1168,7 +1168,14 @@ Continuous polling/application and conflict controls remain TODO. Capture/admit
 pending local changes before pulling remote records, and preserve per-field common
 revisions when local edits race remote application. Dirty UI preferences also need
 per-field merging so a later whole-form save cannot erase untouched remote changes.
-The newly published client `184b98a` adds the required `initialization-v1` capability
-and profile setup barrier. Desktop still pins `33d222d7`: review/adopt the immutable
-contract before claiming current Flutter profile interoperability. Preserve active
-sibling work; no shared target directory across differing vendor worktrees.
+Desktop uses client `184b98a`'s `initialization-v1` contract through immutable
+harness distribution `43cdcf0f`. Keep start/data/completion seed operation identities
+and expected revisions durable. Complete setup must be verified by the shared
+worker before import or local-change admission; listing completion is not enough.
+Never rewrite an admitted legacy operation to insert new ancestry. Only an empty
+history with no admitted seed operations may acquire markers while retaining its
+metadata/UUIDs. Previously started/finished legacy setup recovery stays in TODO.
+Preserve incomplete/legacy/out-of-order and native alternative-profile tests.
+Tooltips is the eighth supported portable setting; unsupported touch-only fields
+stay in shared history. Preserve active sibling work; no shared target directory
+across differing vendor worktrees.

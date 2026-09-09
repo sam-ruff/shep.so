@@ -73,10 +73,15 @@ impl Replica {
         &mut self,
         pending: super::state::Pending,
     ) -> anyhow::Result<super::state::Admitted> {
+        anyhow::ensure!(
+            self.state().await?.initialized,
+            "Finish profile setup on its original device before sharing local changes."
+        );
         let current = self.edit(pending.edit()).await?;
         let versions = self.versions(pending.target(), None).await?;
         anyhow::ensure!(
-            !current.removed
+            current.initialized
+                && !current.removed
                 && current.waiting == 0
                 && current.ready == 0
                 && versions.len() == 1

@@ -466,7 +466,8 @@ impl App {
                 if review.profile_count() > 0 {
                     body = body.push(text("Choose a shared profile").size(16).font(BOLD));
                     for profile in review.profiles() {
-                        let usable = !profile.removed
+                        let usable = profile.initialized
+                            && !profile.removed
                             && profile.waiting == 0
                             && profile.conflicts == 0
                             && !profile.name_conflict
@@ -483,6 +484,11 @@ impl App {
                                             counted(profile.accounts, "account"),
                                             counted(profile.settings, "preference")
                                         )
+                                    } else if !profile.initialized
+                                        && !profile.removed
+                                        && profile.conflicts == 0
+                                    {
+                                        "Setup incomplete · finish on the original device".into()
                                     } else {
                                         "Needs review on its original device".into()
                                     })

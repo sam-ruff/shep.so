@@ -178,6 +178,32 @@ impl Store {
         .await
     }
 
+    /// A saved pre-publication review may adopt the barrier only before any
+    /// history admission. Keep its metadata and operation IDs exactly intact.
+    pub(crate) async fn prepare_profile_seed(
+        &self,
+        expected: Snapshot,
+        history_empty: bool,
+    ) -> anyhow::Result<enrollment::Seed> {
+        self.run(move |c| {
+            let tx=c.transaction()?;
+            let value=review_matches(&tx,&expected)?;
+            let selection=value.selection.as_ref().context("Choose a shared profile first.")?;
+            enrollment::check_google(&get(&tx,"preferences")?,selection)?;
+            anyhow::ensure!(value.options.enabled,"Profile sync was turned off.");
+            let mut seed:enrollment::Seed=get::<Option<enrollment::Seed>>(&tx,enrollment::SEED_KEY)?.context("The saved profile setup is missing.")?;
+            if seed.initialization.is_none() {
+                anyhow::ensure!(history_empty && seed.chunks.iter().all(|c|c.expected_revision.is_none()),
+                    "This older profile has already started publication and needs recovery. Its original records and accounts have been kept; no replacement was uploaded.");
+                seed.initialization=Some(enrollment::Initialization::new());
+                seed.validate(selection)?;
+                put(&tx,enrollment::SEED_KEY,&seed)?;
+            } else {seed.validate(selection)?;}
+            tx.commit()?;
+            Ok(seed)
+        }).await
+    }
+
     /// Persist the exact shared-core edit request before submitting it. A retry
     /// must keep the first expected revision as well as its operation ID/bytes.
     pub async fn checkpoint_profile_seed(
@@ -204,9 +230,7 @@ impl Store {
                     .context("The saved profile setup is missing.")?;
             seed.validate(selection)?;
             let chunk = seed
-                .chunks
-                .iter_mut()
-                .find(|c| c.operation == operation)
+                .operation_mut(operation)
                 .context("This setup operation is no longer pending.")?;
             if chunk.expected_revision.is_none() {
                 chunk.expected_revision = Some(revision);

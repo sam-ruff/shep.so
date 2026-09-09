@@ -4,7 +4,7 @@
 
 ## Shared codec
 
-Cargo pins `shep-profile-core` with its Drive/history features to published commit `33d222d7550d8c4bcd000cd31c9eb029886f398a`. It validates the same major-1 operations used by Flutter. The fictional `tests/support/profile-operation.json` is copied unchanged from `bae0d86949a0138b90e71348cef0ab434d022dc6`'s `shared/profile-operation.json`; the HTTP round trip preserves its exact bytes, Unicode and unknown optional fields. Passwords, Google grants and device settings have no representation in this metadata format.
+Cargo pins `shep-profile-core` with its Drive/history features to published commit `43cdcf0f70f7dbff2f80b7828eb7e570d025b09a`. It validates the same major-1 operations used by Flutter. The fictional `tests/support/profile-operation.json` is copied unchanged from `bae0d86949a0138b90e71348cef0ab434d022dc6`'s `shared/profile-operation.json`; the HTTP round trip preserves its exact bytes, Unicode and unknown optional fields. Passwords, Google grants and device settings have no representation in this metadata format.
 
 `Replica` uses the shared causal-history worker for merge, conflicts, tombstones and local edits. It retains the same operation/reservation identity in both history and transport journals. Account application still needs the native account lifecycle and revision checks; decoding or downloading an operation is not permission to apply it.
 
@@ -200,10 +200,29 @@ Old profiles without a trustworthy common basis require recovery review, not an
 assumed snapshot of today's cloud values. Existing unmapped local accounts require
 explicit linking; local-only removal must not publish a shared tombstone.
 
-The newer Flutter publication checkpoint
-[`184b98a`](https://github.com/sam-ruff/shep.so/commit/184b98a) adds a required
-`initialization-v1` barrier; see [client publication](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_PUBLICATION.md).
-Desktop's current `33d222d7` pin does not implement it and refuses those required
-records. Adopt and test that immutable shared contract before claiming current
-first-device interoperability; a complete listing is not proof all setup records
-have been published.
+## Complete setup before import
+
+Desktop now uses the initialization protocol published by Flutter in
+[`184b98a`](https://github.com/sam-ruff/shep.so/commit/184b98a), distributed with the
+owned loopback harness in [`43cdcf0`](https://github.com/sam-ruff/shep.so/commit/43cdcf0f70f7dbff2f80b7828eb7e570d025b09a).
+The shared source and three JSON fixtures were copied from that immutable client
+commit; the active client worktree was not changed.
+
+Setup persists separate start and completion operations around its metadata
+chunks. Their IDs and expected revisions survive restart. Every record requires
+`initialization-v1`. The shared worker verifies a completion descended from the
+start and written by the same originating device, with all required ancestry
+present. Native discovery and import require its initialized state. A finished
+Drive listing, visible name or complete-looking settings page is insufficient.
+
+An older saved seed can acquire these markers automatically only while its
+history is empty and no operation has been admitted. Keep the existing metadata
+and UUIDs. Previously admitted legacy operations cannot be rewritten or assigned
+new ancestry; retain them for explicit recovery. Older completed profiles also
+need a migration/recovery flow before enrolling new devices in this format.
+
+Desktop applies eight shared settings, including Tooltips. Swipe actions, sender
+pictures and preview-line count have no matching native setting yet; their
+validated values stay in history and are neither overwritten nor counted as
+applied preferences. This is format and fixture interoperability; actual
+cross-client Google OAuth/app-data access and continuous updates remain open.

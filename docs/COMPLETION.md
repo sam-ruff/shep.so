@@ -1,5 +1,43 @@
 # Completion audit
 
+## 9 September: shared setup completion before native import
+
+R02/R49/R92 now uses Flutter publication's `initialization-v1` protocol. The pinned
+[`43cdcf0`](https://github.com/sam-ruff/shep.so/commit/43cdcf0f70f7dbff2f80b7828eb7e570d025b09a)
+distribution copies the shared source/fixtures from client `184b98a` and retains
+the owned loopback harness seam. The active client worktree was preserved. The
+independent shared suite passes 53 tests; its Clippy check also passed.
+
+Desktop creation persists a start operation, metadata chunks and completion
+operation with stable IDs/revisions. An interrupted upload retains its receipt
+while later records stay queued. Native discovery/import and local-edit admission
+require the shared worker's initialized state. Complete listings, a visible name
+and populated settings cannot authorize importing a partial setup. Out-of-order
+complete histories import successfully with an independent device identity.
+
+Unstarted legacy seeds can acquire markers without changing metadata or operation
+IDs. Already-admitted legacy records stay untouched for recovery; their ancestry
+is never rewritten. Desktop now applies the portable Tooltips choice, bringing
+supported settings to eight. Validated touch-only settings remain in history.
+
+The targeted profile suite passes 62 tests, including three new boundary/recovery
+regressions and updated multi-record upload contracts. **17 native scenarios pass**:
+11 profile flows, five database imports and tooltip preferences. Two new native
+flows reject unfinished/legacy Home while allowing complete Work. Reviewed WebPs:
+`1f665e379cfa` (incomplete/light), `f99c7cb81fad` (compact dark review) and
+`ab3e7ba843e3` (import/reconnect). Native executable SHA-256:
+`709eff8bba2e270f5cb51152989e8cc4890f8d887226f2cd9a5ce266f8e1c6c4`.
+Python passes 54 tests; Windows GNU all-target/all-feature cross-compilation
+passes. Mandatory hook results and source shipping are recorded after commit.
+
+Automatic login discovery/enrollment, continuous local/remote updates,
+conflict/removal controls, admitted legacy migration and protected credentials
+remain open. These are isolated protocol/native tests, not live Google or actual
+Flutter-to-desktop cloud verification. No personal data, credentials, cloud state
+or production installation changed. Performance stays deferred and quality/release
+CI stays disabled; documentation publishing remains enabled. The full goal and
+OAuth handover priority remain active in TODO.
+
 ## 9 September: durable common values for later profile synchronization
 
 R02/R49/R92 enrollment now saves its original common field values and shared/local

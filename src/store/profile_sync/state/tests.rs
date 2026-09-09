@@ -44,6 +44,18 @@ async fn fixture(path: &std::path::Path) -> (Store, Replica, history::Binding, U
     .await
     .unwrap();
     let initial = Uuid::new_v4();
+    worker
+        .edit(history::LocalEdit {
+            operation: Uuid::new_v4(),
+            expected_revision: 0,
+            changes: vec![Change {
+                action: Action::ProfileSetup { complete: false },
+                extra: Default::default(),
+            }],
+            resolutions: vec![],
+        })
+        .await
+        .unwrap();
     let mut common = appearance("Light");
     common
         .extra
@@ -51,8 +63,20 @@ async fn fixture(path: &std::path::Path) -> (Store, Replica, history::Binding, U
     let state = worker
         .edit(history::LocalEdit {
             operation: initial,
-            expected_revision: 0,
+            expected_revision: worker.state().await.unwrap().revision,
             changes: vec![common.clone()],
+            resolutions: vec![],
+        })
+        .await
+        .unwrap();
+    let state = worker
+        .edit(history::LocalEdit {
+            operation: Uuid::new_v4(),
+            expected_revision: state.revision,
+            changes: vec![Change {
+                action: Action::ProfileSetup { complete: true },
+                extra: Default::default(),
+            }],
             resolutions: vec![],
         })
         .await
@@ -189,7 +213,11 @@ async fn profile_local_edit_cannot_be_silently_reparented_after_a_concurrent_rem
         format: shep_profile_core::FORMAT.into(),
         major: 1,
         minor: 0,
-        requires: vec!["causal-v1".into(), "settings-v1".into()],
+        requires: vec![
+            "causal-v1".into(),
+            "settings-v1".into(),
+            "initialization-v1".into(),
+        ],
         namespace: binding.namespace.clone(),
         profile: binding.profile,
         generation: binding.generation,
@@ -245,7 +273,11 @@ async fn profile_replayed_edit_cannot_acknowledge_an_unseen_remote_successor_or_
             format: shep_profile_core::FORMAT.into(),
             major: 1,
             minor: 0,
-            requires: vec!["causal-v1".into(), "settings-v1".into()],
+            requires: vec![
+                "causal-v1".into(),
+                "settings-v1".into(),
+                "initialization-v1".into(),
+            ],
             namespace: binding.namespace.clone(),
             profile: binding.profile,
             generation: binding.generation,

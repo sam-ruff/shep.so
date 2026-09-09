@@ -637,3 +637,13 @@ is near x=1065,y=520 in filtered Your accounts. At 900×640 the Review buttons
 are near x=802. Capture and review light/dark WebPs after changing form copy or
 geometry. Preserve the first-device/held-read/upload-close scenarios alongside
 these tests. A completed initial import is not ongoing or live Google sync.
+
+Shared-profile fixtures now publish the causal `initialization-v1` start/data/end
+records used by Flutter. `existing-incomplete` omits Home's completion marker;
+`existing-legacy` provides its older marker-free record. Work stays complete in
+both modes. Preserve the two native initialization scenarios: observe
+`profile_sync.profiles.N.initialized`, click the disabled Home review control,
+verify local accounts/settings remain intact, then review/import Work normally.
+Home in the normal existing fixture also imports the portable tooltip preference.
+Creation/restart tests read the owned SQLite checkpoint after graceful close.
+Partial first uploads must retain their receipt and leave later records queued.
