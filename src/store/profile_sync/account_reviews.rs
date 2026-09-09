@@ -62,6 +62,67 @@ impl Store {
         .await
     }
 
+    /// Suppression is local and durable: keep the account, mail and credential
+    /// identity intact without republishing the remotely removed account.
+    pub(crate) async fn keep_removed_profile_account(&self, review: Review) -> anyhow::Result<()> {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            let (enrollment, selection) = state::selected(&tx)?;
+            let mut current = state::read(&tx, &selection.binding)?;
+            let prefs: Preferences = get(&tx, "preferences")?;
+            let accounts: Vec<Account> = get(&tx, "accounts")?;
+            let basis = &review.basis;
+            let target = account_reviews::target(basis.shared);
+            let native = state::native_revisions(&tx, &current)?;
+            let pending = current
+                .pending
+                .iter()
+                .chain(current.deferred.values())
+                .find(|p| p.target() == target)
+                .map(|p| p.operation);
+            anyhow::ensure!(
+                review.removed()
+                    && selection.binding == basis.binding
+                    && enrollment.revision == basis.enrollment_revision
+                    && enrollment.options.enabled
+                    && enrollment.options.accounts
+                    && prefs.google_lifecycle.revision == basis.google_revision,
+                "Profile sync choices changed. Refresh this removal review."
+            );
+            anyhow::ensure!(
+                review.revision >= current.revision
+                    && get::<u64>(&tx, "connections_revision")? == basis.connections_revision
+                    && current.accounts.get(&basis.local.id) == Some(&basis.shared)
+                    && !current.suppressed.contains(&basis.shared)
+                    && accounts.iter().any(|account| account == &basis.local)
+                    && native.get(&target).copied().unwrap_or_default() == basis.native_revision
+                    && pending == basis.pending,
+                "The local account changed. Refresh this removal review to keep your newer choices."
+            );
+            connections::allow(&tx, ConnectionKind::Account, &basis.local.id)?;
+            let name = history::target(&Action::AccountName {
+                id: basis.shared,
+                name: String::new(),
+            });
+            if current
+                .pending
+                .as_ref()
+                .is_some_and(|p| p.target() == target || p.target() == name)
+            {
+                current.pending = None;
+            }
+            current.deferred.remove(&target);
+            current.deferred.remove(&name);
+            current.suppressed.insert(basis.shared);
+            current.revision = current.revision.max(review.revision);
+            current.validate()?;
+            put(&tx, replication::STORAGE_KEY, &current)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+
     pub(crate) async fn reserve_profile_account_review(
         &self,
         review: Review,
