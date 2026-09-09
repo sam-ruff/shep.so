@@ -1284,3 +1284,16 @@ including when no iced window is open. Preserve held-delivery, zero/large-count,
 Linux private-bus and saved native badge regressions. `scripts/check_badge_adapters.py`
 checks exact platform adapter source separately from full-app compilation and OS
 execution; do not report it as Windows/macOS desktop verification.
+
+
+The raw Linux entry point is `scripts/install-release-linux.sh`; it fetches the
+standard-library helper `scripts/install_release.py`, resolves a published native
+asset, verifies `SHA256SUMS`, validates/extracts into private staging, then invokes
+the archive's existing Linux installer. It defaults to the current user and offers
+an interactive scope/cancel choice; sudo runs only for an explicitly chosen
+all-user installation after the archive is ready. Never enable release CI, publish
+an asset or install onto a developer's account merely to validate this script.
+`tests/test_release_installer.py` uses an owned loopback release server, fictional
+binaries, temporary prefixes/menu entries, staged failure/cancellation and a fake
+bootstrap curl. Missing release/platform assets must remain explicit; a working
+fixture does not prove a binary is publicly available.
