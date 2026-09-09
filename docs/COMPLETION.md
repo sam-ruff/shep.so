@@ -1,5 +1,44 @@
 # Completion audit
 
+
+## Windows/macOS unread badges — integration checkpoint
+
+The existing default-on unread preference and aggregate optimistic Inbox count
+now feed all three native adapters. Windows prepares a transparent red count
+image on its independent watch worker, displays 99+ above 99, and keeps the exact
+count in the accessible description. Its HWND-owned subclass reapplies the current
+image after taskbar recreation and releases its resources with the window;
+tray reopening uses the newest retained frame. macOS uses the system Dock badge
+label on AppKit's main queue, including when the window is hidden. It waits for
+one native acknowledgment before admitting another and retains only the latest
+pending count. Zero or disabling the preference clears the badge.
+
+The platform contracts follow [Microsoft's overlay API](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-itaskbarlist3-setoverlayicon)
+and [Apple's Dock badge property](https://developer.apple.com/documentation/appkit/nsdocktile/badgelabel).
+Windows overlays require large taskbar icons. Five targeted Rust tests pass,
+including held native delivery, an occupied output bridge, zero/large-count
+raster validation and unchanged Linux bus/reconnect regressions. Prepared 32px
+WebPs for 1, 10 and 99+ were reviewed under `artifacts/e2e/taskbar-raster`;
+these images are not screenshots of Windows. Full Windows GNU all-target/all-feature
+checking, Windows Clippy with warnings denied, and exact macOS adapter checking
+pass. The Windows check also caught an existing cfg-dependent unused index in a
+profile path-protection test; separating its Unix alias loop preserves that test
+coverage on both targets. The reproducible adapter check is
+`scripts/check_badge_adapters.py`.
+
+All 11 selected native badge/tray scenarios pass, and all 59 Python tests pass.
+Reviewed current native WebPs include `a21f7f3fe231/badge-preference-compact-dark.webp`
+and `de3ee2be6d28/badge-failed-archive.webp`. The native binary SHA-256 is
+`408b7732dca0ff00e62e4651fcf53045b82332cca978a7fb5071422d35a7fc0e`.
+The first badge run exposed the existing fixture's AF_UNIX path limit in a long
+worktree, before application actions; an owned short alias and actual private-bus
+cleanup regression now cover it. Native Linux badge behavior is unchanged.
+Strict documentation and mandatory hook results are recorded during integration. Actual Windows/macOS rendering, Explorer restart, hidden AppKit delivery,
+full macOS app checking, production installation and root integration/shipping
+remain separate unfinished work. Linux adapter behavior is unchanged. R70 stays
+in TODO for platform/runtime and remaining ambiguous-provider/restart count work.
+
+
 ## Native tray and window lifecycle — integration checkpoint
 
 Preferences → System tray controls close-to-tray, off by default, with an
@@ -62,6 +101,17 @@ initial correction. Explicit hidden-window state and pre-event close ownership
 now distinguish ordinary hide, startup, and a pending Quit; an obsolete attachment
 failure cannot cancel a newer required save. The failing hooks were retained and
 corrected, without bypassing them. Final verification/shipping remains pending.
+
+The corrected ordinary-hide follow-up is pushed as
+[`b8eafde`](https://github.com/sam-ruff/shep.so/commit/b8eafde), with exact remote
+equality verified. All12 tray/controller tests and748 hook executions pass
+(three personal diagnostics ignored), as do all16 selected native scenarios in
+78.974 seconds and strict Zensical. The new native scenario covers both ordinary
+hide and subsequent actual tray-menu Quit. Root reviewed the retained reply and
+visible error in `df09111f194d/tray-ordinary-hide-write-failure.webp`.
+Native SHA-256: `811d628d18dc80f74f7e83ac991f7bc92f749e3388a022c8999d914c01f1b5dc`.
+Logs use `artifacts/logs/tray-ordinary-hide-final-*`. Remaining actual platform
+execution and personal-server diagnosis stay active; this is a source update.
 
 ## 9 September: adjacent selection after deleting mail
 

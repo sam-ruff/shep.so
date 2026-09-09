@@ -1273,3 +1273,14 @@ operation-owned cancellation state before reopening: a stale attachment/discard
 result cannot cancel a newer close dependency. Queue-rejected draft saves keep
 the visible window. Preserve `test_tray_native_ordinary_hide_reopens_when_pending_send_fails`
 and its actual tray-menu Quit variant alongside the typed-result regressions.
+
+Windows badge images are prepared on the existing count watch worker; iced's
+native window callback only owns the HWND overlay and its recovery subclass.
+`TaskbarButtonCreated` reapplies the latest prepared frame after Explorer restart;
+`WM_NCDESTROY` releases the subclass owner. Reopening from tray reapplies the current
+count. macOS Dock labels use one acknowledged main-queue operation at a time,
+with a capacity-one watch signal retaining the latest count while AppKit is busy,
+including when no iced window is open. Preserve held-delivery, zero/large-count,
+Linux private-bus and saved native badge regressions. `scripts/check_badge_adapters.py`
+checks exact platform adapter source separately from full-app compilation and OS
+execution; do not report it as Windows/macOS desktop verification.

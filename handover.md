@@ -29,9 +29,10 @@ credential protection still remain. Do not discard any lane's uncommitted work.
 `6728931` is pushed: native tray, temporary-saving notification/auto-exit and
 failure recovery pass745 integrated hook executions and32 native scenarios.
 Linux menus/compact settings were reviewed; Windows GNU and exact macOS adapter
-checks do not establish actual platform runtime. Root reproduced a remaining
-ordinary-hide pending-send failure and is fixing visibility; keep R86 active.
-The tray agent is now implementing Windows/macOS unread badge adapters.
+checks do not establish actual platform runtime. Ordinary-hide pending-send failure recovery is pushed in b8eafde, with748 hook
+executions and16 native scenarios passing. Keep R86 active for actual platform
+verification. Badge adapter checkpoint66222f6 is being integrated; the tray
+agent has moved to direct-download installers.
 
 `91ed9a9` is pushed: deletion follows the next displayed message without resetting
 scroll, including page boundaries and previous/empty fallback. Combined testing

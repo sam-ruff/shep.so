@@ -19,6 +19,7 @@ import signal
 import subprocess
 import sys
 import time
+import tempfile
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,6 +92,7 @@ class Desktop:
         self.browser_log = None
         self.tray_fixture = None
         self.badge_bus = None
+        self.badge_alias = None
         self.badge_monitor = None
         self.badge_log = None
         self.badge_events = None
@@ -139,6 +141,9 @@ class Desktop:
         self.launch_args = None
         self.clipboard = None
         self.badge_bus = self.badge_monitor = None
+        if self.badge_alias:
+            self.badge_alias.cleanup()
+            self.badge_alias = None
         for stream in (self.badge_log, self.badge_events):
             if stream:
                 stream.close()
@@ -370,7 +375,14 @@ class Desktop:
         for tool in ("dbus-daemon", "busctl"):
             if not shutil.which(tool):
                 raise RuntimeError(f"Install {tool} for isolated desktop badge tests.")
-        address = f"unix:path={self.directory}/badge-bus"
+        socket_directory = self.directory
+        if len(os.fsencode(str(socket_directory / "badge-bus"))) >= 100:
+            # Long worktree paths exceed AF_UNIX's limit; keep all files under
+            # the owned artifact directory through a short, cleaned-up alias.
+            self.badge_alias = tempfile.TemporaryDirectory(prefix="shep-badge-")
+            socket_directory = Path(self.badge_alias.name) / "owned"
+            socket_directory.symlink_to(self.directory, target_is_directory=True)
+        address = f"unix:path={socket_directory}/badge-bus"
         self.env["DBUS_SESSION_BUS_ADDRESS"] = address
         runtime = self.directory / "runtime"
         runtime.mkdir(mode=0o700, exist_ok=True)

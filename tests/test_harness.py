@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -353,6 +354,29 @@ class HarnessTests(unittest.TestCase):
                 bus, monitor = desktop.badge_bus, desktop.badge_monitor
             finally:
                 desktop.stop()
+            self.assertIsNotNone(bus.poll())
+            self.assertIsNotNone(monitor.poll())
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux launcher protocol")
+    def test_badge_bus_long_worktree_path_uses_owned_alias_and_cleans_up(self):
+        desktop = harness.Desktop()
+        with tempfile.TemporaryDirectory() as directory:
+            desktop.directory = Path(directory) / ("worktree-" + "x" * 100)
+            desktop.directory.mkdir()
+            try:
+                desktop.start_badge_bus()
+                address = desktop.env["DBUS_SESSION_BUS_ADDRESS"]
+                socket = Path(address.removeprefix("unix:path="))
+                self.assertLess(len(os.fsencode(str(socket))), 100)
+                self.assertEqual(socket.resolve(), desktop.directory / "badge-bus")
+                activatable = json.loads(desktop.command("busctl", f"--address={address}", "--json=short", "call",
+                    "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListActivatableNames"))
+                self.assertEqual(activatable["data"], [["org.freedesktop.DBus"]])
+                alias = Path(desktop.badge_alias.name)
+                bus, monitor = desktop.badge_bus, desktop.badge_monitor
+            finally:
+                desktop.stop()
+            self.assertFalse(alias.exists())
             self.assertIsNotNone(bus.poll())
             self.assertIsNotNone(monitor.poll())
 

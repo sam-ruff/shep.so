@@ -69,11 +69,20 @@ zbus = { version = "5.19", default-features = false, features = ["tokio"] }
 tray-icon = "=0.24.2"
 notify-rust = { version = "=4.17.0", default-features = false }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.4"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSApplication", "NSDockTile", "NSResponder"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["NSString"] }
+dispatch2 = "=0.3.1"
+
 [target.'cfg(target_os = "windows")'.dependencies]
+ab_glyph = "=0.2.32"
+windows = { version = "=0.62.2", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_Com"] }
 winreg = "0.55"
 same-file = "1"
 
 [dev-dependencies]
+ab_glyph = "=0.2.32"
 shep-profile-core = { git = "https://github.com/sam-ruff/shep.so", rev = "43cdcf0f70f7dbff2f80b7828eb7e570d025b09a", features = ["test-support"] }
 litehtml-sys = { version = "=0.2.5", features = ["shep-test-support"] }
 tokio = { version = "1", features = ["test-util"] }

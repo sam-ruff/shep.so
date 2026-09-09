@@ -714,3 +714,14 @@ It covers both ordinary hidden saving and selecting Quit from the actual tray
 menu while the send is pending. Both failures must reopen the intact reply with
 its error and cancel exit. Keep old-result ownership and read-only-background
 checks; the previously saved error is not a new recovery event.
+
+For unread platform adapters, preserve the four `test_desktop_badge_*` native
+scenarios and tray background/reopen flows. These exercise real Linux launcher
+protocol messages on the private fixture bus, not Windows/macOS rendering.
+`cargo test --all-features desktop_badge` also holds native acknowledgments and
+output capacity open while replacing unread counts. To review the Windows raster,
+set `SHEP_BADGE_EVIDENCE=artifacts/e2e/taskbar-raster` for that Cargo test; it writes
+WebP evidence for single/double digits and 99+. This is prepared-image evidence.
+Run full Windows checking and `python3 scripts/check_badge_adapters.py` for exact
+macOS API checks; actual desktop badge rendering, Explorer restart and AppKit
+hidden-window delivery must still be executed on their operating systems.

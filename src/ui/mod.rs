@@ -305,6 +305,8 @@ pub struct App {
     action_toasts: action_toasts::ActionToasts,
     printing: printing::State,
     desktop_badge: Option<tokio::sync::watch::Sender<u64>>,
+    #[cfg(target_os = "windows")]
+    desktop_overlay: Option<Arc<crate::desktop_badge::overlay::Frame>>,
     notifications: notifications::State,
     context_menu: Option<context_menu::Menu>,
     pending_mail_action: Option<(String, context_menu::MailAction)>,
@@ -455,6 +457,8 @@ impl App {
                 action_toasts: Default::default(),
                 printing: Default::default(),
                 desktop_badge: None,
+                #[cfg(target_os = "windows")]
+                desktop_overlay: None,
                 notifications: Default::default(),
                 context_menu: None,
                 pending_mail_action: None,
@@ -955,6 +959,13 @@ impl App {
             Message::DesktopBadge(crate::desktop_badge::Event::Ready(sender)) => {
                 self.desktop_badge = Some(sender);
             }
+            #[cfg(target_os = "windows")]
+            Message::DesktopBadge(crate::desktop_badge::Event::Overlay(frame)) => {
+                self.desktop_overlay = Some(frame);
+                return self.apply_desktop_overlay();
+            }
+            #[cfg(all(test, not(target_os = "windows")))]
+            Message::DesktopBadge(crate::desktop_badge::Event::Overlay(_)) => {}
             Message::Tray(event) => return self.tray_event(event),
             Message::MainWindowOpened(window) => return self.main_window_opened(window),
             Message::WindowCloseRequested(window) => return self.request_main_close(window),
