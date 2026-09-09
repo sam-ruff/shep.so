@@ -5,6 +5,7 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 cargo test -p shep-html-pixbuf
+cargo test -p shep-profile-core
 python3 -m unittest discover -s tests -p 'test_*.py'
 cargo bench --bench responsiveness
 if [[ "${SHEP_SKIP_E2E:-0}" != "1" ]]; then

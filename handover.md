@@ -2,6 +2,22 @@
 
 The user stopped feature work to conserve credits and requested this handover, a cleaned TODO and a push. **The full application goal is not complete.** Resume from [TODO.md](TODO.md), preserving the original requirements in [docs/REQUEST_AUDIT.md](docs/REQUEST_AUDIT.md). Read [AGENTS.md](AGENTS.md) for operational rules and [docs/COMPLETION.md](docs/COMPLETION.md) for evidence; do not repeat historical work based only on the latest chat message.
 
+## 9 September continuation: shared profile transport
+
+The latest backend checkpoint adds verified Drive profile discovery and immutable
+uploads using a published shared-codec revision. A separate bounded channel
+worker keeps page tokens, revisions and reserved bytes durable across restart.
+Read [the transport contract](docs/agents/profile-drive.md) and the newest
+completion entry for verification/shipping. No production installation changed.
+
+OAuth/profile sync remains first in TODO, referencing the
+[Flutter handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md).
+Next connect the published shared causal-history worker to enrollment and account/
+settings application, then polling and native controls. Keep current sibling
+client work untouched. Transport tests do not prove complete sync or live Google
+interoperability. Protect the eventual production journal paths during database
+transfer. The credential-transfer protection question remains unanswered.
+
 ## 9 September continuation: full database import and local profiles
 
 R83 now has native **Database transfer → Import database** with a private schema/

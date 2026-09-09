@@ -64,3 +64,4 @@ pub async fn write_secret(id: &str, secret: SecretString) -> anyhow::Result<()> 
         .write(id, secret)
         .await
 }
+pub(crate) mod drive_http;

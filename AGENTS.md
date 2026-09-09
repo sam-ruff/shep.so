@@ -44,6 +44,7 @@ bash scripts/install-hooks.sh              # install repository Git hooks
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
+cargo test -p shep-profile-core             # shared Rust/Flutter metadata codec
 cargo test -p shep-html-pixbuf             # dependency cache regressions
 python3 -m unittest discover -s tests -p 'test_*.py'
 cargo bench --bench responsiveness
@@ -1026,3 +1027,35 @@ selects a canonical local profile UUID alongside the required authorized
 OAuth cross-client profile implementation remains the top TODO priority. Use the
 [Flutter handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md)
 and shared format; do not present local database transfer as continuous sync.
+
+## Continuous profile transport
+
+`profile_sync` uses the pinned shared `shep-profile-core` codec; keep the exact
+operation bytes and optional fields. `providers/drive_http.rs` supplies bounded
+HTTP decoding to profiles and backups. Profile files use their own stable
+category, names and custom properties in appDataFolder; never select them with
+backup retention or serialize local Preferences/credentials wholesale. The wire
+contract and live limitations are in `docs/agents/profile-drive.md`.
+
+The profile transport journal owns a separate 32-command SQLite worker. Reserve
+the remote ID and commit exact bytes before obtaining a `DurableUpload`; a retry
+cannot replace its reservation. Verify the actual server checksum, or fetch the
+content when omitted. A lost/conflicting reply and a failed local acknowledgment
+must retain the same pending operation. Never turn file-name equality into proof
+of an immutable upload. Profile transport has no overwrite/delete operation.
+
+Persist discovery tokens/record IDs and revisions. Empty pages with another token
+remain incomplete; reject loops, duplicate identities and stale or foreign pages
+atomically. Only a completed scan exposes metadata pages for application, at most
+50 at a time; no whole-history collection/page ceiling. Scan replacement must
+preserve uploads and merge history. Keep the protocol/journal/scan regressions
+and existing Drive backup tests. Run JSON/hash/SQL/network work only in backend
+workers. Enrollment, merge, category toggles and native controls must still be
+implemented and tested before claiming continuous profile sync.
+
+The pre-commit hook, full check script and disabled quality workflow also run
+`cargo test -p shep-profile-core`. Keep the immutable Git revision in Cargo.lock
+and its fixture provenance explicit when adopting newer client history/codec
+work; never use a sibling worktree path as a shipped dependency. When the
+production enrollment chooses a Drive-journal path, protect it in database
+export/import guards alongside the other active provider journals.

@@ -15,6 +15,7 @@ pub mod model;
 pub mod notifications;
 pub mod outgoing;
 pub mod printing;
+pub mod profile_sync;
 pub mod profiles;
 pub mod providers;
 pub mod remote_images;

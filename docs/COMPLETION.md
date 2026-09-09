@@ -1,5 +1,40 @@
 # Completion audit
 
+## 9 September: Drive profile transport and durable discovery
+
+R02/R49/R92 now have a backend transport for the shared Rust/Flutter operation
+format. Cargo pins the published client codec; exact JSON bytes and optional
+fields survive download/upload. The connection checks the actual Drive identity
+and granted scope. Profile files have a separate stable app-data category and
+bounded metadata/content parsing; backup retention cannot select them.
+
+A separate bounded SQLite worker persists discovery tokens, revisions, record
+identities and exact reserved uploads. Discovery survives restart, rejects loops,
+duplicates and stale/foreign pages atomically, and exposes only completed scans
+in pages of 50. There is no total history page cap. Upload retries verify the same
+reserved ID after lost/conflicting responses, including content verification when
+Google omits its checksum. A previously acknowledged file that disappears is not
+silently recreated. Accepted journal writes survive observer cancellation.
+
+Verification uses the production HTTP implementation against a scripted loopback
+server and isolated SQLite files. The shared fixture round trip, scope/identity
+checks, malformed/oversized replies, interrupted upload/reopen, immutable
+reservations, discovery restart and cancellation regressions pass. Existing Drive
+backup protocol tests also pass after extracting the common bounded HTTP reader.
+Final hooks and shipping are recorded below when complete. Earlier checks passed
+51 Python tests, Windows GNU compilation and strict Zensical. No native UI changed;
+no new native flow, live Google connection, performance measurement or production
+installation is claimed.
+
+**Continuous sync is still open and remains the top TODO priority**, with the
+[Flutter handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md)
+as the implementation reference. The shared causal-history worker, enrollment,
+account/settings application, incremental polling, native controls, production
+journal path protection and actual cross-client Google verification remain.
+Passwords are outside this metadata format; the credential-protection choice is
+still unanswered. See [the transport contract](agents/profile-drive.md). Evidence:
+ignored `artifacts/logs/profile-sync-*`. Quality/release workflows stay disabled.
+
 ## 9 September: complete database import and local profiles
 
 R83 adds **Backups → Database transfer → Import database** and **Accounts → Profiles**. A private staged copy is checked against supported v2/v3 schema, SQLite integrity/foreign keys and portable connection identities before account/count review. Confirmation consumes that exact copy, archives changed pending-operation metadata and publishes without overwriting the original workspace. Imports retain cached MIME/attachments, drafts, account/calendar definitions, cached events and portable settings. Pending sends, Sent uploads and bulk/folder changes become explicit review work; imported credential cleanup cannot delete local secrets. Notification setup stays quiet, and Google/automatic-backup state requires new-device setup.
