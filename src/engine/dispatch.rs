@@ -10,6 +10,11 @@ impl Default for Slots {
     }
 }
 impl Slots {
+    pub(super) fn try_acquire(
+        &self,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, tokio::sync::TryAcquireError> {
+        self.0.clone().try_acquire_owned()
+    }
     pub(super) async fn acquire(&self) -> tokio::sync::OwnedSemaphorePermit {
         self.0
             .clone()

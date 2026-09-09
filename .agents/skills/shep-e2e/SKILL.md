@@ -257,3 +257,14 @@ retain the current page; row positions and page cursors are observations, not
 interchangeable zero-based indexes. Review connection details, deselected imports,
 reconnect counts and light/dark/compact captures. Switching Preferences categories
 can retain scroll position: scroll General to its top before choosing appearance.
+
+
+For ongoing desktop profiles, `desktop.start(profile_sync=true,
+google_permissions="drive")` uses an isolated remote appearance change after
+reviewed enrollment. The saved `test_desktop_profile_sync_background_and_controls`
+searches Mail during that change, toggles per-field/master sync, preserves a
+paused local edit and retries an acknowledged upload with a lost reply. Observe
+`profiles.sync` and the projected `sync_master`/`sync_fields`; they never act on
+the app. Unknown upload counts are distinct from zero. Keep the publication
+scenario's seven-preference setup and compact controls. Review the saved WebP
+captures; these fixtures do not authenticate to Google or use personal profiles.

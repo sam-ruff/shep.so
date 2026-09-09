@@ -1534,6 +1534,56 @@ class NativeFlows(unittest.TestCase):
                        check("profiles.pending",False), check("profiles.error",None), check("account_count",75),
                        check("reconnect_required_count",0), shot("publication-pages-cancelled-light"))
 
+    def test_desktop_profile_sync_background_and_controls(self):
+        result = self.mcp.call("desktop.start", google_permissions="drive", profile_sync=True)
+        print(f"Ongoing profile evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(956,156), check("settings_tab", "Profiles"), check("profiles.loaded",True),
+                       wait(150), click(600,390), type_text("so.shep.fixture"), click(342,441),
+                       check("profiles.error",None,"ne"), check("profiles.pending",False),
+                       click(344,601), check("profiles.discovery.state.phase","complete"),
+                       check("profiles.pending",False), wait(150), click(500,534),
+                       check("profiles.discovery.enrollment.review.phase","review"),
+                       check("profiles.pending",False), wait(150), click(351,543),
+                       check("profiles.discovery.enrollment.review.phase","complete"),
+                       check("profiles.pending",False), check("dark",True), wait(150),
+                       shot("sync-enrollment-complete"), click(366,479),
+                       check("profiles.sync_visible",True), check("profiles.sync.subscription.enabled",False),
+                       check("profiles.pending",False), check("profiles.sync_error",None),
+                       check("profiles.sync.subscription.pending",0), wait(150), shot("sync-paused-dark"),
+                       click(288,413), check("profiles.sync.subscription.enabled",True),
+                       check("profiles.sync.phase","Checking shared changes"), key("ctrl+1"), check("tab","Mail"),
+                       key("ctrl+k"), check("focused_input","search"), type_text("prototype"), check("query","prototype"), check("total",1),
+                       check("dark",False), check("saved_appearance","Light"), check("query","prototype"),
+                       check("profiles.sync.subscription.last_synced",None,"ne"),
+                       check("profiles.sync.subscription.error",None), wait(150), shot("sync-remote-applied-mail-light"),
+                       key("Escape"), key("ctrl+comma"), check("tab","Preferences"),
+                       click(956,156), check("settings_tab","Profiles"), wait(150), shot("sync-received-light"))
+        self.mcp.batch(click(288,566), check("profiles.sync.fields.0.enabled",False), check("profiles.pending",False),
+                       click(292,156), check("settings_tab","General"), wait(150), click(690,366),
+                       check("dark",True), check("preferences_saved",True), click(956,156), check("settings_tab","Profiles"),
+                       wait(150), click(372,640), check("profiles.sync.phase","Checking shared changes"),
+                       check("profiles.sync.phase","Last check finished"), check("profiles.sync.fields.0.local","Dark"),
+                       check("profiles.sync.fields.0.shared.value","Light"), check("profiles.sync.fields.0.pending",True),
+                       check("profiles.sync.queued",0), check("profiles.sync.subscription.error",None), shot("sync-field-paused-local-dark"))
+        self.mcp.batch(click(288,413), check("profiles.sync.subscription.enabled",False), check("profiles.pending",False),
+                       wait(80), click(288,566), check("profiles.sync.fields.0.enabled",True), check("profiles.pending",False),
+                       wait(80), click(288,413), check("profiles.sync.subscription.enabled",True),
+                       check("profiles.sync.subscription.error",None,"ne"), check("profiles.sync.queued",1), shot("sync-lost-upload-receipt-dark"),
+                       click(372,640), check("profiles.sync.phase","Checking shared changes"),
+                       check("profiles.sync.phase","Last check finished"), check("profiles.sync.subscription.error",None),
+                       check("profiles.sync.queued",0), check("profiles.sync.fields.0.shared.value","Dark"),
+                       check("profiles.sync.fields.0.pending",False), check("dark",True), shot("sync-recovered-dark"),
+                       click(288,413), check("profiles.sync.subscription.enabled",False), check("profiles.pending",False),
+                       {"type":"resize","width":900,"height":640}, check("window_size",[900,640]),
+                       wait(150), shot("sync-paused-compact-dark"),
+                       {"type":"hover","x":750,"y":550}, {"type":"scroll","amount":20},
+                       wait(150), shot("sync-paused-compact-footer-dark"), click(266,449),
+                       check("profiles.sync.fields.0.enabled",False), check("profiles.pending",False),
+                       check("profiles.sync.subscription.enabled",False), wait(80), click(266,449),
+                       check("profiles.sync.fields.0.enabled",True), check("profiles.pending",False),
+                       shot("sync-paused-compact-field-restored"))
+
     def test_desktop_profile_enrollment_review_apply_reconnect(self):
         result = self.mcp.call("desktop.start", google_permissions="drive", profile_discovery=True)
         print(f"Desktop enrollment evidence: {result['artifacts']}", flush=True)
@@ -1642,7 +1692,22 @@ class NativeFlows(unittest.TestCase):
                        click(350,493), check("profiles.discovery.publication.review.phase","complete"),
                        check("profiles.pending",False), check("profiles.error",None),
                        check("profiles.discovery.publication.review.uploaded",5),
-                       check("profiles.discovery.state.profiles",3), wait(150), shot("publication-complete-light"),
+                       check("profiles.discovery.state.profiles",3), wait(150), shot("publication-complete-light"))
+        self.mcp.batch(click(368,494), check("profiles.sync_visible",True),
+                       check("profiles.sync.subscription.enabled",False), check("profiles.pending",False),
+                       check("profiles.sync_error",None), check("profiles.sync.subscription.pending",0),
+                       check("profiles.sync.fields.0.key","appearance"), check("profiles.sync.fields.6.key","unified_inbox"),
+                       wait(150), shot("sync-publication-choices-light"), click(288,566),
+                       check("profiles.sync.fields.0.enabled",False), check("profiles.pending",False))
+        self.assertEqual(len(self.mcp.call("desktop.state")["profiles"]["sync"]["fields"]),7)
+        self.profiles_scroll_end()
+        self.mcp.batch(shot("sync-publication-fields-footer-light"),
+                       {"type":"resize","width":900,"height":640}, check("window_size",[900,640]))
+        self.profiles_scroll_end()
+        self.mcp.batch(shot("sync-publication-fields-compact-light"),
+                       {"type":"resize","width":1440,"height":920}, check("window_size",[1440,920]))
+        self.profiles_scroll_end(False)
+        self.mcp.batch(click(311,333), check("profiles.sync_visible",False), wait(150),
                        click(335,333), check("profiles.publication_visible",False), wait(150),
                        click(741,441), check("profiles.discovery.state",None), wait(100),
                        click(342,441), check("profiles.discovery.state.phase","complete"), check("profiles.pending",False),

@@ -5,8 +5,8 @@ account/settings operations and merges their causal history. It is a foundation
 for [continuous profiles](PROFILE_SYNC_HANDOVER.md). The optional [Drive transport](PROFILE_DRIVE.md) now verifies provider identity
 and immutable files against this journal. A separate [discovery catalog](PROFILE_DISCOVERY.md)
 now retains remote scan progress. Flutter discovery and [initialized publication](PROFILE_PUBLICATION.md)
-are connected; desktop/browser integration, enrollment, category switches and real
-account/preferences application remain unfinished. The browser currently shares the codec, not this SQLite journal.
+and reviewed desktop/mobile enrollment are connected. Complete categories,
+browser application and cross-client continuous sync remain unfinished. The browser currently shares the codec, not this SQLite journal.
 
 ## Ownership and bounds
 
@@ -65,6 +65,14 @@ reserved identity/digest, but does not perform HTTP or prove Google committed it
 Transport must verify that exact owned immutable file before calling
 it. Discovery checkpoints and acknowledged local application need separate
 durable state; the journal's derived fields do not update mail accounts/settings.
+
+`ExportAcknowledgedRecord { expected_revision, after }` returns one exact
+original imported or confirmed-local operation, excluding unsent local records.
+A partial covering index bounds this traversal. Import alone does not authenticate
+an original: reconciliation additionally checks every returned record against the
+completed provider inventory. Reopening an ongoing-sync owner restarts that
+verification; normal cycles verify newly acknowledged records. Losing only the
+catalog metadata cannot reuse proof from a surviving observation history.
 
 ## Flutter integration and evidence
 

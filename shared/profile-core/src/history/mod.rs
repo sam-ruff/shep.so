@@ -140,6 +140,11 @@ pub enum Command {
         expected_revision: u64,
         after: u64,
     },
+    /// Imported originals and acknowledged local writes; excludes unsent edits.
+    ExportAcknowledgedRecord {
+        expected_revision: u64,
+        after: u64,
+    },
     NextUpload,
     Reserve {
         operation: Uuid,
@@ -273,6 +278,12 @@ impl Journal {
                 after,
             } => self
                 .export_record(expected_revision, after)
+                .map(Reply::Record),
+            Command::ExportAcknowledgedRecord {
+                expected_revision,
+                after,
+            } => self
+                .export_acknowledged_record(expected_revision, after)
                 .map(Reply::Record),
             Command::NextUpload => self.next_upload().map(Reply::Upload),
             Command::Reserve { operation, file_id } => {

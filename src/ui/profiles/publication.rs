@@ -408,7 +408,11 @@ impl App {
                     );
                 }
             } else if review.phase == PublicationPhase::Complete {
-                body = body.push(control("Create another profile", Message::New, !busy));
+                body = body
+                    .push(self.sync_prepare_button(
+                        crate::profiles::sync::control::Source::Publication(review.id),
+                    ))
+                    .push(control("Create another profile", Message::New, !busy));
             }
             if let Some(error) = p.error.as_ref().or(review.error.as_ref()) {
                 body = body.push(text(error).size(12));

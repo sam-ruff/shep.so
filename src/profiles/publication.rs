@@ -52,6 +52,8 @@ pub struct Review {
     pub accounts: u64,
     pub prepared: u64,
     pub settings: BTreeMap<SettingKey, Value>,
+    #[serde(default)]
+    pub preference_revisions: BTreeMap<SettingKey, u64>,
     pub total: u64,
     pub staged: u64,
     pub uploaded: u64,

@@ -8,13 +8,9 @@ use crate::{
     },
 };
 use shep_profile_core::{Action, drive::catalog::Phase as CatalogPhase, history::LocalEdit};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-    time::Duration,
-};
+use std::{collections::BTreeSet, path::Path, time::Duration};
 
-async fn enrolled(root: &Path, drive: &Drive) -> (Store, Subscription) {
+pub(crate) async fn enrolled(root: &Path, drive: &Drive) -> (Store, Subscription) {
     let store = Store::open(root.join("mail.sqlite")).unwrap();
     let mut prefs = Preferences {
         google_connection_id: "drive:fixture".into(),
@@ -24,6 +20,7 @@ async fn enrolled(root: &Path, drive: &Drive) -> (Store, Subscription) {
     prefs.google_grant.access.known = true;
     prefs.google_grant.access.drive = true;
     store.put("preferences", prefs.clone()).await.unwrap();
+    store.put("profile_namespace", NAMESPACE).await.unwrap();
     let mut session = Session::open(
         root.join("discovery"),
         Uuid::new_v4(),
@@ -95,21 +92,19 @@ async fn enrolled(root: &Path, drive: &Drive) -> (Store, Subscription) {
     }
     let review = complete.expect("initial enrollment completed");
     session.close().await.unwrap();
-    let history = open_history(root, &review.binding).await;
-    let Reply::State(state) = history.request(Command::State).await.unwrap() else {
-        panic!()
-    };
-    history.close().await.unwrap();
-    let subscription = store
-        .profile_sync_seed(Seed {
-            binding: review.binding,
-            device: state.device,
-            name: "Work".into(),
-            history_revision: state.revision,
-            fields: BTreeMap::from([(SettingKey::Appearance, Some(setting("Dark")))]),
-        })
-        .await
-        .unwrap();
+    let subscription = crate::profiles::sync::control::prepare(
+        &store,
+        &root.join("discovery"),
+        shep_profile_core::drive::catalog::Scope {
+            namespace: NAMESPACE.into(),
+            principal: "drive:fixture".into(),
+        },
+        crate::profiles::sync::control::Source::Enrollment(review.id),
+    )
+    .await
+    .unwrap();
+    assert!(!subscription.enabled);
+    assert_eq!(subscription.pending, 0);
     let subscription = store
         .profile_sync_enable(
             subscription.binding.storage_key().unwrap(),
@@ -336,7 +331,16 @@ async fn lost_edit_receipt_cannot_acknowledge_a_later_remote_value() {
     else {
         panic!()
     };
-    let mut remote = shep_profile_core::history::Journal::memory(sub.binding.clone()).unwrap();
+    assert_eq!(first.queued, 1);
+    // The coordinator's receipt is lost, but the original has reached Drive
+    // before a different device can build a causal successor from it.
+    drive.upload_next(&history).await.unwrap().unwrap();
+    let Reply::State(first) = history.request(Command::State).await.unwrap() else {
+        panic!()
+    };
+    let remote_path = root.path().join("remote.sqlite");
+    let mut remote =
+        shep_profile_core::history::Journal::open(&remote_path, sub.binding.clone()).unwrap();
     let mut after = 0;
     loop {
         let Reply::Record(record) = history
@@ -363,6 +367,12 @@ async fn lost_edit_receipt_cannot_acknowledge_a_later_remote_value() {
         })
         .unwrap();
     let record = remote.next_upload().unwrap().unwrap().record;
+    drop(remote);
+    let remote = Worker::open(remote_path, sub.binding.clone())
+        .await
+        .unwrap();
+    drive.upload_next(&remote).await.unwrap().unwrap();
+    remote.close().await.unwrap();
     let Reply::State(later) = history.request(Command::Import { record }).await.unwrap() else {
         panic!()
     };
@@ -522,5 +532,87 @@ async fn committed_upload_with_lost_reply_survives_pause_and_restart_without_reu
     );
     assert_eq!(appearance(&store).await, Appearance::Light);
     h.close().await.unwrap();
+    runner.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn rebuilding_catalog_metadata_cannot_hide_missing_remote_ancestry_or_upload_over_it() {
+    let fixture = Fixture::start(1, false, Duration::ZERO).await.unwrap();
+    let drive = fixture
+        .connect(NAMESPACE.into(), "drive:fixture")
+        .await
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let (store, sub) = enrolled(root.path(), &drive).await;
+    let mut runner = Runner::open(root.path().join("discovery"), &sub)
+        .await
+        .unwrap();
+    cycle(&mut runner, &store, &drive).await;
+    let key = sub.binding.storage_key().unwrap();
+    let original = store.profile_sync_subscription(key.clone()).await.unwrap();
+    runner.close().await.unwrap();
+    let scope = Scope {
+        namespace: NAMESPACE.into(),
+        principal: "drive:fixture".into(),
+    };
+    let catalog_path = root
+        .path()
+        .join("discovery/ongoing")
+        .join(format!("{}.sqlite", scope.storage_key().unwrap()));
+    tokio::fs::remove_file(catalog_path).await.unwrap();
+    // Keep the independent observation journal, which still remembers this record.
+    fixture
+        .hidden_files
+        .lock()
+        .unwrap()
+        .insert("fixture-10001".into());
+    edit(&store, Appearance::Light).await;
+    let mut runner = Runner::open(root.path().join("discovery"), &sub)
+        .await
+        .unwrap();
+    let mut failed = None;
+    for _ in 0..200 {
+        match runner.step(&store, Some(&drive)).await {
+            Err(error) => {
+                failed = Some(error);
+                break;
+            }
+            Ok(step) if step.idle => break,
+            Ok(_) => {}
+        }
+    }
+    assert!(
+        failed.is_some(),
+        "A rebuilt catalog must verify the acknowledged history before uploading"
+    );
+    assert!(fixture.attempts.lock().unwrap().is_empty());
+    assert_eq!(appearance(&store).await, Appearance::Light);
+    let current = store.profile_sync_subscription(key).await.unwrap();
+    assert_eq!(current.remote_device, original.remote_device);
+    assert!(current.error.is_some());
+    let history = open_history(root.path(), &sub.binding).await;
+    let Reply::State(state) = history.request(Command::State).await.unwrap() else {
+        panic!()
+    };
+    assert_eq!(state.queued, 1);
+    assert_eq!(state.operations, 4);
+    history.close().await.unwrap();
+    // Restore the same originals and exercise the runner's production rescan.
+    fixture.hidden_files.lock().unwrap().clear();
+    runner.rescan().await.unwrap();
+    cycle(&mut runner, &store, &drive).await;
+    assert_eq!(fixture.attempts.lock().unwrap().len(), 1);
+    let h = open_history(root.path(), &sub.binding).await;
+    let Reply::State(state) = h.request(Command::State).await.unwrap() else {
+        panic!()
+    };
+    assert_eq!(state.queued, 0);
+    assert_eq!(state.operations, 4);
+    h.close().await.unwrap();
+    let proof = runner.verified_after;
+    assert!(proof > 0);
+    cycle(&mut runner, &store, &drive).await;
+    assert!(runner.verified_after >= proof);
+    assert_eq!(fixture.attempts.lock().unwrap().len(), 1);
     runner.close().await.unwrap();
 }

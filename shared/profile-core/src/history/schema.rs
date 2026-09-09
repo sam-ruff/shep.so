@@ -63,6 +63,8 @@ pub(super) fn initialize(db: &mut Connection, binding: &Binding) -> Result<Uuid>
         return Err(Error::Binding);
     }
     let device = parse_uuid(&saved.4)?;
+    // An additive derived index is compatible with the v1 history format.
+    tx.execute_batch("CREATE INDEX IF NOT EXISTS acknowledged_operations ON operations(seq) WHERE local=0 OR uploaded=1;")?;
     tx.commit()?;
     Ok(device)
 }

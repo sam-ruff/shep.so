@@ -17,7 +17,12 @@ enum Phase {
     Refresh,
     Scan,
     Copy(Snapshot),
-    Drain,
+    Drain(Snapshot),
+    Verify {
+        source: Snapshot,
+        after: u64,
+        revision: u64,
+    },
     Merge(usize),
     Upload,
     Idle,
@@ -28,6 +33,10 @@ pub struct Runner {
     catalog: Discovery,
     phase: Phase,
     pub queued: u64,
+    // The private catalog remains owned while this cursor is reused. Reopening
+    // always starts at zero, so losing only its inventory cannot reuse proof
+    // from a surviving observation journal. Normal cycles inspect new records.
+    verified_after: u64,
 }
 pub struct Step {
     pub idle: bool,
@@ -78,6 +87,7 @@ impl Runner {
             catalog,
             phase,
             queued: state.queued,
+            verified_after: 0,
         })
     }
     pub fn needs_network(&self) -> bool {
@@ -87,7 +97,7 @@ impl Runner {
         match self.phase {
             Phase::Local(_) => "Saving local changes",
             Phase::Refresh | Phase::Scan => "Checking shared changes",
-            Phase::Copy(_) | Phase::Drain => "Receiving changes",
+            Phase::Copy(_) | Phase::Drain(_) | Phase::Verify { .. } => "Receiving changes",
             Phase::Merge(_) => "Applying shared preferences",
             Phase::Upload => "Uploading changes",
             Phase::Idle => "Last check finished",
@@ -97,6 +107,17 @@ impl Runner {
         if matches!(self.phase, Phase::Idle) {
             self.phase = Phase::Local(0);
         }
+    }
+    pub async fn rescan(&mut self) -> Result<()> {
+        let state = self.catalog.state().await?;
+        self.catalog.refresh(state.revision, true).await?;
+        self.verified_after = 0;
+        self.phase = if matches!(self.phase, Phase::Local(_) | Phase::Idle) {
+            Phase::Local(0)
+        } else {
+            Phase::Scan
+        };
+        Ok(())
     }
     pub async fn close(self) -> Result<()> {
         Ok(self.catalog.close().await?)
@@ -152,7 +173,7 @@ impl Runner {
                 && (state.initialized
                     || matches!(
                         self.phase,
-                        Phase::Refresh | Phase::Scan | Phase::Copy(_) | Phase::Drain
+                        Phase::Refresh | Phase::Scan | Phase::Copy(_) | Phase::Drain(_)
                     )),
             "The local profile history is incomplete, replaced or removed. Keep this device's setup and review the profile before syncing."
         );
@@ -227,19 +248,27 @@ impl Runner {
                     .export_record(source.clone(), subscription.remote_cursor)
                     .await?
                 {
-                    history
+                    let Reply::State(imported) = history
                         .request(Command::Import {
                             record: record.record,
                         })
-                        .await?;
+                        .await?
+                    else {
+                        anyhow::bail!("Could not acknowledge the copied profile record.")
+                    };
                     store
-                        .profile_sync_copied(profile, subscription.remote_cursor, record.position)
+                        .profile_sync_copied(
+                            profile,
+                            subscription.remote_cursor,
+                            record.position,
+                            imported.revision,
+                        )
                         .await?;
                 } else {
-                    self.phase = Phase::Drain;
+                    self.phase = Phase::Drain(source.clone());
                 }
             }
-            Phase::Drain => {
+            Phase::Drain(source) => {
                 let Reply::State(current) = history.request(Command::Drain).await? else {
                     anyhow::bail!("Could not prepare the shared changes.")
                 };
@@ -248,7 +277,45 @@ impl Runner {
                     "Some shared changes are missing or this profile was removed. Keep local data and review the source."
                 );
                 if current.ready == 0 {
-                    self.phase = Phase::Merge(0);
+                    self.phase = Phase::Verify {
+                        source: source.clone(),
+                        after: self.verified_after,
+                        revision: current.revision,
+                    };
+                }
+            }
+            Phase::Verify {
+                source,
+                after,
+                revision,
+            } => {
+                if state.revision != *revision {
+                    // Another accepted profile action changed ancestry or upload
+                    // acknowledgments. Restart the proof over its current scope.
+                    self.verified_after = 0;
+                    self.phase = Phase::Local(0);
+                } else {
+                    let Reply::Record(record) = history
+                        .request(Command::ExportAcknowledgedRecord {
+                            expected_revision: *revision,
+                            after: *after,
+                        })
+                        .await?
+                    else {
+                        anyhow::bail!("Could not verify the profile's acknowledged history.")
+                    };
+                    if let Some(record) = record {
+                        let position = record.position;
+                        self.catalog.verify_original(source.clone(), record).await?;
+                        self.verified_after = position;
+                        self.phase = Phase::Verify {
+                            source: source.clone(),
+                            after: position,
+                            revision: *revision,
+                        };
+                    } else {
+                        self.phase = Phase::Merge(0);
+                    }
                 }
             }
             Phase::Merge(index) => {
@@ -325,7 +392,9 @@ impl Runner {
             }
             Phase::Upload => {
                 if state.queued == 0 {
-                    store.profile_sync_completed(profile).await?;
+                    store
+                        .profile_sync_completed(profile, state.revision)
+                        .await?;
                     self.phase = Phase::Idle;
                 } else {
                     drive
@@ -380,4 +449,4 @@ async fn receipt_revision(history: &Worker, edit: &PendingEdit) -> Result<u64> {
 }
 
 #[cfg(all(test, feature = "test-support"))]
-mod tests;
+pub(crate) mod tests;

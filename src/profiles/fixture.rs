@@ -16,6 +16,8 @@ pub struct Fixture {
     pub attempts: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     #[cfg(test)]
     pub upload_failure: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(test)]
+    pub hidden_files: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -24,16 +26,20 @@ impl Drop for Fixture {
 }
 impl Fixture {
     pub async fn start(count: usize, fail_once: bool, delay: std::time::Duration) -> Result<Self> {
-        Self::start_with_accounts(count, 1, fail_once, delay).await
+        Self::start_with_accounts(count, 1, fail_once, delay, false).await
     }
     pub async fn start_paged(fail_once: bool, delay: std::time::Duration) -> Result<Self> {
-        Self::start_with_accounts(51, 75, fail_once, delay).await
+        Self::start_with_accounts(51, 75, fail_once, delay, false).await
+    }
+    pub async fn start_sync(delay: std::time::Duration) -> Result<Self> {
+        Self::start_with_accounts(1, 1, true, delay, true).await
     }
     async fn start_with_accounts(
         count: usize,
         first_accounts: usize,
         mut fail_once: bool,
         delay: std::time::Duration,
+        remote_on_sync: bool,
     ) -> Result<Self> {
         anyhow::ensure!(
             count <= 60 && (1..=75).contains(&first_accounts),
@@ -42,6 +48,7 @@ impl Fixture {
         let root = tempfile::tempdir()?;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let url = url::Url::parse(&format!("http://{}/", listener.local_addr()?))?;
+        let mut starts = 0;
         let mut records = Vec::new();
         for n in 0..count {
             let accounts = if n == 0 { first_accounts } else { 1 };
@@ -149,6 +156,10 @@ impl Fixture {
         let written = attempts.clone();
         let upload_failure = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(fail_once));
         let fail_upload = upload_failure.clone();
+        let hidden_files = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::<
+            String,
+        >::new()));
+        let hidden = hidden_files.clone();
         let mut hidden_once: Option<String> = None;
         let mut reserved = std::collections::HashSet::new();
         let task = tokio::spawn(async move {
@@ -240,6 +251,32 @@ impl Fixture {
                 } else if uri.path() == "/drive/v3/about" {
                     serde_json::to_vec(&json!({"user":{"permissionId":"fixture"}})).unwrap()
                 } else if uri.path() == "/drive/v3/changes/startPageToken" {
+                    starts += 1;
+                    if remote_on_sync && starts == 2 {
+                        // Another device changes appearance after initial
+                        // enrollment. Only the explicit native fixture adds it.
+                        let mut operation: Operation =
+                            serde_json::from_slice(&records[2].1).unwrap();
+                        operation.parents = vec![operation.operation];
+                        operation.operation = Uuid::from_u128(50000);
+                        operation.device = Uuid::from_u128(600);
+                        operation.changes = vec![Change {
+                            action: Action::Setting {
+                                key: SettingKey::Appearance,
+                                value: json!("Light"),
+                            },
+                            extra: Default::default(),
+                        }];
+                        let bytes = operation.encode().unwrap();
+                        let mut meta = records[2].0.clone();
+                        meta["id"] = json!("fixture-50000");
+                        meta["name"] = json!(format!("shep-profile-{}.json", operation.operation));
+                        meta["size"] = json!(bytes.len().to_string());
+                        meta["appProperties"]["shepOperation"] = json!(operation.operation);
+                        meta["appProperties"]["shepSha256"] =
+                            json!(format!("{:x}", Sha256::digest(&bytes)));
+                        records.push((meta, bytes));
+                    }
                     serde_json::to_vec(&json!({"startPageToken":records.len().to_string()}))
                         .unwrap()
                 } else if uri.path() == "/drive/v3/changes" {
@@ -273,14 +310,23 @@ impl Fixture {
                             .find(|(k, _)| k == "pageToken")
                             .and_then(|(_, v)| v.parse().ok())
                             .unwrap_or(0);
-                        let mut body = json!({"incompleteSearch":false,"files":records.iter().skip(offset).take(50).map(|(m,_)|m).collect::<Vec<_>>()});
-                        if offset + 50 < records.len() {
+                        let excluded = hidden.lock().unwrap();
+                        let visible = records
+                            .iter()
+                            .filter(|(m, _)| !excluded.contains(m["id"].as_str().unwrap()))
+                            .collect::<Vec<_>>();
+                        let mut body = json!({"incompleteSearch":false,"files":visible.iter().skip(offset).take(50).map(|(m,_)|m).collect::<Vec<_>>()});
+                        if offset + 50 < visible.len() {
                             body["nextPageToken"] = json!((offset + 50).to_string());
                         }
                         serde_json::to_vec(&body).unwrap()
                     }
                 } else if let Some((meta, content)) = records.iter().find(|(meta, _)| {
                     uri.path().strip_prefix("/drive/v3/files/") == meta["id"].as_str()
+                        && !hidden
+                            .lock()
+                            .unwrap()
+                            .contains(meta["id"].as_str().unwrap())
                 }) {
                     if uri.query_pairs().any(|(k, v)| k == "alt" && v == "media") {
                         content.clone()
@@ -308,6 +354,8 @@ impl Fixture {
             attempts,
             #[cfg(test)]
             upload_failure,
+            #[cfg(test)]
+            hidden_files,
         })
     }
     pub async fn connect(

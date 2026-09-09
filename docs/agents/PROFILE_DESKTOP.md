@@ -139,6 +139,8 @@ coverage; live Google, continuous synchronization and Apple remain separate work
 
 The [reconciliation engine](PROFILE_RECONCILIATION.md) retains later local edits,
 copies incremental original records and applies supported remote preferences with
-atomic receipts. Its storage/provider tests pass, but automatic scheduling,
-reviewed subscription creation and sync/conflict controls remain unconnected.
-Initial enrollment does not silently enable it.
+atomic receipts. Completed publication/enrollment reviews offer explicit paused
+sync choices, followed by master/field controls and authenticated background work
+outside Preferences. Storage/provider/native controls are verified in completion.
+Initial enrollment never silently enables ongoing sync. Checked conflict resolution,
+complete categories/settings/accounts and Flutter/browser equivalents remain open.

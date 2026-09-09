@@ -609,8 +609,7 @@ async fn a_cancelled_read_can_retry_but_a_foreign_google_session_cannot_start_di
     discovery.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn initialized_discovery_exports_exact_records_without_cloning_device_or_upload_state() {
+fn initialized_records() -> Vec<Record> {
     let mut records = Vec::new();
     let mut parent = Vec::new();
     for (n, action) in [
@@ -656,6 +655,12 @@ async fn initialized_discovery_exports_exact_records_without_cloning_device_or_u
             bytes,
         });
     }
+    records
+}
+
+#[tokio::test]
+async fn initialized_discovery_exports_exact_records_without_cloning_device_or_upload_state() {
+    let records = initialized_records();
     let mut steps = vec![
         identity(),
         start(),
@@ -743,5 +748,75 @@ async fn initialized_discovery_exports_exact_records_without_cloning_device_or_u
     assert!(catalog.export_record(source, 0).await.is_err());
     catalog.close().await.unwrap();
     target.close().await.unwrap();
+    server.finish().await;
+}
+
+#[tokio::test]
+async fn retained_history_cannot_export_originals_missing_from_a_rebuilt_inventory() {
+    let records = initialized_records();
+    let first = &records[0];
+    let second = &records[1];
+    let complete = &records[2];
+    let mut steps = vec![identity(), start(), files(&[first, second, complete], None)];
+    for record in &records {
+        steps.extend(downloads(record));
+    }
+    steps.push(caught_up("original"));
+    steps.extend([start(), files(&[second, complete], None)]);
+    steps.extend(downloads(second));
+    steps.extend(downloads(complete));
+    steps.push(caught_up("recovered"));
+    let server = Server::start(steps).await;
+    let drive = server.connect(Some(PRINCIPAL)).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("catalog.sqlite");
+    let catalog = Discovery::open(path.clone(), scope()).await.unwrap();
+    finish(&catalog, &drive).await;
+    let profile = catalog.profiles(None).await.unwrap().remove(0);
+    let snapshot = catalog
+        .latest_snapshot(profile.profile, profile.generation)
+        .await
+        .unwrap();
+    let source_device = catalog.source_device(snapshot.clone()).await.unwrap();
+    let original = catalog.export_record(snapshot, 0).await.unwrap().unwrap();
+    assert_eq!(original.record.as_bytes(), first.bytes);
+    catalog.close().await.unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let catalog = Discovery::open(path, scope()).await.unwrap();
+    finish(&catalog, &drive).await;
+    let snapshot = catalog
+        .latest_snapshot(profile.profile, profile.generation)
+        .await
+        .unwrap();
+    assert_eq!(
+        catalog.source_device(snapshot.clone()).await.unwrap(),
+        source_device
+    );
+    assert!(matches!(
+        catalog.export_record(snapshot.clone(), 0).await,
+        Err(DiscoveryError::Missing)
+    ));
+    assert!(matches!(
+        catalog
+            .verify_original(snapshot.clone(), original.clone())
+            .await,
+        Err(DiscoveryError::Missing)
+    ));
+    let mut wrong = snapshot.clone();
+    wrong.binding.principal = "drive:wrong".into();
+    assert!(catalog.verify_original(wrong, original).await.is_err());
+    let second = catalog
+        .export_record(snapshot.clone(), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut changed = second.clone();
+    changed.record.push(' ');
+    assert!(matches!(
+        catalog.verify_original(snapshot.clone(), changed).await,
+        Err(DiscoveryError::Integrity)
+    ));
+    catalog.verify_original(snapshot, second).await.unwrap();
+    catalog.close().await.unwrap();
     server.finish().await;
 }

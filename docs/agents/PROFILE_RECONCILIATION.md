@@ -1,10 +1,10 @@
 # Desktop reconciliation engine
 
 `src/profiles/sync/runner.rs` and `src/store/profile_sync.rs` implement bounded
-ongoing preference reconciliation. **Automatic scheduling, reviewed subscription
-creation and Preferences controls are not connected.** Existing enrollment and
-publication do not silently enable this engine. Flutter/browser equivalents,
-account changes, full categories and conflict-resolution controls remain open.
+ongoing preference reconciliation. Completed publication/enrollment reviews offer
+**Sync these preferences**, followed by explicit master and per-preference choices.
+The background owner continues outside Preferences. Flutter/browser equivalents,
+account changes, full categories and checked conflict resolution remain open.
 
 ## Device state and ownership
 
@@ -64,30 +64,39 @@ A committed upload with a lost response can finish after restart without another
 upload. `last_synced` records a completed transport cycle; pending fields and
 conflicts must still be shown. It is not proof of full convergence.
 
-## Required next integration
+## Scheduling and controls
 
-1. Verify partial catalog loss with retained observation histories and missing
-   remote ancestry before enabling automatic uploads. The current rebuild test
-   removes the whole observation directory while all remote originals remain
-   available. A rebuilt catalog must not imply that previously acknowledged
-   ancestry is still present remotely.
-2. Derive subscriptions only from completed backend reviews, preserving selected
-   fields and their original changes. Offer explicit enablement and stable saved
-   choices. Do not accept UI-supplied baselines or bind an arbitrary Google identity.
-3. Drive bounded steps from the existing profile engine owner outside Preferences.
-   Serialize its local history with publication/enrollment, suspend while a frozen
-   review is active, and recheck the active grant/namespace before each step.
-   Acquire provider capacity before the Google lifecycle read lock. Keep cached
-   mail, drafts and preference saves on their independent queues; retry with backoff.
-4. Deliver canonical small preference snapshots through existing UI generations.
-   Preserve newer native edits, including reverted intent, while results are pending.
-   Apply normal appearance/query/reader effects without stealing focus.
-5. Connect master/field switches, Sync now, pending/error progress and checked,
-   paged conflict resolution. Preserve unresolved requests until review commits.
-   Add saved native flows and reviewed light/dark/compact captures.
-6. Extend Flutter through its own SQLite/SDK lifecycle and add Android/Playwright
-   equivalents. Continue accounts/categories, switching, restoration and browser
-   integration under the full [profile contract](PROFILE_SYNC_HANDOVER.md).
+The dedicated profile engine owns UI reviews and background work. It checks the
+saved grant and namespace before each step, takes provider capacity before the
+Google lifecycle lock and defers when either is occupied. Frozen reviews suspend
+background history changes. Idle/error checks use a 15-second interval; accepted
+bounded steps yield between units. A new/reconnected owner starts a full scan,
+so a different Google project's empty app-data space cannot inherit a previous
+project's inventory or change token.
+
+Setup derives selected fields and original values from completed backend reviews.
+Approval/application records local preference revisions; setup compares them in
+its transaction, preserving later and reverted intent. A subscription starts
+paused. Master and field switches project immediately and coalesce newer choices
+behind one in-flight revision-checked command. Failures restore the affected
+choice, retain newer intent and reload the durable revision. Pausing retains
+queued operations; an accepted provider step can finish before the pause commits.
+
+Canonical preference snapshots use the existing UI/store generations. Pending
+native edits remain visible until their own acknowledgment, without echoing
+remote values or losing other fields. Names, pending counts, upload status,
+errors and retry are visible. An original missing after partial catalog loss
+stops upload; restoring it and restarting the scan recovers without another
+operation. Every acknowledged original is proved after reopen, then only newly
+acknowledged originals during ordinary cycles.
+
+## Remaining integration
+
+Deliver checked, paged conflict resolution, complete settings/categories and
+account lifecycle synchronization. Extend Flutter through its SQLite/SDK lifecycle
+with Android/Playwright equivalents, then browser integration, automatic setup,
+restoration and reviewed workspace switching. Preserve unresolved requests until
+a reviewed resolution commits. See the full [profile contract](PROFILE_SYNC_HANDOVER.md).
 
 ## Evidence
 
@@ -106,3 +115,9 @@ profile controls are regression checks for the shared fixture; there is no nativ
 ongoing-sync control yet. Final checks and shipping are in [completion](../COMPLETION.md).
 These fixtures do not establish live Google access, authenticated Flutter
 interchange, Apple execution or final performance.
+
+The connected-control continuation adds partial-metadata-loss/missing-original
+recovery, acknowledged-history export, atomic reviewed baselines, rapid native
+choice ordering and the background owner's saturation/reconnect/project checks.
+Native control evidence and shipping are recorded in [completion](../COMPLETION.md).
+Fixture success does not prove live Google, Apple or full cross-client parity.

@@ -8,7 +8,7 @@ Every desktop feature/default/provider change must update this matrix and the co
 
 | Behavior | Rust desktop reference | Flutter mobile | Separate browser |
 | --- | --- | --- | --- |
-| OAuth and continuous account/settings profiles | Scoped OAuth consent, durable discovery, reviewed initial publication and account/preferences enrollment; automatic setup, continuous sync, remaining categories and full DB transfer open | Scoped native consent, actual host/Android history bridge and saved-Google discovery and initialized first-profile publication controls; reviewed [device enrollment](agents/PROFILE_ENROLLMENT.md) and account/preferences application now have native/host and isolated control coverage; automatic setup and ongoing reconciliation remain active in [the handover](agents/PROFILE_SYNC_HANDOVER.md). Credential protection and live cross-client access open | Identity gate and shared codec exist; provider consent/history/application and profile sync remain open |
+| OAuth and continuous account/settings profiles | Scoped OAuth consent, durable discovery, reviewed initial publication and account/preferences enrollment; reviewed ongoing sync for eight preferences with native controls; conflict resolution, automatic setup, complete categories/settings and full DB transfer open | Scoped native consent, actual host/Android history bridge and saved-Google discovery and initialized first-profile publication controls; reviewed [device enrollment](agents/PROFILE_ENROLLMENT.md) and account/preferences application now have native/host and isolated control coverage; automatic setup and ongoing reconciliation remain active in [the handover](agents/PROFILE_SYNC_HANDOVER.md). Credential protection and live cross-client access open | Identity gate and shared codec exist; provider consent/history/application and profile sync remain open |
 | Multiple accounts, unified/account folders | Implemented | Native setup/reconnect, atomic credential activation with stale-request binding checks, device credentials and cached folders; reviewed atomic removal with durable credential cleanup and stale-write protection tested; connection editing and Apple lifecycle open | Setup/reconnect, cached folders and unified view; reviewed atomic removal, stale-tab protection and cancellation tested; connection editing and wider lifecycle audit open |
 | IMAP/POP3, TLS/STARTTLS, SMTP | Implemented, remaining live/protocol audit | Shared Rust provider adapter and native bridge implemented; complete device/protocol and live verification open | Shared Rust transport, authenticated VPS endpoints and browser adapter implemented; live verification open |
 | Sender/subject/snippet, unread/flag/attachment indicators | Implemented | Implemented in preview; 0–4 snippet lines, avatars | Implemented in preview; 0–4 snippet lines, avatars |
@@ -87,7 +87,7 @@ The profile prerequisite in `shared/profile-core` adds bounded operation metadat
 
 Desktop scoped-consent continuation adds explicit Drive backup and Calendar off/read/read-write choices for the next sign-in. Requested permissions remain separate from the active grant, survive saves and bind pending-grant retry/activation; a broader returned Google scope does not enable an unselected service. All 118 native functional scenarios and the protocol/lifecycle checks pass; light/dark/compact captures are reviewed. Flutter native consent now has the separately recorded SDK/host/Android evidence. Browser provider consent, verified profile identity and enrollment remain active R75/R02 gaps; beta login is unchanged.
 
-Desktop [Profiles and sync](agents/PROFILE_DESKTOP.md) now connects the active Google grant to durable read-only discovery, bounded pages and pause/retry/restart controls. Reviewed desktop publication and account/preferences enrollment are now connected. Automatic setup, complete portable settings/categories and continuous reconciliation remain active gaps.
+Desktop [Profiles and sync](agents/PROFILE_DESKTOP.md) now connects the active Google grant to durable read-only discovery, bounded pages and pause/retry/restart controls. Reviewed desktop publication and account/preferences enrollment are now connected. Automatic setup, complete portable settings/categories and account reconciliation remain active gaps.
 
 Desktop publication now freezes account/settings reviews and resumes exact staged/uploaded records through the active grant. The separate browser still needs provider consent, discovery, publication and application; Flutter publication/enrollment is implemented separately, while authenticated cross-client interchange and continuous reconciliation remain open. Native/protocol results belong in the completion log.
 
@@ -109,10 +109,13 @@ counterpart. Separate browser enrollment is still open. See the completion log
 for executed results and shipping.
 
 
-Desktop ongoing preference reconciliation has a durable edit ledger and a bounded
-runner, tested with two independent enrolled histories and the loopback Drive
-provider. Lost receipts, restart, pause, cache replacement and concurrent values
-are covered. [Its contract](agents/PROFILE_RECONCILIATION.md) explicitly leaves
-subscription creation, authenticated automatic scheduling, sync/conflict controls,
-account/category reconciliation and Flutter/browser equivalents open. This is
-engine coverage; it does not establish a working continuous-sync user flow.
+Desktop ongoing preference sync has reviewed setup, authenticated background
+scheduling, master/field pause controls and retry/status. Partial catalog-loss
+recovery checks acknowledged originals against verified inventory, and a new or
+reconnected owner performs a full scan. Native verification and shipping are in
+[completion](COMPLETION.md); the [contract](agents/PROFILE_RECONCILIATION.md) keeps
+checked conflict resolution, complete settings/categories/accounts and ongoing
+Flutter/browser equivalents OPEN. Sixteen Flutter Rust bridge checks cover the
+shared-core changes. The additional history export command changes local APIs,
+not the portable operation format. Existing mobile discovery/publication/enrollment
+contracts remain required.

@@ -96,6 +96,15 @@ impl Discovery {
         self.call(move |catalog| catalog.source_device(source))
             .await
     }
+    /// Verify a known original against a completed scan, including when its
+    /// position precedes the enrolled device's incremental copy cursor.
+    pub async fn verify_original(&self, source: Snapshot, record: history::Record) -> Result<()> {
+        if record.record.len() > crate::MAX_RECORD_BYTES {
+            return Err(history::Error::Record(crate::Error::TooLarge).into());
+        }
+        self.call(move |catalog| catalog.verify_original(source, record))
+            .await
+    }
     pub async fn export_record(
         &self,
         source: Snapshot,

@@ -568,7 +568,9 @@ fn apply_settings(db: &Connection, review: &mut Review) -> Result<()> {
         preferences.validate()?;
         put(db, "preferences", &preferences)?;
     }
-    review.settings_receipt = Some(serde_json::json!({"applied":applied,"kept":kept}));
+    let local_revisions = profile_preferences::state(db)?.revisions;
+    review.settings_receipt =
+        Some(serde_json::json!({"applied":applied,"kept":kept,"local_revisions":local_revisions}));
     review.phase = "complete".into();
     Ok(())
 }

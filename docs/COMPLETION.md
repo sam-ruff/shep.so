@@ -2591,3 +2591,64 @@ all original remote files remain available. It does not prove that broader
 recovery case. Then connect authenticated scheduling, reviewed subscriptions and
 sync/conflict controls, followed by Flutter/account/category reconciliation.
 All 40 active requests and the full product goal remain open.
+
+
+## Connected desktop preference sync — 2026-09-09
+
+Completed publication/enrollment reviews now offer **Sync these preferences**.
+Setup derives original selected values and preference revisions from the backend
+review and starts paused. Master and per-preference switches preserve newer
+choices behind one revision-checked request. A bounded background owner runs
+outside Preferences, yields to occupied provider/lifecycle capacity and suspends
+for frozen reviews. Local Pause remains available during Google connection work.
+Canonical snapshots preserve pending native edits; status distinguishes unchecked
+uploads, queued operations and failures. Status rows keep switch positions stable.
+
+Recovery verifies acknowledged original records against the provider inventory,
+including when only catalog metadata is lost and observation history survives.
+Every new/reconnected owner performs a full inventory scan. A regression first
+reproduced upload into another project's empty space using cached proof; it now
+stops before upload. Restoring a missing original and rescanning reuses saved
+operations. Shared export uses a partial index and excludes unsent records.
+
+The profile-focused run passes 46 checks, including atomic reverted-intent setup,
+real reviewed publication/enrollment, source ownership, lost receipts, rapid UI
+choice ordering, provider saturation, Google lifecycle changes and wrong-project
+recovery. Sixteen relevant Flutter Rust bridge tests and 43 Python checks pass;
+37 parity contracts remain valid. Shared full-suite results are included in the
+mandatory gates below.
+
+All **22 native profile/Google/Preferences flows pass** in 221.987 seconds. The
+ongoing flow searches Mail through a remote Light appearance change, edits Dark
+with the field paused, resumes, retains a lost-upload error/count and recovers. Protocol regressions separately
+verify retry without another upload or operation. It also operates the compact field switch. Publication
+controls preserve seven selected preferences and review light/compact pages.
+Reviewed runs include `bfe6e5d12db4` (ongoing) and `26437ba96d3f` (publication).
+Final wording-only screenshots and mandatory shipping results follow below.
+
+Retained failures include `profile-sync-ancestry-before.log`,
+`profile-sync-project-before.log`, `profile-sync-status-before.log` and
+`profile-sync-native-footers-before.log` under `artifacts/logs/`. The first proves
+the partial-catalog gap, the second the Google-project gap, and the third a status
+update hiding the frozen-review wait. The native run passed 19/22 before the
+footer correction; grouped sync controls restore the paging/retry footer layout.
+Earlier native authoring failures retain search-focus and batch-validation logs;
+the saved scenario now waits for actual search focus and uses bounded batches.
+The existing no-force-input and timeout requirements are unchanged.
+
+The full goal and all 40 active requests remain unfinished. Checked conflict
+resolution, complete portable settings/categories/accounts, Flutter/browser
+ongoing sync, first setup/restoration and live authenticated interchange remain.
+No live Google, Apple, deployment, complete parity or performance claim is made.
+The host had other active work; the earlier navigation/combined performance
+failure remains open. Quality/release CI is disabled. Phone data, the installed
+desktop and the independent main worktree are unchanged.
+
+
+The two new sync control flows also pass after final wording changes (39.962
+seconds). Reviewed final captures are `92c482b10061` (queued-error recovery,
+compact field controls and Mail search) and `7604433c3ceb` (seven-preference
+publication and compact pages). Counters use clear labels, unchecked uploads
+remain distinct from zero, and values reuse the existing human-readable formatter.
+Mandatory hooks, production compilation, strict docs and exact remote shipping
+are recorded next; this is not yet a shipping receipt.

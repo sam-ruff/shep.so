@@ -1,13 +1,13 @@
 # OAuth and cross-device profiles: implementation handover
 
 This is the next implementation priority (R75/R02/R49 and
-`desktop-main:R92`). **Continuous profile sync is not implemented.** The desktop
-has Google OAuth, encrypted Drive backups and reviewed initial profile enrollment.
-Continuous account/settings sharing is still unfinished. This document records the
+`desktop-main:R92`). **Full cross-client profile sync is unfinished.** Desktop now has reviewed
+ongoing sync for eight preferences, alongside Google OAuth, encrypted Drive backups
+and initial enrollment. Complete account/settings sharing remains open. This document records the
 contract to implement and verify in Rust desktop and Flutter, with browser parity
 tracked separately. Keep the linked entry first in the root TODO until delivery.
 
-See [desktop profiles](PROFILE_DESKTOP.md), [Flutter enrollment](PROFILE_ENROLLMENT.md) and the [desktop reconciliation engine](PROFILE_RECONCILIATION.md) for the current boundaries. The reconciliation engine has protocol/storage coverage; its automatic scheduler and controls are not connected.
+See [desktop profiles](PROFILE_DESKTOP.md), [Flutter enrollment](PROFILE_ENROLLMENT.md) and the [desktop reconciliation engine](PROFILE_RECONCILIATION.md) for the current boundaries. Desktop scheduling and controls now have protocol/storage/native coverage. Checked conflict resolution, complete categories/settings/accounts and Flutter/browser ongoing reconciliation remain open.
 
 ## Existing code to reuse
 
