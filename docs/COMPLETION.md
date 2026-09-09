@@ -1822,3 +1822,69 @@ selection and bulk tests retain their behavioral assertions. Full native
 verification before this additional index passed all 118 functional scenarios;
 final targeted controls and fresh performance evidence follow below. No query
 predicate, result ordering or budget was weakened.
+
+
+The first 14-scenario native index rerun during compilation passed 12 and failed
+two existing input flows: compact bulk selection stayed at zero after consecutive
+checkbox clicks, and the badge preference expected four while the underlying mail
+state had already changed to three unread messages. Screenshots/state were reviewed
+(`68972d6b03cb` and `c51b45348c43`); these are retained input-under-load evidence for
+R63, not proof of an index-counting error or a fixed input race. The unchanged suite
+is rerun after compilation, without forced clicks, added delays or relaxed checks.
+The earlier full 118-scenario run passed. See final results below.
+
+
+## 2026-09-09 — Final profile-history and storage verification
+
+Code checkpoints: [`e9115f9`](https://github.com/sam-ruff/shep.so/commit/e9115f978d6753fb66400178927ffb5b4bd61c97)
+(profile history), [`e568c84`](https://github.com/sam-ruff/shep.so/commit/e568c84)
+(materialized search) and [`da6f2e8`](https://github.com/sam-ruff/shep.so/commit/da6f2e803fbddf1e485418b925923eeeb08afd1e)
+(covering unread counts). Mandatory hooks pass formatting, Clippy and **411
+root/shared Rust tests**, with two personal-account diagnostics intentionally
+ignored. Native Rust passes **68**, Flutter host **90**, Python **41**, shared WASM
+**23 cases** plus malformed-record checks, and parity **32 contracts**. Native
+Clippy, Flutter analysis, the backend's locked dependency check and strict pinned
+documentation pass. No provider/platform claim is inferred from these fixtures.
+
+The actual profile-history FFI scenario passes on Android. Its wrapper verifies a
+fresh named completion marker. The final ARM64 production build contains the Rust
+bridge, configured NotoSans/Roboto fonts, license notices and checked production
+identity, with checked fixture markers absent. This single-ABI artifact is
+**unsigned**, confirmed by `apksigner`; it is not the earlier development-signed
+phone installation or the complete distribution gate. An initial ad-hoc package
+check assumed the wrong font family; the corrected inspection checks the configured
+files. No phone installation was repeated.
+
+All **118 native functional scenarios** pass before the final index; all **14
+relevant index/badge/search/selection/bulk scenarios** pass unchanged afterward
+with compilation stopped. The earlier 12/14 run's input failures remain R63.
+Reviewed synthetic exact-body-first/after-refresh, compact dark selection and
+light page-two captures are copied to ignored `artifacts/profile-history-reviewed/`.
+The original run directories and failed screenshots are retained.
+
+The final backend benchmark passes: Inbox **6.030 ms**, account **3.106 ms**, search
+**35.537 ms**, body **0.025 ms** p95. Native navigation remains over budget:
+**154.81, 162.33, 154.88 and 155.14 ms** in four 30-transition runs against **150 ms**.
+The combined gate was executed and **fails on navigation**; its handler measurement
+passes at 0.010 ms. A previous cached worktree test executable also failed three
+runs at 159.31–168.24 ms. This supports retaining the existing responsiveness
+investigation, not attributing it to the new index or claiming it is fixed. The
+current executable and report were restored after comparison and verified. See
+[measurement scope](PERFORMANCE.md); no timing deadline, click flow or threshold
+was changed to produce a pass.
+
+Logs are under ignored `artifacts/logs/profile-history-*`; comparison hashes and
+reports under `artifacts/profile-navigation-comparison/`. Final source checks and
+code shipping are recorded here separately from full product completion. R75
+provider identity/transport/discovery/enrollment/category controls, real
+account/preferences application, protected credentials, browser history, Apple,
+VPS configuration and the broader parity/performance work remain in TODO. Main,
+installed desktop and personal phone were untouched. Quality/release workflows
+remain disabled; re-enable only when requested with trusted runners ready.
+
+
+The three code checkpoints are **pushed to `feat/mobile-web-clients`**, with exact
+remote head `da6f2e803fbddf1e485418b925923eeeb08afd1e` verified. This fulfills prompt
+review-branch shipping for the profile-history/storage increment, with the native
+navigation failure explicitly retained. Full goal completion and release readiness
+are not claimed. Final handover/evidence documentation follows this code head.
