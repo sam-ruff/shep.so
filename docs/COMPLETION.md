@@ -2083,3 +2083,91 @@ covers this code. Shipping logs are `profile-client-commit.log` and
 `artifacts/profile-client-shipping.json`. A final documentation checkpoint follows
 in branch history. Creation/enrollment, real account/preferences application and
 all remaining parity work stay active.
+
+## 2026-09-09 — Reviewed Flutter profile publication
+
+Flutter **Profiles and sync → Create profile** now prepares a named account/settings
+review and publishes it through the production native Drive transport. The review
+shows all eight current Flutter preferences and 50 account rows at a time, with
+selectable connection details. Changed local accounts/preferences invalidate approval.
+No passwords, OAuth grants, mail or drafts enter the portable records. This is
+publication; enrollment, real account/preferences application and continuous sync
+remain active. See [the publication contract](agents/PROFILE_PUBLICATION.md).
+
+Native schema 10 retains frozen reviews, explicit account mappings, exact history
+requests and publication progress. Lost staging/approval receipts retry the original
+identities. Shared `initialization-v1` history requires a preparing root and causal
+completion before a profile becomes initialized. Tracked upload records the verified
+owned file in discovery before confirming the local queue; a failed catalog receipt
+keeps the same remote reservation for retry. Pause/close finishes accepted work,
+and grant/session generations prevent late results reaching a replacement account.
+
+Verification passes **52 shared profile tests**, **74 mobile Rust tests**, native
+Clippy, **111 Flutter host tests**, clean analysis and the configured SDK-boundary
+fixture. The **28 shared codec cases** pass native Rust, actual Dart FFI and standalone
+Rust WASM, including additional duplicate/size/depth rejection. Native tests exercise
+75 accounts/78 operations, 50-row reviews, legacy IDs, stale account/settings reviews,
+lost cross-database receipts and close/reopen while an upload and mail capacity are
+held. They preserve cached accounts and credential slots. **41 Python tests** and
+**36 parity contracts** pass. Final Android regressions, strict docs, production APK
+and mandatory shipping hooks are recorded below once verified.
+
+The two saved publication scenarios pass on Android, and four matching publication
+flows pass through **Appium/UiAutomator2 and Flutter Playwright**. They cover entered
+names, frozen values, account details/pages, failed upload and Resume, light/dark
+appearance, Pause and actual mail reading while a step is held. Providers in these
+controls are isolated fixtures; shared/native protocol tests separately cover the
+real transport and persistence. No live Google or Apple success is claimed.
+
+Synthetic final captures under ignored `artifacts/profile-publication-reviewed/final/`
+were reviewed for readable settings/account details, paged controls, persistent errors,
+paused progress, mail navigation and light/dark completion. Browser account details
+were initially visible but absent from the accessibility tree; replacing their
+`SelectableText` with `SelectionArea(Text)` preserves selection and exposes the
+content. The same saved Playwright assertion now passes. Native Appium initially
+met a System UI unresponsive dialog; its screenshot/tree and logs are retained,
+and only the dedicated emulator's OS dialog was dismissed. No root cause is claimed.
+A missed initial Preferences tap and unfocused name entry are also retained; the
+saved flow waits for Appearance and focuses the real field before typing/asserting
+the entered name. No forced clicks or relaxed deadlines were added. The broader
+native input-under-load audit remains active.
+
+Failures are retained under `artifacts/profile-publication-failures/` and
+`artifacts/logs/profile-publish-*`, including initial SQL integer conversions,
+old schema expectations, Dart lint/control-route checks and native Clippy. Final
+core/native/host/SDK/Android/web result logs carry the same prefix; named Android
+reports live under `artifacts/flutter/native/`. Fixture captures contain no personal
+mail. The website, main worktree, installed desktop and personal phone are unchanged.
+The new flows are wired into the deliberately **disabled** quality definition;
+documentation CI remains enabled.
+
+All **40 active requests** remain in TODO. Reviewed enrollment/application,
+desktop/browser publication, full portable categories, credential protection,
+legacy migration, automatic native SDK restoration, Apple/live Google and complete
+product parity remain unfinished. The prior native navigation gate still fails
+154.81–162.33 ms against 150 ms; this increment makes no new latency claim. The
+password-protection choice remains unanswered.
+
+Final Android regression executes **seven named scenarios**: two publication,
+two discovery, two Google consent and one actual two-store native history/restart
+flow. Publication and discovery each pass four Appium and four Flutter Playwright
+flows, **eight flows per automation surface**. The shared harness retains actual
+click/touch input and both earlier discovery recovery/dark/disconnect flows.
+Final named reports and WebP captures are retained under the paths above. Final
+analysis and all **111 host tests** pass after the account-detail accessibility fix.
+
+The production ARM64 release APK builds and passes scoped inspection for the Rust
+and Flutter libraries, absent fixture markers, bundled fonts/licenses, production
+package and Internet permission. SHA-256 and details are in ignored
+`artifacts/profile-publication-apk.json`. `apksigner` confirms it is **unsigned**;
+no registered Google project is configured and no phone installation occurred.
+All-architecture distribution, signed releases and Apple verification remain open.
+The dedicated emulator and preview servers have been stopped after testing.
+
+The unchanged 100,000-message storage benchmark passes: Inbox p95 **6.28 ms**,
+account page **3.10 ms**, FTS search **36.10 ms** (each under 50 ms), cached body
+**0.02 ms** (under 10 ms). Owned Android/browser builds and the emulator finished
+before measurement; host observations are retained in `profile-publish-bench-host.log`,
+without claiming an otherwise idle host. This is a storage regression check, not
+native input-to-pixel evidence or a fix for the prior combined-gate failure.
+Strict pinned Zensical, Rust/Dart formatting and diff checks also pass.

@@ -49,22 +49,27 @@ store submissions in TODO.
 
 ## Current continuation
 
-Flutter Preferences now opens **Profiles and sync**, using a native discovery
-session bound to the saved Google account. The provider-verified Drive principal
-commits to secure device metadata before any profile contents appear. One owned
-operation and grant generations preserve pause/retry/cleanup through late results;
-50-row paging keeps observations bounded. Configuration, ownership and verification
-limits are in [the mobile contract](docs/agents/PROFILE_MOBILE.md).
+Flutter **Profiles and sync → Create profile** now prepares a frozen account and
+settings review, pages account details, and publishes initialized immutable history
+to private Google storage. Pause/retry/close retain exact requests and file IDs;
+tracked own-upload receipts commit before the local queue confirms. The shared
+initialization marker prevents a partial setup being presented as ready. See
+[the publication contract](docs/agents/PROFILE_PUBLICATION.md).
 
-Flutter discovery code [`438682e`](https://github.com/sam-ruff/shep.so/commit/438682e277c93832a95168034b9940afe8de0cc0) is pushed with exact remote verification.
-Mandatory hooks pass 443 root/shared tests; 71 mobile Rust, 104 Flutter host,
-five named Android scenarios, four Appium and four Flutter Playwright flows,
-41 Python checks, 35 parity contracts and strict docs pass. The unsigned ARM64
-APK builds and passes scoped fixture-isolation inspection. Detailed evidence,
-retained failures and limitations are in the latest completion entry. UI providers
-are isolated fixtures; no live Google, Apple or enrollment/sync success is implied.
+Final verification and prompt review-branch shipping are in progress. Core 52,
+mobile Rust 74, Flutter host 111, configured SDK, Python 41, parity 36 and strict
+docs checks pass. The two Android publication scenarios and four Appium/four
+Flutter Playwright publication flows pass, including accessible selectable account
+details and browsing mail during a paused step. The earlier Google/history/discovery
+regressions also pass: seven named Android, eight Appium and eight Flutter
+Playwright flows in total. The unsigned production ARM64 APK passes scoped fixture-isolation inspection.
+Mandatory hooks and shipping are being completed;
+use the latest completion entry for final evidence rather than inferring a pass.
+All providers in the control fixtures are isolated. No live Google, Apple,
+enrollment or continuous sync success is implied.
 
-The last unchanged 100,000-message storage benchmark passes, but the earlier native
+The current unchanged 100,000-message storage benchmark passes (Inbox p95 6.28 ms;
+search p95 36.10 ms), but the earlier native
 navigation and combined performance gate still fail at 154.81–162.33 ms against
 150 ms. Do not weaken that budget, call the host idle or claim this increment fixes
 it. Earlier native input failures during concurrent compilation also remain R63.
@@ -72,10 +77,10 @@ it. Earlier native input failures during concurrent compilation also remain R63.
 ## Restart order
 
 1. **Highest priority:** continue [OAuth and shared profiles](docs/agents/PROFILE_SYNC_HANDOVER.md).
-   Implement initialized first-profile publication, bounded reviewed enrollment and
-   actual account/preferences application on desktop and Flutter, then complete
-   category controls and ongoing reconciliation. Preserve own-upload identities
-   before later discovery and a causal completion barrier for multi-record setup.
+   Connect bounded reviewed enrollment and real account/preferences application on
+   Flutter, plus desktop publication/enrollment, then complete
+   category controls and ongoing reconciliation. Preserve tracked own-upload identities and the causal completion barrier for
+   multi-record setup.
    Copy original records into independently owned device history, never clone a
    remote observation database/device UUID. Account application preserves mail and
    drafts, uses explicit mappings and requires reviewed credential activation when
@@ -99,7 +104,9 @@ it. Earlier native input failures during concurrent compilation also remain R63.
 ## Verification and artifacts
 
 Run relevant saved scenarios from [client testing](docs/CLIENT_TESTING.md); never
-substitute direct controller calls for real UI controls. New discovery checks are
+substitute direct controller calls for real UI controls. Publication checks are
+`python3 scripts/clients/android_e2e.py --device emulator-5554 --creation-only` and
+`python3 scripts/clients/flutter_web_e2e.py --creation`. Discovery checks are
 `python3 scripts/clients/android_e2e.py --device emulator-5554 --discovery-only` and
 `python3 scripts/clients/flutter_web_e2e.py --discovery`. They run explicit fixtures.
 Wait for each Flutter build/test process to terminate before editing its source or

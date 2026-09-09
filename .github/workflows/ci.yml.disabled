@@ -123,6 +123,7 @@ jobs:
           python3 scripts/clients/flutter_web_e2e.py
           python3 scripts/clients/flutter_web_e2e.py --formatted
           python3 scripts/clients/flutter_web_e2e.py --discovery
+          python3 scripts/clients/flutter_web_e2e.py --creation
           cd flutter
           flutter build apk --debug --flavor production
           cd ..

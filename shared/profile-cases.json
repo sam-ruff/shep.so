@@ -30,7 +30,10 @@
       "patches": [
         {
           "path": "/requires",
-          "value": ["causal-v1", "future-security-v2"]
+          "value": [
+            "causal-v1",
+            "future-security-v2"
+          ]
         }
       ],
       "error": "Upgrade"
@@ -40,7 +43,10 @@
       "patches": [
         {
           "path": "/requires",
-          "value": ["causal-v1", "settings-v1"]
+          "value": [
+            "causal-v1",
+            "settings-v1"
+          ]
         }
       ],
       "error": "Invalid"
@@ -63,7 +69,9 @@
       "patches": [
         {
           "path": "/parents",
-          "value": ["40000000-0000-4000-8000-000000000001"]
+          "value": [
+            "40000000-0000-4000-8000-000000000001"
+          ]
         }
       ],
       "error": "Invalid"
@@ -159,7 +167,7 @@
               "key": "appearance",
               "value": "Dark",
               "future_hint": {
-                "label": "night 🌙",
+                "label": "night \ud83c\udf19",
                 "enabled": false
               }
             },
@@ -168,7 +176,7 @@
               "key": "appearance",
               "value": "Dark",
               "future_hint": {
-                "label": "night 🌙",
+                "label": "night \ud83c\udf19",
                 "enabled": false
               }
             }
@@ -200,7 +208,7 @@
             {
               "kind": "account_name",
               "id": "50000000-0000-4000-8000-000000000001",
-              "name": "Équipe"
+              "name": "\u00c9quipe"
             },
             {
               "kind": "account_removed",
@@ -222,7 +230,7 @@
               "key": "appearance",
               "value": "Dark",
               "future_hint": {
-                "label": "night 🌙",
+                "label": "night \ud83c\udf19",
                 "enabled": false
               }
             },
@@ -299,7 +307,7 @@
             "smtp_auth": "Login",
             "smtp_separate_password": true,
             "sent_copy": "Automatic",
-            "sent_folder": "Sent/Équipe",
+            "sent_folder": "Sent/\u00c9quipe",
             "future_server_option": {
               "mode": "strict"
             }
@@ -307,6 +315,112 @@
         }
       ],
       "error": null
+    },
+    {
+      "name": "preparing-profile",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "profile_setup",
+              "complete": false
+            }
+          ]
+        },
+        {
+          "path": "/requires",
+          "value": [
+            "causal-v1",
+            "initialization-v1"
+          ]
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "completed-profile-marker",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "profile_setup",
+              "complete": true
+            }
+          ]
+        },
+        {
+          "path": "/requires",
+          "value": [
+            "causal-v1",
+            "initialization-v1"
+          ]
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "setup-requires-capability",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "profile_setup",
+              "complete": false
+            }
+          ]
+        }
+      ],
+      "error": "Invalid"
+    },
+    {
+      "name": "mobile-preference-fields",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "setting",
+              "key": "left_swipe",
+              "value": "move"
+            },
+            {
+              "kind": "setting",
+              "key": "right_swipe",
+              "value": "read"
+            },
+            {
+              "kind": "setting",
+              "key": "sender_pictures",
+              "value": false
+            },
+            {
+              "kind": "setting",
+              "key": "tooltips",
+              "value": true
+            }
+          ]
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "invalid-mobile-swipe",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "setting",
+              "key": "left_swipe",
+              "value": "send"
+            }
+          ]
+        }
+      ],
+      "error": "Upgrade"
     }
   ]
 }

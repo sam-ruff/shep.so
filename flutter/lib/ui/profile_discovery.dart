@@ -1,12 +1,19 @@
 import 'package:flutter/material.dart';
 import '../model/profile_discovery.dart';
 import 'google_connection.dart';
+import 'profile_creation.dart';
+import '../model/preferences.dart';
 
 String _count(int n, String noun) => '$n $noun${n == 1 ? '' : 's'}';
 
 class ProfileDiscoveryScreen extends StatelessWidget {
-  const ProfileDiscoveryScreen({super.key, required this.discovery});
+  const ProfileDiscoveryScreen({
+    super.key,
+    required this.discovery,
+    this.preferences,
+  });
   final ProfileDiscovery discovery;
+  final Preferences Function()? preferences;
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: discovery,
@@ -29,6 +36,49 @@ class ProfileDiscoveryScreen extends StatelessWidget {
             const Text(
               'Find account and settings profiles saved with Google. Applying a profile and continuous sync are not available in this build yet.',
             ),
+            if (d.supportsCreation && preferences != null) ...[
+              const SizedBox(height: 12),
+              if (d.creation case final creation?)
+                Card(
+                  child: ListTile(
+                    title: Text(creation.name),
+                    subtitle: Text(
+                      creation.complete
+                          ? 'Profile saved to Google'
+                          : creation.needsReview
+                          ? 'Profile review saved on this device'
+                          : 'Profile publication needs to finish',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => ProfileCreationScreen(
+                          discovery: d,
+                          preferences: preferences!,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              OutlinedButton.icon(
+                onPressed:
+                    d.canCreate && (d.creation == null || d.creation!.complete)
+                    ? () => Navigator.push(
+                        context,
+                        MaterialPageRoute<void>(
+                          builder: (_) => ProfileCreationScreen(
+                            discovery: d,
+                            preferences: preferences!,
+                            newProfile: true,
+                          ),
+                        ),
+                      )
+                    : null,
+                icon: const Icon(Icons.add),
+                label: const Text('Create profile'),
+              ),
+            ],
             if (!d.configured)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
@@ -62,7 +112,7 @@ class ProfileDiscoveryScreen extends StatelessWidget {
                         : 'Resume discovery',
                   ),
                 ),
-                if (d.busy)
+                if (d.busy && !d.publishing)
                   OutlinedButton(
                     onPressed: d.paused ? null : d.pause,
                     child: Text(d.paused ? 'Pausing…' : 'Pause discovery'),
@@ -141,6 +191,8 @@ class ProfileDiscoveryScreen extends StatelessWidget {
                           '${_count(profile.accounts, 'account')} · ${_count(profile.settings, 'setting')}',
                         ),
                         if (profile.removed) const Text('Removed profile'),
+                        if (!profile.removed && !profile.initialized)
+                          const Text('Setup is not complete'),
                         if (profile.waiting > 0 || profile.ready > 0)
                           const Text('History is incomplete'),
                         if (profile.conflicts > 0)
@@ -151,6 +203,7 @@ class ProfileDiscoveryScreen extends StatelessWidget {
                       ],
                     ),
                     isThreeLine:
+                        !profile.initialized ||
                         profile.removed ||
                         profile.waiting > 0 ||
                         profile.ready > 0 ||

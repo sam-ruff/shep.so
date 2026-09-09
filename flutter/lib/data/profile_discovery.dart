@@ -11,10 +11,11 @@ class DiscoveredProfile {
       waiting = data['waiting'] as int,
       ready = data['ready'] as int,
       conflicts = data['conflicts'] as int,
-      removed = data['removed'] as bool;
+      removed = data['removed'] as bool,
+      initialized = data['initialized'] as bool? ?? false;
   final String profile, generation;
   final String? name;
-  final bool nameConflict, removed;
+  final bool nameConflict, removed, initialized;
   final int accounts, settings, waiting, ready, conflicts;
   String get cursor => '$profile:$generation';
 }

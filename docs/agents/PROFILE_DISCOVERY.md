@@ -87,10 +87,9 @@ until that binding is acknowledged. Continue desktop/browser integration; a
 caller-supplied history binding alone is not authentication.
 Enrollment must import original records into an independently owned local journal
 through a bounded reviewed transfer; copying observation SQLite would clone the
-device UUID. Define a causal initialization barrier before publishing a first
-setup that spans several operations. Carry acknowledged own-upload identities
-into discovery so a later deletion cannot resurrect a generation that this
-catalog has not yet observed.
+device UUID. Preserve the [causal initialization barrier](PROFILE_PUBLICATION.md)
+and tracked own-upload receipts used by Flutter publication. Later deletion of
+an uploaded file must remain explicit even before a subsequent cloud listing.
 
 Apply accounts through reviewed lifecycle operations, preserving local mail and
 drafts. Never reuse credentials against a remotely changed endpoint or import a

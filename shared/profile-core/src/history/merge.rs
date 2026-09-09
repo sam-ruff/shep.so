@@ -73,15 +73,31 @@ impl Journal {
         if parents.len() > crate::MAX_PARENTS {
             return Err(Error::Heads);
         }
+        let setup = setup_state(&tx)?;
+        if setup
+            .as_ref()
+            .is_some_and(|(complete, device, _)| !complete && *device != self.device)
+        {
+            return Err(Error::Incomplete);
+        }
+        let mut requires = vec![
+            "causal-v1".into(),
+            "accounts-v1".into(),
+            "settings-v1".into(),
+        ];
+        if setup.is_some()
+            || edit
+                .changes
+                .iter()
+                .any(|c| matches!(c.action, Action::ProfileSetup { .. }))
+        {
+            requires.push("initialization-v1".into());
+        }
         let operation = Operation {
             format: crate::FORMAT.into(),
             major: 1,
             minor: 0,
-            requires: vec![
-                "causal-v1".into(),
-                "accounts-v1".into(),
-                "settings-v1".into(),
-            ],
+            requires,
             namespace: self.binding.namespace.clone(),
             profile: self.binding.profile,
             generation: self.binding.generation,
@@ -272,6 +288,31 @@ fn apply_change(
             return Ok(());
         }
     }
+    if let Action::ProfileSetup { complete } = action {
+        match (complete, setup_state(tx)?) {
+            (false, None) if op.parents.is_empty() => {
+                let others: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM operations WHERE applied=1)",
+                    [],
+                    |r| r.get(0),
+                )?;
+                if others {
+                    return Err(Error::Identity);
+                }
+            }
+            (true, Some((false, device, root))) if device == op.device => {
+                let ancestor: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM history_ancestors WHERE id=?)",
+                    [root.to_string()],
+                    |r| r.get(0),
+                )?;
+                if !ancestor {
+                    return Err(Error::Identity);
+                }
+            }
+            _ => return Err(Error::Identity),
+        }
+    }
     let key = target(action);
     tx.execute(
         "INSERT OR IGNORE INTO targets(target,account) VALUES(?,?)",
@@ -355,4 +396,9 @@ fn preserves_extensions(old: &Change, new: &Change) -> bool {
             ) => old.extra.iter().all(|(k, v)| new.extra.get(k) == Some(v)),
             _ => true,
         }
+}
+
+fn setup_state(tx: &Transaction<'_>) -> Result<Option<(bool, Uuid, Uuid)>> {
+    tx.query_row("SELECT json_extract(CAST(o.raw AS TEXT),'$.changes[0].complete'),o.device,o.id FROM versions v JOIN operations o ON o.id=v.operation WHERE v.target='profile:setup'", [], |r| Ok((r.get::<_,bool>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?))).optional()?
+        .map(|(complete, device, operation)| Ok((complete,parse_uuid(&device)?,parse_uuid(&operation)?))).transpose()
 }

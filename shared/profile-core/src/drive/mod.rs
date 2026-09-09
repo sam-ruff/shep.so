@@ -66,6 +66,10 @@ pub enum Error {
         "The profile upload could not be confirmed. Retry the same saved upload; do not create another operation."
     )]
     Unconfirmed,
+    #[error(
+        "The profile file was saved to Google, but its discovery receipt could not be saved. Check device storage and retry this same publication."
+    )]
+    DiscoveryReceipt,
     #[error(transparent)]
     History(#[from] history::Error),
     #[error(transparent)]
@@ -339,6 +343,27 @@ impl Drive {
     /// reply, not the reservation; another call reconciles that same remote ID.
     /// The caller must finish discovery/reconciliation before publishing edits.
     pub async fn upload_next(&self, worker: &Worker) -> Result<Option<Uuid>> {
+        self.upload_next_inner(worker, None).await
+    }
+    /// Production publication must retain its own verified file identities before
+    /// the local history can mark them uploaded, including after a lost response.
+    pub async fn upload_next_tracked(
+        &self,
+        worker: &Worker,
+        catalog: &catalog::Discovery,
+    ) -> Result<Option<Uuid>> {
+        if catalog.scope().namespace != self.namespace
+            || catalog.scope().principal != self.principal
+        {
+            return Err(Error::Identity);
+        }
+        self.upload_next_inner(worker, Some(catalog)).await
+    }
+    async fn upload_next_inner(
+        &self,
+        worker: &Worker,
+        catalog: Option<&catalog::Discovery>,
+    ) -> Result<Option<Uuid>> {
         self.bind(worker)?;
         let mut upload = match worker.request(Command::NextUpload).await? {
             Reply::Upload(Some(upload)) => upload,
@@ -419,6 +444,12 @@ impl Drive {
             if !self.confirmed(&file).await? {
                 return Err(Error::Unconfirmed);
             }
+        }
+        if let Some(catalog) = catalog {
+            catalog
+                .accept_upload(file.clone(), upload.record)
+                .await
+                .map_err(|_| Error::DiscoveryReceipt)?;
         }
         worker
             .request(Command::Confirm {

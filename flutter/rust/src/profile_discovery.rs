@@ -1,5 +1,6 @@
 //! Device-local discovery sessions. Only the verified Google transport can open
-//! a production session; no account application or remote writes happen here.
+//! a production session; reviewed publication retains that same identity.
+pub(crate) mod creation;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use secrecy::SecretString;
@@ -20,6 +21,11 @@ use uuid::Uuid;
 trait Remote: Send + Sync {
     fn scope(&self) -> Scope;
     async fn advance(&self, catalog: &Discovery) -> Result<State>;
+    async fn publish(
+        &self,
+        worker: &shep_profile_core::history::Worker,
+        catalog: &Discovery,
+    ) -> Result<Option<Uuid>>;
 }
 #[async_trait]
 impl Remote for Drive {
@@ -31,6 +37,13 @@ impl Remote for Drive {
     }
     async fn advance(&self, catalog: &Discovery) -> Result<State> {
         Ok(catalog.advance(self).await?)
+    }
+    async fn publish(
+        &self,
+        worker: &shep_profile_core::history::Worker,
+        catalog: &Discovery,
+    ) -> Result<Option<Uuid>> {
+        Ok(self.upload_next_tracked(worker, catalog).await?)
     }
 }
 struct Session {
@@ -188,6 +201,43 @@ impl Runtime {
         }
         .await;
         // Data AND errors from an old grant cannot update a replacement screen.
+        self.session(id).await?;
+        result
+    }
+    pub async fn creation(
+        &self,
+        db: &crate::database::Database,
+        id: Uuid,
+        command: creation::Command,
+    ) -> Result<Value> {
+        let session = self.session(id).await?;
+        let _permit = if command.reads() {
+            None
+        } else {
+            Some(
+                session
+                    .advancing
+                    .clone()
+                    .try_acquire_owned()
+                    .context("Profile work is busy. Retry shortly.")?,
+            )
+        };
+        if command.needs_discovery() {
+            let state = session.catalog.state().await?;
+            anyhow::ensure!(
+                state.phase == shep_profile_core::drive::catalog::Phase::Complete
+                    && state.error.is_none(),
+                "Finish or retry discovery before publishing a profile."
+            );
+        }
+        let result = creation::run(
+            db,
+            session.remote.scope(),
+            session.remote.as_ref(),
+            &session.catalog,
+            command,
+        )
+        .await;
         self.session(id).await?;
         result
     }

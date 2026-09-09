@@ -111,6 +111,10 @@ pub enum Request {
         session: uuid::Uuid,
         command: crate::profile_discovery::Command,
     },
+    ProfileCreation {
+        session: uuid::Uuid,
+        command: crate::profile_discovery::creation::Command,
+    },
     CloseProfileDiscovery {
         session: uuid::Uuid,
     },
@@ -462,6 +466,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             Ok(serde_json::to_value(profile.operations.profile_discovery.open(&db.path,session,access_token,namespace,expected_principal).await?)?)
         }
         Request::ProfileDiscovery { session, command } => profile.operations.profile_discovery.run(session,command).await,
+        Request::ProfileCreation { session, command } => profile.operations.profile_discovery.creation(db,session,command).await,
         Request::CloseProfileDiscovery { session } => {
             profile.operations.profile_discovery.close(session).await?;
             Ok(json!({"closed":true}))

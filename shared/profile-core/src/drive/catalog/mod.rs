@@ -124,6 +124,8 @@ pub struct Profile {
     pub ready: u64,
     pub conflicts: u64,
     pub removed: bool,
+    #[serde(default)]
+    pub initialized: bool,
     pub revision: u64,
 }
 impl Profile {
@@ -140,6 +142,7 @@ impl Profile {
             ready: overview.state.ready,
             conflicts: overview.state.conflicts,
             removed: overview.state.removed,
+            initialized: overview.state.initialized,
             revision: overview.state.revision,
         }
     }
