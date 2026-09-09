@@ -105,6 +105,129 @@ async fn upload(path: &std::path::Path, pending: &Snapshot) -> ReservedUpload {
     }
 }
 
+// Observe the exact queued wire records without mutating upload acknowledgments.
+// Every caller has already closed its history worker (including SQLite WAL).
+fn uploads(path: &std::path::Path) -> Vec<ReservedUpload> {
+    let c = rusqlite::Connection::open_with_flags(
+        path.join("history.sqlite"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    c.prepare("SELECT raw FROM operations WHERE local=1 ORDER BY seq")
+        .unwrap()
+        .query_map([], |r| r.get::<_, Vec<u8>>(0))
+        .unwrap()
+        .enumerate()
+        .map(|(i, raw)| {
+            let record = Record::decode(binding().namespace(), raw.unwrap()).unwrap();
+            ReservedUpload {
+                binding: binding(),
+                remote: RemoteRecord {
+                    id: if i == 0 {
+                        "seed-file".into()
+                    } else {
+                        format!("seed-file-{i}")
+                    },
+                    key: record.key(),
+                    size: record.bytes().len() as u64,
+                    sha256: record.sha256.clone(),
+                },
+                record,
+            }
+        })
+        .collect()
+}
+fn fresh_uploads(records: &[ReservedUpload]) -> Vec<Reply> {
+    records
+        .iter()
+        .flat_map(|r| {
+            [
+                Reply::new(
+                    200,
+                    json!({"ids":[r.remote.id],"space":"appDataFolder"}).to_string(),
+                ),
+                Reply::new(404, ""),
+                Reply::new(201, file(r).to_string()),
+            ]
+        })
+        .collect()
+}
+fn download_all(records: &[ReservedUpload]) -> Vec<Reply> {
+    let mut replies = vec![Reply::new(
+        200,
+        json!({"files":records.iter().map(file).collect::<Vec<_>>()}).to_string(),
+    )];
+    for r in records {
+        replies.extend([
+            Reply::new(200, file(r).to_string()),
+            Reply::binary(200, r.record.bytes().to_vec()),
+        ]);
+    }
+    replies
+}
+
+#[tokio::test]
+async fn profile_setup_upgrades_only_unstarted_legacy_seeds_without_changing_frozen_metadata() {
+    for admitted in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = local(dir.path()).await;
+        let journal = journal::Journal::open(None).unwrap();
+        let pending = initial(&store, &journal).await;
+        let mut replica = open(dir.path(), &pending, &journal).await;
+        if admitted {
+            let seed = store.profile_seed(pending.clone()).await.unwrap();
+            let chunk = store
+                .checkpoint_profile_seed(pending.clone(), seed.chunks[0].operation, 0)
+                .await
+                .unwrap();
+            replica
+                .edit(history::LocalEdit {
+                    operation: chunk.operation,
+                    expected_revision: 0,
+                    changes: chunk.changes,
+                    resolutions: vec![],
+                })
+                .await
+                .unwrap();
+        }
+        let mut seed = store.profile_seed(pending.clone()).await.unwrap();
+        seed.initialization = None;
+        store.put(SEED_KEY, seed.clone()).await.unwrap();
+        let before = replica.state().await.unwrap();
+        let result = prepare(&store, &mut replica, &pending).await;
+        let after: Seed = store.get::<Option<Seed>>(SEED_KEY).await.unwrap().unwrap();
+        assert_eq!(after.account_ids, seed.account_ids);
+        if admitted {
+            assert!(result.is_err());
+            assert!(after.initialization.is_none());
+            assert_eq!(
+                serde_json::to_value(&after).unwrap(),
+                serde_json::to_value(&seed).unwrap()
+            );
+            assert_eq!(replica.state().await.unwrap().revision, before.revision);
+        } else {
+            result.unwrap();
+            assert!(after.initialization.is_some());
+            for (old, new) in seed.chunks.iter().zip(&after.chunks) {
+                assert_eq!(old.operation, new.operation);
+                assert_eq!(old.changes, new.changes);
+                assert!(new.expected_revision.is_some());
+            }
+            assert!(replica.state().await.unwrap().initialized);
+        }
+        assert!(
+            store
+                .profile_enrollment()
+                .await
+                .unwrap()
+                .enrollment
+                .last_success
+                .is_none()
+        );
+        replica.close().await.unwrap();
+    }
+}
+
 #[tokio::test]
 async fn profile_setup_publishes_reviewed_seed_after_restart_and_other_device_reads_exact_settings()
 {
@@ -118,18 +241,18 @@ async fn profile_setup_publishes_reviewed_seed_after_restart_and_other_device_re
     prepare(&store, &mut replica, &pending).await.unwrap();
     assert_eq!(replica.state().await.unwrap().revision, before.revision);
     replica.close().await.unwrap();
-    let saved = upload(dir.path(), &pending).await;
-    assert!(!String::from_utf8_lossy(saved.record.bytes()).contains("path-does-not-travel"));
+    let saved = uploads(dir.path());
+    assert!(
+        saved
+            .iter()
+            .all(|r| !String::from_utf8_lossy(r.record.bytes()).contains("path-does-not-travel"))
+    );
     drop(store);
     let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
     let mut replica = open(dir.path(), &pending, &journal).await;
-    let mut server = Server::start(vec![
-        Reply::new(200, r#"{"files":[]}"#),
-        Reply::new(200, r#"{"ids":["seed-file"],"space":"appDataFolder"}"#),
-        Reply::new(404, ""),
-        Reply::new(201, file(&saved).to_string()),
-    ])
-    .await;
+    let mut replies = vec![Reply::new(200, r#"{"files":[]}"#)];
+    replies.extend(fresh_uploads(&saved));
+    let mut server = Server::start(replies).await;
     let done = publish(
         &store,
         &mut replica,
@@ -149,7 +272,7 @@ async fn profile_setup_publishes_reviewed_seed_after_restart_and_other_device_re
             .iter()
             .filter(|r| r.method == "POST")
             .count(),
-        1
+        saved.len()
     );
     replica.close().await.unwrap();
 
@@ -174,13 +297,15 @@ async fn profile_setup_publishes_reviewed_seed_after_restart_and_other_device_re
         .unwrap();
     let other_journal = journal::Journal::open(None).unwrap();
     let mut other_replica = open(other.path(), &joined, &other_journal).await;
-    let mut server = Server::start(vec![
-        Reply::new(200, json!({"files":[file(&saved)]}).to_string()),
-        Reply::new(200, file(&saved).to_string()),
-        Reply::binary(200, saved.record.bytes().to_vec()),
-    ])
-    .await;
-    other_replica.pull(&session(&server)).await.unwrap();
+    let mut server = Server::start(download_all(&saved)).await;
+    assert!(
+        other_replica
+            .pull(&session(&server))
+            .await
+            .unwrap()
+            .state()
+            .initialized
+    );
     let versions = other_replica
         .versions("setting:appearance".into(), None)
         .await
@@ -201,7 +326,7 @@ async fn profile_setup_publishes_reviewed_seed_after_restart_and_other_device_re
 }
 
 #[tokio::test]
-async fn profile_setup_lost_upload_response_reopens_original_operation_and_finishes_without_posting_again()
+async fn profile_setup_lost_upload_response_reopens_original_operation_and_finishes_without_posting_the_root_again()
  {
     let dir = tempfile::tempdir().unwrap();
     let store = local(dir.path()).await;
@@ -211,6 +336,7 @@ async fn profile_setup_lost_upload_response_reopens_original_operation_and_finis
     let mut replica = open(dir.path(), &pending, &journal).await;
     prepare(&store, &mut replica, &pending).await.unwrap();
     replica.close().await.unwrap();
+    let all = uploads(dir.path());
     let saved = upload(dir.path(), &pending).await;
     let mut replica = open(dir.path(), &pending, &journal).await;
     let mut first = Server::start(vec![
@@ -240,18 +366,26 @@ async fn profile_setup_lost_upload_response_reopens_original_operation_and_finis
     drop(journal);
     let journal = journal::Journal::open(Some(&path)).unwrap();
     let mut replica = open(dir.path(), &pending, &journal).await;
-    let mut second = Server::start(vec![
+    let mut replies = vec![
         Reply::new(200, json!({"files":[file(&saved)]}).to_string()),
         Reply::new(200, file(&saved).to_string()),
         Reply::binary(200, saved.record.bytes().to_vec()),
         Reply::new(200, file(&saved).to_string()),
-    ])
-    .await;
+    ];
+    replies.extend(fresh_uploads(&all[1..]));
+    let mut second = Server::start(replies).await;
     publish(&store, &mut replica, &session(&second), pending, 124)
         .await
         .unwrap();
     second.finish().await;
-    assert!(second.requests().iter().all(|r| r.method == "GET"));
+    assert_eq!(
+        second
+            .requests()
+            .iter()
+            .filter(|r| r.method == "POST")
+            .count(),
+        all.len() - 1
+    );
     assert_eq!(
         journal
             .load(&binding(), saved.remote.key)
@@ -454,15 +588,11 @@ async fn profile_setup_checkpoints_original_seed_before_upload_and_preserves_lat
         baseline.fields
     );
     replica.close().await.unwrap();
-    let saved = upload(dir.path(), &current).await;
+    let saved = uploads(dir.path());
     let mut replica = open(dir.path(), &current, &journal).await;
-    let mut server = Server::start(vec![
-        Reply::new(200, r#"{"files":[]}"#),
-        Reply::new(200, r#"{"ids":["seed-file"],"space":"appDataFolder"}"#),
-        Reply::new(404, ""),
-        Reply::new(201, file(&saved).to_string()),
-    ])
-    .await;
+    let mut replies = vec![Reply::new(200, r#"{"files":[]}"#)];
+    replies.extend(fresh_uploads(&saved));
+    let mut server = Server::start(replies).await;
     publish(&store, &mut replica, &session(&server), current, 123)
         .await
         .unwrap();
@@ -594,8 +724,8 @@ async fn profile_setup_keeps_inflight_receipt_but_never_reenables_a_disabled_or_
         server.finish().await;
         assert_eq!(
             replica.state().await.unwrap().queued,
-            0,
-            "The committed receipt must survive the stop request."
+            2,
+            "The committed root receipt must survive; metadata and completion stay queued."
         );
         assert!(
             journal
@@ -694,7 +824,7 @@ async fn profile_control_interrupts_a_held_read_but_waits_for_an_admitted_upload
     release.send(()).unwrap();
     let (replica, result) = write.await.unwrap();
     assert!(result.unwrap_err().is::<Stopped>());
-    assert_eq!(replica.state().await.unwrap().queued, 0);
+    assert_eq!(replica.state().await.unwrap().queued, 2);
     assert!(
         journal
             .load(&binding(), saved.remote.key)

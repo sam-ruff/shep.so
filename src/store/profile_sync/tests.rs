@@ -320,6 +320,36 @@ async fn profile_metadata_maps_explicit_auth_and_keeps_unimplemented_settings_an
     assert_eq!(preferences.appearance, Appearance::Dark);
     assert!(!metadata::apply_setting(&mut preferences, &operation.changes[3]).unwrap());
     assert!(metadata::setting_value(SettingKey::PreviewLines, &preferences).is_none());
+    let tooltip = Change {
+        action: Action::Setting {
+            key: SettingKey::Tooltips,
+            value: json!(false),
+        },
+        extra: Default::default(),
+    };
+    assert!(metadata::apply_setting(&mut preferences, &tooltip).unwrap());
+    assert!(!preferences.tooltips);
+    assert!(
+        preferences.shortcut_tooltips,
+        "The independent shortcut hint choice stays local."
+    );
+    for (key, value) in [
+        (SettingKey::LeftSwipe, json!("archive")),
+        (SettingKey::RightSwipe, json!("read")),
+        (SettingKey::SenderPictures, json!(false)),
+    ] {
+        assert!(
+            !metadata::apply_setting(
+                &mut preferences,
+                &Change {
+                    action: Action::Setting { key, value },
+                    extra: Default::default()
+                }
+            )
+            .unwrap()
+        );
+        assert!(metadata::setting_value(key, &preferences).is_none());
+    }
 }
 
 #[tokio::test]

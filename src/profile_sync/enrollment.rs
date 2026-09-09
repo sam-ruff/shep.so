@@ -15,11 +15,29 @@ pub struct SeedChunk {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct Initialization {
+    pub begin: SeedChunk,
+    pub complete: SeedChunk,
+}
+impl Initialization {
+    pub(crate) fn new() -> Self {
+        Self {
+            begin: setup_marker(false),
+            complete: setup_marker(true),
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Seed {
     pub binding_key: String,
     pub chunks: Vec<SeedChunk>,
     /// Maps this device's account IDs to stable shared IDs; the map stays local.
     pub account_ids: std::collections::BTreeMap<String, Uuid>,
+    /// Absent in old saved setups. Never rewrite their admitted operation bytes
+    /// or insert a new causal root into an already-published legacy history.
+    #[serde(default)]
+    pub initialization: Option<Initialization>,
 }
 impl Seed {
     pub(crate) fn create(
@@ -75,6 +93,7 @@ impl Seed {
             binding_key: selection.binding.storage_key()?,
             chunks,
             account_ids,
+            initialization: Some(Initialization::new()),
         };
         seed.validate(selection)?;
         Ok(seed)
@@ -83,6 +102,18 @@ impl Seed {
     pub(crate) fn validate(&self, selection: &Selection) -> anyhow::Result<()> {
         use shep_profile_core::{Action, Operation};
         selection.validate()?;
+        let initialization=self.initialization.as_ref().context(
+            "This saved profile setup uses an older format and needs recovery before it can resume. Its original records and local accounts have been kept.")?;
+        for (chunk, complete) in [
+            (&initialization.begin, false),
+            (&initialization.complete, true),
+        ] {
+            anyhow::ensure!(
+                chunk.changes.len() == 1
+                    && matches!(chunk.changes[0].action,Action::ProfileSetup { complete: value } if value == complete),
+                "The saved profile initialization markers are invalid. Keep the original setup for recovery."
+            );
+        }
         anyhow::ensure!(
             selection.origin == Origin::Create
                 && !selection.ready
@@ -95,7 +126,7 @@ impl Seed {
         let mut connections = std::collections::BTreeSet::new();
         let mut names = std::collections::BTreeSet::new();
         let mut profile_names = 0;
-        for chunk in &self.chunks {
+        for chunk in self.operations() {
             anyhow::ensure!(
                 operations.insert(chunk.operation)
                     && chunk.expected_revision.is_none_or(|v| v <= i64::MAX as u64),
@@ -111,6 +142,7 @@ impl Seed {
                     "causal-v1".into(),
                     "accounts-v1".into(),
                     "settings-v1".into(),
+                    "initialization-v1".into(),
                 ],
                 namespace: selection.binding.namespace.clone(),
                 profile: selection.binding.profile,
@@ -138,6 +170,16 @@ impl Seed {
                         format!("{id}:name")
                     }
                     Action::Setting { key, .. } => format!("setting:{key:?}"),
+                    Action::ProfileSetup { complete }
+                        if chunk.operation
+                            == if *complete {
+                                initialization.complete.operation
+                            } else {
+                                initialization.begin.operation
+                            } =>
+                    {
+                        format!("profile:setup:{complete}")
+                    }
                     _ => anyhow::bail!("The initial setup cannot contain removals."),
                 };
                 anyhow::ensure!(targets.insert(target), "The saved setup repeats a field.");
@@ -153,6 +195,36 @@ impl Seed {
             "The saved account mappings are incomplete. Keep the original setup for recovery."
         );
         Ok(())
+    }
+
+    pub fn operations(&self) -> impl Iterator<Item = &SeedChunk> {
+        self.initialization
+            .iter()
+            .map(|s| &s.begin)
+            .chain(self.chunks.iter())
+            .chain(self.initialization.iter().map(|s| &s.complete))
+    }
+    pub(crate) fn operation_mut(&mut self, id: Uuid) -> Option<&mut SeedChunk> {
+        if let Some(setup) = &mut self.initialization {
+            if setup.begin.operation == id {
+                return Some(&mut setup.begin);
+            }
+            if setup.complete.operation == id {
+                return Some(&mut setup.complete);
+            }
+        }
+        self.chunks.iter_mut().find(|c| c.operation == id)
+    }
+}
+
+fn setup_marker(complete: bool) -> SeedChunk {
+    SeedChunk {
+        operation: Uuid::new_v4(),
+        expected_revision: None,
+        changes: vec![shep_profile_core::Change {
+            action: shep_profile_core::Action::ProfileSetup { complete },
+            extra: Default::default(),
+        }],
     }
 }
 

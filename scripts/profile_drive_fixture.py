@@ -10,7 +10,7 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
-MODES = ("empty", "fail-once", "hold-list", "slow-upload", "invalid-local", "existing", "existing-unsupported")
+MODES = ("empty", "fail-once", "hold-list", "slow-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy")
 
 
 class ProfileDriveFixture:
@@ -146,16 +146,31 @@ class ProfileDriveFixture:
             if number == 1:
                 operation["changes"] += [{"kind":"account_connection", "account":account},
                     {"kind":"account_name", "id":account["id"], "name":"Cloud account"}]
-            raw = json.dumps(operation, ensure_ascii=False).encode()
-            identity = f"existing-profile-{number}"
-            digest = hashlib.sha256(raw).hexdigest()
-            metadata = {"id":identity, "name":f"shep-profile-{operation['operation']}.json", "ownedByMe":True,
-                "trashed":False,"spaces":["appDataFolder"],"mimeType":"application/json","size":str(len(raw)),
-                "sha256Checksum":digest, "appProperties":{"shepType":"profile","shepFormat":"operation-v1",
-                    "shepNamespace":hashlib.sha256(b"so.shep").hexdigest(),"shepProfile":operation["profile"],
-                    "shepGeneration":operation["generation"],"shepOperation":operation["operation"],"shepSha256":digest}}
-            self.files[identity] = (metadata, raw)
-            self.changes.append(identity)
+            if number == 1:
+                operation["changes"].append({"kind":"setting", "key":"tooltips", "value":False})
+            if self.mode == "existing-legacy" and number == 1:
+                records = [("", operation)]
+            else:
+                operation["requires"] = [*operation["requires"], "initialization-v1"]
+                start = dict(operation, operation=f"60000000-0000-4000-8000-{number:012d}",
+                             parents=[], changes=[{"kind":"profile_setup", "complete":False}])
+                operation["parents"] = [start["operation"]]
+                end = dict(operation, operation=f"70000000-0000-4000-8000-{number:012d}",
+                           parents=[operation["operation"]], changes=[{"kind":"profile_setup", "complete":True}])
+                records = [("-start", start), ("", operation)]
+                if not (self.mode == "existing-incomplete" and number == 1):
+                    records.append(("-complete", end))
+            for suffix, record in records:
+                raw = json.dumps(record, ensure_ascii=False).encode()
+                identity = f"existing-profile-{number}{suffix}"
+                digest = hashlib.sha256(raw).hexdigest()
+                metadata = {"id":identity, "name":f"shep-profile-{record['operation']}.json", "ownedByMe":True,
+                    "trashed":False,"spaces":["appDataFolder"],"mimeType":"application/json","size":str(len(raw)),
+                    "sha256Checksum":digest, "appProperties":{"shepType":"profile","shepFormat":"operation-v1",
+                        "shepNamespace":hashlib.sha256(b"so.shep").hexdigest(),"shepProfile":record["profile"],
+                        "shepGeneration":record["generation"],"shepOperation":record["operation"],"shepSha256":digest}}
+                self.files[identity] = (metadata, raw)
+                self.changes.append(identity)
 
     def close(self):
         self.release.set()

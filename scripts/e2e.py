@@ -1762,7 +1762,7 @@ class NativeFlows(unittest.TestCase):
                        shot("profile-existing-review"),click(340,619),
                        check("profile_sync.enrollment.selection.name","Home"),
                        check("profile_sync.enrollment.selection.ready",True),check("account_count",3),
-                       check("account_reconnect_count",1),check("dark",True),check("profile_sync.error",None),
+                       check("account_reconnect_count",1),check("dark",True),check("tooltips",False),check("profile_sync.error",None),
                        shot("profile-existing-imported"),{"type":"restart"})
         self.open_shared_profiles()
         self.mcp.batch(check("profile_sync.enrollment.selection.name","Home"),check("account_count",3),
@@ -1799,6 +1799,28 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(click(1130,545),check("profile_sync.join_review.name","Work"),
                        check("profile_sync.join_review.accounts",0),check("profile_sync.error",None),
                        shot("profile-unsupported-recovery"))
+
+    def profile_not_ready_scenario(self, mode):
+        started=self.mcp.call("desktop.start",profile_sync=mode)
+        print(f"Profile initialization evidence: {started['artifacts']}",flush=True)
+        self.open_shared_profiles()
+        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
+                       check("profile_sync.profiles.0.initialized",False),
+                       check("profile_sync.profiles.1.initialized",True),
+                       shot("profile-initialization-required"),click(1130,494),wait(80),
+                       check("profile_sync.join_review",None),check("profile_sync.enrollment.selection",None),
+                       check("account_count",2),check("dark",False),
+                       click(1130,545),check("profile_sync.join_review.name","Work"),
+                       shot("profile-complete-alternative"),click(340,566),
+                       check("profile_sync.enrollment.selection.name","Work"),
+                       check("profile_sync.enrollment.selection.ready",True),check("account_count",2),
+                       check("profile_sync.error",None),shot("profile-complete-imported"))
+
+    def test_profile_sync_native_incomplete_setup_cannot_be_imported(self):
+        self.profile_not_ready_scenario("existing-incomplete")
+
+    def test_profile_sync_native_legacy_format_requires_review_without_losing_local_data(self):
+        self.profile_not_ready_scenario("existing-legacy")
 
     def test_profile_sync_native_existing_compact_dark_review_and_cancel(self):
         started=self.mcp.call("desktop.start",profile_sync="existing",width=900,height=640)
@@ -1846,7 +1868,7 @@ class NativeFlows(unittest.TestCase):
         checkpoint=self.profile_checkpoint(started)
         self.assertEqual(len(checkpoint["accounts"]),2)
         self.assertEqual(checkpoint["local_only"],[])
-        self.assertEqual(sum(t.startswith("setting:") for t in checkpoint["fields"]),7)
+        self.assertEqual(sum(t.startswith("setting:") for t in checkpoint["fields"]),8)
         self.assertIsNone(checkpoint["pending"])
 
     def test_profile_sync_native_failure_retry_and_opt_out(self):
