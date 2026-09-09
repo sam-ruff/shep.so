@@ -272,7 +272,7 @@ impl Engine {
         let mut timer = tokio::time::interval(Duration::from_secs(60));
         timer.tick().await;
         let mut last_calendar_sync = Instant::now();
-        let mut last_backup_attempt: Option<(BackupTarget, Instant)> = None;
+        let mut last_backup_attempt = std::collections::HashMap::<String, Instant>::new();
         loop {
             tokio::select! {
                 biased;
@@ -317,14 +317,25 @@ impl Engine {
                                 (Some("calendar".into()), worker.execute(Command::SyncCalendar, events).await)
                             });
                         }
-                        let target = BackupTarget::from_preferences(&prefs);
-                        let interval = Duration::from_secs(prefs.backup_hours * 3600);
-                        let retry_due = last_backup_attempt.as_ref().is_none_or(|(previous, at)| *previous != target || at.elapsed() >= interval);
-                        if prefs.auto_backup && prefs.backup_ready && retry_due && chrono::Utc::now().timestamp()-prefs.last_backup.unwrap_or(0)>=interval.as_secs()as i64&&!busy.contains("backup")&&jobs.len()<NETWORK_CONCURRENCY {
-                                last_backup_attempt = Some((target.clone(), Instant::now()));
-                                busy.insert("backup".into());let _=output.send(Event::Busy("backup".into(),true)).await;
-                                let engine=engine.clone();let output=output.clone();jobs.spawn(async move{let _slot = engine.provider_slots.acquire().await; (Some("backup".into()),engine.execute(Command::AutomaticBackup(target),output).await)});
+                        let configured = backup::config::configurations(&prefs);
+                        let valid_keys: HashSet<_> = configured.iter().map(|p| BackupTarget::from_preferences(p).work_key()).collect();
+                        last_backup_attempt.retain(|key, _| valid_keys.contains(key));
+                        for configured in configured {
+                            let target = BackupTarget::from_preferences(&configured);
+                            let key = target.work_key();
+                            let interval = Duration::from_secs(configured.backup_hours * 3600);
+                            let retry_due = last_backup_attempt.get(&key).is_none_or(|at| at.elapsed() >= interval);
+                            if configured.auto_backup && configured.backup_ready && retry_due && chrono::Utc::now().timestamp() - configured.last_backup.unwrap_or(0) >= interval.as_secs() as i64 && !busy.contains(&key) && jobs.len() < NETWORK_CONCURRENCY {
+                                last_backup_attempt.insert(key.clone(), Instant::now());
+                                busy.insert(key.clone());
+                                let _ = output.send(Event::Busy(key.clone(), true)).await;
+                                let engine = engine.clone(); let output = output.clone();
+                                jobs.spawn(async move {
+                                    let _slot = engine.provider_slots.acquire().await;
+                                    (Some(key), engine.execute(Command::AutomaticBackup(target), output).await)
+                                });
                             }
+                        }
                     }
                 }
             }

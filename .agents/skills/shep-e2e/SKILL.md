@@ -725,3 +725,13 @@ WebP evidence for single/double digits and 99+. This is prepared-image evidence.
 Run full Windows checking and `python3 scripts/check_badge_adapters.py` for exact
 macOS API checks; actual desktop badge rendering, Explorer restart and AppKit
 hidden-window delivery must still be executed on their operating systems.
+
+For multiple Local/Drive destinations, preserve
+`test_multiple_backup_destinations_setup_and_restart`. It edits real native
+settings, rejects a duplicate folder, switches independent names/retention,
+restarts, cancels then confirms the red removal review, and verifies removal
+survives restart. It also edits the remaining destination at 900×640 in dark
+appearance. `backup_destinations`, `backup_selected` and
+`saved_backup_destinations` are observation-only. Normal preview cannot upload,
+restore, read the keychain or contact Google; actual isolated encrypted local
+uploads and passphrase/retention isolation have Rust coverage.

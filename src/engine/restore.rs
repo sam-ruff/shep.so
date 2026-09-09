@@ -14,6 +14,7 @@ impl Engine {
         let _google = self.google_connection_lock.read().await;
         let prefs = self.store.get("preferences").await?;
         Self::check_backup_target(&target, &prefs)?;
+        let prefs = backup::config::resolve(&prefs, &target)?;
         let bytes = self.backup_provider(&prefs).await?.download(&id).await?;
         let snapshot =
             tokio::task::spawn_blocking(move || backup::decrypt(&bytes, &passphrase)).await??;

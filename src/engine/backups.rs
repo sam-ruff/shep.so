@@ -46,7 +46,7 @@ impl Engine {
             "Reconnect Google and approve Drive backup access before accessing copies."
         );
         anyhow::ensure!(
-            *target == BackupTarget::from_preferences(prefs),
+            backup::config::resolve(prefs, target).is_ok(),
             "The backup destination changed. Refresh copies or start the backup again with the current settings."
         );
         Ok(())
@@ -60,8 +60,9 @@ impl Engine {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(!self.demo, "Backup is disabled in preview.");
         let _guard = self.backup_connection_guard(&target).await;
-        let prefs: Preferences = self.store.get("preferences").await?;
-        Self::check_backup_target(&target, &prefs)?;
+        let saved: Preferences = self.store.get("preferences").await?;
+        Self::check_backup_target(&target, &saved)?;
+        let prefs = backup::config::resolve(&saved, &target)?;
         prefs.validate()?;
         let passphrase = if let Some(secret) = supplied {
             secret
@@ -76,9 +77,7 @@ impl Engine {
                     let changed = target.clone();
                     self.store
                         .update_preferences(move |current| {
-                            if BackupTarget::from_preferences(current) == changed {
-                                current.backup_ready = false;
-                            }
+                            backup::config::pause(current, &changed);
                         })
                         .await?;
                     self.workspace(output).await?;
@@ -256,7 +255,7 @@ impl Engine {
             .get::<Preferences>("preferences")
             .await
             .ok()
-            .filter(|p| BackupTarget::from_preferences(p) == target)
+            .and_then(|p| backup::config::resolve(&p, &target).ok())
             .map_or(prefs.backup_copies, |p| p.backup_copies);
         if let Err(error) = backup::retain(provider, keep, &copy.id).await {
             warnings.push(format!("Older-copy cleanup did not finish: {error}."));

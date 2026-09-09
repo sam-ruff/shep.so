@@ -131,8 +131,8 @@ impl Command {
             Self::RestoreGoogleCalendars => Some("restore-calendars".into()),
             Self::GoogleLogin(..) => Some("google".into()),
             Self::DisconnectGoogle(_) | Self::CleanupGoogle => Some("google-disconnect".into()),
-            Self::Backup(..) | Self::AutomaticBackup(_) | Self::Restore(..) => {
-                Some("backup".into())
+            Self::Backup(target, _) | Self::AutomaticBackup(target) | Self::Restore(target, ..) => {
+                Some(target.work_key())
             }
             Self::Send(d) => Some(format!("send:{}", d.id)),
             Self::SaveEvent(e) | Self::DeleteEvent(e) => Some(format!("event:{}", e.key())),
@@ -1254,6 +1254,7 @@ impl Engine {
                     let _guard = self.backup_connection_guard(&target).await;
                     let prefs = self.store.get("preferences").await?;
                     Self::check_backup_target(&target, &prefs)?;
+                    let prefs = backup::config::resolve(&prefs, &target)?;
                     self.backup_provider(&prefs).await?.list().await
                 }
                 .await;

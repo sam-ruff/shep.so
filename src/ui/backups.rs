@@ -13,6 +13,31 @@ pub(super) struct PendingBackup {
     action: BackupAction,
 }
 impl App {
+    pub(super) fn change_backup_destination(&mut self, id: Option<String>) {
+        if let Err(error) = self.read_preferences() {
+            self.notice(error.to_string(), true);
+            return;
+        }
+        let result = match id {
+            Some(id) => crate::backup::config::select(&mut self.preferences, &id),
+            None => crate::backup::config::add(&mut self.preferences),
+        };
+        match result {
+            Ok(()) => {
+                self.settings_fields();
+                self.fields.remove("passphrase");
+                self.backups_generation += 1;
+                self.save_preferences();
+            }
+            Err(error) => self.notice(error.to_string(), true),
+        }
+    }
+
+    pub(super) fn backup_busy(&self) -> bool {
+        self.busy
+            .contains(&self.configured_backup_target().work_key())
+    }
+
     pub(super) fn configured_backup_target(&self) -> BackupTarget {
         if self.preferences.backup_destination == BackupDestination::Local
             && self.tab == Tab::Preferences

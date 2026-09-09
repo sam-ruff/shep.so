@@ -94,6 +94,7 @@ pub enum Dialog {
     Event,
     Export,
     Restore,
+    RemoveBackup,
     Sender,
 }
 
@@ -185,6 +186,10 @@ pub enum Message {
     CalendarBack,
     SavePreferences,
     Appearance(Appearance),
+    AddBackupDestination,
+    SelectBackupDestination(String),
+    ReviewBackupRemoval,
+    RemoveBackupDestination,
     BackupDestination(BackupDestination),
     BackupAccounts(bool),
     AutoBackup(bool),
@@ -2435,6 +2440,26 @@ impl App {
                 self.preferences.appearance = appearance;
                 self.save_preferences();
             }
+            Message::AddBackupDestination => self.change_backup_destination(None),
+            Message::SelectBackupDestination(id) => self.change_backup_destination(Some(id)),
+            Message::ReviewBackupRemoval => self.dialog = Some(Dialog::RemoveBackup),
+            Message::RemoveBackupDestination => {
+                if self.dialog == Some(Dialog::RemoveBackup) {
+                    match crate::backup::config::remove_selected(&mut self.preferences) {
+                        Ok(()) => {
+                            self.dialog = None;
+                            self.settings_fields();
+                            self.fields.remove("passphrase");
+                            self.save_preferences();
+                            self.notice(
+                                "Backup destination removed. Saved copies are kept.",
+                                false,
+                            );
+                        }
+                        Err(error) => self.notice(error.to_string(), true),
+                    }
+                }
+            }
             Message::BackupDestination(destination) => {
                 self.preferences.backup_destination = destination;
                 self.preference_sync.changed();
@@ -3099,6 +3124,15 @@ impl App {
     }
     fn settings_fields(&mut self) {
         for (k, v) in [
+            (
+                "backup_name",
+                self.preferences
+                    .backup_destinations
+                    .iter()
+                    .find(|d| Some(&d.id) == self.preferences.backup_selected.as_ref())
+                    .map(|d| d.name.clone())
+                    .unwrap_or_else(|| "Main backup".into()),
+            ),
             ("backup_folder", self.preferences.backup_folder.clone()),
             ("copies", self.preferences.backup_copies.to_string()),
             ("hours", self.preferences.backup_hours.to_string()),
@@ -3138,6 +3172,12 @@ impl App {
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
         }
+        if let Some(id) = &next.backup_selected
+            && let Some(destination) = next.backup_destinations.iter_mut().find(|d| &d.id == id)
+        {
+            destination.name = self.field("backup_name").trim().to_owned();
+        }
+        crate::backup::config::capture_editor(&mut next);
         next.validate()?;
         self.preferences = next;
         Ok(())
@@ -3743,6 +3783,10 @@ impl App {
         );
         data["draft_in_reply_to"] = serde_json::json!(self.composer.current.draft.in_reply_to);
         data["focused_input"] = serde_json::json!(self.focused_input);
+        data["backup_destinations"] = serde_json::json!(self.preferences.backup_destinations);
+        data["backup_selected"] = serde_json::json!(self.preferences.backup_selected);
+        data["saved_backup_destinations"] =
+            serde_json::json!(self.workspace.preferences.backup_destinations);
         data["auto_backup"] = serde_json::json!(self.preferences.auto_backup);
         data["backup_ready"] = serde_json::json!(self.preferences.backup_ready);
         data["saved_backup_folder"] = serde_json::json!(self.workspace.preferences.backup_folder);
