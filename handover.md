@@ -4,11 +4,14 @@ The user stopped feature work to conserve credits and requested this handover, a
 
 ## 9 September continuation: shared profile transport
 
-The latest backend checkpoint adds verified Drive profile discovery and immutable
+Source `bb87ac2` is pushed with verified Drive profile discovery and immutable
 uploads using a published shared-codec revision. A separate bounded channel
 worker keeps page tokens, revisions and reserved bytes durable across restart.
 Read [the transport contract](docs/agents/profile-drive.md) and the newest
-completion entry for verification/shipping. No production installation changed.
+completion entry for verification/shipping. Hooks passed 596 Rust, two adapter
+and six shared-codec tests; documentation CI passed. No production installation
+changed. The client thread is independently implementing Drive transport: reconcile
+file metadata/query conventions before claiming cross-client interoperability.
 
 OAuth/profile sync remains first in TODO, referencing the
 [Flutter handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md).
