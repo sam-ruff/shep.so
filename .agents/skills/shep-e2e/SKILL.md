@@ -749,3 +749,13 @@ restart and upload convergence. A separate native flow changes Appearance while
 a review is open, rejects the stale action, refreshes and retries. Read-only
 SQLite assertions inspect the closed fixture's durable checkpoint; they never
 actuate the UI. These are fixture/history contracts, not live Google evidence.
+
+
+For existing-account import links, use the owned `existing-matching` or
+`existing-many` profile fixture. `test_profile_join_link_native_*` drives actual
+account-choice dropdowns, Add new, compact dark Import and eight-account paging,
+then checks restart and the closed cache mapping. The many-account scenario
+imports twelve shared accounts while reusing one existing native account.
+`profile_sync.join_review.page`, `links` and `offset` only observe the review;
+never use them to operate it. Preserve local mail, pending Reconnect state and
+stale-review rejection tests. These fixtures do not use live Google or keychains.

@@ -24,6 +24,11 @@ readiness issue are in the newest completion entry;
 conflict/removal/endpoint controls, account linking, incremental pulls and
 credential protection still remain. Do not discard any lane's uncommitted work.
 
+The isolated `profile-cache` / `codex/profile-links` lane adds explicit matching
+account reuse during import. Tests and remaining shipping work are recorded in
+COMPLETION; preserve its separate commits when integrating the inbox/icon lane.
+It does not complete post-enrollment linking or protected password transfer.
+
 ## Current source checkpoint
 
 Portable preference reviews from `713f96e` are integrated: six targeted

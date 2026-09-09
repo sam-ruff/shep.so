@@ -1,5 +1,12 @@
 # Conversation request audit
 
+
+R02/R49/R92 continuation: explicit existing-account linking during reviewed import
+now retains native mail/identity and requires exactly matching connection fields.
+Default Add new, eight-account paging, frozen choices and reconnect preservation
+have storage/controller/native evidence in the newest completion entry. Root
+integration/shipping, post-enrollment linking and remaining reviews stay in TODO.
+
 R02/R49/R92 continuation: portable preference resolution now has bounded native
 review controls and durable shared-history admission. Six store/history/controller
 regressions and 86 matching profile tests pass. All 25 native profile flows pass;

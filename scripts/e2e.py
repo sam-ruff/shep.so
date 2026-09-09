@@ -2259,6 +2259,90 @@ class NativeFlows(unittest.TestCase):
                        check("selected","Your weekly workspace digest"),shot("profile-login-held-navigation"))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
 
+    def test_profile_join_link_native_reuses_existing_account_and_survives_restart(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-matching")
+        print(f"Profile account linking evidence: {started['artifacts']}",flush=True)
+        self.open_shared_profiles()
+        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
+                       click(1130,494),check("profile_sync.join_review.name","Home"),
+                       check("profile_sync.join_review.page.0.matches.0.id","preview-work"),
+                       check("account_count",2),shot("profile-account-link-review"),
+                       click(580,558),wait(80),shot("profile-account-link-options"),click(580,520),
+                       check("profile_sync.join_review.links.50000000-0000-4000-8000-000000000001","preview-work"),
+                       shot("profile-account-link-chosen"),click(340,664),
+                       check("profile_sync.enrollment.selection.ready",True),check("account_count",2),
+                       check("account_reconnect_count",0),check("profile_sync.error",None),
+                       check("dark",True),key("ctrl+1"),check("tab","Mail"),
+                       check("total",120),shot("profile-account-link-keeps-mail"),{"type":"restart"})
+        self.open_shared_profiles()
+        self.mcp.batch(check("profile_sync.enrollment.selection.name","Home"),check("account_count",2),
+                       check("account_reconnect_count",0),shot("profile-account-link-restarted"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
+        checkpoint=self.profile_checkpoint(started)
+        self.assertEqual(checkpoint["accounts"],{"preview-work":"50000000-0000-4000-8000-000000000001"})
+        self.assertEqual(checkpoint["local_only"],["preview-personal"])
+
+    def test_profile_join_link_native_matching_account_can_be_added_separately(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-matching")
+        print(f"Separate matching account evidence: {started['artifacts']}",flush=True)
+        self.open_shared_profiles()
+        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
+                       click(1130,494),check("profile_sync.join_review.page.0.matches.0.id","preview-work"),
+                       check("profile_sync.join_review.links",{}),shot("profile-matching-add-separately"),
+                       click(340,664),check("profile_sync.enrollment.selection.ready",True),
+                       check("account_count",3),check("account_reconnect_count",1),
+                       check("profile_sync.error",None),{"type":"restart"},check("account_count",3),
+                       check("account_reconnect_count",1))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
+        checkpoint=self.profile_checkpoint(started)
+        self.assertEqual(len(checkpoint["accounts"]),1)
+        self.assertNotIn("preview-work",checkpoint["accounts"])
+        self.assertEqual(checkpoint["local_only"],["preview-personal","preview-work"])
+
+    def test_profile_join_link_native_compact_dark_choices(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-matching",width=900,height=640)
+        print(f"Compact account linking evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),click(563,366),
+                       check("dark",True),check("preferences_saved",True))
+        self.open_shared_profiles(search_x=650)
+        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
+                       click(800,494),check("profile_sync.join_review.name","Home"),
+                       {"type":"hover","x":780,"y":500},{"type":"scroll","amount":12},wait(100),
+                       shot("profile-account-link-compact-dark"),click(580,414),wait(80),
+                       shot("profile-account-link-compact-options"),click(580,376),
+                       check("profile_sync.join_review.links.50000000-0000-4000-8000-000000000001","preview-work"),
+                       wait(80),shot("profile-account-link-compact-chosen"),click(310,518),
+                       check("profile_sync.enrollment.selection.ready",True),check("account_count",2),
+                       check("account_reconnect_count",0),check("profile_sync.error",None),
+                       shot("profile-account-link-compact-applied"))
+
+    def test_profile_join_link_native_account_pages_keep_reviewed_choices(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-many")
+        print(f"Account review pages evidence: {started['artifacts']}",flush=True)
+        self.open_shared_profiles()
+        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
+                       click(1130,494),check("profile_sync.join_review.accounts",12),
+                       click(580,558),wait(80),click(580,520),
+                       check("profile_sync.join_review.links.50000000-0000-4000-8000-000000000001","preview-work"),
+                       {"type":"hover","x":1050,"y":780},{"type":"scroll","amount":24},wait(100),
+                       shot("profile-account-pages-first"),click(550,729),
+                       check("profile_sync.join_review.offset",8),
+                       check("profile_sync.join_review.page.0.name","Shared account 09"),
+                       check("profile_sync.join_review.links.50000000-0000-4000-8000-000000000001","preview-work"),
+                       wait(100),shot("profile-account-pages-next"),click(350,711),
+                       check("profile_sync.join_review.offset",0),check("profile_sync.join_review.page.0.name","Cloud account"),
+                       check("profile_sync.join_review.links.50000000-0000-4000-8000-000000000001","preview-work"),
+                       {"type":"hover","x":1050,"y":780},{"type":"scroll","amount":24},wait(100),
+                       shot("profile-account-pages-choice-retained"),click(340,814),
+                       check("profile_sync.enrollment.selection.ready",True),check("account_count",13),
+                       check("account_reconnect_count",11),check("profile_sync.error",None),{"type":"restart"},
+                       check("account_count",13),check("account_reconnect_count",11))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
+        checkpoint=self.profile_checkpoint(started)
+        self.assertEqual(len(checkpoint["accounts"]),12)
+        self.assertEqual(checkpoint["accounts"]["preview-work"],"50000000-0000-4000-8000-000000000001")
+        self.assertEqual(checkpoint["local_only"],["preview-personal"])
+
     def test_profile_sync_native_existing_profile_review_import_and_restart(self):
         started=self.mcp.call("desktop.start",profile_sync="existing")
         print(f"Existing profile evidence: {started['artifacts']}",flush=True)

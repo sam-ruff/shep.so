@@ -1335,3 +1335,14 @@ confirmed Google success. Preserve the `profile_setting_review_*` Rust and saved
 native scenarios, including compact dropdown/mouse choices, restart and stale
 native preference recovery. Account endpoint/removal/linking reviews remain
 separate unfinished work.
+
+
+Shared-profile import can explicitly link an exactly matching native account.
+Compare the complete portable incoming/SMTP connection, preserve its local ID,
+mail, keychain slot, local-name intent and any existing reconnect marker. Never
+send an existing credential to a changed downloaded endpoint. Reviews render
+eight accounts per page and prohibit reusing one local account twice. Both the
+live control and durable join receipt retain the exact chosen links; stale events
+and a lost-acknowledgment retry with other choices are rejected. Preserve
+`profile_join_*` storage/controller tests and all `test_profile_join_link_native_*`
+scenarios. This does not implement post-enrollment linking or password transfer.
