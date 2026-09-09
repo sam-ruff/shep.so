@@ -16,7 +16,7 @@ pub fn active() -> bool {
 fn mode() -> Option<String> {
     std::env::args()
         .find_map(|a| a.strip_prefix("--backup-run=").map(str::to_owned))
-        .filter(|value| matches!(value.as_str(), "ready" | "recover"))
+        .filter(|value| matches!(value.as_str(), "ready" | "recover" | "warning"))
 }
 fn root() -> anyhow::Result<PathBuf> {
     Ok(super::workspace::path_from_arguments()?
@@ -50,23 +50,35 @@ pub async fn seed(store: &Store) -> anyhow::Result<()> {
 }
 
 #[derive(Default)]
-struct Vault(HashMap<String, SecretString>);
+struct Vault {
+    entries: HashMap<String, SecretString>,
+    fail_repeat: bool,
+}
 impl credentials::Backend for Vault {
     fn read(&mut self, key: &str) -> anyhow::Result<Option<SecretString>> {
-        Ok(self.0.get(key).cloned())
+        Ok(self.entries.get(key).cloned())
     }
     fn write(&mut self, key: &str, value: SecretString) -> anyhow::Result<()> {
-        self.0.insert(key.into(), value);
+        if self.fail_repeat && self.entries.contains_key(key) {
+            self.fail_repeat = false;
+            anyhow::bail!("Fixture keychain temporarily unavailable");
+        }
+        self.entries.insert(key.into(), value);
         Ok(())
     }
     fn delete(&mut self, key: &str) -> anyhow::Result<()> {
-        self.0.remove(key);
+        self.entries.remove(key);
         Ok(())
     }
 }
 pub async fn credentials(store: &Store) -> anyhow::Result<credentials::Credentials> {
-    let vault =
-        credentials::Credentials::with_backend(credentials::Scope::Legacy, Vault::default());
+    let vault = credentials::Credentials::with_backend(
+        credentials::Scope::Legacy,
+        Vault {
+            fail_repeat: mode().as_deref() == Some("warning"),
+            ..Default::default()
+        },
+    );
     let secrets = backup::OsPassphraseStore(vault.clone());
     let prefs: Preferences = store.get("preferences").await?;
     for d in &prefs.backup_destinations {

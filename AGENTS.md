@@ -143,8 +143,20 @@ a keyed main forces MEMORY even after an authorizer change, while keying scratch
 alone does not change a plain main. Keep the VFS spill positive/negative controls.
 Do not activate keyed startup before unbounded selection/catalog summaries and
 recovered-view automatic indexes have bounded encrypted scratch plans.
+
+Keep `vendor/libsqlite3-sys/shep-export.patch`: SQLCipher export must preserve
+unindexed rowids as well as indexed mail/external-FTS identities. The explicit
+raw SQLite export remains unencrypted and excludes credentials; its atomic
+candidate in the chosen export folder is intentional user output. Implicit
+cache/import/migration candidates must stay encrypted.
 Selection/frozen-review scratch lives in a private attached encrypted database;
 its connection must close before the owning temporary directory is removed.
+Conversation duplicate selection/rank also uses indexed scratch and returns at
+most 20 metadata rows. Session scratch uses DELETE/OFF with normal rollback but
+no crash-durability guarantee; restart creates fresh scratch. Main cache and
+receipt journals remain FULL. Qualify `PRAGMA main.journal_mode=WAL` so it cannot
+overwrite the attached scratch policy. Preserve index-plan, duplicate/focus,
+spilled rollback, cleanup and orphan-restart regressions.
 Shared ancestry uses transaction-cleared indexed main-database scratch with a
 bounded frontier. Finish legacy publication/recovery, remaining sorter/temp
 paths, profile catalog/portable transfer routing and native key recovery before

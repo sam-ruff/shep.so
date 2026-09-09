@@ -12,6 +12,7 @@ pub(super) struct HostKeyReview {
 
 pub(super) enum BackupAction {
     Save(SecretString),
+    ResumeHistory(String, SecretString),
     ConnectS3(Option<(SecretString, SecretString)>),
     ConnectSftp(Option<SecretString>),
     ConnectFtp(Option<SecretString>),
@@ -28,12 +29,57 @@ pub(super) struct RunRow {
     pub status: crate::backup::run::Status,
 }
 
+#[derive(Default)]
+pub(super) struct Activity {
+    pub open: bool,
+    pub generation: u64,
+    pub target: Option<BackupTarget>,
+    pub entries: Arc<Vec<crate::backup::history::Entry>>,
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
 pub(super) struct PendingBackup {
     request: u64,
     target: BackupTarget,
     action: BackupAction,
 }
 impl App {
+    pub(super) fn refresh_backup_history(&mut self) {
+        let target = self.configured_backup_target();
+        self.backup_activity.generation += 1;
+        self.backup_activity.loading = true;
+        self.backup_activity.error = None;
+        if self.backup_activity.target.as_ref() != Some(&target) {
+            self.backup_activity.entries = Arc::new(Vec::new());
+        }
+        self.backup_activity.target = Some(target.clone());
+        if !self.try_command(Command::BackupHistory(
+            self.backup_activity.generation,
+            target,
+        )) {
+            self.backup_activity.loading = false;
+            self.backup_activity.error =
+                Some("Activity could not be loaded. Try Refresh activity.".into());
+        }
+    }
+    pub(super) fn retry_backup_history(&mut self, id: String) {
+        let target = self.configured_backup_target();
+        if self.backup_activity.entries.first().is_none_or(|entry| {
+            entry.id != id || entry.target != target || !entry.outcome.attention()
+        }) {
+            self.backup_validation_error("Backup activity changed. Refresh it before retrying.");
+            return;
+        }
+        if self.backup_busy() || self.pending_backup.is_some() {
+            return;
+        }
+        self.begin_backup_request(BackupAction::ResumeHistory(
+            id,
+            self.field("passphrase").to_owned().into(),
+        ));
+    }
+
     pub(super) fn backup_validation_error(&mut self, error: impl Into<String>) {
         self.notice(error, true);
         self.preference_notice = self.notice.as_ref().map(|notice| notice.2);
@@ -72,6 +118,7 @@ impl App {
                 self.fields.remove("sftp_password_secret");
                 self.backups_generation += 1;
                 self.save_preferences();
+                self.refresh_backup_history();
             }
             Err(error) => self.notice(error.to_string(), true),
         }
@@ -320,6 +367,9 @@ impl App {
                 }
             }
             BackupAction::Save(secret) => self.send(Command::Backup(pending.target, secret)),
+            BackupAction::ResumeHistory(id, secret) => {
+                self.send(Command::RetryBackupHistory(id, pending.target, secret))
+            }
             BackupAction::List => self.request_backup_copies(pending.target),
             BackupAction::Restore(id, secret) => {
                 self.send(Command::Restore(pending.target, id, secret))
@@ -871,6 +921,72 @@ mod tests {
                 .unwrap()
                 .0
                 .contains("destination changed")
+        );
+    }
+
+    #[test]
+    fn backup_history_stale_result_and_changed_destination_cannot_retry_an_old_copy() {
+        let (mut app, _) = App::new();
+        app.tab = Tab::Preferences;
+        app.preferences.backup_folder = std::env::temp_dir()
+            .join("history-first")
+            .to_string_lossy()
+            .into();
+        app.settings_fields();
+        let target = app.configured_backup_target();
+        let mut row =
+            crate::backup::history::Entry::new(target.clone(), "First".into(), Default::default());
+        row.outcome = crate::backup::history::Outcome::NeedsReview;
+        row.copy = Some("reserved-copy".into());
+        app.backup_activity.generation = 2;
+        let _ = app.handle(Message::Backend(Event::BackupHistory(
+            1,
+            target.clone(),
+            Ok(Arc::new(vec![row.clone()])),
+        )));
+        assert!(app.backup_activity.entries.is_empty());
+        let _ = app.handle(Message::Backend(Event::BackupHistory(
+            2,
+            target,
+            Ok(Arc::new(vec![row.clone()])),
+        )));
+        let (sender, mut saves, mut network) = engine::CommandSender::backup_test_channels();
+        app.tx = Some(sender);
+        app.retry_backup_history(row.id);
+        let Command::SavePreferences(request, _) = saves.try_recv().unwrap() else {
+            panic!("Retry must save settings first");
+        };
+        app.fields.insert(
+            "backup_folder",
+            std::env::temp_dir()
+                .join("history-second")
+                .to_string_lossy()
+                .into(),
+        );
+        app.continue_backup_request(request);
+        assert!(network.try_recv().is_err());
+        assert!(app.notice.unwrap().0.contains("destination changed"));
+    }
+
+    #[test]
+    fn backup_history_read_queue_backpressure_keeps_refresh_available() {
+        let (mut app, _) = App::new();
+        let target = app.configured_backup_target();
+        let (sender, _reads) = engine::CommandSender::foreground_test_channel();
+        for request in 0..32 {
+            sender
+                .try_send(Command::BackupHistory(request, target.clone()))
+                .unwrap();
+        }
+        app.tx = Some(sender);
+        app.refresh_backup_history();
+        assert!(!app.backup_activity.loading);
+        assert!(
+            app.backup_activity
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("Refresh activity")
         );
     }
 }

@@ -168,6 +168,8 @@ async fn unsupported_or_executable_schema_and_invalid_settings_never_become_a_st
         "CREATE TRIGGER foreign_trigger AFTER INSERT ON messages BEGIN DELETE FROM kv; END",
         "DROP VIEW visible_mail; CREATE VIEW visible_mail AS SELECT * FROM messages WHERE 0",
         "CREATE TABLE unknown_future_extension(data TEXT)",
+        "DROP TABLE backup_history; PRAGMA user_version=3; CREATE TABLE unknown_future_extension(data TEXT)",
+        "DROP TABLE backup_history; DROP TABLE imported_operations; PRAGMA user_version=2; CREATE TABLE unknown_future_extension(data TEXT)",
         "UPDATE kv SET value='not JSON' WHERE key='preferences'",
         "UPDATE kv SET value=json_set(value,'$[0].id','google-oauth') WHERE key='accounts'",
         "UPDATE kv SET value=json_set(value,'$[0].id','GOOGLE-OAUTH') WHERE key='accounts'",

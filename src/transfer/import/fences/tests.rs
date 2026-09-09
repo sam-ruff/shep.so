@@ -387,7 +387,9 @@ async fn version_two_exports_migrate_privately_and_future_stores_are_not_modifie
     let source = super::super::tests::workspace(&path).await;
     source
         .run(|c| {
-            c.execute_batch("DROP TABLE imported_operations; PRAGMA user_version=2;")?;
+            c.execute_batch(
+                "DROP TABLE backup_history; DROP TABLE imported_operations; PRAGMA user_version=2;",
+            )?;
             Ok(())
         })
         .await
@@ -411,7 +413,10 @@ async fn version_two_exports_migrate_privately_and_future_stores_are_not_modifie
     let imported = Store::open(saved.path).unwrap();
     imported
         .run(|c| {
-            assert_eq!(count(c, "PRAGMA user_version")?, 3);
+            assert_eq!(
+                count(c, "PRAGMA user_version")?,
+                crate::store::DATABASE_VERSION as u64
+            );
             assert_eq!(
                 count(
                     c,
@@ -496,5 +501,122 @@ async fn failure_halfway_through_preparation_rolls_back_operation_changes_and_no
         )
         .unwrap(),
         0
+    );
+}
+
+#[tokio::test]
+async fn backup_history_version_three_exports_migrate_without_changing_the_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("v3.sqlite");
+    let source = super::super::tests::workspace(&path).await;
+    source
+        .run(|c| {
+            c.execute_batch("DROP TABLE backup_history; PRAGMA user_version=3;")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let destination = Store::open(directory.path().join("shep.sqlite")).unwrap();
+    let catalog = crate::profiles::Catalog::open(directory.path(), "shep.sqlite").unwrap();
+    let prepared = stage(destination, path)
+        .await
+        .unwrap()
+        .finish()
+        .await
+        .unwrap()
+        .unwrap();
+    let saved = prepared
+        .install(
+            catalog,
+            "Version three export".into(),
+            Preferences::default(),
+        )
+        .unwrap()
+        .finish()
+        .await
+        .unwrap()
+        .unwrap();
+    let connection = Connection::open(saved.path).unwrap();
+    assert_eq!(
+        count(&connection, "PRAGMA user_version").unwrap(),
+        crate::store::DATABASE_VERSION as u64
+    );
+    assert_eq!(
+        count(&connection, "SELECT count(*) FROM backup_history").unwrap(),
+        0
+    );
+    source
+        .run(|c| {
+            assert_eq!(count(c, "PRAGMA user_version")?, 3);
+            assert_eq!(
+                count(
+                    c,
+                    "SELECT count(*) FROM sqlite_schema WHERE name='backup_history'"
+                )?,
+                0
+            );
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn backup_history_old_import_marker_recovery_migrates_without_repeating_preparation() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("source.sqlite");
+    let _source = super::super::tests::workspace(&path).await;
+    let destination = Store::open(directory.path().join("shep.sqlite")).unwrap();
+    let prepared = stage(destination, path)
+        .await
+        .unwrap()
+        .finish()
+        .await
+        .unwrap()
+        .unwrap();
+    let (_alive, cancel) = watch::channel(false);
+    apply(
+        prepared.path(),
+        prepared.id,
+        "Imported once",
+        &Preferences::default(),
+        &cancel,
+    )
+    .unwrap();
+    let c = Connection::open(prepared.path()).unwrap();
+    let archived = count(&c, "SELECT count(*) FROM imported_operations").unwrap();
+    let preferences: String = c
+        .query_row("SELECT value FROM kv WHERE key='preferences'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    c.execute_batch("DROP TABLE backup_history; PRAGMA user_version=3;")
+        .unwrap();
+    drop(c);
+    // An older app already prepared the same profile before an interrupted
+    // publication. Recovery must migrate it without archiving/fencing it again.
+    apply(
+        prepared.path(),
+        prepared.id,
+        "Do not replace prior preparation",
+        &Preferences::default(),
+        &cancel,
+    )
+    .unwrap();
+    let c = Connection::open(prepared.path()).unwrap();
+    assert_eq!(
+        count(&c, "PRAGMA user_version").unwrap(),
+        crate::store::DATABASE_VERSION as u64
+    );
+    assert_eq!(count(&c, "SELECT count(*) FROM backup_history").unwrap(), 0);
+    assert_eq!(
+        count(&c, "SELECT count(*) FROM imported_operations").unwrap(),
+        archived
+    );
+    assert_eq!(
+        c.query_row::<String, _, _>("SELECT value FROM kv WHERE key='preferences'", [], |r| r
+            .get(0))
+            .unwrap(),
+        preferences
     );
 }

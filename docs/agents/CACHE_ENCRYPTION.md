@@ -21,6 +21,16 @@ Selection membership and
 frozen reviews now use a private attached encrypted scratch database, with a
 2 MiB page-cache target. Full selection ordering builds an index on disk and
 walks it one row at a time instead of materializing an unbounded sort/window.
+Conversation duplicate choice and chronological ordering also use indexed scratch
+metadata, loading only the requested 20-message page into Rust. Anchor/focus copy
+precedence and timestamp/ID ordering remain unchanged.
+
+Scratch uses DELETE rollback journals with synchronous OFF. It is disposable
+session state, has no crash-durability guarantee, and is never reused after a
+restart. Normal transaction rollback still protects current session operations;
+main cache and durable receipt journals retain FULL durability. Qualify the main
+WAL pragma: an unqualified journal_mode assignment also changes attached scratch.
+The previous initializer therefore made scratch WAL despite requesting DELETE.
 The owning cache worker keeps scratch alive until admitted jobs drain and drops
 the connection before deleting its directory. Reopened sessions start empty.
 Read-move TEMP projections are bounded at 128 entries. A separate shared-source
@@ -67,10 +77,14 @@ process exclusion and retained ownership through every admitted worker write
 remain required before activation.
 
 The SQLite backup API supports copies between databases with compatible
-encryption settings. It cannot perform plaintext/ciphertext conversion. Portable
-export/import must retain independent snapshot ownership, bounded cancellation
-and exact reviewed-copy publication while adding logical conversion. Explicit
-user exports are distinct from application-owned cache/temp data.
+encryption settings. It rejects plaintext/ciphertext conversion. Keyed raw export
+uses logical conversion with a separately pinned, URI-readonly source; its atomic
+candidate lives in the chosen export folder. This remains intentional unencrypted
+user output, with the existing credentials-excluded contract. Import/migration
+scratch is implicit application data and must stay keyed. The export-only
+`DBFLAG_VacuumInto` patch preserves unindexed rowids as well as indexed mail/FTS;
+without it SQLCipher renumbers rows in unindexed extension tables. Keep bounded
+cancellation and exact reviewed-copy publication when completing keyed import.
 [SQLCipher backup API support](https://discuss.zetetic.net/t/using-the-sqlite-online-backup-api/2631/4)
 
 Data inventory:
@@ -81,7 +95,8 @@ Data inventory:
 | Backup upload archive, destination and session | Keyed journal constructor and Engine routing |
 | Profile upload cache, history, discovery and nested observations | Keyed constructors/shared initializer |
 | Local profile catalog, active profiles and imported-marker recovery | Explicit keyed constructor and propagation; bootstrap activation still pending |
-| Import staging and portable export/import | Encrypted conversion/routing still required |
+| Raw portable export | Keyed readonly source converted to intentional user-selected SQLite output |
+| Import staging | Encrypted conversion/routing still required |
 | Selection/frozen reviews | Attached encrypted scratch, indexed incremental ordering, worker-owned cleanup |
 | Profile ancestry | Indexed main-database scratch with bounded frontier, included in shared pin |
 | Remote images and print previews | Already memory-only within Shep |

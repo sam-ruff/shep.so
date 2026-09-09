@@ -851,3 +851,13 @@ Back up all. It also operates the new controls in compact dark appearance. The
 fixture's calendars use valid fictional identities so real restore validation
 runs unchanged. Ordinary preview still cannot restore. Keep the codec's independent
 libargon2/AES-GCM vector and FTPS/SFTP wire-format tests alongside this native flow.
+
+
+For persistent backup activity, preserve both saved `test_backup_history_native_*`
+flows. `desktop.start(backup_run="recover")` loses one upload acknowledgment;
+`backup_run="warning"` acknowledges the copy but fails one fixture-keychain save.
+Use real Recent activity and Retry controls after restart. Observe
+`backup_activity.entries`/`loading`/`error`, ensuring NeedsReview and
+SavedWithWarning stay distinct. Compare the owned reserved filename and archive
+bytes before/after Retry, restart again, and review light/compact-dark WebPs.
+Activity reads are observation-only and must not become a fixture action API.

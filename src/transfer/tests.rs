@@ -2,7 +2,10 @@ use super::*;
 use crate::model::{Appearance, Draft, Preferences, parse_mail};
 
 async fn workspace(path: &Path) -> Store {
-    let store = Store::open(path).unwrap();
+    fill_workspace(Store::open(path).unwrap()).await
+}
+
+async fn fill_workspace(store: Store) -> Store {
     let account = serde_json::from_value(serde_json::json!({
         "id":"work", "name":"Test account", "email":"mail@example.test",
         "protocol":"Imap", "host":"imap.example.test", "port":993,
@@ -32,6 +35,8 @@ async fn workspace(path: &Path) -> Store {
     store.run(|c| {
         c.execute_batch("CREATE TABLE future_extension(id TEXT PRIMARY KEY, data BLOB NOT NULL);
         INSERT INTO future_extension VALUES('large',zeroblob(2097152));
+        CREATE TABLE unindexed_future(value TEXT);
+        INSERT INTO unindexed_future(rowid,value) VALUES(4444,'Preserve unindexed identity');
         INSERT INTO draft_attachments VALUES('file','draft','notes.txt','text/plain',5,x'68656c6c6f');")?;
         Ok(())
     }).await.unwrap();
@@ -315,4 +320,164 @@ async fn invalid_destination_and_in_memory_store_leave_no_export() {
         .unwrap();
     assert!(export.finish().await.is_err());
     assert!(!directory.path().join("missing").exists());
+}
+
+#[tokio::test]
+async fn encrypted_export_retains_complete_pinned_database_during_concurrent_saves() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("encrypted 'source #.sqlite");
+    let key = std::sync::Arc::new(crate::cache_cipher::Key::generate().unwrap());
+    let store = fill_workspace(Store::open_encrypted(&path, key).unwrap()).await;
+    store
+        .run(|c| {
+            c.execute("UPDATE messages SET rowid=101", [])?;
+            c.execute("INSERT INTO mail_search(mail_search) VALUES('rebuild')", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let destination = directory.path().join("portable.sqlite");
+    let (started, waiting) = oneshot::channel();
+    let (release, held) = oneshot::channel();
+    let mut gate = Some((started, held));
+    let mut export = start_export(
+        store.clone(),
+        destination.clone(),
+        false,
+        move |value, _| {
+            if value.phase == Phase::Copying
+                && let Some((started, held)) = gate.take()
+            {
+                assert_eq!(value.copied_pages, 0);
+                assert!(value.total_pages > 0);
+                started.send(()).unwrap();
+                held.blocking_recv().unwrap();
+            }
+        },
+    )
+    .await
+    .unwrap();
+    waiting.await.unwrap();
+    store.put("new-after-copy", true).await.unwrap();
+    assert_eq!(store.query(Default::default()).await.unwrap().total, 1);
+    release.send(()).unwrap();
+    assert!(matches!(
+        export.finish().await.unwrap(),
+        Outcome::Saved { .. }
+    ));
+    assert!(
+        std::fs::read(&destination)
+            .unwrap()
+            .starts_with(b"SQLite format 3\0")
+    );
+    let copy = Store::open(&destination).unwrap();
+    assert!(!copy.get::<bool>("new-after-copy").await.unwrap());
+    assert!(store.get::<bool>("new-after-copy").await.unwrap());
+    assert_eq!(copy.query(Default::default()).await.unwrap().total, 1);
+    assert_eq!(
+        copy.get::<Vec<Draft>>("drafts").await.unwrap()[0].body,
+        "Keep this draft"
+    );
+    copy.run(|c| {
+        assert_eq!(
+            c.query_row("SELECT length(data) FROM future_extension", [], |r| r
+                .get::<_, i64>(0))?,
+            2097152
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT data FROM draft_attachments WHERE id='file'",
+                [],
+                |r| r.get::<_, Vec<u8>>(0)
+            )?,
+            b"hello"
+        );
+        assert_eq!(
+            c.query_row("SELECT rowid FROM messages", [], |r| r.get::<_, i64>(0))?,
+            101
+        );
+        assert_eq!(
+            c.query_row("SELECT rowid FROM unindexed_future", [], |r| r
+                .get::<_, i64>(0))?,
+            4444
+        );
+        c.execute(
+            "INSERT INTO mail_search(mail_search,rank) VALUES('integrity-check',1)",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let searched = copy
+        .query(crate::model::MailQuery {
+            search: "Exact original".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(searched.total, 1);
+}
+
+#[tokio::test]
+async fn encrypted_export_cancel_preserves_existing_copy_and_removes_private_output() {
+    for drop_observer in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let key = std::sync::Arc::new(crate::cache_cipher::Key::generate().unwrap());
+        let store = fill_workspace(
+            Store::open_encrypted(directory.path().join("cache.sqlite"), key).unwrap(),
+        )
+        .await;
+        let destination = directory.path().join("keep.sqlite");
+        std::fs::write(&destination, b"Keep existing user copy").unwrap();
+        let (started, waiting) = oneshot::channel();
+        let (release, held) = oneshot::channel();
+        let mut gate = Some((started, held));
+        let mut export = start_export(store.clone(), destination.clone(), true, move |p, _| {
+            if p.phase == Phase::Copying
+                && let Some((started, held)) = gate.take()
+            {
+                started.send(()).unwrap();
+                held.blocking_recv().unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        waiting.await.unwrap();
+        if drop_observer {
+            drop(export);
+            release.send(()).unwrap();
+        } else {
+            export.cancel();
+            release.send(()).unwrap();
+            assert_eq!(export.finish().await.unwrap(), Outcome::Cancelled);
+        }
+        // Admission of another export is the actual prior-owner drain signal.
+        let next = directory.path().join("next.sqlite");
+        let mut complete = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(export) = export_database(store.clone(), next.clone(), false).await {
+                    break export;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            complete.finish().await.unwrap(),
+            Outcome::Saved { .. }
+        ));
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"Keep existing user copy"
+        );
+        assert!(!std::fs::read_dir(directory.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".shep-export-")
+        }));
+    }
 }

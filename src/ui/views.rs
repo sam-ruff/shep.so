@@ -1908,6 +1908,14 @@ impl App {
                     .on_press_maybe(
                         (!self.backup_busy() && self.pending_backup.is_none())
                             .then_some(Message::Backup)
+                    ),
+                    action(
+                        if self.backup_activity.open {
+                            "Hide activity"
+                        } else {
+                            "Recent activity"
+                        },
+                        Message::ToggleBackupHistory
                     )
                 ]
                 .spacing(12),
@@ -1958,22 +1966,102 @@ impl App {
                 .align_y(Alignment::Center),
             );
         }
-        column![
-            self.settings_card(
-                "Backups",
-                "Choose where to keep copies. Include selects destinations for Back up all.",
-                form.into()
-            ),
-            self.settings_card(
+        let mut cards = column![self.settings_card(
+            "Backups",
+            "Choose where to keep copies. Include selects destinations for Back up all.",
+            form.into()
+        )]
+        .spacing(if self.settings_group.is_some() { 0 } else { 22 });
+        if self.backup_activity.open {
+            cards = cards.push(self.backup_history_view());
+        }
+        cards
+            .push(self.settings_card(
                 "Restore a copy",
                 "Restoring merges messages and accounts into this device. Existing mail is kept.",
-                copies.into()
-            ),
-            self.database_transfer_card()
-        ]
-        .spacing(if self.settings_group.is_some() { 0 } else { 22 })
-        .into()
+                copies.into(),
+            ))
+            .push(self.database_transfer_card())
+            .into()
     }
+    fn backup_history_view(&self) -> Element<'_, Message> {
+        let mut entries = column![
+            row![
+                text("Recent activity").font(BOLD).size(14),
+                space().width(Length::Fill),
+                action("Refresh activity", Message::RefreshBackupHistory)
+            ]
+            .align_y(Alignment::Center)
+        ]
+        .spacing(14);
+        if let Some(error) = &self.backup_activity.error {
+            entries = entries.push(text(error).size(12));
+        } else if self.backup_activity.loading {
+            entries = entries.push(muted("Loading activity…").size(12));
+        }
+        if self.backup_activity.target.as_ref() == Some(&self.configured_backup_target()) {
+            if self.backup_activity.entries.is_empty() && !self.backup_activity.loading {
+                entries = entries
+                    .push(muted("No backup attempts recorded for this destination yet.").size(12));
+            }
+            for (index, entry) in self.backup_activity.entries.iter().enumerate() {
+                let time = chrono::DateTime::from_timestamp_millis(entry.started)
+                    .unwrap_or_default()
+                    .with_timezone(&chrono::Local)
+                    .format("%d %b %Y at %H:%M")
+                    .to_string();
+                let mut heading = row![
+                    text(entry.outcome.label()).size(13).font(BOLD),
+                    space().width(Length::Fill),
+                    muted(time).size(11)
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center);
+                if index == 0 && entry.outcome.attention() {
+                    heading = heading.push(
+                        button(text("Retry").size(12))
+                            .padding([10, 14])
+                            .style(outline)
+                            .on_press_maybe(
+                                (!self.backup_busy() && self.pending_backup.is_none())
+                                    .then(|| Message::RetryBackupHistory(entry.id.clone())),
+                            ),
+                    );
+                }
+                let mut row = column![
+                    heading,
+                    muted(format!(
+                        "{} · {}",
+                        if entry.format.encrypted() {
+                            "Encrypted"
+                        } else {
+                            "Unencrypted"
+                        },
+                        if entry.format.compressed() {
+                            "Compressed"
+                        } else {
+                            "Uncompressed"
+                        }
+                    ))
+                    .size(11)
+                ]
+                .spacing(8);
+                if !entry.detail.is_empty() {
+                    row = row.push(text(&entry.detail).size(12));
+                }
+                if entry.outcome == crate::backup::history::Outcome::Unfinished {
+                    row = row.push(muted("This attempt has no final result. Retry checks the reserved copy before uploading.").size(12));
+                }
+                entries = entries.push(container(row).padding(12).style(subtle));
+            }
+        }
+        self.settings_card(
+            "Backup activity",
+            "The latest 20 attempts for this destination, including previous sessions.",
+            entries.into(),
+        )
+    }
+
     fn ftp_backup_settings(&self) -> Element<'_, Message> {
         use crate::backup::ftp::Security;
         let testing = self

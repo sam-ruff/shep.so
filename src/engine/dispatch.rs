@@ -183,6 +183,7 @@ impl CommandSender {
             Command::BulkRun(_) => &self.bulk,
             Command::Query(_, _, true) | Command::Detail { prefetch: true, .. } => &self.prefetch,
             Command::Query(..)
+            | Command::BackupHistory(..)
             | Command::Profiles(..)
             | Command::MoveRecoveries(..)
             | Command::Detail { .. }
@@ -309,7 +310,7 @@ impl Engine {
                         // merely because the whole archive takes over ten minutes.
                         // Restore also must observe its blocking SQLite commit;
                         // dropping its future cannot cancel that transaction.
-                        let result = if matches!(&command, Command::Move(..) | Command::Transfer(..) | Command::UndoMove(..) | Command::RecoverMailMove(..) | Command::Flags(..) | Command::Backup(..) | Command::AutomaticBackup(_) | Command::BackupIncluded(..) | Command::ConnectS3(..) | Command::ConnectSftp(..) | Command::ConnectFtp(..) | Command::Restore(..) | Command::Send(_) | Command::DisconnectGoogle(_) | Command::CleanupGoogle | Command::GoogleLogin(..) | Command::ResolveOutgoing(..) | Command::RepairOutgoing | Command::IndexConversations | Command::ConnectCalendars(..) | Command::SaveAccount(..) | Command::RemoveConnection(..) | Command::CleanupCredentials | Command::RestoreGoogleCalendars) {
+                        let result = if matches!(&command, Command::Move(..) | Command::Transfer(..) | Command::UndoMove(..) | Command::RecoverMailMove(..) | Command::Flags(..) | Command::Backup(..) | Command::AutomaticBackup(_) | Command::BackupIncluded(..) | Command::RetryBackupHistory(..) | Command::ConnectS3(..) | Command::ConnectSftp(..) | Command::ConnectFtp(..) | Command::Restore(..) | Command::Send(_) | Command::DisconnectGoogle(_) | Command::CleanupGoogle | Command::GoogleLogin(..) | Command::ResolveOutgoing(..) | Command::RepairOutgoing | Command::IndexConversations | Command::ConnectCalendars(..) | Command::SaveAccount(..) | Command::RemoveConnection(..) | Command::CleanupCredentials | Command::RestoreGoogleCalendars) {
                             engine.execute(command, output).await
                         } else {
                             tokio::time::timeout(Duration::from_secs(600), engine.execute(command, output)).await

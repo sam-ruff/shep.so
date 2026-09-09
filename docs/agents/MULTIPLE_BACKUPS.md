@@ -329,3 +329,55 @@ with 74 passing and seven platform skips, and strict documentation builds pass.
 Logs use `artifacts/logs/backup-formats-*`. Mandatory hooks and root integration
 are the final shipping receipts. Persistent destination failure history, complete
 large-snapshot streaming and actual provider/platform execution remain open.
+
+
+## Persistent destination activity
+
+Backups offers Recent activity for the selected destination. Its latest twenty
+attempts survive restart, with start time, the actual archive format and the
+result. Unconfirmed uploads remain distinct from confirmed copies whose keychain,
+receipt or retention work needs attention. Final notices name the destination,
+including when a combined run uses different archive formats.
+
+Activity uses the existing cache worker, an indexed table and bounded reads:
+twenty rows per destination, at most 640 retained rows overall, and at most 2,048
+characters of diagnostic detail per row. Passwords, tokens and archive bytes are
+never added to this table. The upload journal remains the authority for reserved
+object/session identity and immutable bytes; activity cannot replace a receipt.
+A newer confirmed recovery marks only earlier uncertain attempts for that same
+destination and reserved object as recovered. Confirmed copies cannot be rewritten
+as failed uploads.
+
+Only the latest unresolved attempt offers Retry. The controller saves current
+settings first, checks the selected target again after acknowledgment, and the
+backend rejects a stale activity review. A row with a reserved object can resume
+only its matching local journal entry. Imported activity without that entry
+cannot create another copy through Retry; it directs the user to inspect copies
+or explicitly start a new backup. A locked keychain keeps its original passphrase
+requirement. Navigating away or a saturated read queue never blocks the UI.
+
+Database schema v4 adds the indexed history table. Full database imports still
+accept exact v2 and v3 schemas, reject unknown objects, and migrate only their
+private staged copies. Recovery of an already-prepared old imported profile
+applies the migration without repeating operation fencing or overwriting its
+prepared preferences. Portable backup snapshots and Drive profile values do not
+include destination activity.
+
+Saved native history scenarios use `backup_run="recover"` for lost upload
+acknowledgment and `backup_run="warning"` for an acknowledged copy followed by one
+failed fixture-keychain save. They operate only on owned temporary folders and an
+isolated credential worker. Both click Retry, compare the exact filename/bytes,
+restart twice, and capture light plus 900×640 dark activity controls. No real
+provider or personal credentials are used.
+
+
+History checkpoint verification: 109 backup-filter Rust checks and 28 transfer
+checks pass. All 22 selected native backup/provider/compact/database-transfer
+flows pass in 137.645 seconds. Final light and compact-dark history WebPs under
+ignored `artifacts/e2e/25b2646dfdd1` and `artifacts/e2e/fa94ba50129d` were reviewed.
+The tested binary SHA-256 is
+`1f541abf0bea2dc9c97a18a17d9ff14db916522a39a00e50c00237cbd2a8cc51`.
+Full Windows GNU checking, Python's 81 tests (seven platform skips), and strict
+documentation builds pass. Logs use `artifacts/logs/backup-history-*`; normal hooks
+and root integration remain the shipping receipts. This does not complete the
+journal-channel migration, large snapshots or actual remote-provider/OS testing.

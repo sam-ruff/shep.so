@@ -1232,3 +1232,99 @@ async fn backup_format_pending_encrypted_copy_uses_original_key_after_encryption
     drop(output);
     observed.await.unwrap();
 }
+
+#[tokio::test]
+async fn backup_history_keychain_warning_retains_confirmed_copy_then_retry_reuses_it() {
+    use backup::history::Outcome;
+    let secrets = Arc::new(Secrets::default());
+    secrets.fail_write.store(true, Ordering::Relaxed);
+    let engine = engine(secrets.clone());
+    let directory = tempfile::tempdir().unwrap();
+    let prefs = Preferences {
+        backup_folder: directory.path().to_string_lossy().into(),
+        ..Default::default()
+    };
+    let target = BackupTarget::from_preferences(&prefs);
+    engine.store.save_preferences(prefs).await.unwrap();
+    let (mut output, events) = futures::channel::mpsc::channel(32);
+    let observed = tokio::spawn(async move { events.collect::<Vec<_>>().await });
+    engine
+        .run_backup(target.clone(), Some(passphrase()), &mut output)
+        .await
+        .unwrap();
+    let rows = engine.store.backup_history(target.clone()).await.unwrap();
+    assert_eq!(rows[0].outcome, Outcome::SavedWithWarning);
+    assert!(rows[0].detail.contains("OS keychain"));
+    let provider = backup::LocalBackup {
+        directory: directory.path().into(),
+    };
+    let copies = provider.list().await.unwrap();
+    assert_eq!(copies.len(), 1);
+    let original = provider.download(&copies[0].id).await.unwrap();
+    secrets.fail_write.store(false, Ordering::Relaxed);
+    engine
+        .execute(
+            Command::RetryBackupHistory(rows[0].id.clone(), target.clone(), passphrase()),
+            output.clone(),
+        )
+        .await
+        .unwrap();
+    let latest = engine.store.backup_history(target.clone()).await.unwrap();
+    assert_eq!(latest[0].outcome, Outcome::Saved);
+    assert_eq!(latest[0].copy, rows[0].copy);
+    assert_eq!(provider.list().await.unwrap().len(), 1);
+    assert_eq!(provider.download(&copies[0].id).await.unwrap(), original);
+    // A stale Retry cannot start a new archive after a newer attempt succeeded.
+    assert!(
+        engine
+            .execute(
+                Command::RetryBackupHistory(rows[0].id.clone(), target, passphrase()),
+                output.clone()
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(provider.list().await.unwrap().len(), 1);
+    drop(output);
+    observed.await.unwrap();
+}
+
+#[tokio::test]
+async fn backup_history_imported_or_missing_receipt_cannot_start_a_duplicate_copy() {
+    let engine = engine(Arc::new(Secrets::default()));
+    let directory = tempfile::tempdir().unwrap();
+    let prefs = Preferences {
+        backup_folder: directory.path().to_string_lossy().into(),
+        ..Default::default()
+    };
+    let target = BackupTarget::from_preferences(&prefs);
+    engine.store.save_preferences(prefs).await.unwrap();
+    let mut row =
+        backup::history::Entry::new(target.clone(), "Imported device".into(), Default::default());
+    row.copy = Some("another-device-reserved-copy".into());
+    row.outcome = backup::history::Outcome::NeedsReview;
+    engine
+        .store
+        .write_backup_history(row.clone())
+        .await
+        .unwrap();
+    let (output, _events) = futures::channel::mpsc::channel(32);
+    let error = engine
+        .execute(
+            Command::RetryBackupHistory(row.id.clone(), target.clone(), passphrase()),
+            output,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("no matching pending upload"));
+    assert_eq!(
+        engine.store.backup_history(target).await.unwrap()[0].id,
+        row.id
+    );
+    assert!(
+        std::fs::read_dir(directory.path())
+            .unwrap()
+            .next()
+            .is_none()
+    );
+}

@@ -251,6 +251,9 @@ fn validate_schema(connection: &Connection, expected: &Schema) -> anyhow::Result
         "This database version is not supported. Use matching, current Shep versions on both devices."
     );
     let mut expected = expected.clone();
+    if version < 4 {
+        expected.retain(|_, (_, owner, _)| owner != "backup_history");
+    }
     if version == 2 {
         expected.retain(|_, (_, owner, _)| owner != "imported_operations");
     }

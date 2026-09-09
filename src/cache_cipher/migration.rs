@@ -161,6 +161,48 @@ mod tests {
     }
 
     #[test]
+    fn staged_cache_copy_preserves_gapped_rowids_and_external_fts() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("plain.sqlite");
+        let c = Connection::open(&source).unwrap();
+        c.execute_batch("CREATE TABLE messages(id TEXT PRIMARY KEY, body TEXT);
+            CREATE VIRTUAL TABLE search USING fts5(body,content='messages',content_rowid='rowid');
+            CREATE TRIGGER inserted AFTER INSERT ON messages BEGIN INSERT INTO search(rowid,body) VALUES(new.rowid,new.body); END;
+            INSERT INTO messages(rowid,id,body) VALUES(7,'first','Fictional first phrase'),(101,'last','Fictional last phrase');
+            CREATE INDEX body_order ON messages(body COLLATE NOCASE);
+            CREATE TABLE unindexed_metadata(value TEXT);
+            INSERT INTO unindexed_metadata(rowid,value) VALUES(991,'Fictional external row reference');").unwrap();
+        drop(c);
+        let key = Key::generate().unwrap();
+        let (_send, receive) = oneshot::channel();
+        let candidate = stage_plaintext(&source, dir.path(), &key, receive).unwrap();
+        let c = key
+            .open(candidate.path(), OpenFlags::SQLITE_OPEN_READ_WRITE)
+            .unwrap();
+        let rows = c
+            .prepare("SELECT rowid,id FROM messages ORDER BY rowid")
+            .unwrap()
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(rows, [(7, "first".into()), (101, "last".into())]);
+        let matched: String = c.query_row("SELECT id FROM messages WHERE rowid IN (SELECT rowid FROM search WHERE search MATCH 'last')", [], |r|r.get(0)).unwrap();
+        assert_eq!(matched, "last");
+        assert_eq!(
+            c.query_row("SELECT rowid FROM unindexed_metadata", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            991
+        );
+        c.execute(
+            "INSERT INTO search(search,rank) VALUES('integrity-check',1)",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn cancelled_copy_leaves_only_the_unchanged_original() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("plain.sqlite");

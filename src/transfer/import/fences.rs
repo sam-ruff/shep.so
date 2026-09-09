@@ -22,7 +22,7 @@ pub(super) fn apply(
     defensive(&c, cancel)?;
     c.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")?;
     let tx = c.transaction()?;
-    // The copy was validated as v2/v3; bring its archive table/version forward
+    // The copy was validated as v2/v3/v4; bring its archive table/version forward
     // in the same transaction as the device-specific import preparation.
     crate::store::import_archive_schema(&tx)?;
     let import_id = id.to_string();
@@ -37,6 +37,11 @@ pub(super) fn apply(
         serde_json::from_str::<ImportMarker>(value)
             .is_ok_and(|marker| marker.version == 1 && marker.local_profile == id)
     }) {
+        // Recovered imported copies keep their completed preparation, while
+        // still receiving schema migrations added since that preparation.
+        crate::store::backup_history::schema(&tx)?;
+        tx.pragma_update(None, "user_version", crate::store::DATABASE_VERSION)?;
+        tx.commit()?;
         return Ok(());
     }
 
@@ -185,6 +190,7 @@ pub(super) fn apply(
         "INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         params![IMPORT_MARKER_KEY, serde_json::to_string(&marker)?],
     )?;
+    crate::store::backup_history::schema(&tx)?;
     tx.pragma_update(None, "user_version", crate::store::DATABASE_VERSION)?;
     check_cancel(cancel)?;
     tx.commit()?;

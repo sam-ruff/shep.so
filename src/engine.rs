@@ -112,6 +112,8 @@ pub enum Command {
     ConnectFtp(u64, BackupTarget, Option<SecretString>),
     ProbeSftp(u64, backup::sftp::Settings),
     ListBackups(u64, BackupTarget),
+    BackupHistory(u64, BackupTarget),
+    RetryBackupHistory(String, BackupTarget, SecretString),
     Restore(BackupTarget, String, SecretString),
     ExportAttachment(String, usize, String),
     ExportMessage(String, String),
@@ -138,6 +140,7 @@ impl Command {
             Self::GoogleLogin(..) => Some("google".into()),
             Self::DisconnectGoogle(_) | Self::CleanupGoogle => Some("google-disconnect".into()),
             Self::Backup(target, _)
+            | Self::RetryBackupHistory(_, target, _)
             | Self::AutomaticBackup(target)
             | Self::BackupIncluded(_, _, target)
             | Self::Restore(target, ..)
@@ -237,6 +240,12 @@ pub enum Event {
     SftpFingerprint(u64, backup::sftp::Settings, Result<String, String>),
     BackupFinished(BackupTarget),
     BackupRun(u64, BackupTarget, backup::run::Status),
+    BackupHistory(
+        u64,
+        BackupTarget,
+        Result<Arc<Vec<backup::history::Entry>>, String>,
+    ),
+    BackupHistoryChanged(BackupTarget),
     Busy(String, bool),
     Notice(String),
     Error(String),
@@ -1364,6 +1373,35 @@ impl Engine {
             }
             Command::AutomaticBackup(target) => {
                 self.run_backup(target, None, &mut output).await?;
+            }
+            Command::RetryBackupHistory(id, target, secret) => {
+                let history = self.store.backup_history(target.clone()).await?;
+                anyhow::ensure!(
+                    history
+                        .first()
+                        .is_some_and(|entry| entry.id == id && entry.outcome.attention()),
+                    "Backup activity changed. Refresh it before retrying."
+                );
+                if let Some(copy) = history.first().and_then(|entry| entry.copy.as_ref()) {
+                    let pending = self.backup_journal().await?.pending(&target).await?;
+                    anyhow::ensure!(
+                        pending
+                            .as_ref()
+                            .is_some_and(|entry| &entry.upload.id == copy),
+                        "This activity has no matching pending upload on this device. Refresh copies to check it, or choose Back up now to create a new copy."
+                    );
+                }
+                self.run_backup(target, Some(secret), &mut output).await?;
+            }
+            Command::BackupHistory(request, target) => {
+                let result = self.store.backup_history(target.clone()).await;
+                output
+                    .send(Event::BackupHistory(
+                        request,
+                        target,
+                        result.map(Arc::new).map_err(|error| format!("{error:#}")),
+                    ))
+                    .await?;
             }
             Command::ListBackups(request, target) => {
                 let result: anyhow::Result<Vec<BackupCopy>> = async {

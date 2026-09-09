@@ -37,7 +37,12 @@ patch in `shep-lifecycle.patch` skips SQLCipher process-exit/finalizer cleanup
 and initializes OpenSSL with `OPENSSL_INIT_NO_ATEXIT` before the first RNG call,
 matching Rust OpenSSL's existing policy. Explicit `sqlite3_shutdown()` retains
 SQLCipher cleanup and supports reinitialization after all connections close.
-No cipher/page/KDF algorithm is changed. The separate `vendor/curl` initializer
+The separate `shep-export.patch` enables SQLite's existing `DBFLAG_VacuumInto`
+rowid-preservation flag inside `sqlcipher_export`, restoring prior flags on return.
+Without it, unindexed tables are renumbered even when exporting explicitly stored
+rowids. The conversion regression preserves unindexed rowid 991, indexed mail
+rowids 7/101 and external-content FTS. The flag only changes rowid assignment in
+SQLite's existing transfer path; it does not change a cipher/page/KDF algorithm. The separate `vendor/curl` initializer
 patch sets the same policy before libcurl's pre-main crypto use; keep the combined
 `tests/crypto_lifecycle.rs` regression when updating either library.
 
@@ -64,6 +69,8 @@ The current lockfile bundles OpenSSL 3.6.3 via `openssl-src` 300.6.1;
 `OpenSSL-LICENSE.txt` accompanies the statically linked release binary. Update
 that license alongside an OpenSSL source update.
 
-Patched `sqlite3.c` SHA-256: `4fb051a14915b03520e815a23ca3aebb10957af39a36a70da5c9fb9bba29bdd4`.
+Lifecycle-only `sqlite3.c` SHA-256: `4fb051a14915b03520e815a23ca3aebb10957af39a36a70da5c9fb9bba29bdd4`.
 
 Lifecycle + temporary-policy `sqlite3.c` SHA-256: `36846a44259e232f5d75e671e2d9b73ff9ea603cb322b28b07250c08f786348a`.
+
+Final lifecycle + temporary-policy + export `sqlite3.c` SHA-256: `77c71d5c5e8b1c0211881eb30892cde7da7b2f5353e656027bd8f1f38e1ea39e`.

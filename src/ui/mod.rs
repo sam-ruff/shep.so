@@ -210,6 +210,9 @@ pub enum Message {
     BackupAccounts(bool),
     BackupCompression(bool),
     BackupEncryption(bool),
+    ToggleBackupHistory,
+    RefreshBackupHistory,
+    RetryBackupHistory(String),
     AutoBackup(bool),
     IncludeBackup(String, bool),
     BackupAll,
@@ -388,6 +391,7 @@ pub struct App {
     pending_backup_all: Option<u64>,
     backup_run_generation: u64,
     backup_run: Vec<backups::RunRow>,
+    backup_activity: backups::Activity,
     tab: Tab,
     settings_tab: SettingsTab,
     settings_search: String,
@@ -549,6 +553,7 @@ impl App {
                 pending_backup_all: None,
                 backup_run_generation: 0,
                 backup_run: Vec::new(),
+                backup_activity: Default::default(),
                 tab: Tab::Mail,
                 settings_tab: SettingsTab::General,
                 settings_search: String::new(),
@@ -697,7 +702,8 @@ impl App {
             | Command::SaveEvent(..)
             | Command::DeleteEvent(..)
             | Command::GoogleLogin(..)
-            | Command::BackupIncluded(..) => command.key(),
+            | Command::BackupIncluded(..)
+            | Command::RetryBackupHistory(..) => command.key(),
             _ => None,
         };
         if close_key
@@ -1642,6 +1648,29 @@ impl App {
                         self.editing_event = None;
                     }
                 }
+                Event::BackupHistory(request, target, result) => {
+                    if request == self.backup_activity.generation
+                        && target == self.configured_backup_target()
+                    {
+                        self.backup_activity.loading = false;
+                        self.backup_activity.target = Some(target);
+                        match result {
+                            Ok(entries) => {
+                                self.backup_activity.entries = entries;
+                                self.backup_activity.error = None;
+                            }
+                            Err(error) => self.backup_activity.error = Some(error),
+                        }
+                    }
+                }
+                Event::BackupHistoryChanged(target) => {
+                    if self.tab == Tab::Preferences
+                        && self.settings_tab == SettingsTab::Backups
+                        && target == self.configured_backup_target()
+                    {
+                        self.refresh_backup_history();
+                    }
+                }
                 Event::Backups(request, target, result) => {
                     if request == self.backups_generation
                         && target == self.configured_backup_target()
@@ -1926,6 +1955,9 @@ impl App {
                 self.settings_tab = tab;
                 self.fields.clear();
                 self.settings_fields();
+                if tab == SettingsTab::Backups {
+                    self.refresh_backup_history();
+                }
             }
             Message::NewMessage => {
                 self.new_composer();
@@ -2712,6 +2744,14 @@ impl App {
                 }
             }
             Message::CleanupGoogle => self.send(Command::CleanupGoogle),
+            Message::ToggleBackupHistory => {
+                self.backup_activity.open = !self.backup_activity.open;
+                if self.backup_activity.open {
+                    self.refresh_backup_history();
+                }
+            }
+            Message::RefreshBackupHistory => self.refresh_backup_history(),
+            Message::RetryBackupHistory(id) => self.retry_backup_history(id),
             Message::Backup => self.begin_backup_request(backups::BackupAction::Save(
                 secrecy::SecretString::from(self.field("passphrase").to_string()),
             )),
@@ -4060,6 +4100,7 @@ impl App {
         data["saved_backup_destinations"] =
             serde_json::json!(self.workspace.preferences.backup_destinations);
         data["auto_backup"] = serde_json::json!(self.preferences.auto_backup);
+        data["backup_activity"] = serde_json::json!({"open": self.backup_activity.open, "entries": &*self.backup_activity.entries, "loading": self.backup_activity.loading, "error": self.backup_activity.error});
         data["backup_format"] = serde_json::json!(self.preferences.backup_format);
         data["saved_backup_format"] = serde_json::json!(self.workspace.preferences.backup_format);
         data["backup_accounts"] = serde_json::json!(self.preferences.backup_accounts);

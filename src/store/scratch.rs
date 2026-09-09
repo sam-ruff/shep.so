@@ -39,9 +39,12 @@ pub(super) fn attach(
     };
     let initialized = (|| -> anyhow::Result<()> {
         key.apply(connection, c"scratch")?;
+        // Scratch is rebuilt every session. Retain encrypted rollback journals
+        // for transaction errors, but do not fsync throwaway ranking/selection
+        // metadata. The main cache and durable receipt journals remain FULL.
         connection.execute_batch(
             "PRAGMA scratch.journal_mode=DELETE;
-            PRAGMA scratch.synchronous=FULL; PRAGMA scratch.cache_size=-2048;
+            PRAGMA scratch.synchronous=OFF; PRAGMA scratch.cache_size=-2048;
             CREATE TABLE scratch.owner(version INTEGER NOT NULL);
             INSERT INTO scratch.owner VALUES(1);",
         )?;
@@ -172,6 +175,94 @@ mod tests {
                 .selection_snapshot(selection, vec![])
                 .await
                 .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn ephemeral_scratch_skips_flushes_preserves_main_durability_and_ignores_crash_leftovers()
+    {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("mail.sqlite");
+        let key = Arc::new(Key::generate().unwrap());
+        let store = Store::open_encrypted(&path, key.clone()).unwrap();
+        let scratch = store
+            .run(|c| {
+                assert_eq!(
+                    c.query_row("PRAGMA main.synchronous", [], |r| r.get::<_, i64>(0))?,
+                    2
+                );
+                assert_eq!(
+                    c.query_row("PRAGMA scratch.synchronous", [], |r| r.get::<_, i64>(0))?,
+                    0
+                );
+                assert_eq!(
+                    c.query_row("PRAGMA scratch.journal_mode", [], |r| r.get::<_, String>(0))?,
+                    "delete"
+                );
+                c.execute("INSERT INTO scratch.owner VALUES(99)", [])?;
+                let scratch: String = c.query_row(
+                    "SELECT file FROM pragma_database_list WHERE name='scratch'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                Ok(std::path::PathBuf::from(scratch))
+            })
+            .await
+            .unwrap();
+        let orphan = directory.path().join(".shep-cache-scratch-crash-fixture");
+        std::fs::create_dir(&orphan).unwrap();
+        std::fs::copy(&scratch, orphan.join("scratch.sqlite")).unwrap();
+        let original_orphan = std::fs::read(orphan.join("scratch.sqlite")).unwrap();
+        drop(store);
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while scratch.parent().unwrap().exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let reopened = Store::open_encrypted(path, key).unwrap();
+        let new_scratch = reopened
+            .run(|c| {
+                assert_eq!(
+                    c.query_row("SELECT count(*) FROM scratch.owner", [], |r| r
+                        .get::<_, i64>(0))?,
+                    1
+                );
+                assert_eq!(
+                    c.query_row("SELECT version FROM scratch.owner", [], |r| r
+                        .get::<_, i64>(0))?,
+                    1
+                );
+                assert_eq!(
+                    c.query_row(
+                        "SELECT count(*) FROM scratch.conversation_choices",
+                        [],
+                        |r| r.get::<_, i64>(0)
+                    )?,
+                    0
+                );
+                assert_eq!(
+                    c.query_row("PRAGMA main.synchronous", [], |r| r.get::<_, i64>(0))?,
+                    2
+                );
+                assert_eq!(
+                    c.query_row("PRAGMA scratch.synchronous", [], |r| r.get::<_, i64>(0))?,
+                    0
+                );
+                Ok(c.query_row(
+                    "SELECT file FROM pragma_database_list WHERE name='scratch'",
+                    [],
+                    |r| r.get::<_, String>(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_ne!(Path::new(&new_scratch), scratch);
+        assert_ne!(Path::new(&new_scratch), orphan.join("scratch.sqlite"));
+        assert_eq!(
+            std::fs::read(orphan.join("scratch.sqlite")).unwrap(),
+            original_orphan
         );
     }
 }
