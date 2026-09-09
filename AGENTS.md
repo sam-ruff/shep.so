@@ -1297,3 +1297,12 @@ an asset or install onto a developer's account merely to validate this script.
 binaries, temporary prefixes/menu entries, staged failure/cancellation and a fake
 bootstrap curl. Missing release/platform assets must remain explicit; a working
 fixture does not prove a binary is publicly available.
+
+The raw macOS entry point is `scripts/install-release-macos.sh`. It uses system
+Bash, JXA/Foundation JSON parsing, curl/tar/shasum, plutil and sips/iconutil to stage
+a native application bundle. Only exact unique regular binary/icon members stream
+out of the verified archive. The destination copy has a rollback slot; an explicit
+system install elevates only that final operation. Keep Gatekeeper unchanged and
+never describe generated bundles as signed/notarized. `tests/test_macos_installer.py`
+executes the shell/download/filesystem paths against isolated native-tool fixtures;
+it is not actual macOS execution. No Python runtime is required by this installer.
