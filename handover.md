@@ -4,7 +4,7 @@ The user stopped feature work to conserve credits and requested this handover, a
 
 ## 9 September continuation: native initial-profile controls
 
-Preferences now has **Accounts → Profiles and sync** for explicit first-device
+Source `488a9ec` is pushed. Preferences now has **Accounts → Profiles and sync** for explicit first-device
 review/create, saved categories, stop/resume and enable/disable. The owning
 32-command coordinator keeps local choices available during network work and
 retains admitted upload receipts through shutdown. Touched-field saves preserve
@@ -13,16 +13,21 @@ and all existing aliases are protected from database export.
 
 Five new native scenarios pass, including compact dark rapid choices,
 failure/retry/opt-out, first creation/reopen, held-read close and closing during
-upload followed by Resume. Actual WebP captures were reviewed. Relevant Rust
-ordering/protocol/export tests pass; final full checks and shipping are recorded
-in the newest completion entry. No personal installation or live Google test was
+upload followed by Resume. Actual WebP captures were reviewed. Twelve affected import/Google native flows also pass. Mandatory hooks passed
+622 Rust, two renderer and 34 shared tests; 54 Python tests, warning-free Windows
+GNU cross-compilation and strict Zensical passed. See the newest completion entry
+for the exact tested binary and source. No personal installation or live Google test was
 performed. The screen labels completion as an initial copy, because continuous
 updates and joining existing profiles remain unfinished.
 
 **Next finish existing-device discovery/application, then continuous sync.** Keep
 OAuth implementation first in TODO with the Flutter handover reference, as the
 user requested. Review newer committed shared-client discovery/history support
-without touching that worktree's active files. Desktop new profiles currently use
+without touching that worktree's active files. Its committed `3c9b98d` adds durable
+profile discovery/change replay; `36fccb4` records its checks in
+`docs/agents/PROFILE_DISCOVERY.md`. Review it before implementing another catalog;
+the desktop dependency remains pinned to `9289f53` until deliberate adoption.
+Desktop new profiles currently use
 namespace `so.shep`; all participating clients must agree before live parity is
 claimed. Preserve saved bindings and the pinned dependency until a reviewed
 migration/update. Account reconnection/suppression, portable preferences beyond

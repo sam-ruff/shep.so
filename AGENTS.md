@@ -1050,15 +1050,13 @@ atomically. Only a completed scan exposes metadata pages for application, at mos
 50 at a time; no whole-history collection/page ceiling. Scan replacement must
 preserve uploads and merge history. Keep the protocol/journal/scan regressions
 and existing Drive backup tests. Run JSON/hash/SQL/network work only in backend
-workers. Native enrollment, account application and continuous polling must still be
+workers. Existing-device enrollment, account application and continuous polling must still be
 implemented and tested before claiming continuous profile sync.
 
 The pre-commit hook, full check script and disabled quality workflow also run
 `python3 scripts/test_profile_core.py`. Keep the immutable Git revision in Cargo.lock
 and its fixture provenance explicit when adopting newer client history/codec
-work; never use a sibling worktree path as a shipped dependency. When the
-production enrollment chooses a Drive-journal path, protect it in database
-export/import guards alongside the other active provider journals.
+work; never use a sibling worktree path as a shipped dependency. Keep production Drive/history paths protected in database export/import guards alongside the other active provider journals.
 
 `profile_sync::replica::Replica` privately owns the shared history worker. Complete
 verified pulls mint revision/device/scan proofs; publishing compares core, Drive
@@ -1074,8 +1072,8 @@ The shared Drive metadata fixture now fixes appProperties/category/file naming
 across implementations; preserve exact bytes with the repository Git attributes.
 The earlier bb87ac2 desktop prototype had a different unconnected wire convention.
 Real same-project cross-client visibility remains unverified. The kernel still
-needs native controls, actual account application and remaining settings,
-production journal path guards and incremental pulls; do not call it working
+needs existing-device controls, actual account application and remaining settings,
+and incremental pulls; do not call it working
 continuous sync based on two-store HTTP fixtures alone.
 
 The shared Git crate now has dev-dependencies, so Cargo cannot test it directly
