@@ -12,7 +12,7 @@ curl -fsSL https://raw.githubusercontent.com/sam-ruff/shep.so/main/scripts/insta
 
 The Linux installer downloads a published release, verifies its checksum, and adds Shep to your applications menu. It defaults to your home directory; an interactive prompt also offers all-user installation or cancellation. Requires curl and Python 3.
 
-**No binary releases are published yet while release CI is paused.** The installer reports this clearly; use [the source instructions](#get-started) until a release is available. Windows downloads are being added.
+**No binary releases are published yet while release CI is paused.** The installer reports this clearly; use [the source instructions](#get-started) until a release is available.
 
 For macOS (built-in system tools, no Python):
 
@@ -21,6 +21,14 @@ curl -fsSL https://raw.githubusercontent.com/sam-ruff/shep.so/main/scripts/insta
 ```
 
 This prepares `~/Applications/Shep.app` with its native icon; `--system` installs for all users. macOS release assets and actual desktop verification remain pending.
+
+For Windows, run in PowerShell:
+
+```powershell
+& ([scriptblock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/sam-ruff/shep.so/main/scripts/install-release-windows.ps1)))
+```
+
+Uses built-in PowerShell and Windows `tar.exe`. Installs under your user profile with a Start-menu shortcut; the prompt offers all-user installation. Windows release assets and actual desktop verification remain pending.
 
 ![Shep in light mode, with a unified inbox and an open email](docs/images/mail-light.webp)
 

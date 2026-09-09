@@ -17,7 +17,7 @@ The installer never stops an open Shep window; reopen it after an update.
 Release CI is currently paused and no binary releases are published yet. The
 installer reports missing releases or platform assets without changing installed
 files. Use the source instructions below until an archive is available;
-Windows download installation and macOS/Windows release packaging remain in development.
+macOS/Windows release packaging remains in development.
 
 For a particular release, a prompt-free user install or optional GNOME pinning:
 
@@ -49,6 +49,32 @@ and reopen after updates. No running process is stopped, user data is kept, and
 Gatekeeper settings are preserved. This does not create a signed or notarized app.
 The shell and isolated native-tool contracts are tested on Linux; actual macOS
 execution and published macOS assets remain pending.
+
+### Windows
+
+Run this in PowerShell:
+
+```powershell
+& ([scriptblock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/sam-ruff/shep.so/main/scripts/install-release-windows.ps1)))
+```
+
+Uses built-in Windows PowerShell 5.1 or newer and Windows 10/11 `tar.exe`; no Python
+or extra runtime is installed. The default location is
+`%LOCALAPPDATA%\Programs\Shep`, with a native Start-menu shortcut and icon.
+The terminal prompt offers your user, all users, or cancel. Add `-User` or `-Yes`
+after the command to use the user default without prompting. Add `-AllUsers` for
+Program Files and the shared Start menu; only the final verified, staged install
+requests administrator approval. `-Version 1.2.3` chooses a published version and
+`-InstallDirectory PATH` customizes a user installation.
+
+The installer verifies SHA-256, preserves binary data during extraction, and
+restores the previous application if replacement fails. If Windows keeps an open
+executable locked, close Shep and retry. User mail/configuration are preserved;
+no process is stopped and no system execution/security policy is changed.
+The prepared administrator process alone permits its installer script to run.
+PowerShell filesystem/transport tests run in isolated Linux fixtures; actual
+Windows PowerShell 5.1, Start-menu rendering, UAC and published assets still need
+Windows verification. This script does not sign the application.
 
 ## Run from source
 

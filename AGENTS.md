@@ -1306,3 +1306,15 @@ system install elevates only that final operation. Keep Gatekeeper unchanged and
 never describe generated bundles as signed/notarized. `tests/test_macos_installer.py`
 executes the shell/download/filesystem paths against isolated native-tool fixtures;
 it is not actual macOS execution. No Python runtime is required by this installer.
+
+The raw Windows entry point is `scripts/install-release-windows.ps1`. It targets
+built-in PowerShell 5.1 and Windows tar.exe, streams binary extraction outside
+PowerShell's text pipeline, creates a PNG-backed native ICO and WScript Start-menu
+shortcut, and defaults to LocalAppData/Programs/Shep. Explicit all-user installation
+uses a prepared script/data manifest and RunAs; encoded invocation quotes literal
+paths and never evaluates release metadata. Keep checksum/member validation,
+rollback and missing-asset errors. `tests/test_windows_installer.py` uses temporary
+folders, loopback downloads and explicit COM/UAC/environment boundary fixtures;
+set `SHEP_POWERSHELL` to an existing PowerShell binary for Linux contract execution.
+Do not install a runtime or invoke real UAC on the developer's desktop for tests.
+Actual Windows PowerShell 5.1/COM/UAC execution remains distinct from Linux fixtures.
