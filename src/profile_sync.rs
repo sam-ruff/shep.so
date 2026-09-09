@@ -2,8 +2,11 @@
 //! as Flutter. Enrollment/merge owns application decisions; transport never
 //! applies account settings, credentials or mail actions by itself.
 pub mod drive;
+pub mod enrollment;
 pub mod journal;
+pub mod metadata;
 pub mod replica;
+pub mod setup;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};

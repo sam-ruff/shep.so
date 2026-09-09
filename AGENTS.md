@@ -1050,7 +1050,7 @@ atomically. Only a completed scan exposes metadata pages for application, at mos
 50 at a time; no whole-history collection/page ceiling. Scan replacement must
 preserve uploads and merge history. Keep the protocol/journal/scan regressions
 and existing Drive backup tests. Run JSON/hash/SQL/network work only in backend
-workers. Enrollment, merge, category toggles and native controls must still be
+workers. Native enrollment, account application and continuous polling must still be
 implemented and tested before claiming continuous profile sync.
 
 The pre-commit hook, full check script and disabled quality workflow also run
@@ -1074,7 +1074,7 @@ The shared Drive metadata fixture now fixes appProperties/category/file naming
 across implementations; preserve exact bytes with the repository Git attributes.
 The earlier bb87ac2 desktop prototype had a different unconnected wire convention.
 Real same-project cross-client visibility remains unverified. The kernel still
-needs persisted enrollment, native controls, actual account/settings application,
+needs native controls, actual account application and remaining settings,
 production journal path guards and incremental pulls; do not call it working
 continuous sync based on two-store HTTP fixtures alone.
 
@@ -1087,3 +1087,17 @@ After reviewing a dependency change, `--update-lock` deliberately refreshes that
 isolated test lock. Ordinary hooks/CI use the locked mode; Python 3.11+ is required.
 Keep the runner's source-pin/copy-isolation tests and all shared protocol/history
 tests in addition to the desktop bridge tests.
+
+Enrollment and seeds use device-local KV records on the cache owning worker.
+Keep revision checks, independent offline option saves and same-transaction
+Google-disconnect pausing. Database import archives/removes both records.
+`profile_sync::setup` creates only from a current complete discovery review,
+persists all seed UUIDs/account mappings, and checkpoints the exact expected
+history revision before each edit. Retry that original request, never resnapshot
+its values or assign another UUID. Keep an admitted upload owned through both
+journal receipts even after stop; subsequent requests must observe newer intent.
+Actual account application, native controls, incremental polling and production
+journal path protection remain open. Metadata review alone must not connect a
+remote-specified server using existing credentials. See the profile reference
+and TODO for supported settings and remaining behavior; preserve held-response,
+restart, malformed seed, settings rollback and import-fence tests.

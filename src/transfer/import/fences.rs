@@ -161,6 +161,15 @@ pub(super) fn apply(
         disconnected: true,
         ..Default::default()
     };
+    // Enrollment and its external history belong to the source device. Archive
+    // the local pointer for review, then require fresh discovery on this copy.
+    for key in [
+        crate::profile_sync::enrollment::STORAGE_KEY,
+        crate::profile_sync::enrollment::SEED_KEY,
+    ] {
+        tx.execute("INSERT INTO imported_operations SELECT ?,'profile-enrollment',key,value FROM kv WHERE key=?",params![import_id,key])?;
+        tx.execute("DELETE FROM kv WHERE key=?", [key])?;
+    }
     tx.execute("INSERT INTO kv(key,value) VALUES('preferences',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [serde_json::to_string(&preferences)?])?;
     let marker = ImportMarker {
         version: 1,

@@ -12,6 +12,7 @@ pub use connections::{ConnectionKind, ConnectionRef, CredentialCleanup, RemovalP
 mod drafts;
 mod google_lifecycle;
 mod outgoing;
+mod profile_sync;
 mod restore;
 mod selection;
 pub(crate) mod worker;
