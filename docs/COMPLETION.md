@@ -16,7 +16,8 @@ The acceptance transaction rechecks opt-out and newly created local data; stale
 reviews cannot apply. Errors show a recovery prompt, never an empty-cloud success.
 Existing profile publication, initialization barriers and retry receipts remain.
 
-Four new Rust regressions cover persisted opt-out/reconnection, settings/draft
+Four new Rust regressions cover persisted opt-out through the actual store
+disconnect/cleanup/grant-activation lifecycle, settings/draft
 eligibility, automatic acceptance with late local changes and idempotent retry,
 and UI status coalescing/save/error/decline/close ordering. The targeted profile
 run passes 69 tests, with one personal diagnostic explicitly ignored. **30 native
@@ -28,8 +29,13 @@ and `28d56de408ca` (light setup after re-enable). Native executable SHA-256:
 `1d6cbaec9815937101de0c07489eebc36e2a5a946e2021149b317aa053585611`.
 
 Python passes 55 tests and Windows GNU all-target/all-feature cross-compilation
-passes. Strict Zensical passed; mandatory hook and shipping receipts follow the
-source commit. The first native attempt identified a missing preview status-event
+passes. Strict Zensical and formatting/Clippy passed. Mandatory hooks passed
+**647 root Rust + two renderer + 53 shared tests (702 executions)**, with three
+personal diagnostics explicitly ignored. Source
+[`acb4969`](https://github.com/sam-ruff/shep.so/commit/acb4969154bb6a882a9688cf6e340d27a977a32a)
+is pushed to main; exact remote equality was verified. [Source documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34323561457)
+passed the strict build and Pages deployment. The first native attempt identified
+a missing preview status-event
 fixture; it was connected to the normal command path. A checkbox-edge coordinate
 was corrected before the complete passing run. No test or budget was weakened.
 
