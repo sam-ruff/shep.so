@@ -14,7 +14,11 @@ pub struct ConnectionFactory(Arc<Open>);
 
 impl Default for ConnectionFactory {
     fn default() -> Self {
-        Self::new(|path| Ok(Connection::open(path)?))
+        Self::new(|path| {
+            let connection = Connection::open(path)?;
+            connection.pragma_update(None, "temp_store", "FILE")?;
+            Ok(connection)
+        })
     }
 }
 
@@ -40,6 +44,27 @@ mod tests {
             profile: uuid::Uuid::new_v4(),
             generation: uuid::Uuid::new_v4(),
         }
+    }
+
+    #[test]
+    fn default_open_keeps_the_existing_file_temporary_store_policy() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::open(&dir.path().join("history.sqlite"), binding()).unwrap();
+        assert_eq!(
+            journal
+                .db
+                .query_row("PRAGMA temp_store", [], |r| r.get::<_, i32>(0))
+                .unwrap(),
+            1
+        );
+        let memory = Journal::memory(binding()).unwrap();
+        assert_eq!(
+            memory
+                .db
+                .query_row("PRAGMA temp_store", [], |r| r.get::<_, i32>(0))
+                .unwrap(),
+            1
+        );
     }
 
     #[test]
