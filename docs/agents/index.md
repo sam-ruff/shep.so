@@ -18,6 +18,7 @@ Read the repository's [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/
 - [Calendar](calendar.md): discovery, access, write acknowledgments, conflicts and connection removal.
 - [Google and backups](backups.md): authorization, destination identity, scheduling, resumable uploads and additive restore.
 - [Profile metadata format and current limits](PROFILE_FORMAT.md).
+- [Local profile history](PROFILE_HISTORY.md): causal merge, durable upload identities, native worker/bridge and remaining enrollment work.
 - [Profile sync handover](PROFILE_SYNC_HANDOVER.md): next-priority OAuth, Rust/Flutter enrollment, portable records, conflicts and verification requirements; implementation remains open.
 - [Limits](limits.md): protocol requirements, storage ceilings and unverified behavior.
 

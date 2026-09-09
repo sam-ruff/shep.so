@@ -1730,3 +1730,55 @@ The second Appium attempt reached Preferences but the new high-level scroll comm
 Committed and pushed as [`6c4bb65`](https://github.com/sam-ruff/shep.so/commit/6c4bb65fbc02c96dd258ed9942e64e6282bca181) to `feat/mobile-web-clients`; the exact remote SHA is verified. Mandatory hooks pass formatting, Clippy and **398 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Final source checks pass **89 Flutter host tests**, the configured SDK contract, **two Android Google scenarios**, **seven Appium flows**, **seven offline Flutter Playwright flows**, **40 Python tests**, **31 parity contracts**, clean Flutter analysis/formatting, the production ARM64 release build and pinned strict documentation. Synthetic compact light/dark and cancellation/storage-recovery captures are reviewed. Intermediate failures remain explicitly recorded above; none counts as a passing run.
 
 This delivers the native consent/permission/local-cleanup increment. Full R75/profile parity remains active: registered live Google clients, safe switching/automatic restoration, actual Calendar/Drive use, verified profile discovery/enrollment/merge, protected credentials and Apple execution are unfinished. The test emulator and inspection server were stopped. Main, installed desktop and personal phone were untouched; quality/release CI remains disabled until requested with trusted runners ready. The next restart continues OAuth/shared profiles from the handover.
+
+## 2026-09-09 — Native causal profile history checkpoint
+
+R75/R02/R49/desktop-main:R92 adds durable metadata history in
+`shared/profile-core`, a bounded owning worker and the production Flutter native
+bridge. Two local stores retain exact operations, merge independent fields,
+preserve concurrent versions for review, reject stale resolutions and retain
+account/profile tombstones through offline edits and restart. Local edits are
+idempotent after lost replies; reserved upload IDs and byte digests persist.
+Accepted worker writes outlive cancelled observers. SQL failure rolls back record,
+ancestry, field versions and counters together. See [the API and integration
+boundaries](agents/PROFILE_HISTORY.md).
+
+The history uses its own database and worker, independent of occupied mail
+provider capacity. Native binding changes drain the previous journal; a stale
+close cannot close another binding. Flutter encodes/decodes profile metadata off
+its UI isolate. Root/native rusqlite moves to 0.40.2 / SQLite 3.53.2, deliberately
+porting the dependency fix inspected in desktop `db8c82a`; that commit's entire
+mail-cache owning-worker migration is not included here.
+
+Verification before shipping: **17 shared profile tests** (10 history, one worker,
+six codec), **68 native Rust tests**, **90 Flutter host tests**, clean native Rust
+Clippy/Flutter analysis, **41 Python tests**, **31 parity contracts**, strict pinned
+documentation and **23 common WASM cases** plus duplicate/size/depth rejection
+pass. The shared actual Dart FFI scenario also passes on the isolated Android
+emulator: two stores exchange synthetic account/settings records, retain/resolve
+a conflict and reopen queued work without accessing credentials. Its completion
+marker is required by the wrapper; it is backend integration, not a new Settings
+control E2E. Production ARM64 APK builds successfully with the native library;
+it remains development-signed. Final root hooks, performance and shipping evidence
+follow below.
+
+Retained failed-before evidence under ignored `artifacts/logs/profile-history-*`:
+initial SQL integer-conversion compile errors; symlink lock alias failure; duplicate
+tombstones counted as conflicts; the planner choosing a competing index; two
+Clippy style findings; the first Dart fixture's missing import; and two Android
+runs failing temporary-directory setup before opening history. Corrected ownership,
+tombstone/index logic and fixture setup pass the corresponding unchanged contracts.
+The full Android setup failure log is retained separately. No interrupted or failed
+run counts as a pass. No product UI changed, so unchanged desktop/Appium/Playwright
+control suites were not rerun for this backend increment. Earlier control evidence
+remains separately recorded.
+
+**Remaining:** authenticated Google identity/owned-file transport, complete
+creation/discovery/enrollment checkpoints, category/profile switches, actual
+account/preferences application, complete portable settings and protected
+credentials. A supplied binding is not verified Google identity; matching a local
+reserved ID/digest is not proof of a cloud upload. Zero missing ancestry is not a
+complete cloud listing. Large-history/compaction, device-ID rebinding during full
+transfer, encrypted local SQLite, Apple and genuine cross-client Google access
+remain open. The full product goal stays active; personal phone/main/installed
+desktop were untouched and quality/release CI stays disabled.

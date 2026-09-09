@@ -479,3 +479,13 @@ R75/R02/R49/desktop-main:R92/R63/R67/R69/R73/R77: Flutter native consent now pas
 
 
 Flutter scoped consent is shipped in [`6c4bb65`](https://github.com/sam-ruff/shep.so/commit/6c4bb65fbc02c96dd258ed9942e64e6282bca181), with exact remote verification and mandatory hooks passing 398 root/shared Rust tests. Client/platform test counts, reviewed evidence and limitations are in [the completion log](COMPLETION.md). R77 prompt shipping is fulfilled for this increment; full R75/R02/R49 and client/platform parity stay in TODO.
+
+R75/R02/R49/desktop-main:R92/R67/R69/R73/R77 continuation: the shared native causal
+history and Flutter bridge now retain immutable metadata, offline conflicts,
+removal tombstones and reserved upload identities. Core/native tests and the same
+actual FFI scenario on host/Android pass without credentials; evidence, failures
+and final checkpoint shipping are in [the completion log](COMPLETION.md). No scope
+item is removed: authenticated discovery/enrollment/category controls, real
+account/preferences application, credentials, browser history and Apple/live
+verification remain active. The R75 Google replacement and R76 grouped scheduled
+automatic-replies TODOs are retained, as are deployment and Linux store work.

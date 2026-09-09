@@ -31,7 +31,8 @@ async-trait = "0.1"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.38", features = ["bundled"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+shep-profile-core = { path = "shared/profile-core", features = ["history"] }
 directories = "6"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"

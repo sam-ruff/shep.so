@@ -15,6 +15,7 @@ tracked separately. Keep the linked entry first in the root TODO until delivery.
 | Desktop Google lifecycle | `src/store/google_lifecycle.rs`, `src/engine/google_lifecycle.rs` | Local disconnect, cleanup retries and stale-result protection must also fence profile jobs. |
 | Desktop Drive transport | `src/backup/drive.rs`, `src/backup/journal.rs` | Reuse bounded HTTP, pagination, identity checks and acknowledged-upload recovery. Profile files need their own namespace and retention rules. |
 | Desktop account definitions | `src/model.rs` (`Account`, `Preferences`), `src/store/connections.rs` | Map explicitly to portable fields. SQLite and local credential-slot identifiers are not the sync wire format. |
+| Shared causal metadata history | `shared/profile-core/src/history/`, `flutter/rust/src/profile_history.rs` | One owning worker, immutable records, conflicts/tombstones and durable upload reservations have native/FFI/Android evidence. [History boundaries](PROFILE_HISTORY.md): no discovery/enrollment, HTTP or account/preferences application yet. |
 | Flutter accounts | `flutter/lib/data/accounts.dart`, `native_repository.dart`, `flutter/rust/src/accounts.rs` | Retain stable account IDs across clients; use native lifecycle operations when applying changes. |
 | Flutter credentials | `flutter/lib/data/credentials.dart`, `flutter/rust/src/connections.rs` | Stage a complete incoming/SMTP pair in secure storage, then activate its local slot atomically. Never copy another device's slot ID. |
 | Flutter Google connection | `flutter/lib/model/google_connection.dart`, `flutter/lib/data/google_native.dart` | Native SDK consent and durable local metadata/cleanup pass host/Android/Appium/offline-preview checks; see [configuration and limits](GOOGLE_MOBILE.md). Automatic restore, safe switching and real profile/provider integration remain open. |
@@ -108,8 +109,9 @@ override portable defaults without publishing those overrides back to the profil
 
 Do not serialize `Preferences` wholesale or use SQLite as the shared profile.
 The initial metadata codec and native/WASM fixtures now live in `shared/profile-core`;
-see [the implemented format subset](PROFILE_FORMAT.md). Production upload, enrollment,
-causal application and the remaining settings/credential format are still open. The following is a design target, **not a shipped
+see [the implemented format subset](PROFILE_FORMAT.md). Native causal metadata history now has independent-store and Android bridge coverage;
+see [the history API](PROFILE_HISTORY.md). Production upload, enrollment, real
+account/preferences application and the remaining settings/credential format are still open. The following is a design target, **not a shipped
 wire format**; freeze exact field names/enums and crypto parameters together with
 the implementation and golden fixtures before either client writes production
 files.

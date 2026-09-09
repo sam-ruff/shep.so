@@ -28,6 +28,7 @@ mod connections_tests;
 
 mod paging;
 
+mod profile_history;
 mod selection;
 #[cfg(test)]
 mod selection_tests;

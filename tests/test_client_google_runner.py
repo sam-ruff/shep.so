@@ -13,6 +13,26 @@ SPEC.loader.exec_module(runner)
 
 
 class GoogleRunnerTests(unittest.TestCase):
+    def test_profile_history_requires_its_own_fresh_completion_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = root / 'artifacts/flutter/native/integration-profiles-result.json'
+            report.parent.mkdir(parents=True)
+            report.write_text(json.dumps({'profile_history': ['two-device-conflicts-restart']}))
+            with patch.object(runner, 'ROOT', root), patch.object(runner, 'run'):
+                with self.assertRaisesRegex(RuntimeError, 'did not report completion'):
+                    runner.profiles('emulator-5554', 'flutter', {})
+                self.assertFalse(report.exists())
+            for stages, succeeds in [([], False), (['two-device-conflicts-restart'], True)]:
+                def finish(*args, **kwargs):
+                    report.write_text(json.dumps({'profile_history': stages}))
+                with patch.object(runner, 'ROOT', root), patch.object(runner, 'run', side_effect=finish):
+                    if succeeds:
+                        runner.profiles('emulator-5554', 'flutter', {})
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, 'did not report completion'):
+                            runner.profiles('emulator-5554', 'flutter', {})
+
     def test_zero_exit_with_missing_or_partial_report_is_not_success(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
