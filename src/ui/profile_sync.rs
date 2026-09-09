@@ -14,6 +14,9 @@ pub enum Action {
     Refresh,
     Discover,
     Create,
+    Page(Option<String>),
+    Choose(String),
+    AcceptJoin,
     Resume,
     Stop,
     Enabled(bool),
@@ -33,6 +36,7 @@ pub(super) struct State {
     stopping: Option<u64>,
     serial: u64,
     review: Option<Arc<Discovery>>,
+    join_review: Option<Arc<crate::profile_sync::join::Review>>,
     name: String,
     error: Option<String>,
 }
@@ -51,6 +55,14 @@ impl State {
         self.desired
             .apply(self.sent.unwrap_or_default().apply(self.saved_options()))
     }
+    fn accepts_snapshot(&self, snapshot: &Snapshot) -> bool {
+        self.snapshot.as_ref().is_none_or(|s| {
+            snapshot.enrollment.revision >= s.enrollment.revision
+                && snapshot.preferences_revision >= s.preferences_revision
+                && snapshot.connections_revision >= s.connections_revision
+                && snapshot.google_revision >= s.google_revision
+        })
+    }
     pub fn pending(&self) -> bool {
         self.saving.is_some()
             || (!self.desired.empty() && self.error.is_none())
@@ -61,7 +73,9 @@ impl State {
     pub fn observation(&self) -> serde_json::Value {
         serde_json::json!({"loaded":self.snapshot.is_some(),"available":self.snapshot.as_ref().is_some_and(|s|s.available),
             "options":self.options(),"saving":self.saving.is_some(),"working":self.job.is_some(),"stopping":self.stopping.is_some(),
-            "review":self.review.as_ref().map(|r|r.records()),"name":self.name,"error":self.error,
+            "review":self.review.as_ref().map(|r|r.records()),
+            "profiles":self.review.as_ref().map(|r|r.profiles()),
+            "join_review":self.join_review.as_ref().map(|r|serde_json::json!({"name":r.name(),"accounts":r.accounts,"settings":r.settings})),"name":self.name,"error":self.error,
             "enrollment":self.snapshot.as_ref().map(|s|&s.enrollment)})
     }
 }
@@ -74,6 +88,7 @@ impl App {
             }
             Action::CancelReview => {
                 self.profile_sync.review = None;
+                self.profile_sync.join_review = None;
                 return;
             }
             Action::Enabled(value) | Action::Accounts(value) | Action::Settings(value) => {
@@ -97,6 +112,7 @@ impl App {
                 }
                 self.profile_sync.desired = changes;
                 self.profile_sync.review = None;
+                self.profile_sync.join_review = None;
                 self.save_profile_options();
                 return;
             }
@@ -116,7 +132,12 @@ impl App {
                 }
                 Request::Stop(id)
             }
-            Action::Discover | Action::Create | Action::Resume => {
+            Action::Discover
+            | Action::Create
+            | Action::Resume
+            | Action::Page(_)
+            | Action::Choose(_)
+            | Action::AcceptJoin => {
                 if self.profile_sync.job.is_some()
                     || self.profile_sync.saving.is_some()
                     || !self.profile_sync.desired.empty()
@@ -127,6 +148,35 @@ impl App {
                 match action {
                     Action::Discover => Request::Discover(id),
                     Action::Resume => Request::Resume(id),
+                    Action::Page(after) => {
+                        let Some(review) = self.profile_sync.review.clone() else {
+                            return;
+                        };
+                        Request::Page {
+                            request: id,
+                            review,
+                            after,
+                        }
+                    }
+                    Action::Choose(cursor) => {
+                        let Some(review) = self.profile_sync.review.clone() else {
+                            return;
+                        };
+                        Request::JoinReview {
+                            request: id,
+                            review,
+                            cursor,
+                        }
+                    }
+                    Action::AcceptJoin => {
+                        let Some(review) = self.profile_sync.join_review.clone() else {
+                            return;
+                        };
+                        Request::JoinAccept {
+                            request: id,
+                            review,
+                        }
+                    }
                     _ => {
                         if self.profile_sync.name.trim().is_empty()
                             || !(self.profile_sync.options().accounts
@@ -161,7 +211,15 @@ impl App {
                 Request::Stop(_) => state.stopping = Some(id),
                 _ => {
                     state.job = Some(id);
-                    state.review = None;
+                    if !matches!(
+                        request,
+                        Request::Page { .. }
+                            | Request::JoinReview { .. }
+                            | Request::JoinAccept { .. }
+                    ) {
+                        state.review = None;
+                        state.join_review = None;
+                    }
                 }
             }
         } else {
@@ -210,6 +268,7 @@ impl App {
         }
         let pending = matches!(update, Update::Pending(_));
         let published = matches!(update, Update::Published(_));
+        let joined = matches!(update, Update::Joined(_));
         let failed = matches!(update, Update::Failed(_));
         if saving {
             state.saving = None;
@@ -226,26 +285,43 @@ impl App {
         }
         let mut refresh = false;
         match update {
-            Update::Status(snapshot) | Update::Published(snapshot) | Update::Pending(snapshot) => {
-                if state.snapshot.as_ref().is_none_or(|s| {
-                    snapshot.enrollment.revision >= s.enrollment.revision
-                        && snapshot.preferences_revision >= s.preferences_revision
-                        && snapshot.connections_revision >= s.connections_revision
-                        && snapshot.google_revision >= s.google_revision
-                }) {
+            Update::Status(snapshot)
+            | Update::Published(snapshot)
+            | Update::Pending(snapshot)
+            | Update::Joined(snapshot) => {
+                if state.accepts_snapshot(&snapshot) {
                     state.snapshot = Some(snapshot);
+                }
+                if job && joined {
+                    state.review = None;
+                    state.join_review = None;
+                    self.notice("Shared profile imported", false);
                 }
                 if job && published {
                     self.notice("Profile created on Google Drive", false);
                 }
             }
             Update::Review(review) => {
-                if state.desired.empty() && state.saving.is_none() {
+                if state.desired.empty()
+                    && state.saving.is_none()
+                    && state.accepts_snapshot(review.local())
+                {
                     state.snapshot = Some(Arc::new(review.local().clone()));
                     state.review = Some(review);
                     if state.name.is_empty() {
                         state.name = "Personal".into();
                     }
+                } else {
+                    refresh = true;
+                }
+            }
+            Update::JoinReview(review) => {
+                if state.desired.empty()
+                    && state.saving.is_none()
+                    && state.accepts_snapshot(review.local())
+                {
+                    state.snapshot = Some(Arc::new(review.local().clone()));
+                    state.join_review = Some(review);
                 } else {
                     refresh = true;
                 }
@@ -316,9 +392,15 @@ impl App {
             body = body.push(controls);
             if selected.ready {
                 body = body.push(
-                    muted("Initial profile saved. Continuous updates are still being implemented.")
+                    muted(if selected.origin == crate::profile_sync::enrollment::Origin::Join { "Initial profile imported. Continuous updates are still being implemented." } else { "Initial profile saved. Continuous updates are still being implemented." })
                         .size(12),
                 );
+                if !self.workspace.account_reconnect.is_empty() {
+                    body = body.push(action(
+                        "Reconnect accounts",
+                        Message::FindSetting(SettingsTab::Accounts, "Your accounts"),
+                    ));
+                }
             } else {
                 body = body.push(
                     muted("Setup is pending. Resume to finish the original saved copy.").size(12),
@@ -349,13 +431,95 @@ impl App {
                         "Google connection",
                         Message::FindSetting(SettingsTab::Accounts, "Google connection"),
                     ));
+            } else if let Some(review) = &state.join_review {
+                body = body
+                    .push(
+                        text(format!("Use {} on this device?", review.name()))
+                            .size(16)
+                            .font(BOLD),
+                    )
+                    .push(
+                        muted(format!(
+                            "Add {} · apply {}",
+                            counted(review.accounts as u64, "account"),
+                            counted(review.settings as u64, "preference")
+                        ))
+                        .size(13),
+                    );
+                for (name, email) in &review.account_preview {
+                    body =
+                        body.push(column![text(name).size(13), muted(email).size(12)].spacing(4));
+                }
+                if review.accounts > review.account_preview.len() {
+                    body = body.push(
+                        muted(format!(
+                            "And {} more accounts",
+                            review.accounts - review.account_preview.len()
+                        ))
+                        .size(12),
+                    );
+                }
+                body = body.push(muted(if review.accounts == 0 { "Shared preferences replace matching local choices. Your accounts and mail are kept." } else if review.settings == 0 { "Your existing accounts, mail and preferences are kept. Reconnect imported accounts with their passwords here." } else { "Your existing accounts and mail are kept. Reconnect imported accounts here; shared preferences replace matching local choices." }).size(12))
+                    .push(row![button(text("Import profile").size(13)).padding([12,16]).style(components::primary).on_press_maybe(idle.then(||msg(Action::AcceptJoin))),
+                        action("Cancel",msg(Action::CancelReview))].spacing(10));
             } else if let Some(review) = &state.review {
+                if review.profile_count() > 0 {
+                    body = body.push(text("Choose a shared profile").size(16).font(BOLD));
+                    for profile in review.profiles() {
+                        let usable = !profile.removed
+                            && profile.waiting == 0
+                            && profile.conflicts == 0
+                            && !profile.name_conflict
+                            && profile.name.is_some();
+                        body = body.push(
+                            row![
+                                column![
+                                    text(profile.name.as_deref().unwrap_or("Unnamed profile"))
+                                        .size(14)
+                                        .font(BOLD),
+                                    muted(if usable {
+                                        format!(
+                                            "{} · {}",
+                                            counted(profile.accounts, "account"),
+                                            counted(profile.settings, "preference")
+                                        )
+                                    } else {
+                                        "Needs review on its original device".into()
+                                    })
+                                    .size(12)
+                                ]
+                                .spacing(4),
+                                space().width(Length::Fill),
+                                button(text("Review").size(13))
+                                    .padding([12, 16])
+                                    .style(outline)
+                                    .on_press_maybe(
+                                        (idle && usable)
+                                            .then(|| msg(Action::Choose(profile.cursor())))
+                                    )
+                            ]
+                            .spacing(12)
+                            .align_y(Alignment::Center),
+                        );
+                    }
+                    let mut pages = row![].spacing(10);
+                    if review.after().is_some() {
+                        pages = pages.push(action("First page", msg(Action::Page(None))));
+                    }
+                    if review.has_more() {
+                        pages = pages.push(action(
+                            "Next page",
+                            msg(Action::Page(review.profiles().last().map(|p| p.cursor()))),
+                        ));
+                    }
+                    body = body.push(pages);
+                }
                 body = body
                     .push(
                         muted(if review.records() == 0 {
                             "No shared profiles found. Create one from this workspace?"
                         } else {
-                            "Shared profile data exists. A separate profile keeps it intact."
+                            "Or create a separate profile from this workspace."
                         })
                         .size(12),
                     )
@@ -441,6 +605,10 @@ impl App {
     }
 }
 
+fn counted(count: u64, noun: &str) -> String {
+    format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,6 +621,43 @@ mod tests {
         app.tx = Some(sender);
         app.profile_sync.snapshot = Some(original.clone());
         (app, queue, original)
+    }
+
+    #[tokio::test]
+    async fn profile_join_review_cannot_restore_older_category_choices_after_a_save() {
+        let (mut app, mut queue, original) = app().await;
+        let mut newer = (*original).clone();
+        newer.enrollment.revision += 1;
+        newer.enrollment.options.accounts = false;
+        app.profile_sync.snapshot = Some(Arc::new(newer));
+        app.profile_sync.job = Some(55);
+        let review = crate::profile_sync::join::Review {
+            id: uuid::Uuid::new_v4(),
+            local: (*original).clone(),
+            selection: crate::profile_sync::enrollment::Selection {
+                binding: shep_profile_core::history::Binding {
+                    namespace: "so.shep".into(),
+                    principal: "drive:fixture".into(),
+                    profile: uuid::Uuid::new_v4(),
+                    generation: uuid::Uuid::new_v4(),
+                },
+                name: "Old review".into(),
+                origin: crate::profile_sync::enrollment::Origin::Join,
+                ready: true,
+            },
+            revision: 1,
+            device: uuid::Uuid::new_v4(),
+            accounts: 1,
+            settings: 1,
+            account_preview: vec![],
+        };
+        let _ = app.shared_profile_update(55, Update::JoinReview(Arc::new(review)));
+        assert!(app.profile_sync.join_review.is_none());
+        assert!(!app.profile_sync.options().accounts);
+        assert!(matches!(
+            queue.try_recv().unwrap(),
+            Command::ProfileSync(Request::Status(_))
+        ));
     }
 
     #[tokio::test]

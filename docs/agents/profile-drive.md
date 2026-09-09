@@ -1,10 +1,10 @@
 # Profile records on Google Drive
 
-`profile_sync` implements transport, causal history and first-device enrollment primitives for the [shared profile format](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_FORMAT.md). Existing-profile enrollment, account application and continuous sync remain open in [TODO](https://github.com/sam-ruff/shep.so/blob/main/TODO.md). Preferences exposes initial profile creation, category choices and recovery; this does not yet provide continuous account sync.
+`profile_sync` implements transport, causal history and native first/new-device enrollment for the [shared profile format](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_FORMAT.md). Preferences supports creating a profile or reviewing/importing an existing one, with saved category choices and recovery. Continuous updates remain open in [TODO](https://github.com/sam-ruff/shep.so/blob/main/TODO.md).
 
 ## Shared codec
 
-Cargo pins `shep-profile-core` with its history feature to published client commit `9289f5327b71bb6aaff463ee965eab48c13df85a`. It validates the same major-1 operations used by Flutter. The fictional `tests/support/profile-operation.json` is copied unchanged from `bae0d86949a0138b90e71348cef0ab434d022dc6`'s `shared/profile-operation.json`; the HTTP round trip preserves its exact bytes, Unicode and unknown optional fields. Passwords, Google grants and device settings have no representation in this metadata format.
+Cargo pins `shep-profile-core` with its Drive/history features to published commit `33d222d7550d8c4bcd000cd31c9eb029886f398a`. It validates the same major-1 operations used by Flutter. The fictional `tests/support/profile-operation.json` is copied unchanged from `bae0d86949a0138b90e71348cef0ab434d022dc6`'s `shared/profile-operation.json`; the HTTP round trip preserves its exact bytes, Unicode and unknown optional fields. Passwords, Google grants and device settings have no representation in this metadata format.
 
 `Replica` uses the shared causal-history worker for merge, conflicts, tombstones and local edits. It retains the same operation/reservation identity in both history and transport journals. Account application still needs the native account lifecycle and revision checks; decoding or downloading an operation is not permission to apply it.
 
@@ -70,7 +70,7 @@ Create/Join origin, enabled/category choices, a revision and initial completion
 state. Changes use the mail-cache owning worker. Options can be saved without
 network/keychain access; enabling requires the appropriate saved Google grant.
 Google disconnect pauses enrollment in the same transaction. Late results cannot
-re-enable it. Database import archives enrollment and its seed, then requires new
+re-enable it. Database import archives enrollment, its seed and the join identity map, then requires new
 device discovery rather than replaying the source's choices or history pointers.
 
 `setup::discover` returns a private completed-scan/local-revision proof. Explicit
@@ -85,11 +85,12 @@ durable upload at a time. It checks local intent between writes. An in-flight
 write still reaches both journal acknowledgments after a stop/disconnect; setup
 stays pending and reports that an upload was saved. Conflicts, removals, stale
 reviews and missing existing generations cannot become a completed first setup.
-The future engine coordinator must retain ownership through these acknowledgments.
+The engine coordinator retains ownership through these acknowledgments.
 
 The explicit metadata adapter preserves IMAP/POP3 and independent SMTP security,
-authentication and Sent options, but returns an account review candidate only.
-It does not connect an account or import a password. Settings application commits
+authentication and Sent options, and returns an account review candidate.
+Joining can save that definition, with receiving/sending paused until explicit
+credential reconnection. It never imports a password. Settings application commits
 a bounded conflict-free page atomically against local preferences/connection/
 Google/enrollment revisions. It currently implements appearance, quoted replies,
 external-image policy, unified inbox, cross-account moves, conversation grouping
@@ -97,9 +98,8 @@ and unread badges. Device fields and backend metadata stay unchanged. Shared
 preview-line values/extensions remain in history; other portable settings still
 need shared-contract support and native implementation.
 
-Existing-device enrollment, account reconnection/removal reviews,
-ongoing local change capture, conflict resolution and incremental polling are
-not connected yet. A successful initial seed is not proof that later local edits
+Ongoing account change/removal reviews, local change capture, conflict resolution
+and enrolled-device incremental polling are not connected yet. A successful initial seed is not proof that later local edits
 have synced. Password transfer still requires the outstanding protection choice.
 
 ## Verification boundary
@@ -111,8 +111,8 @@ Run `cargo test --all-features profile_`, `python3 scripts/test_profile_core.py`
 **Preferences → Accounts → Profiles and sync** discovers app-data records and
 reviews an explicitly named first-device profile before uploading. Account and
 settings choices save independently of provider work. Initial completion is
-labeled as an initial copy: joining existing profiles, ongoing local edits and
-conflict reviews remain unfinished. Setup failure retains the original seed and
+labeled as an initial copy: ongoing local edits and conflict reviews remain
+unfinished. Setup failure retains the original seed and
 offers Resume; it must never create a replacement operation to hide a failed save.
 
 The owning profile coordinator receives at most 32 commands, separate from the
@@ -143,3 +143,37 @@ and subsequent status-read failure, later unsent choices remain available for
 explicit retry; they do not launch another write against the stale snapshot or
 trap a later window close. Actual admitted work still drains. The `invalid-local`
 native fixture checks the error screen, disabled controls and graceful restart.
+
+
+## Existing-device discovery and import
+
+The shared catalog owns its separate SQLite connection and observation journals.
+It captures a Drive start token before listing, verifies each record, and replays
+changes before returning a completed review. Later discovery uses the saved change
+token. Restart retains unfinished progress; errors cannot masquerade as an empty
+account. See Google's [change tracking](https://developers.google.com/workspace/drive/api/guides/manage-changes).
+Native pages contain at most 50 profile summaries, with names, account/settings
+counts and unavailable/conflicted states. The observation directory and its nested
+files/aliases are protected by database transfer guards.
+
+Choosing Review pulls the selected profile into its own causal history. The review
+retains its local enrollment/preferences/connections/Google revisions and the
+history's device/revision; it sends only counts and up to eight account summaries
+to iced. Unsupported connection extensions block account application. Tombstoned
+accounts stay absent. Unknown optional settings remain in shared history.
+
+Import re-reads that frozen history and atomically saves enrollment, account
+mappings and supported preferences through the mail-cache owner. Existing local
+accounts/mail remain intact. Each imported account receives a fresh local UUID;
+the shared-to-local mapping is persisted as `profile_join_v1`. Imported definitions
+are listed in `profile_reconnect_v1`, excluded from background sync, and rejected
+by provider account lookup until SaveAccount has acknowledged its device credential.
+Preferences shows **Reconnect** for these accounts. Removing one clears its pending
+reconnect marker; database import archives the source-device join mapping.
+
+A saved review UUID makes retry after a lost acceptance acknowledgment idempotent.
+Newer local preferences/categories or Google lifecycle reject unapplied reviews.
+Read cancellation remains interruptible; admitted application commits drain before
+close. Continuous updates, automatic enrollment prompts after login, account linking
+between already-populated devices, conflict/removal controls and protected password
+transfer still need implementation. Real cross-client Google visibility is unverified.

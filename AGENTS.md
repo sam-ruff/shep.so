@@ -1123,3 +1123,26 @@ Keep newer unsent choices after failed writes/status reads for explicit retry,
 but do not treat failed, unadmitted intent as a shutdown dependency. An actual
 admitted save/upload still drains. Preserve the controller ordering test and
 `invalid-local` native fixture's disabled controls, navigation and graceful restart.
+
+
+Native profile discovery now uses the shared durable catalog pinned at `33d222d7`.
+The extra shared `test-support` feature exposes only an owned loopback transport
+with a fixed fake token; normal releases cannot use it. Keep nested catalog
+observations and directory/hard-link aliases protected during database transfer.
+Do not share a Cargo target directory between worktrees with different vendored
+renderer sources: stale path-dependency artifacts can hide or invent build failures.
+
+Existing-profile import uses a sealed discovery/history/local-revision review.
+Only small summaries reach iced; acceptance reads current values on background
+owners and atomically commits enrollment, supported preferences and fresh local
+account IDs. Persist `profile_join_v1` shared-to-local mappings and the applied
+review UUID for lost-acknowledgment retry; database import archives this source
+mapping. Never reuse remote account IDs as existing OS credential slots.
+`profile_reconnect_v1` keeps imported accounts out of background sync and provider
+lookup until SaveAccount has persisted their device credentials. Preserve this
+marker in newer workspace snapshots; remove it on explicit account removal.
+Keep catalog restart/change-token/ownership, join category/stale/rollback/tombstone,
+unknown-connection and native review/import/restart regressions. Joining is an
+initial import; continuous polling, existing-device changes, automatic login
+prompts and credential transfer remain TODO work. The protection choice is still
+unanswered. Follow the shared handover before extending the format.

@@ -26,13 +26,21 @@ impl Paths {
         })
         .await?
     }
+    pub fn catalog(
+        &self,
+        scope: &shep_profile_core::drive::catalog::Scope,
+    ) -> anyhow::Result<PathBuf> {
+        Ok(self
+            .root
+            .join(format!("catalog-{}.sqlite", scope.storage_key()?)))
+    }
     pub fn history(&self, binding: &history::Binding) -> anyhow::Result<PathBuf> {
         Ok(self.root.join(format!("{}.sqlite", binding.storage_key()?)))
     }
 }
 
 /// Export's destination parent is already canonicalized. Inspect every member
-/// of this flat provider directory so a hard link or symlink cannot overwrite a
+/// of this provider directory, including catalog observations, so a hard link or symlink cannot overwrite a
 /// live history, its SQLite sidecar, or the independent-process ownership file.
 pub(crate) fn protect(cache_parent: &Path, target: &Path) -> anyhow::Result<()> {
     let root = cache_parent.join(DIRECTORY);
@@ -48,17 +56,31 @@ pub(crate) fn protect(cache_parent: &Path, target: &Path) -> anyhow::Result<()> 
             && !crate::transfer::same_path(&canonical, target),
         "Choose an export destination outside Shep's profile sync data."
     );
-    let entries = match std::fs::read_dir(&root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    for entry in entries {
-        let path = entry?.path();
+    let mut directories = vec![root];
+    let mut visited = std::collections::HashSet::new();
+    while let Some(directory) = directories.pop() {
+        let canonical = match directory.canonicalize() {
+            Ok(path) => path,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
         anyhow::ensure!(
-            !crate::transfer::same_file(&path, target)?,
-            "This export destination aliases active profile sync data. Choose another file."
+            !target.starts_with(&canonical),
+            "Choose an export destination outside Shep's profile observations."
         );
+        if !visited.insert(canonical) {
+            continue;
+        }
+        for entry in std::fs::read_dir(&directory)? {
+            let path = entry?.path();
+            anyhow::ensure!(
+                !crate::transfer::same_file(&path, target)?,
+                "This export destination aliases active profile sync data. Choose another file."
+            );
+            if path.is_dir() {
+                directories.push(path);
+            }
+        }
     }
     Ok(())
 }
@@ -122,5 +144,32 @@ mod tests {
         assert!(protect(dir.path(), &paths.root.join("future-history.sqlite")).is_err());
         assert!(protect(dir.path(), &dir.path().join("ordinary-export.sqlite")).is_ok());
         worker.close().await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn profile_catalog_nested_observations_and_directory_aliases_are_protected() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache.sqlite");
+        let store = crate::store::Store::open(&cache).unwrap();
+        let root = dir.path().join(DIRECTORY);
+        let nested = root.join("catalog.sqlite.observations");
+        std::fs::create_dir_all(&nested).unwrap();
+        let observed = nested.join("observed.sqlite");
+        std::fs::write(&observed, b"protected fixture").unwrap();
+        let alias = dir.path().join("export.sqlite");
+        std::fs::hard_link(&observed, &alias).unwrap();
+        denied(&store, alias.clone()).await;
+        assert_eq!(std::fs::read(&observed).unwrap(), b"protected fixture");
+        std::fs::remove_file(&alias).unwrap();
+        std::os::unix::fs::symlink(&nested, &alias).unwrap();
+        denied(&store, alias.join("future.sqlite")).await;
+        // A directory cycle cannot make an ordinary export recurse forever.
+        std::os::unix::fs::symlink(&root, nested.join("cycle")).unwrap();
+        assert!(protect(dir.path(), &dir.path().join("ordinary.sqlite")).is_ok());
+        let external = dir.path().join("external-observations");
+        std::fs::create_dir(&external).unwrap();
+        std::os::unix::fs::symlink(&external, nested.join("external")).unwrap();
+        assert!(protect(dir.path(), &external.join("future.sqlite")).is_err());
     }
 }

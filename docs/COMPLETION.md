@@ -1,5 +1,44 @@
 # Completion audit
 
+## 9 September: named profile discovery and existing-device import
+
+R02/R49/R92 adds a native profile picker and reviewed import of account definitions
+and seven supported preferences. Discovery uses the shared owning catalog and
+saved Drive change tokens; the dependency is pinned to published `33d222d7`.
+That commit adds the fixed-token loopback harness seam to the client catalog from
+`3c9b98d`, without editing the active sibling client worktree.
+
+Joining reads a complete conflict-free history and commits enrollment, supported
+preferences and fresh local account IDs atomically. Existing accounts/mail remain.
+Imported accounts show Reconnect and are excluded from background sync/provider
+lookup until explicit device credential setup. A saved review UUID prevents
+duplicates after a lost acknowledgment; later local choices survive retries.
+The import fence archives source-device join mappings. Nested observation files,
+directory aliases and hard links are protected from database export.
+
+New backend regressions cover change-token reuse, stale discovery/history/local
+reviews, held-read cancellation and ownership, category selection, restart,
+credential-slot isolation, rollback, unsupported connection fields and tombstones.
+The controller rejects reviews older than acknowledged category choices.
+**22 selected native scenarios pass**: nine profile flows, eight database transfer,
+two Google disconnect and three account setup/removal flows. These include three
+new existing-profile scenarios. Reviewed WebPs are in ignored runs `b5114d0926e2`
+(light/import/reconnect), `e38b0fccef38` (compact dark/settings-only/cancel/disable)
+and `407fa9f5b9c7` (unsupported account/recovery). Native executable SHA-256:
+`e7d39ae27f87967be4612310288b391cc5d80c92a1eb1c287ef75756004a61fb`.
+The pinned shared suite passes 50 tests; Python passes 54 tests. Windows GNU
+all-target/all-feature cross-compilation and strict Zensical pass. Mandatory
+formatting/Clippy/Rust hooks remain required for the source commit; shipping is
+recorded by the following audit.
+
+This is an initial metadata/settings import, not continuous sync. Automatic
+post-login enrollment, linking already-populated devices, local/remote changes,
+conflict/removal controls, remaining portable settings and protected credentials
+remain in TODO. Real Google/cross-client/Windows/macOS execution and performance
+were not measured here. No personal installation, keychain or cloud data changed.
+Quality/release CI stays disabled; documentation CI remains enabled. OAuth
+implementation with the Flutter handover reference is still the first TODO item.
+
 ## 9 September: profile settings failure and close recovery
 
 The final profile-control review found that an unreadable enrollment could leave

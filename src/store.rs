@@ -38,6 +38,7 @@ pub(crate) const DATABASE_VERSION: u32 = 3;
 pub struct Workspace {
     pub move_pending_total: usize,
     pub accounts: Vec<Account>,
+    pub account_reconnect: crate::profile_sync::join::Reconnect,
     pub calendars: Vec<CalendarSource>,
     pub preferences: Preferences,
     pub preferences_revision: u64,
@@ -328,6 +329,7 @@ impl Store {
             let drafts = drafts::snapshot(c)?;
             Ok(Workspace {
                 accounts: get(c, "accounts")?,
+                account_reconnect: get(c,crate::profile_sync::join::RECONNECT_KEY)?,
                 calendars: get(c, "calendars")?,
                 preferences: get(c, "preferences")?,
                 preferences_revision: get(c, "preferences_revision")?,
@@ -557,6 +559,7 @@ impl Store {
             accounts.retain(|a| a.id != account.id);
             if !account.sent_folder.is_empty() {c.execute("INSERT INTO sent_folders(account,folder) VALUES(?,?) ON CONFLICT(account) DO UPDATE SET folder=excluded.folder",params![account.id,account.sent_folder])?;}
             else {c.execute("DELETE FROM sent_folders WHERE account=?",[&account.id])?;}
+            profile_sync::join::reconnected(c, &account.id)?;
             accounts.push(account);
             put(c, "accounts", &accounts)?;
             connections::changed(c)?;

@@ -1551,7 +1551,14 @@ impl App {
                         ]
                         .spacing(4),
                         space().width(Length::Fill),
-                        action("Edit account", Message::EditAccount(account.id.clone())),
+                        action(
+                            if self.workspace.account_reconnect.contains(&account.id) {
+                                "Reconnect"
+                            } else {
+                                "Edit account"
+                            },
+                            Message::EditAccount(account.id.clone())
+                        ),
                         self.icon_action(
                             "trash",
                             "Remove account",

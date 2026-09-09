@@ -99,3 +99,12 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 
 
 The main omissions were already present in the completion log but were not an adequate live checklist: faithful HTML, local encryption/large-mail streaming, folder trees/mutations, inline multiple drafts/discard, palette editing, multiple backup targets and continuous settings/account sync. Every request remains traceable above; TODO tracks unfinished work, including the remaining optimistic-state reconciliation and final coverage audit. Passing unrelated tests does not close a request.
+
+
+9 September continuation: R02/R49/R92 now has named shared-catalog discovery and
+native reviewed existing-profile import, including safe local account identities,
+reconnection gating, selected settings and idempotent application. The newest
+completion entry records 22 native scenarios and backend coverage. Continuous
+updates, automatic login prompts, credential protection and real cross-client
+Google verification remain open. R92's OAuth/handover follow-up remains first in
+TODO. Source shipping is recorded in the following completion audit.

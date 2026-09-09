@@ -1751,6 +1751,66 @@ class NativeFlows(unittest.TestCase):
                        check("settings_group", "Profiles and sync"),
                        check("profile_sync.loaded", True), wait(100))
 
+    def test_profile_sync_native_existing_profile_review_import_and_restart(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing")
+        print(f"Existing profile evidence: {started['artifacts']}",flush=True)
+        self.open_shared_profiles()
+        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
+                       check("profile_sync.profiles.1.name","Work"),shot("profile-existing-choices"),
+                       click(1130,494),check("profile_sync.join_review.name","Home"),
+                       check("profile_sync.join_review.accounts",1),check("account_count",2),
+                       shot("profile-existing-review"),click(340,619),
+                       check("profile_sync.enrollment.selection.name","Home"),
+                       check("profile_sync.enrollment.selection.ready",True),check("account_count",3),
+                       check("account_reconnect_count",1),check("dark",True),check("profile_sync.error",None),
+                       shot("profile-existing-imported"),{"type":"restart"})
+        self.open_shared_profiles()
+        self.mcp.batch(check("profile_sync.enrollment.selection.name","Home"),check("account_count",3),
+                       check("account_reconnect_count",1),check("dark",True),shot("profile-existing-reopened"),
+                       click(350,550),check("settings_group","Your accounts"),shot("profile-account-reconnect"),
+                       click(1065,520),check("dialog","Account"),check("fields.email","cloud@example.test"),
+                       check("fields.host","imap.example.test"),check("fields.smtp_host","smtp.example.test"),
+                       check("fields.incoming_security","Tls"),check("fields.smtp_security","StartTls"),
+                       shot("profile-account-reconnect-wizard"),key("Escape"),check("dialog",None))
+
+    def test_profile_sync_native_existing_unsupported_account_keeps_local_data_and_allows_other_profile(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing-unsupported")
+        print(f"Unsupported profile evidence: {started['artifacts']}",flush=True)
+        self.open_shared_profiles()
+        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
+                       click(1130,494),check("profile_sync.error","additional connection fields","contains"),
+                       check("profile_sync.working",False),check("profile_sync.join_review",None),
+                       check("profile_sync.enrollment.selection",None),check("account_count",2),check("dark",False),
+                       shot("profile-unsupported-account"),key("ctrl+1"),check("tab","Mail"))
+        self.open_shared_profiles()
+        self.mcp.batch(click(1130,545),check("profile_sync.join_review.name","Work"),
+                       check("profile_sync.join_review.accounts",0),check("profile_sync.error",None),
+                       shot("profile-unsupported-recovery"))
+
+    def test_profile_sync_native_existing_compact_dark_review_and_cancel(self):
+        started=self.mcp.call("desktop.start",profile_sync="existing",width=900,height=640)
+        print(f"Compact profile evidence: {started['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),click(563,366),
+                       check("dark",True),check("preferences_saved",True))
+        self.open_shared_profiles(650)
+        self.mcp.batch(click(288,371),check("profile_sync.options.accounts",False),check("profile_sync.saving",False),
+                       click(370,442),check("profile_sync.profiles.1.name","Work"),shot("profile-existing-compact-choices"),
+                       click(802,545),check("profile_sync.join_review.name","Work"),check("profile_sync.join_review.accounts",0),
+                       shot("profile-existing-compact-review"),click(421,566),
+                       check("profile_sync.join_review",None),check("profile_sync.enrollment.selection",None),
+                       check("account_count",2),check("dark",True),
+                       click(370,442),check("profile_sync.profiles.1.name","Work"),
+                       click(802,545),check("profile_sync.join_review.name","Work"),
+                       click(318,566),check("profile_sync.enrollment.selection.name","Work"),
+                       check("profile_sync.enrollment.selection.ready",True),check("dark",False),
+                       check("account_count",2),check("account_reconnect_count",0),shot("profile-existing-settings-imported"),
+                       click(266,408),check("profile_sync.options.enabled",False),check("profile_sync.saving",False),
+                       {"type":"restart"})
+        self.open_shared_profiles(650)
+        self.mcp.batch(check("profile_sync.options.enabled",False),check("profile_sync.options.accounts",False),
+                       check("profile_sync.enrollment.selection.name","Work"),check("account_count",2),
+                       shot("profile-existing-disabled-reopened"))
+
     def test_profile_sync_native_first_device_review(self):
         self.mcp.call("desktop.start", profile_sync="slow-upload")
         self.open_shared_profiles()

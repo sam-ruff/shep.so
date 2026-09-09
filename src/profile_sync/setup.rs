@@ -9,12 +9,70 @@ use shep_profile_core::history;
 /// manufacturing an empty result or replacing the reviewed local revision.
 #[derive(Clone, Debug)]
 pub struct Discovery {
-    scan: journal::Scan,
+    evidence: Evidence,
     local: Snapshot,
+}
+#[derive(Clone, Debug)]
+enum Evidence {
+    Files(journal::Scan),
+    Catalog(Box<super::catalog::Review>),
 }
 impl Discovery {
     pub fn records(&self) -> u64 {
-        self.scan.files()
+        match &self.evidence {
+            Evidence::Files(scan) => scan.files(),
+            Evidence::Catalog(review) => review.files,
+        }
+    }
+    pub(crate) fn from_catalog(review: super::catalog::Review) -> Self {
+        Self {
+            local: review.local.clone(),
+            evidence: Evidence::Catalog(Box::new(review)),
+        }
+    }
+    pub fn profiles(&self) -> &[shep_profile_core::drive::catalog::Profile] {
+        match &self.evidence {
+            Evidence::Catalog(review) => &review.profiles,
+            _ => &[],
+        }
+    }
+    pub fn profile_count(&self) -> u64 {
+        match &self.evidence {
+            Evidence::Catalog(review) => review.total,
+            _ => 0,
+        }
+    }
+    pub fn has_more(&self) -> bool {
+        matches!(&self.evidence,Evidence::Catalog(review) if review.more)
+    }
+    pub fn after(&self) -> Option<&str> {
+        match &self.evidence {
+            Evidence::Catalog(review) => review.after.as_deref(),
+            _ => None,
+        }
+    }
+    pub(crate) async fn page(&self, store: &Store, after: Option<String>) -> anyhow::Result<Self> {
+        let Evidence::Catalog(review) = &self.evidence else {
+            anyhow::bail!("Discover named profiles first.")
+        };
+        Ok(Self::from_catalog(review.page(store, after).await?))
+    }
+    pub(crate) async fn validate(
+        &self,
+        session: &drive::Session,
+        journal: &journal::Journal,
+    ) -> anyhow::Result<()> {
+        match &self.evidence {
+            Evidence::Files(scan) => {
+                anyhow::ensure!(
+                    scan.binding() == session.binding() && scan.profile().is_none(),
+                    "Google changed after discovery. Review the current account first."
+                );
+                journal.scan_entries(scan, None).await?;
+                Ok(())
+            }
+            Evidence::Catalog(review) => review.validate(session).await,
+        }
     }
     pub fn local(&self) -> &Snapshot {
         &self.local
@@ -50,7 +108,10 @@ pub async fn discover_controlled(
     }
     // Validate local intent again before presenting the completed review.
     store.check_profile_review(local.clone()).await?;
-    Ok(Discovery { scan, local })
+    Ok(Discovery {
+        evidence: Evidence::Files(scan),
+        local,
+    })
 }
 
 /// Only an explicit Create review may choose fresh shared identities. This is
@@ -64,11 +125,7 @@ pub async fn create(
     name: String,
     options: Options,
 ) -> anyhow::Result<Snapshot> {
-    anyhow::ensure!(
-        reviewed.scan.binding() == session.binding() && reviewed.scan.profile().is_none(),
-        "Google changed after discovery. Review the current account first."
-    );
-    journal.scan_entries(&reviewed.scan, None).await?; // validates the current complete scan
+    reviewed.validate(session, journal).await?;
     store
         .begin_profile_enrollment(
             reviewed.local,

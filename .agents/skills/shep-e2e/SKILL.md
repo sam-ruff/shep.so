@@ -615,5 +615,25 @@ Search Preferences for "shared profile" to find **Profiles and sync**; search
 using real controls for every action. Pending enrollment is not upload completion.
 Keep saved `test_profile_sync_native_*` scenarios for first-device review/create,
 restart, errors/retry/opt-out, option changes during held reads, close and compact
-dark rapid gestures. Review their WebP evidence. Joining other devices and live
-cross-client Google access remain separate unfinished paths.
+dark rapid gestures. Review their WebP evidence. Live cross-client Google access and continuous updates remain unverified.
+
+
+For existing-profile enrollment, `profile_sync="existing"` seeds two fictional
+profiles, Home (an account and dark appearance) and Work (light appearance).
+`existing-unsupported` adds an optional connection field the native account adapter
+cannot apply. Both use the production shared catalog, history and atomic local
+import. These modes never read personal data, access keychain credentials or
+write to real Drive. Native import cannot send real mail; reconnection opens the
+ordinary account wizard and preview still refuses saving credentials.
+
+Keep all three `test_profile_sync_native_existing_*` scenarios. They exercise
+profile choice/review, apply and restart with existing accounts retained, the
+Reconnect control, compact dark cancellation/settings-only import and opt-out,
+and unavailable connection fields with navigation and another usable profile.
+Observe `profile_sync.profiles`, `profile_sync.join_review`, enrollment and
+`account_reconnect_count`; none is an action API. At 1440×920, the first/second
+Review buttons are near x=1130,y=494/545; the third account's Reconnect control
+is near x=1065,y=520 in filtered Your accounts. At 900×640 the Review buttons
+are near x=802. Capture and review light/dark WebPs after changing form copy or
+geometry. Preserve the first-device/held-read/upload-close scenarios alongside
+these tests. A completed initial import is not ongoing or live Google sync.

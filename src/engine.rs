@@ -380,6 +380,7 @@ impl Engine {
         Ok(())
     }
     async fn account(&self, id: &str) -> anyhow::Result<Account> {
+        self.store.require_account_reconnected(id.into()).await?;
         self.store
             .get::<Vec<Account>>("accounts")
             .await?
@@ -750,7 +751,7 @@ impl Engine {
                     output.send(Event::Changed).await?;
                     return Ok(());
                 }
-                let accounts: Vec<Account> = self.store.get("accounts").await?;
+                let accounts = self.store.accounts_ready_to_sync().await?;
                 let results: Vec<_> = futures::stream::iter(accounts)
                     .map(|a| {
                         let engine = self.clone();
