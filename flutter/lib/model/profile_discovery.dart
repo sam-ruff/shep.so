@@ -4,9 +4,11 @@ import 'package:flutter/foundation.dart';
 import '../data/profile_discovery.dart';
 import '../data/profile_creation.dart';
 import '../data/profile_enrollment.dart';
+import '../data/profile_sync.dart';
 import 'google_connection.dart';
 part 'profile_creation.dart';
 part 'profile_enrollment.dart';
+part 'profile_sync.dart';
 
 class ProfileDiscovery extends ChangeNotifier {
   ProfileDiscovery(this.google, this.repository, {required this.namespace}) {
@@ -25,6 +27,15 @@ class ProfileDiscovery extends ChangeNotifier {
   List<EnrollmentRow> enrollmentRows = [];
   int enrollmentAfter = 0;
   bool enrolling = false;
+  ProfileSyncStatus? sync;
+  List<ProfileSyncReview> syncReviews = [];
+  ProfileSyncReview? syncReview;
+  List<ProfileSyncVersion> syncVersions = [];
+  int syncSeen = 0, _syncOffset = 0;
+  // Totals of the most recent run, which may span several bounded cycles.
+  int syncApplied = 0, syncPublished = 0;
+  bool syncing = false, syncChecked = false, syncRan = false;
+  String? syncError;
   List<DiscoveredProfile> profiles = [];
   String? error, after;
   bool busy = false, paused = false;
@@ -55,6 +66,16 @@ class ProfileDiscovery extends ChangeNotifier {
       enrollment = null;
       enrollmentRows = [];
       enrollmentAfter = 0;
+      // Local-only disconnect: the durable subscription and other devices are
+      // untouched; cycles simply stop until the same account is connected.
+      sync = null;
+      syncReviews = [];
+      syncReview = null;
+      syncVersions = [];
+      syncSeen = 0;
+      syncChecked = false;
+      syncRan = false;
+      syncError = null;
       profiles = [];
       after = null;
       error = null;
@@ -106,6 +127,35 @@ class ProfileDiscovery extends ChangeNotifier {
     _ => 'Could not discover saved profiles. Check your connection and retry.',
   };
 
+  /// Replace any previous session with one bound to the current grant. Returns
+  /// null when the grant changed underneath; throws on provider/identity errors.
+  Future<String?> _open(int generation, int grant) async {
+    await _retire();
+    if (_disposed || generation != _generation || !connected) return null;
+    final token = await google.accessToken(const [
+      'https://www.googleapis.com/auth/drive.appdata',
+    ]);
+    if (_disposed || generation != _generation || !connected) return null;
+    final id = _identity();
+    _session = id;
+    final opened = await repository.open(
+      id,
+      token,
+      namespace,
+      google.active!.drivePrincipal,
+    );
+    if (!_current(generation, id)) return null;
+    if (opened.id != id || opened.namespace != namespace) {
+      throw const DiscoveryFailure(
+        'Profile discovery returned a different session. Reconnect Google and retry.',
+      );
+    }
+    await google.bindDrivePrincipal(grant, opened.principal);
+    if (!_current(generation, id)) return null;
+    state = opened.state;
+    return id;
+  }
+
   /// The task stays owned through native replies and session cleanup even if the
   /// screen closes. One step at a time, with no next GET after pause/disconnect.
   Future<void> discover({bool full = false}) {
@@ -121,33 +171,14 @@ class ProfileDiscovery extends ChangeNotifier {
       String? id;
       var bound = false;
       try {
-        await _retire();
-        if (_disposed || generation != _generation || !connected) return;
-        final token = await google.accessToken(const [
-          'https://www.googleapis.com/auth/drive.appdata',
-        ]);
-        if (_disposed || generation != _generation || !connected) return;
-        id = _identity();
-        _session = id;
-        final opened = await repository.open(
-          id,
-          token,
-          namespace,
-          google.active!.drivePrincipal,
-        );
-        if (!_current(generation, id)) return;
-        if (opened.id != id || opened.namespace != namespace) {
-          throw const DiscoveryFailure(
-            'Profile discovery returned a different session. Reconnect Google and retry.',
-          );
-        }
-        await google.bindDrivePrincipal(grant, opened.principal);
-        if (!_current(generation, id)) return;
+        id = await _open(generation, grant);
+        if (id == null) return;
         bound = true;
-        state = opened.state;
         await _readCreation(generation, id);
         if (!_current(generation, id)) return;
         await _readEnrollment(generation, id);
+        if (!_current(generation, id)) return;
+        await _readSync(generation, id);
         if (!_current(generation, id)) return;
         if (creation?.needsReview == true) {
           await _creationPage(generation, id, 0);

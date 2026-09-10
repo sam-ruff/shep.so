@@ -344,6 +344,9 @@ class Workspace extends ChangeNotifier {
         if (_foreground && !syncing && native.mailAccounts.isNotEmpty) {
           unawaited(refresh());
         }
+        if (_foreground && !savingPreferences && _unsavedPreferences.isEmpty) {
+          unawaited(profileDiscovery?.syncTick(profileApplication));
+        }
       });
     }
     _changed();

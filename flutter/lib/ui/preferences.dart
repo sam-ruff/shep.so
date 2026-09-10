@@ -10,6 +10,7 @@ import 'sent_preferences.dart';
 import '../data/accounts.dart';
 import 'google_connection.dart';
 import 'profile_discovery.dart';
+import 'profile_sync.dart';
 
 class PreferencesView extends StatelessWidget {
   const PreferencesView({super.key, required this.workspace});
@@ -292,6 +293,10 @@ class PreferencesView extends StatelessWidget {
                   ),
                 ),
               ),
+            ),
+            ProfileSyncControls(
+              discovery: discovery,
+              device: workspace.profileApplication,
             ),
           ]),
         if (workspace.savingPreferences) const Text('Saving preferences…'),

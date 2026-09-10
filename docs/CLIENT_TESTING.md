@@ -308,6 +308,44 @@ Theme after returning to that page.
 
 The authenticated catalog export has separate scripted protocol tests. These
 combined tests do not establish fully authenticated Google-to-Flutter interchange
-or live provider login. Apple execution, automatic enrollment and continuous
-reconciliation remain open. Record actual results, reviewed WebP captures and the
-shipping commit in the completion log.
+or live provider login. Apple execution and automatic enrollment remain open;
+ongoing preference sync is covered below. Record actual results, reviewed WebP
+captures and the shipping commit in the completion log.
+
+## Ongoing Flutter preference sync
+
+```sh
+python3 scripts/clients/android_e2e.py --device emulator-5554 --sync-only
+python3 scripts/clients/flutter_web_e2e.py --sync
+```
+
+The Android wrapper runs two saved integration scenarios and requires exactly
+`sync-controls-conflicts-receipts` and `sync-disconnect-pause` in
+`integration-sync-result.json`, then rebuilds `test/profile_sync_main.dart` and
+runs the seven shared UiAutomator2 flows from `flutter/e2e/profile_sync.mjs`. The
+web wrapper runs the same flows through Playwright. Both use the isolated
+`FixtureProfileSync` provider, real Preferences switches and the same
+`profile_harness.mjs`, which now has a `toggle` helper for switch/checkbox roles;
+re-run the discovery, creation and enrollment flows after changing it. Sync rows
+sit below the fold of a lazily built list, so the flow reveals each result by real
+scrolling before asserting it.
+
+The saved flow seeds sync from the applied profile, turns it on, applies a remote
+theme through the device receipt, loses that receipt's reply and retries the same
+identity, turns one preference off, then changes the theme twice while the
+fixture's other device does the same: the first 52-version conflict is resolved
+with Keep mine after both pages were opened, the second with Use profile, and mail
+browsing continues afterwards. `profile_sync_controls_test.dart` shares those
+controls with the Android driver and also holds a cycle while Google disconnects.
+`profile_sync_test.dart` drives the controller over production preference
+persistence: paused seeding, remote application with frozen receipt revisions,
+publication of local intent, per-field switches, lost confirmations retried with
+the same identity, failed cycles, paged reviews, stale decisions, and a held cycle
+that cannot update a replaced grant. Mobile Rust tests (`profile_discovery::sync`)
+use an in-memory second device for seeding, admission before pull, convergence,
+restart, kept receipts, conflicts, unproven fields, lost history acknowledgments,
+controls, incomplete pulls, rebuilt sources and enrollment serialisation.
+
+These fixtures do not establish live Google delivery between clients, account
+definitions or the remaining portable categories; see
+[Flutter profile boundaries](agents/PROFILE_MOBILE.md).

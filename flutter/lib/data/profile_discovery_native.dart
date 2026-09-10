@@ -3,12 +3,20 @@ import 'accounts.dart';
 import 'profile_discovery.dart';
 import 'profile_creation.dart';
 import 'profile_enrollment.dart';
+import 'profile_sync.dart';
 
 class NativeProfileDiscovery
     implements
         ProfileDiscoveryRepository,
         ProfileCreationRepository,
-        ProfileEnrollmentRepository {
+        ProfileEnrollmentRepository,
+        ProfileSyncRepository {
+  // Preference sync never touches accounts or credentials, so it does not wait
+  // in the account lifecycle FIFO; Rust serialises it with enrollment itself.
+  @override
+  Future<dynamic> sync(String session, Map<String, Object?> command) =>
+      _call({'op': 'profile_sync', 'session': session, 'command': command});
+
   @override
   Future<dynamic> enrollment(
     String session,

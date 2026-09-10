@@ -3,8 +3,8 @@
 Preferences now links to **Profiles and sync**, where the Android/iOS client can
 find saved profiles, retry interrupted discovery, rescan, pause, and page through
 50 summaries at a time. Names, account/setting counts, missing history, removal
-and conflicts are observations. Applying accounts/settings and continuous sync
-remain unfinished; no enrollment or credential-import success is displayed.
+and conflicts are observations. Reviewed enrollment and ongoing preference sync
+are described below; no credential-import success is displayed.
 
 ## Connection and configuration
 
@@ -75,8 +75,71 @@ executed scenarios and reviewed captures; neither fixtures nor successful builds
 establish live Google or Apple execution.
 
 [First-profile publication](PROFILE_PUBLICATION.md) now adds frozen reviews,
-initialized history and owned upload receipts. Continue bounded reviewed enrollment,
-category controls and real account/preferences application.
-Keep local mail/drafts and device identity; changed endpoints require reviewed
-credential activation. The credential-protection choice, legacy migration,
-desktop/browser integration, Apple and live cross-client verification remain open.
+initialized history and owned upload receipts. [Reviewed enrollment](PROFILE_ENROLLMENT.md)
+applies accounts and the eight preferences. Ongoing preference reconciliation
+is described below. Keep local mail/drafts and device identity; changed endpoints
+require reviewed credential activation. The credential-protection choice, legacy
+migration, browser integration, Apple and live cross-client verification remain open.
+
+## Ongoing preference sync
+
+`flutter/rust/src/profile_discovery/sync/` keeps a native ledger in mail schema 12:
+one subscription per Google scope (`profile_subscriptions`), staged/admitted/deferred
+local edits (`profile_sync_edits`), device applications with their receipts
+(`profile_sync_applications`) and open reviews (`profile_sync_reviews`). It reuses
+the enrollment's history journal under `.published-profiles` and the discovery
+catalog of the current session; nothing reads credentials or mail.
+
+Seeding needs a completed enrollment. Fields whose platform receipt froze their
+original revision get a proven basis; a kept field starts at its baseline revision so
+the next cycle publishes the newer local value; legacy receipts, conflicts and
+unsupported rows stay unproven. An unproven field never acknowledges a matching
+value: a differing remote value opens a review, and a later local edit is still
+published as intent. Each basis records the shared version, its scalar and the
+device revision it was seen at. A subscription starts paused with every field enabled.
+
+A cycle (`Cycle { snapshot }`) takes the device's current values and revisions.
+It first retries staged edits, then admits new local intent (a revision newer
+than the basis, including change-and-revert), then pulls: incremental catalog
+refresh, bounded advance, and originals exported after the saved cursor, which
+resets when the observation history's device identity changes. After draining,
+each supported field is observed: a single shared version equal to the basis is
+common; a version newer than a proven, unedited basis is applied through one
+device request at a time; a conflict, a pending local edit or an unproven basis
+opens a review. Publication then uploads queued operations. Every step is bounded
+at 32 and the report says whether more remains.
+
+Applications reuse the enrollment device path: `Application` returns a
+`{id, baseline, changes}` request, the Flutter store writes it with the same
+frozen-revision receipt, and `ConfirmApplication` records it. The platform store
+retains one receipt, so enrollment refuses to prepare while an application is
+unconfirmed and cycles refuse while an enrollment is pending. A receipt that keeps
+the field marks newer local intent, which the next cycle publishes.
+
+Reviews page the exact shared versions fifty at a time from the owned history.
+`Decide` requires every page to have been opened and the device snapshot to match
+the reviewed local intent. Keep mine stages one resolution operation carrying the
+local value and the reviewed versions; Use profile with several versions stages the
+same kind of resolution with the chosen value, while the only shared version needs
+no new operation. Either choice that changes the device value stages an application.
+The staged decision is committed before the history edit, so a lost reply retries
+the identical operation, and a `Changed` or `Conflict` reply defers it to a refreshed
+review rather than dropping it.
+
+`ProfileDiscovery` (`flutter/lib/model/profile_sync.dart`) owns one sync task at a
+time through the same verified session as discovery, opening one when none is
+active. Enrollment completion seeds the subscription; the Workspace's 15-second
+foreground timer runs a silent tick when the grant is connected, sync is enabled and
+no preference save is pending. Google disconnect or a changed grant clears the
+in-memory status and stops cycles without touching the durable subscription or
+other devices; reconnecting the same account resumes it. Preferences shows the
+master switch, eight per-preference switches, status, Sync now, the conflict entry
+and an explicit paused message while Drive is not connected.
+
+Rust tests cover seeding rules, admission before pull, two-device convergence,
+receipt retry after restart, kept receipts, conflict and unproven reviews, lost
+history acknowledgments, controls, incomplete pulls, rebuilt sources and pending
+enrollment. Flutter host tests drive the controller and the actual controls; the
+saved web and Android flows are listed in [client testing](../CLIENT_TESTING.md).
+Account definitions, the remaining portable categories, automatic setup, browser
+sync, credential transfer, live Google and Apple execution remain open.
