@@ -58,5 +58,11 @@ CREATE INDEX IF NOT EXISTS profile_enrollment_recent ON profile_enrollments(scop
 CREATE TABLE IF NOT EXISTS profile_enrollment_fields(enrollment TEXT NOT NULL REFERENCES profile_enrollments(id),target TEXT NOT NULL,change TEXT,error TEXT,PRIMARY KEY(enrollment,target));
 CREATE TABLE IF NOT EXISTS profile_enrollment_rows(enrollment TEXT NOT NULL REFERENCES profile_enrollments(id),position INTEGER NOT NULL,target TEXT NOT NULL,kind TEXT NOT NULL,details TEXT NOT NULL,choice TEXT NOT NULL,receipt TEXT,PRIMARY KEY(enrollment,position),UNIQUE(enrollment,target));
 CREATE TABLE IF NOT EXISTS profile_reconnect(account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,reason TEXT NOT NULL);
-PRAGMA user_version=11;
+CREATE TABLE IF NOT EXISTS profile_subscriptions(scope TEXT PRIMARY KEY,id TEXT NOT NULL UNIQUE,state TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS profile_sync_edits(seq INTEGER PRIMARY KEY AUTOINCREMENT,subscription TEXT NOT NULL REFERENCES profile_subscriptions(id),operation TEXT NOT NULL UNIQUE,field TEXT NOT NULL,request TEXT NOT NULL,native_revision INTEGER NOT NULL,review TEXT,state TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS profile_sync_edit_state ON profile_sync_edits(subscription,state,seq);
+CREATE TABLE IF NOT EXISTS profile_sync_applications(seq INTEGER PRIMARY KEY AUTOINCREMENT,subscription TEXT NOT NULL REFERENCES profile_subscriptions(id),id TEXT NOT NULL UNIQUE,field TEXT NOT NULL,operation TEXT NOT NULL,request TEXT NOT NULL,receipt TEXT);
+CREATE INDEX IF NOT EXISTS profile_sync_application_pending ON profile_sync_applications(subscription,seq) WHERE receipt IS NULL;
+CREATE TABLE IF NOT EXISTS profile_sync_reviews(seq INTEGER PRIMARY KEY AUTOINCREMENT,subscription TEXT NOT NULL REFERENCES profile_subscriptions(id),id TEXT NOT NULL UNIQUE,field TEXT NOT NULL,review TEXT NOT NULL,UNIQUE(subscription,field));
+PRAGMA user_version=12;
 COMMIT;

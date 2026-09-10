@@ -130,6 +130,19 @@ export async function withProfileHarness(mode, name, run) {
     } else target = await node(label, true);
     await target.click();
   }
+  async function toggle(label) {
+    // Switches and checkboxes carry their own web roles; Android exposes them
+    // as clickable rows like any other control.
+    if (mode === "native") return tap(label);
+    const name = new RegExp(
+      `(?:^|\\s)${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|\\s)`,
+    );
+    await page
+      .getByRole("switch", { name })
+      .or(page.getByRole("checkbox", { name }))
+      .last()
+      .click();
+  }
   async function wait(label) {
     if (mode === "native")
       return driver.waitUntil(async () => (await labels()).includes(label), {
@@ -257,6 +270,7 @@ export async function withProfileHarness(mode, name, run) {
       scroll,
       reveal,
       tap,
+      toggle,
       wait,
       capture,
       theme,
