@@ -1,6 +1,8 @@
 use super::*;
 use crate::mail_actions::{Flags, MoveReceipt};
 mod counts;
+mod navigation;
+mod projection;
 mod undo;
 
 #[derive(Default)]
@@ -9,6 +11,7 @@ pub(super) struct Actions {
     pub base_page: Arc<MailPage>,
     flags: HashMap<String, PendingFlags>,
     sequence: u64,
+    pub(super) follow: Option<navigation::Follow>,
     moves: HashMap<String, PendingMove>,
     transfers: HashMap<String, PendingTransfer>,
     undo: HashMap<u64, undo::Record>,
@@ -39,6 +42,9 @@ struct PendingFlags {
 }
 
 impl Actions {
+    pub fn moving(&self, id: &str) -> bool {
+        self.moves.contains_key(id) || self.transfers.contains_key(id)
+    }
     pub fn pending(&self) -> usize {
         self.flags
             .values()
@@ -66,6 +72,26 @@ impl Actions {
 
 impl App {
     pub(super) fn set_mail_page(&mut self, page: Arc<MailPage>) {
+        Arc::make_mut(&mut self.workspace).move_pending_total = page.move_pending_total;
+        if let Some(id) = self.selected.clone()
+            && let Some(current) = page.relocated.get(&id)
+        {
+            let original = self
+                .page
+                .rows
+                .iter()
+                .find(|m| m.id == id)
+                .cloned()
+                .or_else(|| {
+                    self.detail
+                        .as_ref()
+                        .filter(|d| d.summary.id == id)
+                        .map(|d| d.summary.clone())
+                });
+            if let Some(original) = original {
+                self.reconcile_move_row(&original, Some(current), false);
+            }
+        }
         let reader = self.reader_id().map(str::to_owned);
         self.mail_actions
             .flags
@@ -91,21 +117,32 @@ impl App {
         }
         let mut page = (*self.mail_actions.base_page).clone();
         page.rows.retain_mut(|mail| {
-            if self.mail_actions.moves.contains_key(&mail.id)
-                || self.mail_actions.transfers.contains_key(&mail.id)
-            {
-                page.total = page.total.saturating_sub(1);
-                if mail.unread {
-                    page.unread = page.unread.saturating_sub(1);
-                    if mail.folder.eq_ignore_ascii_case("INBOX") {
-                        let count = page
-                            .inbox_unread
-                            .entry(mail.account_id.clone())
-                            .or_default();
-                        *count = count.saturating_sub(1);
+            if let Some((_, account, folder)) = self.mail_actions.move_target(&mail.id) {
+                // A page may already contain the projected destination, or the
+                // real local destination after its write and before its receipt.
+                let restoring = self.mail_actions.restoring(&mail.id);
+                let keep = !restoring && self.bulk_scope_contains(&self.query, account, folder);
+                if keep {
+                    if mail.account_id != account || mail.folder != folder {
+                        mail.account_id = account.into();
+                        mail.folder = folder.into();
+                        mail.remote_id.clear();
+                        page.move_placeholders.insert(mail.id.clone());
                     }
+                } else {
+                    page.total = page.total.saturating_sub(1);
+                    if mail.unread {
+                        page.unread = page.unread.saturating_sub(1);
+                        if mail.folder.eq_ignore_ascii_case("INBOX") {
+                            let count = page
+                                .inbox_unread
+                                .entry(mail.account_id.clone())
+                                .or_default();
+                            *count = count.saturating_sub(1);
+                        }
+                    }
+                    return false;
                 }
-                return false;
             }
             let effective = self.mail_actions.effective(mail);
             if mail.unread != effective.unread {
@@ -133,6 +170,7 @@ impl App {
                 || self.query.starred_only && !mail.starred);
             if !keep {
                 page.total = page.total.saturating_sub(1);
+                page.unread = page.unread.saturating_sub(usize::from(mail.unread));
             }
             keep
         });
@@ -143,7 +181,7 @@ impl App {
     }
 
     pub(super) fn toggle_mail_flag(&mut self, mail: Mail, unread: bool) {
-        if self.mail_actions.restoring(&mail.id) {
+        if self.mail_actions.restoring(&mail.id) || self.bulk_owns_mail(&mail.id) {
             return;
         }
         if unread
@@ -205,6 +243,9 @@ impl App {
     }
 
     pub(super) fn transfer_mail(&mut self, mail: Mail, account: String, folder: String) {
+        if self.bulk_owns_mail(&mail.id) {
+            return;
+        }
         let id = mail.id.clone();
         if self.mail_actions.restoring(&id)
             || self.mail_actions.transfers.contains_key(&id)
@@ -212,6 +253,7 @@ impl App {
         {
             return;
         }
+        let neighbors = self.removal_neighbors(&mail.id);
         if self
             .mail_actions
             .read_candidate
@@ -240,14 +282,7 @@ impl App {
             self.focused_input = None;
             self.pending_focus = None;
             self.project_mail_flags();
-            if self.selected.as_ref() == Some(&id) || self.reader_id() == Some(id.as_str()) {
-                self.selected = None;
-                self.detail = None;
-                self.conversation = Default::default();
-                if let Some(next) = self.page.rows.first() {
-                    self.select(next.id.clone());
-                }
-            }
+            self.select_after_removal(&id, neighbors);
         }
     }
 
@@ -314,12 +349,14 @@ impl App {
 
     pub(super) fn move_mail(&mut self, mail: Mail, destination: String) {
         if self.mail_actions.restoring(&mail.id)
+            || self.bulk_owns_mail(&mail.id)
             || mail.folder == destination
             || self.mail_actions.moves.contains_key(&mail.id)
             || self.mail_actions.transfers.contains_key(&mail.id)
         {
             return;
         }
+        let neighbors = self.removal_neighbors(&mail.id);
         if self
             .mail_actions
             .read_candidate
@@ -352,14 +389,7 @@ impl App {
         self.focused_input = None;
         self.pending_focus = None;
         self.project_mail_flags();
-        if self.selected.as_ref() == Some(&id) || self.reader_id() == Some(id.as_str()) {
-            self.selected = None;
-            self.detail = None;
-            self.conversation = Default::default();
-            if let Some(next) = self.page.rows.first() {
-                self.select(next.id.clone());
-            }
-        }
+        self.select_after_removal(&id, neighbors);
     }
 
     fn dispatch_move(&mut self, id: &str) {
@@ -412,18 +442,11 @@ impl App {
                     record.original = entry.mail.clone();
                     record.receipt = Some(receipt.clone());
                 }
-                let mut base = (*self.mail_actions.base_page).clone();
-                counts::confirm_move(&mut base, &entry.mail, receipt.current.as_ref());
-                if let Some(index) = base.rows.iter().position(|m| m.id == mail.id) {
-                    let removed = base.rows.remove(index);
-                    base.total = base.total.saturating_sub(1);
-                    if removed.unread {
-                        base.unread = base.unread.saturating_sub(1);
-                    }
-                }
-                self.mail_actions.base_page = Arc::new(base);
+                self.confirm_move_display(&entry.mail, &receipt);
+                self.mail_actions.flags.remove(&mail.id);
             }
             Err(error) => {
+                self.reconcile_move_row(&entry.mail, None, true);
                 let undo_requested = self
                     .mail_actions
                     .undo
@@ -907,13 +930,17 @@ mod tests {
         assert!(app.page.rows[0].unread);
     }
     #[tokio::test]
-    async fn native_focus_result_blocks_unhandled_destructive_chords_in_search() {
+    async fn native_focus_blocks_unhandled_destructive_chords_in_search() {
         let (mut app, mut commands, _) = fixture().await;
         for focused in [true, false] {
-            let _ = app.handle(Message::KeyFocusChecked(
+            let _ = app.handle(Message::Key(
                 Key::Character("d".into()),
                 keyboard::Modifiers::CTRL,
-                focused,
+                false,
+                native_input::Focus {
+                    search: focused,
+                    ..Default::default()
+                },
             ));
             if focused {
                 assert!(commands.try_recv().is_err());
@@ -934,6 +961,7 @@ mod tests {
             Key::Named(keyboard::key::Named::Escape),
             keyboard::Modifiers::empty(),
             false,
+            native_input::Focus::default(),
         ));
         assert!(!app.full_reader);
         app.full_reader = true;
@@ -941,6 +969,7 @@ mod tests {
             Key::Character("d".into()),
             keyboard::Modifiers::CTRL,
             false,
+            native_input::Focus::default(),
         ));
         assert!(matches!(commands.try_recv(), Ok(Command::Move(_, _, _))));
         app.tab = Tab::Preferences;
@@ -948,6 +977,7 @@ mod tests {
             Key::Character("d".into()),
             keyboard::Modifiers::CTRL,
             false,
+            native_input::Focus::default(),
         ));
         assert!(
             commands.try_recv().is_err(),

@@ -1,4 +1,5 @@
 //! Fictional styled mail exercises the same MIME/store/reader path as real mail.
+use crate::complex_html_fixture as complex_html;
 use crate::{model::parse_mail, store::Store};
 use base64::Engine;
 
@@ -118,5 +119,52 @@ Content-Transfer-Encoding: base64
             false,
         )?])
         .await?;
+    // Distinct, fictional nested-table mail with more images than the original
+    // eight-image cache. Used by repeated-open pixel and native regressions.
+    for (index, title, color) in [
+        (0, "Dispatch update", "#ecf4fa"),
+        (1, "Delivery update", "#f5eddc"),
+    ] {
+        let products = (0..12).map(|i| format!(
+            "<tr><td style='padding:12px'><table width='100%'><tr><td width='96'><img src='https://images.example.test/parcel-{index}-{i}.webp' width='80' height='80'></td><td><b>{title}: item {i}</b><p>Fictional workshop supplies</p><table><tr><td>Quantity: 1</td><td>Ready for delivery</td></tr></table></td></tr></table></td></tr>"
+        )).collect::<String>();
+        let raw = format!(
+            "From: Example Parcels <parcels@example.test>\r\nTo: alex@studio.example\r\nSubject: {title}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html><body><table width='540' align='center' style='background:{color};border-collapse:collapse'><tr><td style='padding:24px'><h1>{title}</h1><p>Your fictional package is on its way.</p></td></tr>{products}</table></body></html>"
+        );
+        let mut mail = parse_mail(
+            "preview-work",
+            &format!("html-parcel-{index}"),
+            "Sent",
+            raw.into_bytes(),
+            false,
+            false,
+        )?;
+        mail.summary.timestamp = chrono::Utc::now().timestamp() + 100 - index;
+        store.upsert(vec![mail]).await?;
+    }
+    // Keep deep layouts outside the initially selected message's neighbors.
+    for index in 2..5 {
+        let (title, html) = if index == 4 {
+            ("Deeply nested delivery", complex_html::letter(16))
+        } else {
+            (
+                "Template separator",
+                format!("<p>Fictional separator {index}</p>"),
+            )
+        };
+        let raw = format!(
+            "From: Example Templates <templates@example.test>\r\nTo: alex@studio.example\r\nSubject: {title}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n{html}"
+        );
+        let mut mail = parse_mail(
+            "preview-work",
+            &format!("html-template-{index}"),
+            "Sent",
+            raw.into_bytes(),
+            false,
+            false,
+        )?;
+        mail.summary.timestamp = chrono::Utc::now().timestamp() + 100 - index;
+        store.upsert(vec![mail]).await?;
+    }
     Ok(())
 }

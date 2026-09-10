@@ -92,7 +92,7 @@ pub(super) fn revive(c: &Connection, kind: ConnectionKind, id: &str) -> anyhow::
     )?;
     Ok(())
 }
-fn transfers(c: &Connection, account: &str) -> anyhow::Result<Vec<(String, String)>> {
+pub(super) fn transfers(c: &Connection, account: &str) -> anyhow::Result<Vec<(String, String)>> {
     let rows = c.prepare("SELECT k.key,k.value,m.account FROM kv k LEFT JOIN messages m ON m.id=substr(k.key,10) WHERE k.key LIKE 'transfer:%' ORDER BY k.key")?
         .query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?)))?
         .collect::<Result<Vec<_>,_>>()?;
@@ -178,6 +178,8 @@ fn preview(c: &Connection, target: ConnectionRef) -> anyhow::Result<RemovalPrevi
             let (history, pending_bulk) = bulk::account_review(c, &out.target.id, &mut digest)?;
             out.mail_history = history;
             out.transfers += pending_bulk;
+            out.transfers += move_journal::account_review(c, &out.target.id, &mut digest)?;
+            out.transfers += folder_actions::account_review(c, &out.target.id, &mut digest)?;
         }
         ConnectionKind::Calendar => {
             let mut statement = c.prepare("SELECT data FROM events WHERE source=? ORDER BY id")?;
@@ -217,7 +219,7 @@ impl Store {
                 ConnectionKind::Account => {
                     let mut accounts: Vec<Account> = get(&tx, "accounts")?;
                     accounts.retain(|a| a.id != target.id);
-                    tx.execute("DELETE FROM profile_reconnect WHERE account_id=?",[&target.id])?;
+                    super::profile_sync::join::reconnected(&tx, &target.id)?;
                     put(&tx, "accounts", &accounts)?;
                     keys.extend([target.id.clone(),format!("{}:smtp",target.id)]);
                     for (key,_) in transfers(&tx, &target.id)? { tx.execute("DELETE FROM kv WHERE key=?", [key])?; }
@@ -226,10 +228,15 @@ impl Store {
                     tx.execute("DELETE FROM sent_folders WHERE account=?",[&target.id])?;
                     outgoing::changed(&tx)?;
                     bulk::remove_account(&tx,&target.id)?;
+                    move_journal::remove_account(&tx, &target.id)?;
+                    tx.execute("DELETE FROM folder_jobs WHERE account=?", [&target.id])?;
                     tx.execute("DELETE FROM messages WHERE account=?", [&target.id])?;
+                    super::notifications::remove_account(&tx, &target.id)?;
                     tx.execute("DELETE FROM conversation_tokens WHERE account=?", [&target.id])?;
                     let mut folder_map: std::collections::HashMap<String,Vec<String>> = get(&tx, "account_folders")?;
                     folder_map.remove(&target.id); put(&tx, "account_folders", &folder_map)?;
+                    let mut catalogs: std::collections::HashMap<String,Vec<crate::folders::Mailbox>> = get(&tx, "folder_catalogs")?;
+                    catalogs.remove(&target.id); put(&tx, "folder_catalogs", &catalogs)?;
                     let folders: std::collections::BTreeSet<_> = folder_map.values().flatten().cloned().collect();
                     put(&tx, "folders", &folders)?;
                     let mut drafts: Vec<Draft> = get(&tx, "drafts")?;

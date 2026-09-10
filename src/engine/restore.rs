@@ -8,15 +8,27 @@ impl Engine {
         passphrase: SecretString,
         output: &mut Output,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(!self.demo, "Restore is disabled in preview.");
+        if self.demo {
+            #[cfg(feature = "test-support")]
+            let owned_fixture = crate::test_support::backups::active();
+            #[cfg(not(feature = "test-support"))]
+            let owned_fixture = false;
+            anyhow::ensure!(owned_fixture, "Restore is disabled in preview.");
+        }
         // Local archives may also contain Google sources. Serialize against
         // login/calendar discovery while preserving this device's Google token.
         let _google = self.google_connection_lock.read().await;
         let prefs = self.store.get("preferences").await?;
         Self::check_backup_target(&target, &prefs)?;
+        let prefs = backup::config::resolve(&prefs, &target)?;
         let bytes = self.backup_provider(&prefs).await?.download(&id).await?;
-        let snapshot =
-            tokio::task::spawn_blocking(move || backup::decrypt(&bytes, &passphrase)).await??;
+        let snapshot = tokio::task::spawn_blocking(move || {
+            backup::format::decode(
+                &bytes,
+                (!passphrase.expose_secret().is_empty()).then_some(&passphrase),
+            )
+        })
+        .await??;
         self.import_snapshot(snapshot, output).await
     }
 
@@ -48,12 +60,12 @@ impl Engine {
         accounts.dedup();
         let mut guards = Vec::new();
         for id in accounts {
-            guards.push(self.account_lock(id).await);
+            guards.push(self.account_access(id).await);
         }
         let mut calendars: Vec<_> = snapshot.calendars.iter().map(|c| c.id.as_str()).collect();
         calendars.sort_unstable();
         for id in calendars {
-            guards.push(self.calendar_lock(id).await);
+            guards.push(self.calendar_access(id).await);
         }
         let restored = self.store.restore_snapshot(snapshot).await?;
         // The SQLite commit is complete even if a keychain prompt fails next.

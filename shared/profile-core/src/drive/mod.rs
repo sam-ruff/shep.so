@@ -128,13 +128,14 @@ pub struct Drive {
     namespace: String,
 }
 impl Drive {
-    /// Isolated protocol/native fixtures only. The default production build has
-    /// no endpoint override; fixtures refuse hosts, proxies and redirects.
-    #[cfg(feature = "test-support")]
+    /// Owned loopback fixtures only. This nondefault entry point cannot receive a
+    /// real credential and keeps the production redirect, timeout and identity
+    /// checks; it refuses hosts, proxies, missing ports and ambiguous endpoints.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn connect_fixture(
         base: Url,
         namespace: String,
-        expected_principal: &str,
+        expected_principal: Option<&str>,
     ) -> Result<Self> {
         if base.scheme() != "http"
             || !base
@@ -145,6 +146,7 @@ impl Drive {
                         .ok()
                 })
                 .is_some_and(|ip| ip.is_loopback())
+            || base.port().is_none()
             || !base.username().is_empty()
             || base.password().is_some()
             || base.query().is_some()
@@ -159,9 +161,9 @@ impl Drive {
                 .build()
                 .map_err(|_| Error::Network)?,
             base,
-            SecretString::from("synthetic-profile-fixture"),
+            SecretString::from("fixture-profile-token"),
             namespace,
-            Some(expected_principal),
+            expected_principal,
         )
         .await
     }

@@ -253,6 +253,237 @@ fn older_settings_gain_frequent_mail_checks_and_new_values_round_trip() {
     preferences.mail_check_seconds = 0;
     assert!(preferences.validate().is_err());
 }
+
+#[tokio::test]
+async fn multiple_backup_destinations_keep_independent_history_across_edits_and_restart() {
+    use shep::backup::config;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cache.sqlite");
+    let store = Store::open(&path).unwrap();
+    let mut prefs = Preferences {
+        backup_folder: directory.path().join("one").to_string_lossy().into(),
+        auto_backup: true,
+        backup_copies: 3,
+        ..Default::default()
+    };
+    store.save_preferences(prefs.clone()).await.unwrap();
+    let first = BackupTarget::from_preferences(&prefs);
+    prefs = store
+        .record_backup(first.clone(), 10, true)
+        .await
+        .unwrap()
+        .value;
+    config::add(&mut prefs).unwrap();
+    prefs.backup_folder = directory.path().join("two").to_string_lossy().into();
+    prefs.backup_copies = 9;
+    prefs.auto_backup = true;
+    config::capture_editor(&mut prefs);
+    let second = BackupTarget::from_preferences(&prefs);
+    let mut stale = store.save_preferences(prefs).await.unwrap().value;
+    store.record_backup(second.clone(), 20, true).await.unwrap();
+    stale.appearance = Appearance::Dark;
+    let saved = store.save_preferences(stale).await.unwrap().value;
+    let one = config::resolve(&saved, &first).unwrap();
+    let two = config::resolve(&saved, &second).unwrap();
+    assert_eq!(
+        (one.backup_copies, one.last_backup, one.backup_ready),
+        (3, Some(10), true)
+    );
+    assert_eq!(
+        (two.backup_copies, two.last_backup, two.backup_ready),
+        (9, Some(20), true)
+    );
+    let mut changed = saved;
+    changed.backup_folder = directory.path().join("three").to_string_lossy().into();
+    config::capture_editor(&mut changed);
+    let saved = store.save_preferences(changed).await.unwrap().value;
+    assert_eq!(saved.last_backup, None);
+    assert!(!saved.backup_ready);
+    let after = store.record_backup(second, 30, true).await.unwrap().value;
+    assert_eq!(after.last_backup, None);
+    assert_eq!(
+        config::resolve(&after, &first).unwrap().last_backup,
+        Some(10)
+    );
+    drop(store);
+    let reopened = Store::open(&path).unwrap();
+    assert_eq!(
+        reopened.get::<Preferences>("preferences").await.unwrap(),
+        after
+    );
+}
+
+#[tokio::test]
+async fn multiple_backup_destinations_reject_duplicate_drive_and_folder_aliases() {
+    use shep::{backup::config, model::BackupDestination};
+    let directory = tempfile::tempdir().unwrap();
+    let mut prefs = Preferences {
+        backup_folder: directory.path().to_string_lossy().into(),
+        ..Default::default()
+    };
+    config::add(&mut prefs).unwrap();
+    prefs.backup_folder = format!("{}/./", directory.path().display());
+    config::capture_editor(&mut prefs);
+    assert!(
+        prefs
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("already configured")
+    );
+    for destination in &mut prefs.backup_destinations {
+        destination.destination = BackupDestination::GoogleDrive;
+    }
+    assert!(prefs.validate().is_err());
+    #[cfg(unix)]
+    {
+        let original = directory.path().join("original");
+        std::fs::create_dir(&original).unwrap();
+        let alias = directory.path().join("alias");
+        std::os::unix::fs::symlink(&original, &alias).unwrap();
+        prefs.backup_destinations[0].destination = BackupDestination::Local;
+        prefs.backup_destinations[0].folder = original.to_string_lossy().into();
+        prefs.backup_destinations[1].destination = BackupDestination::Local;
+        prefs.backup_destinations[1].folder = alias.to_string_lossy().into();
+        let second = prefs.backup_destinations[1].clone();
+        second.apply(&mut prefs);
+        let store = Store::memory().unwrap();
+        assert!(
+            store
+                .save_preferences(prefs)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("same folder")
+        );
+    }
+}
+
+#[tokio::test]
+async fn multiple_backup_form_save_preserves_remote_preferences_and_other_target_receipts() {
+    let store = Store::memory().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let first = directory
+        .path()
+        .join("first")
+        .to_string_lossy()
+        .into_owned();
+    let second = directory
+        .path()
+        .join("second")
+        .to_string_lossy()
+        .into_owned();
+    let mut form = Preferences {
+        backup_folder: first.clone(),
+        ..Default::default()
+    };
+    shep::backup::config::add(&mut form).unwrap();
+    form.backup_folder = second.clone();
+    let initial = store.save_preferences(form).await.unwrap();
+    let mut stale_form = initial.value;
+    // Another device changes an unrelated portable field, then the other local
+    // destination finishes its already-started upload while this form is open.
+    store
+        .update_preferences(|p| p.tooltips = false)
+        .await
+        .unwrap();
+    store
+        .record_backup(BackupTarget::Local(first), 4567, true)
+        .await
+        .unwrap();
+    stale_form.backup_copies = 19;
+    let saved = store
+        .save_preferences(shep::preference_edits::Write {
+            value: stale_form,
+            portable: Default::default(),
+        })
+        .await
+        .unwrap()
+        .value;
+    assert!(!saved.tooltips);
+    assert_eq!(saved.backup_folder, second);
+    assert_eq!(saved.backup_copies, 19);
+    assert_eq!(saved.backup_destinations[1].copies, 19);
+    assert_eq!(saved.backup_destinations[0].last_backup, Some(4567));
+    assert!(saved.backup_destinations[0].ready);
+    assert_eq!(saved.backup_destinations[1].last_backup, None);
+}
+
+#[tokio::test]
+async fn backup_format_receipts_and_stale_settings_preserve_new_setup_requirements() {
+    use shep::backup::{BackupTarget, config, format};
+    for multiple in [false, true] {
+        let store = Store::memory().unwrap();
+        let mut prefs = Preferences {
+            backup_folder: "/format-race".into(),
+            ..Default::default()
+        };
+        if multiple {
+            config::add(&mut prefs).unwrap();
+            let first = prefs.backup_destinations[0].id.clone();
+            config::select(&mut prefs, &first).unwrap();
+        }
+        let target = BackupTarget::from_preferences(&prefs);
+        store.save_preferences(prefs.clone()).await.unwrap();
+        let acknowledged = store
+            .record_backup_format(target.clone(), format::Options::default(), 10, true)
+            .await
+            .unwrap();
+        prefs = acknowledged.value;
+        let old = prefs.clone();
+        prefs.backup_format.protection = format::Protection::None;
+        let edited = store.save_preferences(prefs).await.unwrap().value;
+        assert!(!edited.backup_ready);
+        let late = store
+            .record_backup_format(target.clone(), old.backup_format, 20, true)
+            .await
+            .unwrap()
+            .value;
+        assert_eq!(late.backup_format, edited.backup_format);
+        assert!(!late.backup_ready);
+        assert_eq!(late.last_backup, Some(20));
+        let ready = store
+            .record_backup_format(target.clone(), edited.backup_format, 30, true)
+            .await
+            .unwrap()
+            .value;
+        assert!(ready.backup_ready);
+        // An older receipt must not revoke setup of the currently chosen format.
+        let late = store
+            .record_backup_format(target, old.backup_format, 40, false)
+            .await
+            .unwrap()
+            .value;
+        assert!(late.backup_ready);
+        if multiple {
+            assert!(late.backup_destinations[0].ready);
+            assert_eq!(late.backup_destinations[0].format, edited.backup_format);
+        }
+    }
+}
+
+#[test]
+fn backup_format_old_scalar_and_collection_settings_keep_encrypted_compressed_defaults() {
+    let mut prefs = Preferences {
+        backup_folder: "/legacy-backup".into(),
+        ..Default::default()
+    };
+    shep::backup::config::add(&mut prefs).unwrap();
+    let mut json = serde_json::to_value(&prefs).unwrap();
+    json.as_object_mut().unwrap().remove("backup_format");
+    for d in json["backup_destinations"].as_array_mut().unwrap() {
+        d.as_object_mut().unwrap().remove("format");
+    }
+    let loaded: Preferences = serde_json::from_value(json).unwrap();
+    assert!(loaded.backup_format.encrypted() && loaded.backup_format.compressed());
+    assert!(
+        loaded
+            .backup_destinations
+            .iter()
+            .all(|d| d.format.encrypted() && d.format.compressed())
+    );
+}
+
 #[test]
 fn google_permission_choices_are_opt_in_and_legacy_grants_do_not_override_explicit_choices() {
     use shep::model::{GoogleAccess, GoogleCalendarRequest, GoogleServices};

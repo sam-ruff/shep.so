@@ -6,6 +6,8 @@ use std::collections::BTreeSet;
 pub const CONVERSATION_PAGE_SIZE: usize = 20;
 const HEADER_LIMIT: usize = 64 * 1024;
 
+mod ranking;
+
 #[derive(Debug, Clone, Default)]
 pub struct ConversationPage {
     pub anchor: String,
@@ -23,6 +25,7 @@ pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
             id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
             account TEXT NOT NULL, group_id TEXT NOT NULL, logical_id TEXT NOT NULL, timestamp INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS conversation_group ON conversation_members(account,group_id,timestamp,id);")?;
+    ranking::schema(c)?;
     Ok(())
 }
 
@@ -155,30 +158,46 @@ impl Store {
             let tx = c.transaction()?;
             index_message(&tx, &anchor)?;
             let (account, group): (String, String) = tx.query_row(
-                "SELECT account,group_id FROM conversation_members WHERE id=?", [&anchor], |r| Ok((r.get(0)?,r.get(1)?)))?;
-            // Show one copy per Message-ID. The actual selected mailbox copy wins
-            // so every action still targets its correct account/folder/remote UID.
-            // Window functions materialize their input: never include raw MIME
-            // or full body text when ranking the metadata for a conversation.
-            let query = "WITH copies AS (
-                SELECT m.id,m.data,m.unread,m.starred,m.folder,m.timestamp,
-                    ROW_NUMBER() OVER (PARTITION BY t.logical_id ORDER BY
-                    CASE WHEN m.id=?3 OR m.id=?4 THEN 0 WHEN m.folder='INBOX' THEN 1 WHEN m.folder='Sent' THEN 2 ELSE 3 END,m.id) AS copy
-                FROM conversation_members t JOIN messages m ON m.id=t.id WHERE t.account=?1 AND t.group_id=?2
-            ), ordered AS (
-                SELECT *,ROW_NUMBER() OVER (ORDER BY timestamp,id)-1 AS position FROM copies WHERE copy=1
-            ) ";
-            let values = params![account,group,anchor,focus];
-            let (total, position): (i64, i64) = tx.query_row(&format!("{query} SELECT COUNT(*),COALESCE(MAX(CASE WHEN id=?4 THEN position END),MAX(CASE WHEN id=?3 THEN position END),0) FROM ordered"), values,
-                |r| Ok((r.get(0)?,r.get(1)?)))?;
-            let last = (total as usize).saturating_sub(1) / CONVERSATION_PAGE_SIZE * CONVERSATION_PAGE_SIZE;
-            let offset = requested.unwrap_or(position as usize / CONVERSATION_PAGE_SIZE * CONVERSATION_PAGE_SIZE).min(last);
-            let rows = tx.prepare(&format!("{query} SELECT data,unread,starred,folder FROM ordered ORDER BY position LIMIT ?5 OFFSET ?6"))?
-                .query_map(params![account,group,anchor,focus,CONVERSATION_PAGE_SIZE as i64,offset as i64], |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?)))?
-                .map(|row| { let (data,unread,starred,folder)=row?; let mut mail:Mail=serde_json::from_str(&data)?; mail.unread=unread; mail.starred=starred; mail.folder=folder; Ok(mail) })
+                "SELECT account,group_id FROM conversation_members WHERE id=?",
+                [&anchor],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            // Keep duplicate choice and chronological rank in the owned
+            // encrypted scratch database, returning one metadata page to iced.
+            let (total, position) =
+                ranking::capture(&tx, &account, &group, &anchor, focus.as_deref())?;
+            let last = total.saturating_sub(1) / CONVERSATION_PAGE_SIZE * CONVERSATION_PAGE_SIZE;
+            let offset = requested
+                .unwrap_or(position / CONVERSATION_PAGE_SIZE * CONVERSATION_PAGE_SIZE)
+                .min(last);
+            let rows = tx
+                .prepare(ranking::PAGE)?
+                .query_map(params![CONVERSATION_PAGE_SIZE as i64, offset as i64], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, bool>(1)?,
+                        r.get::<_, bool>(2)?,
+                        r.get::<_, String>(3)?,
+                    ))
+                })?
+                .map(|row| {
+                    let (data, unread, starred, folder) = row?;
+                    let mut mail: Mail = serde_json::from_str(&data)?;
+                    mail.unread = unread;
+                    mail.starred = starred;
+                    mail.folder = folder;
+                    Ok(mail)
+                })
                 .collect::<anyhow::Result<Vec<_>>>()?;
+            ranking::clear(&tx)?;
             tx.commit()?;
-            Ok(ConversationPage { anchor, rows, total:total as usize, offset })
-        }).await
+            Ok(ConversationPage {
+                anchor,
+                rows,
+                total,
+                offset,
+            })
+        })
+        .await
     }
 }

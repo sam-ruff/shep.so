@@ -338,39 +338,54 @@ fn form(server: &Server, index: usize) -> HashMap<String, String> {
 
 #[tokio::test]
 async fn cancelled_google_keychain_write_cannot_overtake_the_next_sign_in() {
-    let queue = tokens::WriteQueue::default();
-    let entered = Arc::new(tokio::sync::Notify::new());
-    let (release, blocked) = std::sync::mpsc::channel();
-    let writes = Arc::new(StdMutex::new(Vec::new()));
-    let first_queue = queue.clone();
-    let first_writes = writes.clone();
-    let first_entered = entered.clone();
-    let first = tokio::spawn(async move {
-        first_queue
-            .run(move || {
-                first_entered.notify_one();
-                blocked.recv_timeout(Duration::from_secs(10)).unwrap();
-                first_writes.lock().unwrap().push("old grant");
-                Ok(())
-            })
-            .await
+    struct Writes {
+        entered: Option<tokio::sync::oneshot::Sender<()>>,
+        held: Option<tokio::sync::oneshot::Receiver<()>>,
+        writes: std::sync::mpsc::SyncSender<String>,
+    }
+    impl crate::credentials::Backend for Writes {
+        fn read(&mut self, _: &str) -> anyhow::Result<Option<SecretString>> {
+            Ok(None)
+        }
+        fn write(&mut self, key: &str, secret: SecretString) -> anyhow::Result<()> {
+            assert_eq!(key, "google-oauth");
+            if let Some(entered) = self.entered.take() {
+                entered.send(()).unwrap();
+                self.held.take().unwrap().blocking_recv().unwrap();
+            }
+            self.writes.send(secret.expose_secret().to_owned()).unwrap();
+            Ok(())
+        }
+        fn delete(&mut self, _: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+    let (entered, waiting) = tokio::sync::oneshot::channel();
+    let (release, held) = tokio::sync::oneshot::channel();
+    let (writes, results) = std::sync::mpsc::sync_channel(2);
+    let credentials = Arc::new(tokens::OsCredentialStore {
+        credentials: crate::credentials::Credentials::with_backend(
+            crate::credentials::Scope::Legacy,
+            Writes {
+                entered: Some(entered),
+                held: Some(held),
+                writes,
+            },
+        ),
     });
-    tokio::time::timeout(Duration::from_secs(10), entered.notified())
-        .await
-        .unwrap();
+    let first = tokio::spawn({
+        let credentials = credentials.clone();
+        async move { credentials.write("old grant".into()).await }
+    });
+    waiting.await.unwrap();
     first.abort();
     assert!(first.await.unwrap_err().is_cancelled());
-    let next_writes = writes.clone();
-    let mut next = Box::pin(queue.run(move || {
-        next_writes.lock().unwrap().push("new grant");
-        Ok(())
-    }));
-    // The cancelled async task is gone, but its OS operation still owns the
-    // write queue. This assertion needs no timing or sleep.
+    let mut next = Box::pin(credentials.write("new grant".into()));
     assert!(futures::poll!(next.as_mut()).is_pending());
     release.send(()).unwrap();
     next.await.unwrap();
-    assert_eq!(*writes.lock().unwrap(), ["old grant", "new grant"]);
+    assert_eq!(results.try_recv().unwrap(), "old grant");
+    assert_eq!(results.try_recv().unwrap(), "new grant");
 }
 
 #[tokio::test]

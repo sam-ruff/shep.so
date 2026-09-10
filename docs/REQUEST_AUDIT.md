@@ -1,8 +1,89 @@
 # Conversation request audit
 
+**2026-09-09 merge of `main` into `feat/mobile-web-clients`:** this audit is now the union of the desktop session's audit (`main`) and the mobile/web client session's audit. The two sessions numbered requests independently after R66: **R67 to R80 exist twice**. Main's R67 to R80 are desktop requests (read-on-leave, counted Undo toasts, HTML readiness, dock badges, refresh icon, HTML latency, moved-mail recovery, F5 refresh, Inbox highlight, preview background, reply-editor clipping, scroll snapping, selection icons and selection-mode clicks). The client branch's R67 to R80 are mobile, browser and website requests (Flutter parity, mobile mail interactions, Flutter quality/release, promo website, browser hosting, Linux app stores, continuous parity, restricted browser beta, Sign in with Google, out-of-office replies, checkpoint push, handover, Android installation and visual parity). Neither side is renumbered: desktop rows keep main's numbers and client rows are marked `(client)` in the table below. Older client paragraphs that write `desktop-main:RNN` mean main's RNN (for example `desktop-main:R92` is main's R92, `desktop-main:R83` is main's R83 and `desktop-main:R67`/`R68`/`R70` are main's read-on-leave, counted Undo and dock-badge requests). R81 to R93 exist only on main. After this merge `main` is the single integration branch for the desktop, mobile and website sessions, so desktop changes are no longer ported into the client branch separately.
+
 **2026-09-08 priority update — desktop-main:R92 / R75 / R02 / R49:** the user prioritized full database transfer in Settings and Google account/settings profile sync, including first login from either desktop or Flutter and new/existing-device enrollment. They requested a Flutter implementation handover in this worktree, followed by OAuth implementation as the first TODO item referencing that document. [The handover](agents/PROFILE_SYNC_HANDOVER.md) now records the inspected integration points, proposed format, lifecycle/conflict rules, toggles, credential-protection decision and required tests. Writing it does not deliver OAuth/profile sync; implementation remains open at the top of TODO. Desktop-main:R83 complete database transfer remains separate from this shared profile format.
 
-Audited against the user messages, source, AGENTS.md and completion evidence on 2026-09-07. “Delivered” refers to existing committed behavior, not completion of the entire product. “In progress” includes uncommitted code and does not imply shipping or a full passing test suite. Open items are maintained in [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md); completed evidence stays in [COMPLETION.md](COMPLETION.md).
+Audited against the user messages, source, AGENTS.md and completion evidence on 2026-09-06 (desktop) and 2026-09-07 (clients), merged on 2026-09-09. “Delivered” refers to existing committed behavior, not completion of the entire product. “In progress” includes uncommitted code and does not imply shipping or a full passing test suite. Open items are maintained in [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md); completed evidence stays in [COMPLETION.md](COMPLETION.md).
+
+The desktop summaries below are newest first and were written on `main` before the merge.
+
+9 September consolidation (R91, R02/R49/R92, R15, R22, R32): the restarted
+desktop session resolved the interrupted backup-history cherry-pick as
+`c35e2b5`, then merged bounded backup journal ownership (`42c69b4`), remote
+account-removal reviews (`61c6dfc`) and duplicate-address sidebar labels
+(`c0ebf3f`). Every other `codex/*` lane was verified byte-identical to main
+and deleted. Sam's 9 September request that closing blocked by saving is the
+first fix afterwards is recorded under R90. Hook, Python, docs and native
+counts are in completion; the push receipt follows.
+
+R32: included-destination manual backup now has independent progress/recovery,
+exact staged-copy retry and close receipts. All 13 integrated native paths pass;
+archive options and persistent failure history stay in TODO. Source `cf76976`
+is pushed with 843 normal hook executions passing. See completion.
+
+R63: the first-profile pending-navigation fixture is shipped in `91c59a4`.
+Eight native flows, 84 Python tests and 834 hook executions pass; owned HTTP
+release/cleanup replaces accumulated delays without changing timing budgets.
+
+R02/R49/R92: explicit shared connection reviews preserve previous native mail
+and credential identities, add changed setups with reconnect, and publish local
+choices through durable shared-history admission. Storage/controller/native
+evidence and remaining verification are recorded in completion. Removal choices,
+post-enrollment links and credential transfer remain open.
+
+
+R02/R49/R92 continuation: explicit existing-account linking during reviewed import
+now retains native mail/identity and requires exactly matching connection fields.
+Default Add new, eight-account paging, frozen choices and reconnect preservation
+have storage/controller/native evidence in the newest completion entry. Root
+integration/shipping, post-enrollment linking and remaining reviews stay in TODO.
+
+R02/R49/R92 continuation: portable preference resolution now has bounded native
+review controls and durable shared-history admission. Six store/history/controller
+regressions and 86 matching profile tests pass. All 25 native profile flows pass;
+the integrated binary repeats all 25 successfully after the control-identity guard,
+with 81 Python tests and reviewed light/dark/error WebPs. Source `22a3af5` is
+pushed with 762 root hook executions passing and exact remote equality verified.
+Account linking, endpoint/removal reviews and live cross-client checks remain open.
+
+R02/R49 follow-up: verified immutable profile records now survive polling and
+restart without repeated downloads. Current complete discovery remains required.
+Source `e77eabc` is pushed with 729 integrated hook executions and nine native
+flows passing. Remaining change-token polling/review work stays in TODO.
+
+9 September continuous profile checkpoint (R02/R49/R92): background receipt, local
+publication and native field-generation reconciliation now have source/tests.
+Source `bd50c52` is pushed; remaining interoperability/review work and the native
+picker readiness limitation are recorded in the completion log and TODO. This is
+not full OAuth/profile completion. R87 is delivered in integrated agent commit
+`d29ce06`, with direction, pacing and native-control evidence reviewed.
+
+9 September parallel delivery request (R93): independent agents now own isolated
+worktrees, with the primary agent responsible for tested integration into main.
+The full TODO goal remains active; parallelism does not waive native verification
+or make partially implemented features complete.
+
+9 September continuation: R02/R49/R92 connects after-login discovery, a persistent
+opt-out, optional first-device setup and single-profile automatic import into an
+untouched workspace. Multiple profiles and populated workspaces retain review;
+continuous updates and protected credentials remain open. Source `acb4969` is
+pushed with 30 native scenarios and 702 hook test executions passing; see the
+newest completion entry.
+
+9 September continuation: R02/R49/R92 adopts the published shared initialization
+barrier through `43cdcf0f`, including native incomplete/legacy import guards,
+multi-record creation/retry, safe unstarted-seed upgrade and portable Tooltips.
+Source `9158b50` is pushed with 17 native scenarios and 698 mandatory hook test
+executions passing. See the newest completion entry; continuous changes, automatic login enrollment and
+admitted legacy recovery remain in TODO.
+
+9 September continuation: R02/R49/R92 adds durable common values at native
+enrollment, exact local change capture and verified history acknowledgments.
+The upcoming continuous loop remains unfinished. The current Flutter initialization
+barrier (`184b98a`) also needs adoption; desktop remains pinned to `33d222d7`.
+Source `5c0e9f0` is pushed with 14 affected native scenarios and 692 mandatory
+hook test executions passing; see the newest completion entry. OAuth and the shared handover remain first in TODO.
 
 | ID | Request and subsequent corrections | Status / evidence |
 | --- | --- | --- |
@@ -27,35 +108,35 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R19 | Double-click mail opens full-window reader; Esc/close button with remapping | Delivered |
 | R20 | Configurable collapsed replies/history instead of one continuous body; configurable separate-message conversation cards | Delivered and tested |
 | R21 | Compact inbox header rather than an excessively thick top bar | Delivered; refresh-icon replacement is R53 |
-| R22 | Encrypt local SQLite mail cache at rest | Open; keychain/backup protection is separate |
+| R22 | Encrypt local SQLite mail cache at rest | Open; keyed SQLite/journals, staged migration, encrypted selection scratch, bounded ancestry/order and verified exit-lifecycle foundation are implemented in codex/encrypted-cache; plain FILE/keyed MEMORY temp-policy correction pending shipping; guarded publication/recovery, keyed raw export and conversation indexed scratch/DELETE-OFF correction are integrated on main as `c35e2b5`; guarded migration, remaining sorter/portable paths and native startup validation remain |
 | R23 | Arbitrary email length/size; remove 25 MiB incoming, 256 MiB snapshot and 32k preview limits; background large downloads so other mail proceeds | Open; no higher-cap workaround is considered completion |
 | R24 | Sidebar fits horizontally; sidebar/inbox/reader widths draggable; window dimensions persist across sessions | Delivered; long labels ellipsize and drag/layout state persists |
-| R25 | Flagged outline red and entire UI palette configurable in Preferences | Red outline delivered; palette editor open |
+| R25 | Flagged outline red and entire UI palette configurable in Preferences | Red outline delivered; independent light/dark palette model/editor and native light/dark/compact/restart scenarios implemented in the parallel lane; per-role typed save integration, twelve targeted tests and ten combined native scenarios pass; full Windows checking/strict docs pass; final hooks and shipping pending |
 | R26 | Ctrl-click folder multi-selection | Delivered, including native-event modifier snapshots and saved Ctrl-click flows in 590ab10 |
 | R27 | Add account only in Preferences; clicking account heading collapses its folders with arrow | Delivered |
 | R28 | Calendar sync refresh icon; remove Google/CalDAV sync caption and Workspace/Calendar breadcrumb; free calendar space | Delivered |
 | R29 | Persist window and pane sizes | Delivered and SQLite reopen/close-order tests |
-| R30 | Folder right-click delete/move into other folders; nested collapsible groups default collapsed | Open; current account collapse does not fulfill nested folder trees |
+| R30 | Folder right-click delete/move into other folders; nested collapsible groups default collapsed | Trees delivered in 6d520e9: server delimiters/selectability, decoded labels, saved expansion, keyboard reveal and drag-hover expansion, with protocol/cache/native evidence. Backend checkpoint 5eabb52 is installed/pushed with tested mutation plans, checked provider commands and durable cache/recovery; native checkpoint 3567de2 is installed/pushed: reviewed delete/move controls, optimistic projection, local POP3 and bounded recovery/close, with seven saved native flows and final Rust/native/release evidence. 97c9a9a ships retained-path Ctrl-selection during projected renames. The isolated combined-folder-delete checkpoint now has a verified bounded-folder-delete correction replacing its all-folder count map with scalar observations and indexed encrypted scratch; it projects exact deleted membership/counts, preserves remaining/newer choices and readers, restores only uncommitted membership, and retains accepted-unconfirmed cached mail, with deterministic and saved native restart evidence. Primary-agent integration/push, aggregate account choice and wider uncertainty/history lifecycle verification remain open |
 | R31 | Inbox item right-click menu | Delivered baseline; reported immediate-dismiss regression now R54 |
-| R32 | Multiple backup options simultaneously; good setup UX; Google Drive/S3/FTP/SFTP/local; compression and passcode encryption; restore password; rolling unreadable copies | Open beyond existing single Local/Drive configuration |
+| R32 | Multiple backup options simultaneously; good setup UX; Google Drive/S3/FTP/SFTP/local; compression and passcode encryption; restore password; rolling unreadable copies | Multiple Local/Drive checkpoint is pushed as `2b87db4`, with migration, independent schedules/retention/passphrases, reviewed removal, 756 hook executions and 21 integrated native scenarios verified. S3 is pushed in `4e75005`, SFTP and its setup deadline correction in `ff03b02`. FTP/FTPS (`13f9c36`), combined manual backup (`cf76976`), optional formats (`1c0fc45`) and persistent per-destination history (`c35e2b5`) are integrated; live/platform verification and journal ownership remain TODO; see completion. |
 | R33 | Separate Contacts Preferences section | Delivered |
 | R34 | Save-success toast and slightly depressed button state | Delivered, with acknowledgment-based toast and failure preservation |
-| R35 | Compose in preview pane, autosave while typing, read other mail and work on several replies/drafts | Autosave delivered; inline/multiple-draft UX open |
+| R35 | Compose in preview pane, autosave while typing, read other mail and work on several replies/drafts | Delivered e16590c: inline reply/new/forward editors, parked drafts, restart-safe recipients/files, reply quotes, normal text input, pending-save/removal guards, Find and conversation paging. Verification/shipping evidence is in the completion log; provider rekey/recovery remains R73 |
 | R36 | Collapsible Drafts group, right-click delete, discard bin in draft editor; red discard confirmation button | Delivered 5aab267; collapsed preference, context/bin review, red confirmation, retirement/rollback/outgoing tests and native flows |
 | R37 | Shortcut hints for buttons | Superseded by R51/R52: icon-only tooltip, primary key only and toggles |
 | R38 | Render HTML like supplied examples, including the later raw-XHTML tags; preserve layout/images and selectable text | Delivered 1968e37 / 32120b4: MIME/XHTML selection, worker-rendered static HTML, native text copy, plain mode, quotes, inline/remote images, wide tables and focused-reader keyboard scrolling; 270 Rust, 20 Python and all 81 native functional scenarios pass; installed optimized build |
 | R39 | Delete shortcut and optional second binding; final defaults Ctrl+D → Trash, Backspace + Delete → Archive; all remappable | Delivered in 590ab10: versioned slots/migration, conflict and native tests; older Delete-to-Trash default superseded |
 | R40 | Clicking Mail while already open from another folder returns to unified/first Inbox | Delivered in 590ab10, native unified/first-account Inbox tests |
 | R41 | Add Forward and Print controls in preview | Forward delivered in 9062dcf; Print delivered in b120721: complete cached MIME in Formatted/Plain mode, headers/CID images, background preparation, remappable Mod+P and browser printer/PDF selection; 289 Rust, 24 Python and 95 native functional scenarios verified (one startup-layout test rerun) |
-| R42 | Ctrl+A list selection, Ctrl-click, Shift-click, checkbox Select mode beside search, bulk toolbar/keybind actions and Y/N/Enter/Esc confirmations | Native selection, frozen bulk reviews, persistent bounded jobs, per-message outcomes, immediate counts/toasts and grouped Undo are implemented. Shipped in af056a9: 347 Rust tests and all 116 native scenarios pass; optimized Linux build installed. Explicit new-arrival selection, group/individual coordination and remaining native recovery paths keep R42 open |
+| R42 | Ctrl+A list selection, Ctrl-click, Shift-click, checkbox Select mode beside search, bulk toolbar/keybind actions and Y/N/Enter/Esc confirmations | Delivered in b352d12, building on 2444049: native multi-selection, frozen reviews, group toolbar/keybind actions, immediate feedback, partial results and Undo; History pagination, Continue, retry and explicit uncertainty review. Real fixture process close/crash/restart and empty Inbox coverage pass. All 127 native functional scenarios, 362 Rust tests and 32 Python tests pass; optimized Linux release installed and pushed. Broader individual/group ordering and provider ambiguity remain R50/R60; independent-process coordination remains R01/R06 |
 | R43 | Inbox (unread count) in sidebar | Delivered in 590ab10; cache counts ignore query/filter scope, with storage/native tests |
 | R44 | Ctrl+F within email; fast search; fuzzy matching library and exact body “test” ranked first | Delivered d3a530a / c266035: library-based relevance search plus remappable Ctrl+F in formatted/plain message bodies, literal Unicode/whitespace matching, case toggle, highlighted next/previous, visible quote scope, wide-table reveal and native keyboard isolation; 277 Rust, 20 Python and all 86 native functional scenarios pass |
-| R45 | Drag messages/selection from list into sidebar folders | Open |
+| R45 | Drag messages/selection from list into sidebar folders | Delivered in ca39080: single/group drops, destination outlines, hover expansion, sidebar scrolling, account rules, review/Undo, cancellation and shadow cleanup; ten saved drag scenarios and all 137 native functional flows pass; Linux release installed |
 | R46 | Highlight Move target used by Enter | Delivered in 590ab10; highlighted Inbox/Enter target and native visual evidence |
 | R47 | Cannot move out of A. Keep into Inbox; display Inbox rather than INBOX | In progress; local metadata confirms folders exist, native return-move and wire/logout tests exist; actual reported personal-account cause not confirmed |
 | R48 | I goes to Inbox only with sidebar focus; remappable and disableable | Delivered in 590ab10, including sidebar/list focus and native disable/remap tests |
-| R49 | Drive appDataFolder continuously syncs accounts and as many settings as possible; first-time offer/toggle; existing cloud setup automatically loads on another PC | Open; credential-protection preference question pending |
-| R50 | Flagging immediately reflects UI intent before database/network save; apply same treatment elsewhere appropriate | Flags/read/same-account moves delivered 742b21e; cross-account source feedback and typed results delivered 9c907d2; 90776fa adds observed pending identities and global unread count reconciliation across page scopes; filtered destination rows, ambiguous outcomes, other controls and durable recovery remain open |
+| R49 | Drive appDataFolder continuously syncs accounts and as many settings as possible; first-time offer/toggle; existing cloud setup automatically loads on another PC | In progress. First-device creation/recovery and reviewed existing-profile import are shipped (`071c6b0`), with shared-catalog discovery, safe local account IDs/reconnection and selected preference application; see COMPLETION. Automatic login prompts, linking existing workspaces, continuous changes, remaining portable settings and live interoperability remain. Credential-protection preference question pending. |
+| R50 | Flagging immediately reflects UI intent before database/network save; apply same treatment elsewhere appropriate | Flags/read/same-account moves delivered 742b21e; cross-account source feedback and typed results delivered 9c907d2; 90776fa adds observed pending identities and global unread count reconciliation across page scopes; the compact-mail conversation correction is shipped as `15a4a3c` and preserves the surviving Inbox anchor and newer reader intent through moves; 97c9a9a ships filtered unread header counts when optimistic flags remove rows; the isolated combined-folder-delete checkpoint with its verified bounded scalar-count correction, adds immediate query-wide membership/counts and selective rollback with newer reader/scope preservation and accepted-uncertainty restart evidence. Integration/push and broader combined/filtered-folder reconciliation, ambiguous outcomes, other controls and durable recovery remain open |
 | R51 | Remove newly added tooltips from text-labeled controls; tooltips only on icons | Delivered in 590ab10, labeled controls unwrapped and native visual checks |
 | R52 | Tooltip shows primary shortcut only; disable all tooltips or keyboard hints independently; searchable Preferences | Delivered in 590ab10; both tooltip toggles, primary-only hints, settings index/direct section navigation and native light/dark/compact tests |
 | R53 | Sync mail becomes refresh icon at top right | Delivered in 590ab10; mouse sync/busy/navigation native tests |
@@ -63,32 +144,59 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 | R55 | Audit whole conversation; maintain TODO.md immediately for every request; update AGENTS and remove items only when complete | Delivered: TODO.md and full audit plus immediate-tracking/removal rules in AGENTS.md; ongoing maintenance required |
 | R56 | No root log files; delete accidental ones | Ongoing requirement; all current agent logs use ignored artifacts/logs |
 | R57 | Preload messages, adjacent emails and next pages; WebP for image loading | Delivered baseline; maintain while large-mail/HTML work proceeds |
-| R58 | Additional useful features required | Existing sender actions, outgoing recovery, conversations, connection removal and calendar discovery delivered; Forward/Print/selection/settings sync remain explicit open requests |
+| R58 | Additional useful features required | Existing sender actions, outgoing recovery, conversations, connection removal and calendar discovery and forwarding and printing delivered; remaining selection refinements/settings sync remain explicit open requests |
 | R59 | Investigate and fix the newly failed CI build | Delivered eea1dfb; strict local build and GitHub run 34026001754 passed |
-| R60 | Immediate optimistic archive/move and app-wide reversible-action feedback; persist principle in AGENTS.md | Baseline delivered 742b21e; principle recorded, remaining app-wide audit under R50/R60 |
-| R61 | Raw GitHub installers for Linux/macOS/Windows, user-local default, optional system install and app menus; first install commands in README/docs | Recorded, open |
+| R60 | Immediate optimistic archive/move and app-wide reversible-action feedback; persist principle in AGENTS.md | Principle recorded; immediate flags/read/moves delivered in 742b21e and 9c907d2, with remaining reconciliation/recovery under R50/R60 |
+| R61 | Raw GitHub installers for Linux/macOS/Windows, user-local default, optional system install and app menus; first install commands in README/docs | Linux raw-wrapper/shared downloader checkpoint implements verified staging, per-user/native-menu installation, explicit all-user elevation and cancellation with nine isolated tests; README-first command is present. The macOS native-tool shell installer adds bundle/icon creation, checksums, rollback and explicit elevation with six isolated contract tests; the native PowerShell Windows installer adds binary-safe extraction, ICO/Start-menu creation, rollback and explicit staged elevation with seven isolated execution tests. Root hooks/shipping and actual OS/published-asset installation remain open; see completion. |
 | R62 | Fix nonworking read/unread and add integration coverage for basic mail behavior | Delivered 742b21e; IMAP NO detection, selective flags, dispatcher/cache/reopen/native coverage |
-| R63 | Fix shortcut × and extend native E2E coverage across functionality paths | Clear controls delivered 742b21e with per-slot persistence and native tests; final functionality coverage audit remains open |
-| R64 | Transparent GNOME desktop icon matching system theme | Recorded, open |
-| R65 | More frequent/reliable background sync independent of manual Refresh | Desktop delivered upstream d4ecb21 / 2965ae2; this older client worktree must preserve it during integration; mobile/browser lifecycle work remains open |
+| R63 | Fix shortcut × and extend native E2E coverage across functionality paths | Clear controls delivered 742b21e; native search-focus isolation and wrong-row clear regression delivered 9c907d2. Native key/click ordering and event-time field focus delivered b451777, installed/pushed: three native-widget tests, saved rapid-key baseline failure and passing native regressions. All 174 native scenarios have passing coverage across the 172/174 full run and final targeted reruns; detailed limitations are in COMPLETION. Final functionality coverage audit remains open. The client branch's badge re-enabling regression and input-under-load audit are recorded in its TODO entry. |
+| R64 | Transparent GNOME desktop icon matching system theme | Transparent approved-design vector/WebP/PNG assets, native Linux symbolic launcher/tray and macOS template checkpoint passes alpha/installer/platform checks plus nine reviewed native MCP flows. Root source is pushed as `15a4a3c`; personal install and actual GNOME/Windows/macOS shell review remain open; see completion. |
+| R65 | Frequent background sync (user prioritizes rapid arrival), immediate startup check and independent manual Refresh | Delivered d4ecb21; 15-second default, saved seconds interval, independent coalescing refresh, virtual-time and native arrival/retry tests. The client branch ported it (2965ae2 integration) with browser visible-tab and Flutter foreground checks; mobile/browser lifecycle work remains open |
 | R66 | Record Dungeonwalk vectoriser/remove.bg credential discovery in AGENTS.md | Delivered 742b21e; discovery pointer only, no keys copied |
-| R67 | Flutter Android/Apple, separate desktop-style browser client feature parity, same shadcn-inspired theme/configurability; corrected to root desktop + flutter/ + web/ + website/ in one monorepo | Worktree Flutter/browser surfaces and parity matrix implemented; full parity open; separate shep.flutter repository superseded |
-| R68 | K-9-style mail list, swipe icons/previews, configurable swipes | Preview gestures/icons/preferences tested on Android and Chromium; native provider integration and full accessibility review open |
-| R69 | Walkie Textie Flutter Playwright/native E2E, emulators/simulators, disabled CI and coordinated release tooling | Android integration/Appium and Playwright executed; Apple execution/signing and full release packaging open; CI/release stay disabled |
-| R70 | Delegated worktree promo website, screenshots, user-agent-aware install and other-platform/store links | Delegated worktree source reviewed and copied to combined review worktree; 61 browser tests pass, two clipboard skips; publishing/store targets open |
-| R71 | Separate web client at shep.so and shared network hosting; client-side credentials/Google login, no server storage | Separate browser and client-side cache connected to Rust gateway; production deployment and complete feature parity open |
-| R72 | Linux app stores/distribution | Recorded as requested TODO |
-| R73 | Keep feature parity with every desktop change; work only in worktrees for now | AGENTS reminder, parity matrix/checker and shared scenarios implemented; no main merge/push. Latest R74 authorizes VPS installation once configuration arrives |
-| R74 | Hosted beta login restricted initially to owner; Rust backend on existing email VPS for login verification and SMTP/other mail protocols; later allow more users | Rust allowlist/session/mail gateway and production-browser fixtures verified; supersedes static-only/local-bridge transport. VPS/OAuth/owner configuration and live verification pending |
-| R75 | Replace manual Google tokens with OAuth “Sign in with Google”; maintain parity across clients | Recorded, open; beta access login is separate from Google provider authorization |
-| R76 | Preferences out-of-office replies for individual/all accounts and separate groups, reusable messages, start/end times and easy assignment UX | Recorded, open; named Automatic replies entries, reusable messages/schedules, searchable account selection, saved groups/Select all and per-account provider results |
-| R79 | Install the current app on the owner’s Android phone using authorized wireless ADB | Production-flavor 0.1.0 ARM64 release built, development-signed and installed without clearing data; Android launch/package/process verified. Final screen check found the phone locked; evidence shipped in [`1ea12a6`](https://github.com/sam-ruff/shep.so/commit/1ea12a677829dcd71c4246b87cae46327f9c749f). |
-| R80 | Make sure visually that the app looks like the desktop app (9 September 2026) | Recorded, open: side-by-side reviewed screenshot comparison of Flutter and browser screens against the installed iced desktop in light/dark, fixing palette, typography, spacing, control and state differences while keeping touch-adapted mobile layout |
-| desktop-main:R67 | Select an inbox message, then click away to count it as read | Delivered 9c907d2: deliberate selection, immediate read-on-leave, explicit-unread protection, rollback and native navigation tests |
-| desktop-main:R68 | Refreshing counted toast with Undo for archive, delete and move | Delivered 9c907d2 / 551f86c: immediate counted feedback and grouped Undo before/after acknowledgment, original-account/folder restoration, verified server identities and persistent failed-reversal retry; 81 native functional flows pass, including immediate toasts and Undo while mail saves remain pending |
-| desktop-main:R69 | HTML layout moves during rendering, visual artifacts and slow readiness; investigate more pre-caching/rendering | Delivered across cd8f732, 6d83b72 and cc38af9: actual viewport loading, stale-frame isolation, retained fonts, bounded adjacent-frame preparation, stable controls, compact attachments/Find, late-image text anchoring and native Retry. All 104 native functional scenarios and 305 Rust/27 Python tests pass; release installed and pushed. Final idle-host timing remains R03/R09 |
-| desktop-main:R70 | New-email count badges on the dock/taskbar launcher, as in the supplied GNOME screenshot | Linux publication and preference delivered in 90776fa, with private-bus Update/Query/reconnect tests, global optimistic count reconciliation, 313 Rust/29 Python tests and all 108 native scenarios. Windows/macOS, actual dock rendering and remaining ambiguous/restart cases stay open |
-| desktop-main:R71 | Refresh icon looks malformed in the latest screenshot | Delivered for native Shep in cd8f732: shared Mail/Calendar SVG arrowheads corrected; normal/120% scale, light/dark and compact visual/native evidence; the browser crop was not separately reproduced |
+| R67 | Select an inbox message, then click away to count it as read | Delivered 9c907d2: deliberate selection, immediate read-on-leave, explicit-unread protection, rollback and native navigation tests |
+| R68 | Refreshing counted toast with Undo for archive, delete and move | Delivered 9c907d2 / 551f86c: immediate counted feedback and grouped Undo before/after acknowledgment, original-account/folder restoration, verified server identities and persistent failed-reversal retry; 81 native functional flows pass, including immediate toasts and Undo while mail saves remain pending |
+| R69 | HTML layout moves during rendering, visual artifacts and slow readiness; investigate more pre-caching/rendering | Delivered across cd8f732, 6d83b72 and cc38af9: actual viewport loading, stale-frame isolation, retained fonts, bounded adjacent-frame preparation, stable controls, compact attachments/Find, late-image text anchoring and native Retry. All 104 native functional scenarios and 305 Rust/27 Python tests pass; release installed and pushed. Final idle-host timing remains R03/R09 |
+| R70 | New-email count badges on the dock/taskbar launcher, as in the supplied GNOME screenshot | Linux shipped `90776fa`; Windows/macOS adapters integrated/pushed `1595fb3` with 751 hook executions and 12 native Linux scenarios, merged Windows and exact macOS adapter checking. Actual Windows/macOS runtime and remaining count reconciliation stay open; see completion. |
+| R71 | Refresh icon looks malformed in the latest screenshot | Delivered for native Shep in cd8f732: shared Mail/Calendar SVG arrowheads corrected; normal/120% scale, light/dark and compact visual/native evidence; the browser crop was not separately reproduced |
+| R72 | Highest priority: measure and greatly improve selection-to-visible HTML latency | Delivered ebddf54: reproduced the original 1.5–2.1 s worker delay; the same messages now take 47–63 ms. Corrected table reuse preserves pixels/height against the uncached corrected renderer. Eight native pixel cases pass (20 samples each; 100/50 ms gates), with 36 final native regressions and 427 Rust tests. Installed/pushed; detailed evidence and limits in COMPLETION/PERFORMANCE |
+| R73 | Moved messages do not appear in the destination folder | Partial delivery in acb33c0 and a81d767, installed/pushed: immediate destination membership/cached reading, durable original-MIME/copy receipts, bounded lookup, explicit recovery/review/local-copy controls, failure/retry/restart/navigation/close coverage. All 167 native flows, 484 Rust tests plus two drawing-adapter tests and release/hooks pass. Actual adapter wire/journal, broader Undo/history/alias integration and the personal-account report remain open alongside R47/R50. |
+| R74 | F5 default secondary Refresh; animate only explicitly requested refreshes | Delivered in 80f5867, installed/pushed with 2b4c480 test synchronization: conflict/clear-safe F5 migration, manual-only animation, SVG transform/clip repair, 492 Rust plus two adapter tests, and passing coverage for all 171 native scenarios across the full run and corrected rerun. Background checks remain still. |
+| R75 | Mail returns to Inbox but leaves the previous folder highlighted | Delivered 3f24823: Mail clears the previous outline, focuses the list and retargets subsequent sidebar navigation to Inbox; the sidebar Inbox accelerator retains sidebar focus. Unit/native unified/per-account coverage and reviewed light/dark captures; installed and pushed |
+| R76 | Match preview background to the email so white messages do not float in a dark surround | Delivered in ebddf54 and 1bf6ac9, installed/pushed: standalone and expanded conversation surfaces follow the document background, with readable controls, cached switching, refresh/scroll and light/dark/compact pixel coverage. |
+| R77 | Reply editor leaves overlapping text at its bottom edge while typing | Clipping correction delivered ebddf54: direct renderer regression fails before/passes after, native long-reply typing is clean in compact light/dark. e16590c integrates the inline composer; compact light/dark native typing/repaint checks pass and screenshots were reviewed. Preserve these regressions |
+| R78 | Scrolling the preview with other thread messages snaps back to the top | Delivered ebddf54: ordinary conversation refreshes preserve manual scroll; controller and saved native sync/scroll regression pass. Installed and pushed |
+| R79 | Use a square selection icon for Select and adjacent copy icons in sender details | Delivered ebddf54: square list selection icon and adjacent sender copy icons, generous targets and configurable icon tooltips; native toggling and actual clipboard paste checks pass. Installed and pushed |
+| R80 | Selection-mode row clicks always toggle one message while retaining other choices | Delivered ebddf54: plain selection-mode row clicks toggle one item, Shift adds ranges across pages, double-click reader preserved. Controller, modifiers, arrivals and real cross-page bulk review pass. Installed and pushed |
+| R81 | Default padding and a centered reading column for plain/minimally styled email | Delivered in 1bf6ac9, installed/pushed: padded/centered plain letters and simple HTML, conservative preservation of sender layouts, rendered geometry/font-size tests and native selection/Find/full/compact pixel checks. Copy regression coordinates updated in cc20ce0. |
+| R82 | Native Linux/Windows/macOS new-mail notification popups and sound, enabled by default and configurable | Installed/pushed ded5aca: separate popup/sound/details controls, persistent initial-import/identity deduplication, worker/private Linux bus/protocol tests and native preference/recovery scenarios. Windows cross-compilation passes; actual Windows/macOS delivery and macOS bundle integration remain open. |
+| R83 | Preferences export of the complete SQL database, including all emails, configuration and accounts, for moving to another PC | Delivered by export `3927053` and import/profile checkpoint `93d4289`, pushed to main. Complete validated import, pending-operation review/fencing, isolated profiles, rename and next-launch selection pass Rust/native tests; see COMPLETION. Passwords require reconnection; separately protected credential sharing remains R49. |
+| R84 | Search should search other folders, not just Inbox | Delivered in a81d767, installed/pushed: account-scoped search across cached folders, result locations, matching selection/relevance scopes, and storage/native search/move/bulk/clear/account/compact-layout tests. All 167 native functional scenarios pass. |
+| R85 | Conserve credits: write handover.md, clean TODO and push current project changes | Completed by the handover push; verification and checkpoint identity in COMPLETION.md. Full product remains unfinished |
+| R86 | Native close-to-tray; follow-up: temporarily use tray while saving even when ordinary close-to-tray is disabled, notify and quit after saving | Native tray, temporary saving notice, durable auto-quit and failure/Open recovery are implemented in the parallel lane; nine targeted Rust, 58 Python and all 26 selected native scenarios pass with reviewed WebPs. Full Windows GNU and exact macOS adapter checks pass; root integration 6728931 is pushed with32 native scenarios and745 hook executions passing. Ordinary-hide write-failure recovery ships in b8eafde with 748 hook executions and 16 native scenarios passing. Actual Windows/macOS execution and full macOS app checking remain open. See completion. |
+| R87 | Refresh icon should spin more slowly and clockwise; add to TODO and push | Delivered in `d29ce06`: 2.4-second clockwise turn; renderer and seven native scenarios pass; see completion log. |
+| R88 | Remove sender icons/avatars for shorter compact email-list rows, retain action buttons; unread highlight, dot and bold subject | Implemented in the compact-mail lane: 60px rows, shared virtualization/navigation geometry, measured ellipsis and visible unread states; 28 lane scenarios pass; root uses actual viewport reveal, with all 248 integrated native paths passing across the full run and corrected test setup reruns. Pushed as `15a4a3c`, with 769 hook executions and strict docs passing; see completion evidence |
+| R89 | Deleting a message should select the next message down and keep the list from snapping to the top | Shipped in 5a85ac3 and 91ed9a9: adjacent optimistic selection, stable scroll, previous/empty fallback and bounded page refill; six controller tests and 59 integrated native scenarios pass. Selected-account Unicode Move correction included; see completion evidence |
+| R90 | Sync/close seems excessively slow; investigate and fix any bug | `34cfc71`: channel-owned account scheduling interrupts held read-only sync for read/flag writes while preserving cache commits; 528 Rust/adapter, 49 Python and 185/185 native functional tests. Additional close continuation/capacity-wait checkpoint passes 29 targeted Rust, 57 Python and 15 selected native scenarios; integrated as `2733cc6` and pushed with 725 hook executions and 23 merged native scenarios passing. Pending-save tray and remaining personal-server diagnosis stay open. 9 September 2026: Sam asks for closing blocked by saving to be the first fix after lane consolidation; it is the first phase 2 lane in TODO |
+| R91 | Use channels rather than locks to manage state | Account/calendar scheduling, mail-cache connection/local leases, credential operations and profile catalog use bounded owning workers. Long database copying has its own connection/controller and does not hold the cache worker. Cache/credential cancellation/draining and profile/restart tests pass. Remaining Google lifecycle and backup-journal coordination stay in TODO; see completion/shipping evidence. |
+| R92 | Next priority: full DB import/export in Settings; Google OAuth/Drive account/profile sharing; first login on either client, new/existing devices, configurable toggles; Flutter interoperability document in shep-clients; follow-up: put OAuth implementation referencing that handover at the top of TODO | Handover, parity/scenario gaps and top-priority client TODO shipped in client-branch `02c4b32`, with verified audit `59578f3`. Database transfer/local profiles are covered by R83. Native first-device creation/recovery and category controls ship in `488a9ec`, with failed-settings/close recovery in `6860f50` and isolated MCP/protocol coverage; see the newest completion entry. Existing-profile discovery/import ships in `071c6b0`, with 22 affected native scenarios. OAuth/profile implementation remains explicitly first in TODO, linking the Flutter handover; after-login discovery/enrollment ships in `acb4969`, while continuous changes, live interoperability and the credential-protection choice remain open. The client branch's Flutter discovery, publication, enrollment and reconciliation checkpoints are recorded in its history below. |
+| R67 (client) | Flutter Android/Apple, separate desktop-style browser client feature parity, same shadcn-inspired theme/configurability; corrected to root desktop + flutter/ + web/ + website/ in one monorepo | Worktree Flutter/browser surfaces and parity matrix implemented; full parity open; separate shep.flutter repository superseded |
+| R68 (client) | K-9-style mail list, swipe icons/previews, configurable swipes | Preview gestures/icons/preferences tested on Android and Chromium; native provider integration and full accessibility review open |
+| R69 (client) | Walkie Textie Flutter Playwright/native E2E, emulators/simulators, disabled CI and coordinated release tooling | Android integration/Appium and Playwright executed; Apple execution/signing and full release packaging open; CI/release stay disabled |
+| R70 (client) | Delegated worktree promo website, screenshots, user-agent-aware install and other-platform/store links | Delegated worktree source reviewed and copied to combined review worktree; 61 browser tests pass, two clipboard skips; publishing/store targets open |
+| R71 (client) | Separate web client at shep.so and shared network hosting; client-side credentials/Google login, no server storage | Separate browser and client-side cache connected to Rust gateway; production deployment and complete feature parity open |
+| R72 (client) | Linux app stores/distribution | Recorded as requested TODO |
+| R73 (client) | Keep feature parity with every desktop change; work only in worktrees for now | AGENTS reminder, parity matrix/checker and shared scenarios implemented. Since the 2026-09-09 merge, main is the single integration branch and desktop changes arrive there rather than through ports. Latest R74 authorizes VPS installation once configuration arrives |
+| R74 (client) | Hosted beta login restricted initially to owner; Rust backend on existing email VPS for login verification and SMTP/other mail protocols; later allow more users | Rust allowlist/session/mail gateway and production-browser fixtures verified; supersedes static-only/local-bridge transport. VPS/OAuth/owner configuration and live verification pending |
+| R75 (client) | Replace manual Google tokens with OAuth “Sign in with Google”; maintain parity across clients | Recorded, open; beta access login is separate from Google provider authorization |
+| R76 (client) | Preferences out-of-office replies for individual/all accounts and separate groups, reusable messages, start/end times and easy assignment UX | Recorded, open; named Automatic replies entries, reusable messages/schedules, searchable account selection, saved groups/Select all and per-account provider results |
+| R77 (client) | Push all current client work as soon as possible | Completed by `d80f539` on `feat/mobile-web-clients`; see the R77 section below |
+| R78 (client) | Conserve credits: write the client handover, clean TODO and push | Completed by the client handover push (`d4da04c`); see the R78 paragraph below. The user resumed the full client goal on 2026-09-08 |
+| R79 (client) | Install the current app on the owner’s Android phone using authorized wireless ADB | Production-flavor 0.1.0 ARM64 release built, development-signed and installed without clearing data; Android launch/package/process verified. Final screen check found the phone locked; evidence shipped in [`1ea12a6`](https://github.com/sam-ruff/shep.so/commit/1ea12a677829dcd71c4246b87cae46327f9c749f). |
+| R80 (client) | Make sure visually that the app looks like the desktop app (9 September 2026) | Recorded, open: side-by-side reviewed screenshot comparison of Flutter and browser screens against the installed iced desktop in light/dark, fixing palette, typography, spacing, control and state differences while keeping touch-adapted mobile layout |
+
+## Client history (feat/mobile-web-clients)
+
+The following paragraphs were written on the client branch, in their original order. Desktop request numbers written as `desktop-main:RNN` are main's RNN.
 
 The main omissions were already present in the completion log but were not an adequate live checklist: faithful HTML, local encryption/large-mail streaming, folder trees/mutations, inline multiple drafts/discard, palette editing, multiple backup targets and continuous settings/account sync. The newer bulk-selection, drag/drop, find, optimistic feedback, tooltip/settings-search and context-menu requests are now explicit TODO entries. Passing the existing suite does not close them.
 
@@ -723,3 +831,72 @@ now changes preferences after a lost acknowledgment and resumes the same import.
 Validation, retained failures and shipping are recorded in [completion](COMPLETION.md).
 All 40 active requests remain; ongoing Flutter reconciliation and full parity are
 not completed by this receipt prerequisite.
+## Desktop history (main)
+
+The following paragraphs were written on `main`, in their original order.
+
+The main omissions were already present in the completion log but were not an adequate live checklist: faithful HTML, local encryption/large-mail streaming, folder trees/mutations, inline multiple drafts/discard, palette editing, multiple backup targets and continuous settings/account sync. Every request remains traceable above; TODO tracks unfinished work, including the remaining optimistic-state reconciliation and final coverage audit. Passing unrelated tests does not close a request.
+
+
+9 September continuation: R02/R49/R92 now has named shared-catalog discovery and
+native reviewed existing-profile import, including safe local account identities,
+reconnection gating, selected settings and idempotent application. The newest
+completion entry records 22 native scenarios and backend coverage. Continuous
+updates, automatic login prompts, credential protection and real cross-client
+Google verification remain open. R92's OAuth/handover follow-up remains first in
+TODO. Source `071c6b0` is pushed; mandatory hooks passed 683 test executions. See the newest completion entry.
+
+R90 shutdown review follow-up: matching attachment/discard/forward failures cancel
+pending close; obsolete results retain newer dependencies. Three App::update tests
+cover both result identities and late BulkStopped. Nine selected native scenarios
+pass, including three saved failure/close/retry flows with reviewed WebPs. The
+close filter passes 32 Rust tests; Python passes 57. Awaiting mandatory hooks and
+root integration/shipping; native tray and personal-server diagnosis remain open.
+
+R86 native-tray checkpoint: searchable persisted close preference, native Open/Quit,
+background daemon/window ownership, temporary-saving notice and durable auto-exit,
+reopening on failure/host loss, and native attachment-chooser safety are implemented.
+Nine targeted Rust and 58 Python tests pass; all 26 selected native scenarios pass,
+including final picker coverage and reviewed light/compact-dark/native menu WebPs. Full Windows GNU checking and exact macOS adapter checking
+pass, with actual OS execution and full macOS app checking explicitly outstanding.
+See the completion log; root integration/shipping and mandatory hook recording
+remain pending, so R86/R90 are retained in TODO.
+
+Account connection-reversion groundwork tracks incoming/SMTP intent independently
+of account names, including changes reverted before a pull and after restart.
+All 102 matching profile tests pass; explicit endpoint/removal controls remain
+R02/R49. Connection-reversion tracking is integrated and pushed as `ff03b02`; see the completion log.
+
+Palette editing (R25), S3 setup/recovery (R32) and matching native account imports
+(R02/R49) are integrated and pushed as `4e75005`: 798 root hook executions, all
+81 Python and 88 selected native scenarios pass. R25 is complete; the remaining
+provider, shared palette, endpoint/removal and credential work stays in TODO.
+
+R30/R50 folder selection and filtered-header fixes are pushed as `97c9a9a`,
+with 818 hook executions, 81 Python and 19 integrated native scenarios passing.
+FTP/FTPS and shared account credential guards are pushed as `13f9c36`
+with 834 hook executions and 13 selected native scenarios passing; remaining backend/options and account review work stays in TODO.
+
+R02/R49 reconnection follow-up: tests and saves reject saved credentials while a
+shared account requires reconnection; fresh input, separate/no-auth SMTP, cache
+preservation, failed-write restart and normal local reuse have four passing
+engine regressions. They are integrated and pushed as `13f9c36`.
+
+R63 first-profile fixture follow-up: explicit held upload and batch release
+replace stacked record delays while preserving pending-navigation assertions
+and completion timeout. Three HTTP/isolation/cleanup tests, all 84 Python tests
+and eight integrated native scenarios pass; mandatory hooks/publication remain.
+
+Integrated foundation/account-review/backup-format/folder-deletion verification covers all 273 native correctness scenarios across the interrupted 269-pass run and four unchanged passing tray reruns, 850 Rust tests, 84 Python tests and full Windows GNU checking. Exact source, artifacts and shipping status are recorded at the top of [Completion](COMPLETION.md); 915 normal hook executions pass and the checkpoint is pushed as `1c0fc45`.
+
+R02/R49 shared account-removal review is in `codex/profile-account-removals`:
+Keep suppression preserves local account/mail identity; reviewed local removal
+uses the normal confirmation and clears stale controls. Eight initial targeted
+Rust tests, all 98 profile tests and three native flows pass; the final source
+adds a stale-card controller regression and passes all 35 native profile
+scenarios in 171.199 seconds with reviewed final screenshots. Main integration,
+normal hooks and shipping remain pending.
+
+## Merge record
+
+2026-09-09: `main` (`c414227`) was merged into `feat/mobile-web-clients` (`724f764`). The desktop profile sync implementation from `main` replaced the client branch's own desktop implementation under the "main wins for root code" rule; the shared profile-core crate became a superset of both sides, main's `a81d767`/`5eabb52` provider changes were ported into `shared/mail-core`, and the pre-commit hook became the union of both branches' gates. From this point desktop changes reach the client branch through `main` rather than through ports, and every unfinished requirement from both sides remains in [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md). See the matching [completion entry](COMPLETION.md) for gate results.

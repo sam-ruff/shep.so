@@ -10,11 +10,6 @@ impl Default for Slots {
     }
 }
 impl Slots {
-    pub(super) fn try_acquire(
-        &self,
-    ) -> Result<tokio::sync::OwnedSemaphorePermit, tokio::sync::TryAcquireError> {
-        self.0.clone().try_acquire_owned()
-    }
     pub(super) async fn acquire(&self) -> tokio::sync::OwnedSemaphorePermit {
         self.0
             .clone()
@@ -35,6 +30,7 @@ pub struct CommandSender {
     printing: mpsc::Sender<Command>,
     selections: mpsc::Sender<Command>,
     bulk: mpsc::Sender<Command>,
+    database: mpsc::Sender<Command>,
     profiles: mpsc::Sender<Command>,
 }
 
@@ -47,6 +43,7 @@ pub(super) struct Inputs {
     printing: mpsc::Receiver<Command>,
     selections: mpsc::Receiver<Command>,
     pub(super) bulk: mpsc::Receiver<Command>,
+    database: mpsc::Receiver<Command>,
     profiles: mpsc::Receiver<Command>,
 }
 
@@ -56,12 +53,17 @@ impl CommandSender {
         let (sender, inputs) = Self::channel();
         (sender, inputs.profiles)
     }
-
     #[cfg(test)]
-    pub(crate) fn profile_save_test_channels()
+    pub(crate) fn database_test_channels()
     -> (Self, mpsc::Receiver<Command>, mpsc::Receiver<Command>) {
         let (sender, inputs) = Self::channel();
-        (sender, inputs.profiles, inputs.persistence)
+        (sender, inputs.database, inputs.persistence)
+    }
+    #[cfg(test)]
+    pub(crate) fn backup_test_channels() -> (Self, mpsc::Receiver<Command>, mpsc::Receiver<Command>)
+    {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.persistence, inputs.network)
     }
 
     #[cfg(test)]
@@ -71,9 +73,29 @@ impl CommandSender {
     }
 
     #[cfg(test)]
+    pub(crate) fn foreground_test_channel() -> (Self, mpsc::Receiver<Command>) {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.reads)
+    }
+
+    #[cfg(test)]
     pub(crate) fn persistence_test_channel() -> (Self, mpsc::Receiver<Command>) {
         let (sender, inputs) = Self::channel();
         (sender, inputs.persistence)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn draft_review_test_channels()
+    -> (Self, mpsc::Receiver<Command>, mpsc::Receiver<Command>) {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.persistence, inputs.reads)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn close_test_channels() -> (Self, mpsc::Receiver<Command>, mpsc::Receiver<Command>)
+    {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.selections, inputs.network)
     }
 
     #[cfg(test)]
@@ -91,6 +113,7 @@ impl CommandSender {
         let (printing, print_input) = mpsc::channel(2);
         let (selections, selection_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (bulk, bulk_input) = mpsc::channel(1);
+        let (database, database_input) = mpsc::channel(1);
         let (profiles, profile_input) = mpsc::channel(CHANNEL_CAPACITY);
         (
             Self {
@@ -102,6 +125,7 @@ impl CommandSender {
                 printing,
                 selections,
                 bulk,
+                database,
                 profiles,
             },
             Inputs {
@@ -113,6 +137,7 @@ impl CommandSender {
                 printing: print_input,
                 selections: selection_input,
                 bulk: bulk_input,
+                database: database_input,
                 profiles: profile_input,
             },
         )
@@ -137,7 +162,15 @@ impl CommandSender {
             };
         }
         let channel = match &command {
-            Command::Profiles(_) => &self.profiles,
+            Command::ProfileSync(..) => &self.profiles,
+            Command::Database(_) => &self.database,
+            Command::Folder(request) => {
+                if request.is_read() {
+                    &self.reads
+                } else {
+                    &self.selections
+                }
+            }
             Command::Print(..) => &self.printing,
             Command::Selection(..)
             | Command::ReviewSelection(..)
@@ -150,6 +183,9 @@ impl CommandSender {
             Command::BulkRun(_) => &self.bulk,
             Command::Query(_, _, true) | Command::Detail { prefetch: true, .. } => &self.prefetch,
             Command::Query(..)
+            | Command::BackupHistory(..)
+            | Command::Profiles(..)
+            | Command::MoveRecoveries(..)
             | Command::Detail { .. }
             | Command::Conversation(..)
             | Command::RemovalPreview(..)
@@ -157,7 +193,6 @@ impl CommandSender {
             | Command::BulkJobs(..)
             | Command::BulkItems(..) => &self.reads,
             Command::SavePreferences(..)
-            | Command::SaveProfilePreferences(..)
             | Command::SaveDraft(_)
             | Command::AutoSaveDraft(_)
             | Command::DeleteDraft(_)
@@ -182,7 +217,6 @@ impl Engine {
             }
         };
         tokio::join!(
-            self.clone().run_profiles(input.profiles, output.clone()),
             self.clone()
                 .run_mail_sync(input.sync, output.clone(), background),
             self.clone().run_reads(input.reads, output.clone(), 2),
@@ -193,6 +227,10 @@ impl Engine {
             self.clone()
                 .run_persistence(input.persistence, output.clone()),
             self.clone().run_bulk_queue(input.bulk, output.clone()),
+            self.clone()
+                .run_database_transfers(input.database, output.clone()),
+            self.clone()
+                .run_profile_sync(input.profiles, output.clone()),
             self.run_network(input.network, output),
         );
     }
@@ -242,20 +280,27 @@ impl Engine {
         let mut timer = tokio::time::interval(Duration::from_secs(60));
         timer.tick().await;
         let mut last_calendar_sync = Instant::now();
-        let mut last_backup_attempt: Option<(BackupTarget, Instant)> = None;
+        let mut last_backup_attempt = std::collections::HashMap::<String, Instant>::new();
         loop {
             tokio::select! {
                 biased;
                 result=jobs.join_next(),if !jobs.is_empty()=>{
                     if let Some(Ok((key,result)))=result{
-                        if let Some(key)=key{busy.remove(&key);let _=output.send(Event::Busy(key,false)).await;}
+                        // Failure must reach the UI before releasing its close
+                        // dependency; otherwise it may quit on Busy(false).
                         if let Err(e)=result{let _=output.send(Event::Error(format!("{e:#}"))).await;}
+                        if let Some(key)=key{busy.remove(&key);let _=output.send(Event::Busy(key,false)).await;}
                     }
                 }
                 command=input.recv(),if jobs.len()<NETWORK_CONCURRENCY=>{
                     let Some(command)=command else{break;};
                     let key=command.key();
-                    if key.as_ref().is_some_and(|k|busy.contains(k)){continue;}
+                    if key.as_ref().is_some_and(|k|busy.contains(k)){
+                        if let Command::BackupIncluded(request, _, target) = command {
+                            let _ = output.send(Event::BackupRun(request, target, backup::run::Status::Failed("This destination is already working. Wait for it to finish, then retry.".into()))).await;
+                        }
+                        continue;
+                    }
                     if let Some(key)=&key{busy.insert(key.clone());let _=output.send(Event::Busy(key.clone(),true)).await;}
                     let engine=engine.clone();let output=output.clone();
                     jobs.spawn(async move {
@@ -265,7 +310,7 @@ impl Engine {
                         // merely because the whole archive takes over ten minutes.
                         // Restore also must observe its blocking SQLite commit;
                         // dropping its future cannot cancel that transaction.
-                        let result = if matches!(&command, Command::Move(..) | Command::Transfer(..) | Command::UndoMove(..) | Command::Flags(..) | Command::Backup(..) | Command::AutomaticBackup(_) | Command::Restore(..) | Command::Send(_) | Command::DisconnectGoogle(_) | Command::CleanupGoogle | Command::GoogleLogin(..) | Command::ResolveOutgoing(..) | Command::RepairOutgoing | Command::IndexConversations | Command::ConnectCalendars(..) | Command::SaveAccount(..) | Command::RemoveConnection(..) | Command::CleanupCredentials | Command::RestoreGoogleCalendars) {
+                        let result = if matches!(&command, Command::Move(..) | Command::Transfer(..) | Command::UndoMove(..) | Command::RecoverMailMove(..) | Command::Flags(..) | Command::Backup(..) | Command::AutomaticBackup(_) | Command::BackupIncluded(..) | Command::RetryBackupHistory(..) | Command::ConnectS3(..) | Command::ConnectSftp(..) | Command::ConnectFtp(..) | Command::Restore(..) | Command::Send(_) | Command::DisconnectGoogle(_) | Command::CleanupGoogle | Command::GoogleLogin(..) | Command::ResolveOutgoing(..) | Command::RepairOutgoing | Command::IndexConversations | Command::ConnectCalendars(..) | Command::SaveAccount(..) | Command::RemoveConnection(..) | Command::CleanupCredentials | Command::RestoreGoogleCalendars) {
                             engine.execute(command, output).await
                         } else {
                             tokio::time::timeout(Duration::from_secs(600), engine.execute(command, output)).await
@@ -285,14 +330,25 @@ impl Engine {
                                 (Some("calendar".into()), worker.execute(Command::SyncCalendar, events).await)
                             });
                         }
-                        let target = BackupTarget::from_preferences(&prefs);
-                        let interval = Duration::from_secs(prefs.backup_hours * 3600);
-                        let retry_due = last_backup_attempt.as_ref().is_none_or(|(previous, at)| *previous != target || at.elapsed() >= interval);
-                        if prefs.auto_backup && prefs.backup_ready && retry_due && chrono::Utc::now().timestamp()-prefs.last_backup.unwrap_or(0)>=interval.as_secs()as i64&&!busy.contains("backup")&&jobs.len()<NETWORK_CONCURRENCY {
-                                last_backup_attempt = Some((target.clone(), Instant::now()));
-                                busy.insert("backup".into());let _=output.send(Event::Busy("backup".into(),true)).await;
-                                let engine=engine.clone();let output=output.clone();jobs.spawn(async move{let _slot = engine.provider_slots.acquire().await; (Some("backup".into()),engine.execute(Command::AutomaticBackup(target),output).await)});
+                        let configured = backup::config::configurations(&prefs);
+                        let valid_keys: HashSet<_> = configured.iter().map(|p| BackupTarget::from_preferences(p).work_key()).collect();
+                        last_backup_attempt.retain(|key, _| valid_keys.contains(key));
+                        for configured in configured {
+                            let target = BackupTarget::from_preferences(&configured);
+                            let key = target.work_key();
+                            let interval = Duration::from_secs(configured.backup_hours * 3600);
+                            let retry_due = last_backup_attempt.get(&key).is_none_or(|at| at.elapsed() >= interval);
+                            if configured.auto_backup && configured.backup_ready && retry_due && chrono::Utc::now().timestamp() - configured.last_backup.unwrap_or(0) >= interval.as_secs() as i64 && !busy.contains(&key) && jobs.len() < NETWORK_CONCURRENCY {
+                                last_backup_attempt.insert(key.clone(), Instant::now());
+                                busy.insert(key.clone());
+                                let _ = output.send(Event::Busy(key.clone(), true)).await;
+                                let engine = engine.clone(); let output = output.clone();
+                                jobs.spawn(async move {
+                                    let _slot = engine.provider_slots.acquire().await;
+                                    (Some(key), engine.execute(Command::AutomaticBackup(target), output).await)
+                                });
                             }
+                        }
                     }
                 }
             }
@@ -303,6 +359,96 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn backup_all_busy_destination_acknowledges_each_attempt_without_duplicate_work() {
+        let engine = super::super::calendar_tests::engine();
+        let mut held = Vec::new();
+        for _ in 0..NETWORK_CONCURRENCY {
+            held.push(engine.provider_slots.acquire().await);
+        }
+        let (commands, input) = mpsc::channel(4);
+        let (output, mut events) = futures::channel::mpsc::channel(16);
+        let worker = Running(tokio::spawn(engine.run_network(input, output)));
+        let target = BackupTarget::Local("/fixture-only".into());
+        commands
+            .send(Command::BackupIncluded(1, "first".into(), target.clone()))
+            .await
+            .unwrap();
+        assert!(matches!(events.next().await, Some(Event::Busy(_, true))));
+        commands
+            .send(Command::BackupIncluded(2, "first".into(), target))
+            .await
+            .unwrap();
+        let duplicate = tokio::time::timeout(Duration::from_secs(5), events.next())
+            .await
+            .unwrap();
+        assert!(
+            matches!(duplicate, Some(Event::BackupRun(2, _, backup::run::Status::Failed(message))) if message.contains("already working"))
+        );
+        // The duplicate result is delivered while the original remains held.
+        drop(held);
+        let result = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut observations = Vec::new();
+            while let Some(event) = events.next().await {
+                let finished = matches!(event, Event::Busy(_, false));
+                observations.push(event);
+                if finished {
+                    break;
+                }
+            }
+            observations
+        })
+        .await
+        .unwrap();
+        assert!(
+            result
+                .iter()
+                .any(|e| matches!(e, Event::BackupRun(1, _, backup::run::Status::Failed(_))))
+        );
+        assert!(
+            !result
+                .iter()
+                .any(|e| matches!(e, Event::BackupRun(2, _, _) | Event::Busy(_, true)))
+        );
+        drop(worker);
+    }
+
+    #[tokio::test]
+    async fn failed_write_reports_error_before_releasing_its_close_dependency() {
+        let engine = super::super::calendar_tests::engine();
+        let account: Account = serde_json::from_value(serde_json::json!({
+            "id":"close-fixture", "name":"Fixture", "email":"fixture@example.test",
+            "protocol":"Imap", "host":"imap.example.test", "port":993,
+            "username":"fixture", "smtp_host":"smtp.example.test", "smtp_port":465
+        }))
+        .unwrap();
+        let (commands, input) = mpsc::channel(1);
+        let (output, mut events) = futures::channel::mpsc::channel(8);
+        let worker = Running(tokio::spawn(engine.run_network(input, output)));
+        commands
+            .send(Command::SaveAccount(account, "".into(), "".into()))
+            .await
+            .unwrap();
+        let events = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut received = Vec::new();
+            while let Some(event) = events.next().await {
+                let done =
+                    matches!(&event, Event::Busy(key, false) if key == "account:close-fixture");
+                received.push(event);
+                if done {
+                    return received;
+                }
+            }
+            panic!("Worker ended before releasing the close dependency");
+        })
+        .await
+        .unwrap();
+        assert!(matches!(&events[0], Event::Busy(key, true) if key == "account:close-fixture"));
+        assert!(matches!(&events[1], Event::Error(error) if error.contains("preview")));
+        assert!(matches!(&events[2], Event::Busy(key, false) if key == "account:close-fixture"));
+        drop(worker);
+    }
 
     #[tokio::test]
     async fn manual_refresh_has_a_coalescing_queue_independent_of_provider_backpressure() {
@@ -332,24 +478,30 @@ mod tests {
 
     #[tokio::test]
     async fn cached_reads_and_ordered_saves_complete_with_all_network_jobs_and_queue_occupied() {
-        let store = Store::memory().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::open(directory.path().join("cache.sqlite")).unwrap();
         let mail = parse_mail("test-account", "1", "INBOX",
             b"From: Test <test@example.com>\r\nTo: reader@example.com\r\nSubject: Still readable\r\n\r\nCached content while the server is unavailable.".to_vec(), true, false).unwrap();
         let id = mail.summary.id.clone();
         store.upsert(vec![mail]).await.unwrap();
         let engine = Engine {
+            profiles: Some(crate::profiles::Session {
+                catalog: crate::profiles::Catalog::open(directory.path(), "cache.sqlite").unwrap(),
+                current: crate::profiles::Id::Legacy,
+            }),
+            credentials: Default::default(),
             store: store.clone(),
             google: Default::default(),
             demo: true,
-            account_locks: Default::default(),
-            calendar_locks: Default::default(),
+            account_work: Default::default(),
+            calendar_work: Default::default(),
             calendar_setup_lock: Default::default(),
             connection_lifecycle_lock: Default::default(),
-            secret_remover: Arc::new(removals::OsSecretRemover),
-            outbound: Arc::new(providers::outgoing::Servers),
+            secret_remover: Arc::new(removals::OsSecretRemover::default()),
+            outbound: Arc::new(providers::outgoing::Servers::default()),
             google_connection_lock: Default::default(),
-            passphrases: Arc::new(backup::OsPassphraseStore),
-            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
+            passphrases: Arc::new(backup::OsPassphraseStore::default()),
+            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer::default()),
             backup_uploads: Default::default(),
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),
@@ -382,6 +534,17 @@ mod tests {
             Err(error) if matches!(*error, mpsc::error::TrySendError::Full(_))
         ));
         sender
+            .try_send(Command::ProfileSync(
+                crate::profile_sync::commands::Request::Change {
+                    request: 79,
+                    changes: crate::profile_sync::enrollment::Changes {
+                        accounts: Some(false),
+                        ..Default::default()
+                    },
+                },
+            ))
+            .unwrap();
+        sender
             .try_send(Command::Query(42, MailQuery::default(), false))
             .unwrap();
         sender
@@ -400,7 +563,8 @@ mod tests {
                 Preferences {
                     reader_font_size: 12,
                     ..Default::default()
-                },
+                }
+                .into(),
             ))
             .unwrap();
         sender
@@ -409,7 +573,8 @@ mod tests {
                 Preferences {
                     reader_font_size: 18,
                     ..Default::default()
-                },
+                }
+                .into(),
             ))
             .unwrap();
         let draft = Draft {
@@ -446,10 +611,21 @@ mod tests {
             ))
             .unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
-            let (mut page, mut detail, mut saved, mut conversation, mut selected) =
-                (false, false, false, false, false);
-            while !(page && detail && saved && conversation && selected) {
+            let (mut page, mut detail, mut saved, mut conversation, mut selected, mut profile) =
+                (false, false, false, false, false, false);
+            while !(page && detail && saved && conversation && selected && profile) {
                 match events.next().await.expect("Dispatcher stopped") {
+                    Event::ProfileSync(
+                        79,
+                        crate::profile_sync::commands::Update::Status(snapshot),
+                    ) => {
+                        assert!(!snapshot.enrollment.options.accounts);
+                        assert!(!snapshot.enrollment.options.enabled);
+                        profile = true;
+                    }
+                    Event::ProfileSync(_, crate::profile_sync::commands::Update::Failed(error)) => {
+                        panic!("Profile control failed: {error}")
+                    }
                     Event::Selection(45, result) => {
                         let snapshot = result.unwrap().unwrap();
                         assert_eq!(snapshot.selected, 1);
@@ -524,6 +700,64 @@ mod tests {
         })
         .await
         .expect("Forward waited for blocked provider jobs");
+        let destination = directory.path().join("export.sqlite");
+        sender
+            .try_send(Command::Database(crate::transfer::Request::Export {
+                request: 78,
+                destination: destination.clone(),
+                replace: false,
+            }))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Event::Database(78, crate::transfer::Update::Finished(result)) = events.next().await.unwrap() {
+                    assert!(matches!(result.unwrap(), crate::transfer::Outcome::Saved { path, .. } if path == destination));
+                    break;
+                }
+            }
+        }).await.expect("Database export waited for blocked provider jobs");
+        // The isolated import path accepts only explicitly marked fixtures.
+        // The exact same saved export can be reviewed while every provider is
+        // held and the provider queue remains full.
+        {
+            let exported = rusqlite::Connection::open(&destination).unwrap();
+            exported
+                .pragma_update(None, "application_id", 0x5348_5054)
+                .unwrap();
+        }
+        sender
+            .try_send(Command::Database(crate::transfer::Request::Import {
+                request: 79,
+                source: destination,
+            }))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Event::Database(79, crate::transfer::Update::Review(review)) =
+                    events.next().await.unwrap()
+                {
+                    assert_eq!(review.messages, 1);
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("Database import waited for blocked provider jobs");
+        sender
+            .try_send(Command::Database(crate::transfer::Request::Cancel(79)))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Event::Database(79, crate::transfer::Update::ImportFinished(result)) =
+                    events.next().await.unwrap()
+                {
+                    assert!(result.unwrap().is_none());
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("Cancelling a reviewed import waited for blocked provider jobs");
         sender
             .try_send(Command::Print(77, id, Default::default()))
             .unwrap();

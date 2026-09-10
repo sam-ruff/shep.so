@@ -3,31 +3,44 @@ mod action_toasts;
 mod backups;
 mod bulk;
 mod calendar_setup;
+mod closing;
 mod components;
 mod composing;
 mod context_menu;
 mod conversations;
+mod database_import;
+mod database_transfers;
+mod drag_mail;
 mod ellipsis;
 mod find_message;
+mod folder_controls;
 #[cfg(test)]
 mod google_lifecycle_tests;
 mod html_reader;
 mod layout;
 mod mail_actions;
+mod mail_list;
 mod mail_selection;
+mod move_recovery;
+mod native_input;
+mod notifications;
 mod outgoing;
+mod palette;
+mod pointer;
 mod preference_sync;
 mod printing;
-mod profile_preferences;
+mod profile_sync;
 mod profiles;
 mod read_tracking;
 mod reading;
 #[cfg(test)]
 mod reading_tests;
+mod refresh;
 mod removals;
 mod selectable;
 mod settings_search;
 mod sidebar;
+mod tray;
 mod views;
 
 use crate::{
@@ -40,7 +53,7 @@ use crate::{
 use chrono::{Datelike, NaiveDate, TimeZone};
 use components::*;
 use iced::{
-    Element, Size, Subscription, Task, Theme, event,
+    Element, Size, Subscription, Task, Theme,
     keyboard::{self, Key},
     widget::{self, text_editor},
 };
@@ -65,10 +78,12 @@ pub enum SettingsTab {
     Shortcuts,
     Privacy,
     Contacts,
-    Profiles,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
+    FolderChange,
+    FolderHistory,
+    MoveRecovery,
     BulkReview,
     BulkHistory,
     Removal,
@@ -77,11 +92,11 @@ pub enum Dialog {
     Account,
     Calendar,
     Move,
-    Compose,
     DiscardDraft,
     Event,
     Export,
     Restore,
+    RemoveBackup,
     Sender,
 }
 
@@ -93,14 +108,16 @@ enum MailPane {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Folders(folder_controls::Message),
+    MoveRecovery(move_recovery::Message),
     WindowUnfocused,
     Html(html_reader::Message),
     Find(find_message::Message),
     HtmlScaleRequest(iced::window::Id),
     Backend(Event),
-    Profiles(profiles::Message),
     Bulk(bulk::Message),
     Tick,
+    RefreshFrame(Instant),
     Noop,
     Tab(Tab),
     SettingsTab(SettingsTab),
@@ -130,6 +147,7 @@ pub enum Message {
     MoveFirst,
     Focus(&'static str, u8),
     FocusChecked(&'static str, bool),
+    RevealSidebar(String, u8),
     ToggleStar,
     ToggleRead,
     Reply,
@@ -139,7 +157,12 @@ pub enum Message {
     ChooseAttachments,
     ChosenAttachments(Draft, Vec<std::path::PathBuf>),
     RemoveDraftAttachment(String),
+    NewMessage,
     ShowRecipients,
+    ComposeField(&'static str, String),
+    CloseComposer,
+    ToggleComposer,
+    IncludeOriginal(bool),
     SaveDraft,
     Send,
     Field(&'static str, String),
@@ -165,9 +188,35 @@ pub enum Message {
     CalendarBack,
     SavePreferences,
     Appearance(Appearance),
+    TestS3Connection,
+    TestSftpConnection,
+    TestFtpConnection,
+    FtpSecurity(crate::backup::ftp::Security),
+    ProbeSftpFingerprint,
+    VerifySftpFingerprint(bool),
+    AcceptSftpFingerprint,
+    S3PathStyle(bool),
+    AddBackupDestination,
+    SelectBackupDestination(String),
+    ReviewBackupRemoval,
+    RemoveBackupDestination,
+    PaletteTheme(bool),
+    PaletteRole(crate::appearance::Role),
+    PaletteValue(String),
+    PaletteReset,
+    PaletteDiscard,
+    PaletteApply,
     BackupDestination(BackupDestination),
     BackupAccounts(bool),
+    BackupCompression(bool),
+    BackupEncryption(bool),
+    ToggleBackupHistory,
+    RefreshBackupHistory,
+    RetryBackupHistory(String),
     AutoBackup(bool),
+    IncludeBackup(String, bool),
+    BackupAll,
+    RetryBackup(String),
     GoogleLogin(bool),
     GoogleDriveAccess(bool),
     GoogleCalendarAccess(GoogleCalendarRequest),
@@ -178,8 +227,7 @@ pub enum Message {
     ListBackups,
     Restore(String),
     ConfirmRestore,
-    Key(Key, keyboard::Modifiers, bool),
-    KeyFocusChecked(Key, keyboard::Modifiers, bool),
+    Key(Key, keyboard::Modifiers, bool, native_input::Focus),
     Remap(Action, Slot),
     ClearShortcut(Action, Slot),
     ResetShortcuts,
@@ -208,10 +256,20 @@ pub enum Message {
     Dismiss,
     BrowseBackup,
     BrowseExport,
+    DatabaseExport,
+    DatabaseImport(database_import::Action),
+    Profiles(profiles::Action),
+    ProfileSync(profile_sync::Action),
+    DatabaseExportPath(u64, Option<std::path::PathBuf>),
+    CancelDatabaseTransfer,
     ChosenPath(&'static str, Option<String>),
     PaneResize(widget::pane_grid::ResizeEvent),
     SaveLayout(u64),
     InboxScroll(f32),
+    InboxRevealed(mail_list::reveal::Revealed),
+    DragChanged,
+    DragReveal(drag_mail::Reveal),
+    DropMail(Arc<drag_mail::Payload>, Option<drag_mail::Target>),
     WindowClose(iced::window::Id),
     SidebarAction(usize),
     SidebarClick(usize, keyboard::Modifiers),
@@ -224,13 +282,19 @@ pub enum Message {
     MailPaneClicked(widget::pane_grid::Pane),
     ToggleInboxExpanded,
     ToggleAccountFolders(String),
+    ToggleFolderGroup(String, String),
     Modifiers(keyboard::Modifiers),
     AccountFolder(String, String),
     AccountFolderUnified,
     PrefUnified(bool),
     PrefTooltips(bool),
     PrefUnreadBadge(bool),
+    PrefCloseToTray(bool),
+    Tray(crate::desktop_tray::Event),
+    MainWindowOpened(iced::window::Id),
+    WindowCloseRequested(iced::window::Id),
     DesktopBadge(crate::desktop_badge::Event),
+    Notification(notifications::Message),
     PrefShortcutTooltips(bool),
     SettingsSearch(String),
     FindSetting(SettingsTab, &'static str),
@@ -250,6 +314,7 @@ pub enum Message {
     ConversationFlag(String),
     ConversationPage(bool),
     ConversationScroll(u64),
+    ConversationViewport(f32),
     RetryConversation,
     PrefImages(ImagePolicy),
     AllowImages(u8),
@@ -260,13 +325,21 @@ pub struct App {
     panes: widget::pane_grid::State<MailPane>,
     reader_split: widget::pane_grid::Split,
     layout_generation: u64,
-    pending_preference_save: Option<(u64, Preferences)>,
+    pending_preference_save: Option<(u64, crate::preference_edits::Write)>,
     pending_close: Option<iced::window::Id>,
+    tray: tray::State,
+    database_transfer: database_transfers::State,
+    database_import: database_import::State,
+    profiles: profiles::State,
+    profile_sync: profile_sync::State,
     confirm_save: Option<u64>,
     saved_toast: Option<Instant>,
     action_toasts: action_toasts::ActionToasts,
     printing: printing::State,
     desktop_badge: Option<tokio::sync::watch::Sender<u64>>,
+    #[cfg(target_os = "windows")]
+    desktop_overlay: Option<Arc<crate::desktop_badge::overlay::Frame>>,
+    notifications: notifications::State,
     context_menu: Option<context_menu::Menu>,
     pending_mail_action: Option<(String, context_menu::MailAction)>,
     mail_actions: mail_actions::Actions,
@@ -274,6 +347,7 @@ pub struct App {
     bulk: bulk::State,
     list_focus: bool,
     reader_selection: Option<Box<selectable::Content>>,
+    folder_controls: folder_controls::State,
     html_reader: html_reader::State,
     find_message: find_message::State,
     remote_bytes: VecDeque<(String, Arc<[u8]>)>,
@@ -281,6 +355,9 @@ pub struct App {
     reader_selection_generation: u64,
     reader_preparation: Option<iced::task::Handle>,
     inbox_scroll: f32,
+    #[cfg(feature = "test-support")]
+    inbox_reveal_height: f32,
+    mail_drag: drag_mail::Handle,
     last_click: Option<(String, Instant)>,
     pending_focus: Option<&'static str>,
     focused_input: Option<&'static str>,
@@ -288,9 +365,10 @@ pub struct App {
     test_keys: VecDeque<String>,
     #[cfg(feature = "test-support")]
     test_sync_round: u64,
+    #[cfg(feature = "test-support")]
+    test_account_sync_waiting: bool,
     list_revision: u64,
     last_list_query: MailQuery,
-    draft_dirty: Option<Instant>,
     composer: composing::Composer,
     conversation: conversations::Conversation,
     inbox_expanded: bool,
@@ -307,13 +385,17 @@ pub struct App {
     tx: Option<engine::CommandSender>,
     workspace: Arc<Workspace>,
     preferences: Preferences,
+    theme_cache: palette::ThemeCache,
+    palette_editor: palette::Editor,
     preference_sync: preference_sync::PreferenceSync,
-    portable_preferences: profile_preferences::Edits,
     pending_google_login: Option<(u64, Preferences, bool)>,
     pending_backup: Option<backups::PendingBackup>,
+    pending_backup_all: Option<u64>,
+    backup_run_generation: u64,
+    backup_run: Vec<backups::RunRow>,
+    backup_activity: backups::Activity,
     tab: Tab,
     settings_tab: SettingsTab,
-    profiles: profiles::Profiles,
     settings_search: String,
     settings_group: Option<&'static str>,
     dialog: Option<Dialog>,
@@ -337,10 +419,10 @@ pub struct App {
     calendar_setup: calendar_setup::CalendarSetup,
     removal: removals::Removal,
     outbox: outgoing::Outbox,
-    editor: text_editor::Content,
-    draft_id: String,
+    move_recovery: move_recovery::Recovery,
     remapping: Option<(Action, Slot)>,
     busy: HashSet<String>,
+    refresh: refresh::Animation,
     notice: Option<(String, bool, Instant)>,
     sync_notice: Option<Instant>,
     preference_notice: Option<Instant>,
@@ -353,38 +435,39 @@ pub struct App {
     backups: Arc<Vec<BackupCopy>>,
     backups_target: Option<BackupTarget>,
     backups_generation: u64,
+    s3_connection: Option<backups::ConnectionCheck>,
+    sftp_connection: Option<backups::ConnectionCheck>,
+    ftp_connection: Option<backups::ConnectionCheck>,
+    sftp_host_key: Option<backups::HostKeyReview>,
     restore_id: String,
     restore_target: Option<BackupTarget>,
     export_index: Option<usize>,
     started: Instant,
     update_samples: VecDeque<f64>,
     test_state: Option<std::path::PathBuf>,
+    #[cfg(feature = "test-support")]
+    initial_page_loaded: bool,
+    #[cfg(feature = "test-support")]
+    idle_navigation: bool,
     test_revision: u64,
 }
 
 pub fn run() -> iced::Result {
-    iced::application(App::new, App::update, App::view)
+    iced::daemon(App::boot, App::update, App::window_view)
         .title("Shep — Mail & Calendar")
-        .theme(App::theme)
-        .scale_factor(|app: &App| app.preferences.interface_scale as f32 / 100.)
+        .theme(|app: &App, _| app.theme())
+        .scale_factor(|app: &App, _| app.preferences.interface_scale as f32 / 100.)
         .subscription(App::subscription)
-        .window(iced::window::Settings {
-            size: Size::new(1440., 920.),
-            exit_on_close_request: false,
-            min_size: Some(Size::new(900., 640.)),
-            #[cfg(target_os = "linux")]
-            platform_specific: iced::window::settings::PlatformSpecific {
-                application_id: "so.shep.Shep".into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
         .default_font(iced::Font::with_name("Noto Sans"))
         .font(include_bytes!("../../assets/NotoSans-Regular.ttf").as_slice())
         .font(include_bytes!("../../assets/NotoSans-SemiBold.ttf").as_slice())
         .run()
 }
 impl App {
+    fn window_view(&self, _window: iced::window::Id) -> Element<'_, Message> {
+        self.view()
+    }
+
     fn new() -> (Self, Task<Message>) {
         let args: Vec<_> = std::env::args().collect();
         let demo = cfg!(feature = "test-support") && args.iter().any(|a| a == "--demo");
@@ -408,11 +491,19 @@ impl App {
                 layout_generation: 0,
                 pending_preference_save: None,
                 pending_close: None,
+                tray: Default::default(),
+                database_transfer: Default::default(),
+                database_import: Default::default(),
+                profiles: Default::default(),
+                profile_sync: Default::default(),
                 confirm_save: None,
                 saved_toast: None,
                 action_toasts: Default::default(),
                 printing: Default::default(),
                 desktop_badge: None,
+                #[cfg(target_os = "windows")]
+                desktop_overlay: None,
+                notifications: Default::default(),
                 context_menu: None,
                 pending_mail_action: None,
                 mail_actions: Default::default(),
@@ -420,6 +511,7 @@ impl App {
                 bulk: Default::default(),
                 list_focus: true,
                 reader_selection: None,
+                folder_controls: Default::default(),
                 html_reader: Default::default(),
                 find_message: Default::default(),
                 remote_bytes: VecDeque::new(),
@@ -427,6 +519,9 @@ impl App {
                 reader_selection_generation: 0,
                 reader_preparation: None,
                 inbox_scroll: 0.,
+                #[cfg(feature = "test-support")]
+                inbox_reveal_height: 0.,
+                mail_drag: Default::default(),
                 last_click: None,
                 pending_focus: None,
                 focused_input: None,
@@ -434,9 +529,10 @@ impl App {
                 test_keys: VecDeque::new(),
                 #[cfg(feature = "test-support")]
                 test_sync_round: 0,
+                #[cfg(feature = "test-support")]
+                test_account_sync_waiting: false,
                 list_revision: 0,
                 last_list_query: MailQuery::default(),
-                draft_dirty: None,
                 composer: Default::default(),
                 conversation: Default::default(),
                 inbox_expanded: false,
@@ -454,14 +550,18 @@ impl App {
                 workspace: Arc::new(Workspace::default()),
                 preferences: Preferences::default(),
                 preference_sync: Default::default(),
-                portable_preferences: Default::default(),
                 pending_google_login: None,
                 pending_backup: None,
+                pending_backup_all: None,
+                backup_run_generation: 0,
+                backup_run: Vec::new(),
+                backup_activity: Default::default(),
                 tab: Tab::Mail,
                 settings_tab: SettingsTab::General,
-                profiles: Default::default(),
                 settings_search: String::new(),
                 settings_group: None,
+                theme_cache: Default::default(),
+                palette_editor: Default::default(),
                 dialog: None,
                 fields: HashMap::new(),
                 protocol: Protocol::Imap,
@@ -486,10 +586,10 @@ impl App {
                 calendar_setup: Default::default(),
                 removal: Default::default(),
                 outbox: Default::default(),
-                editor: text_editor::Content::new(),
-                draft_id: String::new(),
+                move_recovery: Default::default(),
                 remapping: None,
                 busy: HashSet::new(),
+                refresh: Default::default(),
                 notice: None,
                 sync_notice: None,
                 preference_notice: None,
@@ -506,37 +606,30 @@ impl App {
                 backups: Arc::new(Vec::new()),
                 backups_target: None,
                 backups_generation: 0,
+                s3_connection: None,
+                sftp_connection: None,
+                ftp_connection: None,
+                sftp_host_key: None,
                 restore_id: String::new(),
                 restore_target: None,
                 export_index: None,
                 started: Instant::now(),
                 update_samples: VecDeque::new(),
                 test_state,
+                #[cfg(feature = "test-support")]
+                initial_page_loaded: false,
+                #[cfg(feature = "test-support")]
+                idle_navigation: demo && args.iter().any(|a| a == "--idle-navigation"),
                 test_revision: 0,
             },
             iced::system::theme().map(Message::SystemTheme),
         )
     }
     fn theme(&self) -> Theme {
-        static THEMES: std::sync::OnceLock<[Theme; 2]> = std::sync::OnceLock::new();
-        let themes = THEMES.get_or_init(|| {
-            let make = |dark| {
-                Theme::custom(
-                    if dark { "Shep Dark" } else { "Shep Light" },
-                    iced::theme::Palette {
-                        background: if dark { hex(0x141416) } else { hex(0xf7f7f9) },
-                        text: if dark { hex(0xf4f4f5) } else { hex(0x292830) },
-                        primary: if dark { hex(0xb5a0ff) } else { hex(0x7356bd) },
-                        success: hex(0x398366),
-                        warning: hex(0xc7954a),
-                        danger: hex(0xbf5757),
-                    },
-                )
-            };
-            [make(false), make(true)]
-        });
-        themes[usize::from(self.dark())].clone()
+        self.theme_cache
+            .get(self.preferences.palettes.get(self.dark()), self.dark())
     }
+
     fn dark(&self) -> bool {
         match self.preferences.appearance {
             Appearance::Light => false,
@@ -545,18 +638,33 @@ impl App {
         }
     }
     fn subscription(&self) -> Subscription<Message> {
+        let tick = iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick);
+        #[cfg(feature = "test-support")]
+        let tick = if self.idle_navigation {
+            Subscription::none()
+        } else {
+            tick
+        };
         Subscription::batch([
             Subscription::run_with(self.demo, engine::subscription).map(Message::Backend),
             Subscription::run(crate::desktop_badge::subscription).map(Message::DesktopBadge),
+            Subscription::run_with(self.demo, crate::desktop_tray::subscription).map(Message::Tray),
+            Subscription::run_with(self.demo, crate::notifications::subscription)
+                .map(|event| Message::Notification(notifications::Message::Backend(event))),
             Subscription::run(crate::html_render::subscription)
                 .map(|e| Message::Html(html_reader::Message::Backend(e))),
             Subscription::run(crate::html_render::preparation::subscription)
                 .map(|e| Message::Html(html_reader::Message::Prepared(e))),
-            iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick),
+            tick,
+            if self.refresh_animating() {
+                iced::time::every(std::time::Duration::from_millis(16)).map(Message::RefreshFrame)
+            } else {
+                Subscription::none()
+            },
             iced::system::theme_changes().map(Message::SystemTheme),
-            iced::event::listen_with(|e, status, id| match e {
+            iced::event::listen_with(|e, _status, id| match e {
                 iced::Event::Window(iced::window::Event::CloseRequested) => {
-                    Some(Message::WindowClose(id))
+                    Some(Message::WindowCloseRequested(id))
                 }
                 iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
                     Some(Message::Modifiers(modifiers))
@@ -564,9 +672,6 @@ impl App {
                 iced::Event::Window(iced::window::Event::Unfocused) => {
                     Some(Message::WindowUnfocused)
                 }
-                iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => Some(
-                    Message::Key(key, modifiers, status == event::Status::Captured),
-                ),
                 iced::Event::Window(
                     iced::window::Event::Opened { .. } | iced::window::Event::Moved(_),
                 ) => Some(Message::HtmlScaleRequest(id)),
@@ -592,20 +697,27 @@ impl App {
         self.try_command(command);
     }
     fn try_command(&mut self, command: Command) -> bool {
-        let mut portable_save = false;
-        let command = if let Command::SavePreferences(request, prefs) = command {
-            let fields = self
-                .portable_preferences
-                .prepare(&prefs, &self.preference_sync.saved.value);
-            portable_save = true;
-            Command::SaveProfilePreferences(request, prefs, fields)
-        } else {
-            command
-        };
-        let preferences_request = match &command {
-            Command::SavePreferences(request, _)
-            | Command::SaveProfilePreferences(request, _, _) => Some(*request),
+        // Admission already owns a durable write, even before a provider slot
+        // starts it. Close must not race the worker's later Busy notification.
+        let close_key = match &command {
+            Command::SaveAccount(..)
+            | Command::SaveEvent(..)
+            | Command::DeleteEvent(..)
+            | Command::GoogleLogin(..)
+            | Command::BackupIncluded(..)
+            | Command::RetryBackupHistory(..) => command.key(),
             _ => None,
+        };
+        if close_key
+            .as_ref()
+            .is_some_and(|key| self.busy.contains(key))
+        {
+            return false;
+        }
+        let preferences_request = if let Command::SavePreferences(request, _) = &command {
+            Some(*request)
+        } else {
+            None
         };
         if let Some(tx) = &self.tx {
             if let Err(error) = tx.try_send(command) {
@@ -627,8 +739,8 @@ impl App {
             self.notice("Opening your local workspace…", false);
             return false;
         }
-        if portable_save {
-            self.portable_preferences.accepted();
+        if let Some(key) = close_key {
+            self.busy.insert(key);
         }
         if preferences_request.is_some_and(|request| {
             self.pending_preference_save
@@ -646,8 +758,10 @@ impl App {
         self.fields.get(key).map(String::as_str).unwrap_or("")
     }
     fn request_page(&mut self) {
+        self.query.exclude_folders = self.pending_folder_deletions();
         self.reconcile_selection_scope();
         if self.last_list_query != self.query {
+            self.mail_actions.follow = None;
             self.inbox_scroll = 0.;
             self.list_revision += 1;
             self.last_list_query = self.query.clone();
@@ -656,7 +770,13 @@ impl App {
         self.prefetch_page = None;
         self.prefetch_query = None;
         let mut query = self.query.clone();
+        query.project_moves = self.mail_actions.projected_moves();
         query.observe = self.mail_actions.observed_ids();
+        if let Some(id) = &self.selected
+            && !query.observe.contains(id)
+        {
+            query.observe.push(id.clone());
+        }
         query.observe_bulk = self.bulk_observed_ids();
         self.send(Command::Query(self.generation, query, false));
     }
@@ -685,8 +805,17 @@ impl App {
             self.detail_cache.pop_back();
         }
     }
+    fn cached_detail(&mut self, id: &str) -> Option<Arc<MailDetail>> {
+        let index = self
+            .detail_cache
+            .iter()
+            .position(|detail| detail.summary.id == id)?;
+        let detail = self.detail_cache.remove(index)?;
+        self.detail_cache.push_front(detail.clone());
+        Some(detail)
+    }
     fn preload(&mut self, id: String) {
-        if self.page.bulk_placeholders.contains(&id) {
+        if self.page.is_transient_placeholder(&id) {
             return;
         }
         if self.detail_cache.iter().any(|d| d.summary.id == id)
@@ -702,20 +831,19 @@ impl App {
         });
     }
     fn select(&mut self, id: String) {
+        self.mail_actions.follow = None;
         self.pending_mail_action = None;
         if self.selected.as_deref() != Some(&id) {
+            self.park_composer();
+            self.composer.dismissed_for = None;
             self.expanded_replies.clear();
             self.conversation.page = Default::default();
         }
         self.selected = Some(id.clone());
-        if self.page.bulk_placeholders.contains(&id) {
+        if self.page.is_transient_placeholder(&id) {
             self.bulk.waiting_reader = Some(id.clone());
             self.conversation = Default::default();
-            self.detail = self
-                .detail_cache
-                .iter()
-                .find(|d| d.summary.id == id)
-                .cloned();
+            self.detail = self.cached_placeholder_detail(&id);
             return;
         }
         self.bulk.waiting_reader = None;
@@ -739,11 +867,11 @@ impl App {
             }
         }
         self.load_remote_images();
+        self.restore_reply();
     }
     fn open(&mut self, dialog: Dialog) {
         self.pending_focus = None;
         self.focused_input = None;
-        self.draft_dirty = None;
         self.dialog = Some(dialog);
         self.fields.clear();
         self.remapping = None;
@@ -758,20 +886,6 @@ impl App {
                 self.fields.insert("incoming_auth", "Password".into());
                 self.fields.insert("smtp_security", "StartTls".into());
                 self.fields.insert("smtp_auth", "Automatic".into());
-            }
-            Dialog::Compose => {
-                self.composer.draft = Draft::default();
-                self.composer.show_recipients = false;
-                self.draft_id = uuid::Uuid::new_v4().to_string();
-                self.editor = text_editor::Content::new();
-                if let Some(account) = self
-                    .query
-                    .account
-                    .clone()
-                    .or_else(|| self.workspace.accounts.first().map(|a| a.id.clone()))
-                {
-                    self.fields.insert("account", account);
-                }
             }
             Dialog::Event => {
                 self.editing_event = None;
@@ -797,12 +911,36 @@ impl App {
         if matches!(message, Message::Noop) {
             return Task::none();
         }
+        if matches!(message, Message::RefreshFrame(_)) {
+            // Animation only changes one SVG. Do not pump mail work, prepare
+            // bodies, or mix frame ticks into interaction-handler measurements.
+            let task = self.handle(message);
+            return if self.test_state.is_some() {
+                Task::batch([task, self.write_test_state()])
+            } else {
+                task
+            };
+        }
         let start = Instant::now();
+        let hidden_closing =
+            self.tray.hidden && (self.pending_close.is_some() || self.composer.close.is_some());
+        let hidden_write = self.tray.hidden && !hidden_closing && self.has_required_close_work();
+        let previous_notice = self.notice.as_ref().map(|(_, _, at)| *at);
         let task = self.handle(message);
         self.pump_bulk();
+        let close = self.continue_pending_close();
+        let reopen = self.reopen_after_failed_close(
+            hidden_write && self.new_error_since(previous_notice),
+            hidden_closing,
+        );
+        let tray_close = self.continue_tray_close();
         self.update_desktop_badge();
+        self.update_notification_settings();
         let task = Task::batch([
             task,
+            close,
+            reopen,
+            tray_close,
             self.prepare_reader_selection(),
             self.prepare_html(),
             self.prepare_find(),
@@ -850,8 +988,33 @@ impl App {
             return Task::none();
         }
         match message {
+            Message::Folders(message) => {
+                let focus = matches!(
+                    message,
+                    folder_controls::Message::Choose(0) | folder_controls::Message::Back
+                );
+                self.handle_folders(message);
+                if focus && self.dialog == Some(Dialog::FolderChange) {
+                    return focus_after_layout("folder-parent-search");
+                }
+            }
+            Message::Notification(message) => self.handle_notification(message),
             Message::DesktopBadge(crate::desktop_badge::Event::Ready(sender)) => {
                 self.desktop_badge = Some(sender);
+            }
+            #[cfg(target_os = "windows")]
+            Message::DesktopBadge(crate::desktop_badge::Event::Overlay(frame)) => {
+                self.desktop_overlay = Some(frame);
+                return self.apply_desktop_overlay();
+            }
+            #[cfg(all(test, not(target_os = "windows")))]
+            Message::DesktopBadge(crate::desktop_badge::Event::Overlay(_)) => {}
+            Message::Tray(event) => return self.tray_event(event),
+            Message::MainWindowOpened(window) => return self.main_window_opened(window),
+            Message::WindowCloseRequested(window) => return self.request_main_close(window),
+            Message::PrefCloseToTray(value) => {
+                self.preferences.close_to_tray = value;
+                self.save_preferences();
             }
             Message::PrefUnreadBadge(value) => {
                 self.preferences.unread_badge = value;
@@ -862,11 +1025,20 @@ impl App {
                     .map(|s| Message::Html(html_reader::Message::Scale(s)));
             }
             Message::Bulk(message) => return self.handle_bulk(message),
+            Message::DropMail(payload, target) => self.drop_mail(payload, target),
+            Message::DragReveal(reveal) => self.reveal_drag_folders(reveal),
+            Message::DragChanged => {
+                self.last_click = None;
+            }
             Message::Html(message) => return self.handle_html(message),
             Message::Find(message) => return self.handle_find(message),
-            Message::WindowUnfocused => self.modifiers = keyboard::Modifiers::default(),
+            Message::WindowUnfocused => {
+                self.modifiers = keyboard::Modifiers::default();
+                self.mail_drag.clear();
+            }
             Message::Noop => return Task::none(),
             Message::DismissContext => {
+                self.folder_controls.menu = None;
                 self.context_menu = None;
                 self.composer.context = None;
             }
@@ -876,7 +1048,7 @@ impl App {
             }
             Message::DraftContext(id, position) => {
                 if self.dialog.is_none()
-                    && self.workspace.drafts.iter().any(|draft| draft.id == id)
+                    && self.draft_labels().iter().any(|(draft, _)| *draft == id)
                     && !self.workspace.outgoing_drafts.contains(&id)
                 {
                     self.context_menu = None;
@@ -931,9 +1103,11 @@ impl App {
             }
             Message::MailContextAction(action) => return self.choose_mail_context(action),
             Message::Backend(event) => match event {
+                Event::Folder(event) => self.folder_event(event),
                 Event::Ready(tx, workspace, google) => {
                     self.tx = Some(tx);
                     self.send(Command::BulkJobs(0, 0));
+                    self.send(Command::Folder(engine::folders::Request::History(0, 0)));
                     self.preferences = workspace.preferences.clone();
                     self.preference_sync =
                         preference_sync::PreferenceSync::new(PreferenceSnapshot {
@@ -965,7 +1139,6 @@ impl App {
                         },
                         &mut self.preferences,
                     );
-                    self.profile_grant_changed();
                     if self.preferences.google_lifecycle.disconnected {
                         self.google_connected = false;
                         self.pending_google_login = None;
@@ -973,9 +1146,10 @@ impl App {
                     let mut workspace = (*workspace).clone();
                     if workspace.connections_revision < self.workspace.connections_revision {
                         workspace.accounts = self.workspace.accounts.clone();
-                        workspace.profile_reconnect = self.workspace.profile_reconnect.clone();
+                        workspace.account_reconnect = self.workspace.account_reconnect.clone();
                         workspace.calendars = self.workspace.calendars.clone();
                         workspace.account_folders = self.workspace.account_folders.clone();
+                        workspace.folder_trees = self.workspace.folder_trees.clone();
                         workspace.folders = self.workspace.folders.clone();
                         workspace.connections_revision = self.workspace.connections_revision;
                         workspace.credential_cleanup = self.workspace.credential_cleanup;
@@ -994,6 +1168,7 @@ impl App {
                         workspace.drafts_revision = self.workspace.drafts_revision;
                     }
                     self.workspace = Arc::new(workspace);
+                    self.reconcile_folder_accounts();
                     if let Some(folders) = &mut self.query.folders {
                         let before = folders.len();
                         folders.retain(|s| {
@@ -1043,6 +1218,7 @@ impl App {
                     ),
                 },
                 Event::PreferencesSaveFailed(request, error) => {
+                    self.database_preferences_failed(request, &error);
                     if self
                         .pending_google_login
                         .as_ref()
@@ -1051,9 +1227,6 @@ impl App {
                         self.pending_google_login = None;
                     }
                     self.cancel_backup_save(request);
-                    self.publication_save_failed(request);
-                    self.enrollment_save_failed(request);
-                    self.sync_save_failed(request);
                     if self.confirm_save == Some(request) {
                         self.confirm_save = None;
                     }
@@ -1065,14 +1238,12 @@ impl App {
                     self.preference_notice = self.notice.as_ref().map(|notice| notice.2);
                 }
                 Event::PreferencesSaved(request, snapshot) => {
-                    let effects = profile_preferences::Effects::from(&self.preferences);
+                    self.database_preferences_saved(request);
                     self.preference_sync.acknowledge(
                         request,
                         (*snapshot).clone(),
                         &mut self.preferences,
                     );
-                    self.apply_profile_preference_effects(effects);
-                    self.portable_preferences.observed(&self.preferences);
                     self.update_saved_preferences();
                     if !self.preference_sync.dirty() {
                         if self.confirm_save.is_some_and(|id| request >= id) {
@@ -1089,9 +1260,6 @@ impl App {
                         }
                     }
                     self.continue_backup_request(request);
-                    self.publication_saved(request);
-                    self.enrollment_saved(request);
-                    self.sync_saved(request);
                     if self
                         .pending_google_login
                         .as_ref()
@@ -1131,9 +1299,14 @@ impl App {
                             self.prefetch_page = Some((query, page));
                         }
                     } else {
+                        #[cfg(feature = "test-support")]
+                        {
+                            self.initial_page_loaded = true;
+                        }
                         self.set_mail_page(page);
+                        let reveal_after_removal = self.finish_removal_selection();
                         if let Some(id) = self.bulk.waiting_reader.clone()
-                            && !self.page.bulk_placeholders.contains(&id)
+                            && !self.page.is_transient_placeholder(&id)
                         {
                             self.bulk.waiting_reader = None;
                             if self.selected.as_ref() == Some(&id)
@@ -1152,6 +1325,7 @@ impl App {
                             .selected
                             .as_ref()
                             .is_some_and(|id| !self.page.rows.iter().any(|m| &m.id == id))
+                            && !self.retain_folder_reader()
                         {
                             self.selected = None;
                             self.detail = None;
@@ -1166,7 +1340,14 @@ impl App {
                             let mut query = self.query.clone();
                             query.offset += PAGE_SIZE;
                             self.prefetch_query = Some(query.clone());
+                            query.project_moves = self.mail_actions.projected_moves();
                             query.observe = self.mail_actions.observed_ids();
+                            if let Some(id) = &self.selected
+                                && self.page.move_recovery.contains_key(id)
+                                && !query.observe.contains(id)
+                            {
+                                query.observe.push(id.clone());
+                            }
                             query.observe_bulk = self.bulk_observed_ids();
                             self.send(Command::Query(g, query, true));
                         }
@@ -1180,6 +1361,9 @@ impl App {
                         for id in ids {
                             self.preload(id);
                         }
+                        if reveal_after_removal {
+                            return self.reveal_selected_mail();
+                        }
                     }
                 }
                 Event::Detail {
@@ -1192,12 +1376,19 @@ impl App {
                     match result {
                         Ok(detail) => {
                             if self.reader_id() == Some(&id) {
-                                self.detail = Some(detail.clone());
+                                let mut visible = detail.clone();
+                                if self.page.is_placeholder(&id)
+                                    && let Some(mail) = self.page.rows.iter().find(|m| m.id == id)
+                                {
+                                    Arc::make_mut(&mut visible).summary = mail.clone();
+                                }
+                                self.detail = Some(visible);
                             }
                             if !prefetch || self.detail_cache.len() < 8 {
                                 self.cache_detail(detail);
                             }
                             self.load_remote_images();
+                            self.restore_reply();
                             if self.pending_mail_action.is_some() {
                                 return self.finish_mail_context();
                             }
@@ -1223,6 +1414,14 @@ impl App {
                         self.sync_notice = self.notice.as_ref().map(|notice| notice.2);
                     }
                 },
+                Event::MailArrived(arrival) => self.notification_arrived(arrival),
+                Event::MoveRecovered(record) => self.move_recovered(&record),
+                Event::MoveRecoveries(request, result) => {
+                    self.move_recoveries_loaded(request, result)
+                }
+                Event::MailMoveRecovery(request, token, result) => {
+                    return self.move_recovery_finished(request, token, result);
+                }
                 Event::UndoFinished(request, mail, result) => {
                     return self.undo_finished(request, mail, result);
                 }
@@ -1237,16 +1436,24 @@ impl App {
                 }
                 #[cfg(feature = "test-support")]
                 Event::PreviewSync(round) => self.test_sync_round = round,
+                #[cfg(feature = "test-support")]
+                Event::PreviewAccountSync(waiting) => self.test_account_sync_waiting = waiting,
                 Event::Changed => {
                     self.detail_revision += 1;
                     self.prefetch_page = None;
-                    self.detail_cache.clear();
+                    self.detail_cache.retain(|d| {
+                        self.mail_actions.moving(&d.summary.id)
+                            || self.page.is_placeholder(&d.summary.id)
+                    });
                     self.pending_details.clear();
                     self.request_page();
                     self.request_conversation(None);
                     if let Some(id) = self
                         .reader_id()
-                        .filter(|id| !self.mail_actions.restoring(id))
+                        .filter(|id| {
+                            !self.mail_actions.restoring(id)
+                                && !self.page.is_transient_placeholder(id)
+                        })
                         .map(str::to_owned)
                     {
                         self.send(Command::Detail {
@@ -1263,6 +1470,13 @@ impl App {
                     }
                 }
                 Event::Busy(key, busy) => {
+                    if key == "sync" {
+                        if busy {
+                            self.refresh.start(Instant::now());
+                        } else {
+                            self.refresh.stop();
+                        }
+                    }
                     if busy {
                         self.busy.insert(key);
                     } else {
@@ -1271,22 +1485,21 @@ impl App {
                 }
                 Event::Notice(text) => self.notice(text, false),
                 Event::Error(text) => {
+                    self.pending_close = None;
+                    self.composer.close = None;
                     self.notice(text, true);
                     self.pending_details.clear();
-                }
-                Event::ProfileSync(grant, observation, snapshot) => {
-                    self.sync_background(grant, observation, snapshot)
-                }
-                Event::Profiles(panel, serial, result) => {
-                    self.profile_result(panel, serial, result)
                 }
                 Event::GoogleStatus(revision, connected) => {
                     if revision == self.preferences.google_lifecycle.revision {
                         self.google_connected =
                             connected && !self.preferences.google_lifecycle.disconnected;
+                        self.profile_google_status(revision, self.google_connected);
+                        self.shared_profile_action(profile_sync::Action::Refresh);
                     }
                 }
                 Event::GoogleDisconnected(revision, result) => {
+                    self.shared_profile_action(profile_sync::Action::Refresh);
                     if self.google_disconnect_pending == Some(revision) {
                         self.google_disconnect_pending = None;
                         match result {
@@ -1322,17 +1535,40 @@ impl App {
                 Event::DraftSaved(id, revision, result) => {
                     return self.draft_saved(id, revision, result);
                 }
+                Event::Database(request, update) => {
+                    return match update {
+                        update @ (crate::transfer::Update::Progress(_)
+                        | crate::transfer::Update::Finished(_)) => {
+                            self.database_update(request, update)
+                        }
+                        update => self.database_import_update(request, update),
+                    };
+                }
+                Event::Profiles(request, result) => return self.profiles_update(request, result),
+                Event::ProfileSync(request, update) => {
+                    return self.shared_profile_update(request, update);
+                }
                 Event::DraftDeleted(id, result) => self.draft_deleted(id, result),
                 Event::ForwardDraft(id, result) => return self.forward_ready(id, result),
                 Event::Print(revision, result) => return self.print_ready(revision, result),
                 Event::DraftFiles(id, result) => {
-                    if self.composer.io.as_deref() == Some(&id) {
+                    let current = self.composer.io.as_deref() == Some(&id);
+                    if current {
                         self.composer.io = None;
                     }
                     match result {
                         Ok(state) => self.observe_drafts(&state),
-                        Err(error) => self.notice(error, true),
+                        Err(error) => {
+                            if current {
+                                self.pending_close = None;
+                                self.composer.close = None;
+                            }
+                            self.fail_removal_draft_wait(&id, &error);
+                            self.fail_database_preparation(&error);
+                            self.notice(error, true);
+                        }
                     }
+                    self.continue_removal_review();
                 }
                 Event::OutgoingPage(request, result) => self.outgoing_page(request, result),
                 Event::OutgoingChanged => {
@@ -1341,9 +1577,10 @@ impl App {
                     }
                 }
                 Event::ReviewOutgoing(id, revision) => {
-                    if self.dialog == Some(Dialog::Compose)
-                        && self.draft_id == id
-                        && self.composer.draft.revision == revision
+                    if self.compose_visible()
+                        && self.dialog.is_none()
+                        && self.composer.current.draft.id == id
+                        && self.composer.current.draft.revision == revision
                     {
                         self.open_outbox();
                     } else {
@@ -1351,25 +1588,24 @@ impl App {
                     }
                 }
                 Event::SubmissionQueued(id, revision) | Event::Sent(id, revision) => {
-                    if self.draft_id == id
-                        && self.composer.draft.revision == revision
-                        && self.dialog == Some(Dialog::Compose)
-                    {
-                        self.dialog = None;
-                        self.draft_dirty = None;
-                        self.editor = text_editor::Content::new();
-                        self.fields.clear();
-                    }
+                    self.retire_draft(&id, Some(revision));
                 }
                 Event::RemoteImage(url, result) => {
                     self.requested_images.remove(&url);
                     match result {
                         Ok(bytes) => {
-                            self.html_reader.cache.image_revision += 1;
+                            self.html_reader.cache.image_arrived(&url);
                             self.remote_bytes.retain(|(u, _)| u != &url);
                             self.remote_bytes
                                 .push_back((url.clone(), Arc::from(bytes.clone())));
-                            while self.remote_bytes.len() > 8 {
+                            while self.remote_bytes.len() > 128
+                                || self
+                                    .remote_bytes
+                                    .iter()
+                                    .map(|(_, bytes)| bytes.len())
+                                    .sum::<usize>()
+                                    > 16 * 1024 * 1024
+                            {
                                 self.remote_bytes.pop_front();
                             }
                             self.remote_handles.retain(|(u, _)| u != &url);
@@ -1417,6 +1653,29 @@ impl App {
                         self.editing_event = None;
                     }
                 }
+                Event::BackupHistory(request, target, result) => {
+                    if request == self.backup_activity.generation
+                        && target == self.configured_backup_target()
+                    {
+                        self.backup_activity.loading = false;
+                        self.backup_activity.target = Some(target);
+                        match result {
+                            Ok(entries) => {
+                                self.backup_activity.entries = entries;
+                                self.backup_activity.error = None;
+                            }
+                            Err(error) => self.backup_activity.error = Some(error),
+                        }
+                    }
+                }
+                Event::BackupHistoryChanged(target) => {
+                    if self.tab == Tab::Preferences
+                        && self.settings_tab == SettingsTab::Backups
+                        && target == self.configured_backup_target()
+                    {
+                        self.refresh_backup_history();
+                    }
+                }
                 Event::Backups(request, target, result) => {
                     if request == self.backups_generation
                         && target == self.configured_backup_target()
@@ -1430,6 +1689,60 @@ impl App {
                                 .notice(format!("Could not refresh saved copies: {error}"), true),
                         }
                     }
+                }
+                Event::FtpConnection(request, target, result) => {
+                    if self
+                        .ftp_connection
+                        .as_ref()
+                        .is_some_and(|(id, previous, _)| *id == request && *previous == target)
+                        && target == self.configured_backup_target()
+                    {
+                        if result.is_ok() {
+                            self.fields.remove("ftp_password_secret");
+                        }
+                        self.ftp_connection = Some((request, target, Some(result)));
+                    }
+                }
+                Event::SftpConnection(request, target, result) => {
+                    if self
+                        .sftp_connection
+                        .as_ref()
+                        .is_some_and(|(id, previous, _)| *id == request && *previous == target)
+                        && target == self.configured_backup_target()
+                    {
+                        if result.is_ok() {
+                            self.fields.remove("sftp_password_secret");
+                        }
+                        self.sftp_connection = Some((request, target, Some(result)));
+                    }
+                }
+                Event::SftpFingerprint(request, settings, result) => {
+                    let current = self.sftp_form_settings();
+                    if let Some(review) = &mut self.sftp_host_key
+                        && review.request == request
+                        && review.settings == settings
+                        && current.host == settings.host
+                        && current.port == settings.port
+                    {
+                        review.result = Some(result);
+                    }
+                }
+                Event::S3Connection(request, target, result) => {
+                    if self
+                        .s3_connection
+                        .as_ref()
+                        .is_some_and(|(id, previous, _)| *id == request && *previous == target)
+                        && target == self.configured_backup_target()
+                    {
+                        if result.is_ok() {
+                            self.fields.remove("s3_access_secret");
+                            self.fields.remove("s3_key_secret");
+                        }
+                        self.s3_connection = Some((request, target, Some(result)));
+                    }
+                }
+                Event::BackupRun(request, target, status) => {
+                    self.observe_backup_run(request, target, status)
                 }
                 Event::BackupSaved(target, copy) => {
                     if target == self.configured_backup_target() {
@@ -1453,89 +1766,115 @@ impl App {
                 _ => {}
             },
             Message::WindowClose(window) => {
+                self.pending_close = Some(window);
+                if self.profile_sync.pending() {
+                    self.pending_close = Some(window);
+                    self.shared_profile_action(profile_sync::Action::Stop);
+                    return Task::none();
+                }
+                if self.profiles.changing() {
+                    self.pending_close = Some(window);
+                    return Task::none();
+                }
+                if self.database_import.pending() {
+                    let _ = self.database_import_action(database_import::Action::Cancel);
+                    if self.database_import.pending() {
+                        self.pending_close = Some(window);
+                        return Task::none();
+                    }
+                }
+                if self.database_transfer.pending.is_some() {
+                    self.cancel_database_transfer();
+                    if self.database_transfer.pending.is_some() {
+                        self.pending_close = Some(window);
+                        return Task::none();
+                    }
+                }
+                self.mail_drag.clear();
+                if self.flush_pane_resize() {
+                    self.save_preferences();
+                }
                 if self.dialog == Some(Dialog::DiscardDraft) && !self.composer.discard_pending {
                     self.cancel_discard_draft();
                 }
-                if self.bulk.staging.is_some()
-                    || !self.bulk.stopped && self.bulk.jobs.iter().any(|j| j.remaining > 0)
+                if self.folder_staging()
+                    || self.bulk.staging.is_some()
+                    || self.tx.is_some() && !self.bulk.stopped
                 {
                     self.pending_close = Some(window);
-                    self.notice(
+                    if self.bulk.staging.is_some()
+                        || self.bulk.jobs.iter().any(|j| j.remaining > 0)
+                        || self.folder_controls.jobs.iter().any(|j| !j.closed)
+                        || self.folder_staging()
+                    {
+                        self.notice(
                         "Finishing the current mail change. Queued changes will resume next time.",
                         false,
                     );
-                } else if self.mail_actions.pending() > 0 {
+                    }
+                } else if self.mail_actions.pending() > 0 || !self.move_recovery.pending.is_empty()
+                {
                     self.pending_close = Some(window);
                     self.notice("Finishing your mail changes before closing…", false);
                 } else if self.removal.removing.is_some()
                     || self.busy.contains("credential-cleanup")
                 {
-                    self.notice(
-                        "Wait for credential cleanup to finish before closing.",
-                        true,
-                    );
+                    self.notice("Finishing credential cleanup before closing…", false);
                 } else if self.busy.contains("google-disconnect") || self.busy.contains("google") {
                     self.notice(
-                        "Wait for the Google connection change to finish before closing.",
-                        true,
+                        "Finishing the Google connection change before closing…",
+                        false,
                     );
                 } else if self.busy.iter().any(|key| key.starts_with("outgoing:")) {
-                    self.notice(
-                        "Wait for Sent-copy recovery to finish before closing.",
-                        true,
-                    );
+                    self.notice("Finishing Sent-copy recovery before closing…", false);
                 } else if self.calendar_setup.saving.is_some() {
-                    self.notice(
-                        "Wait for the calendar connection to finish saving before closing.",
-                        true,
-                    );
-                } else if self.busy.iter().any(|key| key.starts_with("send:")) {
-                    self.notice(
-                        "A message is being sent. Wait for delivery to finish before closing.",
-                        true,
-                    );
+                    self.notice("Saving the calendar connection before closing…", false);
+                } else if self.busy.iter().any(|key| {
+                    key.starts_with("send:")
+                        || key.starts_with("event:")
+                        || key.starts_with("account:")
+                        || key.starts_with("backup:")
+                }) {
+                    self.notice("Finishing your changes before closing…", false);
                 } else if self.composer.discard_pending {
-                    self.notice(
-                        "Wait for the draft to finish discarding before closing.",
-                        true,
-                    );
+                    self.notice("Finishing the draft change before closing…", false);
                 } else if self.composer.forward_pending.is_some() {
                     self.notice(
                         "Wait for the forward to finish preparing before closing.",
                         false,
                     );
                 } else if self.composer.io.is_some() {
-                    self.notice(
-                        "Wait for the selected files to finish attaching before closing.",
-                        true,
-                    );
+                    self.notice("Saving the selected attachments before closing…", false);
                 } else {
                     self.flush_pane_resize();
                     if self.preference_sync.dirty() {
                         self.pending_close = Some(window);
                         self.save_preferences();
                     } else if !self.defer_draft_exit(composing::Exit::Window(window)) {
-                        return iced::window::close(window);
+                        self.pending_close = None;
+                        return self.finish_exit();
                     }
                 }
             }
             Message::Tick => {
+                self.advance_profile_login();
+                self.advance_profile_cycle();
+                self.advance_database_import();
+                self.advance_database_transfer();
                 self.pump_selection();
                 self.action_toasts.expire(Instant::now());
                 self.prune_undos();
                 self.dispatch_undos();
-                if let Some((request, prefs)) = self.pending_preference_save.take() {
-                    self.persist_preferences(request, prefs);
+                if let Some((request, prefs)) = self.pending_preference_save.take()
+                    && !self.try_command(Command::SavePreferences(request, prefs.clone()))
+                {
+                    self.pending_preference_save = Some((request, prefs));
                 }
                 if self.saved_toast.is_some_and(|t| t.elapsed().as_secs() >= 4) {
                     self.saved_toast = None;
                 }
-                if self.dialog == Some(Dialog::Compose)
-                    && self.draft_dirty.is_some_and(|t| t.elapsed().as_secs() >= 1)
-                    && self.try_command(Command::AutoSaveDraft(self.current_draft()))
-                {
-                    self.draft_dirty = None;
-                }
+                self.autosave_draft();
+                self.continue_removal_review();
                 if self
                     .notice
                     .as_ref()
@@ -1545,15 +1884,11 @@ impl App {
                 }
             }
             Message::Tab(tab) => {
-                if tab != Tab::Preferences {
-                    self.pause_profiles();
-                } else if self.settings_tab == SettingsTab::Profiles {
-                    self.load_profiles();
-                }
                 if self.defer_draft_exit(composing::Exit::Tab(tab)) {
                     return Task::none();
                 }
                 if tab == Tab::Mail && self.tab == Tab::Mail {
+                    self.close_composer();
                     self.query.account = if self.preferences.unified_inbox {
                         None
                     } else {
@@ -1566,31 +1901,38 @@ impl App {
                     };
                     self.full_reader = false;
                     self.open_mail_folder("INBOX".into(), false);
+                    self.sidebar_index = self
+                        .sidebar_items()
+                        .iter()
+                        .position(|item| item.active)
+                        .unwrap_or(0);
+                    self.sidebar_focus = false;
+                    self.list_focus = true;
                 }
                 self.tab = tab;
                 self.dialog = None;
+                if tab == Tab::Mail
+                    && let Some(draft) = self
+                        .composer
+                        .resume
+                        .take()
+                        .and_then(|id| self.owned_draft(&id))
+                {
+                    self.load_draft(draft);
+                }
                 if tab == Tab::Preferences {
                     self.fields.clear();
                     self.settings_fields();
-                    return widget::operation::snap_to(
-                        "settings-tabs",
-                        widget::scrollable::RelativeOffset {
-                            x: if self.settings_tab == SettingsTab::Profiles {
-                                1.
-                            } else {
-                                0.
-                            },
-                            y: 0.,
-                        },
-                    );
                 }
             }
-            Message::Profiles(message) => self.profile_message(message),
             Message::SettingsSearch(query) => {
                 self.settings_search = query;
                 self.settings_group = None;
             }
             Message::FindSetting(tab, group) => {
+                if group == "Profiles" {
+                    self.profile_action(profiles::Action::Refresh);
+                }
                 let task = self.handle(Message::SettingsTab(tab));
                 self.settings_group = Some(group);
                 return task;
@@ -1608,24 +1950,23 @@ impl App {
                 self.save_preferences();
             }
             Message::SettingsTab(tab) => {
+                if tab == SettingsTab::Accounts {
+                    self.shared_profile_action(profile_sync::Action::Refresh);
+                }
+                self.defer_draft_exit(composing::Exit::Tab(Tab::Preferences));
                 self.settings_search.clear();
                 self.settings_group = None;
                 self.tab = Tab::Preferences;
                 self.settings_tab = tab;
-                if tab == SettingsTab::Profiles {
-                    self.load_profiles();
-                } else {
-                    self.pause_profiles();
-                }
                 self.fields.clear();
                 self.settings_fields();
-                return widget::operation::snap_to(
-                    "settings-tabs",
-                    widget::scrollable::RelativeOffset {
-                        x: if tab == SettingsTab::Profiles { 1. } else { 0. },
-                        y: 0.,
-                    },
-                );
+                if tab == SettingsTab::Backups {
+                    self.refresh_backup_history();
+                }
+            }
+            Message::NewMessage => {
+                self.new_composer();
+                return focus_after_layout("to");
             }
             Message::Open(dialog) => {
                 self.open(dialog);
@@ -1634,6 +1975,14 @@ impl App {
                 }
             }
             Message::Close => {
+                if self.dialog == Some(Dialog::FolderChange) {
+                    self.release_folder_preview();
+                    self.folder_controls.serial += 1;
+                    self.request_page();
+                }
+                if self.dialog == Some(Dialog::BulkHistory) {
+                    let _ = self.handle_bulk(bulk::Message::CancelResolution);
+                }
                 if self.dialog == Some(Dialog::BulkReview) {
                     self.cancel_bulk_review();
                     return widget::operation::focus("unfocused");
@@ -1654,19 +2003,21 @@ impl App {
                 }
                 self.pending_focus = None;
                 self.focused_input = None;
-                if self.defer_draft_exit(composing::Exit::Dialog) {
-                    return Task::none();
+                if self.dialog.is_none() && self.compose_visible() {
+                    self.close_composer();
                 }
                 self.dialog = None;
                 self.remapping = None;
                 return widget::operation::focus("unfocused");
             }
             Message::Query(query) => {
+                self.close_composer();
                 if query.trim().is_empty() {
                     self.query.sort = self.preferences.mail_sort;
                 } else if self.query.search.trim().is_empty() {
                     self.query.sort = MailSort::Relevance;
                 }
+                self.query.search_all_folders = !query.trim().is_empty();
                 self.query.search = query;
                 self.reconcile_selection_scope();
                 self.query.offset = 0;
@@ -1688,6 +2039,7 @@ impl App {
             Message::Folder(folder) => self.open_mail_folder(folder, false),
             Message::SentFolder => self.open_mail_folder("Sent".into(), true),
             Message::Account(account) => {
+                self.close_composer();
                 self.query.folders = None;
                 self.query.account = account.or_else(|| {
                     if self.preferences.unified_inbox {
@@ -1702,6 +2054,7 @@ impl App {
                 self.request_page();
             }
             Message::Sort(sort) => {
+                self.close_composer();
                 self.focused_input = None;
                 self.pending_focus = None;
                 self.query.sort = sort;
@@ -1715,6 +2068,7 @@ impl App {
                 self.request_page();
             }
             Message::Filter(filter) => {
+                self.close_composer();
                 self.focused_input = None;
                 self.pending_focus = None;
                 self.query.unread_only = filter == MailFilter::Unread;
@@ -1727,6 +2081,7 @@ impl App {
                 self.request_page();
             }
             Message::Starred => {
+                self.close_composer();
                 self.query.folders = None;
                 self.tab = Tab::Mail;
                 self.query.starred_only = true;
@@ -1761,6 +2116,7 @@ impl App {
             }
             Message::Hover(id) => self.preload(id),
             Message::NextPage(next) => {
+                self.close_composer();
                 self.query.offset = if next {
                     (self.query.offset + PAGE_SIZE)
                         .min(self.page.total.saturating_sub(1) / PAGE_SIZE * PAGE_SIZE)
@@ -1792,30 +2148,8 @@ impl App {
                     };
                     if let Some(m) = self.page.rows.get(next) {
                         let id = m.id.clone();
-                        self.select_for_read(id.clone());
-                        let next = self
-                            .page
-                            .rows
-                            .iter()
-                            .position(|mail| mail.id == id)
-                            .unwrap_or(next);
-                        let viewport = (self.size.height
-                            / (self.preferences.interface_scale as f32 / 100.)
-                            - 220.)
-                            .max(104.);
-                        let top = next as f32 * 104.;
-                        let offset = if top < self.inbox_scroll {
-                            top
-                        } else if top + 104. > self.inbox_scroll + viewport {
-                            top + 104. - viewport
-                        } else {
-                            self.inbox_scroll
-                        };
-                        self.inbox_scroll = offset;
-                        return widget::operation::scroll_to(
-                            "inbox-list",
-                            widget::scrollable::AbsoluteOffset { x: 0., y: offset },
-                        );
+                        self.select_for_read(id);
+                        return self.reveal_selected_mail();
                     }
                 }
             }
@@ -1825,8 +2159,13 @@ impl App {
                         self.find_message.open && self.tab == Tab::Mail && self.dialog.is_none()
                     }
                     "folder-search" => self.dialog == Some(Dialog::Move),
+                    "folder-parent-search" => self.dialog == Some(Dialog::FolderChange),
                     "event-title" => self.dialog == Some(Dialog::Event),
-                    "to" => self.dialog == Some(Dialog::Compose),
+                    "to" | "compose-body" => {
+                        self.compose_visible()
+                            && !self.composer.current.minimized
+                            && self.dialog.is_none()
+                    }
                     "search" => self.tab == Tab::Mail && self.dialog.is_none() && !self.full_reader,
                     _ => false,
                 };
@@ -1865,15 +2204,18 @@ impl App {
             Message::Sync => {
                 if self.try_command(Command::Sync) {
                     self.busy.insert("sync".into());
+                    self.refresh.start(Instant::now());
+                }
+            }
+            Message::RefreshFrame(now) => {
+                if self.refresh_animating() {
+                    self.refresh.advance(now);
                 }
             }
             Message::SyncCalendar => self.send(Command::SyncCalendar),
             Message::MoveFirst => {
                 if self.dialog == Some(Dialog::Move)
-                    && let Some(folder) =
-                        crate::fuzzy::ranked(self.field("folder_search"), self.move_folders())
-                            .into_iter()
-                            .next()
+                    && let Some(folder) = self.ranked_move_folders().into_iter().next()
                 {
                     return self.handle(Message::Move(folder));
                 }
@@ -1921,12 +2263,31 @@ impl App {
             }
             Message::Reply | Message::ReplyAll => {
                 if let Some(detail) = self.detail.clone() {
-                    let draft = detail.reply.draft(
+                    let mut draft = detail.reply.draft(
                         &detail,
                         &self.workspace.accounts,
                         matches!(message, Message::ReplyAll),
                     );
-                    self.load_draft(draft);
+                    self.restore_reply();
+                    if self
+                        .composer
+                        .current
+                        .draft
+                        .reply_context
+                        .as_ref()
+                        .is_some_and(|context| context.mail_id == detail.summary.id)
+                    {
+                        self.composer.current.minimized = false;
+                    } else {
+                        draft.reply_context = Some(ReplyContext {
+                            account_id: detail.summary.account_id.clone(),
+                            mail_id: detail.summary.id.clone(),
+                            quote: std::mem::take(&mut draft.body),
+                            include_quote: true,
+                        });
+                        self.load_draft(draft);
+                    }
+                    return focus_after_layout("compose-body");
                 }
             }
             Message::Forward => {
@@ -1938,17 +2299,45 @@ impl App {
             Message::ChooseAttachments => return self.choose_attachments(),
             Message::ChosenAttachments(draft, paths) => self.attach_chosen(draft, paths),
             Message::RemoveDraftAttachment(id) => self.remove_draft_attachment(id),
+            Message::ComposeField(key, value) => self.edit_compose_field(key, value),
+            Message::CloseComposer => {
+                self.close_composer();
+                return widget::operation::focus("unfocused");
+            }
+            Message::ToggleComposer => {
+                self.composer.current.minimized = !self.composer.current.minimized;
+                self.pending_focus = None;
+                self.focused_input = None;
+                return if self.composer.current.minimized {
+                    widget::operation::focus("unfocused")
+                } else {
+                    focus_after_layout("compose-body")
+                };
+            }
+            Message::IncludeOriginal(value) => {
+                if !self.compose_locked()
+                    && let Some(context) = &mut self.composer.current.draft.reply_context
+                {
+                    context.include_quote = value;
+                    self.draft_edited();
+                }
+            }
             Message::ShowRecipients => {
-                self.composer.show_recipients = !self.composer.show_recipients
+                self.composer.current.show_recipients = !self.composer.current.show_recipients
             }
             Message::SaveDraft => {
-                self.save_and_exit(composing::Exit::Dialog);
+                self.save_current_draft();
             }
             Message::Send => {
-                if !self.compose_locked() && self.composer.io.as_deref() != Some(&self.draft_id) {
+                if self.compose_visible()
+                    && self.dialog.is_none()
+                    && !self.compose_locked()
+                    && self.composer.io.as_deref() != Some(&self.composer.current.draft.id)
+                {
                     let draft = self.current_draft();
                     if self.try_command(Command::Send(draft)) {
-                        self.busy.insert(format!("send:{}", self.draft_id));
+                        self.busy
+                            .insert(format!("send:{}", self.composer.current.draft.id));
                     }
                 }
             }
@@ -1957,8 +2346,9 @@ impl App {
                     self.open_outbox();
                     return Task::none();
                 }
-                if let Some(draft) = self.workspace.drafts.iter().find(|d| d.id == id).cloned() {
+                if let Some(draft) = self.owned_draft(&id) {
                     self.load_draft(draft);
+                    return focus_after_layout("compose-body");
                 }
             }
             Message::Field(key, value) => {
@@ -1967,9 +2357,6 @@ impl App {
                         return Task::none();
                     }
                     self.calendar_setup.invalidate();
-                }
-                if self.compose_locked() {
-                    return Task::none();
                 }
                 if self.dialog == Some(Dialog::Account)
                     && !matches!(key, "setup_step" | "sent_copy" | "sent_folder")
@@ -1991,10 +2378,38 @@ impl App {
                         );
                     }
                 }
-                self.fields.insert(key, value);
-                if self.dialog == Some(Dialog::Compose) {
-                    self.draft_edited();
+                if key.starts_with("ftp_") {
+                    self.ftp_connection = None;
+                    if key != "ftp_password_secret" {
+                        self.fields.remove("ftp_password_secret");
+                    }
                 }
+                if key.starts_with("sftp_") {
+                    self.sftp_connection = None;
+                    self.ftp_connection = None;
+                    self.fields.remove("ftp_password_secret");
+                    if matches!(key, "sftp_host" | "sftp_port" | "sftp_fingerprint") {
+                        self.sftp_host_key = None;
+                    }
+                    if matches!(
+                        key,
+                        "sftp_host"
+                            | "sftp_port"
+                            | "sftp_username"
+                            | "sftp_directory"
+                            | "sftp_fingerprint"
+                    ) {
+                        self.fields.remove("sftp_password_secret");
+                    }
+                }
+                if key.starts_with("s3_") {
+                    self.s3_connection = None;
+                    if matches!(key, "s3_endpoint" | "s3_bucket" | "s3_prefix") {
+                        self.fields.remove("s3_access_secret");
+                        self.fields.remove("s3_key_secret");
+                    }
+                }
+                self.fields.insert(key, value);
             }
             Message::Protocol(protocol) => {
                 self.protocol = protocol;
@@ -2119,6 +2534,7 @@ impl App {
             }
             Message::ConfirmOutgoing(value) => self.outbox.confirmed = value,
             Message::ResolveOutgoing(action) => self.resolve_outbox(action),
+            Message::MoveRecovery(message) => self.handle_move_recovery(message),
             Message::ReviewRemoval(target) => self.review_removal(target),
             Message::ConfirmRemoval => self.confirm_removal(),
             Message::CancelPendingTransfers(value) => self.removal.cancel_transfers = value,
@@ -2153,22 +2569,160 @@ impl App {
                 }
                 Err(e) => {
                     self.confirm_save = None;
+                    self.saved_toast = None;
                     self.notice(e.to_string(), true);
                     self.preference_notice = self.notice.as_ref().map(|notice| notice.2);
                 }
             },
+            Message::PaletteTheme(dark) => self.palette_editor.select(
+                dark,
+                self.palette_editor.role,
+                self.preferences.palettes,
+            ),
+            Message::PaletteRole(role) => self.palette_editor.select(
+                self.palette_editor.dark,
+                role,
+                self.preferences.palettes,
+            ),
+            Message::PaletteValue(value) => {
+                self.palette_editor.edit(value, self.preferences.palettes)
+            }
+            Message::PaletteReset => self.palette_editor.reset(self.preferences.palettes),
+            Message::PaletteDiscard => self.palette_editor.discard(self.preferences.palettes),
+            Message::PaletteApply => {
+                if let Some(palettes) = self.palette_editor.apply(self.preferences.palettes) {
+                    self.preferences.palettes = palettes;
+                    self.save_preferences();
+                    self.confirm_save = Some(self.preference_sync.generation());
+                    self.saved_toast = None;
+                }
+            }
             Message::Appearance(appearance) => {
                 self.preferences.appearance = appearance;
                 self.save_preferences();
             }
+            Message::TestFtpConnection => {
+                let secret = self.field("ftp_password_secret");
+                let supplied =
+                    (!secret.is_empty()).then(|| secrecy::SecretString::from(secret.to_owned()));
+                self.begin_backup_request(backups::BackupAction::ConnectFtp(supplied));
+            }
+            Message::FtpSecurity(security) => {
+                let previous = self.preferences.backup_ftp.security;
+                self.preferences.backup_ftp.security = security;
+                let port = self.field("ftp_port");
+                if (previous == crate::backup::ftp::Security::ImplicitTls && port == "990")
+                    || (previous != crate::backup::ftp::Security::ImplicitTls && port == "21")
+                {
+                    self.fields.insert(
+                        "ftp_port",
+                        if security == crate::backup::ftp::Security::ImplicitTls {
+                            "990".into()
+                        } else {
+                            "21".into()
+                        },
+                    );
+                }
+                self.fields.remove("ftp_password_secret");
+                self.ftp_connection = None;
+                self.preference_sync.changed();
+            }
+            Message::TestSftpConnection => {
+                let secret = self.field("sftp_password_secret");
+                let supplied =
+                    (!secret.is_empty()).then(|| secrecy::SecretString::from(secret.to_owned()));
+                self.begin_backup_request(backups::BackupAction::ConnectSftp(supplied));
+            }
+            Message::ProbeSftpFingerprint => self.probe_sftp_fingerprint(),
+            Message::VerifySftpFingerprint(verified) => {
+                if let Some(review) = &mut self.sftp_host_key {
+                    review.verified = verified;
+                }
+            }
+            Message::AcceptSftpFingerprint => self.accept_sftp_fingerprint(),
+            Message::TestS3Connection => {
+                let key = self.field("s3_access_secret").trim();
+                let secret = self.field("s3_key_secret");
+                if key.is_empty() != secret.is_empty() {
+                    self.backup_validation_error("Enter both the S3 access key and secret key.");
+                } else {
+                    let supplied = (!key.is_empty())
+                        .then(|| (key.to_owned().into(), secret.to_owned().into()));
+                    self.begin_backup_request(backups::BackupAction::ConnectS3(supplied));
+                }
+            }
+            Message::S3PathStyle(enabled) => {
+                self.preferences.backup_s3.path_style = enabled;
+                self.s3_connection = None;
+                self.preference_sync.changed();
+            }
+            Message::AddBackupDestination => self.change_backup_destination(None),
+            Message::SelectBackupDestination(id) => self.change_backup_destination(Some(id)),
+            Message::ReviewBackupRemoval => self.dialog = Some(Dialog::RemoveBackup),
+            Message::RemoveBackupDestination => {
+                if self.dialog == Some(Dialog::RemoveBackup) {
+                    match crate::backup::config::remove_selected(&mut self.preferences) {
+                        Ok(()) => {
+                            self.dialog = None;
+                            self.settings_fields();
+                            self.fields.remove("passphrase");
+                            self.fields.remove("s3_access_secret");
+                            self.fields.remove("s3_key_secret");
+                            self.s3_connection = None;
+                            self.sftp_connection = None;
+                            self.ftp_connection = None;
+                            self.fields.remove("ftp_password_secret");
+                            self.sftp_host_key = None;
+                            self.fields.remove("sftp_password_secret");
+                            self.save_preferences();
+                            self.notice(
+                                "Backup destination removed. Saved copies are kept.",
+                                false,
+                            );
+                        }
+                        Err(error) => self.notice(error.to_string(), true),
+                    }
+                }
+            }
             Message::BackupDestination(destination) => {
+                self.fields.remove("s3_access_secret");
+                self.fields.remove("s3_key_secret");
+                self.s3_connection = None;
+                self.sftp_connection = None;
+                self.ftp_connection = None;
+                self.fields.remove("ftp_password_secret");
+                self.sftp_host_key = None;
+                self.fields.remove("sftp_password_secret");
                 self.preferences.backup_destination = destination;
+                self.preference_sync.changed();
+            }
+            Message::BackupCompression(enabled) => {
+                self.preferences.backup_format.compression = if enabled {
+                    crate::backup::format::Compression::Zstd
+                } else {
+                    crate::backup::format::Compression::None
+                };
+                self.preference_sync.changed();
+            }
+            Message::BackupEncryption(enabled) => {
+                self.preferences.backup_format.protection = if enabled {
+                    crate::backup::format::Protection::Passphrase
+                } else {
+                    crate::backup::format::Protection::None
+                };
+                if !enabled {
+                    self.preferences.backup_accounts = false;
+                    self.fields.remove("passphrase");
+                }
                 self.preference_sync.changed();
             }
             Message::BackupAccounts(enabled) => {
                 self.preferences.backup_accounts = enabled;
                 self.preference_sync.changed();
             }
+            Message::IncludeBackup(id, included) => self.include_backup(id, included),
+            Message::BackupAll => self.begin_backup_all(None),
+            Message::RetryBackup(id) => self.begin_backup_all(Some(id)),
             Message::AutoBackup(enabled) => {
                 self.preferences.auto_backup = enabled;
                 self.preference_sync.changed();
@@ -2186,9 +2740,7 @@ impl App {
                         Some(self.preferences.requested_google_services());
                     let request = self.preference_sync.changed();
                     self.pending_google_login = Some((request, self.preferences.clone(), retry));
-                    if !self
-                        .try_command(Command::SavePreferences(request, self.preferences.clone()))
-                    {
+                    if !self.queue_preference_write(request, self.preferences.clone()) {
                         self.pending_google_login = None;
                     }
                 }
@@ -2216,6 +2768,14 @@ impl App {
                 }
             }
             Message::CleanupGoogle => self.send(Command::CleanupGoogle),
+            Message::ToggleBackupHistory => {
+                self.backup_activity.open = !self.backup_activity.open;
+                if self.backup_activity.open {
+                    self.refresh_backup_history();
+                }
+            }
+            Message::RefreshBackupHistory => self.refresh_backup_history(),
+            Message::RetryBackupHistory(id) => self.retry_backup_history(id),
             Message::Backup => self.begin_backup_request(backups::BackupAction::Save(
                 secrecy::SecretString::from(self.field("passphrase").to_string()),
             )),
@@ -2243,107 +2803,8 @@ impl App {
                     self.notice("The backup destination changed. Close this dialog and refresh copies before restoring.", true);
                 }
             }
-            Message::Key(key, modifiers, captured) => {
-                // Scope Select All at input time as well as after the async
-                // native focus check. A delayed reader key must not select mail
-                // merely because the user clicked the list in the meantime.
-                if self.dialog.is_none()
-                    && self.remapping.is_none()
-                    && chord(&key, modifiers)
-                        .as_deref()
-                        .and_then(|k| self.preferences.shortcuts.resolve(k))
-                        == Some(Action::SelectAll)
-                    && (self.tab != Tab::Mail
-                        || !self.list_focus
-                        || self.sidebar_focus
-                        || self.full_reader)
-                {
-                    return Task::none();
-                }
-                if self.find_message.open
-                    && self.tab == Tab::Mail
-                    && self.dialog.is_none()
-                    && self.remapping.is_none()
-                    && self.context_menu.is_none()
-                    && self.composer.context.is_none()
-                    && key == Key::Named(keyboard::key::Named::Enter)
-                {
-                    let revision = self.find_message.revision;
-                    return widget::operation::is_focused("find-message").map(move |focused| {
-                        Message::Find(find_message::Message::Enter(
-                            revision,
-                            key.clone(),
-                            modifiers,
-                            captured,
-                            focused,
-                        ))
-                    });
-                }
-                let input_guard = !captured
-                    && self.dialog.is_none()
-                    && self.remapping.is_none()
-                    && self.context_menu.is_none()
-                    && self.composer.context.is_none()
-                    && chord(&key, modifiers)
-                        .as_deref()
-                        .and_then(|key| self.preferences.shortcuts.resolve(key))
-                        .is_some_and(|action| {
-                            !matches!(
-                                action,
-                                Action::Search
-                                    | Action::Find
-                                    | Action::Mail
-                                    | Action::Calendar
-                                    | Action::Settings
-                                    | Action::Compose
-                                    | Action::Sync
-                            )
-                        });
-                if input_guard {
-                    if self.tab != Tab::Mail {
-                        return Task::none();
-                    }
-                    if self.full_reader && self.find_message.open {
-                        return widget::operation::is_focused("find-message").map(move |focused| {
-                            Message::Find(find_message::Message::GuardedKey(
-                                key.clone(),
-                                modifiers,
-                                focused,
-                            ))
-                        });
-                    }
-                    if self.full_reader {
-                        // The full-window reader has no search widget. A focus
-                        // operation for a missing widget emits no response.
-                        return self.key(key, modifiers, captured);
-                    }
-                    // iced may leave unhandled modified chords uncaptured in a
-                    // focused text input. Inspect native focus, not the cached
-                    // focus observation used by the UI harness.
-                    return widget::operation::is_focused("search").map(move |focused| {
-                        Message::KeyFocusChecked(key.clone(), modifiers, focused)
-                    });
-                }
-                return self.key(key, modifiers, captured);
-            }
-            Message::KeyFocusChecked(key, modifiers, focused) => {
-                if self.tab == Tab::Mail
-                    && self.dialog.is_none()
-                    && self.remapping.is_none()
-                    && self.context_menu.is_none()
-                    && self.composer.context.is_none()
-                {
-                    if !focused && self.find_message.open {
-                        return widget::operation::is_focused("find-message").map(move |focused| {
-                            Message::Find(find_message::Message::GuardedKey(
-                                key.clone(),
-                                modifiers,
-                                focused,
-                            ))
-                        });
-                    }
-                    return self.key(key, modifiers, focused);
-                }
+            Message::Key(key, modifiers, captured, focus) => {
+                return self.native_key(key, modifiers, captured, focus);
             }
             Message::Remap(action, slot) => {
                 self.remapping = Some((action, slot));
@@ -2367,13 +2828,13 @@ impl App {
                 self.save_preferences();
             }
             Message::Editor(action) => {
-                if self.compose_locked() {
+                if !self.compose_visible() || self.dialog.is_some() || self.compose_locked() {
                     return Task::none();
                 }
                 if action.is_edit() {
                     self.draft_edited();
                 }
-                self.editor.perform(action);
+                self.composer.current.editor.perform(action);
             }
             Message::Month(delta) => {
                 let months = chrono::Months::new(delta.unsigned_abs());
@@ -2498,6 +2959,9 @@ impl App {
             }
             Message::SystemTheme(mode) => self.system_dark = mode == iced::theme::Mode::Dark,
             Message::Resize(size) => {
+                if size != self.size {
+                    self.mail_drag.clear();
+                }
                 self.size = size;
                 if self.tx.is_some() && size.width > 0. && size.height > 0. {
                     self.preferences.window_size = Some(WindowSize {
@@ -2549,12 +3013,19 @@ impl App {
                     |p| Message::ChosenPath("path", p),
                 );
             }
+            Message::DatabaseExport => return self.begin_database_export(),
+            Message::DatabaseImport(action) => return self.database_import_action(action),
+            Message::Profiles(action) => self.profile_action(action),
+            Message::ProfileSync(action) => self.shared_profile_action(action),
+            Message::DatabaseExportPath(request, path) => self.database_export_path(request, path),
+            Message::CancelDatabaseTransfer => self.cancel_database_transfer(),
             Message::ChosenPath(key, path) => {
                 if let Some(path) = path {
                     self.fields.insert(key, path);
                 }
             }
             Message::Modifiers(modifiers) => self.modifiers = modifiers,
+            Message::RevealSidebar(target, attempt) => return self.reveal_sidebar(target, attempt),
             Message::ToggleAccountFolders(account) => {
                 if self.preferences.collapsed_accounts.contains(&account) {
                     self.preferences
@@ -2564,6 +3035,18 @@ impl App {
                     self.preferences.collapsed_accounts.push(account);
                 }
                 self.save_preferences();
+            }
+            Message::ToggleFolderGroup(account, path) => {
+                self.sidebar_focus = true;
+                self.list_focus = false;
+                let expanded = !self.folder_expanded(&account, &path);
+                self.set_folder_expanded(&account, &path, expanded);
+                if let Some(index) = self.sidebar_items().iter().position(|item| {
+                    self.sidebar_group(&item.action).as_ref()
+                        == Some(&(account.clone(), path.clone()))
+                }) {
+                    self.sidebar_index = index;
+                }
             }
             Message::ToggleInboxExpanded => self.inbox_expanded = !self.inbox_expanded,
             Message::SidebarClick(index, modifiers) => {
@@ -2607,6 +3090,7 @@ impl App {
                 return self.handle(Message::Folder("INBOX".into()));
             }
             Message::AccountFolder(account, folder) => {
+                let folder = self.original_folder(&account, &folder);
                 self.query.account = Some(account);
                 return self.handle(Message::Folder(folder));
             }
@@ -2688,6 +3172,7 @@ impl App {
                 };
                 self.request_conversation(Some(offset));
             }
+            Message::ConversationViewport(y) => self.conversation.scroll = y,
             Message::ConversationScroll(generation) => return self.conversation_scroll(generation),
             Message::RetryConversation => {
                 self.request_conversation(Some(self.conversation.page.offset))
@@ -2740,6 +3225,15 @@ impl App {
                 }
             }
             Message::InboxScroll(offset) => self.inbox_scroll = offset,
+            Message::InboxRevealed(result) => {
+                if result.context == self.inbox_context() && result.height > 0. {
+                    self.inbox_scroll = result.offset;
+                    #[cfg(feature = "test-support")]
+                    {
+                        self.inbox_reveal_height = result.height;
+                    }
+                }
+            }
             Message::PaneResize(event) => {
                 let schedule = self.pending_resize.is_none();
                 self.pending_resize = Some(event);
@@ -2857,6 +3351,7 @@ impl App {
         }
     }
     fn open_mail_folder(&mut self, folder: String, sent_only: bool) {
+        self.close_composer();
         self.tab = Tab::Mail;
         self.query.folders = None;
         self.query.folder = folder;
@@ -2920,7 +3415,41 @@ impl App {
     }
     fn settings_fields(&mut self) {
         for (k, v) in [
+            (
+                "backup_name",
+                self.preferences
+                    .backup_destinations
+                    .iter()
+                    .find(|d| Some(&d.id) == self.preferences.backup_selected.as_ref())
+                    .map(|d| d.name.clone())
+                    .unwrap_or_else(|| "Main backup".into()),
+            ),
             ("backup_folder", self.preferences.backup_folder.clone()),
+            ("ftp_host", self.preferences.backup_ftp.host.clone()),
+            ("ftp_port", self.preferences.backup_ftp.port.to_string()),
+            ("ftp_username", self.preferences.backup_ftp.username.clone()),
+            (
+                "ftp_directory",
+                self.preferences.backup_ftp.directory.clone(),
+            ),
+            ("sftp_host", self.preferences.backup_sftp.host.clone()),
+            ("sftp_port", self.preferences.backup_sftp.port.to_string()),
+            (
+                "sftp_username",
+                self.preferences.backup_sftp.username.clone(),
+            ),
+            (
+                "sftp_directory",
+                self.preferences.backup_sftp.directory.clone(),
+            ),
+            (
+                "sftp_fingerprint",
+                self.preferences.backup_sftp.fingerprint.clone(),
+            ),
+            ("s3_endpoint", self.preferences.backup_s3.endpoint.clone()),
+            ("s3_region", self.preferences.backup_s3.region.clone()),
+            ("s3_bucket", self.preferences.backup_s3.bucket.clone()),
+            ("s3_prefix", self.preferences.backup_s3.prefix.clone()),
             ("copies", self.preferences.backup_copies.to_string()),
             ("hours", self.preferences.backup_hours.to_string()),
             (
@@ -2938,9 +3467,15 @@ impl App {
         }
     }
     fn read_preferences(&mut self) -> anyhow::Result<()> {
+        if let Some(error) = self.palette_editor.error {
+            anyhow::bail!("Colors: {error}");
+        }
         let mut next = self.preferences.clone();
         if self.fields.contains_key("copies") {
             next.backup_folder = self.field("backup_folder").into();
+            next.backup_s3 = self.s3_form_settings();
+            next.backup_sftp = self.sftp_form_settings();
+            next.backup_ftp = self.ftp_form_settings();
             next.backup_copies = self.field("copies").parse()?;
             next.backup_hours = self.field("hours").parse()?;
             next.mail_check_seconds = self.field("mail_check_seconds").parse()?;
@@ -2959,7 +3494,16 @@ impl App {
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
         }
+        if let Some(id) = &next.backup_selected
+            && let Some(destination) = next.backup_destinations.iter_mut().find(|d| &d.id == id)
+        {
+            destination.name = self.field("backup_name").trim().to_owned();
+        }
+        crate::backup::config::capture_editor(&mut next);
         next.validate()?;
+        if let Some(palettes) = self.palette_editor.apply(next.palettes) {
+            next.palettes = palettes;
+        }
         self.preferences = next;
         Ok(())
     }
@@ -3046,6 +3590,73 @@ impl App {
         })
     }
     fn key(&mut self, key: Key, modifiers: keyboard::Modifiers, captured: bool) -> Task<Message> {
+        if let Some(menu) = &mut self.folder_controls.menu {
+            use keyboard::key::Named;
+            match key {
+                Key::Named(Named::Escape) => self.folder_controls.menu = None,
+                Key::Named(Named::ArrowDown) => menu.index = (menu.index + 1) % 3,
+                Key::Named(Named::ArrowUp) => menu.index = (menu.index + 2) % 3,
+                Key::Named(Named::Enter) => {
+                    let index = menu.index;
+                    return self.handle(Message::Folders(folder_controls::Message::Choose(index)));
+                }
+                _ => {}
+            }
+            return Task::none();
+        }
+        if self.dialog == Some(Dialog::FolderChange) && modifiers.is_empty() && !captured {
+            match &key {
+                Key::Named(keyboard::key::Named::Enter) => {
+                    self.handle_folders(folder_controls::Message::Submit);
+                    return Task::none();
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("y") => {
+                    self.handle_folders(folder_controls::Message::Submit);
+                    return Task::none();
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("n") => {
+                    return self.handle(Message::Close);
+                }
+                _ => {}
+            }
+        }
+
+        if key == Key::Named(keyboard::key::Named::Escape) && self.mail_drag.consume_escape()
+            || self.mail_drag.holding()
+        {
+            return Task::none();
+        }
+        if self.dialog == Some(Dialog::MoveRecovery) && modifiers.is_empty() {
+            match &key {
+                Key::Named(keyboard::key::Named::Enter) => {
+                    return self.handle(Message::MoveRecovery(move_recovery::Message::Submit));
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("y") => {
+                    return self.handle(Message::MoveRecovery(move_recovery::Message::Submit));
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("n") => {
+                    return self.handle(Message::Close);
+                }
+                _ => {}
+            }
+        }
+        if self.bulk_confirming() && modifiers.is_empty() {
+            match &key {
+                Key::Named(keyboard::key::Named::Enter) => {
+                    return self.handle_bulk(bulk::Message::ConfirmResolution);
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("y") => {
+                    return self.handle_bulk(bulk::Message::ConfirmResolution);
+                }
+                Key::Named(keyboard::key::Named::Escape) => {
+                    return self.handle_bulk(bulk::Message::CancelResolution);
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("n") => {
+                    return self.handle_bulk(bulk::Message::CancelResolution);
+                }
+                _ => {}
+            }
+        }
         if self.dialog == Some(Dialog::BulkReview) && modifiers.is_empty() {
             match &key {
                 Key::Named(keyboard::key::Named::Enter) => {
@@ -3107,6 +3718,24 @@ impl App {
                     return self.choose_mail_context(action);
                 }
                 _ => {}
+            }
+            return Task::none();
+        }
+        if !captured
+            && self.dialog.is_none()
+            && self.tab == Tab::Mail
+            && self.sidebar_focus
+            && modifiers.shift()
+            && key == Key::Named(keyboard::key::Named::F10)
+        {
+            if let Some(item) = self.sidebar_items().get(self.sidebar_index)
+                && let Some((account, path)) = self.sidebar_folder_context(&item.action)
+            {
+                self.handle_folders(folder_controls::Message::Context(
+                    account.clone(),
+                    path.clone(),
+                    iced::Point::new(40., 220.),
+                ));
             }
             return Task::none();
         }
@@ -3196,10 +3825,22 @@ impl App {
         }
         if self.tab == Tab::Mail
             && self.sidebar_focus
+            && modifiers.is_empty()
+            && matches!(
+                key,
+                Key::Named(keyboard::key::Named::ArrowLeft | keyboard::key::Named::ArrowRight)
+            )
+        {
+            let action = self.sidebar_tree_key(key == Key::Named(keyboard::key::Named::ArrowRight));
+            return Task::batch([action, self.reveal_sidebar_focus()]);
+        }
+        if self.tab == Tab::Mail
+            && self.sidebar_focus
             && key == Key::Named(keyboard::key::Named::Enter)
             && modifiers.is_empty()
         {
-            return self.handle(Message::SidebarAction(self.sidebar_index));
+            let action = self.handle(Message::SidebarAction(self.sidebar_index));
+            return Task::batch([action, self.reveal_sidebar_focus()]);
         }
         if self.tab == Tab::Mail
             && matches!(
@@ -3218,11 +3859,14 @@ impl App {
                 if self
                     .sidebar_items()
                     .get(self.sidebar_index)
-                    .is_some_and(|s| s.section)
+                    .is_some_and(|s| {
+                        s.section || matches!(s.action, Message::ToggleFolderGroup(..))
+                    })
                 {
-                    return Task::none();
+                    return self.reveal_sidebar_focus();
                 }
-                return self.handle(Message::SidebarAction(self.sidebar_index));
+                let action = self.handle(Message::SidebarAction(self.sidebar_index));
+                return Task::batch([action, self.reveal_sidebar_focus()]);
             }
             return self.handle(Message::PreviousMessage(previous));
         }
@@ -3248,7 +3892,7 @@ impl App {
                     }
                     Task::none()
                 }
-                Action::Compose => self.handle(Message::Open(Dialog::Compose)),
+                Action::Compose => self.handle(Message::NewMessage),
                 Action::Reply => self.handle(Message::Reply),
                 Action::ReplyAll => self.handle(Message::ReplyAll),
                 Action::Forward => self.handle(Message::Forward),
@@ -3262,7 +3906,10 @@ impl App {
                 Action::Mail => self.handle(Message::Tab(Tab::Mail)),
                 Action::Inbox => {
                     if self.tab == Tab::Mail && self.sidebar_focus {
-                        self.handle(Message::Tab(Tab::Mail))
+                        let task = self.handle(Message::Tab(Tab::Mail));
+                        self.sidebar_focus = true;
+                        self.list_focus = false;
+                        Task::batch([task, self.reveal_sidebar_focus()])
                     } else {
                         Task::none()
                     }
@@ -3288,8 +3935,32 @@ impl App {
         self.test_revision += 1;
         let mut samples: Vec<_> = self.update_samples.iter().copied().collect();
         samples.sort_by(f64::total_cmp);
-        let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|self.mail_actions.effective(&d.summary).starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts.0,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
+        let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|self.mail_actions.effective(&d.summary).starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts.0,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.composer.current.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
+        data["compose_fields"] = serde_json::json!({
+            "account": self.compose_field("account"),
+            "to": self.compose_field("to"),
+            "cc": self.compose_field("cc"),
+            "bcc": self.compose_field("bcc"),
+            "subject": self.compose_field("subject"),
+        });
+        data["composer"] = serde_json::json!({
+            "visible": self.compose_visible(),
+            "id": self.composer.current.draft.id,
+            "minimized": self.composer.current.minimized,
+            "parked": self.composer.parked.keys().collect::<Vec<_>>(),
+            "pending": self.composer.current.pending,
+            "reply": self.composer.current.draft.reply_context,
+        });
         self.bulk_test_state(&mut data);
+        data["database_transfer"] = self.database_transfer.observation();
+        data["database_import"] = self.database_import.observation();
+        data["profiles"] = self.profiles.observation();
+        data["profile_sync"] = self.profile_sync.observation();
+        data["mail_drag"] = self.mail_drag.observation();
+        #[cfg(feature = "test-support")]
+        {
+            data["page_loaded"] = serde_json::json!(self.initial_page_loaded);
+        }
         data["mail_selection"] = serde_json::json!({
             "mode": self.mail_selection.mode, "count": self.mail_selection.count,
             "pending": self.mail_selection.busy(), "visible": self.mail_selection.visible,
@@ -3306,15 +3977,12 @@ impl App {
             );
         }
         data["move_enter_destination"] = serde_json::json!(if self.dialog == Some(Dialog::Move) {
-            crate::fuzzy::ranked(self.field("folder_search"), self.move_folders())
-                .first()
-                .cloned()
+            self.ranked_move_folders().first().cloned()
         } else {
             None
         });
         data["tooltips"] = serde_json::json!(self.preferences.tooltips);
         data["shortcut_tooltips"] = serde_json::json!(self.preferences.shortcut_tooltips);
-        data["profiles"] = self.profile_observation();
         data["settings_search"] = serde_json::json!(self.settings_search);
         data["settings_group"] = serde_json::json!(self.settings_group);
         data["settings_matches"] = serde_json::json!(
@@ -3323,8 +3991,19 @@ impl App {
                 .map(|s| s.title)
                 .collect::<Vec<_>>()
         );
+        data["page_unread"] = serde_json::json!(self.page.unread);
         data["inbox_unread"] = serde_json::json!(self.page.inbox_unread);
+        data["tray"] = serde_json::json!({"available": self.tray.available,
+            "visible": self.tray.window.is_some(), "ready": self.tray.ready, "temporary": self.tray.temporary,
+            "exiting": self.tray.exiting, "enabled": self.preferences.close_to_tray,
+            "saved_enabled": self.workspace.preferences.close_to_tray});
+        data["close_pending"] =
+            serde_json::json!(self.pending_close.is_some() || self.composer.close.is_some());
         data["unread_badge"] = serde_json::json!(self.preferences.unread_badge);
+        #[cfg(feature = "test-support")]
+        {
+            data["notifications"] = self.notification_observation();
+        }
         data["saved_unread_badge"] = serde_json::json!(self.workspace.preferences.unread_badge);
         data["count_observed_ids"] = serde_json::json!(
             self.mail_actions
@@ -3338,8 +4017,12 @@ impl App {
         #[cfg(feature = "test-support")]
         {
             data["sync_round"] = serde_json::json!(self.test_sync_round);
+            data["account_sync_waiting"] = serde_json::json!(self.test_account_sync_waiting);
         }
         data["refreshing"] = serde_json::json!(self.busy.contains("sync"));
+        data["refresh_animation"] = serde_json::json!({
+            "running": self.refresh_animating(), "angle": self.refresh.angle()
+        });
         data["background_sync"] = serde_json::json!(self.busy.contains("background-sync"));
         data["mail_check_seconds"] = serde_json::json!(self.preferences.mail_check_seconds);
         data["mail_pending"] = serde_json::json!(self.mail_actions.pending());
@@ -3355,12 +4038,22 @@ impl App {
                 .map(|d| self.mail_actions.effective(&d.summary).unread)
         );
         data["mail_rows"] = serde_json::json!(self.page.rows);
+        #[cfg(feature = "test-support")]
+        for (index, mail) in self.page.rows.iter().enumerate() {
+            data["mail_rows"][index]["group_pending"] =
+                serde_json::json!(self.bulk_owns_mail(&mail.id));
+        }
         data["conversation_rows"] = serde_json::json!(self.conversation.page.rows);
         data["conversation_offset"] = serde_json::json!(self.conversation.page.offset);
         data["conversation_collapsed"] = serde_json::json!(self.conversation.collapsed);
         data["loaded_message_id"] =
             serde_json::json!(self.detail.as_ref().map(|detail| &detail.summary.id));
         data["reader_message_id"] = serde_json::json!(self.reader_id());
+        #[cfg(feature = "test-support")]
+        {
+            data["folder_changes"] = self.folder_test_state();
+        }
+        data["move_recovery"] = serde_json::json!({"total":self.workspace.move_pending_total,"selected":self.move_recovery.selected.as_ref().map(|r|&r.token),"stage":self.move_recovery.selected.as_ref().map(|r|r.stage),"action":self.move_recovery.action,"confirmed":self.move_recovery.confirmed,"pending":self.move_recovery.pending.len(),"error":self.move_recovery.error,"rows":*self.move_recovery.rows});
         data["outgoing_pending"] = serde_json::json!(self.workspace.outgoing_pending);
         data["outgoing_rows"] = serde_json::json!(self.outbox.page.rows);
         data["outgoing_confirmed"] = serde_json::json!(self.outbox.confirmed);
@@ -3370,9 +4063,8 @@ impl App {
         data["removal_error"] = serde_json::json!(self.removal.error);
         data["removing"] = serde_json::json!(self.removal.removing.is_some());
         data["removal_cancel_transfers"] = serde_json::json!(self.removal.cancel_transfers);
+        data["account_reconnect_count"] = serde_json::json!(self.workspace.account_reconnect.len());
         data["account_count"] = serde_json::json!(self.workspace.accounts.len());
-        data["reconnect_required_count"] =
-            serde_json::json!(self.workspace.profile_reconnect.len());
         data["calendar_count"] = serde_json::json!(self.workspace.calendars.len());
         data["removed_google_calendars"] =
             serde_json::json!(self.workspace.removed_google_calendars);
@@ -3392,7 +4084,7 @@ impl App {
         data["google_connected"] = serde_json::json!(self.google_connected);
         data["event_access"] = serde_json::json!(self.event_access());
         data["group_conversations"] = serde_json::json!(self.preferences.group_conversations);
-        data["draft_attachments"] = serde_json::json!(self.composer.draft.attachments);
+        data["draft_attachments"] = serde_json::json!(self.composer.current.draft.attachments);
         data["drafts_collapsed"] = serde_json::json!(self.preferences.collapsed_drafts);
         data["saved_drafts_collapsed"] =
             serde_json::json!(self.workspace.preferences.collapsed_drafts);
@@ -3408,22 +4100,50 @@ impl App {
         data["discard_pending"] = serde_json::json!(self.composer.discard_pending);
         data["draft_io"] = serde_json::json!(self.composer.io.is_some());
         data["forward_pending"] = serde_json::json!(self.composer.forward_pending.is_some());
-        data["draft_forward"] = serde_json::json!(self.composer.draft.forward.is_some());
+        data["draft_forward"] = serde_json::json!(self.composer.current.draft.forward.is_some());
         data["draft_forward_html"] = serde_json::json!(
             self.composer
+                .current
                 .draft
                 .forward
                 .as_ref()
                 .is_some_and(|quote| !quote.html_body.is_empty()
-                    && self.editor.text().ends_with(&quote.text))
+                    && self.composer.current.editor.text().ends_with(&quote.text))
         );
-        data["draft_in_reply_to"] = serde_json::json!(self.composer.draft.in_reply_to);
+        data["draft_in_reply_to"] = serde_json::json!(self.composer.current.draft.in_reply_to);
         data["focused_input"] = serde_json::json!(self.focused_input);
+        data["s3_connection"] = serde_json::json!(self.s3_connection.as_ref().map(|(_, target, result)| serde_json::json!({"current": *target == self.configured_backup_target(), "pending": result.is_none(), "connected": result.as_ref().is_some_and(|r| r.is_ok()), "error": result.as_ref().and_then(|r| r.as_ref().err()) })));
+        data["backup_destination"] =
+            serde_json::json!(format!("{:?}", self.preferences.backup_destination));
+        data["saved_backup_sftp"] = serde_json::json!(self.workspace.preferences.backup_sftp);
+        data["saved_backup_ftp"] = serde_json::json!(self.preferences.backup_ftp);
+        data["ftp_connection"] = serde_json::json!(self.ftp_connection.as_ref().map(|(_,target,result)|serde_json::json!({"current":*target==self.configured_backup_target(),"pending":result.is_none(),"connected":result.as_ref().is_some_and(|r|r.is_ok()),"error":result.as_ref().and_then(|r|r.as_ref().err())})));
+        data["sftp_connection"] = serde_json::json!(self.sftp_connection.as_ref().map(|(_, target, result)| serde_json::json!({"current": *target == self.configured_backup_target(), "pending": result.is_none(), "connected": result.as_ref().is_some_and(|r| r.is_ok()), "error": result.as_ref().and_then(|r| r.as_ref().err()) })));
+        data["sftp_host_key"] = serde_json::json!(self.sftp_host_key.as_ref().map(|review| serde_json::json!({"pending": review.result.is_none(), "verified":review.verified, "fingerprint": review.result.as_ref().and_then(|r| r.as_ref().ok()), "error": review.result.as_ref().and_then(|r| r.as_ref().err()) })));
+        data["saved_backup_s3"] = serde_json::json!(self.workspace.preferences.backup_s3);
+        data["backup_run"] = serde_json::json!(self.backup_run);
+        data["backup_destinations"] = serde_json::json!(self.preferences.backup_destinations);
+        data["backup_selected"] = serde_json::json!(self.preferences.backup_selected);
+        data["saved_backup_destinations"] =
+            serde_json::json!(self.workspace.preferences.backup_destinations);
         data["auto_backup"] = serde_json::json!(self.preferences.auto_backup);
+        data["backup_activity"] = serde_json::json!({"open": self.backup_activity.open, "entries": &*self.backup_activity.entries, "loading": self.backup_activity.loading, "error": self.backup_activity.error});
+        data["backup_format"] = serde_json::json!(self.preferences.backup_format);
+        data["saved_backup_format"] = serde_json::json!(self.workspace.preferences.backup_format);
+        data["backup_accounts"] = serde_json::json!(self.preferences.backup_accounts);
         data["backup_ready"] = serde_json::json!(self.preferences.backup_ready);
         data["saved_backup_folder"] = serde_json::json!(self.workspace.preferences.backup_folder);
         data["saved_backup_copies"] = serde_json::json!(self.workspace.preferences.backup_copies);
         data["saved_auto_backup"] = serde_json::json!(self.workspace.preferences.auto_backup);
+        data["palettes"] = serde_json::json!(self.preferences.palettes);
+        data["saved_palettes"] = serde_json::json!(self.workspace.preferences.palettes);
+        data["palette_editor"] = serde_json::json!({
+            "dark": self.palette_editor.dark,
+            "role": self.palette_editor.role.to_string(),
+            "value": self.palette_editor.value,
+            "draft": self.palette_editor.draft,
+            "error": self.palette_editor.error,
+        });
         data["preferences_saved"] = serde_json::json!(!self.preference_sync.dirty());
         data["saved_preferences_revision"] = serde_json::json!(self.workspace.preferences_revision);
         data["saved_appearance"] =
@@ -3432,6 +4152,14 @@ impl App {
             serde_json::json!(self.detail.as_ref().map(|d| d.attachments.len()));
         data["selected_folders"] = serde_json::json!(self.query.folders);
         data["collapsed_accounts"] = serde_json::json!(self.preferences.collapsed_accounts);
+        data["expanded_folders"] = serde_json::json!(self.preferences.expanded_folders);
+        data["saved_expanded_folders"] =
+            serde_json::json!(self.workspace.preferences.expanded_folders);
+        data["sidebar_index"] = serde_json::json!(self.sidebar_index);
+        data["sidebar_rows"] = serde_json::json!(self.sidebar_items().iter().map(|item| {
+            let group=self.sidebar_group(&item.action);
+            serde_json::json!({"label":item.label,"depth":item.depth,"selectable":self.sidebar_folder(&item.action).is_some(),"group":group,"expanded":group.as_ref().is_some_and(|(a,p)|self.folder_expanded(a,p))})
+        }).collect::<Vec<_>>());
         data["sidebar_width"] = serde_json::json!(self.sidebar_width());
         data["saved_sidebar_width"] = serde_json::json!(self.workspace.preferences.sidebar_width);
         data["window_size"] = serde_json::json!([self.size.width, self.size.height]);
@@ -3467,6 +4195,19 @@ impl App {
                 .supplied
                 .intersection(&self.html_reader.resources)
                 .count()
+        );
+        data["html_rendered_images"] = serde_json::json!(
+            self.html_reader
+                .frame
+                .as_ref()
+                .map_or(0, |frame| frame.loaded_images.len())
+        );
+        data["conversation_scroll"] = serde_json::json!(self.conversation.scroll);
+        data["html_background"] = serde_json::json!(
+            self.html_reader
+                .frame
+                .as_ref()
+                .and_then(|frame| frame.background)
         );
         data["html_resources"] = serde_json::json!(self.html_reader.resources.len());
         data["html_error"] = serde_json::json!(self.html_reader.error);
@@ -3505,7 +4246,7 @@ impl App {
                 self.action_toasts
                     .current
                     .as_ref()
-                    .map(|t| serde_json::json!({"label": t.label(), "count": t.count(), "undo": !t.undo_tokens().is_empty()}))
+                    .map(|t| serde_json::json!({"label": t.display_label(&self.workspace), "count": t.count(), "undo": !t.undo_tokens().is_empty()}))
             );
         }
         data["undo_failures"] = serde_json::json!(self.mail_actions.undo_failures().len());
@@ -3523,6 +4264,7 @@ impl App {
             data["keys"] = serde_json::json!(self.test_keys);
         }
         data["inbox_scroll"] = serde_json::json!(self.inbox_scroll);
+        data["inbox_reveal_height"] = serde_json::json!(self.inbox_reveal_height);
         Task::perform(
             async move {
                 static SNAPSHOT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -3544,7 +4286,17 @@ impl App {
         )
     }
     fn view(&self) -> Element<'_, Message> {
-        context_menu::ContextArea::root(self.layout()).into()
+        context_menu::ContextArea::root(self.layout(), self.preferences.interface_scale)
+            .with_drag(drag_mail::Region::Root(
+                self.mail_drag.clone(),
+                self.tab == Tab::Mail
+                    && !self.full_reader
+                    && self.dialog.is_none()
+                    && self.context_menu.is_none()
+                    && self.composer.context.is_none(),
+                self.drag_rules(),
+            ))
+            .into()
     }
 }
 pub fn chord(key: &Key, modifiers: keyboard::Modifiers) -> Option<String> {
@@ -3591,3 +4343,6 @@ fn focus_after_layout(id: &'static str) -> Task<Message> {
         |id| Message::Focus(id, 0),
     )
 }
+
+#[cfg(test)]
+mod folder_tests;

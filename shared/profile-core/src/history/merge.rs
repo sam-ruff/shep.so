@@ -209,7 +209,13 @@ fn insert(tx: &Transaction<'_>, op: &Operation, raw: &[u8], request: Option<&[u8
             params![id, parent.to_string()],
         )?;
     }
-    let cycle:bool=tx.query_row("WITH RECURSIVE ancestry(id) AS (SELECT parent FROM parents WHERE child=?1 UNION SELECT p.parent FROM parents p JOIN ancestry a ON p.child=a.id) SELECT EXISTS(SELECT 1 FROM ancestry WHERE id=?1)",[&id],|r|r.get(0))?;
+    collect_ancestry(tx, &id)?;
+    let cycle: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM history_ancestors WHERE id=?)",
+        [&id],
+        |r| r.get(0),
+    )?;
+    tx.execute("DELETE FROM history_ancestors", [])?;
     if cycle {
         return Err(Error::Cycle);
     }
@@ -220,6 +226,35 @@ fn insert(tx: &Transaction<'_>, op: &Operation, raw: &[u8], request: Option<&[u8
     )?;
     tx.execute("UPDATE state SET revision=revision+1,operations=operations+1,waiting=waiting+1,ready=ready+?1,queued=queued+?2",params![remaining==0,request.is_some()])?;
     Ok(())
+}
+// A recursive UNION materializes an unbounded visited set in SQLite temporary
+// storage. Use indexed disk membership and a bounded frontier instead. The main
+// connection owns both this scratch table and the transaction that clears it.
+const ANCESTRY_BATCH: i64 = 128;
+fn collect_ancestry(tx: &Transaction<'_>, operation: &str) -> Result<()> {
+    tx.execute("DELETE FROM history_ancestors", [])?;
+    tx.execute(
+        "INSERT OR IGNORE INTO history_ancestors(id) SELECT parent FROM parents WHERE child=?",
+        [operation],
+    )?;
+    loop {
+        let frontier = tx
+            .prepare("SELECT id FROM history_ancestors WHERE expanded=0 ORDER BY id LIMIT ?")?
+            .query_map([ANCESTRY_BATCH], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        if frontier.is_empty() {
+            return Ok(());
+        }
+        for id in frontier {
+            // The codec bounds each operation's parent list. No full ancestry
+            // list crosses into Rust, including cycles or out-of-order records.
+            tx.execute(
+                "INSERT OR IGNORE INTO history_ancestors(id) SELECT parent FROM parents WHERE child=?",
+                [&id],
+            )?;
+            tx.execute("UPDATE history_ancestors SET expanded=1 WHERE id=?", [&id])?;
+        }
+    }
 }
 fn apply_ready(tx: &Transaction<'_>) -> Result<()> {
     for _ in 0..APPLY_BATCH {
@@ -234,12 +269,11 @@ fn apply_ready(tx: &Transaction<'_>) -> Result<()> {
             break;
         };
         let op = Operation::decode(&raw)?;
-        // SQL keeps ancestry on the owning connection, never in a UI collection.
-        tx.execute("DELETE FROM history_ancestors", [])?;
-        tx.execute("WITH RECURSIVE ancestry(id) AS (SELECT parent FROM parents WHERE child=?1 UNION SELECT p.parent FROM parents p JOIN ancestry a ON p.child=a.id) INSERT INTO history_ancestors SELECT id FROM ancestry",[op.operation.to_string()])?;
+        collect_ancestry(tx, &op.operation.to_string())?;
         for (position, change) in op.changes.iter().enumerate() {
             apply_change(tx, &op, position, &change.action)?;
         }
+        tx.execute("DELETE FROM history_ancestors", [])?;
         for parent in &op.parents {
             tx.execute("DELETE FROM heads WHERE id=?", [parent.to_string()])?;
         }
@@ -249,7 +283,17 @@ fn apply_ready(tx: &Transaction<'_>) -> Result<()> {
             [op.operation.to_string()],
         )?;
         let ready:i64=tx.query_row("SELECT count(*) FROM parents p JOIN operations child ON child.id=p.child WHERE p.parent=? AND child.applied=0 AND child.remaining=1",[op.operation.to_string()],|r|r.get(0))?;
-        tx.execute("UPDATE operations SET remaining=remaining-1 WHERE applied=0 AND id IN (SELECT child FROM parents WHERE parent=?)",[op.operation.to_string()])?;
+        // IN (SELECT child ...) can materialize an arbitrarily wide descendant
+        // set. The covering parent index supplies one child per cursor step.
+        let mut children = tx.prepare("SELECT child FROM parents WHERE parent=?")?;
+        let mut rows = children.query([op.operation.to_string()])?;
+        while let Some(row) = rows.next()? {
+            let child: String = row.get(0)?;
+            tx.execute(
+                "UPDATE operations SET remaining=remaining-1 WHERE applied=0 AND id=?",
+                [child],
+            )?;
+        }
         tx.execute(
             "UPDATE state SET waiting=waiting-1,ready=ready-1+?,revision=revision+1",
             [ready],
@@ -401,4 +445,102 @@ fn preserves_extensions(old: &Change, new: &Change) -> bool {
 fn setup_state(tx: &Transaction<'_>) -> Result<Option<(bool, Uuid, Uuid)>> {
     tx.query_row("SELECT json_extract(CAST(o.raw AS TEXT),'$.changes[0].complete'),o.device,o.id FROM versions v JOIN operations o ON o.id=v.operation WHERE v.target='profile:setup'", [], |r| Ok((r.get::<_,bool>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?))).optional()?
         .map(|(complete, device, operation)| Ok((complete,parse_uuid(&device)?,parse_uuid(&operation)?))).transpose()
+}
+
+#[cfg(test)]
+mod ancestry_tests {
+    use super::*;
+
+    #[test]
+    fn disk_frontier_handles_large_history_duplicates_cycles_and_restarts() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("history.sqlite");
+        let mut connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "PRAGMA temp_store=MEMORY;
+            CREATE TABLE parents(child TEXT,parent TEXT,PRIMARY KEY(child,parent));
+            CREATE TABLE history_ancestors(id TEXT PRIMARY KEY,expanded INTEGER NOT NULL DEFAULT 0);
+            CREATE INDEX history_frontier ON history_ancestors(id) WHERE expanded=0;",
+            )
+            .unwrap();
+        let tx = connection.transaction().unwrap();
+        for number in 1..10_001 {
+            tx.execute(
+                "INSERT INTO parents VALUES(?,?)",
+                params![number.to_string(), (number - 1).to_string()],
+            )
+            .unwrap();
+            if number > 1 {
+                tx.execute(
+                    "INSERT INTO parents VALUES(?,?)",
+                    params![number.to_string(), "0"],
+                )
+                .unwrap();
+            }
+        }
+        collect_ancestry(&tx, "10000").unwrap();
+        assert_eq!(
+            tx.query_row("SELECT count(*) FROM history_ancestors", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            10_000
+        );
+        assert_eq!(
+            tx.query_row(
+                "SELECT count(*) FROM history_ancestors WHERE expanded=0",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        // A cycle terminates through on-disk deduplication and includes the
+        // operation itself, allowing the protocol layer to reject it.
+        tx.execute("INSERT INTO parents VALUES('0','10000')", [])
+            .unwrap();
+        collect_ancestry(&tx, "10000").unwrap();
+        assert_eq!(
+            tx.query_row("SELECT count(*) FROM history_ancestors", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            10_001
+        );
+        tx.execute("DELETE FROM history_ancestors", []).unwrap();
+        tx.commit().unwrap();
+        drop(connection);
+        let mut connection = Connection::open(path).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM history_ancestors", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        let tx = connection.transaction().unwrap();
+        collect_ancestry(&tx, "10000").unwrap();
+        tx.rollback().unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM history_ancestors", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        for sql in [
+            "SELECT id FROM history_ancestors WHERE expanded=0 ORDER BY id LIMIT 128",
+            "SELECT parent FROM parents WHERE child='10000'",
+        ] {
+            let plan = connection
+                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+                .unwrap()
+                .query_map([], |r| r.get::<_, String>(3))
+                .unwrap()
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n");
+            assert!(!plan.contains("TEMP B-TREE"), "{plan}");
+            assert!(plan.contains("INDEX"), "{plan}");
+        }
+    }
 }

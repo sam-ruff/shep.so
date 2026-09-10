@@ -364,23 +364,12 @@ async fn sync(
                 event=tokio::time::timeout(Duration::from_secs(45),receive.recv())=>{
                     match event {
                         Ok(Some(event))=>{
-                            if !emit(&bytes, move || match event {
-                                MailSyncItem::Message(mail)=>{
-                                    let reply=mailparse::parse_mail(&mail.raw).ok().map(|p|shep_mail_core::compose::ReplyHeaders::parse(&p).envelope());
-                                    let sent_message_id = unique_sent_identity(&mail.raw);
-                                    serde_json::json!({"kind":"message","mail":mail,"reply":reply,"sent_message_id":sent_message_id})
-                                },
-                                MailSyncItem::Flags(flags)=>serde_json::json!({"kind":"flags","flags":flags}),
-                                MailSyncItem::Reconcile{account,folder,live_ids}=>serde_json::json!({"kind":"reconcile","account":account,"folder":folder,"live_ids":live_ids}),
-                                MailSyncItem::Folders(account,folders)=>serde_json::json!({"kind":"folders","account":account,"folders":folders}),
-                                MailSyncItem::SentFolder(account,folder)=>serde_json::json!({"kind":"sent_folder","account":account,"folder":folder}),
-                                MailSyncItem::SkippedLarge=>serde_json::json!({"kind":"skipped_large"}),
-                            }).await { provider.abort();let _=provider.await;return; }
+                            if !emit(&bytes, move || browser_event(event)).await { provider.abort();let _=provider.await;return; }
                         }
                         Ok(None)=>break,
                         Err(_)=>{
                             provider.abort();let _=provider.await;
-                            let _=emit(&bytes,|| serde_json::json!({"kind":"error","error":"Mail sync stopped responding. Your cached mail was kept; retry Refresh."})).await;
+                            let _=emit(&bytes,|| Some(serde_json::json!({"kind":"error","error":"Mail sync stopped responding. Your cached mail was kept; retry Refresh."}))).await;
                             return;
                         }
                     }
@@ -393,7 +382,7 @@ async fn sync(
                 serde_json::json!({"kind":"error","error":"Mail sync did not finish. Your cached mail was kept; check the connection and retry."})
             }
         };
-        let _ = emit(&bytes, move || result).await;
+        let _ = emit(&bytes, move || Some(result)).await;
     });
     let stream = ReceiverStream::new(receiver).map(Ok::<_, std::convert::Infallible>);
     (
@@ -402,18 +391,55 @@ async fn sync(
     )
         .into_response()
 }
+/// Browser-facing sync events. The browser caches selectable folder names only,
+/// and its protocol has no inbox lifecycle events, so those are not emitted.
+fn browser_event(event: MailSyncItem) -> Option<serde_json::Value> {
+    Some(match event {
+        MailSyncItem::InboxSyncStarted { .. } | MailSyncItem::InboxSyncFinished { .. } => {
+            return None;
+        }
+        MailSyncItem::Message(mail) => {
+            let reply = mailparse::parse_mail(&mail.raw)
+                .ok()
+                .map(|p| shep_mail_core::compose::ReplyHeaders::parse(&p).envelope());
+            let sent_message_id = unique_sent_identity(&mail.raw);
+            serde_json::json!({"kind":"message","mail":mail,"reply":reply,"sent_message_id":sent_message_id})
+        }
+        MailSyncItem::Flags(flags) => serde_json::json!({"kind":"flags","flags":flags}),
+        MailSyncItem::Reconcile {
+            account,
+            folder,
+            live_ids,
+        } => {
+            serde_json::json!({"kind":"reconcile","account":account,"folder":folder,"live_ids":live_ids})
+        }
+        MailSyncItem::Folders(account, folders) => {
+            let names: Vec<&str> = folders
+                .iter()
+                .filter(|folder| folder.selectable)
+                .map(|folder| folder.name.as_str())
+                .collect();
+            serde_json::json!({"kind":"folders","account":account,"folders":names})
+        }
+        MailSyncItem::SentFolder(account, folder) => {
+            serde_json::json!({"kind":"sent_folder","account":account,"folder":folder})
+        }
+        MailSyncItem::SkippedLarge => serde_json::json!({"kind":"skipped_large"}),
+    })
+}
 async fn emit(
     output: &mpsc::Sender<Bytes>,
-    value: impl FnOnce() -> serde_json::Value + Send + 'static,
+    value: impl FnOnce() -> Option<serde_json::Value> + Send + 'static,
 ) -> bool {
     let data = tokio::task::spawn_blocking(move || {
-        let mut data = serde_json::to_vec(&value()).expect("serializable sync event");
+        let mut data = serde_json::to_vec(&value()?).expect("serializable sync event");
         data.push(b'\n');
-        Bytes::from(data)
+        Some(Bytes::from(data))
     })
     .await;
     match data {
-        Ok(data) => output.send(data).await.is_ok(),
+        Ok(Some(data)) => output.send(data).await.is_ok(),
+        Ok(None) => true,
         Err(_) => false,
     }
 }

@@ -9,6 +9,55 @@ Read `AGENTS.md` for performance budgets, disabled CI, and platform setup. Build
 
 The stdio MCP server is `python3 scripts/mcp_harness.py` from the repository root. Use a 2025-11-25 MCP initialization handshake, `tools/list`, then `tools/call`. An example client is `McpClient` in `scripts/e2e.py`; use it directly from automation when an interactive host cannot register another MCP server.
 
+A tab observation is not proof that its pixels have been presented. The saved
+`test_calendar_navigation_repaints_after_preferences` compares the main content
+before and after native navigation, excluding the sidebar. It runs in light/dark
+with both the ordinary timer and `idle_navigation=true` (a test-only workspace
+without the app's periodic Tick). The explicit 150 ms settle plus screenshot's
+150 ms presentation allowance must show Calendar without another input. Keep
+this independent of the broader appearance tour's slower screenshots. This is a
+pixel-backed correctness check, not a latency percentile.
+
+For HTML opening speed, the automated equivalent is `scripts/html_latency.py`.
+Run `python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html.json`
+without concurrent builds, then `python3 scripts/performance_gate.py --html-only`.
+The combined quality script also checks this report. The user explicitly
+prioritized these measurements while other final performance tests remain deferred.
+
+`pixel_reference` chooses 64 text/edge points across the visible HTML body from
+the owned X11 window. `measure_pixels` accepts those `points` and an `x,y` click;
+it moves the pointer before timing, injects a real XTest click, then polls X11
+pixels until at least 97% match (RGB tolerance 8). A reference that is already
+visible is rejected. The saved automated script prepares references in a separate
+process, then tests a fresh nonadjacent long letter, return to visited mail,
+adjacent prefetch and repeated long-letter opens. Setup/dwell/screenshot waits
+are outside the measured interval. The script rejects a binary changed mid-run.
+
+These measurements require the harness's little-endian RGB24 Xvfb and libXtst.
+They establish displayed body pixels on that software X server, not monitor
+scanout or live remote-image downloads. Startup has warmed the font system;
+"cold" means that particular document was not prepared in the new process.
+Keep actual WebP visual review and the existing HTML selection, image-policy,
+Find, resize, scrolling, zoom and failure/retry native scenarios alongside timing.
+
+
+The HTML timing script now also runs `scripts/html_image_latency.py` against two
+fictional nested-table parcel messages in Sent, each with twelve external fixture
+images. It grants image permission through the native buttons and measures both
+repeated directions, retaining the 50 ms p95 budget. `html_rendered_images` counts
+worker-acknowledged inputs in the displayed frame; `html_loaded_images` is only
+supplied-input bookkeeping and cannot prove the pictures are displayed.
+
+Keep the saved slow-renderer repeated-open, document-background, conversation
+scroll-refresh and sender-copy/selection-icon flows. The repeated-open flow gives
+the worker an artificial 1.2 s delay and requires a cache hit with all twelve
+image inputs already displayed. It then exercises native selection and Find.
+Background checks sample the gutter outside the HTML canvas in light/dark and
+review native text contrast. Sender copy checks paste each copied value into the
+native search field. `conversation_scroll` observes the actual scroller; refresh
+must retain it on the same conversation page. These are isolated fictional data.
+
+
 Call `desktop.start` once per independent scenario. It owns an isolated Xvfb display, a 1440×920 native window and an in-memory fixture workspace. It returns the artifact directory. Set `empty_calendars: true` on `desktop.start` to test the no-calendar state. The nondefault test feature supplies fixture messages and observation hooks; normal builds must never expose personal mail to the harness.
 
 Use `desktop.batch` for related actions. Example arguments:
@@ -179,10 +228,7 @@ Preserve the four saved `test_desktop_badge_*` scenarios: read and leave the fol
 background arrival and failure, archive/delete/move with Undo, and the preference.
 Search Preferences for badge, open Mail & performance, then click the actual
 checkbox near x=340,y=431 in the standard fixture. Wait for the private-bus zero
-and hidden signal when disabling. The badge count always spans all mail accounts. When re-enabling it after mail
-navigation, compare the bus signal with the current unread total: read-on-leave
-can legitimately change the initial count. Preserve zero/hidden, saved preference
-and account-scope assertions; never retain a stale baseline across reading.
+and hidden signal when disabling. The badge count always spans all mail accounts.
 Review the preference/mail WebP captures; the private-bus observer does not render
 a desktop dock, and its results must not be described as a GNOME visual test.
 
@@ -230,7 +276,7 @@ The `unread` observation is the open message's boolean. For group counts use
 belong to the work account; the third is personal. A mixed-account Projects move
 uses checkboxes near x=274,y=218/426. The Move default uses each original account.
 
-Preserve all four `test_bulk_*` flows: review/cancel/archive/Undo, flag/read/unread
+Preserve the saved `test_bulk_*` flows: review/cancel/archive/Undo, flag/read/unread
 and mixed-account Move, failure/History detail pages, and compact dark reviews and
 pending Undo. At 1440x920, History is near x=1330,y=36; its first failed group is
 near x=700,y=490 in the saved scenario. Inspect both per-message errors and the
@@ -242,40 +288,588 @@ native restart coverage from an in-memory MCP workspace.
 Keep consecutive checkbox clicks in the bulk scenarios. Their separate motion
 events must target separate rows even when processed together; do not add sleeps
 between clicks to mask cursor-batching defects. The root input wrapper has a
-widget-level regression for that sequence.
+widget-level regression for that sequence, with redraws between motion and
+press. Captured popup motion shares the root tracker; preserve dropdown and
+interface-scale native scenarios when changing input dispatch.
+
+Preserve the two arrival selection flows. `background_sync=true` supplies a
+fictional incoming message through the normal cache refresh. Select an existing
+row before it arrives, assert unchanged selection on arrival, then use checkbox
+or Ctrl-click and a Shift range. Verify the ensuing bulk review count. No direct
+state mutation may substitute for those inputs.
+
+`mail_rows.<index>.group_pending` observes ownership used by row controls. The
+slow group/individual conflict flow flags the second and third fixture rows,
+checks the disabled second-row flag button and rejects a conflicting context-menu
+action, then verifies ordinary flagging works after the group commits. Keep the
+context menu open/keyboard path and screenshot evidence alongside engine/store
+ownership tests.
 
 
-For desktop profile pages, use `desktop.start(profile_pages=true,
-google_permissions="drive")`. It provides 51 synthetic cloud profiles plus 75
-local and 75 offered accounts through the loopback fixture. It never authenticates
-to Google or accesses personal credentials. Keep the three saved
-`test_desktop_profile_*large_pages*` scenarios alongside the existing small
-publication/enrollment flows. Observe discovery progress in bounded increments;
-do not lengthen the harness deadlines for a large scan. Use actual wheel input
-and First/Next/More controls. Enrollment choices and recoverable failures must
-retain the current page; row positions and page cursors are observations, not
-interchangeable zero-based indexes. Review connection details, deselected imports,
-reconnect counts and light/dark/compact captures. Switching Preferences categories
-can retain scroll position: scroll General to its top before choosing appearance.
+For restart coverage, start with `persistent=true`. The harness owns a marked
+`fixture.sqlite` beside that run's state file; the app seeds it once and never
+opens an unmarked database in demo mode. `desktop.close` sends the native
+WM_DELETE_WINDOW request and waits for that owned process to exit. If it does
+not close, inspect the pending confirmation/work; never kill it implicitly or
+launch a duplicate. `desktop.restart` reuses the owned display and fixture cache,
+archives the previous state observation, and waits for a fresh loaded mail page,
+including an empty Inbox. `crash=true` explicitly kills only the owned app.
+Restart also works as a batch action: `{"type":"restart","crash":true}`.
+The returned process IDs are observations. Never supply personal paths or PIDs.
+
+The graceful group-close scenario inspects the fixture SQLite journal read-only
+while the app is closed, then restarts it; this establishes the saved receipt
+and queued remainder before startup recovery runs. Do not substitute state-file
+writes or fabricated acknowledgments for close/crash input. `bulk_history=true`
+seeds fictional completed groups and a paused group for pagination/Continue;
+all subsequent actions use actual native controls. Saved History scenarios
+exercise Undo retry, unconfirmed-result review and both kinds of pagination.
+
+`bulk.history_jobs` observes IDs on the visible History page; `bulk.jobs` tracks
+recent worker state separately. Use `history_loading`, `jobs_offset`,
+`selected_job`, `items_after` and each item's `position` to verify page changes.
+Scroll the actual History dialog to its footer before Older/Next/First page;
+then inspect a screenshot proving the next page returns to the top. The saved
+127-scenario suite includes compact dark mouse acceptance and formatted-reader
+graceful restart. The empty-Inbox restart scenario archives all 120 fixture
+messages and checks Archive after reopening, covering startup without a selected
+message. Performance remains deferred.
+
+For mail dragging, use `hover` to position the cursor, `mouse_down` to hold the
+left button, then `hover`/`scroll`, assertions and screenshots before `mouse_up`.
+These actions are batchable and restricted to the owned fixture display. The
+harness releases held input on cleanup. Avoid nesting a complete `drag` action
+inside a held gesture. Escape/right-click cancels in the app; follow with
+`mouse_up` to release the physical input. Assert the selection remains unchanged
+and no row/context/folder click leaked through cancellation.
+
+Observe `mail_drag.active`, `count`, `target`, `account`, `valid` and `reason`.
+These describe the actual gesture; they cannot start or complete one. Source
+coordinates for the first/second standard rows are x=402,y=245/347. Archive is
+x=85,y=399; personal Projects is x=95,y=636 before expanding unified Inbox.
+Wait for confirmed selection membership (`mail_selection.pending=false`) before
+dragging a selected group. Select All then Next page must still review all 120
+fixture messages. Common folders preserve each source account; explicit account
+folders require the enabled cross-account preference for a transfer.
+
+Hold over a collapsed account or Inbox until the expanded observation arrives;
+the actual widget uses a 600 ms dwell. With `long_folders=true` at 900×640, wheel
+four ticks while holding over the sidebar, then hover the Japanese folder near
+x=85,y=438. Capture the floating destination label and check its old shadow has
+been erased near the Preferences footer. The saved scenario performs this pixel
+check without a forced full repaint. Review all light/dark/compact/120% captures.
+`pop3_account=true` changes only the personal fixture account: cross-account
+transfers reject it, while moving its own mail between local folders works.
+
+Preserve the ten saved `test_drag_*` automated equivalents: single source identity
+and pending Undo; group review/cancel and mixed accounts; Escape/right-click/
+outside/no-op cancellation; preference rejection/enabled transfer; hover reveal;
+failure rollback and continued navigation; POP3 restrictions; compact dark and
+scaled controls; sidebar scrolling/Unicode/shadow cleanup; and full cross-page
+selection. These are functional fixtures, not live-provider or latency evidence.
+
+For nested folder trees use `desktop.start(nested_folders=true)`, optionally with
+`persistent=true` or delayed `mail_actions`. Work uses slash-delimited Projects
+and Teams; Personal uses dot-delimited Home plus literal `Notes/flat.name` with
+NIL delimiter. Projects holds mail and has children; Teams/ and Teams/Remote are
+containers. Japanese labels retain an encoded server identity. Observe
+`expanded_folders`, `saved_expanded_folders`, `sidebar_index` and `sidebar_rows`;
+these are read-only, never an action interface. The sidebar group row's chevron
+expands without opening mail. A Ctrl-click on a container must not add it to a
+combined query or turn it into a drop target.
+
+Keep all five `test_nested_folder_*` scenarios in scripts/e2e.py. They exercise
+mouse and Left/Right/Enter, ancestor collapse, native close/restart, nonselectable
+and flat folders, nested hover/drop/Undo, decoded Move search/review/toast labels,
+Ctrl-selected parent/child folders, compact dark/120% layout and keyboard scroll
+reveal. Wait for `focused_input == folder-search` before typing into Move, as in
+other saved flows. Record WebP evidence: state cannot prove a keyboard target is
+visible. The compact flow clicks the actual revealed row, and verifies saved
+window dimensions across normal process restart. Do not infer live IMAP server
+behavior or performance results from this fixture.
+
+Use the batchable `paste` action with `text` for Unicode clipboard input. It owns
+an xclip selection only on the fixture display, verifies the exact UTF-8 bytes
+(including spaces/newlines), then sends native Ctrl+V. Cleanup terminates that
+owned clipboard process. Synthetic xdotool typing of Japanese produced an empty
+field intermittently; keep ordinary `type` coverage for ASCII and the saved
+Unicode folder scenario's native paste/search/Enter checks.
+
+Remember an action's source with the saved `selected_mail_subject()` helper:
+it resolves `selected_id` against `mail_rows` in one observation. Startup page
+readiness does not mean the reader body and its `selected` subject have loaded.
+Keep action tests independent of that body load.
+
+Preserve `test_mail_navigation_clears_old_folder_highlight`: click a real account
+folder, then Mail. Inbox becomes active and the old folder loses its keyboard
+outline. Observe `sidebar_focus=false` and `mail_selection.list_focus=true`, then
+Tab/Enter must target Inbox. Cover unified light and per-account dark views, and
+keep the separate remappable sidebar Inbox key flow (it retains sidebar focus).
 
 
-For ongoing desktop profiles, `desktop.start(profile_sync=true,
-google_permissions="drive")` uses an isolated remote appearance change after
-reviewed enrollment. The saved `test_desktop_profile_sync_background_and_controls`
-searches Mail during that change, toggles per-field/master sync, preserves a
-paused local edit and retries an acknowledged upload with a lost reply. Observe
-`profiles.sync` and the projected `sync_master`/`sync_fields`; they never act on
-the app. Unknown upload counts are distinct from zero. Keep the publication
-scenario's seven-preference setup and compact controls. Review the saved WebP
-captures; these fixtures do not authenticate to Google or use personal profiles.
+Keep the deep-table HTML timings in `scripts/html_nested_latency.py`, called by
+`html_latency.py`. Its Sent fixture is nonadjacent to the initial parcel message,
+with sixteen nested tables and 1,182 fictional utility CSS rules. Check both cold
+and revisited actual pixels; budgets stay 100/50 ms p95 with twenty samples.
+Do not substitute the simple long letter for this shape of HTML.
 
-For preference conflicts, `desktop.start(profile_conflicts=true,
-google_permissions="drive")` adds 51 concurrent appearance versions after
-reviewed enrollment, plus one failed local decision receipt and one lost cloud
-upload reply. Preserve `test_desktop_profile_conflict_review_pages_and_resolution`:
-real page/choice controls, disabled premature save, cancellation/reopen, compact
-scrolling, exact saved-decision retry and upload recovery while searching Mail.
-`profiles.sync_review`, `sync_review_open` and `sync_choice` are observations only.
-Each wheel action is bounded to 30; repeated real wheel actions reach long-page
-footers. Preferences can retain scroll position across reopening a card. Review
-its WebP captures; the fixture never accesses real Google or personal data.
+Selection mode row clicks toggle only that row, and Shift ranges add to existing
+choices. The saved `test_selection_mode_row_clicks_toggle_without_clearing_other_pages`
+uses ordinary mouse clicks across two pages and checks the actual bulk review.
+Keep the separate checkbox, arrival, modifier, text-focus and double-click tests.
+
+
+Notification Preferences are searchable as `Notifications`. Their MCP state is
+under `notifications`: settings/saved settings, requested arrival serial, sent
+batch count, last delivery policy, test pending state and error. These are
+observation-only. Fixture mode never sends an OS notification or plays audio.
+Use `notification_delivery: "fail-once"` (or `"slow"`) on desktop.start to hold
+delivery for 1.8 s while testing native navigation, visible failure and Test
+notification recovery. `test_notifications_*` contains the automated equivalents;
+private-bus Rust tests cover the actual Linux wire adapter separately.
+
+For pending move destinations, keep the three `test_move_shows_destination_before_server_acknowledgment`, `test_move_destination_failure_and_pending_undo_restore_source` and `test_cross_account_destination_is_visible_during_transfer` flows. With `mail_actions="slow"`, open Projects before acknowledgment and assert its row/count while `mail_pending >= 1`; `mail_rows.0.group_pending` includes temporary destination ownership. Check the same subject/body before and after the new server ID, moving back to Inbox, failure rollback and Undo while pending. The cross-account flow enables the preference then uses real drag/drop. Review destination and error screenshots; the fixture cannot establish missing-COPYUID or live Fastmail recovery.
+
+For durable move-cache recovery, launch `desktop.start(move_recovery=true,
+persistent=true)`. Projects contains the fictional **Recovered keepsake**, whose
+MOVE was acknowledged without a destination UID. Open Projects through the
+sidebar, verify the full cached body, restart the owned process and reopen it.
+`mail_rows.0.group_pending` remains true until Refresh supplies the fixture's
+exact destination identity. Refresh must keep the open reader/body and one row,
+change `selected_id`, clear the pending marker and leave `notice` empty. The
+fixture never contacts a provider or keychain; actual wire acknowledgments and
+journal retry rules have separate Rust tests. Preserve
+`test_moved_cache_is_readable_after_restart_and_refresh_rekeys_the_open_reader`
+and review its cold/restarted/located WebPs. A late old-cache read previously
+left an error toast despite the email staying visible; assert notice as well as
+reader state. Keep this distinct from live-provider verification and the still
+unfinished manual recovery/review controls.
+
+
+Manual move recovery uses `desktop.start(move_recovery="committed" | "copied" |
+"unconfirmed" | "fail-once", persistent=true)`. Boolean true retains the original
+committed/Refresh scenario. These fixtures run the production journal recovery
+runner with a private fake connection; no provider or OS credential access occurs.
+Observe `move_recovery` for stage, choice, explicit confirmation, pending count
+and errors. Open Review in the reader or Preferences → Accounts → Review
+unfinished moves. Unconfirmed recovery and keeping a local copy require the
+checkbox; Enter/Y cannot bypass it. Escape/N close the form while active recovery
+continues. Keep the saved review, success/navigation, failed retry, local-copy
+restart, compact dark Preferences and graceful-close scenarios. The close flow
+inspects only its owned fixture database, read-only, after the process exits.
+
+For cross-folder search, the three `test_search_*` scenarios use `long_folders`
+and real message search, moves and bulk controls. Search `Sidebar fixture` from
+Inbox to find four cached custom-folder messages. Verify result folder labels,
+selected-account boundaries, exact bulk membership, moving a result without
+removing a still-matching global result, and returning to Inbox when clearing
+search. A fixture's long folder catalog does not contain Archive in the Move
+chooser: use Projects and assert `move_enter_destination` before Enter. Archive
+has separate native toolbar/shortcut coverage. Review light and compact dark
+WebPs; observation counts alone do not establish layout quality.
+
+When a scenario leaves search with Escape before independently opening another
+control, wait for `focused_input == null` before clicking. Key injection returning
+is not proof that iced processed the key; delayed Escape can otherwise close the
+newly opened dialog. Keep rapid-key cancellation as a separate regression (R63).
+
+For reading styles use `desktop.start(reading_mail=true)`: fictional plain and
+minimally styled HTML letters plus a conversation with white and navy message
+backgrounds. The saved `test_reading_columns_*` flow verifies native selection,
+Find, full/compact layout and actual body pixels for centered padding. Clear the
+existing Find text before typing a new query; Find deliberately retains it.
+`test_conversation_surfaces_*` samples the card gutter outside the HTML canvas,
+switches between cached messages, refreshes without losing the scroller, and
+captures both app themes and compact sizes. These fixtures never contact servers.
+
+Manual refresh animation uses the existing delayed `sync_failure_once` and
+`background_sync` fixtures. The two `test_refresh_animation_*` /
+`test_refresh_secondary_*` flows and extended queued-background flow compare
+actual icon pixels, verify failure/retry and navigation while pending, and save
+light/compact-dark evidence. Preferences → Shortcuts has Sync near y=710 at
+1440×920 with the list at its top. Remap and clear F5 through the actual secondary
+control, then restart the owned persistent fixture. `refresh_animation` is an
+observation only; a changing angle does not prove correct drawing. Preserve the
+direct SVG center/scale/clip and partial-redraw tests as well as the native checks.
+
+
+For rapid native input ordering, `key_sequence` takes `keys`, an array of 1–32
+individual chords (maximum 80 characters each; no whitespace), and sends one
+xdotool key sequence with the usual 1 ms delay. It is a functional input action,
+not a timing measurement. Keep the saved `test_native_keys_move_escape_*`,
+`test_native_escape_precedes_*` and `test_native_text_field_chords_*` equivalents.
+They cover repeated Move/Escape and navigation/flags, Escape immediately followed
+by an already-visible recovery Review click, and Ctrl+D in search/Find immediately
+followed by another message click. These deliberately do not wait for the earlier
+key to finish before the next input. Preserve screenshots and the ordinary
+Find/remapping/selection/context-menu flows alongside them.
+
+
+For folder changes use `desktop.start(nested_folders=true, persistent=true,
+folder_actions="slow" | "fail" | "uncertain")`. The fictional server catalog is
+persisted separately from the cache; no provider or keychain is contacted.
+`folder_changes` observes menus, review counts, pending projection and durable
+job/step states. Right-click Projects near x=95,y=540, or focus it then Shift+F10.
+Move destination Enter opens a review; a second Enter/Y confirms. Delete uses
+Down/Enter in the menu and an explicit red confirmation. N/Escape cancels.
+
+Keep all seven `test_folder_controls_*` automated equivalents. They cover
+immediate projection and browsing during slow work, rejected delete and Retry,
+unconfirmed result across restart, checkbox-gated Stop with retained cached
+mail, POP3 local moves, compact dark/keyboard/Inbox protection and graceful close.
+History is near x=90,y=477 after the first job. Its selected review exposes
+retryable errors separately from unconfirmed results. Disabled Retry/Stop clicks
+must do nothing; accepting uncertainty must say Stopped · unconfirmed.
+
+Each delayed wire step takes 1.6 seconds. Await individual step receipts for a
+four-folder delete rather than extending every wait deadline. The graceful-close
+flow reads only the owned fixture database after exit to prove one Done receipt
+and three Queued steps; these statuses are JSON-encoded enums. A failure cancels
+close; the saved scenario expects the harness close timeout, then uses native
+navigation/Retry before another successful close. Never kill or replace the
+personal application. After resizing, await its observed dimensions and allow
+native layout to settle before targeting a changed sidebar row. Review the
+WebP evidence, including the red compact confirmation and preserved cache after
+an unconfirmed move. These are functional tests, not latency or live-server claims.
+
+
+For account scheduling, use `desktop.start(held_account_sync=true)` to hold a
+fictional provider indefinitely on the first Inbox row's account. The fixture
+uses the production channel coordinator and cache-download pipeline; it never
+contacts a server. Observe `account_sync_waiting`. Keep the saved close/read-on-leave,
+flag interruption and failure/retry scenarios. First assert the fixture's actual
+initial flag, click its native button, and check the final flag after `mail_pending`
+returns to zero. `mail_actions="fail"` rejects every attempt, including retries;
+do not describe an optimistic intermediate flag as successful persistence.
+The close flow inspects only the owned fixture database, read-only after exit.
+
+
+Composition is inline in the reader. Assert `composer.visible` and `dialog == null`,
+use `compose_fields` for recipients/subject and `editor` for the new reply text.
+The original is in `composer.reply.quote`, separate from the editor. Saved drafts
+and parked editors are distinct observations; closing an editor does not prove
+that its latest save has completed. `Save draft` keeps the editor open.
+
+Keep all `test_inline_*` scenarios and the migrated compose/forward/discard/Outbox
+flows. They use real native input and owned fixture files, including restart after
+deleting the original attachment file. At 1440×920 the default reply action row is
+near y=564, new-message actions near y=633; Cc/Bcc and attachments add rows. Compact
+windows scroll the complete form. Review the actual WebPs when changing geometry;
+do not change the state oracle to imitate the previous Compose dialog.
+
+With `mail_actions="slow"`, sending holds fixture preparation for 1.6 seconds,
+then reports the existing preview refusal. The saved send-navigation scenario
+edits a second reply while the first is pending, observes failure and reopens the
+first draft. This does not contact SMTP, access the keychain or prove delivery.
+Typing-artifact checks compare a compact editor before and after resize repaint
+in both themes, sampling its bottom padding as well as the surrounding gap.
+
+
+For complete database export, use `desktop.start(persistent=true)`, search
+Preferences for Database transfer, and click Export database. `choose_file` with
+`save: true` accepts a new filename only inside the owned run directory and
+handles the native replacement confirmation for an existing fixture. The default
+attachment-picker action still requires an existing file. Omit path to cancel.
+
+Keep all three `test_database_export_*` equivalents: saved SQLite contents and
+an unsent reply, compact dark cancellation/protected-cache failure/retry, and
+`held_database_export=true` with mail navigation/draft saving, Cancel and graceful
+restart. The hold owns the real copy connection/file until ordinary cancellation;
+it is unavailable outside test-support demo mode. Assert cleanup only after the
+completion acknowledgment or exit, and inspect exported databases read-only.
+Do not use the state file to finish the hold or access personal data. Review the
+light/dark/pending/error WebPs. Google profile sync remains separate work.
+
+For full database import, export an owned persistent fixture through the native
+UI, then use Import database and the native file chooser. The preview importer
+requires the test-support database application ID; it refuses personal files even
+if copied into an artifact directory. Import/profile state is observation-only.
+
+Keep all five `test_database_import_*` equivalents: review/name/rename and restart
+between both preserved profiles; chooser cancellation, invalid/reserved credential
+IDs and review cleanup; pending outgoing review with no automatic send; held copy
+with navigation/draft save/cancel-on-close; and compact dark review plus protected
+catalog export. Inspect owned SQLite copies read-only after ordinary UI actions.
+
+`held_database_import=true` holds the real private copy until Cancel/close; it
+cannot run outside isolated preview mode. A profile choice applies on next launch,
+so assert the current workspace stays unchanged before graceful `restart`.
+Import completion publishes a new profile, not a hot engine switch. At 900×640,
+scroll the Preferences panel to reach the name/review controls and inspect WebPs
+before assuming coordinates. Search `database transfer` or `profiles` to target
+the intended card; the broader `database` query legitimately finds both.
+
+
+For shared-profile setup, `desktop.start(profile_sync="empty")` owns a loopback
+Drive HTTP server and isolated persistent workspace. Modes `fail-once`,
+`hold-list` and `slow-upload` exercise retry, cancellation and navigation during
+upload. `invalid-local` seeds an opaque invalid enrollment only in the owned
+workspace; controls must remain disabled until settings load, while navigation
+and graceful restart keep working. The fake token/endpoint exist only in the test-support preview; neither
+fixture nor harness reads real Google credentials. Restart preserves the owned
+server/files; Stop releases held requests and closes the fixture.
+
+Search Preferences for "shared profile" to find **Profiles and sync**; search
+"profile workspace" for the separate local **Profiles** catalog. Observe
+`profile_sync` loading/options/saving/working/review/enrollment/error state, while
+using real controls for every action. Pending enrollment is not upload completion.
+Keep saved `test_profile_sync_native_*` scenarios for first-device review/create,
+restart, errors/retry/opt-out, option changes during held reads, close and compact
+dark rapid gestures. Review their WebP evidence. Live cross-client Google access and continuous updates remain unverified.
+
+
+For existing-profile enrollment, `profile_sync="existing"` seeds two fictional
+profiles, Home (an account and dark appearance) and Work (light appearance).
+`existing-unsupported` adds an optional connection field the native account adapter
+cannot apply. Both use the production shared catalog, history and atomic local
+import. These modes never read personal data, access keychain credentials or
+write to real Drive. Native import cannot send real mail; reconnection opens the
+ordinary account wizard and preview still refuses saving credentials.
+
+Keep all three `test_profile_sync_native_existing_*` scenarios. They exercise
+profile choice/review, apply and restart with existing accounts retained, the
+Reconnect control, compact dark cancellation/settings-only import and opt-out,
+and unavailable connection fields with navigation and another usable profile.
+Observe `profile_sync.profiles`, `profile_sync.join_review`, enrollment and
+`account_reconnect_count`; none is an action API. At 1440×920, the first/second
+Review buttons are near x=1130,y=494/545; the third account's Reconnect control
+is near x=1065,y=520 in filtered Your accounts. At 900×640 the Review buttons
+are near x=802. Capture and review light/dark WebPs after changing form copy or
+geometry. Preserve the first-device/held-read/upload-close scenarios alongside
+these tests. A completed initial import is not ongoing or live Google sync.
+
+Shared-profile fixtures now publish the causal `initialization-v1` start/data/end
+records used by Flutter. `existing-incomplete` omits Home's completion marker;
+`existing-legacy` provides its older marker-free record. Work stays complete in
+both modes. Preserve the two native initialization scenarios: observe
+`profile_sync.profiles.N.initialized`, click the disabled Home review control,
+verify local accounts/settings remain intact, then review/import Work normally.
+Home in the normal existing fixture also imports the portable tooltip preference.
+Creation/restart tests read the owned SQLite checkpoint after graceful close.
+Partial first uploads must retain their receipt and leave later records queued.
+
+
+Use `profile_login=true` with an owned `profile_sync` fixture to exercise the
+after-sign-in path. It supplies a fictional committed Drive grant and the normal
+connection-status event; it never runs real OAuth or accesses the keychain.
+`empty_profile=true` starts a new workspace with no accounts, mail or preferences
+customization. Both flags require the isolated Drive server. `existing-single`
+has one complete Home profile; the ordinary `existing` mode has Home and Work.
+
+Preserve `test_profile_login_native_*`: one-profile automatic import/restart with
+Reconnect, first-device offer/Not now and re-enable, multi-profile choice, existing
+workspace review, failed discovery/retry, compact dark prompt dismissal and close during a held read. Observe
+`profile_sync.offer`, `login_pending`, `empty_workspace` and
+`options.discover_on_login` through state; all actions use real controls. An
+automatic result must not change the active tab. Review prompt and import WebPs.
+These are after-sign-in fixture tests, not live Google or cross-client evidence.
+
+
+Continuous profile scenarios use `existing-updates`, `existing-update-failure`
+and `existing-upload-failure`.
+Both seed one complete profile, then publish a fictional second-device operation
+on the next enrolled-history check: a new account and Tooltips preference. The
+failure mode rejects the first ongoing list; native Sync now retries it. This is
+an owned HTTP fixture, never a direct application-state mutation or real Google
+request. Preserve all `test_profile_continuous_native_*` equivalents: background
+application while Mail remains open, local publication/restart, offline recovery,
+and received changes remaining visible when a later upload fails. The upload
+failure retains its exact queued operation across restart. Read owned checkpoints only after graceful
+close. Review the actual Preferences/reconnect/error screenshots.
+
+
+The saved `test_profile_continuous_native_reuses_verified_downloads_after_restart`
+uses `existing-single` and ordinary Sync now/restart controls. Read-only
+`profile_drive_requests` reports counters from the owned loopback HTTP server;
+wait for a new scoped listing and completed UI work, then verify unchanged
+records were not downloaded again. This is request-count correctness evidence,
+not a latency benchmark or live Google verification. Review the saved native
+Preferences screenshots alongside the restart/corruption protocol tests.
+For native tray lifecycle use `desktop.start(tray="available" | "missing")`.
+The owned GTK host renders Shep's actual StatusNotifierItem and DBusMenu on the
+isolated X display; its separate D-Bus service records saving notifications.
+The socket uses a temporary alias to the owned artifact directory to avoid Unix
+socket path-length limits in nested worktrees. The fixture permits no personal
+bus, keychain activation or cloud access. It needs `/usr/bin/python3` with GI,
+GTK3 and dbus modules. Tray and badge fixtures intentionally own separate buses.
+
+`tray_menu` clicks the native host; use Down/Return for Open and End/Return for
+Quit. `tray_host_stop`/`tray_host_start` simulate host loss/recovery. `close_request`
+sends the native close event without waiting for process exit; `wait_exit` observes
+actual process completion. Observe `tray` and `tray_host` through state, never as
+action APIs. An allocated reopened window precedes native X11 presentation: use
+`focus_app` to await/focus the newly created owned window before more input.
+Screenshots while hidden capture the owned root display and native menu.
+
+Keep every saved `test_tray_native_*` equivalent plus existing `test_close_*`,
+held-read sync, group/folder receipt and draft failure/restart scenarios. Verify
+preference persistence, missing host fallback, Open/Quit, temporary-save notice,
+failure/retry, durable auto-exit and background arrivals. Review light and compact
+dark WebPs. These Linux native fixture checks are distinct from an actual desktop
+shell and from Windows/macOS execution; keep those limitations explicit.
+
+`test_tray_native_ordinary_hide_reopens_when_pending_send_fails` enables the real
+close preference, sends an isolated failing reply, and closes to the native tray.
+It covers both ordinary hidden saving and selecting Quit from the actual tray
+menu while the send is pending. Both failures must reopen the intact reply with
+its error and cancel exit. Keep old-result ownership and read-only-background
+checks; the previously saved error is not a new recovery event.
+
+For unread platform adapters, preserve the four `test_desktop_badge_*` native
+scenarios and tray background/reopen flows. These exercise real Linux launcher
+protocol messages on the private fixture bus, not Windows/macOS rendering.
+`cargo test --all-features desktop_badge` also holds native acknowledgments and
+output capacity open while replacing unread counts. To review the Windows raster,
+set `SHEP_BADGE_EVIDENCE=artifacts/e2e/taskbar-raster` for that Cargo test; it writes
+WebP evidence for single/double digits and 99+. This is prepared-image evidence.
+Run full Windows checking and `python3 scripts/check_badge_adapters.py` for exact
+macOS API checks; actual desktop badge rendering, Explorer restart and AppKit
+hidden-window delivery must still be executed on their operating systems.
+
+For multiple Local/Drive destinations, preserve
+`test_multiple_backup_destinations_setup_and_restart`. It edits real native
+settings, rejects a duplicate folder, switches independent names/retention,
+restarts, cancels then confirms the red removal review, and verifies removal
+survives restart. It also edits the remaining destination at 900×640 in dark
+appearance. `backup_destinations`, `backup_selected` and
+`saved_backup_destinations` are observation-only. Normal preview cannot upload,
+restore, read the keychain or contact Google; actual isolated encrypted local
+uploads and passphrase/retention isolation have Rust coverage.
+
+
+For portable-setting conflict reviews, use the isolated
+`profile_sync="existing-conflict", profile_login=true, empty_profile=true` fixture.
+Its second complete profile pull adds two actual concurrent setting operations.
+Open Preferences → Profiles and sync, Sync now, then Review shared preferences.
+Observe `profile_sync.setting_reviews` (labels/scalar local/current values),
+`working`, `error`, and normal appearance state. Choose a shared version with the
+real dropdown/mouse control, or keep this device's value. The saved scenarios
+verify compact dark layout, Light application, immutable extension preservation,
+restart and upload convergence. A separate native flow changes Appearance while
+a review is open, rejects the stale action, refreshes and retries. Read-only
+SQLite assertions inspect the closed fixture's durable checkpoint; they never
+actuate the UI. These are fixture/history contracts, not live Google evidence.
+
+
+For transparent/theme-aware launcher and tray assets, keep
+`test_tray_native_symbolic_icon_follows_host_theme_while_app_is_hidden`.
+The owned host loads the actual installed-name symbolic SVG from a private icon
+theme directory. `tray_theme` clicks its native theme button; it changes only
+that GTK fixture process. Assert the actual StatusNotifier IconName and successful
+native icon lookup, then inspect the light/dark WebPs and reopen Shep normally.
+This demonstrates GTK symbolic recoloring and the real SNI/menu path, not a real
+GNOME Shell session or Windows/macOS rendering.
+
+Compact list navigation observes `inbox_reveal_height`, the actual native viewport.
+After rapid navigation, wait for the target row to be fully revealed before
+capturing a scroll offset for a later operation. Selection state can arrive first.
+The owned Xvfb selects GTK's Cairo renderer for file pickers; keep real controls,
+clipboard ownership proof and path confinement intact.
+
+For palette controls, search Preferences for `palette` and open Colors. Keep the saved `test_palette_native_*` equivalents for invalid hex input, custom light/dark colors, normal and compact layouts, applying/undo/reset, and graceful restart. The preview sample changes before application; verify the sidebar/inbox pixels and saved palette separately. The Colors editor deliberately uses readable default controls around the custom sample. These fixture settings are unrelated to live profile or OS-theme synchronization.
+
+The saved palette header-save flow uses the global Save changes button as well
+as Apply colors. Invalid hex must retain the saved palette, show a Colors error
+and clear old success feedback; corrected input must save and clear that error.
+Preserve this path when changing generic settings validation or save handlers.
+
+The saved `test_s3_backup_setup_native_validation_and_saved_target` scenario
+selects S3 through the native provider picker, rejects blank buckets/insecure
+endpoints/incomplete keys, saves settings before its preview-disabled connection
+test, restarts, and reviews 900×640 dark setup and credential controls. It checks
+that fixture keys never reach MCP observations or persisted SQLite settings.
+Transport and verified-key storage success/recovery use object-scoped loopback
+Rust tests (`cargo test --all-features s3_`), not cloud credentials in the native
+fixture. Keep both layers when changing S3 setup or provider behavior.
+
+For existing-account import links, use the owned `existing-matching` or
+`existing-many` profile fixture. `test_profile_join_link_native_*` drives actual
+account-choice dropdowns, Add new, compact dark Import and eight-account paging,
+then checks restart and the closed cache mapping. The many-account scenario
+imports twelve shared accounts while reusing one existing native account.
+`profile_sync.join_review.page`, `links` and `offset` only observe the review;
+never use them to operate it. Preserve local mail, pending Reconnect state and
+stale-review rejection tests. These fixtures do not use live Google or keychains.
+
+The saved `test_sftp_backup_host_identity_setup_and_restart` scenario uses native
+controls to check an unavailable host, inspect/copy a fictional fingerprint,
+require explicit verification, reject unverified replacement, retry a changed
+host, and persist the verified settings through restart. Review light host-key
+and 900×640 dark credential WebPs. Preview fingerprints are object-scoped fixture
+values; password authentication stays disabled. `cargo test --all-features sftp_`
+uses real loopback SSH/SFTP peers for authentication, staged upload/journal
+recovery, retention, restore and keychain ownership. Never substitute preview
+status for actual provider success or introduce real credentials in either layer.
+
+The saved `test_ftp_backup_security_setup_retry_and_restart` scenario verifies
+secure defaults, explicit/implicit FTPS and clearly labelled plain FTP, default
+versus custom ports, masked passwords, retry, persistence and compact dark
+layout through native controls. Preview connection attempts remain disabled.
+Actual protocol tests use bounded loopback FTP/FTPS peers and fixture CAs; an
+untrusted certificate must fail before sending credentials. Preserve interrupted
+archive/manifest append, reserved-directory/journal recovery, complete listing,
+owned retention and foreign-file refusal tests (`cargo test --all-features
+backup::ftp::tests`) alongside the native scenario.
+
+The first-device profile scenario uses `profile_sync="held-upload"`. Its owned
+loopback server holds a committed upload response until the batch action
+`release_profile_upload`. Wait for `profile_upload_held`, exercise native
+navigation while work is pending, assert it is still held, then release it.
+This only controls the fictional transport; it cannot mutate application state
+or contact Google. Keep the existing completion deadline and saved automated
+first-device scenario. Fixture shutdown also releases the response.
+
+Combined-backup correctness flows use `desktop.start(backup_run="ready" | "recover")`.
+They require the owned persistent fixture workspace and prepare two local folders
+beneath its artifact directory. The production queue, snapshot encryption,
+reservation journal, upload, metadata and retention paths run unchanged. An
+isolated credential worker holds fictional distinct passphrases; account-password
+export and non-fixture provider targets are rejected. The recovery fixture loses
+one acknowledgment after the second target's actual local upload, retaining its
+ciphertext and reserved identity for retry/restart. Ordinary preview still cannot
+back up. Observe `backup_run` rows and saved destination inclusion; never modify
+these observations to actuate the UI. Review the light progress/error and compact
+dark WebPs alongside saved native scenarios and `cargo test --all-features backup_all`.
+
+Shared account connection reviews use `profile_sync="existing-connections"`,
+`profile_login=true`, `empty_profile=true`. The owned Drive fixture exposes two
+changed endpoint versions after enrollment. Saved `test_profile_account_review_*`
+scenarios use the actual review picker and Keep/Add buttons, preserve the old
+native account through restart, and verify the durable shared mapping. Backend
+`profile_account_review` tests additionally cover cached mail with identical remote
+IDs on old/new servers, interrupted admission, stale native/history/Google/consent
+and remote removal. Keep account passwords out of this fixture. A menu that opens
+above its control can cover the Keep button: select its visible row before the
+next click; the separately tracked Escape-dismissal issue must not be hidden by
+a direct state mutation or by removing keyboard coverage elsewhere. After adding
+the shared connection, the same fixture leaves two accounts with one address;
+`test_sidebar_duplicate_addresses_distinguish_saved_names_and_controls` checks
+the sidebar shows their saved names above the address, chooses each account by
+mouse and arrow/Return, and captures the 160 px sidebar and 900×640 layouts.
+
+`test_backup_formats_native_options_restore_and_restart` uses the same owned
+`backup_run` fixture to exercise actual unencrypted/encrypted copies, optional
+compression, password exclusion, restore with no password, incorrect-password
+recovery, rolling retention, independent settings after restart and a mixed-format
+Back up all. It also operates the new controls in compact dark appearance. The
+fixture's calendars use valid fictional identities so real restore validation
+runs unchanged. Ordinary preview still cannot restore. Keep the codec's independent
+libargon2/AES-GCM vector and FTPS/SFTP wire-format tests alongside this native flow.
+
+
+For persistent backup activity, preserve both saved `test_backup_history_native_*`
+flows. `desktop.start(backup_run="recover")` loses one upload acknowledgment;
+`backup_run="warning"` acknowledges the copy but fails one fixture-keychain save.
+Use real Recent activity and Retry controls after restart. Observe
+`backup_activity.entries`/`loading`/`error`, ensuring NeedsReview and
+SavedWithWarning stay distinct. Compare the owned reserved filename and archive
+bytes before/after Retry, restart again, and review light/compact-dark WebPs.
+Activity reads are observation-only and must not become a fixture action API.
+
+
+`profile_sync="existing-removal"` delivers an owned remote account tombstone
+after enrollment. The saved `test_profile_account_removal_*` flows operate
+Keep on this device and the actual local-data removal dialog. Preserve Cancel,
+confirmation, restart/no-reimport and stale-card disappearance assertions.
+`profile_account_review` Rust tests retain real cached fixture mail and reject
+changed history/account/Google/consent. UI observations never trigger actions.

@@ -51,6 +51,15 @@ impl State {
     pub fn ready(&self) -> bool {
         self.mode && !self.busy() && self.count > 0
     }
+    pub fn ready_for_drag(&self) -> bool {
+        self.mode
+            && self.count > 0
+            && self.snapshot.is_some()
+            && self.queue.is_empty()
+            && self.inflight.as_ref().is_none_or(|(_, request)| {
+                matches!(request, Request::Observe(_) | Request::Release(_))
+            })
+    }
     fn reset(&mut self) {
         #[cfg(feature = "test-support")]
         {
@@ -134,16 +143,17 @@ impl State {
                             self.count = (to - from + 1) as usize;
                         }
                         for (index, mail) in page.rows.iter().enumerate() {
-                            let position = self
-                                .snapshot
-                                .as_ref()
-                                .and_then(|s| s.positions.get(&mail.id))
-                                .copied()
-                                .unwrap_or((offset + index) as u64);
+                            let position = (offset + index) as u64;
                             if (from..=to).contains(&position) {
-                                self.visible.insert(mail.id.clone());
+                                let added = self.visible.insert(mail.id.clone());
+                                if *additive && added {
+                                    self.count = self.count.saturating_add(1);
+                                }
                             }
                         }
+                        // Off-page overlap lives in SQLite. Until its reply,
+                        // the selected total is at least the whole new range.
+                        self.count = self.count.max((to - from + 1) as usize);
                     }
                 }
             }
@@ -180,17 +190,17 @@ impl App {
         self.pump_selection();
     }
     fn selection_position(&self, id: &str) -> Option<u64> {
-        self.mail_selection
-            .snapshot
-            .as_ref()
-            .and_then(|s| s.positions.get(id))
-            .copied()
+        self.page
+            .rows
+            .iter()
+            .position(|m| m.id == id)
+            .map(|i| (self.query.offset + i) as u64)
             .or_else(|| {
-                self.page
-                    .rows
-                    .iter()
-                    .position(|m| m.id == id)
-                    .map(|i| (self.query.offset + i) as u64)
+                self.mail_selection
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| s.positions.get(id))
+                    .copied()
             })
     }
     fn queue_selection(&mut self, change: SelectionChange) {
@@ -199,13 +209,13 @@ impl App {
             return;
         }
         let range = if let SelectionChange::Range { anchor, target, .. } = &change {
-            let start = self
-                .mail_selection
-                .anchor
-                .as_ref()
-                .filter(|(id, _)| id == anchor)
-                .map(|(_, pos)| *pos)
-                .or_else(|| self.selection_position(anchor));
+            let start = self.selection_position(anchor).or_else(|| {
+                self.mail_selection
+                    .anchor
+                    .as_ref()
+                    .filter(|(id, _)| id == anchor)
+                    .map(|(_, pos)| *pos)
+            });
             start
                 .zip(self.selection_position(target))
                 .map(|(a, b)| (a.min(b), a.max(b)))
@@ -219,6 +229,7 @@ impl App {
         self.pump_selection();
     }
     pub(super) fn toggle_selection_mode(&mut self) -> Task<Message> {
+        self.close_composer();
         self.focused_input = None;
         self.pending_focus = None;
         self.sidebar_focus = false;
@@ -235,6 +246,7 @@ impl App {
         if self.tab != Tab::Mail || self.full_reader || self.sidebar_focus || !self.list_focus {
             return Task::none();
         }
+        self.close_composer();
         // Another explicit Select All includes new arrivals; an existing
         // selection itself never grows silently during a background refresh.
         let anchor = self.mail_selection.anchor.clone().or_else(|| {
@@ -248,6 +260,7 @@ impl App {
         widget::operation::focus("unfocused")
     }
     pub(super) fn checkbox_mail(&mut self, id: String) -> Task<Message> {
+        self.close_composer();
         if !self.mail_selection.mode {
             self.mail_selection.start(&self.query);
         }
@@ -272,13 +285,31 @@ impl App {
         id: String,
         modifiers: keyboard::Modifiers,
     ) -> Task<Message> {
-        let toggle = modifiers.control() || modifiers.command();
+        if self.mail_selection.mode
+            && !modifiers.control()
+            && !modifiers.command()
+            && !modifiers.shift()
+        {
+            let double = self
+                .last_click
+                .as_ref()
+                .is_some_and(|(last, time)| last == &id && time.elapsed().as_millis() < 400);
+            if double {
+                self.last_click = None;
+                return self.handle(Message::OpenMessage(id));
+            }
+            let task = self.checkbox_mail(id.clone());
+            self.last_click = Some((id, Instant::now()));
+            return task;
+        }
+        let toggle = self.mail_selection.mode || modifiers.control() || modifiers.command();
         let range = modifiers.shift();
         self.focused_input = None;
         self.pending_focus = None;
         self.sidebar_focus = false;
         self.list_focus = true;
         if toggle || range {
+            self.close_composer();
             self.last_click = None;
             if !self.mail_selection.mode {
                 self.mail_selection.start(&self.query);
@@ -303,16 +334,6 @@ impl App {
                 return self.checkbox_mail(id);
             }
             return widget::operation::focus("unfocused");
-        }
-        if self.mail_selection.mode {
-            self.mail_selection.anchor = self
-                .selection_position(&id)
-                .map(|position| (id.clone(), position));
-            self.queue_selection(SelectionChange::Set {
-                id: id.clone(),
-                selected: true,
-                clear_others: true,
-            });
         }
         self.handle(Message::Select(id))
     }
@@ -407,6 +428,25 @@ impl App {
                 }
             }
             Err(error) => {
+                if active && matches!(request, Request::Observe(_)) {
+                    self.mail_selection.observed.clear();
+                    self.mail_selection.retry = Some(Instant::now());
+                    self.notice(
+                        format!("Could not refresh the selection. Retrying… {error}"),
+                        true,
+                    );
+                    self.mail_selection.project(&self.page, self.query.offset);
+                    return;
+                }
+                if active && matches!(request, Request::Change(..)) {
+                    // Store changes are atomic. Reject only this gesture, keep
+                    // confirmed membership and process subsequent native input.
+                    self.mail_selection.queue.pop_front();
+                    self.notice(format!("Could not update this selection. {error}"), true);
+                    self.mail_selection.project(&self.page, self.query.offset);
+                    self.pump_selection();
+                    return;
+                }
                 if matches!(request, Request::Release(_)) {
                     self.notice("Could not reset the selection. Retrying…", true);
                 }
@@ -479,6 +519,113 @@ mod tests {
         .map(|s| s.map(Arc::new))
         .map_err(|e| e.to_string());
         app.selection_finished(serial, result);
+    }
+    #[tokio::test]
+    async fn selected_move_search_uses_membership_account_instead_of_unrelated_reader() {
+        let (mut app, store, mut commands) = fixture().await;
+        let first = app.page.rows[0].id.clone();
+        let _ = app.checkbox_mail(first);
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        let raw = "Projects/&ZeVnLIqe-";
+        let mut mailbox = crate::folders::Mailbox::flat(raw.into());
+        mailbox.delimiter = Some('/');
+        mailbox.encoding = crate::folders::NameEncoding::ImapUtf7;
+        let workspace = Arc::make_mut(&mut app.workspace);
+        workspace
+            .account_folders
+            .insert("fixture".into(), vec![raw.into()]);
+        workspace.folder_trees.insert(
+            "fixture".into(),
+            crate::folders::Tree::new(&[mailbox]).into(),
+        );
+        let mut reader = app.page.rows[0].clone();
+        reader.id = "other:INBOX:1".into();
+        reader.account_id = "other".into();
+        app.selected = Some(reader.id.clone());
+        Arc::make_mut(&mut app.page).rows.push(reader);
+        assert_eq!(app.action_mail().unwrap().account_id, "other");
+        app.fields.insert("folder_search", "日本語".into());
+        assert_eq!(app.move_folder_label(raw), "Projects/日本語");
+        assert_eq!(app.ranked_move_folders(), vec![raw.to_owned()]);
+        // Explicit destination choice takes precedence over selected membership.
+        app.fields.insert("move_account", "other".into());
+        assert_eq!(app.move_folder_label(raw), raw);
+        app.fields.remove("move_account");
+        app.mail_selection.mode = false;
+        assert_eq!(app.move_folder_label(raw), raw);
+    }
+
+    #[tokio::test]
+    async fn selection_mode_rows_toggle_and_ranges_preserve_other_pages_before_ack() {
+        let (mut app, store, mut commands) = fixture().await;
+        let first = app.page.rows[0].id.clone();
+        let third = app.page.rows[2].id.clone();
+        let _ = app.toggle_selection_mode();
+        let _ = app.click_select_mail(first.clone(), keyboard::Modifiers::empty());
+        let _ = app.click_select_mail(third.clone(), keyboard::Modifiers::empty());
+        assert_eq!(app.mail_selection.count, 2);
+        let _ = app.click_select_mail(first, keyboard::Modifiers::empty());
+        assert_eq!(app.mail_selection.count, 1);
+        assert!(app.mail_selection.visible.contains(&third));
+        assert!(app.mail_actions.read_candidate.is_none());
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        app.query.offset = 50;
+        app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
+        reply(&mut app, &store, &mut commands).await;
+        let _ = app.click_select_mail(app.page.rows[0].id.clone(), keyboard::Modifiers::empty());
+        let _ = app.click_select_mail(app.page.rows[2].id.clone(), keyboard::Modifiers::SHIFT);
+        assert_eq!(app.mail_selection.count, 4);
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        assert_eq!(app.mail_selection.count, 4);
+        assert!(app.selected.is_none());
+        assert!(app.mail_actions.read_candidate.is_none());
+        let snapshot = store
+            .selection_snapshot(app.mail_selection.token.unwrap(), vec![third.clone()])
+            .await
+            .unwrap();
+        assert_eq!(snapshot.selected, 4);
+        assert!(snapshot.visible.contains(&third));
+    }
+
+    #[tokio::test]
+    async fn passive_selection_observation_does_not_disable_dragging_confirmed_choices() {
+        let (mut app, store, mut commands) = fixture().await;
+        let first = app.page.rows[0].id.clone();
+        let _ = app.checkbox_mail(first);
+        assert!(!app.mail_selection.ready_for_drag());
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        assert!(app.mail_selection.ready_for_drag());
+        store
+            .upsert(vec![
+                parse_mail(
+                    "fixture",
+                    "arrival",
+                    "INBOX",
+                    b"Subject: 000A\r\n\r\nArrival".to_vec(),
+                    true,
+                    false,
+                )
+                .unwrap(),
+            ])
+            .await
+            .unwrap();
+        app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
+        assert!(app.mail_selection.busy());
+        assert!(app.mail_selection.ready_for_drag());
+        reply(&mut app, &store, &mut commands).await;
+        let _ = app.checkbox_mail(app.page.rows[1].id.clone());
+        assert!(
+            !app.mail_selection.ready_for_drag(),
+            "Unacknowledged membership edits still need a reviewable snapshot"
+        );
     }
     #[tokio::test]
     async fn gestures_are_immediate_ordered_and_only_hold_one_metadata_page() {
@@ -620,7 +767,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn select_all_is_scoped_to_list_focus_and_error_clears_optimistic_membership() {
+    async fn select_all_is_scoped_to_list_focus_and_rejection_keeps_confirmed_membership() {
         let (mut app, store, mut commands) = fixture().await;
         app.list_focus = false;
         let _ = app.select_all_mail();
@@ -629,15 +776,102 @@ mod tests {
         let _ = app.select_all_mail();
         reply(&mut app, &store, &mut commands).await;
         let (serial, _) = app.mail_selection.inflight.clone().unwrap();
-        app.selection_finished(serial, Err("Selection removed".into()));
-        assert!(!app.mail_selection.mode);
+        app.selection_finished(serial, Err("Fixture write rejected".into()));
+        assert!(app.mail_selection.mode);
+        assert_eq!(app.mail_selection.count, 0);
         assert!(app.mail_selection.visible.is_empty());
         assert!(
             app.notice
                 .as_ref()
                 .unwrap()
                 .0
-                .contains("Select the messages again")
+                .contains("Fixture write rejected")
+        );
+    }
+
+    #[tokio::test]
+    async fn selecting_an_arrival_and_rejecting_a_vanished_target_keeps_prior_choices() {
+        let (mut app, store, mut commands) = fixture().await;
+        let first = app.page.rows[0].id.clone();
+        let _ = app.checkbox_mail(first.clone());
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        let arrival = parse_mail(
+            "fixture",
+            "arrival",
+            "INBOX",
+            b"Subject: 000A\r\n\r\nNew mail".to_vec(),
+            true,
+            false,
+        )
+        .unwrap();
+        let new_id = arrival.summary.id.clone();
+        store.upsert(vec![arrival]).await.unwrap();
+        app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
+        let Command::Selection(serial, Request::Observe(_), _) = commands.try_recv().unwrap()
+        else {
+            panic!("The new page must observe existing selection membership");
+        };
+        app.selection_finished(serial, Err("Temporary read failure".into()));
+        assert!(app.mail_selection.mode);
+        assert_eq!(app.mail_selection.count, 1);
+        assert!(
+            commands.try_recv().is_err(),
+            "Retry must not spin on a failed cache read"
+        );
+        app.mail_selection.retry = Some(Instant::now() - std::time::Duration::from_secs(2));
+        app.pump_selection();
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        assert_eq!(
+            app.mail_selection.count, 1,
+            "Passive arrival must not select itself"
+        );
+        let _ = app.checkbox_mail(new_id.clone());
+        assert_eq!(
+            app.mail_selection.count, 2,
+            "Explicit clicks project immediately"
+        );
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        assert_eq!(
+            app.mail_selection.visible,
+            [first.clone(), new_id.clone()].into()
+        );
+        assert!(app.mail_actions.read_candidate.is_none());
+
+        let transient = parse_mail(
+            "fixture",
+            "transient",
+            "INBOX",
+            b"Subject: 000B\r\n\r\nLeaving mail".to_vec(),
+            true,
+            false,
+        )
+        .unwrap();
+        let transient_id = transient.summary.id.clone();
+        store.upsert(vec![transient]).await.unwrap();
+        app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        let _ = app.checkbox_mail(transient_id.clone());
+        store.remove(transient_id).await.unwrap();
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        assert!(app.mail_selection.mode);
+        assert_eq!(app.mail_selection.count, 2);
+        assert_eq!(app.mail_selection.visible, [first, new_id].into());
+        assert!(
+            app.notice
+                .as_ref()
+                .unwrap()
+                .0
+                .contains("previous selection is kept")
         );
     }
 }

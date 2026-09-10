@@ -4,7 +4,7 @@ Performance measurements must run on an otherwise idle machine. During developme
 
 ## Enforced gates
 
-`performance-budgets.json` is the source of truth. `scripts/performance_gate.py` requires both backend and native UI reports, rejects missing/non-finite/negative results, requires at least 20 samples, and checks the 100,000-message backend dataset.
+`performance-budgets.json` is the source of truth. `scripts/performance_gate.py` requires backend, native navigation and HTML pixel reports, rejects missing/non-finite/negative results, requires at least 20 samples, and checks the 100,000-message backend dataset.
 
 | Measurement | p95 ceiling |
 | --- | ---: |
@@ -14,6 +14,8 @@ Performance measurements must run on an otherwise idle machine. During developme
 | Cached body load | 10 ms |
 | UI update handler | 8 ms |
 | Native tab navigation, input through observed state | 150 ms |
+| Unprepared HTML document, native click through displayed pixels | 100 ms |
+| Cached/prefetched HTML, native click through displayed pixels | 50 ms |
 
 The backend benchmark uses a temporary SQLite WAL database with 100,000 messages over four accounts, 60 samples per query and 100 body loads. It also verifies that a full bounded channel returns backpressure immediately. It writes `artifacts/performance/backend.json`.
 
@@ -49,10 +51,99 @@ Linux x86_64, iced tiny-skia on Xvfb at 1440×920. Backend: optimized release, 1
 
 The initial native runs measured 154.6–156.8 ms with coarser observation. The harness now explicitly uses 1 ms key injection and 5 ms state polling, which removes artificial key waiting and reduces timing quantization. Budgets were not changed. The native result has limited headroom and must be rechecked on the self-hosted runners. It measures input-to-observed-state, not display frame pacing; it does not establish 60 FPS or live network throughput.
 
+## HTML opening — 7 September 2026
+
+The user explicitly authorized this focused measurement before the remaining
+idle-host gates. `scripts/html_latency.py` measures a native XTest click through
+visible HTML pixels on a 1440×920 RGB24 Xvfb window, using the optimized `test-ui`
+build. No builds ran concurrently with the reported comparison; the host was
+not asserted fully idle. Each case has 20 independent observations.
+
+| Opening case | Before p50 / p95 | After p50 / p95 |
+| --- | ---: | ---: |
+| Unprepared 200-paragraph letter | 87.5 / 122.4 ms | 39.9 / 45.8 ms |
+| Return to styled mail | 84.2 / 103.3 ms | 25.1 / 25.7 ms |
+| Prefetched adjacent message | 113.7 / 140.3 ms | 23.5 / 26.3 ms |
+| Reopen the long letter | 95.7 / 104.8 ms | 26.5 / 37.0 ms |
+
+Bounded width/glyph caching removes repeated shaping/rasterization. The reader
+retains visited initial frames as well as adjacent preparations. Coalescing
+overlapping damage and painting only visible solid panel interiors removes
+repeated software painting of the same region. Pixel-equivalence tests protect
+borders, text, shadows and fractional scaling; external-image policy remains
+part of the frame-cache identity.
+
+Reference pixels are prepared in a separate fixture process. Each measurement
+process starts fresh; its initial styled message has already warmed the font
+system. “Unprepared” describes the selected document, not process startup or
+first font discovery. The styled sample has tables, inline WebP, CSS and blocked
+external images. These figures do not establish live download speed, arbitrary
+HTML complexity, other platforms, monitor scanout or sustained frame rate.
+
+The sampler chooses 64 text/edge points across the visible body and waits for
+at least 97% to match at RGB tolerance 8, with a 2 ms polling sleep. It rejects an
+already visible reference. Pointer placement, reference preparation, dwell and
+screenshots are outside the measured interval. The gate recomputes p95 from raw
+observations and rejects invalid, repeated or insufficient samples. Run:
+
+```sh
+python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html.json
+python3 scripts/performance_gate.py --html-only
+```
+
+Full quality also runs these alongside backend/navigation gates. Reports and
+WebP evidence stay under ignored `artifacts/`; no personal inbox is used.
+
+
+## Complex and revisited HTML follow-up — 7 September 2026
+
+The earlier four fixtures did not reproduce the reported 1–2 second pause.
+Read-only profiling of two authorized cached messages isolated repeated nested
+table layout: initial worker renders took 1,538–2,107 ms. The same messages now
+render in 47–63 ms across the diagnostic comparisons. These are diagnostic
+worker times, not a latency percentile or live desktop-input measurement.
+Personal content and hashes remain private, outside the published evidence.
+The later paired run disables only table reuse: both corrected rendering modes
+produce identical viewport pixels and heights for both messages. One message
+differs from pristine upstream pixels because of the independently tested
+superscript-offset correction; it is not claimed unchanged from that baseline.
+
+The pinned litehtml patch reuses identical table-subtree measurements within one
+normal-flow render, comparing the complete containing-block constraint. It also
+corrects accumulating inline and caption offsets. Reuse never crosses a render,
+resize, image update or positioned-layout phase. Paired pixel/selection tests
+cover constraints, captions, spanning cells, floats, positioning, media changes
+and image reflow; exact geometry checks separately establish the offset fixes.
+
+The native gate now includes an unprepared fictional sixteen-level table with
+1,182 utility CSS rules, plus repeated navigation between two messages with
+twelve allowed fixture images each. The visited-frame cache retains eight frames
+within 32 MiB, including their image inputs. Image arrival invalidates only
+frames that use that URL; unrelated downloads cannot evict a settled preview.
+
+| Native click through displayed body pixels | p50 | p95 | Gate |
+| --- | ---: | ---: | ---: |
+| Unprepared long letter | 37.9 ms | 49.7 ms | 100 ms |
+| Return to styled mail | 28.3 ms | 32.2 ms | 50 ms |
+| Prefetched adjacent message | 26.0 ms | 26.9 ms | 50 ms |
+| Reopen the long letter | 29.1 ms | 36.9 ms | 50 ms |
+| Return to first image-heavy message | 19.3 ms | 21.0 ms | 50 ms |
+| Return to second image-heavy message | 19.5 ms | 22.8 ms | 50 ms |
+| Unprepared deep-table message | 36.0 ms | 38.2 ms | 100 ms |
+| Reopen the deep-table message | 21.2 ms | 22.6 ms | 50 ms |
+
+All eight gates pass with 20 observations each on optimized Linux/Xvfb, binary
+`c6ee6d73113f54d36548ec0d50ce8b428ab7c03e8d73d29e08585c7eb188febc`.
+No build ran during these measurements; the host was not asserted fully idle.
+The method and boundaries described above still apply. Reports and fictional
+WebP captures remain under ignored `artifacts/`; these results do not establish
+all possible HTML complexity, remote download speed, monitor scanout or another
+operating system's performance. Other final performance gates remain deferred.
 
 ## Client worktree checkpoint — 9 September 2026
 
-The profile-history SQLite update prompted a fresh storage check. Relevance now
+Measured on the mobile/web client branch before `main` was merged into it. The
+profile-history SQLite update prompted a fresh storage check. Relevance now
 materializes exact-match ranks once; a covering unread-account index avoids
 per-page message-row lookups and sorting. Release benchmark: 100,000 synthetic
 messages/four accounts, 60 samples per query and 100 body loads, Linux x86_64.
@@ -82,3 +173,5 @@ before the final index and 14 relevant scenarios after it with compilation stopp
 The first 14-scenario rerun during compilation had two input failures; it is not a
 pass. See [the completion log](COMPLETION.md) for evidence and shipping. No threshold
 was weakened, and input-to-state timing is not proof of presented pixels or 60 Hz.
+The merged tree has not been re-measured; the navigation gate result above must be
+rechecked after the merge on an idle host.

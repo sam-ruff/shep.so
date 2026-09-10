@@ -1,7 +1,11 @@
+pub mod folders;
 pub mod gateway;
-mod receipts;
+#[cfg(test)]
+mod notification_tests;
+pub mod receipts;
 pub mod recovery;
 pub mod sent;
+mod sync_queries;
 use super::MailProvider;
 use crate::model::*;
 use anyhow::Context;
@@ -23,7 +27,7 @@ pub fn provider(protocol: Protocol) -> Box<dyn MailProvider> {
         Protocol::Pop3 => Box::new(Pop3),
     }
 }
-type Tls = tokio_native_tls::TlsStream<TcpStream>;
+pub type Tls = tokio_native_tls::TlsStream<TcpStream>;
 
 async fn tls(host: &str, port: u16, route: &gateway::Route) -> anyhow::Result<Tls> {
     tokio::time::timeout(Duration::from_secs(20), async {
@@ -58,7 +62,9 @@ impl async_imap::Authenticator for PlainAuth<'_> {
         format!("\0{}\0{}", self.username, self.password).into_bytes()
     }
 }
-async fn imap(
+/// Authenticated direct IMAP session for client-owned adapters such as durable
+/// move connections. Routed connections stay internal to the gateway.
+pub async fn imap(
     account: &Account,
     password: &SecretString,
 ) -> anyhow::Result<async_imap::Session<Tls>> {
@@ -175,7 +181,8 @@ async fn pop_routed(
     Ok(connection)
 }
 
-async fn sync_imap_session<
+/// Public for client test harnesses that drive an in-memory IMAP session.
+pub async fn sync_imap_session<
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
 >(
     mut session: async_imap::Session<T>,
@@ -201,18 +208,25 @@ async fn sync_imap_session<
             sent::choose_folder(&names, &account.sent_folder).ok(),
         ))
         .await?;
-    let mut folders: Vec<String> = names
+    let mut catalog: Vec<_> = names
         .iter()
-        .filter(|n| {
-            !n.attributes()
-                .iter()
-                .any(|a| format!("{a:?}").eq_ignore_ascii_case("NoSelect"))
+        .map(|name| {
+            folders::mailbox(
+                name.name(),
+                name.delimiter(),
+                name.attributes(),
+                folders::encoding(&capabilities),
+            )
         })
-        .map(|n| n.name().to_owned())
         .collect();
-    folders.sort_by_key(|f| !f.eq_ignore_ascii_case("INBOX"));
+    catalog.sort_by_key(|folder| !folder.name.eq_ignore_ascii_case("INBOX"));
+    let folders: Vec<String> = catalog
+        .iter()
+        .filter(|folder| folder.selectable)
+        .map(|folder| folder.name.clone())
+        .collect();
     output
-        .send(MailSyncItem::Folders(account.id.clone(), folders.clone()))
+        .send(MailSyncItem::Folders(account.id.clone(), catalog))
         .await?;
     tracing::info!(folders = folders.len(), "IMAP folder listing complete");
     for (index, folder) in folders.iter().enumerate() {
@@ -224,8 +238,19 @@ async fn sync_imap_session<
         let validity = mailbox
             .uid_validity
             .context("The server did not provide UIDVALIDITY")?;
+        if folder.eq_ignore_ascii_case("INBOX") {
+            output
+                .send(MailSyncItem::InboxSyncStarted {
+                    account: account.id.clone(),
+                    epoch: format!("imap:{validity}"),
+                })
+                .await?;
+        }
         // Fetch bounded metadata batches first. Oversized bodies are never requested.
-        let mut uids: Vec<_> = session.uid_search("ALL").await?.into_iter().collect();
+        let mut uids: Vec<_> = sync_queries::search(&mut session)
+            .await?
+            .into_iter()
+            .collect();
         uids.sort_unstable_by(|a, b| b.cmp(a));
         tracing::info!(
             folder_index = index,
@@ -242,11 +267,8 @@ async fn sync_imap_session<
                 .map(u32::to_string)
                 .collect::<Vec<_>>()
                 .join(",");
-            let metadata: Vec<_> = session
-                .uid_fetch(set, "(UID FLAGS RFC822.SIZE)")
-                .await?
-                .try_collect()
-                .await?;
+            let metadata =
+                sync_queries::fetch(&mut session, &set, "(UID FLAGS RFC822.SIZE)").await?;
             let mut pending = Vec::new();
             let mut flags = Vec::new();
             for fetch in &metadata {
@@ -256,11 +278,7 @@ async fn sync_imap_session<
                 let remote = format!("{validity}.{uid}");
                 let id = format!("{}:{folder}:{remote}", account.id);
                 if known.contains(&id) {
-                    flags.push((
-                        id,
-                        !fetch.flags().any(|f| f == async_imap::types::Flag::Seen),
-                        fetch.flags().any(|f| f == async_imap::types::Flag::Flagged),
-                    ));
+                    flags.push((id, fetch.unread, fetch.starred));
                 } else if fetch.size.unwrap_or(u32::MAX) as usize > MAX_MESSAGE_BYTES {
                     output.send(MailSyncItem::SkippedLarge).await?;
                 } else {
@@ -289,24 +307,21 @@ async fn sync_imap_session<
                     .map(|(uid, _, _)| uid.to_string())
                     .collect::<Vec<_>>()
                     .join(",");
-                let bodies: Vec<_> = session
-                    .uid_fetch(set, "(UID FLAGS BODY.PEEK[])")
-                    .await?
-                    .try_collect()
-                    .await?;
+                let bodies =
+                    sync_queries::fetch(&mut session, &set, "(UID FLAGS BODY.PEEK[])").await?;
                 for fetch in &bodies {
                     let Some((_, remote, _)) =
                         batch.iter().find(|(uid, _, _)| Some(*uid) == fetch.uid)
                     else {
                         continue;
                     };
-                    if let Some(raw) = fetch.body() {
+                    if let Some(raw) = fetch.body.as_deref() {
                         anyhow::ensure!(
                             raw.len() <= MAX_MESSAGE_BYTES,
                             "The server returned a message exceeding 25 MiB."
                         );
-                        let unread = !fetch.flags().any(|f| f == async_imap::types::Flag::Seen);
-                        let starred = fetch.flags().any(|f| f == async_imap::types::Flag::Flagged);
+                        let unread = fetch.unread;
+                        let starred = fetch.starred;
                         let (id, folder, remote, raw) = (
                             account.id.clone(),
                             folder.clone(),
@@ -332,6 +347,14 @@ async fn sync_imap_session<
                 live_ids,
             })
             .await?;
+        if folder.eq_ignore_ascii_case("INBOX") {
+            output
+                .send(MailSyncItem::InboxSyncFinished {
+                    account: account.id.clone(),
+                    epoch: format!("imap:{validity}"),
+                })
+                .await?;
+        }
     }
     session.logout().await?;
     Ok(folders)
@@ -420,7 +443,8 @@ async fn move_imap_session<
     Ok(receipt)
 }
 
-fn validate_uid(mail: &Mail, validity: Option<u32>) -> anyhow::Result<String> {
+/// The cached remote identity must match the selected mailbox's UIDVALIDITY.
+pub fn validate_uid(mail: &Mail, validity: Option<u32>) -> anyhow::Result<String> {
     let (old, uid) = mail
         .remote_id
         .split_once('.')
@@ -485,39 +509,8 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> PopConnection<S> {
     }
 }
 
-#[async_trait]
-impl MailProvider for Pop3 {
-    async fn sync(
-        &self,
-        account: &Account,
-        password: &SecretString,
-        known: &HashSet<String>,
-        output: Sender<MailSyncItem>,
-    ) -> anyhow::Result<Vec<String>> {
-        sync_pop_connection(pop(account, password).await?, account, known, output).await
-    }
-    async fn move_mail(
-        &self,
-        _: &Account,
-        _: &SecretString,
-        _: &Mail,
-        _: &str,
-    ) -> anyhow::Result<Option<String>> {
-        Ok(None)
-    }
-    async fn set_flags(
-        &self,
-        _: &Account,
-        _: &SecretString,
-        _: &Mail,
-        _: crate::mail_actions::Flags,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
-async fn sync_pop_connection(
-    mut conn: PopConnection<Tls>,
+async fn sync_pop_session<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    mut conn: PopConnection<S>,
     account: &Account,
     known: &HashSet<String>,
     output: Sender<MailSyncItem>,
@@ -526,12 +519,22 @@ async fn sync_pop_connection(
         .await
         .context("A POP3 server with stable UIDL identifiers is required")?;
     let listing = String::from_utf8(conn.multiline(8 * 1024 * 1024).await?)?;
+    output
+        .send(MailSyncItem::InboxSyncStarted {
+            account: account.id.clone(),
+            epoch: "pop3".into(),
+        })
+        .await?;
     for line in listing.lines() {
-        let Some((number, uid)) = line.split_once(' ') else {
-            continue;
-        };
+        let (number, uid) = line
+            .split_once(' ')
+            .context("Invalid POP3 message listing")?;
         let number = number.parse::<u32>()?;
         let uid = uid.trim().to_string();
+        anyhow::ensure!(
+            number > 0 && !uid.is_empty() && !uid.chars().any(char::is_whitespace),
+            "Invalid POP3 message identity"
+        );
         if known.contains(&format!("{}:INBOX:{uid}", account.id)) {
             continue;
         }
@@ -557,8 +560,46 @@ async fn sync_pop_connection(
             .context("Sync was cancelled")?;
     }
     // Always leave originals on the POP3 server. Folders and flags are local.
+    output
+        .send(MailSyncItem::InboxSyncFinished {
+            account: account.id.clone(),
+            epoch: "pop3".into(),
+        })
+        .await?;
     conn.command("QUIT").await?;
     Ok(vec!["INBOX".into()])
+}
+
+#[async_trait]
+impl MailProvider for Pop3 {
+    async fn sync(
+        &self,
+        account: &Account,
+        password: &SecretString,
+        known: &HashSet<String>,
+        output: Sender<MailSyncItem>,
+    ) -> anyhow::Result<Vec<String>> {
+        sync_pop_session(pop(account, password).await?, account, known, output).await
+    }
+
+    async fn move_mail(
+        &self,
+        _: &Account,
+        _: &SecretString,
+        _: &Mail,
+        _: &str,
+    ) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+    async fn set_flags(
+        &self,
+        _: &Account,
+        _: &SecretString,
+        _: &Mail,
+        _: crate::mail_actions::Flags,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 pub async fn send(
@@ -745,6 +786,19 @@ async fn finish_transfer_session<
     mut session: async_imap::Session<T>,
     mail: &Mail,
 ) -> anyhow::Result<()> {
+    finish_transfer_commands(&mut session, mail).await?;
+    let _ = session.logout().await;
+    Ok(())
+}
+
+/// Revalidate and remove exactly the original UID on an open session; the caller
+/// owns the session lifetime so an interrupted move can reuse it.
+pub async fn finish_transfer_commands<
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
+>(
+    session: &mut async_imap::Session<T>,
+    mail: &Mail,
+) -> anyhow::Result<()> {
     let uid = validate_uid(mail, session.select(&mail.folder).await?.uid_validity)?;
     anyhow::ensure!(
         session.capabilities().await?.has_str("UIDPLUS"),
@@ -756,7 +810,6 @@ async fn finish_transfer_session<
     session
         .run_command_and_check_ok(format!("UID EXPUNGE {uid}"))
         .await?;
-    let _ = session.logout().await;
     Ok(())
 }
 

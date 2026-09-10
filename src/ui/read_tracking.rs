@@ -14,7 +14,10 @@ impl App {
             .is_none_or(|current| current.id != id)
         {
             self.finish_read();
-            if !self.mail_actions.restoring(&mail.id) && self.mail_actions.effective(&mail).unread {
+            if !self.mail_actions.restoring(&mail.id)
+                && !self.page.is_placeholder(&mail.id)
+                && self.mail_actions.effective(&mail).unread
+            {
                 self.mail_actions.read_candidate = Some(mail);
             }
         }
@@ -66,17 +69,22 @@ impl App {
                 | Message::Query(_)
                 | Message::NextPage(_)
                 | Message::Draft(_)
-                | Message::Open(Dialog::Compose)
+                | Message::NewMessage
                 | Message::Reply
                 | Message::ReplyAll
                 | Message::ClosePreview
                 | Message::WindowClose(_)
+                | Message::WindowCloseRequested(_)
                 | Message::WindowUnfocused
                 | Message::Focus("search", 0)
         ) || matches!(message, Message::MailContext(id, _) if id != &candidate.id);
         if leaves {
             let accepted = self.finish_read();
-            if matches!(message, Message::WindowClose(_)) && !accepted {
+            if matches!(
+                message,
+                Message::WindowClose(_) | Message::WindowCloseRequested(_)
+            ) && !accepted
+            {
                 return false;
             }
         }
@@ -111,7 +119,9 @@ mod tests {
         let (sender, receiver) = engine::CommandSender::network_test_channel();
         let (mut app, _) = App::new();
         app.tx = Some(sender);
-        app.set_mail_page(Arc::new(store.query(MailQuery::default()).await.unwrap()));
+        app.query.folder = "INBOX".into();
+        app.query.account = Some("work".into());
+        app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
         let messages = app.page.rows.clone();
         app.select(messages[0].id.clone());
         (app, receiver, messages)

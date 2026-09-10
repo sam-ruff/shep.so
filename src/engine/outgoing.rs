@@ -9,7 +9,10 @@ impl Engine {
         Ok(())
     }
     pub(super) async fn send_draft(&self, draft: Draft, output: &mut Output) -> anyhow::Result<()> {
-        let _guard = self.account_lock(&draft.account_id).await;
+        let _guard = self.account_access(&draft.account_id).await;
+        self.store
+            .ensure_folder_idle(draft.account_id.clone())
+            .await?;
         if let Some(previous) = self.store.outgoing_for_draft(draft.id.clone()).await?
             && !matches!(
                 previous.delivery,
@@ -40,13 +43,16 @@ impl Engine {
             Submission::new(account, &build_draft, message)
         })
         .await??;
+        #[cfg(feature = "test-support")]
+        if self.demo && std::env::args().any(|arg| arg == "--mail-actions=slow") {
+            // Hold fixture preparation so native tests can switch editors before
+            // the existing preview refusal. No SMTP or keychain access occurs.
+            tokio::time::sleep(Duration::from_millis(1600)).await;
+        }
         anyhow::ensure!(
             !self.demo,
             "Sending is disabled in preview. Your draft is saved locally."
         );
-        self.store
-            .require_profile_active(draft.account_id.clone())
-            .await?;
         let info = self.store.begin_outgoing(submission, draft.clone()).await?;
         self.outgoing_changed(output).await?;
         output
@@ -169,9 +175,6 @@ impl Engine {
                 "The previous Sent upload was not acknowledged. Check the server or confirm another copy before retrying."
             );
         }
-        self.store
-            .require_profile_active(account.id.clone())
-            .await?;
         let result=async {
             let mut connection=tokio::time::timeout(Duration::from_secs(60),self.outbound.sent(&account)).await.context("Connecting to Sent timed out")??;
             let folder=connection.folder().to_owned();
@@ -221,7 +224,10 @@ impl Engine {
         output: &mut Output,
     ) -> anyhow::Result<()> {
         let initial = self.store.outgoing_info(attempt.clone()).await?;
-        let _guard = self.account_lock(&initial.account_id).await;
+        let _guard = self.account_access(&initial.account_id).await;
+        self.store
+            .ensure_folder_idle(initial.account_id.clone())
+            .await?;
         let info = self.store.outgoing_info(attempt.clone()).await?;
         match action {
             RecoveryAction::ReturnDraft => {
@@ -295,9 +301,6 @@ impl Engine {
                     "POP3 cannot check a server Sent folder. Review delivery with your provider."
                 );
                 let found = tokio::time::timeout(Duration::from_secs(60), async {
-                    self.store
-                        .require_profile_active(account.id.clone())
-                        .await?;
                     let mut connection = self.outbound.sent(&account).await?;
                     connection.find(&info.message_id).await
                 })
@@ -333,7 +336,10 @@ impl Engine {
             let page = self.store.outgoing_page(offset).await?;
             for info in page.rows {
                 if info.delivery == DeliveryState::Accepted {
-                    let _guard = self.account_lock(&info.account_id).await;
+                    let _guard = self.account_access(&info.account_id).await;
+                    self.store
+                        .ensure_folder_idle(info.account_id.clone())
+                        .await?;
                     if self
                         .store
                         .outgoing_info(info.attempt.clone())

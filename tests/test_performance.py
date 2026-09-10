@@ -24,3 +24,21 @@ class PerformanceGate(unittest.TestCase):
             self.assertTrue(self.evaluate(value=value))
         self.assertTrue(self.evaluate(samples=19))
         self.assertTrue(self.evaluate(dataset=99999))
+
+    def test_html_gate_uses_independent_pixels_and_recomputes_percentiles(self):
+        budget = {"minimum_samples": 20, "html_budgets_ms": {"warm_return": 50}}
+        rows = [{"case": "warm_return", "cycle": i, "input_to_pixels_ms": 20,
+                 "match": 1., "before_match": 0.} for i in range(20)]
+        def check(rows):
+            with contextlib.redirect_stdout(io.StringIO()):
+                # A fabricated summary cannot conceal slower raw observations.
+                return gate.evaluate_html(budget, {"readings": rows, "summary": {"p95_ms": 0}})
+        self.assertEqual(check(rows), [])
+        self.assertTrue(check(rows[:19]))
+        self.assertTrue(check(rows + [rows[0]]))
+        for field, value in [("input_to_pixels_ms", True), ("input_to_pixels_ms", -1),
+                             ("input_to_pixels_ms", float("nan")), ("input_to_pixels_ms", float("inf")),
+                             ("match", .5), ("before_match", 1), ("cycle", False)]:
+            self.assertTrue(check([{**row, field: value} for row in rows]))
+        self.assertTrue(check([{**row, "input_to_pixels_ms": 51} for row in rows]))
+        self.assertTrue(check([]))

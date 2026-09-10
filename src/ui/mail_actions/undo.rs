@@ -85,7 +85,8 @@ impl App {
             }
             record.requested = true;
             record.error = None;
-            let id = record.original.id.clone();
+            let original = record.original.clone();
+            let id = original.id.clone();
             // A move waiting behind a flag save has not reached the provider yet.
             // Cancel it locally; the already accepted flag intent still persists.
             let unsent = self
@@ -99,6 +100,7 @@ impl App {
                     .get(&id)
                     .is_some_and(|e| e.request.is_none());
             if unsent {
+                self.reconcile_move_row(&original, None, true);
                 self.mail_actions.moves.remove(&id);
                 self.mail_actions.transfers.remove(&id);
                 self.mail_actions.undo.remove(&token);

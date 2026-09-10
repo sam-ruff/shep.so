@@ -22,6 +22,7 @@ impl Engine {
         tokio::time::timeout(
             std::time::Duration::from_secs(90),
             CalDav {
+                credentials: self.credentials.clone(),
                 http: self.google.http.clone(),
             }
             .discover(&url, &username, password.expose_secret()),
@@ -85,7 +86,7 @@ impl Engine {
             "The saved calendar identities conflict. Check the connected calendars before retrying."
         );
         for id in ids {
-            guards.push(self.calendar_lock(&id).await);
+            guards.push(self.calendar_access(&id).await);
             self.store
                 .check_calendar_reconnect(id, observed_revision)
                 .await?;
@@ -96,7 +97,7 @@ impl Engine {
                 "Enter your calendar password."
             );
             for source in &sources {
-                providers::write_secret(&source.id, password.clone()).await.context("Could not save a calendar password. Unlock your credential store and retry Connect.")?;
+                self.credentials.write(&source.id, password.clone()).await.context("Could not save a calendar password. Unlock your credential store and retry Connect.")?;
             }
         }
         self.store

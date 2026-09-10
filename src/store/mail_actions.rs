@@ -33,29 +33,55 @@ impl Store {
     pub async fn relocate_mail(&self, source: Mail, destination: Mail) -> anyhow::Result<()> {
         self.run(move |c| {
             let tx = c.transaction()?;
-            connections::allow(&tx, ConnectionKind::Account, &destination.account_id)?;
-            let present: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM messages WHERE id=? AND account=? AND folder=?)", params![source.id, source.account_id, source.folder], |r| r.get(0))?;
-            anyhow::ensure!(present, "The cached source changed. Refresh its folders.");
-            if source.id == destination.id {
-                anyhow::ensure!(source.account_id == destination.account_id && source.remote_id == destination.remote_id, "A local identity cannot change accounts.");
-                tx.execute("UPDATE messages SET folder=?,data=? WHERE id=?", params![destination.folder, serde_json::to_string(&destination)?, source.id])?;
-            } else {
-                let collision: Option<bool> = tx.query_row("SELECT raw=(SELECT raw FROM messages WHERE id=?1) AND account=?2 AND folder=?3 FROM messages WHERE id=?4", params![source.id, destination.account_id, destination.folder, destination.id], |r| r.get(0)).optional()?;
-                anyhow::ensure!(collision != Some(false), "The destination identity contains a different message. Refresh its folders.");
-                if collision.is_none() {
-                    tx.execute("INSERT INTO messages(id,account,folder,sender,subject,body,timestamp,unread,starred,data,raw)
-                        SELECT ?1,?2,?3,sender,subject,body,timestamp,unread,starred,?4,raw FROM messages WHERE id=?5",
-                        params![destination.id, destination.account_id, destination.folder, serde_json::to_string(&destination)?, source.id])?;
-                }
-                tx.execute("INSERT OR IGNORE INTO restored_messages(id) SELECT ?1 FROM restored_messages WHERE id=?2", params![destination.id, source.id])?;
-                conversations::index_message(&tx, &destination.id)?;
-                outgoing::reconcile(&tx, &destination)?;
-                tx.execute("DELETE FROM messages WHERE id=?", [source.id])?;
-            }
+            relocate(&tx, &source, &destination)?;
             tx.commit()?;
             Ok(())
-        }).await
+        })
+        .await
     }
+}
+
+pub(super) fn relocate(c: &Connection, source: &Mail, destination: &Mail) -> anyhow::Result<()> {
+    connections::allow(c, ConnectionKind::Account, &destination.account_id)?;
+    folder_actions::idle(c, &source.account_id)?;
+    folder_actions::idle(c, &destination.account_id)?;
+    let present: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM messages WHERE id=? AND account=? AND folder=?)",
+        params![source.id, source.account_id, source.folder],
+        |r| r.get(0),
+    )?;
+    anyhow::ensure!(present, "The cached source changed. Refresh its folders.");
+    if source.id == destination.id {
+        anyhow::ensure!(
+            source.account_id == destination.account_id
+                && source.remote_id == destination.remote_id,
+            "A local identity cannot change accounts."
+        );
+        c.execute(
+            "UPDATE messages SET folder=?,data=? WHERE id=?",
+            params![
+                destination.folder,
+                serde_json::to_string(&destination)?,
+                source.id
+            ],
+        )?;
+    } else {
+        let collision: Option<bool> = c.query_row("SELECT raw=(SELECT raw FROM messages WHERE id=?1) AND account=?2 AND folder=?3 FROM messages WHERE id=?4", params![source.id, destination.account_id, destination.folder, destination.id], |r| r.get(0)).optional()?;
+        anyhow::ensure!(
+            collision != Some(false),
+            "The destination identity contains a different message. Refresh its folders."
+        );
+        if collision.is_none() {
+            c.execute("INSERT INTO messages(id,account,folder,sender,subject,body,timestamp,unread,starred,data,raw)
+                        SELECT ?1,?2,?3,sender,subject,body,timestamp,unread,starred,?4,raw FROM messages WHERE id=?5",
+                        params![destination.id, destination.account_id, destination.folder, serde_json::to_string(&destination)?, source.id])?;
+        }
+        c.execute("INSERT OR IGNORE INTO restored_messages(id) SELECT ?1 FROM restored_messages WHERE id=?2", params![destination.id, source.id])?;
+        conversations::index_message(c, &destination.id)?;
+        outgoing::reconcile(c, destination)?;
+        c.execute("DELETE FROM messages WHERE id=?", [&source.id])?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

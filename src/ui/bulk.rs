@@ -50,6 +50,8 @@ pub(super) struct State {
     resolving: Option<String>,
     prediction: Option<Prediction>,
     pub jobs: VecDeque<Arc<Job>>,
+    history_jobs: VecDeque<Arc<Job>>,
+    history_loading: bool,
     tokens: HashMap<u64, String>,
     originals: VecDeque<(String, Mail)>,
     current_ids: HashMap<String, String>,
@@ -78,6 +80,30 @@ struct Prediction {
     groups: Vec<crate::store::SelectionGroup>,
 }
 impl App {
+    pub(super) fn bulk_action_label(&self, action: &BulkAction, count: Option<usize>) -> String {
+        if let BulkAction::Move { account, folder } = action {
+            let name = self.workspace.folder_label(account.as_deref(), folder);
+            if name != *folder && !folder.eq_ignore_ascii_case("INBOX") {
+                return match count {
+                    Some(count) => format!("Move {} to {name}?", message_count(count)),
+                    None => format!("Move to {name}"),
+                };
+            }
+        }
+        match count {
+            Some(count) => action.review_label(count),
+            None => action.label(),
+        }
+    }
+    pub(super) fn bulk_owns_mail(&self, id: &str) -> bool {
+        self.page.bulk_pending.contains(id)
+            || self.page.is_placeholder(id)
+            || self
+                .bulk
+                .prediction
+                .as_ref()
+                .is_some_and(|p| p.selected.contains(id))
+    }
     pub(super) fn begin_bulk(&mut self, intent: Intent) {
         if self.bulk.stopped {
             if !self.try_command(Command::BulkResume(String::new())) {
@@ -126,9 +152,14 @@ impl App {
         self.bulk.action = None;
         self.dialog = None;
     }
+    pub(super) fn resume_folder_close_barrier(&mut self) {
+        self.bulk.stopped = false;
+        self.bulk.stop_requested = false;
+    }
     pub(super) fn pump_bulk(&mut self) {
         if self.pending_close.is_some()
             && self.bulk.staging.is_none()
+            && !self.folder_staging()
             && !self.bulk.stop_requested
             && !self.bulk.stopped
             && self.try_command(Command::BulkStop)
@@ -269,6 +300,11 @@ impl App {
             }
             Message::History => {
                 self.dialog = Some(Dialog::BulkHistory);
+                self.bulk.resolving = None;
+                self.bulk.selected_job = None;
+                self.bulk.items = Arc::new(vec![]);
+                self.bulk.items_after = None;
+                self.bulk.history_loading = true;
                 self.bulk.error = None;
                 self.bulk.history_serial += 1;
                 self.send(Command::BulkJobs(self.bulk.history_serial, 0));
@@ -281,12 +317,15 @@ impl App {
                 self.bulk.items_after = None;
                 self.bulk.history_serial += 1;
                 self.send(Command::BulkItems(self.bulk.history_serial, id, None));
+                return history_top();
             }
             Message::JobsPage(offset) => {
                 self.bulk.jobs_offset = offset;
                 self.bulk.selected_job = None;
+                self.bulk.history_loading = true;
                 self.bulk.history_serial += 1;
                 self.send(Command::BulkJobs(self.bulk.history_serial, offset));
+                return history_top();
             }
             Message::ItemsPage(after) => {
                 self.bulk.history_refreshed = Some(Instant::now());
@@ -294,6 +333,7 @@ impl App {
                     self.bulk.items_after = after;
                     self.bulk.history_serial += 1;
                     self.send(Command::BulkItems(self.bulk.history_serial, id, after));
+                    return history_top();
                 }
             }
             Message::Undo(id) => {
@@ -313,11 +353,19 @@ impl App {
                     self.bulk.resolving = None;
                 }
             }
-            Message::CancelResolution => self.bulk.resolving = None,
+            Message::CancelResolution => {
+                self.bulk.resolving = None;
+                return history_top();
+            }
         }
         Task::none()
     }
     fn remember_job(&mut self, job: Arc<Job>) {
+        if let Some(displayed) = self.bulk.history_jobs.iter_mut().find(|j| j.id == job.id)
+            && displayed.revision <= job.revision
+        {
+            *displayed = job.clone();
+        }
         if self
             .bulk
             .jobs
@@ -453,7 +501,7 @@ impl App {
                 match result {
                     Ok(job) => {
                         if job.failed + job.uncertain > 0 {
-                            self.notice(format!("{} messages could not be confirmed. Open History to review their results.",job.failed+job.uncertain),true);
+                            self.notice(format!("{} could not be confirmed. Open History to review their results.",message_count(job.failed+job.uncertain)),true);
                         }
                         self.remember_job(job);
                     }
@@ -485,12 +533,33 @@ impl App {
                 }
                 self.request_page();
             }
-            Event::BulkJobs(serial, result) if serial == self.bulk.history_serial => match result {
-                Ok(jobs) => {
-                    self.bulk.jobs = jobs.iter().cloned().map(Arc::new).collect();
+            Event::BulkJobs(serial, result) if serial == self.bulk.history_serial => {
+                self.bulk.history_loading = false;
+                match result {
+                    Ok(jobs) => {
+                        // A read can finish after a more recent worker update.
+                        self.bulk.history_jobs = jobs
+                            .iter()
+                            .map(|job| {
+                                self.bulk
+                                    .jobs
+                                    .iter()
+                                    .find(|known| {
+                                        known.id == job.id && known.revision > job.revision
+                                    })
+                                    .cloned()
+                                    .unwrap_or_else(|| Arc::new(job.clone()))
+                            })
+                            .collect();
+                        if self.dialog != Some(Dialog::BulkHistory) {
+                            for job in jobs.iter().rev() {
+                                self.remember_job(Arc::new(job.clone()));
+                            }
+                        }
+                    }
+                    Err(error) => self.bulk.error = Some(error),
                 }
-                Err(error) => self.bulk.error = Some(error),
-            },
+            }
             Event::BulkItems(serial, id, result)
                 if serial == self.bulk.history_serial
                     && self.bulk.selected_job.as_ref() == Some(&id) =>
@@ -647,7 +716,19 @@ impl App {
                 || self.query.read_only && mail.unread
                 || self.query.starred_only && !mail.starred)
     }
-    fn bulk_scope_contains(&self, query: &MailQuery, account: &str, folder: &str) -> bool {
+    pub(super) fn bulk_scope_contains(
+        &self,
+        query: &MailQuery,
+        account: &str,
+        folder: &str,
+    ) -> bool {
+        if query.exclude_folders.iter().any(|excluded| {
+            excluded.account.as_deref() == Some(account) && excluded.folder == folder
+        }) {
+            return false;
+        }
+        let scope = query.search_scope();
+        let query = scope.as_ref();
         let contains = |selected: &Option<String>, target: &str, sent: bool| {
             selected.as_ref().is_none_or(|a| a == account)
                 && if sent {
@@ -730,7 +811,18 @@ impl App {
         add_count(&mut page.unread, unread_delta);
     }
     pub(super) fn bulk_test_state(&self, data: &mut serde_json::Value) {
-        data["bulk"] = serde_json::json!({"preparing":self.bulk.freeze_pending.is_some(),"review_count":self.bulk.review.as_ref().map(|s|s.selected),"available":self.bulk.review.as_ref().map(|s|s.available),"action":self.bulk.action.as_ref().map(|a|a.label()),"staging":self.bulk.staging,"jobs":self.bulk.jobs.iter().map(|j|serde_json::json!({"id":j.id,"total":j.total,"remaining":j.remaining,"running":j.running,"undo_requested":j.undo_requested,"completed":j.completed,"restored":j.restored,"failed":j.failed,"uncertain":j.uncertain,"cancelled":j.cancelled})).collect::<Vec<_>>(),"items":self.bulk.items.iter().map(|i|serde_json::json!({"subject":i.original.as_ref().map(|m|&m.subject),"status":i.status,"undo":i.undo,"error":i.error})).collect::<Vec<_>>()});
+        data["bulk"] = serde_json::json!({"selected_job":self.bulk.selected_job,"resolving":self.bulk.resolving,"jobs_offset":self.bulk.jobs_offset,"items_after":self.bulk.items_after,"preparing":self.bulk.freeze_pending.is_some(),"review_count":self.bulk.review.as_ref().map(|s|s.selected),"available":self.bulk.review.as_ref().map(|s|s.available),"action":self.bulk.action.as_ref().map(|a|self.bulk_action_label(a,None)),"staging":self.bulk.staging,"jobs":self.bulk.jobs.iter().map(|j|serde_json::json!({"id":j.id,"total":j.total,"paused":j.paused,"remaining":j.remaining,"running":j.running,"undo_requested":j.undo_requested,"completed":j.completed,"restored":j.restored,"failed":j.failed,"uncertain":j.uncertain,"cancelled":j.cancelled})).collect::<Vec<_>>(),"items":self.bulk.items.iter().map(|i|serde_json::json!({"position":i.position,"subject":i.original.as_ref().map(|m|&m.subject),"status":i.status,"undo":i.undo,"error":i.error})).collect::<Vec<_>>()});
+        data["bulk"]["history_jobs"] = serde_json::json!(
+            self.bulk
+                .history_jobs
+                .iter()
+                .map(|j| &j.id)
+                .collect::<Vec<_>>()
+        );
+        data["bulk"]["history_loading"] = serde_json::json!(self.bulk.history_loading);
+    }
+    pub(super) fn bulk_confirming(&self) -> bool {
+        self.dialog == Some(Dialog::BulkHistory) && self.bulk.resolving.is_some()
     }
     fn group_icon(
         &self,
@@ -811,7 +903,7 @@ impl App {
                         text(if self.mail_selection.count == 0 {
                             "Select messages".into()
                         } else {
-                            format!("{} messages selected", self.mail_selection.count)
+                            format!("{} selected", message_count(self.mail_selection.count))
                         })
                         .size(24)
                         .font(BOLD),
@@ -845,7 +937,7 @@ impl App {
             .bulk
             .action
             .as_ref()
-            .map(|a| a.label())
+            .map(|a| self.bulk_action_label(a, None))
             .unwrap_or_default();
         let destructive = matches!(&self.bulk.action,Some(BulkAction::Move{folder,..}) if folder.eq_ignore_ascii_case("Trash"));
         let mut body = column![
@@ -853,7 +945,7 @@ impl App {
                 self.bulk
                     .action
                     .as_ref()
-                    .map(|a| a.review_label(review.available))
+                    .map(|a| self.bulk_action_label(a, Some(review.available)))
                     .unwrap_or_default()
             )
             .size(20)
@@ -902,7 +994,7 @@ impl App {
     }
     pub(super) fn bulk_history_form(&self) -> Element<'_, super::Message> {
         if self.bulk.resolving.is_some() {
-            return column![text("Accept the current folders and read status?").size(18).font(BOLD),
+            return column![text("Accept the current mail state?").size(18).font(BOLD),
                 text("Check the affected messages after refreshing. This clears unconfirmed changes from this group without retrying them. They will no longer be available for group Undo.").size(13),
                 row![action("Back",super::Message::Bulk(Message::CancelResolution)), space().width(Length::Fill), action("Accept current state",super::Message::Bulk(Message::ConfirmResolution))].spacing(12)
             ].spacing(20).into();
@@ -912,11 +1004,21 @@ impl App {
             body = body.push(text(error).size(12));
         }
         if let Some(id) = &self.bulk.selected_job {
-            if let Some(job) = self.bulk.jobs.iter().find(|j| &j.id == id) {
+            if let Some(job) = self
+                .bulk
+                .history_jobs
+                .iter()
+                .chain(&self.bulk.jobs)
+                .find(|j| &j.id == id)
+            {
                 body = body.push(
-                    text(format!("{} · {} messages", job.action.label(), job.total))
-                        .size(16)
-                        .font(BOLD),
+                    text(format!(
+                        "{} · {}",
+                        self.bulk_action_label(&job.action, None),
+                        message_count(job.total)
+                    ))
+                    .size(16)
+                    .font(BOLD),
                 );
                 body = body.push(
                     muted(format!(
@@ -989,6 +1091,10 @@ impl App {
                                         },
                                     "failed" => "Needs attention",
                                     "uncertain" => "Not confirmed",
+                                    "cancelled"
+                                        if item.error.as_deref()
+                                            == Some(crate::bulk::ACCEPTED_STATE_NOTE) =>
+                                        "Accepted current state",
                                     "cancelled" => "Cancelled",
                                     _ => "Unknown result",
                                 }
@@ -1018,15 +1124,22 @@ impl App {
                 );
             }
         } else {
-            if self.bulk.jobs.is_empty() {
+            if self.bulk.history_loading {
+                return muted("Loading changes…").into();
+            }
+            if self.bulk.history_jobs.is_empty() {
                 body = body.push(muted("No recent group changes."));
             }
-            for job in &self.bulk.jobs {
+            for job in &self.bulk.history_jobs {
                 body = body.push(
                     button(
                         column![
-                            text(format!("{} · {} messages", job.action.label(), job.total))
-                                .size(14),
+                            text(format!(
+                                "{} · {}",
+                                self.bulk_action_label(&job.action, None),
+                                message_count(job.total)
+                            ))
+                            .size(14),
                             muted(format!(
                                 "{} completed · {} remaining · {} need attention",
                                 job.completed + job.restored,
@@ -1043,7 +1156,7 @@ impl App {
                     .on_press(super::Message::Bulk(Message::SelectJob(job.id.clone()))),
                 );
             }
-            if self.bulk.jobs_offset > 0 || self.bulk.jobs.len() == 20 {
+            if self.bulk.jobs_offset > 0 || self.bulk.history_jobs.len() == 20 {
                 body = body.push(row![
                     button("Newer").style(outline).padding(10).on_press_maybe(
                         (self.bulk.jobs_offset > 0).then(|| super::Message::Bulk(
@@ -1052,7 +1165,7 @@ impl App {
                     ),
                     space().width(Length::Fill),
                     button("Older").style(outline).padding(10).on_press_maybe(
-                        (self.bulk.jobs.len() == 20).then(|| super::Message::Bulk(
+                        (self.bulk.history_jobs.len() == 20).then(|| super::Message::Bulk(
                             Message::JobsPage(self.bulk.jobs_offset + 20)
                         ))
                     )
@@ -1061,6 +1174,20 @@ impl App {
         }
         body.into()
     }
+}
+
+fn history_top() -> Task<super::Message> {
+    widget::operation::scroll_to(
+        "dialog-scroll",
+        widget::scrollable::AbsoluteOffset::<f32>::default(),
+    )
+}
+
+fn message_count(count: usize) -> String {
+    format!(
+        "{count} {}",
+        if count == 1 { "message" } else { "messages" }
+    )
 }
 
 fn add_count(value: &mut usize, delta: isize) {
@@ -1081,6 +1208,117 @@ fn same_scope(a: &MailQuery, b: &MailQuery) -> bool {
 mod tests {
     use super::*;
     use crate::store::{MailSelectionId, Store};
+
+    fn job(id: &str, revision: u64, remaining: usize) -> Arc<Job> {
+        Arc::new(Job {
+            id: id.into(),
+            action: BulkAction::Flags(Flags {
+                unread: Some(false),
+                starred: None,
+            }),
+            undo_requested: false,
+            paused: false,
+            total: 2,
+            remaining,
+            running: usize::from(remaining > 0),
+            completed: 2 - remaining,
+            restored: 0,
+            failed: 0,
+            uncertain: 0,
+            cancelled: 0,
+            revision,
+        })
+    }
+
+    #[tokio::test]
+    async fn history_pages_keep_active_jobs_and_do_not_reorder_on_worker_updates() {
+        let (mut app, _) = App::new();
+        app.bulk.history_serial = 4;
+        app.dialog = Some(Dialog::BulkHistory);
+        app.remember_job(job("active", 5, 1));
+        app.bulk_event(Event::BulkJobs(
+            4,
+            Ok(Arc::new(vec![(*job("older", 1, 0)).clone()])),
+        ));
+        assert_eq!(app.bulk.jobs[0].id, "active");
+        assert_eq!(app.bulk.history_jobs[0].id, "older");
+        app.remember_job(job("active", 6, 0));
+        assert_eq!(
+            app.bulk.history_jobs[0].id, "older",
+            "An unrelated update must not jump an older History page"
+        );
+        app.bulk_event(Event::BulkJobs(
+            4,
+            Ok(Arc::new(vec![(*job("active", 2, 2)).clone()])),
+        ));
+        assert_eq!(
+            app.bulk.history_jobs[0].revision, 6,
+            "A late History read must retain newer receipts"
+        );
+    }
+
+    #[tokio::test]
+    async fn close_before_the_engine_is_ready_does_not_wait_for_a_missing_worker() {
+        let (mut app, _) = App::new();
+        let task = app.handle(super::super::Message::WindowClose(
+            iced::window::Id::unique(),
+        ));
+        assert!(app.pending_close.is_none());
+        assert_eq!(task.units(), 1);
+        assert!(!app.bulk.stop_requested);
+    }
+
+    #[tokio::test]
+    async fn window_close_quiesces_the_worker_even_without_a_running_job_on_the_ui_page() {
+        let (sender, mut commands) = engine::CommandSender::selection_test_channel();
+        let (mut app, _) = App::new();
+        app.tx = Some(sender);
+        let window = iced::window::Id::unique();
+        let _ = app.handle(super::super::Message::WindowClose(window));
+        assert_eq!(app.pending_close, Some(window));
+        app.pump_bulk();
+        assert!(matches!(commands.try_recv(), Ok(Command::BulkStop)));
+        assert!(app.bulk.stop_requested);
+        let _ = app.handle(super::super::Message::Backend(Event::BulkStopped));
+        assert!(app.bulk.stopped);
+        assert!(app.pending_close.is_none());
+    }
+
+    #[tokio::test]
+    async fn resolution_accepts_confirmation_keys_and_cannot_leak_into_a_reopened_history() {
+        let (sender, mut commands) = engine::CommandSender::selection_test_channel();
+        let (mut app, _) = App::new();
+        app.tx = Some(sender);
+        app.dialog = Some(Dialog::BulkHistory);
+        for key in [
+            Key::Named(keyboard::key::Named::Escape),
+            Key::Character("n".into()),
+        ] {
+            app.bulk.resolving = Some("unconfirmed".into());
+            let _ = app.key(key, keyboard::Modifiers::default(), false);
+            assert!(app.bulk.resolving.is_none());
+            assert_eq!(app.dialog, Some(Dialog::BulkHistory));
+            assert!(commands.try_recv().is_err());
+        }
+        for key in [
+            Key::Named(keyboard::key::Named::Enter),
+            Key::Character("y".into()),
+        ] {
+            app.bulk.resolving = Some("unconfirmed".into());
+            let _ = app.key(key, keyboard::Modifiers::default(), false);
+            assert!(app.bulk.resolving.is_none());
+            assert!(
+                matches!(commands.try_recv(),Ok(Command::BulkResolve(id)) if id=="unconfirmed")
+            );
+        }
+        app.bulk.resolving = Some("unconfirmed".into());
+        app.bulk.selected_job = Some("unconfirmed".into());
+        let _ = app.handle(super::super::Message::Close);
+        assert!(app.bulk.resolving.is_none());
+        let _ = app.handle_bulk(Message::History);
+        assert!(app.bulk.selected_job.is_none());
+        assert!(!app.bulk_confirming());
+    }
 
     #[tokio::test]
     async fn page_observations_prevent_double_projection_before_stage_acknowledgments() {

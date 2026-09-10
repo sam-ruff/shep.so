@@ -37,13 +37,19 @@ impl Engine {
         clip_bounds: Rectangle,
     ) {
         let physical_bounds = quad.bounds * transformation;
+        let shadow = quad.shadow;
+        let shadow_bounds = Rectangle {
+            x: quad.bounds.x + shadow.offset.x - shadow.blur_radius,
+            y: quad.bounds.y + shadow.offset.y - shadow.blur_radius,
+            width: quad.bounds.width + shadow.blur_radius * 2.0,
+            height: quad.bounds.height + shadow.blur_radius * 2.0,
+        } * transformation;
 
-        if !clip_bounds.intersects(&physical_bounds) {
+        if !clip_bounds.intersects(&physical_bounds)
+            && !(shadow.color.a > 0.0 && clip_bounds.intersects(&shadow_bounds))
+        {
             return;
         }
-
-        let clip_mask = (!physical_bounds.is_within(&clip_bounds))
-            .then_some(clip_mask as &_);
 
         let transform = into_transform(transformation);
 
@@ -62,27 +68,62 @@ impl Engine {
                 .min(quad.bounds.height / 2.0);
         }
 
+        // A small damage region entirely inside a flat panel needs only its
+        // visible pixels. Rasterizing the whole window-sized rounded path and
+        // masking it afterwards otherwise repeats that work for every region.
+        // Keep edges, shadows and gradients on the general painter below.
+        let inset = fill_border_radius.iter().copied().fold(border_width, f32::max)
+            * transformation.scale_factor() + 1.0;
+        let interior = Rectangle {
+            x: physical_bounds.x + inset,
+            y: physical_bounds.y + inset,
+            width: (physical_bounds.width - 2.0 * inset).max(0.0),
+            height: (physical_bounds.height - 2.0 * inset).max(0.0),
+        };
+        if shadow.color.a == 0.0 && clip_bounds.is_within(&interior)
+            && let Background::Color(color) = background
+            && let Some(visible) = tiny_skia::Rect::from_xywh(
+                clip_bounds.x.floor(), clip_bounds.y.floor(),
+                (clip_bounds.x + clip_bounds.width).ceil() - clip_bounds.x.floor(),
+                (clip_bounds.y + clip_bounds.height).ceil() - clip_bounds.y.floor(),
+            )
+        {
+            pixels.fill_rect(
+                visible,
+                &tiny_skia::Paint {
+                    shader: tiny_skia::Shader::SolidColor(into_color(*color)),
+                    anti_alias: false,
+                    ..Default::default()
+                },
+                tiny_skia::Transform::identity(),
+                // Preserve the existing path mask's fractional-edge rounding.
+                Some(clip_mask),
+            );
+            return;
+        }
+
         let path = rounded_rectangle(quad.bounds, fill_border_radius);
 
-        let shadow = quad.shadow;
-
-        if shadow.color.a > 0.0 {
-            let shadow_bounds = Rectangle {
-                x: quad.bounds.x + shadow.offset.x - shadow.blur_radius,
-                y: quad.bounds.y + shadow.offset.y - shadow.blur_radius,
-                width: quad.bounds.width + shadow.blur_radius * 2.0,
-                height: quad.bounds.height + shadow.blur_radius * 2.0,
-            } * transformation;
-
+        if shadow.color.a > 0.0
+            && let Some(visible_shadow) =
+                shadow_bounds.intersection(&clip_bounds).and_then(|bounds| {
+                    bounds.intersection(&Rectangle::with_size(Size::new(
+                        pixels.width() as f32,
+                        pixels.height() as f32,
+                    )))
+                })
+        {
             let radii = fill_border_radius
                 .into_iter()
                 .map(|radius| radius * transformation.scale_factor())
                 .collect::<Vec<_>>();
             let (x, y, width, height) = (
-                shadow_bounds.x as u32,
-                shadow_bounds.y as u32,
-                shadow_bounds.width as u32,
-                shadow_bounds.height as u32,
+                visible_shadow.x.floor() as u32,
+                visible_shadow.y.floor() as u32,
+                (visible_shadow.x + visible_shadow.width).ceil() as u32
+                    - visible_shadow.x.floor() as u32,
+                (visible_shadow.y + visible_shadow.height).ceil() as u32
+                    - visible_shadow.y.floor() as u32,
             );
             let half_width = physical_bounds.width / 2.0;
             let half_height = physical_bounds.height / 2.0;
@@ -139,10 +180,13 @@ impl Engine {
                     pixmap.as_ref(),
                     &tiny_skia::PixmapPaint::default(),
                     tiny_skia::Transform::default(),
-                    None,
+                    Some(clip_mask),
                 );
             }
         }
+
+        let clip_mask = (!physical_bounds.is_within(&clip_bounds))
+            .then_some(clip_mask as &_);
 
         pixels.fill_path(
             &path,
@@ -386,13 +430,10 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = match physical_bounds.is_within(&clip_bounds) {
-                    true => None,
-                    false => {
-                        adjust_clip_mask(clip_mask, clip_bounds);
-                        Some(clip_mask as &_)
-                    }
-                };
+                // Editor bounds describe the viewport, not the extent of a
+                // partially visible glyph on its final line. Always clip it.
+                adjust_clip_mask(clip_mask, clip_bounds);
+                let clip_mask = Some(clip_mask as &_);
 
                 self.text_pipeline.draw_editor(
                     editor,
@@ -594,15 +635,26 @@ impl Engine {
                 );
             }
             #[cfg(feature = "svg")]
-            Image::Vector { svg, bounds, .. } => {
+            Image::Vector {
+                svg,
+                bounds,
+                clip_bounds,
+            } => {
                 let physical_bounds = *bounds * _transformation;
-
-                if !_clip_bounds.intersects(&physical_bounds) {
+                let rotated_bounds = physical_bounds.rotate(svg.rotation);
+                let Some(visible) = (*clip_bounds * _transformation)
+                    .intersection(&_clip_bounds)
+                else {
+                    return;
+                };
+                if !visible.intersects(&rotated_bounds) {
                     return;
                 }
-
-                let clip_mask = (!physical_bounds.is_within(&_clip_bounds))
-                    .then_some(_clip_mask as &_);
+                let needs_mask = !rotated_bounds.is_within(&visible);
+                if needs_mask {
+                    adjust_clip_mask(_clip_mask, visible);
+                }
+                let clip_mask = needs_mask.then_some(_clip_mask as &_);
 
                 let center = physical_bounds.center();
                 let radians = f32::from(svg.rotation);
@@ -622,6 +674,11 @@ impl Engine {
                     transform,
                     clip_mask,
                 );
+                if needs_mask {
+                    // Later primitives share this mask, but not this SVG's
+                    // local viewport. Restore the layer/damage intersection.
+                    adjust_clip_mask(_clip_mask, _clip_bounds);
+                }
             }
             #[cfg(not(feature = "image"))]
             Image::Raster { .. } => {

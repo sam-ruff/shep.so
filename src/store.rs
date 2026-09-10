@@ -1,6 +1,12 @@
+pub(crate) mod backup_history;
 mod bulk;
+mod folder_actions;
+mod folder_projection;
 mod mail_actions;
 mod mail_query;
+mod move_journal;
+mod notifications;
+mod read_moves;
 use crate::model::*;
 mod connections;
 mod conversations;
@@ -8,49 +14,72 @@ pub use connections::{ConnectionKind, ConnectionRef, CredentialCleanup, RemovalP
 mod drafts;
 mod google_lifecycle;
 mod outgoing;
-pub(crate) mod profile_enrollment;
-pub(crate) mod profile_preferences;
-pub(crate) mod profile_reconnect;
-pub(crate) mod profile_sync;
-pub(crate) mod profiles;
+mod profile_sync;
 mod restore;
+mod scratch;
 mod selection;
+pub(crate) mod worker;
 use anyhow::Context;
 pub use bulk::BulkLease;
 pub use conversations::{CONVERSATION_PAGE_SIZE, ConversationPage};
 pub use drafts::DraftState;
+pub use folder_actions::FolderLease;
 use rusqlite::{Connection, params};
 pub use selection::{
     MailSelectionId, SelectedMail, SelectionChange, SelectionGroup, SelectionPage,
     SelectionSnapshot,
 };
 use serde::{Serialize, de::DeserializeOwned};
-use std::{
-    path::Path,
-    sync::{Arc, Mutex},
-};
+use std::{path::Path, sync::Arc};
 
 #[derive(Clone)]
-pub struct Store(Arc<Mutex<Connection>>);
+pub struct Store(Arc<worker::Worker>, Option<Arc<crate::cache_cipher::Key>>);
+
+pub(crate) const DATABASE_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Default)]
 pub struct Workspace {
+    pub move_pending_total: usize,
     pub accounts: Vec<Account>,
+    pub account_reconnect: crate::profile_sync::join::Reconnect,
     pub calendars: Vec<CalendarSource>,
     pub preferences: Preferences,
     pub preferences_revision: u64,
     pub folders: Vec<String>,
     pub account_folders: std::collections::HashMap<String, Vec<String>>,
+    pub folder_trees: std::collections::HashMap<String, Arc<crate::folders::Tree>>,
     pub drafts: Vec<Draft>,
     pub drafts_revision: u64,
     pub connections_revision: u64,
     pub credential_cleanup: usize,
-    pub profile_reconnect: std::collections::HashSet<String>,
     pub outgoing_pending: usize,
     pub outgoing_revision: u64,
     pub outgoing_drafts: std::collections::HashSet<String>,
     pub google_archived: std::collections::HashSet<String>,
     pub removed_google_calendars: usize,
+}
+impl Workspace {
+    pub fn folder_label<'a>(
+        &'a self,
+        account: Option<&str>,
+        name: &'a str,
+    ) -> std::borrow::Cow<'a, str> {
+        if name.eq_ignore_ascii_case("INBOX") {
+            return std::borrow::Cow::Borrowed("Inbox");
+        }
+        let node = if let Some(account) = account {
+            self.folder_trees
+                .get(account)
+                .and_then(|tree| tree.node(name))
+        } else {
+            self.accounts.iter().find_map(|account| {
+                self.folder_trees
+                    .get(&account.id)
+                    .and_then(|tree| tree.node(name))
+            })
+        };
+        std::borrow::Cow::Borrowed(node.map_or(name, |node| node.display_path.as_str()))
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -63,12 +92,47 @@ impl Store {
     pub fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         Self::from_connection(Connection::open(path)?)
     }
+    /// The data-root owner loads the key before opening any persisted schema.
+    /// This does not migrate plaintext data or obtain keys on the UI thread.
+    pub fn open_encrypted(
+        path: impl AsRef<Path>,
+        key: Arc<crate::cache_cipher::Key>,
+    ) -> anyhow::Result<Self> {
+        let connection = key.open(path.as_ref(), rusqlite::OpenFlags::default())?;
+        Self::from_connection_key(connection, Some(key))
+    }
+    /// Independent snapshot/journal owners share immutable key material, never
+    /// the cache connection. The key is absent from workspace serialization.
+    pub fn connection_key(&self) -> Option<Arc<crate::cache_cipher::Key>> {
+        self.1.clone()
+    }
     pub fn memory() -> anyhow::Result<Self> {
         Self::from_connection(Connection::open_in_memory()?)
     }
-    fn from_connection(mut conn: Connection) -> anyhow::Result<Self> {
+    fn from_connection(conn: Connection) -> anyhow::Result<Self> {
+        Self::from_connection_key(conn, None)
+    }
+    fn from_connection_key(
+        conn: Connection,
+        key: Option<Arc<crate::cache_cipher::Key>>,
+    ) -> anyhow::Result<Self> {
+        let scratch = scratch::attach(&conn, key.as_deref())?;
+        // The initializer owns the connection. On failure it closes that handle
+        // before this scope removes scratch, including on Windows.
+        let conn = Self::initialize_connection(conn)?;
+        Ok(Self(
+            Arc::new(worker::Worker::with_scratch(conn, scratch)?),
+            key,
+        ))
+    }
+    fn initialize_connection(mut conn: Connection) -> anyhow::Result<Connection> {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
+        let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        anyhow::ensure!(
+            version <= DATABASE_VERSION,
+            "This database was created by a newer Shep version. Update Shep before opening it."
+        );
+        conn.execute_batch("PRAGMA main.journal_mode=WAL; PRAGMA foreign_keys=ON;
             CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS messages (
                 id TEXT PRIMARY KEY, account TEXT NOT NULL, folder TEXT NOT NULL,
@@ -105,17 +169,17 @@ impl Store {
             CREATE TABLE IF NOT EXISTS draft_sent (id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, source TEXT NOT NULL, start INTEGER NOT NULL, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS event_start ON events(start);")?;
+        backup_history::schema(&conn)?;
         conversations::schema(&conn)?;
+        notifications::schema(&conn)?;
         connections::schema(&conn)?;
-        profiles::schema(&conn)?;
-        profile_enrollment::schema(&conn)?;
-        profile_reconnect::schema(&conn)?;
-        profile_preferences::schema(&conn)?;
-        profile_sync::schema(&conn)?;
         outgoing::schema(&conn)?;
         selection::schema(&conn)?;
+        folder_projection::schema(&conn)?;
         bulk::schema(&conn)?;
-        let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        move_journal::schema(&conn)?;
+        read_moves::schema(&conn)?;
+        folder_actions::schema(&conn)?;
         if version < 2 {
             let tx = conn.transaction()?;
             let events = tx
@@ -138,22 +202,23 @@ impl Store {
             tx.pragma_update(None, "user_version", 2)?;
             tx.commit()?;
         }
-        Ok(Self(Arc::new(Mutex::new(conn))))
+        if version < 3 {
+            let tx = conn.transaction()?;
+            import_archive_schema(&tx)?;
+            tx.pragma_update(None, "user_version", DATABASE_VERSION)?;
+            tx.commit()?;
+        }
+        if version < 4 {
+            conn.pragma_update(None, "user_version", DATABASE_VERSION)?;
+        }
+        Ok(conn)
     }
     pub async fn run<T, F>(&self, f: F) -> anyhow::Result<T>
     where
         T: Send + 'static,
         F: FnOnce(&mut Connection) -> anyhow::Result<T> + Send + 'static,
     {
-        let store = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = store
-                .0
-                .lock()
-                .map_err(|_| anyhow::anyhow!("The local database is unavailable."))?;
-            f(&mut conn)
-        })
-        .await?
+        self.0.run(f).await
     }
     pub async fn get<T: DeserializeOwned + Default + Send + 'static>(
         &self,
@@ -178,10 +243,42 @@ impl Store {
     }
     pub async fn save_preferences(
         &self,
-        requested: Preferences,
+        requested: impl Into<crate::preference_edits::Write>,
     ) -> anyhow::Result<PreferenceSnapshot> {
-        self.update_preferences(move |current| profile_preferences::merge(current, requested))
-            .await
+        let mut requested = requested.into();
+        crate::backup::config::capture_editor(&mut requested.value);
+        requested.validate()?;
+        self.update_preferences_checked(move |current| {
+            if crate::backup::config::locations_changed(current, &requested) {
+                crate::backup::config::validate_filesystem(&requested)?;
+            }
+            let previous_backups = current.clone();
+            let last_backup = current.last_backup;
+            let backup_ready = current.backup_ready;
+            let previous_target = crate::backup::BackupTarget::from_preferences(current);
+            let connection = current.google_connection_id.clone();
+            let lifecycle = current.google_lifecycle;
+            let grant = current.google_grant.clone();
+            *current = requested.merge(current);
+            // These are backend-owned metadata, not user preferences.
+            current.google_connection_id = connection;
+            current.google_lifecycle = lifecycle;
+            current.google_grant = grant;
+            if (lifecycle.disconnected || !current.google_grant.access.drive_allowed())
+                && current.backup_destination == BackupDestination::GoogleDrive
+            {
+                current.auto_backup = false;
+            }
+            let same_target =
+                previous_target == crate::backup::BackupTarget::from_preferences(current);
+            current.last_backup = if same_target { last_backup } else { None };
+            current.backup_ready = same_target
+                && backup_ready
+                && current.backup_format == previous_backups.backup_format;
+            crate::backup::config::preserve_metadata(&previous_backups, current);
+            Ok(())
+        })
+        .await
     }
     pub async fn record_backup(
         &self,
@@ -190,10 +287,19 @@ impl Store {
         ready: bool,
     ) -> anyhow::Result<PreferenceSnapshot> {
         self.update_preferences(move |current| {
-            if crate::backup::BackupTarget::from_preferences(current) == target {
-                current.last_backup = Some(time);
-                current.backup_ready = ready;
-            }
+            crate::backup::config::record(current, &target, time, ready);
+        })
+        .await
+    }
+    pub async fn record_backup_format(
+        &self,
+        target: crate::backup::BackupTarget,
+        format: crate::backup::format::Options,
+        time: i64,
+        ready: bool,
+    ) -> anyhow::Result<PreferenceSnapshot> {
+        self.update_preferences(move |current| {
+            crate::backup::config::record_format(current, &target, format, time, ready)
         })
         .await
     }
@@ -214,10 +320,12 @@ impl Store {
         self.run(move |c| {
             let tx = c.transaction()?;
             let mut value: Preferences = get(&tx, "preferences")?;
+            let before = value.clone();
             update(&mut value)?;
             value.validate()?;
             put(&tx, "preferences", &value)?;
             let revision = get(&tx, "preferences_revision")?;
+            profile_sync::state::record_native_preferences(&tx, &before, &value, revision)?;
             tx.commit()?;
             Ok(PreferenceSnapshot { revision, value })
         })
@@ -225,13 +333,14 @@ impl Store {
     }
     pub async fn workspace(&self) -> anyhow::Result<Workspace> {
         self.run(|c| {
+            folder_actions::prepare_local_catalogs(c)?;
             let mut folders = vec![
                 "INBOX".into(),
                 "Archive".into(),
                 "Sent".into(),
                 "Trash".into(),
             ];
-            let mut stmt = c.prepare("SELECT DISTINCT folder FROM messages ORDER BY folder")?;
+            let mut stmt = c.prepare("SELECT DISTINCT folder FROM recovered_mail ORDER BY folder")?;
             for f in stmt.query_map([], |r| r.get::<_, String>(0))? {
                 let f = f?;
                 if !folders.contains(&f) {
@@ -246,32 +355,56 @@ impl Store {
             }
             let mut account_folders: std::collections::HashMap<String, Vec<String>> =
                 get(c, "account_folders")?;
+            let mut catalogs: std::collections::HashMap<String, Vec<crate::folders::Mailbox>> = get(c, "folder_catalogs")?;
+            let catalog_selection: std::collections::HashMap<_, std::collections::HashMap<_,bool>> = catalogs.iter().map(|(account,catalog)| {
+                let mut selection=std::collections::HashMap::new();
+                for folder in catalog {
+                    *selection.entry(folder.name.as_str()).or_default() |= folder.selectable;
+                    *selection.entry(folder.path()).or_default() |= folder.selectable;
+                }
+                (account.as_str(),selection)
+            }).collect();
+            let mut seen: std::collections::HashMap<_,std::collections::HashSet<_>> = account_folders.iter().map(|(account,names)|(account.clone(),names.iter().cloned().collect())).collect();
             for pair in c
-                .prepare("SELECT DISTINCT account,folder FROM messages ORDER BY folder")?
+                .prepare("SELECT DISTINCT account,folder FROM recovered_mail ORDER BY folder")?
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
             {
                 let (account, folder) = pair?;
-                let folders = account_folders.entry(account).or_default();
-                if !folders.contains(&folder) {
-                    folders.push(folder);
+                if catalog_selection.get(account.as_str()).and_then(|catalog|catalog.get(folder.as_str())) == Some(&false) {
+                    continue;
+                }
+                if seen.entry(account.clone()).or_default().insert(folder.clone()) {
+                    account_folders.entry(account).or_default().push(folder);
                 }
             }
+            for (account, names) in &account_folders {
+                let catalog = catalogs.entry(account.clone()).or_default();
+                let mut known: std::collections::HashSet<_> = catalog.iter().map(|folder|folder.name.clone()).collect();
+                for name in names {
+                    if known.insert(name.clone()) {
+                        catalog.push(crate::folders::Mailbox::flat(name.clone()));
+                    }
+                }
+            }
+            let folder_trees = catalogs.into_iter().map(|(account, catalog)| (account, Arc::new(crate::folders::Tree::new(&catalog)))).collect();
             let drafts = drafts::snapshot(c)?;
             Ok(Workspace {
                 accounts: get(c, "accounts")?,
+                account_reconnect: get(c,crate::profile_sync::join::RECONNECT_KEY)?,
                 calendars: get(c, "calendars")?,
                 preferences: get(c, "preferences")?,
                 preferences_revision: get(c, "preferences_revision")?,
                 account_folders,
+                folder_trees,
                 folders,
                 drafts: drafts.drafts,
                 drafts_revision: drafts.revision,
                 connections_revision: get(c, "connections_revision")?,
                 outgoing_pending: outgoing::pending(c)?,
+                move_pending_total: move_journal::pending(c)?,
                 outgoing_revision: get(c, "outgoing_revision")?,
                 google_archived: get(c, "google_archived")?,
                 outgoing_drafts:c.prepare("SELECT draft FROM outgoing WHERE stage IN ('Submitting','Uncertain','Accepted')")?.query_map([],|r|r.get::<_,String>(0))?.collect::<Result<_,_>>()?,
-                profile_reconnect:c.prepare("SELECT account_id FROM profile_reconnect ORDER BY account_id")?.query_map([],|r|r.get::<_,String>(0))?.collect::<Result<_,_>>()?,
                 credential_cleanup: c.query_row(
                     "SELECT COUNT(*) FROM credential_cleanup",
                     [],
@@ -298,28 +431,57 @@ impl Store {
         .await
     }
     pub async fn query(&self, query: MailQuery) -> anyhow::Result<MailPage> {
+        self.query_folder_projection(query, None).await
+    }
+    pub(crate) async fn query_folder_projection(
+        &self,
+        query: MailQuery,
+        projection: Option<(String, u64, Arc<crate::folder_actions::Review>)>,
+    ) -> anyhow::Result<MailPage> {
         self.run(move |c| {
             let transaction = c.transaction()?;
             let c = &transaction;
+            read_moves::prepare(c, &query.project_moves)?;
             let plan = mail_query::Plan::new(c, &query)?;
             let (total, unread) = plan.counts(c)?;
-            let (sql, mut values) = plan.ordered("data,unread,starred,folder,account");
+            let folder_count = if let Some((token, revision, review)) = &projection {
+                folder_projection::capture(c, token, review, *revision, &query)?;
+                Some(plan.affected_counts(c, token)?)
+            } else { None };
+            let columns = if query.project_moves.is_empty() && !move_journal::has_projection(c)? { "data,unread,starred,folder,account,0" } else { "data,unread,starred,folder,account,messages.pending_move" };
+            let (sql, mut values) = plan.ordered(columns);
             values.push((PAGE_SIZE as i64).into());
             values.push((query.offset as i64).into());
             let mut stmt = c.prepare(&format!("{sql} LIMIT ? OFFSET ?"))?;
-            let rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?)))?
-                .map(|r| { let (data,unread,starred,folder,account)=r?; let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;m.account_id=account;Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
-            let source = if bulk::has_effects(c)? { "visible_mail" } else { "messages" };
+            let mut move_placeholders = std::collections::HashSet::new();
+            let mut rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,bool>(5)?)))?
+                .map(|r| { let (data,unread,starred,folder,account,pending)=r?; let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;m.account_id=account;if pending { move_placeholders.insert(m.id.clone()); m.remote_id.clear(); } Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
+            let source = read_moves::source(c)?;
             let inbox_unread = c.prepare(&format!("SELECT account,COUNT(*) FROM {source} WHERE folder='INBOX' AND unread=1 GROUP BY account"))?
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))?
                 .collect::<rusqlite::Result<_>>()?;
             let mut observed = std::collections::HashMap::new();
+            let mut relocated = std::collections::HashMap::new();
             let mut statement = c.prepare(&format!("SELECT account,folder,unread FROM {source} WHERE id=?"))?;
             for id in query.observe {
                 use rusqlite::OptionalExtension;
                 let value = statement.query_row([&id], |row| Ok(MailMembership {
                     account: row.get(0)?, folder: row.get(1)?, unread: row.get(2)?,
                 })).optional()?;
+                if value.is_none() && relocated.len()<PAGE_SIZE {
+                    let data:Option<String>=c.query_row("SELECT data FROM mail_moves WHERE source_id=? AND stage IN ('located','kept')",[&id],|r|r.get(0)).optional()?;
+                    if let Some(data)=data {
+                        let record:crate::mail_actions::journal::MoveRecord=serde_json::from_str(&data)?;
+                        if let Some(mail)=record.resolved_mail() {
+                            let data:Option<(String,bool,bool)>=c.query_row("SELECT data,unread,starred FROM messages WHERE id=?",[&mail.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+                            if let Some((data,unread,starred))=data {
+                                let mut mail:Mail=serde_json::from_str(&data)?;
+                                mail.unread=unread;mail.starred=starred;
+                                relocated.insert(id.clone(),mail);
+                            }
+                        }
+                    }
+                }
                 observed.insert(id, value);
             }
             anyhow::ensure!(query.observe_bulk.len() <= CHANNEL_CAPACITY, "Observe at most 32 mail operations at a time");
@@ -330,19 +492,36 @@ impl Store {
                     bulk_observed.insert(id,undo);
                 }
             }
+            let mut move_recovery = std::collections::HashMap::new();
+            for mail in &mut rows {
+                if let Some(record)=move_journal::for_cache(c,&mail.id)? {
+                    mail.remote_id.clear();
+                    move_placeholders.insert(mail.id.clone());
+                    move_recovery.insert(mail.id.clone(),record);
+                }
+            }
             let mut bulk_pending = std::collections::HashSet::new();
             for mail in &rows {
                 let pending: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM bulk_effects WHERE id=?)",[&mail.id],|r|r.get(0))?;
                 if pending { bulk_pending.insert(mail.id.clone()); }
             }
-            Ok(MailPage { rows, total, unread, inbox_unread, observed, bulk_pending, bulk_observed, bulk_placeholders: Default::default(), bulk_revision: get(c,"bulk_revision")? })
+            let page = MailPage { move_pending_total:move_journal::pending(c)?, relocated, move_recovery, move_placeholders, rows, total, unread, folder_count, inbox_unread, observed, bulk_pending, bulk_observed, bulk_placeholders: Default::default(), bulk_revision: get(c,"bulk_revision")? };
+            drop(stmt);
+            drop(statement);
+            if projection.is_some() {
+                read_moves::prepare(c, &[])?;
+                transaction.commit()?;
+            }
+            Ok(page)
         }).await
     }
     pub async fn detail(&self, id: String) -> anyhow::Result<MailDetail> {
         self.run(move |c| {
             let (data, raw, unread, starred, folder): (String, Vec<u8>, bool, bool, String) = c
                 .query_row(
-                    "SELECT data,raw,unread,starred,folder FROM messages WHERE id=?",
+                    "SELECT data,raw,unread,starred,folder FROM messages WHERE id=COALESCE(
+                        (SELECT id FROM messages WHERE id=?1),
+                        (SELECT CASE stage WHEN 'kept' THEN json_extract(data,'$.retained.id') ELSE json_extract(data,'$.receipt.current.id') END FROM mail_moves WHERE source_id=?1 AND stage IN ('located','kept')))",
                     [id],
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                 )?;
@@ -350,6 +529,7 @@ impl Store {
             summary.unread = unread;
             summary.starred = starred;
             summary.folder = folder;
+            move_journal::project_detail(c, &mut summary)?;
             let parsed = shep_mail_core::mime::parse(&raw)?;
             let content = crate::email_content::extract(&parsed)?;
             let (body, attachments) = (content.text, content.attachments);
@@ -381,25 +561,33 @@ impl Store {
         changes: crate::mail_actions::Flags,
     ) -> anyhow::Result<()> {
         self.run(move |c| {
-            let changed = c.execute("UPDATE messages SET unread=COALESCE(?, unread),starred=COALESCE(?, starred) WHERE id=? AND account=? AND folder=?",
+            let tx = c.transaction()?;
+            folder_actions::idle(&tx, &mail.account_id)?;
+            let changed = tx.execute("UPDATE messages SET unread=COALESCE(?, unread),starred=COALESCE(?, starred) WHERE id=? AND account=? AND folder=?",
                 params![changes.unread, changes.starred, mail.id, mail.account_id, mail.folder])?;
             anyhow::ensure!(changed == 1, "This message moved or was removed. Refresh the folder and try again.");
+            tx.commit()?;
             Ok(())
         }).await
     }
     pub async fn flags(&self, mail: Mail) -> anyhow::Result<()> {
         self.run(move |c| {
-            c.execute(
+            let tx = c.transaction()?;
+            folder_actions::mail_idle(&tx, &mail.id)?;
+            tx.execute(
                 "UPDATE messages SET unread=?,starred=? WHERE id=?",
                 params![mail.unread, mail.starred, mail.id],
             )?;
+            tx.commit()?;
             Ok(())
         })
         .await
     }
     pub async fn move_local(&self, id: String, folder: String) -> anyhow::Result<()> {
         self.run(move |c| {
-            let changed = c.execute(
+            let tx = c.transaction()?;
+            folder_actions::mail_idle(&tx, &id)?;
+            let changed = tx.execute(
                 "UPDATE messages SET folder=? WHERE id=?",
                 params![folder, id],
             )?;
@@ -407,13 +595,17 @@ impl Store {
                 changed == 1,
                 "This message was removed. Refresh the folder and try again."
             );
+            tx.commit()?;
             Ok(())
         })
         .await
     }
     pub async fn remove(&self, id: String) -> anyhow::Result<()> {
         self.run(move |c| {
-            c.execute("DELETE FROM messages WHERE id=?", [id])?;
+            let tx = c.transaction()?;
+            folder_actions::mail_idle(&tx, &id)?;
+            tx.execute("DELETE FROM messages WHERE id=?", [id])?;
+            tx.commit()?;
             Ok(())
         })
         .await
@@ -441,13 +633,17 @@ impl Store {
             let tx = c.transaction()?;
             let c = &tx;
             connections::allow(c, ConnectionKind::Account, &account.id)?;
+            folder_actions::idle(c, &account.id)?;
             let mut accounts: Vec<Account> = get(c, "accounts")?;
+            let previous = accounts.iter().find(|a| a.id == account.id).cloned();
             accounts.retain(|a| a.id != account.id);
             if !account.sent_folder.is_empty() {c.execute("INSERT INTO sent_folders(account,folder) VALUES(?,?) ON CONFLICT(account) DO UPDATE SET folder=excluded.folder",params![account.id,account.sent_folder])?;}
             else {c.execute("DELETE FROM sent_folders WHERE account=?",[&account.id])?;}
-            accounts.push(account);
+            profile_sync::join::reconnected(c, &account.id)?;
+            accounts.push(account.clone());
             put(c, "accounts", &accounts)?;
             connections::changed(c)?;
+            profile_sync::state::record_native_account_fields(c, &account, previous.as_ref())?;
             tx.commit()?;
             Ok(())
         })
@@ -455,12 +651,33 @@ impl Store {
     }
 
     pub async fn save_folders(&self, account: String, folders: Vec<String>) -> anyhow::Result<()> {
+        self.save_folder_catalog(
+            account,
+            folders
+                .into_iter()
+                .map(crate::folders::Mailbox::flat)
+                .collect(),
+        )
+        .await
+    }
+
+    pub async fn save_folder_catalog(
+        &self,
+        account: String,
+        catalog: Vec<crate::folders::Mailbox>,
+    ) -> anyhow::Result<()> {
         self.run(move |c| {
             let tx = c.transaction()?;
             let c = &tx;
             connections::allow(c, ConnectionKind::Account, &account)?;
+            folder_actions::idle(c, &account)?;
             let mut mapping: std::collections::HashMap<String, Vec<String>> =
                 get(c, "account_folders")?;
+            let folders: Vec<String> = catalog
+                .iter()
+                .filter(|folder| folder.selectable)
+                .map(|folder| folder.name.clone())
+                .collect();
             use rusqlite::OptionalExtension;
             let sent: Option<String> = c
                 .query_row(
@@ -472,8 +689,12 @@ impl Store {
             if sent.is_some_and(|folder| !folders.contains(&folder)) {
                 c.execute("DELETE FROM sent_folders WHERE account=?", [&account])?;
             }
-            mapping.insert(account, folders);
+            mapping.insert(account.clone(), folders);
             put(c, "account_folders", &mapping)?;
+            let mut catalogs: std::collections::HashMap<String, Vec<crate::folders::Mailbox>> =
+                get(c, "folder_catalogs")?;
+            catalogs.insert(account, catalog);
+            put(c, "folder_catalogs", &catalogs)?;
             connections::changed(c)?;
             tx.commit()?;
             Ok(())
@@ -482,11 +703,18 @@ impl Store {
     }
     pub async fn apply_sync(&self, item: MailSyncItem) -> anyhow::Result<()> {
         match item {
+            MailSyncItem::InboxSyncStarted { account, epoch } => {
+                self.begin_notification_sync(account, epoch).await
+            }
+            MailSyncItem::InboxSyncFinished { account, epoch } => {
+                self.finish_notification_sync(account, epoch).await
+            }
             MailSyncItem::Message(mail) => self.upsert(vec![mail]).await,
             MailSyncItem::Flags(flags) => {
                 self.run(move |c| {
                     let tx = c.transaction()?;
                     for (id, unread, starred) in flags {
+                        folder_actions::mail_idle(&tx, &id)?;
                         tx.execute(
                             "UPDATE messages SET unread=?,starred=? WHERE id=?",
                             params![unread, starred, id],
@@ -504,8 +732,9 @@ impl Store {
             } => {
                 self.run(move |c| {
                     let tx = c.transaction()?;
+                    folder_actions::idle(&tx, &account)?;
                     let ids: Vec<(String, bool)> = tx
-                        .prepare("SELECT id,EXISTS(SELECT 1 FROM restored_messages WHERE restored_messages.id=messages.id) FROM messages WHERE account=? AND folder=? AND id NOT LIKE '%:local-sent-%'")?
+                        .prepare("SELECT id,EXISTS(SELECT 1 FROM restored_messages WHERE restored_messages.id=messages.id) FROM messages WHERE account=? AND folder=? AND id NOT LIKE '%:local-sent-%' AND id NOT LIKE '%:local-recovered-%' AND NOT EXISTS(SELECT 1 FROM mail_moves WHERE cache_id=messages.id)")?
                         .query_map(params![account, folder], |r| Ok((r.get(0)?, r.get(1)?)))?
                         .collect::<Result<_, _>>()?;
                     for (id, restored) in ids {
@@ -524,12 +753,15 @@ impl Store {
                 })
                 .await
             }
-            MailSyncItem::Folders(account, folders) => self.save_folders(account, folders).await,
+            MailSyncItem::Folders(account, folders) => self.save_folder_catalog(account, folders).await,
             MailSyncItem::SentFolder(account,folder)=>self.run(move |c| {
+                let tx = c.transaction()?;
+                let c = &tx;
                 connections::allow(c,ConnectionKind::Account,&account)?;
+                folder_actions::idle(c,&account)?;
                 if let Some(folder)=folder { c.execute("INSERT INTO sent_folders(account,folder) VALUES(?,?) ON CONFLICT(account) DO UPDATE SET folder=excluded.folder",params![account,folder])?; }
 
-                Ok(())
+                tx.commit()?; Ok(())
             }).await,
             MailSyncItem::SkippedLarge => Ok(()),
         }
@@ -715,6 +947,15 @@ impl Store {
     }
 }
 
+pub(crate) fn import_archive_schema(c: &Connection) -> anyhow::Result<()> {
+    c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS imported_operations(
+        import_id TEXT NOT NULL,kind TEXT NOT NULL,identity TEXT NOT NULL,data TEXT NOT NULL,
+        PRIMARY KEY(import_id,kind,identity));",
+    )?;
+    Ok(())
+}
+
 fn get<T: DeserializeOwned + Default>(c: &Connection, key: &str) -> anyhow::Result<T> {
     use rusqlite::OptionalExtension;
     c.query_row("SELECT value FROM kv WHERE key=?", [key], |r| {
@@ -725,16 +966,9 @@ fn get<T: DeserializeOwned + Default>(c: &Connection, key: &str) -> anyhow::Resu
     .unwrap_or_else(|| Ok(T::default()))
 }
 fn put<T: Serialize>(c: &Connection, key: &str, value: &T) -> anyhow::Result<()> {
-    let encoded = serde_json::to_string(value)?;
-    if key == "preferences" {
-        let revision = get::<u64>(c, "preferences_revision")?
-            .checked_add(1)
-            .context("Preferences revision overflow")?;
-        profile_preferences::changed(c, &serde_json::from_str(&encoded)?, revision)?;
-    }
     c.execute(
         "INSERT INTO kv VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        params![key, encoded],
+        params![key, serde_json::to_string(value)?],
     )?;
     if key == "preferences" {
         let revision: u64 = get(c, "preferences_revision")?;
@@ -770,6 +1004,7 @@ pub(super) fn calendar_changed(c: &Connection) -> anyhow::Result<()> {
 
 fn upsert_message(c: &Connection, message: &StoredMail) -> anyhow::Result<()> {
     connections::allow(c, ConnectionKind::Account, &message.summary.account_id)?;
+    folder_actions::idle(c, &message.summary.account_id)?;
     let m = &message.summary;
     c.execute("INSERT INTO messages(id,account,folder,sender,subject,body,timestamp,unread,starred,data,raw)
         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
@@ -777,5 +1012,6 @@ fn upsert_message(c: &Connection, message: &StoredMail) -> anyhow::Result<()> {
         params![m.id,m.account_id,m.folder,m.sender,m.subject,message.text,m.timestamp,m.unread,m.starred,serde_json::to_string(m)?,message.raw])?;
     conversations::index_message(c, &m.id)?;
     outgoing::reconcile(c, m)?;
+    notifications::remember(c, message)?;
     Ok(())
 }

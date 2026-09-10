@@ -1,7 +1,7 @@
 use super::*;
 use crate::html_render::preparation::{Key, Request};
 
-const MAX_FRAMES: usize = 4;
+const MAX_FRAMES: usize = 8;
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Default)]
@@ -9,16 +9,27 @@ pub(in crate::ui) struct Cache {
     frames: VecDeque<(Key, Arc<html_render::Frame>, widget::image::Handle)>,
     pub tx: Option<tokio::sync::watch::Sender<Vec<Request>>>,
     scheduled: Vec<Key>,
-    pub image_revision: u64,
     pub hits: u64,
 }
 impl Cache {
     pub fn insert(&mut self, key: Key, frame: Arc<html_render::Frame>) {
-        if frame.pixels.len() > MAX_BYTES || frame.scroll != 0. || frame.pan != 0. {
+        // Adjacent preparation must not replace a visited image-complete frame.
+        if self.frames.iter().any(|(old, ..)| old == &key) {
+            return;
+        }
+        let handle = handle(&frame);
+        self.remember(key, frame, handle);
+    }
+    pub fn remember(
+        &mut self,
+        key: Key,
+        frame: Arc<html_render::Frame>,
+        handle: widget::image::Handle,
+    ) {
+        if frame_bytes(&frame) > MAX_BYTES || frame.scroll != 0. || frame.pan != 0. {
             return;
         }
         self.frames.retain(|(old, ..)| old != &key);
-        let handle = handle(&frame);
         self.frames.push_front((key, frame, handle));
         while self.frames.len() > MAX_FRAMES || self.bytes() > MAX_BYTES {
             self.frames.pop_back();
@@ -40,10 +51,23 @@ impl Cache {
         self.hits += 1;
         Some((frame, handle))
     }
+    pub fn image_arrived(&mut self, url: &str) {
+        self.frames.retain(|(key, frame, _)| {
+            !key.allow_images || !frame.images.iter().any(|used| used == url)
+        });
+        self.scheduled.clear();
+    }
+    fn images(&self, key: &Key) -> Vec<(String, Arc<[u8]>)> {
+        self.frames
+            .iter()
+            .find(|(old, ..)| old == key)
+            .map(|(_, frame, _)| frame.loaded_images.clone())
+            .unwrap_or_default()
+    }
     pub fn bytes(&self) -> usize {
         self.frames
             .iter()
-            .map(|(_, frame, _)| frame.pixels.len())
+            .map(|(_, frame, _)| frame_bytes(frame))
             .sum()
     }
     pub fn ids(&self) -> Vec<&str> {
@@ -53,6 +77,15 @@ impl Cache {
             .collect()
     }
 }
+fn frame_bytes(frame: &html_render::Frame) -> usize {
+    frame.pixels.len()
+        + frame
+            .loaded_images
+            .iter()
+            .map(|(url, bytes)| url.len() + bytes.len())
+            .sum::<usize>()
+}
+
 pub(super) fn handle(frame: &html_render::Frame) -> widget::image::Handle {
     widget::image::Handle::from_rgba(
         frame.width,
@@ -68,24 +101,31 @@ impl App {
     ) -> Option<Request> {
         let body = detail.html.as_ref()?;
         let allow_images = crate::remote_images::allowed(&self.preferences, &detail.summary);
-        let images = if allow_images {
-            self.remote_bytes.iter().cloned().collect()
-        } else {
-            Vec::new()
-        };
         let key = Key {
             id: detail.summary.id.clone(),
             signature: body.signature,
             font_size: self.preferences.reader_font_size,
             hide_quotes: self.html_quotes_hidden(detail),
             allow_images,
-            image_revision: if allow_images {
-                self.html_reader.cache.image_revision
-            } else {
-                0
-            },
             viewport,
         };
+        // Keep only this document's images. A visited frame owns its exact
+        // decoded inputs even when the shared download cache evicts them.
+        let mut images = if allow_images {
+            self.html_reader.cache.images(&key)
+        } else {
+            Vec::new()
+        };
+        if allow_images {
+            for (url, bytes) in &self.remote_bytes {
+                if body.remote_images.iter().any(|image| image.url == *url)
+                    || images.iter().any(|(used, _)| used == url)
+                {
+                    images.retain(|(used, _)| used != url);
+                    images.push((url.clone(), bytes.clone()));
+                }
+            }
+        }
         Some(Request {
             source: html_render::Source {
                 body: body.clone(),
@@ -95,6 +135,30 @@ impl App {
             },
             key,
         })
+    }
+    pub(super) fn html_frame_cacheable(&self, key: &Key, frame: &html_render::Frame) -> bool {
+        if !key.allow_images {
+            return true;
+        }
+        // Pending or failed downloads do not prevent retaining the text/layout.
+        // But a frame cannot claim a download that the worker has not decoded.
+        // Each successful arrival invalidates only frames that use that URL.
+        frame
+            .images
+            .iter()
+            .filter(|url| remote_url(url))
+            .all(|url| {
+                self.remote_bytes
+                    .iter()
+                    .find(|(used, _)| used == url)
+                    .is_none_or(|(_, latest)| {
+                        frame
+                            .loaded_images
+                            .iter()
+                            .find(|(used, _)| used == url)
+                            .is_some_and(|(_, applied)| Arc::ptr_eq(applied, latest))
+                    })
+            })
     }
     pub(super) fn preload_html(&mut self) {
         let requests = self
@@ -151,7 +215,6 @@ mod tests {
             font_size: 14,
             hide_quotes: true,
             allow_images: false,
-            image_revision: 0,
             viewport: size,
         };
         let frame = Arc::new(html_render::Frame {
@@ -166,6 +229,8 @@ mod tests {
             pan: 0.,
             scroll: 0.,
             images: vec![],
+            loaded_images: vec![],
+            background: None,
             reflow: None,
         });
         let mut cache = Cache::default();

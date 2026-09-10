@@ -17,11 +17,17 @@ Read the repository's [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/
 - [Mail](mail.md): navigation, drafts, delivery recovery, Sent copies and reading behavior.
 - [Calendar](calendar.md): discovery, access, write acknowledgments, conflicts and connection removal.
 - [Google and backups](backups.md): authorization, destination identity, scheduling, resumable uploads and additive restore.
+- [Multiple backup destinations](MULTIPLE_BACKUPS.md): several local, S3/SFTP/FTP and Google Drive destinations with independent schedules, retention and passphrases.
+- [Local cache encryption](CACHE_ENCRYPTION.md): SQLCipher device keys, staged migration and recovery boundaries (in progress).
+- [Database transfer and profiles](profiles.md): staged import, local profile selection, credential isolation and the desktop profile sync implementation.
+- [Profile Drive records](profile-drive.md): shared metadata transport, durable pagination and immutable upload recovery.
 - [Profile metadata format and current limits](PROFILE_FORMAT.md).
 - [Local profile history](PROFILE_HISTORY.md): causal merge, durable upload identities, native worker/bridge and remaining enrollment work.
-- [Google profile files](PROFILE_DRIVE.md): verified identity, bounded file pages and immutable upload recovery; desktop/browser enrollment remains unfinished.
-- [Durable profile discovery](PROFILE_DISCOVERY.md): saved scans, change replay and isolated remote summaries; desktop/browser enrollment remains unfinished.
-- [Desktop profile discovery](PROFILE_DESKTOP.md): active Google grant, durable scans and read-only iced controls; publication/import remain open.
+- [Google profile files](PROFILE_DRIVE.md): verified identity, bounded file pages and immutable upload recovery from the shared crates.
+- [Durable profile discovery](PROFILE_DISCOVERY.md): saved scans, change replay and isolated remote summaries.
+- [Desktop profile discovery](PROFILE_DESKTOP.md): active Google grant, durable scans and read-only iced controls; the desktop implementation now arrives from `main`.
+- [Desktop reconciliation engine](PROFILE_RECONCILIATION.md): bounded ongoing preference reconciliation and its Flutter/browser equivalents.
+- [Mobile Google connection](GOOGLE_MOBILE.md): platform Google Sign-In packages, stored bindings and cleanup state.
 - [Flutter profile discovery](PROFILE_MOBILE.md): saved Google binding, native session ownership and real discovery controls; reviewed Flutter enrollment is connected.
 - [Flutter profile publication](PROFILE_PUBLICATION.md): frozen reviews, initialized setup, immutable upload receipts and pause/retry controls.
 - [Flutter profile enrollment](PROFILE_ENROLLMENT.md): independent device history, reviewed account/preferences application and credential reconnect boundaries.

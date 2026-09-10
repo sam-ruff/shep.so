@@ -47,7 +47,10 @@ impl HostedMail for BrowserMail {
         output
             .send(MailSyncItem::Folders(
                 c.account.id.clone(),
-                vec!["INBOX".into(), "Archive".into(), "Sent Mail".into()],
+                ["INBOX", "Archive", "Sent Mail"]
+                    .into_iter()
+                    .map(|name| shep_mail_core::folders::Mailbox::flat(name.into()))
+                    .collect(),
             ))
             .await?;
         let location = self

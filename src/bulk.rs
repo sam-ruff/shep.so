@@ -6,6 +6,10 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+/// A reviewed uncertain step is retired without claiming a provider receipt.
+pub const ACCEPTED_STATE_NOTE: &str =
+    "Current mail state accepted. This change will not be retried or included in group Undo.";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Action {
     Move {

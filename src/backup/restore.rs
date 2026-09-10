@@ -2,22 +2,13 @@ use super::Snapshot;
 use crate::model::*;
 use anyhow::Context;
 use async_trait::async_trait;
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 use std::collections::HashSet;
 
 /// Account and CalDAV IDs share the OS keychain namespace. Google OAuth and
 /// destination passphrases are device credentials, never snapshot credentials.
 fn credential_owner(id: &str) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        !id.is_empty()
-            && id.len() <= 256
-            && id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-            && !matches!(id, "google-oauth" | "backup-passphrase"),
-        "The backup contains an invalid account or CalDAV identifier."
-    );
-    Ok(())
+    crate::credentials::connection_id(id, false)
 }
 
 fn identifier(value: &str, label: &str) -> anyhow::Result<()> {
@@ -38,6 +29,7 @@ impl Snapshot {
             "The backup has an invalid creation date."
         );
         self.preferences.validate()?;
+        crate::credentials::validate_connections(&self.accounts, &self.calendars)?;
         let mut owners = HashSet::new();
         let mut allowed = HashSet::new();
         for account in &self.accounts {
@@ -66,7 +58,7 @@ impl Snapshot {
             );
             match source.kind {
                 CalendarKind::CalDav => {
-                    credential_owner(&source.id)?;
+                    crate::credentials::connection_id(&source.id, true)?;
                     identifier(&source.username, "CalDAV username")?;
                     let url = crate::providers::calendar::validate_caldav_url(&source.url)?;
                     anyhow::ensure!(
@@ -160,22 +152,11 @@ pub(crate) trait CredentialRestorer: Send + Sync {
     async fn restore_missing(&self, id: &str, secret: SecretString) -> anyhow::Result<()>;
 }
 
-pub(crate) struct OsCredentialRestorer;
+#[derive(Default)]
+pub(crate) struct OsCredentialRestorer(pub crate::credentials::Credentials);
 #[async_trait]
 impl CredentialRestorer for OsCredentialRestorer {
     async fn restore_missing(&self, id: &str, secret: SecretString) -> anyhow::Result<()> {
-        let id = id.to_owned();
-        tokio::task::spawn_blocking(move || {
-            let entry = keyring::Entry::new("so.shep.desktop", &id)?;
-            match entry.get_password() {
-                Ok(previous) => {
-                    drop(SecretString::from(previous));
-                }
-                Err(keyring::Error::NoEntry) => entry.set_password(secret.expose_secret())?,
-                Err(error) => return Err(error.into()),
-            }
-            Ok(())
-        })
-        .await?
+        self.0.restore_missing(id, secret).await
     }
 }

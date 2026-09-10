@@ -1,13 +1,20 @@
+mod account_setup;
+mod account_sync;
+mod account_work;
 mod backups;
 #[cfg(test)]
 mod backups_tests;
 mod bulk;
 mod calendar_connections;
+mod database_transfers;
 mod dispatch;
+pub mod folders;
 mod google_lifecycle;
 mod mail_actions;
 mod mail_sync;
+mod move_recovery;
 mod outgoing;
+mod profile_sync;
 mod profiles;
 mod removals;
 mod restore;
@@ -34,7 +41,17 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub enum Command {
-    Profiles(crate::profiles::discovery::Request),
+    ProfileSync(crate::profile_sync::commands::Request),
+    Profiles(u64, crate::profiles::Request),
+    Database(crate::transfer::Request),
+    Folder(folders::Request),
+    MoveRecoveries(u64, Option<String>),
+    RecoverMailMove(
+        u64,
+        Arc<crate::mail_actions::journal::MoveRecord>,
+        crate::mail_actions::journal::RecoveryAction,
+        bool,
+    ),
     Query(u64, MailQuery, bool),
     Selection(u64, selections::Request, Vec<String>),
     ReviewSelection(u64, crate::store::MailSelectionId, u64, Vec<String>),
@@ -57,12 +74,7 @@ pub enum Command {
     },
     SaveAccount(Account, SecretString, SecretString),
     TestConnection(Account, SecretString, SecretString, ConnectionTarget),
-    SavePreferences(u64, Preferences),
-    SaveProfilePreferences(
-        u64,
-        Preferences,
-        std::collections::BTreeSet<shep_profile_core::SettingKey>,
-    ),
+    SavePreferences(u64, crate::preference_edits::Write),
     Sync,
     Move(u64, Mail, String),
     Transfer(u64, Mail, String, String),
@@ -94,7 +106,14 @@ pub enum Command {
     DeleteEvent(CalendarEvent),
     Backup(BackupTarget, SecretString),
     AutomaticBackup(BackupTarget),
+    BackupIncluded(u64, String, BackupTarget),
+    ConnectS3(u64, BackupTarget, Option<(SecretString, SecretString)>),
+    ConnectSftp(u64, BackupTarget, Option<SecretString>),
+    ConnectFtp(u64, BackupTarget, Option<SecretString>),
+    ProbeSftp(u64, backup::sftp::Settings),
     ListBackups(u64, BackupTarget),
+    BackupHistory(u64, BackupTarget),
+    RetryBackupHistory(String, BackupTarget, SecretString),
     Restore(BackupTarget, String, SecretString),
     ExportAttachment(String, usize, String),
     ExportMessage(String, String),
@@ -105,8 +124,12 @@ pub enum Command {
     },
 }
 impl Command {
-    fn key(&self) -> Option<String> {
+    pub(crate) fn key(&self) -> Option<String> {
         match self {
+            Self::SaveAccount(account, ..) => Some(format!("account:{}", account.id)),
+            Self::RecoverMailMove(request, record, ..) => {
+                Some(format!("move-recovery:{}:{request}", record.token))
+            }
             Self::TestConnection(_, _, _, target) => Some(format!("test:{target:?}")),
             Self::ResolveOutgoing(id, ..) => Some(format!("outgoing:{id}")),
             Self::RepairOutgoing => Some("outgoing-repair".into()),
@@ -116,8 +139,16 @@ impl Command {
             Self::RestoreGoogleCalendars => Some("restore-calendars".into()),
             Self::GoogleLogin(..) => Some("google".into()),
             Self::DisconnectGoogle(_) | Self::CleanupGoogle => Some("google-disconnect".into()),
-            Self::Backup(..) | Self::AutomaticBackup(_) | Self::Restore(..) => {
-                Some("backup".into())
+            Self::Backup(target, _)
+            | Self::RetryBackupHistory(_, target, _)
+            | Self::AutomaticBackup(target)
+            | Self::BackupIncluded(_, _, target)
+            | Self::Restore(target, ..)
+            | Self::ConnectS3(_, target, _)
+            | Self::ConnectSftp(_, target, _)
+            | Self::ConnectFtp(_, target, _) => Some(target.work_key()),
+            Self::ProbeSftp(_, settings) => {
+                Some(format!("sftp-probe:{}:{}", settings.host, settings.port))
             }
             Self::Send(d) => Some(format!("send:{}", d.id)),
             Self::SaveEvent(e) | Self::DeleteEvent(e) => Some(format!("event:{}", e.key())),
@@ -131,16 +162,20 @@ impl Command {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
-    ProfileSync(
-        Option<crate::profiles::discovery::Grant>,
-        Arc<crate::profiles::sync::control::Observation>,
-        Option<Arc<crate::store::PreferenceSnapshot>>,
-    ),
-    Profiles(
-        uuid::Uuid,
+    ProfileSync(u64, crate::profile_sync::commands::Update),
+    Profiles(u64, Result<Arc<crate::profiles::Snapshot>, String>),
+    Database(u64, crate::transfer::Update),
+    Folder(folders::Event),
+    MoveRecoveries(
         u64,
-        Result<Arc<crate::profiles::discovery::Observation>, String>,
+        Result<Arc<Vec<crate::mail_actions::journal::MoveRecord>>, String>,
     ),
+    MailMoveRecovery(
+        u64,
+        String,
+        Result<Arc<crate::mail_actions::journal::MoveRecord>, String>,
+    ),
+    MoveRecovered(Arc<crate::mail_actions::journal::MoveRecord>),
     Ready(CommandSender, Arc<Workspace>, bool),
     Selection(
         u64,
@@ -173,6 +208,7 @@ pub enum Event {
         prefetch: bool,
     },
     MailSyncFinished(Result<(), String>),
+    MailArrived(Arc<crate::notifications::Arrival>),
     FlagsFinished(u64, Mail, Result<(), String>),
     MoveFinished(
         u64,
@@ -192,11 +228,24 @@ pub enum Event {
     ),
     #[cfg(feature = "test-support")]
     PreviewSync(u64),
+    #[cfg(feature = "test-support")]
+    PreviewAccountSync(bool),
     Changed,
     Calendar(u64, Arc<Vec<CalendarEvent>>),
     Backups(u64, BackupTarget, Result<Arc<Vec<BackupCopy>>, String>),
     BackupSaved(BackupTarget, BackupCopy),
+    S3Connection(u64, BackupTarget, Result<(), String>),
+    SftpConnection(u64, BackupTarget, Result<(), String>),
+    FtpConnection(u64, BackupTarget, Result<(), String>),
+    SftpFingerprint(u64, backup::sftp::Settings, Result<String, String>),
     BackupFinished(BackupTarget),
+    BackupRun(u64, BackupTarget, backup::run::Status),
+    BackupHistory(
+        u64,
+        BackupTarget,
+        Result<Arc<Vec<backup::history::Entry>>, String>,
+    ),
+    BackupHistoryChanged(BackupTarget),
     Busy(String, bool),
     Notice(String),
     Error(String),
@@ -223,15 +272,15 @@ pub enum Event {
     CalendarEventSaved(String),
     ConnectionTest(ConnectionTarget, Result<String, String>),
 }
-type AccountLocks =
-    Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>>;
 #[derive(Clone)]
 struct Engine {
+    profiles: Option<crate::profiles::Session>,
+    credentials: crate::credentials::Credentials,
     store: Store,
     google: providers::google::Google,
     demo: bool,
-    account_locks: AccountLocks,
-    calendar_locks: AccountLocks,
+    account_work: account_work::Accounts,
+    calendar_work: account_work::Accounts,
     calendar_setup_lock: Arc<tokio::sync::Mutex<()>>,
     connection_lifecycle_lock: Arc<tokio::sync::Mutex<()>>,
     secret_remover: Arc<dyn removals::SecretRemover>,
@@ -251,35 +300,13 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
     let demo = *demo;
     iced::stream::channel(CHANNEL_CAPACITY, move |mut output: Output| async move {
         let (tx, input) = CommandSender::channel();
-        let store = tokio::task::spawn_blocking(move || {
-            if demo {
-                Store::memory()
-            } else {
-                let path = directories::ProjectDirs::from("so", "shep", "Shep")
-                    .context("Could not locate the app data directory")?
-                    .data_local_dir()
-                    .to_path_buf();
-                std::fs::create_dir_all(&path)?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
-                }
-                Store::open(path.join("shep.sqlite"))
-            }
-        })
-        .await;
-        let store = match store {
-            Ok(Ok(s)) => s,
-            other => {
+        let (store, profiles) = match profiles::open_workspace(demo).await {
+            Ok(opened) => opened,
+            Err(error) => {
                 let _ = output
                     .send(Event::Error(format!(
                         "Could not open local storage: {}",
-                        match other {
-                            Ok(Err(e)) => e.to_string(),
-                            Err(e) => e.to_string(),
-                            _ => String::new(),
-                        }
+                        error
                     )))
                     .await;
                 futures::future::pending::<()>().await;
@@ -290,24 +317,58 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
         if demo && let Err(e) = crate::test_support::seed_demo(&store).await {
             let _ = output.send(Event::Error(e.to_string())).await;
         }
+        let credentials = crate::credentials::Credentials::new(
+            profiles
+                .as_ref()
+                .map(|p| p.current.scope())
+                .unwrap_or_default(),
+        );
+        #[cfg(feature = "test-support")]
+        let credentials = if demo && crate::test_support::backups::active() {
+            match crate::test_support::backups::credentials(&store).await {
+                Ok(credentials) => credentials,
+                Err(error) => {
+                    let _ = output.send(Event::Error(error.to_string())).await;
+                    return;
+                }
+            }
+        } else {
+            credentials
+        };
         let engine = Engine {
+            profiles,
+            credentials: credentials.clone(),
             store,
-            google: Default::default(),
+            google: providers::google::Google::with_credentials(credentials.clone()),
             demo,
-            account_locks: Default::default(),
-            calendar_locks: Default::default(),
+            account_work: Default::default(),
+            calendar_work: Default::default(),
             calendar_setup_lock: Default::default(),
             connection_lifecycle_lock: Default::default(),
-            secret_remover: Arc::new(removals::OsSecretRemover),
-            outbound: Arc::new(providers::outgoing::Servers),
+            secret_remover: Arc::new(removals::OsSecretRemover(credentials.clone())),
+            outbound: Arc::new(providers::outgoing::Servers {
+                credentials: credentials.clone(),
+            }),
             google_connection_lock: Default::default(),
-            passphrases: Arc::new(backup::OsPassphraseStore),
-            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
+            passphrases: Arc::new(backup::OsPassphraseStore(credentials.clone())),
+            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer(credentials)),
             backup_uploads: Default::default(),
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),
             printing: Default::default(),
             bulk_control: Default::default(),
+        };
+        // An owned fixture can keep all network capacity occupied indefinitely.
+        // It proves close/read/persistence behavior without a real provider.
+        #[cfg(feature = "test-support")]
+        let _held_provider_slots = {
+            let mut slots = Vec::new();
+            if demo && std::env::args().any(|a| a == "--held-provider-slots") {
+                for _ in 0..8 {
+                    slots.push(engine.provider_slots.acquire().await);
+                }
+            }
+            slots
         };
         let workspace = match engine.store.workspace().await {
             Ok(w) => w,
@@ -326,9 +387,27 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             // workspace immediately and check Google from the provider worker.
             let _ = tx.try_send(Command::CheckGoogleConnection);
         }
+        #[cfg(feature = "test-support")]
+        if demo
+            && std::env::args().any(|a| a == "--profile-login")
+            && std::env::args().any(|a| a.starts_with("--profile-drive-url="))
+        {
+            let _ = tx.try_send(Command::CheckGoogleConnection);
+        }
         let _ = tx.try_send(Command::IndexConversations);
-        let _ = tx.try_send(Command::CleanupCredentials);
-        let _ = tx.try_send(Command::RepairOutgoing);
+        let held_capacity_fixture = demo
+            && cfg!(feature = "test-support")
+            && std::env::args().any(|a| a == "--held-provider-slots");
+        if !held_capacity_fixture {
+            let _ = tx.try_send(Command::CleanupCredentials);
+            let _ = tx.try_send(Command::RepairOutgoing);
+        }
+        if engine.profiles.is_some() {
+            let _ = tx.try_send(Command::Profiles(
+                0,
+                crate::profiles::Request::List { offset: 0 },
+            ));
+        }
         let preview_google = demo && workspace.preferences.google_grant.access.known;
         let _ = output
             .send(Event::Ready(tx, Arc::new(workspace), preview_google))
@@ -351,25 +430,11 @@ impl Engine {
         Ok(())
     }
 
-    async fn calendar_lock(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
-        let lock = self
-            .calendar_locks
-            .lock()
-            .expect("calendar lock map poisoned")
-            .entry(id.into())
-            .or_default()
-            .clone();
-        lock.lock_owned().await
+    async fn calendar_access(&self, id: &str) -> account_work::Access {
+        self.calendar_work.write(id).await
     }
-    async fn account_lock(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
-        let lock = self
-            .account_locks
-            .lock()
-            .expect("account lock map poisoned")
-            .entry(id.into())
-            .or_default()
-            .clone();
-        lock.lock_owned().await
+    async fn account_access(&self, id: &str) -> account_work::Access {
+        self.account_work.write(id).await
     }
 
     async fn workspace(&self, output: &mut Output) -> anyhow::Result<()> {
@@ -378,16 +443,8 @@ impl Engine {
             .await?;
         Ok(())
     }
-    async fn read_account_secret(&self, id: &str, smtp: bool) -> anyhow::Result<SecretString> {
-        self.store.require_profile_active(id.into()).await?;
-        providers::read_secret(&if smtp {
-            format!("{id}:smtp")
-        } else {
-            id.into()
-        })
-        .await
-    }
     async fn account(&self, id: &str) -> anyhow::Result<Account> {
+        self.store.require_account_reconnected(id.into()).await?;
         self.store
             .get::<Vec<Account>>("accounts")
             .await?
@@ -405,6 +462,7 @@ impl Engine {
                 preferences: self.store.get("preferences").await?,
             }),
             CalendarKind::CalDav => Box::new(providers::calendar::CalDav {
+                credentials: self.credentials.clone(),
                 http: self.google.http.clone(),
             }),
         })
@@ -453,6 +511,10 @@ impl Engine {
         &self,
         prefs: &Preferences,
     ) -> anyhow::Result<Box<dyn BackupProvider>> {
+        #[cfg(feature = "test-support")]
+        if self.demo && crate::test_support::backups::active() {
+            return crate::test_support::backups::provider(&self.store, prefs);
+        }
         Ok(match prefs.backup_destination {
             BackupDestination::Local => {
                 anyhow::ensure!(
@@ -463,6 +525,23 @@ impl Engine {
                     directory: prefs.backup_folder.clone().into(),
                 })
             }
+            BackupDestination::Ftp => {
+                let secret = self.credentials.read(&prefs.backup_ftp.secret_id()).await.map_err(|_| anyhow::anyhow!("FTP credentials are unavailable. Open Backups and test and save this connection."))?;
+                Box::new(backup::ftp::FtpBackup::new(&prefs.backup_ftp, secret)?)
+            }
+            BackupDestination::Sftp => {
+                let secret = self.credentials.read(&prefs.backup_sftp.secret_id()).await
+                    .map_err(|_| anyhow::anyhow!("SFTP credentials are unavailable for this verified server. Open Backups and test and save the connection."))?;
+                Box::new(backup::sftp::SftpBackup::new(&prefs.backup_sftp, secret)?)
+            }
+            BackupDestination::S3 => {
+                let secret = self.credentials.read(&prefs.backup_s3.identity().secret_id()).await
+                    .map_err(|_| anyhow::anyhow!("S3 credentials are unavailable. Open Backups and test and save this connection."))?;
+                Box::new(backup::s3::S3Backup::from_secret(
+                    &prefs.backup_s3,
+                    &secret,
+                )?)
+            }
             BackupDestination::GoogleDrive => {
                 Box::new(backup::DriveBackup::new(self.google.clone(), prefs.clone()))
             }
@@ -472,7 +551,11 @@ impl Engine {
         let explicit_draft = matches!(&command, Command::SaveDraft(_));
         let deleting_event = matches!(&command, Command::DeleteEvent(_));
         match command {
-            Command::Profiles(_) => anyhow::bail!("Profile work requires its dedicated queue."),
+            Command::ProfileSync(_) => anyhow::bail!("Profile sync reached the wrong worker"),
+            Command::Database(_) => anyhow::bail!("Database transfer reached the wrong worker"),
+            Command::Profiles(request, action) => {
+                return self.profiles_command(request, action, output).await;
+            }
             Command::ReviewSelection(serial, id, revision, visible) => {
                 let result = async {
                     let frozen = self.store.freeze_selection(id, revision).await?;
@@ -490,6 +573,7 @@ impl Engine {
                 output.send(Event::BulkReview(serial, result)).await?;
             }
             Command::ReleaseSelection(id) => self.store.release_selection(id).await?,
+            Command::Folder(request) => self.folder_command(request, output).await?,
             Command::BulkStart(id, selection, action) => {
                 let result = self
                     .store
@@ -500,15 +584,15 @@ impl Engine {
                 output.send(Event::BulkStarted(id, result)).await?;
             }
             Command::BulkResume(id) => {
-                self.bulk_control
-                    .stopping
-                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                if !id.is_empty() {
+                    self.store.continue_bulk(id.clone()).await?;
+                }
+                self.bulk_control.stopping.set(false);
                 output.send(Event::BulkResumed(id)).await?;
             }
             Command::BulkStop => {
-                use std::sync::atomic::Ordering::SeqCst;
-                self.bulk_control.stopping.store(true, SeqCst);
-                if !self.bulk_control.active.load(SeqCst) {
+                self.bulk_control.stopping.set(true);
+                if !self.bulk_control.active.get() {
                     output.send(Event::BulkStopped).await?;
                 }
             }
@@ -556,6 +640,11 @@ impl Engine {
                 let _guard = self.google_connection_lock.read().await;
                 let prefs: Preferences = self.store.get("preferences").await?;
                 let connected = !self.demo && self.google.connected(&prefs).await?;
+                #[cfg(feature = "test-support")]
+                let connected = connected
+                    || (self.demo
+                        && std::env::args().any(|a| a == "--profile-login")
+                        && std::env::args().any(|a| a.starts_with("--profile-drive-url=")));
                 output
                     .send(Event::GoogleStatus(
                         prefs.google_lifecycle.revision,
@@ -658,10 +747,8 @@ impl Engine {
                 let result = async {
                     account.validate()?;
                     anyhow::ensure!(!self.demo, "Connection tests require a real account. Test workspaces do not connect to mail servers.");
-                    let secret = if target == ConnectionTarget::Smtp && account.smtp_auth == SmtpAuth::None { SecretString::from("") }
-                    else if target == ConnectionTarget::Smtp && account.smtp_separate_password {
-                        if smtp_password.expose_secret().is_empty() { self.read_account_secret(&account.id,true).await? } else { smtp_password }
-                    } else if password.expose_secret().is_empty() { self.read_account_secret(&account.id,false).await.context("Enter a password before testing a new account")? } else { password };
+                    let _guard = self.account_access(&account.id).await;
+                    let secret = self.setup_password(&account, &password, &smtp_password, target).await?;
                     match target { ConnectionTarget::Incoming => providers::mail::test_incoming(&account, &secret).await, ConnectionTarget::Smtp => providers::mail::test_smtp(&account, &secret).await }
                 }.await;
                 output
@@ -678,7 +765,8 @@ impl Engine {
                 );
                 account.validate()?;
                 let _lifecycle = self.connection_lifecycle_lock.lock().await;
-                let _guard = self.account_lock(&account.id).await;
+                let _guard = self.account_access(&account.id).await;
+                self.store.ensure_folder_idle(account.id.clone()).await?;
                 self.store
                     .check_connection(crate::store::ConnectionRef {
                         kind: crate::store::ConnectionKind::Account,
@@ -686,47 +774,37 @@ impl Engine {
                     })
                     .await?;
                 let saved_id = account.id.clone();
-                if self
-                    .store
-                    .profile_reconnect_required(account.id.clone())
-                    .await?
-                {
-                    crate::profiles::reconnect::reconnect(
-                        &self.store,
-                        account,
-                        password,
-                        smtp_password,
-                        &crate::profiles::reconnect::OsSecrets,
+                // Resolve all required credentials before writing any of them.
+                // Downloaded endpoint changes cannot reuse a saved old secret.
+                let password = self
+                    .setup_password(
+                        &account,
+                        &password,
+                        &smtp_password,
+                        ConnectionTarget::Incoming,
                     )
                     .await?;
-                    self.workspace(&mut output).await?;
-                    output.send(Event::AccountSaved(saved_id)).await?;
-                    output
-                        .send(Event::Notice(
-                            "Account reconnected. Use Sync to receive your mail.".into(),
-                        ))
-                        .await?;
-                    return Ok(());
-                }
-                let password = if password.expose_secret().is_empty() {
-                    providers::read_secret(&account.id)
-                        .await
-                        .context("Enter an account password or app password")?
-                } else {
-                    password
-                };
-                if account.smtp_separate_password {
-                    let smtp_id = format!("{}:smtp", account.id);
-                    let smtp_password = if smtp_password.expose_secret().is_empty() {
-                        providers::read_secret(&smtp_id)
-                            .await
-                            .context("Enter the separate SMTP password")?
+                let separate =
+                    if account.smtp_separate_password && account.smtp_auth != SmtpAuth::None {
+                        Some(
+                            self.setup_password(
+                                &account,
+                                &password,
+                                &smtp_password,
+                                ConnectionTarget::Smtp,
+                            )
+                            .await?,
+                        )
                     } else {
-                        smtp_password
+                        None
                     };
-                    providers::write_secret(&smtp_id, smtp_password).await?;
+                if let Some(smtp_password) = separate {
+                    self.credentials
+                        .write(&format!("{}:smtp", account.id), smtp_password)
+                        .await?;
                 }
-                providers::write_secret(&account.id, password)
+                self.credentials
+                    .write(&account.id, password)
                     .await
                     .context("Could not save the account credential")?;
                 self.store.save_account(account).await?;
@@ -737,17 +815,6 @@ impl Engine {
                         "Account saved. Use Sync to receive your mail.".into(),
                     ))
                     .await?;
-            }
-            Command::SaveProfilePreferences(request, prefs, fields) => {
-                let event = match self.store.save_profile_preferences(prefs, fields).await {
-                    Ok(snapshot) => {
-                        self.mail_sync_settings
-                            .set(snapshot.value.mail_check_seconds);
-                        Event::PreferencesSaved(request, Arc::new(snapshot))
-                    }
-                    Err(error) => Event::PreferencesSaveFailed(request, error.to_string()),
-                };
-                output.send(event).await?;
             }
             Command::SavePreferences(request, prefs) => {
                 let event = match self.store.save_preferences(prefs).await {
@@ -764,7 +831,13 @@ impl Engine {
                 if self.demo {
                     #[cfg(feature = "test-support")]
                     {
-                        let round = crate::test_support::sync_mail(&self.store).await?;
+                        if std::env::args().any(|arg| arg == "--held-account-sync") {
+                            return self.preview_held_account_sync(output).await;
+                        }
+                        let (round, arrival) = crate::test_support::sync_mail(&self.store).await?;
+                        if let Some(arrival) = arrival {
+                            output.send(Event::MailArrived(Arc::new(arrival))).await?;
+                        }
                         output.send(Event::PreviewSync(round)).await?;
                     }
                     #[cfg(not(feature = "test-support"))]
@@ -772,7 +845,7 @@ impl Engine {
                     output.send(Event::Changed).await?;
                     return Ok(());
                 }
-                let accounts: Vec<Account> = self.store.get("accounts").await?;
+                let accounts = self.store.accounts_ready_to_sync().await?;
                 let results: Vec<_> = futures::stream::iter(accounts)
                     .map(|a| {
                         let engine = self.clone();
@@ -796,13 +869,42 @@ impl Engine {
                     .into_iter()
                     .filter_map(|result| result.err().map(|error| format!("{error:#}")))
                     .collect();
+                self.recover_completed_moves(output.clone()).await?;
                 self.workspace(&mut output).await?;
                 output.send(Event::Changed).await?;
                 anyhow::ensure!(failures.is_empty(), "{}", failures.join("\n"));
             }
+            Command::MoveRecoveries(request, after) => {
+                let result = self
+                    .store
+                    .pending_mail_moves(None, after)
+                    .await
+                    .map(Arc::new)
+                    .map_err(|error| format!("{error:#}"));
+                output.send(Event::MoveRecoveries(request, result)).await?;
+            }
+            Command::RecoverMailMove(request, record, action, confirmed) => {
+                let token = record.token.clone();
+                let result = self
+                    .recover_mail_move((*record).clone(), action, confirmed)
+                    .await;
+                let recovered = result.as_ref().ok().cloned();
+                output
+                    .send(Event::MailMoveRecovery(
+                        request,
+                        token,
+                        result.map(Arc::new).map_err(|error| format!("{error:#}")),
+                    ))
+                    .await?;
+                if let Some(record) = recovered {
+                    output.send(Event::MoveRecovered(Arc::new(record))).await?;
+                }
+                self.workspace(&mut output).await?;
+                output.send(Event::Changed).await?;
+            }
             Command::Transfer(request, mail, destination, folder) => {
                 let result = self
-                    .transfer_message(&mail, destination, folder, output.clone())
+                    .transfer_message(&mail, destination, folder, output.clone(), None)
                     .await;
                 let refresh = result.as_ref().ok().map(|(account, _)| account.clone());
                 output
@@ -814,6 +916,9 @@ impl Engine {
                             .map_err(|e| format!("{e:#}")),
                     ))
                     .await?;
+                if !self.demo {
+                    self.recover_completed_moves(output.clone()).await?;
+                }
                 if !self.demo
                     && let Some(account) = refresh
                     && let Err(error) = self.sync_account(account, output.clone()).await
@@ -822,7 +927,9 @@ impl Engine {
                 }
             }
             Command::Move(request, mail, folder) => {
-                let result = self.change_folder(&mail, &folder, output.clone()).await;
+                let result = self
+                    .change_folder(&mail, &folder, output.clone(), None)
+                    .await;
                 let refresh = result
                     .as_ref()
                     .ok()
@@ -837,6 +944,9 @@ impl Engine {
                             .map_err(|e| format!("{e:#}")),
                     ))
                     .await?;
+                if !self.demo {
+                    self.recover_completed_moves(output.clone()).await?;
+                }
                 if let Some(account) = refresh
                     && let Err(error) = self.sync_account(account, output.clone()).await
                 {
@@ -845,7 +955,7 @@ impl Engine {
             }
             Command::UndoMove(request, original, receipt) => {
                 let result = self
-                    .undo_move(original.clone(), &receipt, output.clone())
+                    .undo_move(original.clone(), &receipt, output.clone(), None)
                     .await;
                 let refresh = result
                     .as_ref()
@@ -860,6 +970,9 @@ impl Engine {
                             .map_err(|e| format!("{e:#}")),
                     ))
                     .await?;
+                if !self.demo {
+                    self.recover_completed_moves(output.clone()).await?;
+                }
                 if !self.demo
                     && let Some(account) = refresh
                     && let Err(error) = self.sync_account(account, output.clone()).await
@@ -902,6 +1015,7 @@ impl Engine {
                         && !self.store.get::<bool>("preview_discard_failed").await?
                     {
                         self.store.put("preview_discard_failed", true).await?;
+                        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
                         anyhow::bail!("Preview storage failure. Your draft is intact; try again.");
                     }
                     self.store.delete_draft(id.clone()).await
@@ -923,7 +1037,14 @@ impl Engine {
             }
             Command::AddDraftFiles(draft, paths) => {
                 let id = draft.id.clone();
-                let result = self.store.add_draft_files(draft, paths).await;
+                let result = async {
+                    #[cfg(feature = "test-support")]
+                    if self.demo {
+                        crate::test_support::attachment_delay(&self.store).await?;
+                    }
+                    self.store.add_draft_files(draft, paths).await
+                }
+                .await;
                 output
                     .send(Event::DraftFiles(
                         id,
@@ -1123,7 +1244,7 @@ impl Engine {
                         {
                             continue;
                         }
-                        let _guard = self.calendar_lock(&source.id).await;
+                        let _guard = self.calendar_access(&source.id).await;
                         let Some(source) = self
                             .store
                             .get::<Vec<CalendarSource>>("calendars")
@@ -1161,7 +1282,7 @@ impl Engine {
                     deleting_event || event.end > event.start,
                     "The event must end after it starts."
                 );
-                let _guard = self.calendar_lock(&event.source_id).await;
+                let _guard = self.calendar_access(&event.source_id).await;
                 let source = self
                     .store
                     .get::<Vec<CalendarSource>>("calendars")
@@ -1190,19 +1311,108 @@ impl Engine {
                 )
                 .await?;
             }
+            Command::ProbeSftp(request, settings) => {
+                let result = if self.demo {
+                    #[cfg(feature = "test-support")]
+                    {
+                        crate::test_support::sftp_fingerprint(&settings.host)
+                    }
+                    #[cfg(not(feature = "test-support"))]
+                    {
+                        Err(anyhow::anyhow!(
+                            "SFTP fingerprint probes are disabled in preview."
+                        ))
+                    }
+                } else {
+                    backup::sftp::probe_fingerprint(&settings).await
+                };
+                output
+                    .send(Event::SftpFingerprint(
+                        request,
+                        settings,
+                        result.map_err(|error| format!("{error:#}")),
+                    ))
+                    .await?;
+            }
+            Command::ConnectFtp(request, target, supplied) => {
+                let result = self.connect_ftp(&target, supplied).await;
+                output
+                    .send(Event::FtpConnection(
+                        request,
+                        target,
+                        result.map_err(|error| format!("{error:#}")),
+                    ))
+                    .await?;
+            }
+            Command::ConnectSftp(request, target, supplied) => {
+                let result = self.connect_sftp(&target, supplied).await;
+                output
+                    .send(Event::SftpConnection(
+                        request,
+                        target,
+                        result.map_err(|error| format!("{error:#}")),
+                    ))
+                    .await?;
+            }
+            Command::ConnectS3(request, target, supplied) => {
+                let result = self
+                    .connect_s3(&target, supplied, backup::s3::S3Backup::from_secret)
+                    .await;
+                output
+                    .send(Event::S3Connection(
+                        request,
+                        target,
+                        result.map_err(|error| format!("{error:#}")),
+                    ))
+                    .await?;
+            }
             Command::Backup(target, passphrase) => {
                 self.run_backup(target, Some(passphrase), &mut output)
+                    .await?;
+            }
+            Command::BackupIncluded(request, id, target) => {
+                self.backup_included(request, id, target, &mut output)
                     .await?;
             }
             Command::AutomaticBackup(target) => {
                 self.run_backup(target, None, &mut output).await?;
             }
+            Command::RetryBackupHistory(id, target, secret) => {
+                let history = self.store.backup_history(target.clone()).await?;
+                anyhow::ensure!(
+                    history
+                        .first()
+                        .is_some_and(|entry| entry.id == id && entry.outcome.attention()),
+                    "Backup activity changed. Refresh it before retrying."
+                );
+                if let Some(copy) = history.first().and_then(|entry| entry.copy.as_ref()) {
+                    let pending = self.backup_journal().await?.pending(&target).await?;
+                    anyhow::ensure!(
+                        pending
+                            .as_ref()
+                            .is_some_and(|entry| &entry.upload.id == copy),
+                        "This activity has no matching pending upload on this device. Refresh copies to check it, or choose Back up now to create a new copy."
+                    );
+                }
+                self.run_backup(target, Some(secret), &mut output).await?;
+            }
+            Command::BackupHistory(request, target) => {
+                let result = self.store.backup_history(target.clone()).await;
+                output
+                    .send(Event::BackupHistory(
+                        request,
+                        target,
+                        result.map(Arc::new).map_err(|error| format!("{error:#}")),
+                    ))
+                    .await?;
+            }
             Command::ListBackups(request, target) => {
                 let result: anyhow::Result<Vec<BackupCopy>> = async {
-                    anyhow::ensure!(!self.demo, "Backup listing is disabled in preview.");
+                    self.allow_backup()?;
                     let _guard = self.backup_connection_guard(&target).await;
                     let prefs = self.store.get("preferences").await?;
                     Self::check_backup_target(&target, &prefs)?;
+                    let prefs = backup::config::resolve(&prefs, &target)?;
                     self.backup_provider(&prefs).await?.list().await
                 }
                 .await;
@@ -1248,74 +1458,6 @@ impl Engine {
         }
         Ok(())
     }
-    async fn sync_account(&self, account: Account, mut output: Output) -> anyhow::Result<()> {
-        let _guard = self.account_lock(&account.id).await;
-        let account = self.account(&account.id).await?;
-        let password = self.read_account_secret(&account.id, false).await?;
-        let known = self.store.known(account.id.clone()).await?;
-        let (tx, mut rx) = mpsc::channel(8);
-        let store = self.store.clone();
-        let receive = async {
-            let mut last = Instant::now();
-            let mut skipped = 0;
-            while let Some(mail) = rx.recv().await {
-                if matches!(mail, MailSyncItem::SkippedLarge) {
-                    skipped += 1;
-                }
-                let folders_changed = matches!(&mail, MailSyncItem::Folders(..));
-                store.apply_sync(mail).await?;
-                if folders_changed {
-                    output
-                        .send(Event::Workspace(Arc::new(store.workspace().await?)))
-                        .await?;
-                }
-                if last.elapsed() > Duration::from_millis(250) {
-                    output.send(Event::Changed).await?;
-                    last = Instant::now();
-                }
-            }
-            if skipped > 0 {
-                output
-                    .send(Event::Notice(format!(
-                        "Skipped {skipped} messages larger than the 25 MiB download limit."
-                    )))
-                    .await?;
-            }
-            Ok::<_, anyhow::Error>(())
-        };
-        let provider = providers::mail::provider(account.protocol);
-        let sync = tokio::time::timeout(
-            Duration::from_secs(480),
-            provider.sync(&account, &password, &known, tx),
-        );
-        let (folders, ()) = tokio::try_join!(
-            async { sync.await.context("Account sync timed out")? },
-            receive
-        )?;
-        self.store
-            .run(move |c| {
-                use rusqlite::OptionalExtension;
-                let old: Option<String> = c
-                    .query_row("SELECT value FROM kv WHERE key='folders'", [], |r| r.get(0))
-                    .optional()?;
-                let mut all: Vec<String> = old
-                    .map(|s| serde_json::from_str(&s))
-                    .transpose()?
-                    .unwrap_or_default();
-                for f in folders {
-                    if !all.contains(&f) {
-                        all.push(f);
-                    }
-                }
-                c.execute(
-                    "INSERT OR REPLACE INTO kv VALUES('folders',?)",
-                    [serde_json::to_string(&all)?],
-                )?;
-                Ok(())
-            })
-            .await?;
-        Ok(())
-    }
 }
 async fn write_new(path: &str, bytes: &[u8]) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
@@ -1336,18 +1478,20 @@ mod calendar_tests {
 
     pub(super) fn engine() -> Engine {
         Engine {
+            profiles: None,
+            credentials: Default::default(),
             store: Store::memory().unwrap(),
             google: Default::default(),
             demo: true,
-            account_locks: Default::default(),
-            calendar_locks: Default::default(),
+            account_work: Default::default(),
+            calendar_work: Default::default(),
             calendar_setup_lock: Default::default(),
             connection_lifecycle_lock: Default::default(),
-            secret_remover: Arc::new(removals::OsSecretRemover),
-            outbound: Arc::new(providers::outgoing::Servers),
+            secret_remover: Arc::new(removals::OsSecretRemover::default()),
+            outbound: Arc::new(providers::outgoing::Servers::default()),
             google_connection_lock: Default::default(),
-            passphrases: Arc::new(backup::OsPassphraseStore),
-            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer),
+            passphrases: Arc::new(backup::OsPassphraseStore::default()),
+            restore_credentials: Arc::new(backup::restore::OsCredentialRestorer::default()),
             backup_uploads: Default::default(),
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),

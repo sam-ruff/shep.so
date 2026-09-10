@@ -29,7 +29,6 @@ impl Store {
             }
             let mut allowed = HashSet::new();
             let mut kept_connections = 0;
-            let credential_ids:HashSet<_>=snapshot.credentials.iter().filter(|(_,value)|!value.is_empty()).map(|(id,_)|id.as_str()).collect();
             for account in snapshot.accounts {
                 connections::revive(&tx, ConnectionKind::Account, &account.id)?;
                 for key in [&account.id, &format!("{}:smtp", account.id)] {
@@ -44,9 +43,7 @@ impl Store {
                     }
                 } else {
                     accounts.push(account.clone());
-                    if !credential_ids.contains(account.id.as_str()) || (account.smtp_separate_password && !credential_ids.contains(format!("{}:smtp",account.id).as_str())) {profile_reconnect::mark(&tx,&account.id)?;}
                 }
-                if profile_reconnect::required(&tx,&account.id)? {continue;}
                 allowed.insert(account.id.clone());
                 if account.smtp_separate_password {
                     allowed.insert(format!("{}:smtp", account.id));

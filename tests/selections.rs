@@ -103,6 +103,26 @@ async fn full_selection_has_identical_scope_and_order_to_every_inbox_page() {
                     expected,
                     "{sort:?} {search}"
                 );
+                if let (Some(first), Some(last)) = (expected.first(), expected.last()) {
+                    store
+                        .change_selection(
+                            id,
+                            0,
+                            SelectionChange::Range {
+                                anchor: first.clone(),
+                                target: last.clone(),
+                                additive: false,
+                            },
+                            vec![],
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        selected_ids(&store, id, 1).await,
+                        expected,
+                        "Rebased {sort:?} {search}"
+                    );
+                }
                 store.release_selection(id).await.unwrap();
             }
         }
@@ -462,4 +482,249 @@ async fn snapshot_pages_use_current_flags_and_do_not_persist_into_other_connecti
         reopened.query(MailQuery::default()).await.unwrap().total,
         142
     );
+}
+
+#[tokio::test]
+async fn explicit_arrival_selection_preserves_choices_and_frozen_review() {
+    let store = Store::memory().unwrap();
+    store
+        .upsert(vec![
+            message(0, "work", "INBOX"),
+            message(2, "work", "INBOX"),
+            message(4, "work", "INBOX"),
+        ])
+        .await
+        .unwrap();
+    let query = MailQuery {
+        account: Some("work".into()),
+        folder: "INBOX".into(),
+        sort: MailSort::Oldest,
+        ..Default::default()
+    };
+    let id = MailSelectionId::default();
+    store
+        .capture_selection(id, 0, query, true, vec![])
+        .await
+        .unwrap();
+    let frozen = store.freeze_selection(id, 0).await.unwrap();
+    store.remove("work:INBOX:4".into()).await.unwrap();
+    store
+        .upsert(vec![
+            message(1, "work", "INBOX"),
+            message(3, "work", "INBOX"),
+            message(5, "personal", "INBOX"),
+        ])
+        .await
+        .unwrap();
+    let passive = store
+        .selection_snapshot(id, vec!["work:INBOX:1".into()])
+        .await
+        .unwrap();
+    assert_eq!((passive.selected, passive.available), (3, 2));
+    assert!(passive.visible.is_empty());
+    let changed = store
+        .change_selection(
+            id,
+            0,
+            SelectionChange::Set {
+                id: "work:INBOX:1".into(),
+                selected: true,
+                clear_others: false,
+            },
+            vec!["work:INBOX:1".into(), "work:INBOX:3".into()],
+        )
+        .await
+        .unwrap();
+    assert_eq!((changed.selected, changed.available), (4, 3));
+    assert_eq!(changed.visible, ["work:INBOX:1".to_owned()].into());
+    assert_eq!(
+        selected_ids(&store, id, 1).await,
+        ["work:INBOX:0", "work:INBOX:1", "work:INBOX:2"]
+    );
+    let review = store.selection_snapshot(frozen.id, vec![]).await.unwrap();
+    assert_eq!((review.selected, review.available), (3, 2));
+    assert!(
+        store
+            .change_selection(
+                frozen.id,
+                0,
+                SelectionChange::Set {
+                    id: "work:INBOX:1".into(),
+                    selected: true,
+                    clear_others: false
+                },
+                vec![]
+            )
+            .await
+            .is_err()
+    );
+    // An out-of-scope click cannot clear valid choices, change the revision, or
+    // leak its temporary rebase candidate when validation fails.
+    assert!(
+        store
+            .change_selection(
+                id,
+                1,
+                SelectionChange::Set {
+                    id: "personal:INBOX:5".into(),
+                    selected: true,
+                    clear_others: true
+                },
+                vec![]
+            )
+            .await
+            .is_err()
+    );
+    let kept = store.selection_snapshot(id, vec![]).await.unwrap();
+    assert_eq!((kept.selected, kept.available, kept.revision), (4, 3, 1));
+    let captures = store
+        .run(|c| {
+            Ok(
+                c.query_row("SELECT COUNT(*) FROM scratch.mail_selections", [], |r| {
+                    r.get::<_, i64>(0)
+                })?,
+            )
+        })
+        .await
+        .unwrap();
+    assert_eq!(captures, 2);
+}
+
+#[tokio::test]
+async fn explicit_ranges_follow_current_order_including_intermediate_arrivals() {
+    let store = Store::memory().unwrap();
+    store
+        .upsert(vec![
+            message(0, "work", "INBOX"),
+            message(2, "work", "INBOX"),
+            message(4, "work", "INBOX"),
+        ])
+        .await
+        .unwrap();
+    let id = MailSelectionId::default();
+    store
+        .capture_selection(
+            id,
+            0,
+            MailQuery {
+                folder: "INBOX".into(),
+                sort: MailSort::Oldest,
+                ..Default::default()
+            },
+            false,
+            vec![],
+        )
+        .await
+        .unwrap();
+    store
+        .upsert(vec![
+            message(1, "work", "INBOX"),
+            message(3, "work", "INBOX"),
+        ])
+        .await
+        .unwrap();
+    let range = store
+        .change_selection(
+            id,
+            0,
+            SelectionChange::Range {
+                anchor: "work:INBOX:0".into(),
+                target: "work:INBOX:4".into(),
+                additive: false,
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    assert_eq!(range.selected, 5);
+    assert_eq!(
+        selected_ids(&store, id, 1).await,
+        (0..5)
+            .map(|i| format!("work:INBOX:{i}"))
+            .collect::<Vec<_>>()
+    );
+    let range = store
+        .change_selection(
+            id,
+            1,
+            SelectionChange::Range {
+                anchor: "work:INBOX:0".into(),
+                target: "work:INBOX:3".into(),
+                additive: false,
+            },
+            vec![],
+        )
+        .await
+        .unwrap();
+    assert_eq!(range.selected, 4);
+    store.remove("work:INBOX:3".into()).await.unwrap();
+    assert!(
+        store
+            .change_selection(
+                id,
+                2,
+                SelectionChange::Range {
+                    anchor: "work:INBOX:3".into(),
+                    target: "work:INBOX:4".into(),
+                    additive: false
+                },
+                vec![]
+            )
+            .await
+            .is_err()
+    );
+    let kept = store.selection_snapshot(id, vec![]).await.unwrap();
+    assert_eq!((kept.selected, kept.available, kept.revision), (4, 3, 2));
+}
+
+#[tokio::test]
+async fn across_folder_search_captures_exact_account_membership_and_ranking_over_pages() {
+    let store = Store::memory().unwrap();
+    fixture(&store).await;
+    let mut query = MailQuery {
+        account: Some("work".into()),
+        folder: "INBOX".into(),
+        search: "test".into(),
+        search_all_folders: true,
+        sort: MailSort::Relevance,
+        ..Default::default()
+    };
+    let expected = query_ids(&store, query.clone()).await;
+    assert_eq!(expected.len(), 134);
+    assert!(expected.iter().any(|id| id.contains(":A. Keep:")));
+    assert!(expected.iter().all(|id| id.starts_with("work:")));
+    let id = MailSelectionId::default();
+    let snapshot = store
+        .capture_selection(
+            id,
+            0,
+            query.clone(),
+            true,
+            expected.iter().take(PAGE_SIZE).cloned().collect(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(snapshot.selected, 134);
+    assert_eq!(selected_ids(&store, id, 0).await, expected);
+    query.search.clear();
+    assert_eq!(query_ids(&store, query.clone()).await.len(), 123);
+    // Clearing the live search cannot change the already captured membership.
+    assert_eq!(selected_ids(&store, id, 0).await, expected);
+    query.search = "test".into();
+    query.folders = Some(vec![FolderSelection {
+        account: Some("personal".into()),
+        folder: "INBOX".into(),
+        sent_only: false,
+    }]);
+    let expected = query_ids(&store, query.clone()).await;
+    assert_eq!(expected.len(), 8);
+    let scoped = MailSelectionId::default();
+    let snapshot = store
+        .capture_selection(scoped, 0, query, true, vec![])
+        .await
+        .unwrap();
+    assert_eq!(snapshot.selected, 8);
+    assert_eq!(selected_ids(&store, scoped, 0).await, expected);
+    store.release_selection(id).await.unwrap();
+    store.release_selection(scoped).await.unwrap();
 }

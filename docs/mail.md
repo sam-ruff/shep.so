@@ -6,7 +6,13 @@ Go to **Preferences → Accounts**. Add an IMAP or POP3 account, then enter its 
 
 ## Find and read messages
 
-The unified inbox brings your accounts together. Choose a folder in the sidebar, search by sender or message text, or filter for unread, flagged or attachment-bearing mail.
+The unified inbox brings your accounts together. Search sender, subject or message text across folders in the selected accounts. Results show their folder; clearing search returns to the folder you were browsing. Filter for unread, flagged or attachment-bearing mail.
+
+Refresh with the top-right icon, `Ctrl+R` or `F5`. The icon spins for manual refreshes; automatic background checks leave it still. Both shortcuts can be changed or disabled in Preferences.
+
+Simple letters use a padded, centered reading column. Formatted messages keep their sender layouts, and the surrounding message card follows the email’s background.
+
+Folder groups start collapsed. Click a chevron to show subfolders; click a folder name to read its mail. A container that cannot hold mail only expands. Shep remembers which groups you opened. With the sidebar focused, Left/Right moves through the tree and expands or collapses groups; Enter opens the focused folder. Ctrl-click combines folders. Dragging mail over a closed group opens it so you can drop into a subfolder.
 
 Click a message to read it. Moving on to another message, folder or tab marks it read. An explicit **Mark as unread** remains unread until you choose to read it again. Double-click for a full-window reader. Related messages appear as collapsible cards; disable grouping in **Preferences → General** if you prefer individual messages.
 
@@ -22,11 +28,15 @@ Use the visible message controls or right-click a message to reply, flag, move, 
 
 Use the forward arrow beside Reply, or `F`, to create a new draft with the original message and attachments. Enter the new recipients before sending. A note above the quoted original preserves its HTML and inline images; editing the quoted original sends your edited text as plain text. Forward can be remapped or disabled in Shortcuts.
 
+New messages and replies open in the preview pane. Replies keep the original conversation below the editor; **Include original message** controls whether quoted text is sent with your reply. Switch messages to work on several replies, then return to resume the matching draft. Collapse a draft with its chevron, or close the editor with × or Escape.
+
 Drafts save automatically and appear in the collapsible **Drafts** group. Right-click a draft or use the bin in its editor to discard it. Review the draft and any attached files before confirming; **Keep draft** or Escape cancels. Attached files are copied into the draft, so moving the originals will not break it. Interrupted sends appear in **Outbox** for review; they are not retried automatically.
 
 ## Adjust your reading preferences
 
 Choose appearance, text size and quoted-history display in **Preferences → General**. External images are blocked by default; manage exceptions in **Privacy** and trusted addresses in **Contacts**.
+
+New-mail popups and sound are enabled by default. Search Preferences for **Notifications** to turn either off, hide sender/subject details, or try a test notification. Alerts cover newly received unread Inbox mail across your accounts; the first import and repeated syncs stay quiet. Shep must be running, and your operating system’s notification permissions and sound settings still apply.
 
 See [current limits](limits.md) for provider restrictions and size limits.
 

@@ -23,6 +23,20 @@ pub struct Colors {
     pub flag: Color,
 }
 pub fn colors(theme: &Theme) -> Colors {
+    if matches!(theme, Theme::Custom(_)) {
+        let p = theme.extended_palette();
+        return Colors {
+            bg: p.background.base.color,
+            surface: p.background.weak.color,
+            subtle: p.background.strong.color,
+            text: p.background.base.text,
+            muted: p.background.strong.text,
+            border: p.secondary.base.color,
+            accent: p.primary.strong.color,
+            tint: p.primary.weak.color,
+            flag: p.danger.strong.color,
+        };
+    }
     let dark = theme.palette().background.r < 0.3;
     if dark {
         Colors {
@@ -128,14 +142,30 @@ pub fn destructive(theme: &Theme, status: button::Status) -> button::Style {
     if status != button::Status::Disabled {
         style.background = Some(
             match status {
-                button::Status::Hovered | button::Status::Pressed => hex(0x991b1b),
-                _ => hex(0xb91c1c),
+                button::Status::Hovered | button::Status::Pressed => {
+                    let color = theme.palette().danger;
+                    if color == hex(0xb91c1c) {
+                        hex(0x991b1b)
+                    } else {
+                        shade(color, false)
+                    }
+                }
+                _ => theme.palette().danger,
             }
             .into(),
         );
         style.text_color = Color::WHITE;
     }
     style
+}
+
+fn shade(color: Color, lighter: bool) -> Color {
+    let target = if lighter { 1. } else { 0. };
+    Color::from_rgb(
+        color.r * 0.85 + target * 0.15,
+        color.g * 0.85 + target * 0.15,
+        color.b * 0.85 + target * 0.15,
+    )
 }
 
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
@@ -151,14 +181,27 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
             ..Default::default()
         };
     }
+    let primary = theme.extended_palette().primary.base;
     let bg = match status {
-        button::Status::Hovered => hex(0x8060cc),
-        button::Status::Pressed => hex(0x60459f),
-        _ => hex(0x7356bd),
+        button::Status::Hovered => {
+            if primary.color == hex(0x7356bd) {
+                hex(0x8060cc)
+            } else {
+                shade(primary.color, true)
+            }
+        }
+        button::Status::Pressed => {
+            if primary.color == hex(0x7356bd) {
+                hex(0x60459f)
+            } else {
+                shade(primary.color, false)
+            }
+        }
+        _ => primary.color,
     };
     button::Style {
         background: Some(bg.into()),
-        text_color: Color::WHITE,
+        text_color: primary.text,
         border: Border {
             radius: 8.into(),
             width: if status == button::Status::Pressed {
@@ -166,7 +209,11 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
             } else {
                 0.
             },
-            color: hex(0x4e3787),
+            color: if primary.color == hex(0x7356bd) {
+                hex(0x4e3787)
+            } else {
+                shade(primary.color, false)
+            },
         },
         ..if matches!(status, button::Status::Disabled) {
             button::Style {
@@ -278,6 +325,8 @@ impl super::App {
     ) -> Element<'a, Message> {
         let control = button(if name == "flag" {
             flag_icon(active, 20.)
+        } else if name == "sync" && matches!(message, Message::Sync) {
+            icon_color(name, 20., false, false, self.refresh.angle())
         } else {
             icon(name, 20.)
         })
@@ -385,15 +434,21 @@ pub fn flagged(theme: &Theme, status: button::Status) -> button::Style {
     style
 }
 pub fn flag_icon<'a>(active: bool, size: f32) -> Element<'a, Message> {
-    icon_color("flag", size, false, active)
+    icon_color("flag", size, false, active, 0.)
 }
 pub fn icon<'a>(name: &str, size: f32) -> Element<'a, Message> {
-    icon_color(name, size, false, false)
+    icon_color(name, size, false, false, 0.)
 }
 pub fn icon_bright<'a>(name: &str, size: f32) -> Element<'a, Message> {
-    icon_color(name, size, true, false)
+    icon_color(name, size, true, false, 0.)
 }
-fn icon_color<'a>(name: &str, size: f32, bright: bool, is_flagged: bool) -> Element<'a, Message> {
+fn icon_color<'a>(
+    name: &str,
+    size: f32,
+    bright: bool,
+    is_flagged: bool,
+    angle: f32,
+) -> Element<'a, Message> {
     static ICONS: OnceLock<HashMap<&'static str, svg::Handle>> = OnceLock::new();
     let icons=ICONS.get_or_init(||[
         ("image",r#"<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="2"/><path d="m21 15-5-5L5 21"/>"#),
@@ -417,7 +472,7 @@ fn icon_color<'a>(name: &str, size: f32, bright: bool, is_flagged: bool) -> Elem
         ("chevron",r#"<path d="m9 5 7 7-7 7"/>"#),
         ("left",r#"<path d="m15 5-7 7 7 7"/>"#),
         ("down",r#"<path d="m6 9 6 6 6-6"/>"#),
-        ("sync",r#"<path d="M20 9a8.25 8.25 0 0 0-14-3L3 9m0-6v6h6M4 15a8.25 8.25 0 0 0 14 3l3-3m0 6v-6h-6"/>"#),
+        ("sync",r#"<g transform="translate(24 0) scale(-1 1)"><path d="M20 9a8.25 8.25 0 0 0-14-3L3 9m0-6v6h6M4 15a8.25 8.25 0 0 0 14 3l3-3m0 6v-6h-6"/></g>"#),
         ("settings",r#"<path d="m9 3 1-1h4l1 3 3 1 3 3-1 3 1 3-3 3-3 1-1 3h-4l-1-3-3-1-3-3 1-3-1-3 3-3 3-1V3Z"/><circle cx="12" cy="12" r="3"/>"#),
         ("shield",r#"<path d="m12 2 9 4v6c0 5-9 10-9 10S3 17 3 12V6l9-4Z"/><path d="m8 12 3 3 5-6"/>"#),
         ("cloud",r#"<path d="M6 18a5 5 0 0 1-1-10 7 7 0 0 1 13-2 6 6 0 0 1 0 12H6Z"/>"#),
@@ -431,6 +486,7 @@ fn icon_color<'a>(name: &str, size: f32, bright: bool, is_flagged: bool) -> Elem
         ("sun",r#"<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1 1M18 18l1 1M5 19l1-1M18 6l1-1"/>"#),
         ("moon",r#"<path d="M21 13A9 9 0 0 1 11 3 9 9 0 1 0 21 13Z"/>"#),
         ("keyboard",r#"<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h1m3 0h1m3 0h1m3 0h1M6 12h1m3 0h1m3 0h1m3 0h1M7 16h10"/>"#),
+        ("select-square",r#"<rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 3 3 5-6"/>"#),
         ("copy",r#"<rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3"/>"#),
         ("download",r#"<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>"#),
         ("up",r#"<path d="m6 15 6-6 6 6"/>"#),
@@ -439,6 +495,7 @@ fn icon_color<'a>(name: &str, size: f32, bright: bool, is_flagged: bool) -> Elem
     svg(icons.get(name).unwrap_or(&icons["mail"]).clone())
         .width(size)
         .height(size)
+        .rotation(iced::Rotation::Floating(iced::Radians(angle)))
         .style(move |t, _| svg::Style {
             color: Some(if is_flagged {
                 colors(t).flag

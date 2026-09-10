@@ -25,3 +25,6 @@ __pycache__/
 /backend/deploy/beta.env
 
 /web/src/wasm/
+
+# Per-workstation tool permissions are not project configuration.
+/.claude/

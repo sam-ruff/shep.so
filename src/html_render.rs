@@ -1,5 +1,6 @@
 //! HTML layout and rasterization live on an owned worker thread. iced receives
 //! immutable viewport frames and small input results through bounded channels.
+mod commands;
 mod container;
 pub mod preparation;
 mod selection;
@@ -23,7 +24,6 @@ pub struct Source {
     pub hide_quotes: bool,
     pub images: Vec<(String, Arc<[u8]>)>,
 }
-use tokio::sync::mpsc as commands;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Viewport {
@@ -96,6 +96,9 @@ pub struct Frame {
     pub pan: f32,
     pub scroll: f32,
     pub images: Vec<String>,
+    /// Validated remote resources actually decoded into these pixels.
+    pub loaded_images: Vec<(String, Arc<[u8]>)>,
+    pub background: Option<[u8; 4]>,
     pub reflow: Option<Reflow>,
 }
 impl Frame {
@@ -125,6 +128,7 @@ pub enum Event {
 pub fn subscription() -> impl futures::Stream<Item = Event> {
     iced::stream::channel(4, |mut output: mpsc::Sender<Event>| async move {
         let (tx, rx) = commands::channel(16);
+        let _cancel = rx.cancel_on_drop();
         let current = Arc::new(AtomicU64::new(0));
         if output
             .send(Event::Ready(tx, current.clone()))
@@ -250,6 +254,8 @@ fn document(
     output: &mut mpsc::Sender<Event>,
 ) -> anyhow::Result<Option<Input>> {
     viewport.validate()?;
+    #[cfg(test)]
+    let mut profiling = std::time::Instant::now();
     let Source {
         body,
         font_size,
@@ -259,8 +265,13 @@ fn document(
     let surface = container::Surface::new(viewport.width, viewport.height, viewport.scale, fonts);
     let mut container = surface.clone();
     let font_size = font_size.clamp(11, 26);
+    let reading = if body.reading_column {
+        "body{box-sizing:border-box;max-width:48em;margin:0 auto;padding:16px 20px}"
+    } else {
+        ""
+    };
     let source = format!(
-        "<style>body{{font-family:sans-serif;font-size:{font_size}px;line-height:1.5;color:#18181b;background:#fff;margin:0}}img{{max-width:100%}}</style>{}",
+        "<style>body{{font-family:sans-serif;font-size:{font_size}px;line-height:1.5;color:#18181b;background:#fff;margin:0}}img{{max-width:100%}}{reading}</style>{}",
         body.source.replace('\0', "\u{fffd}")
     );
     let quotes =
@@ -276,11 +287,19 @@ fn document(
     // These are already validated, cached WebP bytes; never fetch resources here.
     surface.seed_images(images);
     let measure = surface.0.borrow().text_measure_fn();
+    #[cfg(test)]
+    profile_stage("prepare", &mut profiling);
     let mut document = Document::from_html(&source, &mut container, None, quotes)
         .map_err(|_| anyhow::anyhow!("HTML parsing failed."))?;
+    #[cfg(test)]
+    profile_stage("parse", &mut profiling);
     let _ = document.render(viewport.width as f32);
+    #[cfg(test)]
+    profile_stage("layout", &mut profiling);
     let mut selection = Selection::default();
     selection.layout(&document);
+    #[cfg(test)]
+    profile_stage("selection", &mut profiling);
     let mut dragging = false;
     let mut drag_origin = (0., 0.);
     let mut scroll = 0.;
@@ -321,6 +340,7 @@ fn document(
                     viewport.height,
                     viewport.scale,
                 );
+                surface.begin_draw();
                 document.draw(
                     DrawContext::default(),
                     -pan,
@@ -344,8 +364,11 @@ fn document(
                 Arc::from(pixels)
             };
             let frame = {
-                let used_seeded_images = surface.used_seeded_images();
+                let used_seeded_images = surface.requested_images();
+                let loaded_images = surface.loaded_images();
+                let background = surface.background();
                 let mut surface = surface.0.borrow_mut();
+                surface.take_pending_images();
                 Frame {
                     generation,
                     layout_revision,
@@ -357,15 +380,14 @@ fn document(
                     content_width: document.width(),
                     pan,
                     scroll,
-                    images: surface
-                        .take_pending_images()
-                        .into_iter()
-                        .map(|(url, _)| url)
-                        .chain(used_seeded_images)
-                        .collect(),
+                    images: used_seeded_images,
+                    loaded_images,
+                    background,
                     reflow,
                 }
             };
+            #[cfg(test)]
+            profile_stage("paint", &mut profiling);
             if !emit(output, Event::Frame(Arc::new(frame))) {
                 return Ok(None);
             }
@@ -524,9 +546,9 @@ fn document(
                 }
             }
             Input::Image(id, url, bytes) if id == generation => {
-                if let Ok(webp) = crate::remote_images::convert_to_webp(&bytes) {
-                    surface.0.borrow_mut().load_image_data(&url, &webp);
-
+                // LoadImages has already validated and converted these bytes.
+                // Avoid a second full decode/encode before the renderer decode.
+                if surface.load_remote_image(&url, bytes) {
                     // Decode arrivals as usual, but coalesce subsequent layouts
                     // until the native scroller acknowledges the first anchor.
                     images_changed = true;
@@ -550,3 +572,14 @@ fn document(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+fn profile_stage(stage: &str, started: &mut std::time::Instant) {
+    if std::env::var_os("SHEP_PROFILE_CACHE").is_some() {
+        println!(
+            "stage={stage} ms={:.3}",
+            started.elapsed().as_secs_f64() * 1000.
+        );
+        *started = std::time::Instant::now();
+    }
+}

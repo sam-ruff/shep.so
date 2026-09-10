@@ -30,6 +30,11 @@ pub struct Google {
 }
 impl Default for Google {
     fn default() -> Self {
+        Self::with_credentials(crate::credentials::Credentials::default())
+    }
+}
+impl Google {
+    pub(crate) fn with_credentials(credentials: crate::credentials::Credentials) -> Self {
         Self {
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(45))
@@ -40,7 +45,7 @@ impl Default for Google {
             api_base: url::Url::parse("https://www.googleapis.com/")
                 .expect("official Google API URL"),
             state: Default::default(),
-            credentials: Arc::new(OsCredentialStore::default()),
+            credentials: Arc::new(OsCredentialStore { credentials }),
             token_endpoint: url::Url::parse("https://oauth2.googleapis.com/token")
                 .expect("official Google token endpoint"),
         }

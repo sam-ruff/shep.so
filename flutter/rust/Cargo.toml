@@ -5,6 +5,9 @@ edition = "2024"
 publish = false
 license = "MIT"
 
+# Standalone package: never join a parent checkout's workspace.
+[workspace]
+
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
 

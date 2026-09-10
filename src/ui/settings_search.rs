@@ -12,14 +12,19 @@ pub(super) struct Setting {
 }
 const SETTINGS: &[Setting] = &[
     Setting {
-        title: "Profiles and sync",
-        tab: SettingsTab::Profiles,
-        keywords: "google drive accounts preferences shared setup device discovery namespace",
+        title: "Colors",
+        tab: SettingsTab::General,
+        keywords: "color colour palette primary secondary accent surface background border light dark theme contrast",
+    },
+    Setting {
+        title: "System tray",
+        tab: SettingsTab::General,
+        keywords: "tray close minimize minimise quit exit menu bar background saving",
     },
     Setting {
         title: "Appearance",
         tab: SettingsTab::General,
-        keywords: "theme light dark system colors colour",
+        keywords: "theme light dark system",
     },
     Setting {
         title: "Reading and layout",
@@ -30,10 +35,15 @@ const SETTINGS: &[Setting] = &[
         title: "Mail & performance",
         tab: SettingsTab::General,
         keywords: if crate::desktop_badge::SUPPORTED {
-            "sync interval seconds minutes refresh preload background speed unread badge dock taskbar launcher notifications"
+            "sync interval seconds minutes refresh preload background speed unread badge dock taskbar launcher"
         } else {
             "sync interval seconds minutes refresh preload background speed"
         },
+    },
+    Setting {
+        title: "Notifications",
+        tab: SettingsTab::General,
+        keywords: "notification popup banner sound audio alert new mail sender subject privacy",
     },
     Setting {
         title: "Tooltips",
@@ -43,12 +53,22 @@ const SETTINGS: &[Setting] = &[
     Setting {
         title: "Your accounts",
         tab: SettingsTab::Accounts,
-        keywords: "add account email imap pop3 smtp password server tls ssl authentication connection remove",
+        keywords: "add account email imap pop3 smtp password server tls ssl authentication connection remove unfinished moves recovery local copy",
     },
     Setting {
         title: "Google connection",
         tab: SettingsTab::Accounts,
         keywords: "google sign in login oauth reconnect disconnect permissions consent drive calendar read only",
+    },
+    Setting {
+        title: "Profiles",
+        tab: SettingsTab::Accounts,
+        keywords: "profile workspace database import device computer switch rename launch",
+    },
+    Setting {
+        title: "Profiles and sync",
+        tab: SettingsTab::Accounts,
+        keywords: "cloud shared profile google drive device settings accounts sync enrollment",
     },
     Setting {
         title: "Connected calendars",
@@ -58,12 +78,17 @@ const SETTINGS: &[Setting] = &[
     Setting {
         title: "Backups",
         tab: SettingsTab::Backups,
-        keywords: "backup drive destination folder rolling copies retention schedule passphrase password encryption",
+        keywords: "backup compress compression encrypted unencrypted format all include multiple retry progress drive s3 sftp ssh host fingerprint username ftp ftps tls bucket endpoint region access key destination folder rolling copies retention schedule passphrase password encryption",
     },
     Setting {
         title: "Restore a copy",
         tab: SettingsTab::Backups,
         keywords: "restore backup recovery import",
+    },
+    Setting {
+        title: "Database transfer",
+        tab: SettingsTab::Backups,
+        keywords: "database sqlite import export migrate computer transfer all emails drafts accounts settings",
     },
     Setting {
         title: "Keyboard shortcuts",
@@ -137,7 +162,12 @@ mod tests {
         assert_eq!(matches("font")[0].title, "Reading and layout");
         assert_eq!(matches("TLS")[0].title, "Your accounts");
         assert_eq!(matches("tooltip")[0].title, "Tooltips");
-        assert_eq!(matches("secondary")[0].title, "Keyboard shortcuts");
+        assert!(
+            matches("secondary")
+                .iter()
+                .any(|setting| setting.title == "Keyboard shortcuts")
+        );
+        assert_eq!(matches("palette")[0].title, "Colors");
         assert_eq!(matches("select all")[0].title, "Keyboard shortcuts");
         assert!(matches("no-such-setting").is_empty());
     }

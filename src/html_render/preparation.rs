@@ -11,7 +11,6 @@ pub struct Key {
     pub font_size: u16,
     pub hide_quotes: bool,
     pub allow_images: bool,
-    pub image_revision: u64,
     pub viewport: Viewport,
 }
 #[derive(Debug, Clone)]
@@ -27,18 +26,27 @@ pub enum Event {
 pub fn subscription() -> impl futures::Stream<Item = Event> {
     iced::stream::channel(2, |mut output: mpsc::Sender<Event>| async move {
         let (tx, rx) = watch::channel(Vec::new());
+        let (_cancel, stopped) = commands::cancellation();
         if output.send(Event::Ready(tx)).await.is_err() {
             return;
         }
-        let _ = tokio::task::spawn_blocking(move || worker(rx, output)).await;
+        let _ = tokio::task::spawn_blocking(move || worker(rx, output, stopped)).await;
     })
 }
-fn worker(mut input: watch::Receiver<Vec<Request>>, mut output: mpsc::Sender<Event>) {
+fn worker(
+    mut input: watch::Receiver<Vec<Request>>,
+    mut output: mpsc::Sender<Event>,
+    mut stopped: watch::Receiver<bool>,
+) {
     let mut font_system = None;
-    while futures::executor::block_on(input.changed()).is_ok() {
+    while !*stopped.borrow()
+        && futures::executor::block_on(async {
+            tokio::select! { biased; _ = stopped.changed() => false, result = input.changed() => result.is_ok() }
+        })
+    {
         let requests = input.borrow_and_update().clone();
         for request in requests.into_iter().take(2) {
-            if input.has_changed().unwrap_or(true) {
+            if *stopped.borrow() || input.has_changed().unwrap_or(true) {
                 break;
             }
             // A one-frame session uses the same rendering path, then releases
@@ -95,7 +103,6 @@ mod tests {
                 font_size: 14,
                 hide_quotes: true,
                 allow_images: true,
-                image_revision: 1,
                 viewport,
             },
             source: Source {
@@ -118,7 +125,8 @@ mod tests {
         }]);
         tx.send_replace(vec![request.clone()]);
         let (output, mut events) = mpsc::channel(2);
-        let thread = std::thread::spawn(move || worker(rx, output));
+        let (_cancel, stopped) = commands::cancellation();
+        let thread = std::thread::spawn(move || worker(rx, output, stopped));
         let result = tokio::time::timeout(std::time::Duration::from_secs(20), events.next())
             .await
             .unwrap();
@@ -135,5 +143,19 @@ mod tests {
         );
         drop(tx);
         thread.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelling_preparation_stops_an_idle_worker_while_ui_retains_its_mailbox() {
+        let (tx, rx) = watch::channel(Vec::new());
+        let (output, _events) = mpsc::channel(2);
+        let (cancel, stopped) = commands::cancellation();
+        let worker = tokio::task::spawn_blocking(move || worker(rx, output, stopped));
+        drop(cancel);
+        tokio::time::timeout(std::time::Duration::from_secs(1), worker)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(tx.is_closed());
     }
 }
