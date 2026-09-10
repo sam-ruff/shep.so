@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { seed, profile, subject } from "./mailbox-fixture";
 
@@ -108,7 +108,31 @@ async function savedRecovery(page: Page) {
           state.epoch,
         )
         .catch(() => {});
-      for (let i = 0; i < 25; i++) await create(`new-review-${i}`, 57, 1);
+      // A frozen review whose tab is gone: 60 staged rows need two bounded
+      // cleanup transactions at the next owner's startup.
+      await create("older-abandoned", 0, 58);
+      await j.prepare(
+        "older-abandoned-tail",
+        { kind: "flags", starred: true },
+        2,
+        (async function* () {
+          yield originals(0, 2);
+        })(),
+        state.epoch,
+      );
+      // Approved but paused groups keep the older entries beyond the first
+      // History page without ever becoming runnable.
+      for (let i = 0; i < 25; i++) {
+        const paused = await create(`new-paused-${i}`, 57, 1);
+        await j.decideCurrent(
+          await j.decideCurrent(
+            paused,
+            "approve",
+            await store.intents.reserve(),
+          ),
+          "pause",
+        );
+      }
       let busy = await create("new-queued", 56, 1);
       busy = await j.decideCurrent(
         busy,
@@ -149,8 +173,36 @@ async function savedRecovery(page: Page) {
     .toBe("function");
 }
 
+/** Which seeded abandoned reviews still exist, and how many of their rows. */
+function retiredReviews(page: Page) {
+  return page.evaluate(async (profile) => {
+    const path = "/src/bulk_journal.ts",
+      { BulkJournal } = await import(path);
+    return BulkJournal.inspect(profile, async (j: any) => {
+      const present = (id: string) =>
+        j.get(id).then(
+          () => true,
+          () => false,
+        );
+      let rows = 0;
+      for (const id of [
+        "older-abandoned",
+        "older-abandoned-tail",
+        "older-interrupted",
+      ])
+        rows += (await j.page(id)).length;
+      return {
+        abandoned: await present("older-abandoned"),
+        tail: await present("older-abandoned-tail"),
+        interrupted: await present("older-interrupted"),
+        rows,
+      };
+    });
+  }, profile);
+}
+
 for (const theme of ["light", "dark"] as const) {
-  test(`startup ${theme} finds older failed, unconfirmed and interrupted groups while queued work is pending`, async ({
+  test(`startup ${theme} finds older failed and unconfirmed groups and retires abandoned reviews while queued work is pending`, async ({
     page,
   }) => {
     await page.setViewportSize(
@@ -186,7 +238,17 @@ for (const theme of ["light", "dark"] as const) {
       .click();
     await expect(banner).toContainText("52 changes failed");
     await expect(banner).toContainText("1 change has an unconfirmed result");
-    await expect(banner).toContainText("1 review ended before approval");
+    // Abandoned reviews and interrupted staging were retired by the new
+    // owner before its held provider step, so nothing is left to review.
+    await expect(banner).not.toContainText("review ended before approval");
+    await expect
+      .poll(() => retiredReviews(page))
+      .toEqual({
+        abandoned: false,
+        tail: false,
+        interrupted: false,
+        rows: 0,
+      });
     expect(
       (await new AxeBuilder({ page }).include(".group-recovery").analyze())
         .violations,
@@ -395,6 +457,125 @@ test("startup points to saved receipts and cache retry never repeats the acknowl
   );
   expect(calls).toHaveLength(124);
   expect(calls).not.toContain("m000");
+});
+
+async function reviewJobs(page: Page) {
+  return page.evaluate(async (profile) => {
+    const path = "/src/bulk_journal.ts",
+      { BulkJournal } = await import(path);
+    return BulkJournal.inspect(profile, async (j: any) =>
+      Promise.all(
+        (await j.history()).map(async (job: any) => ({
+          state: job.state,
+          rows: (await j.page(job.id)).length,
+        })),
+      ),
+    );
+  }, profile);
+}
+async function openSecondTab(context: BrowserContext) {
+  const other = await context.newPage();
+  await other.route("**/api/session", (route) =>
+    route.fulfill({
+      json: {
+        email: "owner@example.test",
+        user_id: profile,
+        csrf: "X".repeat(43),
+      },
+    }),
+  );
+  await other.goto("/");
+  await expect(
+    other.getByRole("button", { name: subject(0), exact: true }),
+  ).toBeVisible();
+  return other;
+}
+
+test("a review open in a live tab survives another owner's sweep; the same review is retired once its tab closes", async ({
+  page,
+  context,
+}) => {
+  await seed(page);
+  await page.getByRole("button", { name: "Select", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Select all messages", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Archive selected messages", exact: true })
+    .click();
+  const review = page.getByRole("dialog", {
+    name: "Review group action",
+    exact: true,
+  });
+  await expect(
+    review.getByRole("button", { name: "Archive 125 messages", exact: true }),
+  ).toBeFocused();
+  const other = await openSecondTab(context);
+  // The second owner has started and swept; the live review keeps its rows.
+  await other
+    .getByRole("button", { name: "Group history", exact: true })
+    .click();
+  const history = other.getByRole("dialog", {
+    name: "Group history",
+    exact: true,
+  });
+  await expect(
+    history.getByRole("button", { name: /^Archive 125 messages/ }),
+  ).toBeVisible();
+  await history.getByRole("button", { name: "Close", exact: true }).click();
+  // Wait for the second owner's startup run (and its sweep) to finish.
+  await expect
+    .poll(() =>
+      other.evaluate(
+        async (profile) =>
+          (await navigator.locks.query()).held?.some(
+            (lock) => lock.name === `shep.bulk.v1.${profile}`,
+          ) ?? false,
+        profile,
+      ),
+    )
+    .toBe(false);
+  expect(await reviewJobs(other)).toEqual([{ state: "review", rows: 50 }]);
+  await expect(
+    review.getByRole("button", { name: "Archive 125 messages", exact: true }),
+  ).toBeEnabled();
+  // Both tabs hold their own review liveness lock; only the reviewing tab's
+  // lock disappears when it closes.
+  const tabLocks = (target: Page) =>
+    target.evaluate(
+      async (profile) =>
+        (await navigator.locks.query()).held?.filter((lock) =>
+          lock.name?.startsWith(`shep.bulk.tab.${profile}.`),
+        ).length ?? 0,
+      profile,
+    );
+  expect(await tabLocks(other)).toBe(2);
+  await page.close();
+  await expect.poll(() => tabLocks(other)).toBe(1);
+  await other.reload();
+  await expect(
+    other.getByRole("button", { name: subject(0), exact: true }),
+  ).toBeVisible();
+  await expect.poll(() => reviewJobs(other)).toEqual([]);
+  await other
+    .getByRole("button", { name: "Group history", exact: true })
+    .click();
+  await expect(history).toContainText("No group changes on this device.");
+  await expect(
+    other.getByRole("alert", { name: "Saved group actions", exact: true }),
+  ).toBeHidden();
+  const folders = await other.evaluate(async (profile) => {
+    const path = "/src/storage.ts",
+      { BrowserStore } = await import(path),
+      store = await BrowserStore.open(profile);
+    try {
+      return (await store.all("mail")).map((mail: any) => mail.core.folder);
+    } finally {
+      store.close();
+    }
+  }, profile);
+  expect(folders).toEqual(Array(125).fill("INBOX"));
+  await other.close();
 });
 
 test("a second tab observes live ownership without recovery and reports uncertainty only after the owner closes", async ({

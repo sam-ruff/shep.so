@@ -432,9 +432,11 @@ export class SelectionStore {
     job: string,
     action: BulkAction,
     snapshotStarted: () => void = () => {},
+    owner?: string,
   ) {
     selectionToken(id);
     selectionToken(job);
+    if (owner !== undefined) selectionToken(owner);
     revision(expected);
     return BulkJournal.own(this.user, async (journal) => {
       this.exec(
@@ -550,6 +552,7 @@ export class SelectionStore {
           this.value("SELECT COUNT(*) FROM bulk_export"),
           chunks(),
           cacheEpoch,
+          owner,
         );
       } finally {
         this.exec("DELETE FROM bulk_export");

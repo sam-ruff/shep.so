@@ -104,12 +104,13 @@ export class SelectionWorkerClient
     expected: number,
     job: string,
     action: BulkAction,
+    owner?: string,
   ): Promise<BulkJob> {
     await this.ready;
     if (this.closing)
       throw Error("Selection is closing. Select messages again.");
     return this.send<BulkJob>({
-      prepareBulk: { selection, expected, job, action },
+      prepareBulk: { selection, expected, job, action, owner },
     });
   }
   private async finishClose(): Promise<void> {

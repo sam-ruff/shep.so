@@ -61,7 +61,10 @@ export interface BulkItem extends BulkOriginal {
 export interface BulkJob {
   id: string;
   action: BulkAction;
-  state: "preparing" | "interrupted" | "review" | "ready";
+  state: "preparing" | "interrupted" | "review" | "ready" | "cancelled";
+  /** Tab session that prepared the review; its liveness lock keeps the frozen
+   * review alive. A review without a live owner is retired by the sweep. */
+  owner?: string;
   created: number;
   revision: number;
   total: number;
@@ -87,6 +90,32 @@ export interface BulkAttention {
   kind: "failed" | "uncertain" | "cache" | "interrupted";
   count: number;
   job: string;
+}
+export interface BulkSweep {
+  /** Jobs whose last rows were removed. */
+  retired: number;
+  rows: number;
+  /** The transaction bound was reached; abandoned rows may remain. */
+  more: boolean;
+}
+/** Each tab holds this lock while it can still approve its frozen reviews. */
+export const tabLock = (user: string, owner: string) =>
+  `shep.bulk.tab.${user}.${owner}`;
+async function liveOwners(user: string): Promise<Set<string>> {
+  const prefix = tabLock(user, "");
+  const { held } = await navigator.locks.query();
+  return new Set(
+    (held ?? []).flatMap((lock) =>
+      lock.name?.startsWith(prefix) ? [lock.name.slice(prefix.length)] : [],
+    ),
+  );
+}
+export function abandonedReview(job: BulkJob, live: Set<string>) {
+  return (
+    job.state === "cancelled" ||
+    job.state === "interrupted" ||
+    (job.state === "review" && (!job.owner || !live.has(job.owner)))
+  );
 }
 interface AccountFence {
   id: string;
@@ -894,6 +923,7 @@ export class BulkJournal {
     total: number,
     chunks: AsyncIterable<BulkOriginal[]>,
     cacheEpoch?: string,
+    owner?: string,
   ): Promise<BulkJob> {
     selectionToken(id);
     bounds(total);
@@ -908,6 +938,7 @@ export class BulkJournal {
           id,
           action: chosen,
           state: "preparing",
+          ...(owner ? { owner: text(owner) } : {}),
           created: Date.now(),
           revision: 0,
           total,
@@ -987,6 +1018,68 @@ export class BulkJournal {
       job.state = "review";
       return this.save(tx, job);
     });
+  }
+  /** A declined or closed review is fenced before its rows are removed, so it
+   * cannot be approved later and the sweep finishes it regardless of owner. */
+  cancel(expected: BulkJob) {
+    bounds(expected.revision);
+    return this.transaction("readwrite", async (tx) => {
+      const job = await this.job(tx, expected.id);
+      if (job.state === "cancelled") return job;
+      if (job.state !== "review" || job.revision !== expected.revision)
+        throw changed();
+      job.state = "cancelled";
+      return this.save(tx, job);
+    });
+  }
+  private async abandoned(
+    tx: IDBTransaction,
+    live: Set<string>,
+  ): Promise<BulkJob | undefined> {
+    const states = tx.objectStore("jobs").index("state");
+    for (const state of ["cancelled", "interrupted"]) {
+      const job = await request<BulkJob | undefined>(states.get(state));
+      if (job) return job;
+    }
+    const reviews = await request<BulkJob[]>(states.getAll("review", 50));
+    return reviews.find((job) => abandonedReview(job, live));
+  }
+  /** Retire frozen reviews and staged rows without a live owner. Each strict
+   * transaction removes at most 50 item rows plus their job record; runnable
+   * jobs, receipts and pending cache repair are never touched and no provider
+   * step runs. Liveness comes from the tab locks held right now. */
+  async sweep(limit: number): Promise<BulkSweep> {
+    bounds(limit);
+    if (!this.owned) throw Error("Group cleanup requires execution ownership.");
+    const live = await liveOwners(this.user);
+    const result: BulkSweep = { retired: 0, rows: 0, more: false };
+    for (let i = 0; i < limit; i++) {
+      const found = await this.transaction("readwrite", async (tx) => {
+        const job = await this.abandoned(tx, live);
+        if (!job) return false;
+        job.state = "cancelled";
+        const items = await request<BulkItem[]>(
+          tx
+            .objectStore("items")
+            .getAll(
+              IDBKeyRange.bound([job.id, 0], [job.id, Number.MAX_SAFE_INTEGER]),
+              50,
+            ),
+        );
+        for (const item of items)
+          tx.objectStore("items").delete([item.job, item.position]);
+        result.rows += items.length;
+        if (items.length < 50) {
+          tx.objectStore("jobs").delete(job.id);
+          this.touch(tx);
+          result.retired++;
+        } else this.save(tx, job);
+        return true;
+      });
+      if (!found) return result;
+    }
+    result.more = true;
+    return result;
   }
   /** Receipt progress may advance the revision while an Undo/Pause button is
    * held. Compare its reviewed decision generation inside the same transaction,

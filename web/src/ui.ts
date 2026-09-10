@@ -1,4 +1,12 @@
 import { GroupUI } from "./bulk_ui";
+import {
+  dialogShortcuts,
+  keyCombo,
+  keyConsumed,
+  shortcutLabel,
+  shortcutName,
+  type ShortcutKey,
+} from "./shortcut_keys";
 import { renderReaderTree } from "./reader_actions";
 import { PrintController } from "./printing_controller";
 import { MessageFind, SearchWorker } from "./message_find";
@@ -358,7 +366,12 @@ export function mount(
   function readerShortcuts() {
     return [
       ...Object.entries(w.preferences.shortcuts)
-        .filter(([action, value]) => action !== "selectAll" && value)
+        .filter(
+          ([action, value]) =>
+            action !== "selectAll" &&
+            !dialogShortcuts.includes(action as ShortcutKey) &&
+            value,
+        )
         .map(([, value]) => value),
       "Escape",
       ...(w.preferences.shortcuts.find === "Control+f" ? ["Meta+f"] : []),
@@ -2076,15 +2089,7 @@ export function mount(
     ) as (keyof Preferences["shortcuts"])[]) {
       const value = p.shortcuts[key];
       const row = el("div", "shortcut");
-      row.append(
-        el(
-          "span",
-          "",
-          key === "selectAll"
-            ? "Select all messages"
-            : key[0].toUpperCase() + key.slice(1),
-        ),
-      );
+      row.append(el("span", "", shortcutLabel(key)));
       const capturing = shortcutCapture?.key === key;
       const capture = button(
         capturing
@@ -2100,10 +2105,7 @@ export function mount(
       // Both the button and its ancestors survive provider/query redraws.
       // The capture itself belongs to the mounted UI, not a disposable node.
       capture.dataset.stable = `shortcut-capture:${key}`;
-      capture.setAttribute(
-        "aria-label",
-        `Remap ${key === "selectAll" ? "select all messages" : key}`,
-      );
+      capture.setAttribute("aria-label", `Remap ${shortcutName(key)}`);
       capture.onkeydown = (e) => {
         if (shortcutCapture?.key !== key) return;
         e.preventDefault();
@@ -2114,14 +2116,7 @@ export function mount(
           return;
         }
         if (["Control", "Meta", "Shift", "Alt"].includes(e.key)) return;
-        const combo = [
-          e.ctrlKey ? "Control" : e.metaKey ? "Meta" : "",
-          e.altKey ? "Alt" : "",
-          e.shiftKey ? "Shift" : "",
-          e.key.length === 1 ? e.key.toLowerCase() : e.key,
-        ]
-          .filter(Boolean)
-          .join("+");
+        const combo = keyCombo(e);
         const latest = w.preferences;
         if (
           Object.entries(latest.shortcuts).some(
@@ -2147,7 +2142,7 @@ export function mount(
           w.preferences.shortcuts[key] || "Disabled";
       };
       const clear = button(
-        `Clear ${key === "selectAll" ? "select all messages" : key}`,
+        `Clear ${shortcutName(key)}`,
         () => {
           shortcutCapture = undefined;
           const latest = w.preferences;
@@ -2455,32 +2450,8 @@ export function mount(
   }
   w.addEventListener("change", render);
   document.addEventListener("keydown", (e) => {
-    if (
-      e.defaultPrevented ||
-      document.querySelector("dialog[open]") ||
-      (!e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
-        !e.shiftKey &&
-        (e.key === "Enter" || e.key === " ") &&
-        (e.target as Element).closest(
-          "button, summary, a[href], input[type=checkbox], input[type=radio]",
-        )) ||
-      (e.target instanceof HTMLInputElement && e.target.type !== "checkbox") ||
-      e.target instanceof HTMLTextAreaElement ||
-      e.target instanceof HTMLSelectElement ||
-      (e.target as HTMLElement).isContentEditable
-    )
-      return;
-    const combo = [
-      e.ctrlKey ? "Control" : e.metaKey ? "Meta" : "",
-      e.altKey ? "Alt" : "",
-      e.shiftKey ? "Shift" : "",
-      e.key.length === 1 ? e.key.toLowerCase() : e.key,
-    ]
-      .filter(Boolean)
-      .join("+");
-    if (handleShortcut(combo)) e.preventDefault();
+    if (document.querySelector("dialog[open]") || keyConsumed(e)) return;
+    if (handleShortcut(keyCombo(e))) e.preventDefault();
   });
   function handleShortcut(combo: string) {
     if (tab !== "Mail" || document.querySelector("dialog[open]")) return false;
@@ -2500,7 +2471,10 @@ export function mount(
       return true;
     }
     let entry = Object.entries(w.preferences.shortcuts).find(
-      ([, value]) => value && value === combo,
+      ([key, value]) =>
+        value &&
+        value === combo &&
+        !dialogShortcuts.includes(key as ShortcutKey),
     );
     if (
       !entry &&
