@@ -708,6 +708,14 @@ failure/retry, durable auto-exit and background arrivals. Review light and compa
 dark WebPs. These Linux native fixture checks are distinct from an actual desktop
 shell and from Windows/macOS execution; keep those limitations explicit.
 
+`desktop.start(tray="available", backup_run="held")` stalls the second backup
+upload inside a blocking task after its reservation is journaled. Keep
+`test_tray_native_quit_leaves_held_backup_upload_journaled_and_process_exits`
+(first close waits in the tray, tray-menu Quit exits, `wait_exit` returns the
+return code, the journal row survives restart), the slow-upload close notice flow
+and the held read-only sync Quit flow. `wait_exit` reports `returncode`; assert
+it rather than only that a window disappeared.
+
 `test_tray_native_ordinary_hide_reopens_when_pending_send_fails` enables the real
 close preference, sends an isolated failing reply, and closes to the native tray.
 It covers both ordinary hidden saving and selecting Quit from the actual tray

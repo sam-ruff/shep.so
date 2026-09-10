@@ -187,7 +187,7 @@ pub(crate) async fn saving_notification() -> anyhow::Result<()> {
         popups: true,
         sound: false,
         title: "Shep is finishing your changes".into(),
-        body: "Shep will quit when your changes are saved. Open it from the tray to keep working."
+        body: "Shep will quit when your changes are saved. Open Shep from the tray to keep working, or choose Quit Shep to leave now; journaled uploads resume next time."
             .into(),
     })
     .await

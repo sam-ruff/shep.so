@@ -2,6 +2,70 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## 10 September: closing blocked by saving (R90/R86)
+
+Sam's first phase-2 fix. On `c414227` three blocked-close paths were reproduced
+deterministically and corrected on lane `worktree-agent-a92937f9fa561a16d`
+(merged forward onto `ee1305c`).
+
+Reproduced causes. Tray-menu Quit and Preferences Quit Shep while a close was
+already pending re-entered the same `WindowClose` wait and had no effect, so a
+backup upload (untimed by design so a healthy large archive is never cut off) or
+a credential-store call could keep a hidden, windowless Shep alive with no way
+out; three reproduction tests fail on unmodified `c414227`
+(`artifacts/logs/close-repro-head.log`). Quit from an ordinary hidden tray never
+sent the saving notification. After `iced::exit()` the daemon drops its Tokio
+runtime, whose drop joins every running `spawn_blocking` task, so a stalled
+transfer left the process running silently after the last window closed.
+
+Fixes. A repeated explicit Quit (`App::quit_now`: tray menu, Preferences button,
+or closing the visible fallback window again when notifications are unavailable)
+leaves immediately when only journaled work remains (`backup:*` upload journal,
+`credential-cleanup`; both resume on the next launch), otherwise reopens the
+window with the exact reason plus "Shep will quit as soon as this is saved" and
+keeps close intent so the pending acknowledgment still exits automatically. A
+repeated native close event while hiding is not treated as Quit. Quit from an
+ordinary hidden tray announces saving with the same notification, whose text
+now names Quit Shep. `finish_exit` arms `lifecycle::bound_exit` with a
+five-second deadline after the final required acknowledgment. Local saves and
+unjournaled provider writes still block exit and stay bounded by their provider
+timeouts; nothing fakes an acknowledgment and no queue became unbounded.
+
+Evidence. Seven new Rust tests in `ui::tray`, `ui::closing` and `lifecycle`;
+the targeted `tray`/`closing`/`lifecycle` filter passes 32. New
+`backup_run="held"` fixture stalls the second upload inside a blocking task
+after its reservation is journaled. New native scenarios:
+`test_tray_native_quit_leaves_held_backup_upload_journaled_and_process_exits`
+(first close waits in the tray with the notice, tray Quit exits with return code
+0 inside the ten-second `wait_exit` bound, the journal row and first copy survive
+exit and restart),
+`test_tray_native_close_during_slow_backup_upload_notifies_then_exits_when_saved`
+(temporary tray notice names Quit Shep, automatic exit, both copies saved,
+journal empty) and
+`test_tray_native_quit_during_held_readonly_sync_exits_and_keeps_cache`
+(close-to-tray hide, Quit during an indefinitely held read-only sync, cache
+count unchanged after restart) and
+`test_tray_native_repeated_quit_with_pending_send_shows_reason_and_keeps_reply`
+(light and compact dark: Quit during a pending preview send reopens the window
+with the reason, the later rejection cancels close and keeps the reply).
+`wait_exit` now reports the return code. In the held-upload run the process
+ended after 5,026 ms, the exit deadline, where the slow-upload and held-sync
+runs ended in 1,422 ms and 16 ms (`artifacts/e2e/c786c424d98a`,
+`ffa4c24fdbd3`, `41b7ee31e58c`); without the deadline the ten-second
+`wait_exit` bound would have failed. Reviewed WebPs:
+`0ded00daa283/tray-repeated-quit-reason-light.webp` and
+`a82017111e1d/tray-repeated-quit-reason-dark-compact.webp` show the intact
+reply, disabled Sending control and the bottom-bar notice "Finishing your
+changes before closing. Shep will quit as soon as this is saved";
+`c786c424d98a/held-upload-retained-after-restart.webp` shows both destinations
+after restart. All 33 selected native close/tray/saving/quit scenarios pass
+(`artifacts/logs/e2e-close.log`); the targeted Rust filter passes 32, clippy
+with denied warnings passes, `cargo fmt` is clean and 96 Python tests pass
+(7 skipped).
+These are fictional native fixtures on Linux/Xvfb: which save blocked Sam's
+personal close remains inferred rather than observed, and Windows/macOS
+execution of the Quit path is unverified.
+
 ## Journal ownership, removal reviews and duplicate labels — integrated verification
 
 Three lanes were merged into `main` with `--no-ff` after each was rebased onto

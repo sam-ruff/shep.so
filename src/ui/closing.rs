@@ -19,16 +19,24 @@ impl App {
             || self.composer.io.is_some()
             || self.composer.pending()
             || self.preference_sync.dirty()
-            || self.busy.iter().any(|key| {
-                matches!(
-                    key.as_str(),
-                    "credential-cleanup" | "google-disconnect" | "google"
-                ) || key.starts_with("outgoing:")
-                    || key.starts_with("send:")
-                    || key.starts_with("event:")
-                    || key.starts_with("account:")
-                    || key.starts_with("backup:")
-            })
+            || self.busy.iter().any(|key| self.required_busy(key))
+    }
+
+    /// Upload journals and credential cleanup resume on the next launch, so an
+    /// explicit Quit may leave them; every other busy write must acknowledge.
+    fn journaled_busy(key: &str) -> bool {
+        key.starts_with("backup:") || key == "credential-cleanup"
+    }
+
+    pub(super) fn required_busy(&self, key: &str) -> bool {
+        if Self::journaled_busy(key) {
+            return !self.tray.insisted;
+        }
+        matches!(key, "google-disconnect" | "google")
+            || key.starts_with("outgoing:")
+            || key.starts_with("send:")
+            || key.starts_with("event:")
+            || key.starts_with("account:")
     }
 
     pub(super) fn continue_pending_close(&mut self) -> Task<Message> {
@@ -168,6 +176,70 @@ mod tests {
         let _ = app.update(Message::Backend(Event::Busy("event:two".into(), false)));
         assert!(app.pending_close.is_none());
         assert!(app.notice.as_ref().unwrap().1);
+    }
+
+    #[test]
+    fn insisted_quit_keeps_local_saves_but_releases_journaled_uploads() {
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.busy
+            .extend(["backup:one".into(), "credential-cleanup".into()]);
+        app.composer.io = Some("draft".into());
+        let _ = app.handle(Message::WindowClose(window));
+        assert_eq!(app.pending_close, Some(window));
+        let _ = app.quit_now(window);
+        assert_eq!(
+            app.pending_close,
+            Some(window),
+            "an attachment write is not journaled"
+        );
+        assert!(app.notice.as_ref().unwrap().0.contains("attachments"));
+        app.composer.io = None;
+        let _ = app.continue_pending_close();
+        assert!(
+            app.pending_close.is_none(),
+            "journaled uploads no longer hold exit"
+        );
+        assert!(app.tray.exiting);
+        assert!(
+            app.busy.contains("backup:one"),
+            "abandonment is not a fake ack"
+        );
+    }
+
+    #[test]
+    fn a_new_close_after_cancelled_quit_waits_for_journaled_uploads_again() {
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.busy.insert("backup:one".into());
+        let _ = app.handle(Message::WindowClose(window));
+        let _ = app.update(Message::Backend(Event::Error("Upload failed".into())));
+        assert!(app.pending_close.is_none());
+        let _ = app.quit_now(window);
+        assert!(app.tray.exiting, "an explicit Quit still leaves");
+
+        let (mut app, _) = App::new();
+        app.busy.insert("backup:one".into());
+        let _ = app.quit_now(window);
+        assert!(
+            app.tray.exiting,
+            "Quit with no prior close still leaves journaled work"
+        );
+
+        let (mut app, _) = App::new();
+        app.busy.insert("send:one".into());
+        let _ = app.quit_now(window);
+        assert!(!app.tray.exiting);
+        assert_eq!(app.pending_close, Some(window));
+        let _ = app.update(Message::Backend(Event::Error("Send failed".into())));
+        assert!(app.pending_close.is_none());
+        app.busy.insert("backup:two".into());
+        let _ = app.handle(Message::WindowClose(window));
+        assert_eq!(
+            app.pending_close,
+            Some(window),
+            "an ordinary close waits for the upload again"
+        );
     }
 
     #[test]

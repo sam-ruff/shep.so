@@ -6,7 +6,18 @@
 
 Audited against the user messages, source, AGENTS.md and completion evidence on 2026-09-06 (desktop) and 2026-09-07 (clients), merged on 2026-09-09. “Delivered” refers to existing committed behavior, not completion of the entire product. “In progress” includes uncommitted code and does not imply shipping or a full passing test suite. Open items are maintained in [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md); completed evidence stays in [COMPLETION.md](COMPLETION.md).
 
-The desktop summaries below are newest first and were written on `main` before the merge.
+The desktop summaries below are newest first; the first entry was written after the merge.
+
+10 September (R90/R86, Sam's first phase-2 request: closing blocked by saving):
+three blocked-close paths were reproduced and fixed on the lane branch. A
+repeated explicit Quit now leaves when only journaled uploads or credential
+cleanup remain and otherwise shows the reason while keeping close intent; Quit
+from a hidden tray announces saving; process exit is bounded by a five-second
+deadline after the last required acknowledgment. Seven new Rust tests, a held
+upload fixture and three native tray/close scenarios (process exit checked by
+return code, journal and cache checked read-only after restart) pass; counts and
+WebP reviews are in completion. Personal-account diagnosis and Windows/macOS
+execution stay open. Not pushed by the lane; integration is the root's.
 
 9 September consolidation (R91, R02/R49/R92, R15, R22, R32): the restarted
 desktop session resolved the interrupted backup-history cherry-pick as
