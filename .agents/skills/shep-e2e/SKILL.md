@@ -873,3 +873,20 @@ Keep on this device and the actual local-data removal dialog. Preserve Cancel,
 confirmation, restart/no-reimport and stale-card disappearance assertions.
 `profile_account_review` Rust tests retain real cached fixture mail and reject
 changed history/account/Google/consent. UI observations never trigger actions.
+
+`profile_sync="existing-link"` seeds one light Home profile for a populated
+device (no `profile_login`/`empty_profile`), imports it through the ordinary
+picker (Import profile is near y=603 with one unmatched account), then the
+second enrolled listing publishes two later definitions: one exactly matching
+Design studio and one sharing Personal's address on another server. Saved
+`test_profile_account_link_native_*` flows use Sync now, Review shared
+accounts and the actual Link to existing account, Add as a new account and
+Keep this device's account local buttons, then restart and read the closed
+checkpoint (`accounts`, `suppressed`, `local_only`). At 1440×920 after
+`scroll 6` from (1000,780) the three controls sit near y=456/501/546; the
+address-only card offers only Add/Keep. The compact-dark flow toggles the Dark
+appearance after import, resizes to 900×640 and uses `scroll 7` for its
+capture. Observe `profile_sync.account_reviews.N.link` (`linkable`, `matches`)
+only; never mutate it. Backend `profile_account_link` tests cover exact-only
+Link, kept mail, no republished definition, restart, suppression, bounded pages
+and stale native/Google/option/history/already-decided rejection.
