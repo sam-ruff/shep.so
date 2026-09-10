@@ -7,7 +7,11 @@ const root = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
 );
-const local = path.join(root, "artifacts/wasm-tools/bin", process.platform === "win32" ? "wasm-bindgen.exe" : "wasm-bindgen");
+const local = path.join(
+  root,
+  "artifacts/wasm-tools/bin",
+  process.platform === "win32" ? "wasm-bindgen.exe" : "wasm-bindgen",
+);
 const cli =
   process.env.SHEP_WASM_BINDGEN ?? (existsSync(local) ? local : "wasm-bindgen");
 if (
@@ -21,31 +25,37 @@ if (
 const target = path.join(root, "artifacts/mail-content-target");
 const output = path.join(root, "web/src/wasm");
 mkdirSync(output, { recursive: true });
-execFileSync(
-  "cargo",
-  [
-    "build",
-    "--locked",
-    "-p",
-    "shep-mail-content",
-    "--target",
-    "wasm32-unknown-unknown",
-    "--release",
-  ],
-  {
-    cwd: root,
-    env: { ...process.env, CARGO_TARGET_DIR: target },
-    stdio: "inherit",
-  },
-);
-execFileSync(
-  cli,
-  [
-    path.join(target, "wasm32-unknown-unknown/release/shep_mail_content.wasm"),
-    "--target",
-    "web",
-    "--out-dir",
-    output,
-  ],
-  { cwd: root, stdio: "inherit" },
-);
+// The browser also runs the shared profile codec and in-memory history.
+for (const crate of ["shep-mail-content", "shep-profile-core"]) {
+  execFileSync(
+    "cargo",
+    [
+      "build",
+      "--locked",
+      "-p",
+      crate,
+      "--target",
+      "wasm32-unknown-unknown",
+      "--release",
+    ],
+    {
+      cwd: root,
+      env: { ...process.env, CARGO_TARGET_DIR: target },
+      stdio: "inherit",
+    },
+  );
+  execFileSync(
+    cli,
+    [
+      path.join(
+        target,
+        `wasm32-unknown-unknown/release/${crate.replaceAll("-", "_")}.wasm`,
+      ),
+      "--target",
+      "web",
+      "--out-dir",
+      output,
+    ],
+    { cwd: root, stdio: "inherit" },
+  );
+}

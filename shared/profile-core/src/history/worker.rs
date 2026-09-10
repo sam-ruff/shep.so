@@ -1,6 +1,8 @@
 use super::*;
 use std::path::PathBuf;
 use tokio::sync::{mpsc, oneshot, watch};
+#[cfg(test)]
+use uuid::Uuid;
 
 type Request = Box<dyn FnOnce(&mut Journal) + Send>;
 /// Exactly one connection owner and at most 32 accepted pending commands. A
