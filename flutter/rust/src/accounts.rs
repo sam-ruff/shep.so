@@ -15,8 +15,14 @@ pub struct Removal {
     pub outgoing: u64,
     pub unresolved: u64,
     pub moves: u64,
+    #[serde(default)]
+    pub groups: u64,
     pub fingerprint: String,
 }
+
+/// Group work that removal must discard explicitly: queued, in-flight,
+/// failed, uncertain and inverse steps, never completed receipts.
+pub(crate) const ACTIVE_GROUP_ITEMS: &str = "('pending','sending','undoing','reversing','failed','uncertain','undo_failed','undo_uncertain')";
 
 pub fn available(db: &Connection, id: &str) -> Result<()> {
     let removed: bool = db.query_row(
@@ -43,6 +49,7 @@ pub fn preview(db: &Connection, id: &str) -> Result<Removal> {
         "SELECT json_array(d.id,d.revision,d.content,COALESCE(f.revision,0)) FROM drafts d LEFT JOIN draft_file_revisions f ON d.id=f.id WHERE json_extract(d.content,'$.account_id')=?1 ORDER BY d.id",
         "SELECT json_array(o.id,o.state,m.recovery,s.state,s.receipt,s.complete) FROM outgoing o LEFT JOIN outgoing_meta m ON m.id=o.id LEFT JOIN outgoing_sent s ON s.id=o.id WHERE o.account_id=?1 ORDER BY o.id",
         "SELECT json_array(p.id,p.destination) FROM pending_moves p JOIN mail m ON m.id=p.id WHERE m.account_id=?1 ORDER BY p.id",
+        "SELECT json_array(job,position,state) FROM group_items WHERE account=?1 ORDER BY job,position",
     ] {
         let mut statement = db.prepare(query)?;
         let mut rows = statement.query([id])?;
@@ -72,6 +79,9 @@ pub fn preview(db: &Connection, id: &str) -> Result<Removal> {
         moves: count(
             "SELECT COUNT(*) FROM pending_moves p JOIN mail m ON m.id=p.id WHERE m.account_id=?1",
         )?,
+        groups: count(&format!(
+            "SELECT COUNT(*) FROM group_items WHERE account=?1 AND state IN {ACTIVE_GROUP_ITEMS}"
+        ))?,
         fingerprint: format!("{:x}", digest.finalize()),
     })
 }
@@ -100,10 +110,12 @@ pub fn remove(db: &mut Connection, expected: Removal, discard_unresolved: bool) 
         "Local data changed while this review was open. Reload the counts before removing this account."
     );
     anyhow::ensure!(
-        discard_unresolved || (current.unresolved == 0 && current.moves == 0),
-        "Review and confirm discarding unfinished delivery and move records first. Removal cannot undo a server operation."
+        discard_unresolved
+            || (current.unresolved == 0 && current.moves == 0 && current.groups == 0),
+        "Review and confirm discarding unfinished delivery, move and group action records first. Removal cannot undo a server operation."
     );
     let id = &expected.id;
+    crate::groups::fence_account(&tx, id)?;
     tx.execute("INSERT INTO discarded_drafts SELECT id,9223372036854775807 FROM drafts WHERE json_extract(content,'$.account_id')=?1 ON CONFLICT(id) DO UPDATE SET revision=excluded.revision",[id])?;
     tx.execute("INSERT INTO discarded_drafts SELECT draft_id,9223372036854775807 FROM outgoing WHERE account_id=?1 ON CONFLICT(id) DO UPDATE SET revision=excluded.revision",[id])?;
     tx.execute(

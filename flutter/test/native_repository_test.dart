@@ -9,7 +9,9 @@ import 'package:shep_mobile/data/credentials.dart';
 import 'package:shep_mobile/data/native_repository.dart';
 import 'support/profile_history_scenario.dart';
 import 'package:shep_mobile/data/outgoing.dart';
+import 'package:shep_mobile/data/groups.dart';
 import 'package:shep_mobile/model/mail.dart';
+import 'package:shep_mobile/model/mail_groups.dart';
 import 'package:shep_mobile/model/mail_selection.dart';
 import 'mail_selection_test.dart' show settled;
 
@@ -265,6 +267,64 @@ void main() {
       expect(frozen['rows'][0]['unread'], true);
       await repository.selection({'kind': 'release', 'id': 'host-review'});
       expect(credentials.reads, 0);
+    },
+  );
+
+  test(
+    'native group journal freezes, executes, undoes and fences removal through actual FFI',
+    () async {
+      final credentials = FixtureCredentials()..unavailable = true;
+      final repository = await connection(credentials);
+      final account = repository.mailAccounts.single;
+      Future<int> total(String folder) async => (await repository.page(
+        folder: folder,
+        account: account.email,
+        query: '',
+        filter: '',
+        oldest: false,
+        offset: 0,
+      )).total;
+      final model = MailSelection(
+        repository: repository,
+        scope: () => {'folder': 'Inbox', 'account': account.email},
+        currentCount: () => 1,
+        changed: () {},
+      );
+      addTearDown(model.dispose);
+      model.watch('fixture:INBOX:files');
+      model.all();
+      await settled(() => model.ready || model.error != null);
+      expect(model.error, isNull);
+      final groups = MailGroups(
+        repository: repository,
+        changed: () {},
+        refreshMail: () async {},
+      );
+      addTearDown(groups.dispose);
+      final review = await groups.prepare(model, GroupAction.archive);
+      expect(review, isNotNull, reason: groups.error);
+      expect(review!.total, 1);
+      expect(review.groups.single['account'], account.id);
+      expect(review.groups.single['folder'], 'INBOX');
+      expect(await total('Inbox'), 1, reason: 'a review does not paint');
+      final approved = await groups.approve();
+      expect(approved, true, reason: groups.error);
+      expect(await total('Inbox'), 0, reason: 'approved intent paints');
+      await settled(() => !groups.running);
+      final job = groups.jobs.single;
+      expect(job.finished, true);
+      expect(job.count('done'), 1);
+      expect(await total('Archive'), 1);
+      final items = await groups.items(job);
+      expect(items.rows.single.subject, 'Incoming files fixture');
+      expect(items.rows.single.state, 'done');
+      await groups.undo(job);
+      await settled(() => !groups.running && groups.jobs.single.finished);
+      expect(groups.jobs.single.count('undone'), 1);
+      expect(await total('Inbox'), 1);
+      final removal = await repository.removalPreview(account.id);
+      expect(removal.count('groups'), 0);
+      expect(credentials.reads, 0, reason: 'POP3 steps never open credentials');
     },
   );
 

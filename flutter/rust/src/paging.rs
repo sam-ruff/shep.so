@@ -27,8 +27,33 @@ pub struct Scope {
     pub projection: BTreeMap<String, Edit>,
 }
 
+/// Approved group intent that the cache has not confirmed yet, newest job
+/// first per field. Forward items project their job's fields; items awaiting
+/// an inverse step project the frozen baseline of the fields they applied.
+const GROUP_INTENT: &str = "group_active AS (
+          SELECT i.mail AS id,j.seq AS seq,
+          CASE WHEN i.state IN ('pending','sending') THEN json_extract(j.fields,'$.folder') WHEN json_extract(i.receipt,'$.applied.folder') IS NOT NULL THEN i.folder END AS folder,
+          CASE WHEN i.state IN ('pending','sending') THEN json_extract(j.fields,'$.unread') WHEN json_extract(i.receipt,'$.applied.unread') IS NOT NULL THEN i.unread END AS unread,
+          CASE WHEN i.state IN ('pending','sending') THEN json_extract(j.fields,'$.starred') WHEN json_extract(i.receipt,'$.applied.starred') IS NOT NULL THEN i.starred END AS starred
+          FROM group_items i JOIN group_jobs j ON j.id=i.job
+          WHERE (i.state IN ('pending','sending') AND j.state IN ('running','paused')) OR (i.state IN ('undoing','reversing') AND j.state IN ('undoing','paused'))),
+        group_intent AS (
+          SELECT g.id,
+          (SELECT folder FROM group_active a WHERE a.id=g.id AND a.folder IS NOT NULL ORDER BY a.seq DESC LIMIT 1) AS folder,
+          (SELECT unread FROM group_active a WHERE a.id=g.id AND a.unread IS NOT NULL ORDER BY a.seq DESC LIMIT 1) AS unread,
+          (SELECT starred FROM group_active a WHERE a.id=g.id AND a.starred IS NOT NULL ORDER BY a.seq DESC LIMIT 1) AS starred
+          FROM (SELECT DISTINCT id FROM group_active) g)";
+
+pub(crate) fn group_intent_active(db: &Connection) -> Result<bool> {
+    Ok(db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM group_items WHERE state IN ('pending','sending','undoing','reversing'))",
+        [],
+        |r| r.get(0),
+    )?)
+}
+
 pub(crate) struct Plan {
-    pub prefix: &'static str,
+    pub prefix: String,
     pub table: &'static str,
     pub conditions: String,
     pub data: String,
@@ -70,9 +95,26 @@ impl Plan {
             );
             confirmed.push(message);
         }
-        let projected = !edits.is_empty();
+        let grouped = group_intent_active(db)?;
+        let projected = !edits.is_empty() || grouped;
         let data = serde_json::to_string(&edits)?;
-        let prefix = if projected {
+        // Individual edits are newer than any approved group intent, so they
+        // take precedence per field; unprojected rows keep the indexed query.
+        let prefix = if grouped {
+            format!(
+                "WITH {GROUP_INTENT}, projected AS (
+          SELECT rowid,id,account_id,remote_id,folder,sender,recipient,subject,preview,
+          timestamp,unread,starred,attachment_count,moved FROM mail
+          WHERE id NOT IN (SELECT key FROM json_each(?6)) AND id NOT IN (SELECT id FROM group_intent)
+          UNION ALL SELECT m.rowid AS rowid,m.id,m.account_id,m.remote_id,
+          COALESCE(json_extract(e.value,'$.folder'),g.folder,m.folder) AS folder,
+          m.sender,m.recipient,m.subject,m.preview,m.timestamp,
+          COALESCE(json_extract(e.value,'$.unread'),g.unread,m.unread) AS unread,
+          COALESCE(json_extract(e.value,'$.starred'),g.starred,m.starred) AS starred,
+          m.attachment_count,m.moved FROM (SELECT key AS id FROM json_each(?6) UNION SELECT id FROM group_intent) k
+          JOIN mail m ON m.id=k.id LEFT JOIN json_each(?6) e ON e.key=k.id LEFT JOIN group_intent g ON g.id=k.id) "
+            )
+        } else if projected {
             "WITH projected AS (
           SELECT rowid,id,account_id,remote_id,folder,sender,recipient,subject,preview,
           timestamp,unread,starred,attachment_count,moved FROM mail
@@ -83,8 +125,9 @@ impl Plan {
           COALESCE(json_extract(e.value,'$.unread'),m.unread) AS unread,
           COALESCE(json_extract(e.value,'$.starred'),m.starred) AS starred,
           m.attachment_count,m.moved FROM json_each(?6) e JOIN mail m ON m.id=e.key) "
+                .to_owned()
         } else {
-            ""
+            String::new()
         };
         let table = if projected { "projected" } else { "mail" };
         let folder = if folder.eq_ignore_ascii_case("Inbox") {

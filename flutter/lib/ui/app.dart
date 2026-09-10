@@ -10,6 +10,7 @@ import 'calendar.dart';
 import 'composer.dart';
 import 'controls.dart';
 import 'icons.dart';
+import 'mail_groups.dart';
 import 'mail_tile.dart';
 import 'preferences.dart';
 import 'reader.dart';
@@ -264,6 +265,20 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                         );
                       },
                     ),
+                  if (w.groups != null)
+                    sidebarItem(
+                      'Group History',
+                      icon: 'clock',
+                      onTap: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => GroupHistoryScreen(workspace: w),
+                          ),
+                        );
+                      },
+                    ),
                   const SizedBox(height: 17),
                   for (final account in w.accounts)
                     sidebarItem(
@@ -423,39 +438,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
               ],
             ),
           ),
-          if (w.selected.isNotEmpty)
-            Container(
-              color: c.tint,
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Row(
-                children: [
-                  TextButton(
-                    onPressed: w.selectAll,
-                    style: TextButton.styleFrom(foregroundColor: c.accent),
-                    child: Text('${w.selected.length} selected'),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    tooltip: 'Archive selected',
-                    onPressed: () {
-                      for (final id in List.of(w.selected)) {
-                        act(id, MailAction.archive);
-                      }
-                    },
-                    icon: const ShepIcon('archive'),
-                  ),
-                  IconButton(
-                    tooltip: 'Mark selected read',
-                    onPressed: () {
-                      for (final id in List.of(w.selected)) {
-                        w.change(id, {'unread': false});
-                      }
-                    },
-                    icon: const ShepIcon('mail-open'),
-                  ),
-                ],
-              ),
-            ),
+          SelectionBar(workspace: w),
           const Divider(),
           Expanded(
             child: w.visible.isEmpty
@@ -564,6 +547,20 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                 child: badge('PREVIEW'),
               ),
             if (tab == 0) ...[
+              if (w.selection case final selection?)
+                IconButton(
+                  tooltip: selection.mode ? 'Done selecting' : 'Select',
+                  onPressed: w.folder == 'Drafts'
+                      ? null
+                      : selection.mode
+                      ? selection.done
+                      : selection.start,
+                  icon: ShepIcon(
+                    'check-circle',
+                    size: 20,
+                    color: selection.mode ? c.accent : null,
+                  ),
+                ),
               IconButton(
                 tooltip: 'Search',
                 onPressed: () => setState(() => searching = !searching),
@@ -607,6 +604,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           mainAxisSize: MainAxisSize.min,
           children: [
             MailActionBanner(workspace: w),
+            GroupActionBanner(workspace: w),
             DecoratedBox(
               decoration: BoxDecoration(
                 border: Border(top: BorderSide(color: c.border)),

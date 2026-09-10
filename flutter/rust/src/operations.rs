@@ -27,6 +27,8 @@ pub struct Operations {
     printing: Arc<Semaphore>,
     profile_records: Arc<Semaphore>,
     accounts: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// One owned group step at a time; account removal takes it as a fence.
+    pub(crate) groups: Arc<Mutex<()>>,
     pub(crate) outgoing: crate::outgoing::Runtime,
     pub(crate) sent: crate::sent::Runtime,
     #[cfg(test)]
@@ -51,6 +53,7 @@ impl Operations {
             printing: Arc::new(Semaphore::new(2)),
             profile_records: Arc::new(Semaphore::new(1)),
             accounts: Mutex::new(HashMap::new()),
+            groups: Arc::new(Mutex::new(())),
             outgoing: crate::outgoing::Runtime::default(),
             sent: crate::sent::Runtime::default(),
             #[cfg(test)]
@@ -141,6 +144,9 @@ pub enum Request {
         command: crate::selection::Command,
         #[serde(default)]
         observed: Vec<String>,
+    },
+    Groups {
+        command: crate::groups::Command,
     },
     FindText {
         blocks: Vec<String>,
@@ -509,6 +515,10 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
         Request::CheckAccount{id} => {db.read(move|db|crate::accounts::available(db,&id)).await?;Ok(json!({"available":true}))}
         Request::AccountRemovalPreview{id} => db.read(move|db|Ok(serde_json::to_value(crate::accounts::preview(db,&id)?)?)).await,
         Request::RemoveAccount{review,discard_unresolved} => {
+            // Group ownership is taken before the account lock so no owned
+            // step can dispatch or record a receipt for this account meanwhile.
+            let _groups=profile.operations.groups.clone().try_lock_owned()
+                .context("A group action step is in progress. Pause it in History, then retry removal.")?;
             let _guard=profile.operations.try_account(&review.id).await?;
             db.write(move|db|crate::accounts::remove(db,review,discard_unresolved)).await?;
             Ok(json!({"removed":true}))
@@ -670,34 +680,84 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
         Request::Delivery{id} => crate::outgoing::delivery(profile, id).await,
         Request::Outbox{offset} => crate::outgoing::page(profile, offset).await,
         Request::RecoverOutgoing{id,action,confirmed} => crate::outgoing::recover(profile,id,action,confirmed).await,
-        request @ Request::Mutate{..} => {
-            if let Request::Mutate{id,password,folder,unread,starred,..} = &request {
-                let (id,folder,unread,starred,has_password)=(id.clone(),folder.clone(),*unread,*starred,password.is_some());
-                let local=db.write(move |db| {
-                    // A local edit and the handover eligibility marker commit
-                    // together, before any account lock or provider admission.
-                    let tx=db.transaction()?;
-                    let message=stored_mail(&tx,&id)?;
-                    let account=stored_account(&tx,&message.account_id)?;
-                    let pending:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM pending_moves WHERE id=?1)",[&message.id],|r|r.get(0))?;
-                    anyhow::ensure!(!pending,"A previous move has no saved acknowledgment. Refresh both folders and choose the current message; it was not moved again.");
-                    let legacy:bool=tx.query_row("SELECT moved=1 AND NOT EXISTS(SELECT 1 FROM move_receipts WHERE id=?1) FROM mail WHERE id=?1",[&message.id],|r|r.get(0))?;
-                    anyhow::ensure!(!legacy,"This older move has no saved identity. Refresh its destination and choose the current message.");
-                    if account.protocol==Protocol::Imap && !message.remote_id.starts_with("local-") {
-                        return Ok(if has_password {None} else {Some(json!({"requires_credentials":account.id}))});
-                    }
-                    anyhow::ensure!(account.protocol==Protocol::Pop3 || folder.is_none() || (unread.is_none() && starred.is_none()),"Move and flag changes must be separate actions.");
-                    mark_local_sent_edit(&tx,&message)?;
-                    tx.execute("UPDATE mail SET folder=COALESCE(?2,folder),unread=COALESCE(?3,unread),starred=COALESCE(?4,starred) WHERE id=?1",params![message.id,folder,unread,starred])?;
-                    tx.commit()?;
-                    Ok(Some(json!({"committed":true})))
-                }).await?;
-                if let Some(result)=local {return Ok(result);}
-            }
-            network(profile,request).await
+        Request::Mutate{credential_slot,id,password,folder,unread,starred} => {
+            mutate(profile,Mutation{credential_slot,id,password,folder,unread,starred,intent:true}).await
         }
+        Request::Groups{command} => crate::groups::run(profile,command).await,
         request => network(profile,request).await,
     }
+}
+/// One message change. Individual user actions reserve per-field intent
+/// revisions at input time; group steps pass `intent: false` because their
+/// approval revision is older by definition.
+pub(crate) struct Mutation {
+    pub credential_slot: Option<String>,
+    pub id: String,
+    pub password: Option<SecretString>,
+    pub folder: Option<String>,
+    pub unread: Option<bool>,
+    pub starred: Option<bool>,
+    pub intent: bool,
+}
+pub(crate) fn record_intent(db: &Connection, id: &str, fields: &[&str]) -> Result<()> {
+    if fields.is_empty() {
+        return Ok(());
+    }
+    db.execute("UPDATE group_clock SET revision=revision+1 WHERE id=1", [])?;
+    for field in fields {
+        db.execute("INSERT INTO mail_intents(mail,field,revision) VALUES(?1,?2,(SELECT revision FROM group_clock WHERE id=1)) ON CONFLICT(mail,field) DO UPDATE SET revision=excluded.revision",params![id,field])?;
+    }
+    Ok(())
+}
+pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Result<Value> {
+    let db = &profile.database;
+    let (id, folder, unread, starred, has_password, intent) = (
+        mutation.id.clone(),
+        mutation.folder.clone(),
+        mutation.unread,
+        mutation.starred,
+        mutation.password.is_some(),
+        mutation.intent,
+    );
+    let local = db.write(move |db| {
+        // A local edit and the handover eligibility marker commit
+        // together, before any account lock or provider admission.
+        let tx=db.transaction()?;
+        let message=stored_mail(&tx,&id)?;
+        let account=stored_account(&tx,&message.account_id)?;
+        if intent {
+            let fields:Vec<&str>=[folder.as_ref().map(|_|"folder"),unread.map(|_|"unread"),starred.map(|_|"starred")].into_iter().flatten().collect();
+            record_intent(&tx,&message.id,&fields)?;
+        }
+        let pending:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM pending_moves WHERE id=?1)",[&message.id],|r|r.get(0))?;
+        anyhow::ensure!(!pending,"A previous move has no saved acknowledgment. Refresh both folders and choose the current message; it was not moved again.");
+        let legacy:bool=tx.query_row("SELECT moved=1 AND NOT EXISTS(SELECT 1 FROM move_receipts WHERE id=?1) FROM mail WHERE id=?1",[&message.id],|r|r.get(0))?;
+        anyhow::ensure!(!legacy,"This older move has no saved identity. Refresh its destination and choose the current message.");
+        if account.protocol==Protocol::Imap && !message.remote_id.starts_with("local-") {
+            tx.commit()?;
+            return Ok(if has_password {None} else {Some(json!({"requires_credentials":account.id}))});
+        }
+        anyhow::ensure!(account.protocol==Protocol::Pop3 || folder.is_none() || (unread.is_none() && starred.is_none()),"Move and flag changes must be separate actions.");
+        mark_local_sent_edit(&tx,&message)?;
+        tx.execute("UPDATE mail SET folder=COALESCE(?2,folder),unread=COALESCE(?3,unread),starred=COALESCE(?4,starred) WHERE id=?1",params![message.id,folder,unread,starred])?;
+        tx.commit()?;
+        Ok(Some(json!({"committed":true})))
+    }).await?;
+    if let Some(result) = local {
+        return Ok(result);
+    }
+    network(
+        profile,
+        Request::Mutate {
+            credential_slot: mutation.credential_slot,
+            id: mutation.id,
+            password: mutation.password,
+            folder: mutation.folder,
+            unread: mutation.unread,
+            starred: mutation.starred,
+        },
+    )
+    .await
 }
 pub(crate) fn delivery(db: &Connection, id: &str) -> Result<Value> {
     let value = db
