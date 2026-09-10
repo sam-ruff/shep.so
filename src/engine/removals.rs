@@ -43,7 +43,7 @@ impl Engine {
         preview: RemovalPreview,
         cancel_transfers: bool,
     ) -> anyhow::Result<usize> {
-        let _lifecycle = self.connection_lifecycle_lock.lock().await;
+        let _lifecycle = self.connection_lifecycle.write().await;
         let _owner = self.connection_access(&preview.target).await;
         self.store
             .remove_connection(preview.clone(), cancel_transfers)
@@ -62,7 +62,7 @@ impl Engine {
         }
     }
     pub(super) async fn cleanup_credentials(&self) -> anyhow::Result<usize> {
-        let _lifecycle = self.connection_lifecycle_lock.lock().await;
+        let _lifecycle = self.connection_lifecycle.write().await;
         let mut owners = Vec::new();
         for job in self.store.cleanup_jobs().await? {
             if !owners.contains(&job.target) {
@@ -103,7 +103,7 @@ impl Engine {
             !selected.is_empty(),
             "No removed Google calendars are currently accessible. Check calendar access or reconnect Google."
         );
-        let _lifecycle = self.connection_lifecycle_lock.lock().await;
+        let _lifecycle = self.connection_lifecycle.write().await;
         let mut ids: Vec<_> = selected.iter().map(|s| s.id.as_str()).collect();
         ids.sort();
         let mut guards = Vec::new();
@@ -252,7 +252,7 @@ mod tests {
         let cleanup_engine = engine.clone();
         let cleanup = tokio::spawn(async move { cleanup_engine.cleanup_credentials().await });
         fake.started.notified().await;
-        assert!(engine.connection_lifecycle_lock.try_lock().is_err());
+        assert!(engine.connection_lifecycle.is_held().await);
         engine.demo = true; // Calendar setup must not touch the real keychain.
         let reconnect =
             engine.connect_calendars(vec![source("unused")], "fixture".into(), revision);

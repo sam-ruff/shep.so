@@ -5,16 +5,17 @@ use rand::RngCore;
 use secrecy::{ExposeSecret, SecretString};
 use sha2::{Digest, Sha256};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::Mutex;
 
 mod callback;
 mod consent;
+mod owner;
 mod scopes;
 pub(crate) use scopes::Service;
 #[cfg(test)]
 mod tests;
 mod tokens;
-use tokens::{CredentialStore, OsCredentialStore, State};
+use owner::{Backend, Owner};
+use tokens::{CredentialStore, OsCredentialStore};
 
 #[cfg(test)]
 const SCOPES: &str = "https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly";
@@ -22,10 +23,8 @@ const SCOPES: &str = "https://www.googleapis.com/auth/drive.appdata https://www.
 #[derive(Clone)]
 pub struct Google {
     pub http: reqwest::Client,
-    state: Arc<Mutex<State>>,
-    credentials: Arc<dyn CredentialStore>,
-    // Private, object-scoped endpoint injection for loopback protocol tests.
-    token_endpoint: url::Url,
+    // The vault state lives on its owning thread; callers only send jobs.
+    tokens: Owner,
     pub(crate) api_base: url::Url,
 }
 impl Default for Google {
@@ -35,19 +34,35 @@ impl Default for Google {
 }
 impl Google {
     pub(crate) fn with_credentials(credentials: crate::credentials::Credentials) -> Self {
-        Self {
-            http: reqwest::Client::builder()
+        Self::start(
+            reqwest::Client::builder()
                 .timeout(Duration::from_secs(45))
                 .connect_timeout(Duration::from_secs(15))
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("valid HTTP configuration"),
-            api_base: url::Url::parse("https://www.googleapis.com/")
-                .expect("official Google API URL"),
-            state: Default::default(),
-            credentials: Arc::new(OsCredentialStore { credentials }),
-            token_endpoint: url::Url::parse("https://oauth2.googleapis.com/token")
+            Arc::new(OsCredentialStore { credentials }),
+            url::Url::parse("https://oauth2.googleapis.com/token")
                 .expect("official Google token endpoint"),
+            url::Url::parse("https://www.googleapis.com/").expect("official Google API URL"),
+        )
+    }
+
+    /// Private, object-scoped endpoint injection for loopback protocol tests.
+    fn start(
+        http: reqwest::Client,
+        credentials: Arc<dyn CredentialStore>,
+        token_endpoint: url::Url,
+        api_base: url::Url,
+    ) -> Self {
+        Self {
+            tokens: Owner::start(Backend {
+                http: http.clone(),
+                credentials,
+                token_endpoint,
+            }),
+            http,
+            api_base,
         }
     }
 }
@@ -56,17 +71,23 @@ impl Google {
         if prefs.active_google_client().trim().is_empty() || prefs.google_lifecycle.disconnected {
             return Ok(false);
         }
-        let mut state = self.state.lock().await;
-        self.load_tokens(&mut state).await?;
-        Ok(state
-            .grants
-            .iter()
-            .find(|c| c.value.grant_id == prefs.google_grant.id)
-            .is_some_and(|cached| {
-                cached.value.client_id == prefs.active_google_client()
-                    && !cached.invalidated
-                    && !cached.pending_save
-            }))
+        let prefs = prefs.clone();
+        self.tokens
+            .run(move |state, backend| {
+                Box::pin(async move {
+                    backend.load_tokens(state).await?;
+                    Ok(state
+                        .grants
+                        .iter()
+                        .find(|c| c.value.grant_id == prefs.google_grant.id)
+                        .is_some_and(|cached| {
+                            cached.value.client_id == prefs.active_google_client()
+                                && !cached.invalidated
+                                && !cached.pending_save
+                        }))
+                })
+            })
+            .await
     }
     #[cfg(test)]
     pub async fn login(&self, prefs: &Preferences) -> anyhow::Result<crate::model::GoogleGrant> {
@@ -131,71 +152,31 @@ impl Google {
             !prefs.active_google_client().trim().is_empty(),
             "Connect Google in Preferences before syncing or backing up to Drive."
         );
-        let mut state = self.state.lock().await;
-        self.load_tokens(&mut state).await?;
-        let index = state
-            .grants
-            .iter()
-            .position(|c| c.value.grant_id == prefs.google_grant.id)
-            .context("Connect Google in Preferences first.")?;
-        let cached = &state.grants[index];
-        anyhow::ensure!(
-            cached.value.client_id == prefs.active_google_client()
-                && !cached.value.client_id.is_empty(),
-            "Reconnect Google in Preferences to verify access for this OAuth application."
-        );
-        anyhow::ensure!(
-            !cached.invalidated,
-            "Google access expired or was revoked. Reconnect Google in Preferences."
-        );
-        if let Some(service) = service {
-            service.check(cached.value.access())?;
-        }
-        // Retry a failed save before using or renewing a rotated credential.
-        if cached.pending_save {
-            self.persist_refresh(&mut state, index).await?;
-        }
-        let cached = &mut state.grants[index];
-        if cached.value.expires_at <= chrono::Utc::now().timestamp() + 60 {
-            let refresh = cached
-                .value
-                .refresh_token
-                .as_deref()
-                .context("Reconnect Google in Preferences to renew access.")?;
-            let mut form = vec![
-                ("client_id", cached.value.client_id.as_str()),
-                ("refresh_token", refresh),
-                ("grant_type", "refresh_token"),
-            ];
-            let client_secret = if prefs.google_client_id == cached.value.client_id {
-                &prefs.google_client_secret
-            } else {
-                &cached.value.client_secret
-            };
-            if !client_secret.is_empty() {
-                form.push(("client_secret", client_secret.as_str()));
-            }
-            let reply = match self.exchange(&form).await {
-                Ok(reply) => reply,
-                Err(error) => {
-                    if error
-                        .downcast_ref::<tokens::ExchangeError>()
-                        .is_some_and(|kind| matches!(kind, tokens::ExchangeError::InvalidGrant))
-                    {
-                        cached.invalidated = true;
-                    }
-                    return Err(error);
-                }
-            };
-            cached.value = tokens::Tokens::from_reply(prefs, reply, Some(&cached.value))?;
-            cached.pending_save = true;
-            self.persist_refresh(&mut state, index).await?;
-        }
-        let cached = &state.grants[index];
-        if let Some(service) = service {
-            service.check(cached.value.access())?;
-        }
-        Ok(SecretString::from(cached.value.access_token.clone()))
+        let prefs = prefs.clone();
+        self.tokens
+            .run(move |state, backend| {
+                Box::pin(async move { backend.access_token(state, &prefs, service).await })
+            })
+            .await
+    }
+    /// The actual granted access of one cached grant, as the owner sees it.
+    async fn cached_access(
+        &self,
+        grant_id: String,
+        missing: &'static str,
+    ) -> anyhow::Result<crate::model::GoogleAccess> {
+        self.tokens
+            .run(move |state, _| {
+                Box::pin(async move {
+                    state
+                        .grants
+                        .iter()
+                        .find(|c| c.value.grant_id == grant_id)
+                        .map(|cached| cached.value.access())
+                        .context(missing)
+                })
+            })
+            .await
     }
 }
 
@@ -215,15 +196,12 @@ impl Google {
         // A resumed candidate can have expired. Re-evaluate the actual scopes
         // after refresh, before deciding which services to validate.
         self.access_token(&authorized, None).await?;
-        {
-            let state = self.state.lock().await;
-            let cached = state
-                .grants
-                .iter()
-                .find(|c| c.value.grant_id == authorized.google_grant.id)
-                .context("The staged Google connection is missing. Start a new sign-in.")?;
-            authorized.google_grant.access = cached.value.access();
-        }
+        authorized.google_grant.access = self
+            .cached_access(
+                authorized.google_grant.id.clone(),
+                "The staged Google connection is missing. Start a new sign-in.",
+            )
+            .await?;
         let access = authorized.google_grant.access;
         anyhow::ensure!(
             access.drive || access.calendar_read,
@@ -247,12 +225,17 @@ impl Google {
     }
 
     pub async fn clear_credentials(&self) -> anyhow::Result<()> {
-        let mut state = self.state.lock().await;
-        state.grants.clear();
-        state.candidate_id = None;
-        state.pending_login = None;
-        state.disconnected = true;
-        self.credentials.delete().await.map_err(|_| anyhow::anyhow!("Google is disconnected, but its saved credential could not be removed. Unlock the OS keychain and choose Retry Google cleanup in Preferences."))
+        self.tokens
+            .run(|state, backend| {
+                Box::pin(async move {
+                    state.grants.clear();
+                    state.candidate_id = None;
+                    state.pending_login = None;
+                    state.disconnected = true;
+                    backend.credentials.delete().await.map_err(|_| anyhow::anyhow!("Google is disconnected, but its saved credential could not be removed. Unlock the OS keychain and choose Retry Google cleanup in Preferences."))
+                })
+            })
+            .await
     }
 }
 fn random() -> String {
@@ -273,15 +256,12 @@ impl Google {
             token.expose_secret(),
         )
         .await?;
-        let actual_access = {
-            let state = self.state.lock().await;
-            let cached = state
-                .grants
-                .iter()
-                .find(|c| c.value.grant_id == prefs.google_grant.id)
-                .context("Google changed while listing calendars. Try syncing again.")?;
-            cached.value.access()
-        };
+        let actual_access = self
+            .cached_access(
+                prefs.google_grant.id.clone(),
+                "Google changed while listing calendars. Try syncing again.",
+            )
+            .await?;
         if !prefs.google_grant.access.calendar_write_allowed()
             || !actual_access.calendar_write_allowed()
         {

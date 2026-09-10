@@ -22,7 +22,7 @@ impl Engine {
         output: &mut Output,
     ) -> anyhow::Result<()> {
         let _google = self.google_connection_lock.write().await;
-        let _lifecycle = self.connection_lifecycle_lock.lock().await;
+        let _lifecycle = self.connection_lifecycle.write().await;
         self.store.disconnect_google(revision).await?;
         self.workspace(output).await?;
         if let Err(error) = self.cleanup_google_locked().await {
