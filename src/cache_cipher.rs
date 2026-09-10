@@ -8,6 +8,7 @@ use zeroize::Zeroizing;
 pub mod key_store;
 pub mod migration;
 pub mod ownership;
+pub mod publication;
 
 const KEY_PREFIX: &str = "shep-cache-key-v1:";
 

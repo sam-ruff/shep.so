@@ -1,18 +1,30 @@
 //! The first migration phase creates and verifies an encrypted candidate while
 //! keeping the plaintext source untouched. Publication belongs to the separate
 //! data-root recovery state machine; dropping a candidate only deletes itself.
-use super::Key;
+use super::{Key, publication::Fingerprint};
 use anyhow::{Context, ensure};
 use rusqlite::OpenFlags;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::sync::oneshot;
 
 pub struct Candidate {
     file: tempfile::NamedTempFile,
+    source: Fingerprint,
 }
 impl Candidate {
     pub fn path(&self) -> &Path {
         self.file.path()
+    }
+
+    /// The plaintext as it was when this copy was made.
+    pub(super) fn source(&self) -> &Fingerprint {
+        &self.source
+    }
+
+    /// Hand the file to the publication journal; it no longer deletes itself.
+    pub(super) fn keep(self) -> anyhow::Result<PathBuf> {
+        let (_, path) = self.file.keep()?;
+        Ok(path)
     }
 }
 
@@ -39,9 +51,10 @@ fn stage(
         !cancelled(),
         "Cache encryption was cancelled. The original database was kept."
     );
+    let fingerprint = Fingerprint::read(source)?;
     let file = tempfile::Builder::new()
-        .prefix(".shep-encrypted-")
-        .suffix(".partial")
+        .prefix(super::publication::CANDIDATE_PREFIX)
+        .suffix(super::publication::CANDIDATE_SUFFIX)
         .tempfile_in(directory)
         .context(
             "Could not create an encrypted cache candidate. Check available storage and retry.",
@@ -98,7 +111,10 @@ fn stage(
     drop(cipher);
     drop(check);
     file.as_file().sync_all()?;
-    Ok(Candidate { file })
+    Ok(Candidate {
+        file,
+        source: fingerprint,
+    })
 }
 
 #[cfg(test)]

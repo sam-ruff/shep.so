@@ -2,6 +2,47 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## Encrypted cache publication and crash recovery: lane checkpoint
+
+R22 gains the guarded replacement path in `cache_cipher::publication`. With the
+exclusive root guard held and no open plaintext connection, publication
+checkpoints the legacy WAL with TRUNCATE, switches the file to DELETE
+journalling and removes only empty leftover logs (a busy checkpoint or a
+non-empty log fails the step), writes `<cache>.encryption-journal` naming the
+verified candidate, its versions and the plaintext fingerprint, renames the
+plaintext to `<cache>.plaintext-recovery`, renames the candidate into place with
+directory fsyncs, reopens the published file with the key for an authenticated
+schema and version read, and only then deletes the plaintext and the journal.
+Staged candidates carry a source fingerprint and are refused if the plaintext
+changed after staging. Startup recovery derives the state from the journal and
+the main/candidate/recovery layout plus the file header, resumes verified
+candidates, restores the plaintext when the key is wrong while the recovery
+file exists, keeps everything and reports when the plaintext is already gone,
+and refuses layouts it did not create. Guarded orphan cleanup removes stale
+`.shep-encrypted-*.partial` candidates and `.shep-cache-scratch-*` folders
+without touching journalled candidates or import staging.
+
+Verification: ten new publication tests cover full publication with
+uncheckpointed WAL rows, stale candidate with retry, a held plaintext
+connection with retry, reader and foreign guards, interruption before each of
+the seven steps followed by resume, wrong-key rollback and refusal, lost
+candidates, ambiguous layouts, a stray recovery file and orphan cleanup.
+`cargo test --all-features cache_cipher` passes 28 tests and the `migration`
+filter passes seven. The lane's hook run on the merged workspace (`ee1305c`)
+passes 1,007 test executions with zero failures and three ignored, clippy
+with `-D warnings`, fmt, 96 Python tests (seven skipped) and the Windows GNU
+`cargo check --all-targets --all-features`.
+Production startup is unchanged and plaintext, so no native scenario exercises
+this path; none was run. Not verified: actual Windows/macOS execution of the
+rename and sidecar handling, and any personal database.
+
+Still blocking activation: bootstrap routing of recover/stage/publish on a
+worker with the guard held from key creation through publication, reader-guard
+retention through every store/profile worker write, exclusion of legacy Shep
+processes that never take the guard, keyed import staging and catalog routing,
+bounded selection-summary/catalog/recovered-view sorting, native key recovery
+and platform startup checks.
+
 ## Journal ownership, removal reviews and duplicate labels — integrated verification
 
 Three lanes were merged into `main` with `--no-ff` after each was rebased onto
