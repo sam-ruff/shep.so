@@ -142,11 +142,9 @@ impl Engine {
     pub(super) async fn backup_connection_guard(
         &self,
         target: &BackupTarget,
-    ) -> Option<tokio::sync::OwnedRwLockReadGuard<()>> {
+    ) -> Option<lifecycle_work::Access> {
         match target {
-            BackupTarget::GoogleDrive { .. } => {
-                Some(self.google_connection_lock.clone().read_owned().await)
-            }
+            BackupTarget::GoogleDrive { .. } => Some(self.google_connection_lock.read().await),
             BackupTarget::Local(_)
             | BackupTarget::S3(_)
             | BackupTarget::Sftp(_)

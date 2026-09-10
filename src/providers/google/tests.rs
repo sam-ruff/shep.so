@@ -313,13 +313,12 @@ fn response(access: &str, refresh: Option<&str>) -> Reply {
     Reply::new(200, value.to_string())
 }
 fn google(server: &Server, credentials: Arc<Credentials>) -> Google {
-    Google {
-        http: crate::providers::test_http::client(),
-        state: Default::default(),
+    Google::start(
+        crate::providers::test_http::client(),
         credentials,
-        token_endpoint: server.url.join("/token").unwrap(),
-        api_base: server.url.join("/").unwrap(),
-    }
+        server.url.join("/token").unwrap(),
+        server.url.join("/").unwrap(),
+    )
 }
 fn form(server: &Server, index: usize) -> HashMap<String, String> {
     let requests = server.requests();
@@ -861,10 +860,7 @@ async fn failed_credential_deletion_blocks_cached_grants_and_is_retryable() {
     assert!(!google.connected(&prefs()).await.unwrap());
     let mut disconnected = prefs();
     disconnected.google_lifecycle.disconnected = true;
-    let reopened = super::Google {
-        credentials: credentials.clone(),
-        ..Default::default()
-    };
+    let reopened = self::google(&server, credentials.clone());
     assert!(!reopened.connected(&disconnected).await.unwrap());
     assert!(reopened.token(&disconnected).await.is_err());
     credentials.locked.store(false, Ordering::SeqCst);
@@ -1203,4 +1199,106 @@ async fn calendar_roles_cannot_restore_writes_after_refresh_reduces_scope() {
     );
     assert_eq!(server.requests().len(), 2);
     server.finish().await;
+}
+
+#[tokio::test]
+async fn cancelled_refresh_observer_still_persists_the_rotated_token_in_order() {
+    let credentials = Arc::new(Credentials::default());
+    credentials.seed(saved(0));
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    *credentials.write_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    let mut server = Server::start(vec![response("rotated", Some("rotated-refresh"))]).await;
+    let google = google(&server, credentials.clone());
+    let worker = google.clone();
+    let refresh = tokio::spawn(async move { worker.token(&prefs()).await });
+    tokio::time::timeout(Duration::from_secs(10), entered.notified())
+        .await
+        .expect("Refresh did not reach its keychain checkpoint");
+    // The observer leaves while the owner is mid-save; the admitted job drains.
+    refresh.abort();
+    assert!(refresh.await.unwrap_err().is_cancelled());
+    let prefs = prefs();
+    let mut connected = Box::pin(google.connected(&prefs));
+    assert!(futures::poll!(connected.as_mut()).is_pending());
+    assert!(
+        credentials
+            .saved
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|s| { !s.expose_secret().contains("rotated-refresh") })
+    );
+    release.notify_one();
+    assert!(connected.await.unwrap());
+    assert_eq!(credentials.value()["refresh_token"], "rotated-refresh");
+    assert_eq!(server.requests().len(), 1);
+    assert_eq!(
+        google.token(&prefs).await.unwrap().expose_secret(),
+        "rotated"
+    );
+    assert_eq!(server.requests().len(), 1);
+    server.finish().await;
+}
+
+#[tokio::test]
+async fn dropping_the_last_google_handle_drains_the_running_save_before_exit() {
+    let credentials = Arc::new(Credentials::default());
+    credentials.seed(saved(0));
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    *credentials.write_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    let mut server = Server::start(vec![response("rotated", Some("rotated-refresh"))]).await;
+    let google = google(&server, credentials.clone());
+    let worker = google.clone();
+    let refresh = tokio::spawn(async move { worker.token(&prefs()).await });
+    tokio::time::timeout(Duration::from_secs(10), entered.notified())
+        .await
+        .expect("Refresh did not reach its keychain checkpoint");
+    refresh.abort();
+    drop(google);
+    release.notify_one();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while credentials.writes.load(Ordering::SeqCst) == 0
+            || credentials
+                .saved
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_none_or(|s| !s.expose_secret().contains("rotated-refresh"))
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the owner persisted the rotated token before exiting");
+    let restarted = self::google(&server, credentials.clone());
+    let mut value = credentials.value();
+    value["expires_at"] = (chrono::Utc::now().timestamp() + 3600).into();
+    credentials.seed(value);
+    assert_eq!(
+        restarted.token(&prefs()).await.unwrap().expose_secret(),
+        "rotated"
+    );
+    assert_eq!(server.requests().len(), 1);
+    server.finish().await;
+}
+
+#[tokio::test]
+async fn a_locked_keychain_fails_every_queued_caller_without_stopping_the_owner() {
+    let credentials = Arc::new(Credentials::default());
+    credentials.seed(saved(chrono::Utc::now().timestamp() + 3600));
+    credentials.locked.store(true, Ordering::SeqCst);
+    let server = Server::start(vec![]).await;
+    let google = google(&server, credentials.clone());
+    let prefs = prefs();
+    let results = futures::future::join_all((0..4).map(|_| google.token(&prefs))).await;
+    assert!(results.iter().all(|r| r.is_err()));
+    assert!(google.connected(&prefs).await.is_err());
+    credentials.locked.store(false, Ordering::SeqCst);
+    assert_eq!(
+        google.token(&prefs).await.unwrap().expose_secret(),
+        "old-access"
+    );
+    assert!(server.requests().is_empty());
 }

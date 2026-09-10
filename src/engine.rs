@@ -10,6 +10,7 @@ mod database_transfers;
 mod dispatch;
 pub mod folders;
 mod google_lifecycle;
+mod lifecycle_work;
 mod mail_actions;
 mod mail_sync;
 mod move_recovery;
@@ -281,11 +282,13 @@ struct Engine {
     demo: bool,
     account_work: account_work::Accounts,
     calendar_work: account_work::Accounts,
-    calendar_setup_lock: Arc<tokio::sync::Mutex<()>>,
-    connection_lifecycle_lock: Arc<tokio::sync::Mutex<()>>,
+    calendar_setup: lifecycle_work::Lane,
+    connection_lifecycle: lifecycle_work::Lane,
     secret_remover: Arc<dyn removals::SecretRemover>,
     outbound: Arc<dyn providers::outgoing::Outbound>,
-    google_connection_lock: Arc<tokio::sync::RwLock<()>>,
+    // Shared for Google provider work, exclusive for login/disconnect/cleanup.
+    // The field name is shared with the profile sync lane.
+    google_connection_lock: lifecycle_work::Lane,
     passphrases: Arc<dyn backup::PassphraseStore>,
     restore_credentials: Arc<dyn backup::restore::CredentialRestorer>,
     backup_uploads: Arc<tokio::sync::OnceCell<backup::journal::Journal>>,
@@ -343,8 +346,8 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             demo,
             account_work: Default::default(),
             calendar_work: Default::default(),
-            calendar_setup_lock: Default::default(),
-            connection_lifecycle_lock: Default::default(),
+            calendar_setup: Default::default(),
+            connection_lifecycle: Default::default(),
             secret_remover: Arc::new(removals::OsSecretRemover(credentials.clone())),
             outbound: Arc::new(providers::outgoing::Servers {
                 credentials: credentials.clone(),
@@ -764,7 +767,7 @@ impl Engine {
                     "Account changes are disabled in preview. Relaunch without --demo to add an account."
                 );
                 account.validate()?;
-                let _lifecycle = self.connection_lifecycle_lock.lock().await;
+                let _lifecycle = self.connection_lifecycle.write().await;
                 let _guard = self.account_access(&account.id).await;
                 self.store.ensure_folder_idle(account.id.clone()).await?;
                 self.store
@@ -1129,7 +1132,7 @@ impl Engine {
                 self.cleanup_google_locked().await?;
                 let grant = self.google.login_with_retry(&prefs, retry).await?;
                 let (grant, identity, sources) = self.google.prepare_grant(&prefs, grant).await?;
-                let _lifecycle = self.connection_lifecycle_lock.lock().await;
+                let _lifecycle = self.connection_lifecycle.write().await;
                 let saved = self
                     .store
                     .activate_google(prefs, grant, identity, sources)
@@ -1485,8 +1488,8 @@ mod calendar_tests {
             demo: true,
             account_work: Default::default(),
             calendar_work: Default::default(),
-            calendar_setup_lock: Default::default(),
-            connection_lifecycle_lock: Default::default(),
+            calendar_setup: Default::default(),
+            connection_lifecycle: Default::default(),
             secret_remover: Arc::new(removals::OsSecretRemover::default()),
             outbound: Arc::new(providers::outgoing::Servers::default()),
             google_connection_lock: Default::default(),

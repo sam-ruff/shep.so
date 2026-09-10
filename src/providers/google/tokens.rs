@@ -183,7 +183,7 @@ impl std::fmt::Display for ExchangeError {
 }
 impl std::error::Error for ExchangeError {}
 
-impl Google {
+impl Backend {
     pub(super) async fn load_tokens(&self, state: &mut State) -> anyhow::Result<()> {
         if state.disconnected || state.loaded {
             return Ok(());
@@ -327,16 +327,89 @@ impl Google {
         Ok(())
     }
 
-    pub(super) async fn exchange_code(
+    /// Resolve a usable access token for the selected grant, renewing and
+    /// persisting it under the owner so a rotated refresh token is never lost.
+    pub(super) async fn access_token(
         &self,
+        state: &mut State,
+        prefs: &Preferences,
+        service: Option<Service>,
+    ) -> anyhow::Result<SecretString> {
+        self.load_tokens(state).await?;
+        let index = state
+            .grants
+            .iter()
+            .position(|c| c.value.grant_id == prefs.google_grant.id)
+            .context("Connect Google in Preferences first.")?;
+        let cached = &state.grants[index];
+        anyhow::ensure!(
+            cached.value.client_id == prefs.active_google_client()
+                && !cached.value.client_id.is_empty(),
+            "Reconnect Google in Preferences to verify access for this OAuth application."
+        );
+        anyhow::ensure!(
+            !cached.invalidated,
+            "Google access expired or was revoked. Reconnect Google in Preferences."
+        );
+        if let Some(service) = service {
+            service.check(cached.value.access())?;
+        }
+        // Retry a failed save before using or renewing a rotated credential.
+        if cached.pending_save {
+            self.persist_refresh(state, index).await?;
+        }
+        let cached = &mut state.grants[index];
+        if cached.value.expires_at <= chrono::Utc::now().timestamp() + 60 {
+            let refresh = cached
+                .value
+                .refresh_token
+                .as_deref()
+                .context("Reconnect Google in Preferences to renew access.")?;
+            let mut form = vec![
+                ("client_id", cached.value.client_id.as_str()),
+                ("refresh_token", refresh),
+                ("grant_type", "refresh_token"),
+            ];
+            let client_secret = if prefs.google_client_id == cached.value.client_id {
+                &prefs.google_client_secret
+            } else {
+                &cached.value.client_secret
+            };
+            if !client_secret.is_empty() {
+                form.push(("client_secret", client_secret.as_str()));
+            }
+            let reply = match self.exchange(&form).await {
+                Ok(reply) => reply,
+                Err(error) => {
+                    if error
+                        .downcast_ref::<ExchangeError>()
+                        .is_some_and(|kind| matches!(kind, ExchangeError::InvalidGrant))
+                    {
+                        cached.invalidated = true;
+                    }
+                    return Err(error);
+                }
+            };
+            cached.value = Tokens::from_reply(prefs, reply, Some(&cached.value))?;
+            cached.pending_save = true;
+            self.persist_refresh(state, index).await?;
+        }
+        let cached = &state.grants[index];
+        if let Some(service) = service {
+            service.check(cached.value.access())?;
+        }
+        Ok(SecretString::from(cached.value.access_token.clone()))
+    }
+
+    async fn exchange_code(
+        &self,
+        state: &mut State,
         prefs: &Preferences,
         code: &str,
         redirect: &str,
         verifier: &str,
     ) -> anyhow::Result<crate::model::GoogleGrant> {
-        consent::requested_scopes(prefs)?;
-        let mut state = self.state.lock().await;
-        self.load_tokens(&mut state).await?;
+        self.load_tokens(state).await?;
         let mut form = vec![
             ("client_id", prefs.google_client_id.as_str()),
             ("code", code),
@@ -355,21 +428,21 @@ impl Google {
             "Google did not grant usable Calendar or Drive access. Connect again and approve Calendar (including its list) or Drive backup."
         );
         state.pending_login = Some(candidate);
-        self.stage_login(&mut state, prefs).await
+        self.stage_login(state, prefs).await
     }
 
-    pub(super) async fn finish_pending_login(
+    async fn finish_pending_login(
         &self,
+        state: &mut State,
         prefs: &Preferences,
+        requested: &str,
     ) -> anyhow::Result<Option<crate::model::GoogleGrant>> {
-        let requested = consent::requested_scopes(prefs)?;
-        let mut state = self.state.lock().await;
-        self.load_tokens(&mut state).await?;
+        self.load_tokens(state).await?;
         if state.pending_login.as_ref().is_some_and(|t| {
             t.client_id == prefs.google_client_id
-                && t.requested_scopes.as_deref() == Some(requested.as_str())
+                && t.requested_scopes.as_deref() == Some(requested)
         }) {
-            return self.stage_login(&mut state, prefs).await.map(Some);
+            return self.stage_login(state, prefs).await.map(Some);
         }
         // A crash before the SQLite activation leaves the candidate available for
         // retry. The current preference pointer still selects the working grant.
@@ -380,7 +453,7 @@ impl Google {
                 state.candidate_id.as_deref() == Some(c.value.grant_id.as_str())
                     && c.value.grant_id != prefs.google_grant.id
                     && c.value.client_id == prefs.google_client_id
-                    && c.value.requested_scopes.as_deref() == Some(requested.as_str())
+                    && c.value.requested_scopes.as_deref() == Some(requested)
                     && !c.invalidated
             })
             .map(|c| crate::model::GoogleGrant {
@@ -427,22 +500,70 @@ impl Google {
         Ok(grant)
     }
 
-    /// Only after the SQLite pointer commits may the previous credential be pruned.
-    /// Failure is harmless to activation; the bounded vault still selects by ID.
-    pub(crate) async fn finish_activation(&self, prefs: &Preferences) -> anyhow::Result<()> {
-        let mut state = self.state.lock().await;
-        self.load_tokens(&mut state).await?;
+    async fn finish_activation(&self, state: &mut State, grant_id: &str) -> anyhow::Result<()> {
+        self.load_tokens(state).await?;
         let selected = state
             .grants
             .iter()
-            .find(|c| c.value.grant_id == prefs.google_grant.id)
+            .find(|c| c.value.grant_id == grant_id)
             .context("The selected Google grant is missing. Reconnect Google.")?;
         self.write_grants(&[&selected.value], None).await?;
-        state
-            .grants
-            .retain(|c| c.value.grant_id == prefs.google_grant.id);
+        state.grants.retain(|c| c.value.grant_id == grant_id);
         state.candidate_id = None;
         state.pending_login = None;
         Ok(())
+    }
+}
+
+impl Google {
+    pub(super) async fn exchange_code(
+        &self,
+        prefs: &Preferences,
+        code: &str,
+        redirect: &str,
+        verifier: &str,
+    ) -> anyhow::Result<crate::model::GoogleGrant> {
+        consent::requested_scopes(prefs)?;
+        let prefs = prefs.clone();
+        let code = Zeroizing::new(code.to_owned());
+        let redirect = redirect.to_owned();
+        let verifier = Zeroizing::new(verifier.to_owned());
+        self.tokens
+            .run(move |state, backend| {
+                Box::pin(async move {
+                    backend
+                        .exchange_code(state, &prefs, &code, &redirect, &verifier)
+                        .await
+                })
+            })
+            .await
+    }
+
+    pub(super) async fn finish_pending_login(
+        &self,
+        prefs: &Preferences,
+    ) -> anyhow::Result<Option<crate::model::GoogleGrant>> {
+        let requested = consent::requested_scopes(prefs)?;
+        let prefs = prefs.clone();
+        self.tokens
+            .run(move |state, backend| {
+                Box::pin(async move {
+                    backend
+                        .finish_pending_login(state, &prefs, &requested)
+                        .await
+                })
+            })
+            .await
+    }
+
+    /// Only after the SQLite pointer commits may the previous credential be pruned.
+    /// Failure is harmless to activation; the bounded vault still selects by ID.
+    pub(crate) async fn finish_activation(&self, prefs: &Preferences) -> anyhow::Result<()> {
+        let grant_id = prefs.google_grant.id.clone();
+        self.tokens
+            .run(move |state, backend| {
+                Box::pin(async move { backend.finish_activation(state, &grant_id).await })
+            })
+            .await
     }
 }
