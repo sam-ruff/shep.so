@@ -81,7 +81,8 @@ pub struct State {
     pub accounts: BTreeMap<String, Uuid>,
     /// Accounts already present when joining remain local until explicit linking.
     pub local_only: BTreeSet<String>,
-    /// Removing only on this device cannot publish a tombstone or re-add it.
+    /// Removing or keeping local only on this device cannot publish a tombstone
+    /// or re-add the shared account; unmapped identities may appear here.
     pub suppressed: BTreeSet<Uuid>,
     pub fields: BTreeMap<String, Field>,
     pub pending: Option<Pending>,
@@ -171,7 +172,7 @@ impl State {
                     .accounts
                     .keys()
                     .all(|id| !id.is_empty() && !self.local_only.contains(id))
-                && self.suppressed.iter().all(|id| ids.contains(id)),
+                && self.suppressed.iter().all(|id| !id.is_nil()),
             "The saved shared account mapping is ambiguous."
         );
         for (target, field) in &self.fields {

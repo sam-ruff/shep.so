@@ -1,11 +1,215 @@
 use super::*;
 use crate::profile_sync::{
-    account_reviews::{self, Basis, Review},
+    account_reviews::{self, Basis, Candidate, Choice, Link, Review},
+    join::{self, links},
     metadata, state as replication,
 };
 use shep_profile_core::{Action, Change, history};
 
+fn native_key(kind: &str, local: &str) -> String {
+    format!("local-account-{kind}:{local}")
+}
+
 impl Store {
+    /// Match unmapped shared definitions against this device's unmapped
+    /// accounts under one frozen set of profile/Google/connection generations.
+    pub(crate) async fn profile_account_link_bases(
+        &self,
+        binding: history::Binding,
+        candidates: Vec<Candidate>,
+    ) -> anyhow::Result<Vec<(Basis, Link)>> {
+        self.run(move |c| {
+            let (enrollment, selection) = state::selected(c)?;
+            anyhow::ensure!(
+                selection.binding == binding
+                    && enrollment.options.enabled
+                    && enrollment.options.accounts,
+                "Enable account sync for this profile before reviewing connections."
+            );
+            let current = state::read(c, &binding)?;
+            let native = state::native_revisions(c, &current)?;
+            let prefs: Preferences = get(c, "preferences")?;
+            let connections_revision = get(c, "connections_revision")?;
+            let accounts: Vec<Account> = get(c, "accounts")?;
+            let mut links = Vec::new();
+            for candidate in candidates {
+                if current.accounts.values().any(|s| *s == candidate.shared)
+                    || current.suppressed.contains(&candidate.shared)
+                {
+                    continue;
+                }
+                let Action::AccountConnection { account } = &candidate.change.action else {
+                    continue;
+                };
+                anyhow::ensure!(
+                    account.id == candidate.shared,
+                    "The shared connection belongs to another account."
+                );
+                let name = candidate
+                    .name
+                    .as_ref()
+                    .and_then(|named| match &named.change.action {
+                        Action::AccountName { name, .. } => Some(name.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| account.email.clone());
+                let Ok(shared) = metadata::review_account(account, &name) else {
+                    continue;
+                };
+                let matches = continuous::link_matches_with(&current, &accounts, &shared, &native);
+                let Some(first) = matches.first() else {
+                    continue;
+                };
+                links.push((
+                    Basis {
+                        binding: binding.clone(),
+                        enrollment_revision: enrollment.revision,
+                        google_revision: prefs.google_lifecycle.revision,
+                        connections_revision,
+                        local: first.account.clone(),
+                        shared: candidate.shared,
+                        native_revision: first.native_revision,
+                        pending: None,
+                    },
+                    Link {
+                        operation: candidate.operation,
+                        account: shared,
+                        change: candidate.change,
+                        revision: candidate.revision,
+                        name: candidate.name,
+                        matches,
+                    },
+                ));
+            }
+            Ok(links)
+        })
+        .await
+    }
+
+    /// Link, add or keep local in one transaction. Linking reuses the exact
+    /// native row and keychain slot and publishes no new definition; keeping
+    /// local records durable suppression of the shared identity.
+    pub(crate) async fn resolve_profile_account_link(
+        &self,
+        review: Review,
+        choice: Choice,
+    ) -> anyhow::Result<()> {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            let (enrollment, selection) = state::selected(&tx)?;
+            let mut current = state::read(&tx, &selection.binding)?;
+            let prefs: Preferences = get(&tx, "preferences")?;
+            let mut accounts: Vec<Account> = get(&tx, "accounts")?;
+            let basis = &review.basis;
+            let link = review
+                .link()
+                .context("This review does not offer account linking.")?;
+            let target = account_reviews::target(basis.shared);
+            let native = state::native_revisions(&tx, &current)?;
+            anyhow::ensure!(
+                selection.binding == basis.binding
+                    && enrollment.revision == basis.enrollment_revision
+                    && enrollment.options.enabled
+                    && enrollment.options.accounts
+                    && prefs.google_lifecycle.revision == basis.google_revision,
+                "Profile sync choices changed. Refresh this account review."
+            );
+            let unchanged = |m: &account_reviews::Match| {
+                accounts.iter().any(|account| account == &m.account)
+                    && !current.accounts.contains_key(&m.account.id)
+                    && native
+                        .get(&native_key("connection", &m.account.id))
+                        .copied()
+                        .unwrap_or_default()
+                        == m.native_revision
+            };
+            anyhow::ensure!(
+                review.revision >= current.revision
+                    && get::<u64>(&tx, "connections_revision")? == basis.connections_revision
+                    && !current.accounts.values().any(|s| *s == basis.shared)
+                    && !current.suppressed.contains(&basis.shared)
+                    && current
+                        .pending
+                        .iter()
+                        .chain(current.deferred.values())
+                        .all(|p| p.target() != target)
+                    && link.matches.iter().all(unchanged),
+                "The local account changed while this review was open. Refresh to keep your newer settings."
+            );
+            let field = |change: &Change, revision: u64, native_revision: u64| replication::Field {
+                local: Some(replication::normalized(change.clone())),
+                remote: Some(change.clone()),
+                revision,
+                native_revision,
+            };
+            match choice {
+                Choice::KeepLocal => {
+                    current.suppressed.insert(basis.shared);
+                }
+                Choice::AddNew => {
+                    let mut reconnect: join::Reconnect = get(&tx, join::RECONNECT_KEY)?;
+                    continuous::add_shared_account(
+                        &tx,
+                        &mut current,
+                        &mut accounts,
+                        &mut reconnect,
+                        link.account.clone(),
+                        basis.shared,
+                    )?;
+                    current
+                        .fields
+                        .insert(target, field(&link.change, link.revision, 0));
+                    if let Some(named) = &link.name {
+                        current.fields.insert(
+                            history::target(&named.change.action),
+                            field(&named.change, named.revision, 0),
+                        );
+                    }
+                    put(&tx, "accounts", &accounts)?;
+                    put(&tx, join::RECONNECT_KEY, &reconnect)?;
+                    connections::changed(&tx)?;
+                }
+                Choice::LinkExisting(id) => {
+                    let chosen = link
+                        .matches
+                        .iter()
+                        .find(|m| m.account.id == id && m.exact)
+                        .context("Choose an account whose connection matches exactly.")?;
+                    // The local export must equal the shared definition exactly,
+                    // so no message UID or password is redirected elsewhere.
+                    anyhow::ensure!(
+                        links::compatible(&chosen.account, &link.account)?
+                            && replication::normalized(link.change.clone())
+                                == account_reviews::local_change(&chosen.account, basis.shared)?,
+                        "The linked connection changed. Refresh the review before linking."
+                    );
+                    current.local_only.remove(&id);
+                    current.accounts.insert(id.clone(), basis.shared);
+                    current.fields.insert(
+                        target,
+                        field(&link.change, link.revision, chosen.native_revision),
+                    );
+                    if let Some(named) = &link.name {
+                        let name_revision = native
+                            .get(&native_key("name", &id))
+                            .copied()
+                            .unwrap_or_default();
+                        current.fields.insert(
+                            history::target(&named.change.action),
+                            field(&named.change, named.revision, name_revision),
+                        );
+                    }
+                }
+                _ => anyhow::bail!("Choose how this device should treat the new shared account."),
+            }
+            current.revision = current.revision.max(review.revision);
+            current.validate()?;
+            put(&tx, replication::STORAGE_KEY, &current)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
     pub(crate) async fn profile_account_review_bases(
         &self,
         binding: history::Binding,

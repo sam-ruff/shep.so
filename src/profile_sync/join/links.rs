@@ -29,6 +29,11 @@ pub(crate) fn compatible(local: &Account, shared: &Account) -> anyhow::Result<bo
     Ok(native[0] == remote[0])
 }
 
+/// Same mailbox address only; server settings may still differ.
+pub(crate) fn same_address(local: &Account, shared: &Account) -> bool {
+    local.email.trim().to_lowercase() == shared.email.trim().to_lowercase()
+}
+
 pub(crate) fn offers(accounts: &[Account], local: &[Account]) -> anyhow::Result<Vec<AccountOffer>> {
     accounts
         .iter()

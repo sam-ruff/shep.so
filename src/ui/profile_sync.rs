@@ -27,6 +27,10 @@ pub enum Action {
         Arc<crate::profile_sync::account_reviews::Review>,
         account_reviews::Candidate,
     ),
+    LinkCandidate(
+        Arc<crate::profile_sync::account_reviews::Review>,
+        account_reviews::LocalCandidate,
+    ),
     ReviewRemovedAccount(Arc<crate::profile_sync::account_reviews::Review>),
     CloseAccountReviews,
     SettingReviews,
@@ -87,6 +91,7 @@ pub(super) struct State {
     account_reviews: Option<Vec<Arc<crate::profile_sync::account_reviews::Review>>>,
     account_after: Option<String>,
     account_choices: std::collections::BTreeMap<String, account_reviews::Candidate>,
+    account_links: std::collections::BTreeMap<uuid::Uuid, account_reviews::LocalCandidate>,
     setting_reviews: Option<Vec<Arc<crate::profile_sync::reviews::Review>>>,
     setting_choices: std::collections::BTreeMap<shep_profile_core::SettingKey, reviews::Candidate>,
     name: String,
@@ -97,11 +102,15 @@ pub(super) struct State {
 }
 impl State {
     pub(super) fn connection_removed(&mut self) {
-        self.account_reviews = None;
-        self.account_choices.clear();
-        self.account_after = None;
+        self.close_account_reviews();
         self.cycle = None;
         self.next_sync = Some(Instant::now());
+    }
+    fn close_account_reviews(&mut self) {
+        self.account_reviews = None;
+        self.account_choices.clear();
+        self.account_links.clear();
+        self.account_after = None;
     }
     fn accepts_account_review(
         &self,
@@ -148,7 +157,8 @@ impl State {
     pub fn observation(&self) -> serde_json::Value {
         serde_json::json!({"loaded":self.snapshot.is_some(),"available":self.snapshot.as_ref().is_some_and(|s|s.available),"empty_workspace":self.snapshot.as_ref().is_some_and(|s|s.empty_workspace),
             "options":self.options(),"offer":self.offer,"login_pending":self.login_pending.is_some(),"saving":self.saving.is_some(),"working":self.job.is_some(),"stopping":self.stopping.is_some(),
-            "account_reviews": self.account_reviews.as_ref().map(|r| r.iter().map(|r|serde_json::json!({"id":r.local().id,"name":r.local().name,"host":r.local().host,"removed":r.removed(),"versions":r.versions().iter().map(|v|&v.account.host).collect::<Vec<_>>()})).collect::<Vec<_>>()),
+            "account_reviews": self.account_reviews.as_ref().map(|r| r.iter().map(|r|serde_json::json!({"id":r.local().id,"name":r.local().name,"host":r.local().host,"removed":r.removed(),"versions":r.versions().iter().map(|v|&v.account.host).collect::<Vec<_>>(),
+                "link":r.link().map(|l|serde_json::json!({"name":l.account.name,"email":l.account.email,"host":l.account.host,"linkable":l.linkable(),"matches":l.matches.iter().map(|m|serde_json::json!({"id":m.account.id,"exact":m.exact})).collect::<Vec<_>>()}))})).collect::<Vec<_>>()),
             "account_after": self.account_after,
             "setting_reviews": self.setting_reviews.as_ref().map(|r|r.iter().map(|r|serde_json::json!({"label":r.label(),"local":r.local(),"versions":r.versions().iter().map(|v|&v.value).collect::<Vec<_>>()})).collect::<Vec<_>>()),
             "review":self.review.as_ref().map(|r|r.records()),
@@ -205,6 +215,21 @@ impl App {
                 }
                 return;
             }
+            Action::LinkCandidate(review, candidate) => {
+                if self.profile_sync.job.is_none()
+                    && self.profile_sync.accepts_account_review(&review)
+                    && review.link().is_some_and(|link| {
+                        link.matches
+                            .iter()
+                            .any(|m| m.exact && m.account.id == candidate.id())
+                    })
+                {
+                    self.profile_sync
+                        .account_links
+                        .insert(review.shared(), candidate);
+                }
+                return;
+            }
             Action::ReviewRemovedAccount(review) => {
                 if self.profile_sync.job.is_none()
                     && review.removed()
@@ -221,9 +246,7 @@ impl App {
                 return;
             }
             Action::CloseAccountReviews => {
-                self.profile_sync.account_reviews = None;
-                self.profile_sync.account_choices.clear();
-                self.profile_sync.account_after = None;
+                self.profile_sync.close_account_reviews();
                 return;
             }
             Action::SettingCandidate(review, candidate) => {
@@ -285,9 +308,7 @@ impl App {
                     self.profile_sync.login_pending =
                         Some(self.preferences.google_lifecycle.revision);
                 }
-                self.profile_sync.account_reviews = None;
-                self.profile_sync.account_choices.clear();
-                self.profile_sync.account_after = None;
+                self.profile_sync.close_account_reviews();
                 self.profile_sync.setting_reviews = None;
                 self.profile_sync.setting_choices.clear();
                 self.profile_sync.desired = changes;
@@ -569,6 +590,7 @@ impl App {
                     state.account_reviews = Some(reviews);
                     state.account_after = after;
                     state.account_choices.clear();
+                    state.account_links.clear();
                     if saved {
                         state.next_sync = Some(Instant::now() + Duration::from_secs(2));
                         self.notice("Account choice saved", false);
@@ -1117,6 +1139,53 @@ mod tests {
             queue.try_recv(),
             Ok(Command::ProfileSync(Request::ResolveAccount { .. }))
         ));
+    }
+
+    #[tokio::test]
+    async fn profile_account_link_controls_keep_exact_match_identity_and_clear_with_reviews() {
+        use crate::profile_sync::account_reviews::{Choice, Review};
+        let (mut app, mut queue, _) = app().await;
+        let exact = Arc::new(Review::link_fixture("Exact", true));
+        let address = Arc::new(Review::link_fixture("Address only", false));
+        app.profile_sync.account_reviews = Some(vec![exact.clone(), address.clone()]);
+        // Only an exactly matching native account may be chosen for linking.
+        app.shared_profile_action(Action::LinkCandidate(
+            address.clone(),
+            account_reviews::LocalCandidate::fixture(&address.local().id),
+        ));
+        assert!(app.profile_sync.account_links.is_empty());
+        app.shared_profile_action(Action::LinkCandidate(
+            exact.clone(),
+            account_reviews::LocalCandidate::fixture("unoffered"),
+        ));
+        assert!(app.profile_sync.account_links.is_empty());
+        app.shared_profile_action(Action::LinkCandidate(
+            exact.clone(),
+            account_reviews::LocalCandidate::fixture(&exact.local().id),
+        ));
+        assert!(app.profile_sync.account_links.contains_key(&exact.shared()));
+        let stale = Action::ResolveAccount(
+            address.clone(),
+            Choice::LinkExisting(address.local().id.clone()),
+        );
+        app.profile_sync.account_reviews = Some(vec![exact.clone()]);
+        app.shared_profile_action(stale);
+        assert!(queue.try_recv().is_err());
+        app.shared_profile_action(Action::ResolveAccount(
+            exact.clone(),
+            Choice::LinkExisting(exact.local().id.clone()),
+        ));
+        let Command::ProfileSync(Request::ResolveAccount { review, choice, .. }) =
+            queue.try_recv().unwrap()
+        else {
+            panic!("exact displayed review")
+        };
+        assert!(Arc::ptr_eq(&review, &exact));
+        assert_eq!(review.affected_account(&choice), exact.local().id);
+        app.profile_sync.job = None;
+        app.shared_profile_action(Action::CloseAccountReviews);
+        assert!(app.profile_sync.account_links.is_empty());
+        assert!(app.profile_sync.account_reviews.is_none());
     }
 
     #[tokio::test]

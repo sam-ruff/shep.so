@@ -10,7 +10,7 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
-MODES = ("empty", "fail-once", "hold-list", "slow-upload", "held-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-connections", "existing-removal", "existing-updates", "existing-update-failure", "existing-upload-failure")
+MODES = ("empty", "fail-once", "hold-list", "slow-upload", "held-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-connections", "existing-removal", "existing-link", "existing-updates", "existing-update-failure", "existing-upload-failure")
 
 
 class ProfileDriveFixture:
@@ -83,7 +83,7 @@ class ProfileDriveFixture:
                     owner.requests["lists"] += 1
                     if "shepProfile" in q:
                         owner.requests["scoped_lists"] += 1
-                    if "shepProfile" in q and owner.mode in ("existing-conflict", "existing-connections", "existing-removal", "existing-updates", "existing-update-failure", "existing-upload-failure"):
+                    if "shepProfile" in q and owner.mode in ("existing-conflict", "existing-connections", "existing-removal", "existing-link", "existing-updates", "existing-update-failure", "existing-upload-failure"):
                         owner.scoped_lists += 1
                         if owner.scoped_lists >= 2 and not owner.updated:
                             if owner.mode == "existing-update-failure" and not owner.failed:
@@ -93,6 +93,8 @@ class ProfileDriveFixture:
                                 owner.seed_connections()
                             elif owner.mode == "existing-removal":
                                 owner.seed_removal()
+                            elif owner.mode == "existing-link":
+                                owner.seed_link()
                             elif owner.mode == "existing-conflict":
                                 owner.seed_conflict()
                             else:
@@ -166,7 +168,7 @@ class ProfileDriveFixture:
                 smtp_auth="Automatic", smtp_separate_password=False, sent_folder="")
         if self.mode == "existing-unsupported":
             account["future_tls_requirement"] = True
-        names = ("Home",) if self.mode in ("existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-connections", "existing-removal", "existing-updates", "existing-update-failure", "existing-upload-failure") else ("Home", "Work")
+        names = ("Home",) if self.mode in ("existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-connections", "existing-removal", "existing-link", "existing-updates", "existing-update-failure", "existing-upload-failure") else ("Home", "Work")
         for number, name in enumerate(names, start=1):
             operation = dict(original)
             for field, prefix in (("profile","1"),("generation","2"),("device","3"),("operation","4")):
@@ -174,7 +176,7 @@ class ProfileDriveFixture:
             operation["namespace"] = "so.shep"
             operation["parents"] = []
             operation["changes"] = [{"kind":"profile_name", "name":name},
-                {"kind":"setting", "key":"appearance", "value":"Dark" if number == 1 else "Light"}]
+                {"kind":"setting", "key":"appearance", "value":"Dark" if number == 1 and self.mode != "existing-link" else "Light"}]
             if number == 1:
                 operation["changes"] += [{"kind":"account_connection", "account":account},
                     {"kind":"account_name", "id":account["id"], "name":"Cloud account"}]
@@ -266,6 +268,37 @@ class ProfileDriveFixture:
                     "shepGeneration":record["generation"], "shepOperation":operation, "shepSha256":digest}}
             self.files[identity] = (metadata, raw)
             self.changes.append(identity)
+        self.updated = True
+
+    def seed_link(self):
+        """Two later definitions from another device: one exactly matches the
+        preview Design studio account, one shares Personal's address only."""
+        original = json.loads(self.files["existing-profile-1"][1])
+        account = next(c["account"] for c in original["changes"] if c["kind"] == "account_connection").copy()
+        studio = dict(account, id="80000000-0000-4000-8000-000000000002", email="alex@studio.example",
+            username="alex@studio.example", smtp_username="alex@studio.example", host="imap.example", port=993,
+            smtp_host="smtp.example", smtp_port=465, smtp_security="Tls", smtp_auth="Automatic",
+            smtp_separate_password=False, sent_copy="Automatic", sent_folder="")
+        personal = dict(studio, id="80000000-0000-4000-8000-000000000003", email="alex@example.com",
+            username="alex@example.com", smtp_username="alex@example.com", host="mail.other.example",
+            smtp_host="smtp.other.example")
+        record = dict(original, device="90000000-0000-4000-8000-000000000001",
+            operation="50000000-0000-4000-8000-000000000002",
+            parents=["70000000-0000-4000-8000-000000000001"],
+            changes=[{"kind":"account_connection", "account":studio, "peer_hint":"studio"},
+                {"kind":"account_name", "id":studio["id"], "name":"Studio (shared)"},
+                {"kind":"account_connection", "account":personal},
+                {"kind":"account_name", "id":personal["id"], "name":"Personal (other server)"}])
+        raw = json.dumps(record, ensure_ascii=False).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        identity = "existing-profile-1-link"
+        metadata = {"id":identity,"name":f"shep-profile-{record['operation']}.json","ownedByMe":True,
+            "trashed":False,"spaces":["appDataFolder"],"mimeType":"application/json","size":str(len(raw)),
+            "sha256Checksum":digest,"appProperties":{"shepType":"profile","shepFormat":"operation-v1",
+                "shepNamespace":hashlib.sha256(b"so.shep").hexdigest(),"shepProfile":record["profile"],
+                "shepGeneration":record["generation"],"shepOperation":record["operation"],"shepSha256":digest}}
+        self.files[identity] = (metadata,raw)
+        self.changes.append(identity)
         self.updated = True
 
     def seed_update(self):

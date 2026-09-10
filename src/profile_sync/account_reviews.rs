@@ -27,12 +27,51 @@ pub struct Version {
     pub operation: Uuid,
     pub account: Account,
 }
+/// A local account that resembles a new shared definition. Only an exact
+/// connection match may reuse this device's credentials and mail.
+#[derive(Clone, Debug)]
+pub struct Match {
+    pub account: Account,
+    pub exact: bool,
+    pub(crate) native_revision: u64,
+}
+/// A shared account that arrived after enrollment and is still unmapped here.
+#[derive(Clone, Debug)]
+pub struct Link {
+    pub operation: Uuid,
+    pub account: Account,
+    /// Exact shared change, retaining optional fields for the local basis.
+    pub(crate) change: Change,
+    pub(crate) revision: u64,
+    pub(crate) name: Option<Named>,
+    pub matches: Vec<Match>,
+}
+#[derive(Clone, Debug)]
+pub(crate) struct Named {
+    pub change: Change,
+    pub revision: u64,
+}
+impl Link {
+    pub fn linkable(&self) -> bool {
+        self.matches.iter().any(|m| m.exact)
+    }
+}
+/// Raw connection candidate read from history before local matching.
+#[derive(Clone, Debug)]
+pub(crate) struct Candidate {
+    pub shared: Uuid,
+    pub operation: Uuid,
+    pub change: Change,
+    pub revision: u64,
+    pub name: Option<Named>,
+}
 #[derive(Clone, Debug)]
 pub struct Review {
     pub(crate) basis: Basis,
     pub(crate) revision: u64,
     versions: Vec<Version>,
     removals: Vec<Uuid>,
+    link: Option<Link>,
 }
 impl Review {
     pub fn local(&self) -> &Account {
@@ -44,20 +83,49 @@ impl Review {
     pub fn versions(&self) -> &[Version] {
         &self.versions
     }
+    pub fn link(&self) -> Option<&Link> {
+        self.link.as_ref()
+    }
+    pub fn shared(&self) -> Uuid {
+        self.basis.shared
+    }
+    /// The native account whose sync ownership a choice must hold.
+    pub fn affected_account<'a>(&'a self, choice: &'a Choice) -> &'a str {
+        match choice {
+            Choice::LinkExisting(id) => id,
+            _ => &self.basis.local.id,
+        }
+    }
 }
 #[derive(Clone, Debug)]
 pub struct Page {
     pub reviews: Vec<Review>,
     pub after: Option<String>,
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Choice {
     Local,
     AddShared(Uuid),
     KeepRemovedLocal,
+    LinkExisting(String),
+    AddNew,
+    KeepLocal,
 }
+const LINK_CURSOR: &str = "link:";
 pub(crate) fn target(id: Uuid) -> String {
     format!("account:{id}:connection")
+}
+fn name_target(id: Uuid) -> String {
+    history::target(&Action::AccountName {
+        id,
+        name: String::new(),
+    })
+}
+fn connection_target(target: &str) -> Option<Uuid> {
+    target
+        .strip_prefix("account:")?
+        .strip_suffix(":connection")
+        .and_then(|id| Uuid::parse_str(id).ok())
 }
 pub(crate) fn local_change(account: &Account, shared: Uuid) -> anyhow::Result<Change> {
     let mut account = account.clone();
@@ -109,6 +177,85 @@ async fn removals(replica: &Replica, id: Uuid) -> anyhow::Result<Vec<Uuid>> {
 async fn live_account(replica: &Replica, id: Uuid) -> anyhow::Result<bool> {
     Ok(removals(replica, id).await?.is_empty())
 }
+/// Unmapped live shared connections after the cursor, oldest target first.
+/// Conflicting definitions are left to the ordinary cycle report.
+async fn link_candidates(
+    store: &Store,
+    replica: &Replica,
+    after: Option<&str>,
+    room: usize,
+) -> anyhow::Result<(Vec<Candidate>, Option<String>)> {
+    let replication = store.profile_replication(replica.binding().clone()).await?;
+    let mapped: std::collections::BTreeSet<Uuid> = replication.accounts.values().copied().collect();
+    let mut cursor = Some(
+        after
+            .and_then(|after| after.strip_prefix(LINK_CURSOR))
+            .and_then(|id| Uuid::parse_str(id).ok())
+            .map_or_else(|| "account:".to_string(), target),
+    );
+    let mut candidates = Vec::new();
+    'pages: loop {
+        let fields = replica.fields(cursor.clone()).await?;
+        let Some(last) = fields.last() else {
+            break;
+        };
+        cursor = Some(last.target.clone());
+        for field in fields {
+            if !field.target.starts_with("account:") {
+                break 'pages;
+            }
+            let Some(shared) = connection_target(&field.target) else {
+                continue;
+            };
+            if mapped.contains(&shared)
+                || replication.suppressed.contains(&shared)
+                || field.conflict
+                || field.versions != 1
+            {
+                continue;
+            }
+            if candidates.len() == room {
+                // The cursor names the last included definition, or the start
+                // of this section when mapped reviews already filled the page.
+                let next = candidates.last().map_or_else(
+                    || LINK_CURSOR.to_string(),
+                    |c: &Candidate| format!("{LINK_CURSOR}{}", c.shared),
+                );
+                return Ok((candidates, Some(next)));
+            }
+            let version = versions(replica, shared)
+                .await?
+                .into_iter()
+                .next()
+                .context("The shared connection disappeared. Refresh this review.")?;
+            let change = replica
+                .value(field.target.clone(), version.operation)
+                .await?;
+            let names = target_versions(replica, name_target(shared)).await?;
+            let name = match names.as_slice() {
+                [only] => Some(Named {
+                    change: replica.value(name_target(shared), only.operation).await?,
+                    revision: replica
+                        .fields(Some(format!("account:{shared}:")))
+                        .await?
+                        .into_iter()
+                        .find(|f| f.target == name_target(shared))
+                        .map_or(field.revision, |f| f.revision),
+                }),
+                _ => None,
+            };
+            candidates.push(Candidate {
+                shared,
+                operation: version.operation,
+                change,
+                revision: field.revision,
+                name,
+            });
+        }
+    }
+    Ok((candidates, None))
+}
+
 pub async fn prepare(
     store: &Store,
     replica: &Replica,
@@ -116,9 +263,14 @@ pub async fn prepare(
 ) -> anyhow::Result<Page> {
     let state = replica.state().await?;
     ready(&state)?;
-    let (bases, next) = store
-        .profile_account_review_bases(replica.binding().clone(), after)
-        .await?;
+    let linking = after.as_deref().is_some_and(|a| a.starts_with(LINK_CURSOR));
+    let (bases, next) = if linking {
+        (vec![], None)
+    } else {
+        store
+            .profile_account_review_bases(replica.binding().clone(), after.clone())
+            .await?
+    };
     let mut reviews = Vec::new();
     for basis in bases {
         // A remote tombstone never silently deletes native mail or credentials.
@@ -129,6 +281,7 @@ pub async fn prepare(
                 revision: state.revision,
                 versions: vec![],
                 removals,
+                link: None,
             });
             continue;
         }
@@ -161,6 +314,34 @@ pub async fn prepare(
             revision: state.revision,
             versions: candidates,
             removals: vec![],
+            link: None,
+        });
+    }
+    if next.is_some() {
+        return Ok(Page {
+            reviews,
+            after: next,
+        });
+    }
+    // New shared definitions resembling an unmapped native account wait here
+    // rather than silently becoming another reconnecting account.
+    let (candidates, next) = link_candidates(
+        store,
+        replica,
+        linking.then_some(after.as_deref()).flatten(),
+        PAGE_SIZE - reviews.len(),
+    )
+    .await?;
+    for (basis, link) in store
+        .profile_account_link_bases(replica.binding().clone(), candidates)
+        .await?
+    {
+        reviews.push(Review {
+            basis,
+            revision: state.revision,
+            versions: vec![],
+            removals: vec![],
+            link: Some(link),
         });
     }
     Ok(Page {
@@ -193,6 +374,31 @@ pub async fn accept(
         );
         return store.keep_removed_profile_account(review).await;
     }
+    if let Some(link) = &review.link {
+        ensure!(
+            matches!(
+                choice,
+                Choice::LinkExisting(_) | Choice::AddNew | Choice::KeepLocal
+            ),
+            "Choose how this device should treat the new shared account."
+        );
+        ensure!(
+            live_account(replica, review.basis.shared).await?,
+            "This shared account was removed. Refresh its review."
+        );
+        let actual = versions(replica, review.basis.shared).await?;
+        ensure!(
+            current.revision == review.revision
+                && actual.len() == 1
+                && actual[0].operation == link.operation
+                && replica
+                    .value(target(review.basis.shared), link.operation)
+                    .await?
+                    == link.change,
+            "Shared history changed while this review was open. Refresh before choosing."
+        );
+        return store.resolve_profile_account_link(review, choice).await;
+    }
     ensure!(
         live_account(replica, review.basis.shared).await?,
         "This shared account was removed. Keep the local setup and refresh its review."
@@ -209,6 +415,9 @@ pub async fn accept(
     let operation = match choice {
         Choice::KeepRemovedLocal => {
             anyhow::bail!("This account has not been removed from the shared profile.")
+        }
+        Choice::LinkExisting(_) | Choice::AddNew | Choice::KeepLocal => {
+            anyhow::bail!("This account is already part of the shared profile on this device.")
         }
         Choice::Local => {
             review
@@ -291,6 +500,34 @@ impl Review {
                 operation: Uuid::new_v4(),
                 account: local,
             }],
+            link: None,
         }
+    }
+    pub(crate) fn link_fixture(name: &str, exact: bool) -> Self {
+        let mut review = Self::fixture(name);
+        let change = shep_profile_core::Operation::decode(include_bytes!(
+            "../../tests/support/profile-operation.json"
+        ))
+        .unwrap()
+        .changes
+        .remove(0);
+        let Action::AccountConnection { account } = &change.action else {
+            panic!("connection fixture")
+        };
+        let shared = metadata::review_account(account, "Shared name").unwrap();
+        review.versions.clear();
+        review.link = Some(Link {
+            operation: Uuid::new_v4(),
+            account: shared,
+            change,
+            revision: 1,
+            name: None,
+            matches: vec![Match {
+                account: review.basis.local.clone(),
+                exact,
+                native_revision: 1,
+            }],
+        });
+        review
     }
 }
