@@ -7,6 +7,7 @@ pub mod continuous;
 pub mod control;
 pub mod drive;
 pub mod enrollment;
+pub(crate) mod incremental;
 pub mod join;
 pub mod journal;
 pub mod metadata;

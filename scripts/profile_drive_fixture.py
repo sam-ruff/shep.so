@@ -10,7 +10,10 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
-MODES = ("empty", "fail-once", "hold-list", "slow-upload", "held-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-connections", "existing-removal", "existing-link", "existing-updates", "existing-update-failure", "existing-upload-failure")
+MODES = ("empty", "fail-once", "hold-list", "slow-upload", "held-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-connections", "existing-removal", "existing-link", "existing-updates", "existing-update-failure", "existing-upload-failure", "existing-token-expired")
+# One complete Home profile, then a fictional second-device operation on the
+# enrolled device's first ongoing change poll (or a single failure first).
+CONTINUOUS_MODES = ("existing-conflict", "existing-connections", "existing-removal", "existing-link", "existing-updates", "existing-update-failure", "existing-upload-failure", "existing-token-expired")
 
 
 class ProfileDriveFixture:
@@ -22,8 +25,8 @@ class ProfileDriveFixture:
         self.next_id = 0
         self.changes = []
         self.failed = False
-        self.scoped_lists = 0
-        self.requests = {"lists": 0, "scoped_lists": 0, "metadata": 0, "media": 0}
+        self.change_polls = 0
+        self.requests = {"lists": 0, "scoped_lists": 0, "changes": 0, "metadata": 0, "media": 0}
         self.updated = False
         self.release = threading.Event()
         self.upload_held = threading.Event()
@@ -61,9 +64,24 @@ class ProfileDriveFixture:
                 if url.path == "/drive/v3/changes/startPageToken":
                     return self.reply(200, {"startPageToken": f"fixture-change-{len(owner.changes)}"})
                 if url.path == "/drive/v3/changes":
+                    owner.requests["changes"] += 1
                     token = query.get("pageToken", [""])[0]
                     if not re.fullmatch(r"fixture-change-\d+", token):
                         return self.reply(400, {})
+                    # The first poll belongs to discovery; an enrolled device's
+                    # first ongoing check is the second. Continuous modes then
+                    # publish their fictional second-device operation or fail once.
+                    if owner.mode in CONTINUOUS_MODES:
+                        owner.change_polls += 1
+                        if owner.change_polls >= 2 and not owner.updated:
+                            if owner.mode == "existing-update-failure" and not owner.failed:
+                                owner.failed = True
+                                return self.reply(503, {"error":"Fixture is offline during a continuous check."})
+                            owner.seed_for_mode()
+                            if owner.mode == "existing-token-expired":
+                                # The saved token is rejected once; the full
+                                # listing that follows must find the new record.
+                                return self.reply(400, {"error":"Page token expired."})
                     start = int(token.rsplit("-", 1)[1])
                     entries = owner.changes[start:start + 50]
                     end = start + len(entries)
@@ -83,22 +101,6 @@ class ProfileDriveFixture:
                     owner.requests["lists"] += 1
                     if "shepProfile" in q:
                         owner.requests["scoped_lists"] += 1
-                    if "shepProfile" in q and owner.mode in ("existing-conflict", "existing-connections", "existing-removal", "existing-link", "existing-updates", "existing-update-failure", "existing-upload-failure"):
-                        owner.scoped_lists += 1
-                        if owner.scoped_lists >= 2 and not owner.updated:
-                            if owner.mode == "existing-update-failure" and not owner.failed:
-                                owner.failed = True
-                                return self.reply(503, {"error":"Fixture is offline during a continuous check."})
-                            if owner.mode == "existing-connections":
-                                owner.seed_connections()
-                            elif owner.mode == "existing-removal":
-                                owner.seed_removal()
-                            elif owner.mode == "existing-link":
-                                owner.seed_link()
-                            elif owner.mode == "existing-conflict":
-                                owner.seed_conflict()
-                            else:
-                                owner.seed_update()
                     rows = [entry[0] for entry in owner.files.values()]
                     for key in ("shepProfile", "shepGeneration"):
                         match = re.search("key='" + key + r"' and value='([^']+)'", q)
@@ -168,7 +170,7 @@ class ProfileDriveFixture:
                 smtp_auth="Automatic", smtp_separate_password=False, sent_folder="")
         if self.mode == "existing-unsupported":
             account["future_tls_requirement"] = True
-        names = ("Home",) if self.mode in ("existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-connections", "existing-removal", "existing-link", "existing-updates", "existing-update-failure", "existing-upload-failure") else ("Home", "Work")
+        names = ("Home",) if self.mode in ("existing-single", "existing-matching", "existing-many", *CONTINUOUS_MODES) else ("Home", "Work")
         for number, name in enumerate(names, start=1):
             operation = dict(original)
             for field, prefix in (("profile","1"),("generation","2"),("device","3"),("operation","4")):
@@ -323,6 +325,11 @@ class ProfileDriveFixture:
         self.files[identity] = (metadata,raw)
         self.changes.append(identity)
         self.updated = True
+
+    def seed_for_mode(self):
+        seeds = {"existing-connections": self.seed_connections, "existing-removal": self.seed_removal,
+                 "existing-link": self.seed_link, "existing-conflict": self.seed_conflict}
+        seeds.get(self.mode, self.seed_update)()
 
     def close(self):
         self.release.set()

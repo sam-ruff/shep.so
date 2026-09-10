@@ -6,7 +6,10 @@ for [continuous profiles](PROFILE_SYNC_HANDOVER.md). The optional [Drive transpo
 and immutable files against this journal. A separate [discovery catalog](PROFILE_DISCOVERY.md)
 now retains remote scan progress. Flutter discovery and [initialized publication](PROFILE_PUBLICATION.md)
 and reviewed desktop/mobile enrollment are connected. Complete categories,
-browser application and cross-client continuous sync remain unfinished. The browser currently shares the codec, not this SQLite journal.
+browser reconciliation and cross-client continuous sync remain unfinished. The
+browser runs the same command contract through `history::memory`, a pure
+in-memory journal exposed to WASM and parity tested against this SQLite journal;
+see [browser profiles](PROFILE_BROWSER.md).
 
 ## Ownership and bounds
 

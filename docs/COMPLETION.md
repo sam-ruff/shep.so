@@ -29,27 +29,94 @@ copy), with keyed fences and installation. Older guard-less Shep processes are
 excluded by the checkpoint step: SQLite refuses to leave WAL mode while any
 other connection has the file open, including an idle one in another process.
 
-Verification: nine bootstrap tests (plaintext fallback with no key request,
-full migration of catalog/legacy/profile/profile-sync databases and key reuse
-with straggler conversion, interrupted publication recovered before the
-catalog opens, cancellation during key admission, a locked key store, missing
-and wrong keys leaving every byte unchanged, a second process excluded from
-migration while admitted as a reader, and a subprocess modelling an idle
-legacy Shep that blocks publication until it exits), a worker test proving the
+Review fixes before integration: the bootstrap fixture helper no longer
+unwraps a journal-mode change that returns SQLITE_BUSY while a worker is still
+closing (it failed the first hook run); two Shep processes starting together
+wait up to two seconds for each other's exclusive opening phase
+(`Guard::join`, and a bounded wait inside `Guard::share`) instead of failing,
+and the marker is re-read after sharing so a key created in between is
+refused; the keyed import copy now keeps the source application ID, which
+logical export drops, and re-checks the preview fixture marker inside its
+copying transaction; the keyed install test's progress channel is bounded.
+
+Verification after merging `main` at `ca28e69`: ten bootstrap tests
+(plaintext fallback with no key request, full migration of
+catalog/legacy/profile/profile-sync databases and key reuse with straggler
+conversion, interrupted publication recovered before the catalog opens,
+cancellation during key admission, a locked key store, missing and wrong keys
+leaving every byte unchanged, a second process excluded from migration while
+admitted as a reader, a concurrent start waiting for another Shep's opening
+phase, and a subprocess modelling an idle legacy Shep that blocks publication
+until it exits), an ownership join/timeout test, a worker test proving the
 guard outlives admitted writes and the last handle, a catalog/store retention
-test and a keyed import staging/installation test. `cargo test --all-features
-cache_cipher` passes 38 tests, `bootstrap` passes 9 and `profiles` passes 13
-in the desktop crate (plus two shared drive tests matching the filter).
-Clippy with `-D warnings`, fmt and 96 Python tests (seven skipped) pass; the
-hook run, Windows GNU check and native import/export/catalog scenarios are
-recorded in the request audit. Not verified: actual Windows/macOS execution,
-any personal database, and a native scenario on a migrated root (the demo
-fixture opener is plaintext-only).
+test, and keyed import staging/installation and cancellation tests.
+`cargo test --all-features` passes 40 tests for `cache_cipher`, 10 for
+`bootstrap`, 15 for `profiles` (13 desktop plus two shared drive tests) and 32
+for `import`, summed across binaries. fmt, both Clippy runs with
+`-D warnings`, 96 Python tests (seven skipped) and
+`cargo check --target x86_64-pc-windows-gnu --all-targets --all-features`
+pass. The lane commit `400b836` hook passed 1117 tests across 51 binaries
+(three ignored), and the merge commit hook passed 1132 tests across 53
+binaries (three ignored). On the merged test-ui binary the `database_import`,
+`database_export`, `profile_catalog` and `local_profile` selectors ran eight
+native scenarios, all `database_*` (no scenario is named for the other two),
+and all pass in 44.6 s (`artifacts/logs/e2e-cache-bootstrap.log`; the profile
+rename/restart path's evidence is under `artifacts/e2e/7af082792006` and
+`artifacts/e2e/bbcac60fcc72`). These scenarios use the plaintext fixture
+workspace, so they prove the bootstrap-routed plaintext path and unchanged
+import routing, not keyed import. Not verified: actual Windows/macOS
+execution, any personal database, and a native scenario on a migrated root
+(the demo fixture opener is plaintext-only).
 
 Still blocking activation: a user-facing or setting-driven way to select
-`Policy::Migrate`, reader-guard retention in the profile transport/history
-workers, bounded selection-summary/catalog/recovered-view sorting, native key
-recovery and platform startup checks.
+`Policy::Migrate`; reader-guard retention in the profile transport/history
+workers; bounded selection-summary/catalog/recovered-view sorting and the
+index builds inside `sqlcipher_export` during migration staging and keyed
+import, which sort under memory temporary storage; native key recovery; a
+native migrated-root scenario; and actual Windows/macOS startup checks.
+
+## 10 September: incremental enrolled profile pulls (R02/R49 lane)
+
+Enrolled devices now poll the shared discovery catalog's persisted Drive change
+token instead of re-listing the whole profile on every cycle. The new
+`profile_sync::incremental` module completes the catalog (resume a saved page or
+pending download, `refresh(false)` from `completed_token`, or one `refresh(true)`
+full listing per pass when Google rejects the token with 400/404/410 on the
+change poll, a page repeats or a known file is reported removed), freezes this
+profile's verified observation, and copies records into the enrolled history
+one at a time through a `catalog_copies` cursor in `drive.sqlite`. The cursor is
+bound to the observation's and the history's device UUIDs and is saved only
+after each import commits, so a rebuilt owner or a lost checkpoint replays
+exact immutable bytes and can never skip a record. Publication with a
+catalog-sourced proof verifies queued bytes against the verified inventory and
+refuses to reserve another ID for an operation already on Drive. Setup and join
+keep the complete scoped listing. No shared-crate, wire-format or credential
+change is involved.
+
+Lane evidence: eight `profile_incremental_*` tests (unchanged and single-record
+polls with exact request counts, publish through the catalog proof, rejected
+token fallback plus a reported second rejection, 503 mid-page resuming after
+restart without re-listing, rewound cursor replay, out-of-order arrivals,
+rebuilt history/observation owners, removed known file, unlisted profile);
+after merging `main` at `9ea8ad1` (browser profile work and the no-feature
+build fix) and declaring the `incremental` module the lane commit omitted,
+`cargo test --all-features profile_` passes 120 library tests plus four
+integration tests (one personal diagnostic ignored);
+`scripts/test_profile_core.py` passes 73 shared-crate tests; `cargo fmt`, both
+Clippy runs with `-D warnings` and `python3 -m unittest discover` (96, seven
+skipped) pass.
+The loopback fixture's continuous modes now trigger on the second change poll,
+and the new `existing-token-expired` mode rejects the saved token once. On the
+merged test-ui binary all 18 selected `profile_continuous`/`profile_account`/
+`profile_join` native scenarios pass (70.2 s,
+`artifacts/logs/e2e-incremental-final.log`), including
+the new `test_profile_continuous_native_expired_change_token_falls_back_to_one_full_listing`
+(exactly one listing beyond discovery, no repeated metadata/media, second account
+and Tooltips received, durable across restart) with reviewed captures under
+`artifacts/e2e/51f1d36d3d0c`; the three `profile_setting_review` scenarios passed
+on the lane before the merge. The merge commit's hook passes 1116 tests across
+53 binaries (three ignored). Google's exact expired-token status is taken from the fixture and
+documentation, not a live account; integration and push remain with the root.
 
 ## 10 September: Google lifecycle channel ownership (R91)
 
@@ -6062,3 +6129,64 @@ subscribed yet; scheduling is the foreground tick and Sync now with no OS
 background scheduling; fixtures only, with no live Google, cross-client delivery
 or Apple execution claims; sync starts paused after seeding; an unproven field
 with equal values stays silently pending until either side changes.
+
+## Browser profile consent, discovery, publication, enrollment and onboarding — 2026-09-10
+
+R92 / R75 (client) / R02 / R49, lane commits `5e337e5` (shared crate),
+`f16016b` (backend) and `5e013d1` (browser). The shared profile-core crate moves
+its history protocol types out of the SQLite-gated module and adds an in-memory
+journal with the same command contract and derived state as the native journal,
+tested side by side, plus a WASM `ProfileHistory` entry; `test_profile_codec.mjs`
+now exercises the history entry and the browser build compiles the profile-core
+glue. Native paths are unchanged, so the desktop and Flutter keep compiling.
+
+The backend gains a session-bound second OAuth consent behind a provider trait:
+PKCE, state and nonce, the exact desktop scope list, the subject must equal the
+beta identity, the Drive principal is verified, granted scopes are intersected
+with the request, refresh happens server-side, and tokens live only in the
+in-memory session store (pruned with sessions, logout and replacing login),
+never in logs or the browser. Denied, failed or mismatched consent keeps the
+existing grant and choices. A fixture provider and two HTTPS gate stages cover
+denied-then-connected consent and discovery/publication through the proxy; the
+production Google provider is implemented but unexercised.
+
+Browser Preferences gains "Profiles and sync": a Google connection card with
+requested versus saved permissions, Drive app data and Calendar choices,
+Connect, Reconnect and Disconnect with retryable local cleanup, and an explicit
+note when live provider access is not connected. A browser history worker and a
+per-identity IndexedDB store hold the discovery catalog and receipts. Find
+profiles verifies pages and saves an incomplete listing as a failure that retries
+from the same step. Reviewed first-profile publication freezes a fingerprinted
+review, stages exact edits behind the initialisation barrier, uploads one owned
+file per step, retries a lost reply without duplicating files and supports pause,
+browse and resume. Reviewed enrollment copies originals into an independently
+owned journal with a fresh device identity, pages account rows with connection
+details, imports accounts without passwords and marks them Reconnect required
+until a reviewed reconnect, keeps mail, drafts and Sent preferences for mapped
+accounts, offers changed connections as separate accounts and applies the four
+browser portable preferences through frozen-revision receipts. First-setup
+onboarding offers the opt-in, automatic enrollment for a single profile and a
+picker for several; a durable Not now is reversible from Preferences.
+
+Lane evidence (`artifacts/logs/browser-profiles-*.log`): 40 backend tests plus
+the ignored HTTPS gate, backend Clippy and formatting clean, 72 shared crate
+tests with native and wasm32 Clippy clean, 28 codec fixtures plus the history
+entry in Node, 154 browser units, build, `tsc` and prettier clean, 26 Chromium
+scenarios (seven profile scenarios with axe checks and eleven light/dark
+captures under `artifacts/web/profiles/`), 37 parity contracts, strict docs and
+1097 hook tests per commit. Integrator gates after merging onto `main`
+`1d86831` (`artifacts/logs/bp-int-*.log`): 73 shared crate tests and Clippy,
+40 backend tests, 89 mobile Rust tests, 154 browser units, build, the profile
+and workspace specs (21 passed after one capture race), Flutter analysis clean
+and 143 Flutter host tests. The capture helper in `profiles.spec.ts` re-resolves
+the region when a preference save redraws Preferences mid-scroll; three repeated
+runs then pass 21/21. Reviewed captures: discovery dark and the enrollment
+review dialog.
+
+Limitations: no live Google or same-project cross-client verification; ongoing
+browser reconciliation, conflict decisions, shared removal reviews, credential
+protection and the remaining portable categories stay open (appearance, preview
+lines, sender pictures and quoted history are the browser's portable set).
+Browser storage is keyed by the beta identity hash with the Drive principal
+bound in every journal binding; a name row counts inside its account
+application.
