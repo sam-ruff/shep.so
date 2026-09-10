@@ -232,6 +232,17 @@ extension ProfileEnrollmentActions on ProfileDiscovery {
     }
     if (_current(generation, session) && enrollment?.complete == true) {
       await device.refreshProfileAccounts();
+      if (!supportsSync || !_current(generation, session)) return;
+      // Seed ongoing sync from the completed receipts. Failure here leaves the
+      // enrollment complete; Preferences offers the same seeding again.
+      try {
+        if (!syncChecked) await _readSync(generation, session);
+        if (_current(generation, session) && sync == null) {
+          await _subscribe(generation, session, device);
+        }
+      } catch (failure) {
+        if (_current(generation, session)) syncError = _message(failure);
+      }
     }
   }
 }

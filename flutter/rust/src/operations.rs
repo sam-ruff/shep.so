@@ -119,6 +119,10 @@ pub enum Request {
         session: uuid::Uuid,
         command: crate::profile_discovery::enrollment::Command,
     },
+    ProfileSync {
+        session: uuid::Uuid,
+        command: crate::profile_discovery::sync::Command,
+    },
     CloseProfileDiscovery {
         session: uuid::Uuid,
     },
@@ -471,6 +475,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
         }
         Request::ProfileDiscovery { session, command } => profile.operations.profile_discovery.run(session,command).await,
         Request::ProfileEnrollment { session, command } => profile.operations.profile_discovery.enrollment(profile,session,command).await,
+        Request::ProfileSync { session, command } => profile.operations.profile_discovery.sync(profile,session,command).await,
         Request::ProfileCreation { session, command } => profile.operations.profile_discovery.creation(db,session,command).await,
         Request::CloseProfileDiscovery { session } => {
             profile.operations.profile_discovery.close(session).await?;

@@ -1,6 +1,6 @@
 use super::*;
 #[async_trait::async_trait]
-pub(super) trait Records: Send + Sync {
+pub(in crate::profile_discovery) trait Records: Send + Sync {
     async fn export(
         &self,
         source: Snapshot,

@@ -2,6 +2,7 @@
 //! a production session; reviewed publication retains that same identity.
 pub(crate) mod creation;
 pub(crate) mod enrollment;
+pub(crate) mod sync;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use secrecy::SecretString;
@@ -262,6 +263,34 @@ impl Runtime {
         };
         let result =
             enrollment::run(profile, session.remote.scope(), &session.catalog, command).await;
+        self.session(id).await?;
+        result
+    }
+    /// Ongoing reconciliation shares the session's single advancing slot with
+    /// discovery, publication and enrollment writes; reads stay independent.
+    pub async fn sync(
+        &self,
+        profile: &crate::api::MobileProfile,
+        id: Uuid,
+        command: sync::Command,
+    ) -> Result<Value> {
+        let session = self.session(id).await?;
+        let _permit = if command.reads() {
+            None
+        } else {
+            Some(
+                session
+                    .advancing
+                    .clone()
+                    .try_acquire_owned()
+                    .context("Profile work is busy. Retry shortly.")?,
+            )
+        };
+        let source = sync::Live {
+            remote: session.remote.as_ref(),
+            catalog: &session.catalog,
+        };
+        let result = sync::run(profile, session.remote.scope(), &source, command).await;
         self.session(id).await?;
         result
     }
