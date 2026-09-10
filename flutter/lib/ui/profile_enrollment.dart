@@ -4,22 +4,10 @@ import '../data/profile_discovery.dart';
 import '../data/profile_enrollment.dart';
 import '../model/profile_discovery.dart';
 import 'icons.dart';
+import 'profile_labels.dart';
 
-const _labels = {
-  'appearance': 'Appearance',
-  'left_swipe': 'Swipe left',
-  'right_swipe': 'Swipe right',
-  'preview_lines': 'Preview lines',
-  'sender_pictures': 'Sender pictures',
-  'unified_inbox': 'Unified inbox',
-  'reply_display': 'Quoted history',
-  'tooltips': 'Tooltips',
-};
-String _value(Object? value) => value == null
-    ? 'Reset to default'
-    : value is bool
-    ? (value ? 'On' : 'Off')
-    : '$value';
+const _labels = profileSettingLabels;
+String _value(Object? value) => profileValueText(value);
 
 class ProfileEnrollmentScreen extends StatefulWidget {
   const ProfileEnrollmentScreen({
@@ -267,8 +255,10 @@ class _ProfileEnrollmentScreenState extends State<ProfileEnrollmentScreen> {
                         : () => d.resumeEnrollment(widget.device),
                     child: const Text('Retry account refresh'),
                   ),
-                const Text(
-                  'Open Connections to reconnect imported accounts. Continuous background profile sync is still being built.',
+                Text(
+                  d.sync != null
+                      ? 'Open Connections to reconnect imported accounts. Turn on preference sync under Profiles and sync in Preferences to keep this device updated.'
+                      : 'Open Connections to reconnect imported accounts. Preference sync can be set up under Profiles and sync in Preferences.',
                 ),
                 const SizedBox(height: 12),
                 FilledButton(

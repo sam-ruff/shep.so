@@ -4,14 +4,14 @@ use shep_profile_core::{
     SettingKey,
     history::{Journal, LocalEdit, Record},
 };
-fn preferences() -> Preferences {
+pub(in crate::profile_discovery) fn preferences() -> Preferences {
     let values = serde_json::from_value(serde_json::json!({"appearance":"System","left_swipe":"archive","right_swipe":"read","preview_lines":2,"sender_pictures":true,"unified_inbox":true,"reply_display":"Collapsed","tooltips":true})).unwrap();
     Preferences {
         values,
         revisions: SETTINGS.into_iter().map(|s| (s.into(), 0)).collect(),
     }
 }
-fn scope() -> Scope {
+pub(in crate::profile_discovery) fn scope() -> Scope {
     Scope {
         namespace: "so.shep.fixture".into(),
         principal: "drive:fixture-owner".into(),
@@ -878,4 +878,82 @@ async fn legacy_platform_receipts_cannot_acquire_later_current_revisions() {
             .await
             .is_err()
     );
+}
+
+/// Start a review without preparing it, leaving the enrollment pending.
+pub(in crate::profile_discovery) async fn prepare_only(
+    profile: &MobileProfile,
+    snapshot: Snapshot,
+) -> Result<Review> {
+    let key = scope().storage_key().unwrap();
+    profile
+        .database
+        .write(move |db| store::prepare(db, &key, Uuid::new_v4(), snapshot, preferences()))
+        .await
+}
+
+/// Complete a settings-only enrollment against any record source, returning the
+/// platform receipt exactly as the device would acknowledge it. `applied` lists
+/// the fields the device wrote; the rest are kept. `revisions` is the frozen
+/// receipt map, or None for a legacy receipt without proof.
+pub(in crate::profile_discovery) async fn enrolled(
+    profile: &MobileProfile,
+    snapshot: Snapshot,
+    records: &dyn transfer::Records,
+    baseline: Preferences,
+    applied: Vec<String>,
+    revisions: Option<BTreeMap<String, u64>>,
+) -> Review {
+    let key = scope().storage_key().unwrap();
+    let id = Uuid::new_v4();
+    let source = snapshot.clone();
+    let k = key.clone();
+    let mut review = profile
+        .database
+        .write(move |db| store::prepare(db, &k, id, source, baseline))
+        .await
+        .unwrap();
+    let history = worker(&profile.database, review.binding.clone())
+        .await
+        .unwrap();
+    while review.phase != "review" {
+        review = transfer::step(
+            &profile.database,
+            &key,
+            review,
+            snapshot.clone(),
+            records,
+            &history,
+        )
+        .await
+        .unwrap();
+    }
+    history.close().await.unwrap();
+    let k = key.clone();
+    let mut review = profile
+        .database
+        .write(move |db| store::approve(db, &k, id, false, true))
+        .await
+        .unwrap();
+    while review.phase == "applying" {
+        review = apply::step(profile, &key, review).await.unwrap();
+    }
+    let k = key.clone();
+    let request = profile
+        .database
+        .read(move |db| apply::settings(db, &k, id))
+        .await
+        .unwrap();
+    let kept = request["changes"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .filter(|field| !applied.contains(field))
+        .cloned()
+        .collect();
+    profile
+        .database
+        .write(move |db| apply::confirm(db, &key, id, applied, kept, revisions))
+        .await
+        .unwrap()
 }

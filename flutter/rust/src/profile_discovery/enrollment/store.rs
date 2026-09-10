@@ -36,6 +36,10 @@ pub(super) fn prepare(
         !pending,
         "An enrollment is already pending. Resume or cancel it with its original Google account first."
     );
+    ensure!(
+        !super::super::sync::pending_application(&tx)?,
+        "Profile sync is still applying a preference on this device. Sync now to finish it before reviewing another profile."
+    );
     let review = Review {
         id,
         binding: source.binding.clone(),

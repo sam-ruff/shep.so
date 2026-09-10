@@ -1,7 +1,7 @@
 //! Reviewed device enrollment. Remote history is copied, never a device database.
 mod apply;
 mod store;
-mod transfer;
+pub(super) mod transfer;
 use super::changed;
 use crate::{api::MobileProfile, database::Database};
 use anyhow::{Context, Result, ensure};
@@ -23,7 +23,7 @@ pub(crate) struct Preferences {
     pub values: BTreeMap<String, Value>,
     pub revisions: BTreeMap<String, u64>,
 }
-const SETTINGS: [&str; 8] = [
+pub(super) const SETTINGS: [&str; 8] = [
     "appearance",
     "left_swipe",
     "right_swipe",
@@ -34,7 +34,7 @@ const SETTINGS: [&str; 8] = [
     "tooltips",
 ];
 impl Preferences {
-    fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self) -> Result<()> {
         ensure!(
             self.values.len() == SETTINGS.len() && self.revisions.len() == SETTINGS.len(),
             "Refresh the device preferences before reviewing this profile."
@@ -161,7 +161,7 @@ impl Command {
         )
     }
 }
-fn read(db: &Connection, key: &str, id: Uuid) -> Result<Review> {
+pub(super) fn read(db: &Connection, key: &str, id: Uuid) -> Result<Review> {
     let raw: String = db.query_row("SELECT review FROM profile_enrollments WHERE id=? AND scope=?", params![id.to_string(), key], |r| r.get(0)).optional()?.context("This enrollment belongs to another Google account or is no longer available. Reopen Profiles and sync.")?;
     Ok(serde_json::from_str(&raw)?)
 }
@@ -181,7 +181,7 @@ fn integer(value: u64) -> Result<i64> {
         .try_into()
         .context("Invalid enrollment cursor. Reopen the review.")
 }
-async fn worker(db: &Database, binding: Binding) -> Result<Worker> {
+pub(super) async fn worker(db: &Database, binding: Binding) -> Result<Worker> {
     let mut directory = db.path.as_os_str().to_owned();
     directory.push(".published-profiles");
     Worker::open(
@@ -295,4 +295,4 @@ async fn step(profile: &MobileProfile, key: &str, id: Uuid, catalog: &Discovery)
     Ok(review)
 }
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

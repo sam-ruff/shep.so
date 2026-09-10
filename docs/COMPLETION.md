@@ -5890,3 +5890,69 @@ Limitations: cross-account transport, large-group performance and native
 equivalents remain open; the interrupted-review recovery banner entry is
 transient and retires at the next owner's wake; reviews prepared by direct
 journal use without an owner are treated as abandoned.
+
+## Ongoing Flutter preference sync — 2026-09-10
+
+R92 / R75 (client) / R02 / R49, lane commit `1bb5803`. The mobile Rust crate
+gains a durable sync ledger (`profile_discovery/sync` with mail schema 12): one
+subscription per Google scope, staged/admitted/deferred/superseded edits,
+device applications with their receipts, and reviews, over the enrollment's own
+published-profile history journal and the session's discovery catalog. Seeding
+requires a completed enrollment: fields whose platform receipt froze the
+original revision get a proven basis, a kept field starts at its baseline so the
+next cycle publishes the newer local value, and legacy receipts, conflicts and
+unsupported rows stay unproven. A matching value is never acknowledged as proof;
+an unproven field opens a review on a differing remote value and still publishes
+later local edits. Enrollment preparation refuses while a sync application is
+unconfirmed and cycles refuse while an enrollment is pending, so the platform
+store keeps one receipt.
+
+Each bounded cycle (32 per step) retries staged edits, admits new local intent
+whose revision is newer than its basis (including change-and-revert) while
+preserving the shared version's extensions, refreshes the catalog and advances
+the history, exports originals after the saved cursor (reset when the
+observation history's device identity changes), and observes every supported
+field: common values pass, safe remote values apply through one device request
+at a time, and conflicts, pending local edits and unproven bases become reviews.
+Changed or conflicting replies defer the exact request into a review; a lost
+reply retries the same operation identifier. Applications reuse the enrollment
+device path with frozen-revision receipts and idempotent confirmation; a kept
+receipt is newer local intent published on the next cycle.
+
+Preferences gains a Profiles and sync section: Keep in sync seeds from the
+completed enrollment and starts paused, a master choice and eight per-preference
+choices (desktop-style checkboxes), status, Sync now, Review N preference
+conflicts and an explicit message that sync is paused while Google Drive is not
+connected. Enrollment completion seeds automatically; the workspace's 15-second
+foreground timer runs a silent cycle when connected, enabled and no save is
+pending, through the same verified session as discovery. Google disconnect or a
+grant change clears in-memory status and stops cycles without touching the
+durable subscription or other devices; reconnecting the same account resumes.
+The conflict review pages exact versions 50 at a time, requires every page
+opened and the device snapshot to match the reviewed local intent, and Keep mine
+or Use profile stages one durable resolution operation plus a device application
+where the value changes.
+
+Lane evidence (`artifacts/logs/sync-*.log`): 89 mobile Rust tests (eight new
+sync tests: seeding rules, admission before pull and two-device convergence,
+receipt retry after restart, kept receipts, conflict decisions converging both
+devices, unproven fields, lost history acknowledgment after restart, controls,
+incomplete pull, rebuilt source and pending enrollment), Clippy clean, Flutter
+analysis clean, 143 Flutter host tests (four controller tests over production
+device settings and three widget tests), the new web sync scenario (7 flows) and
+Android `--sync-only` (two named integration scenarios plus 7 Appium flows),
+and the enrollment scenarios on both. Integrator gates after merging onto `main`
+`924141d` (`artifacts/logs/sync-int-*.log`): 89 mobile Rust tests, Flutter
+analysis clean, 143 host tests, web sync 7 flows and Android sync 7 flows plus
+both named integration scenarios, rerun after the sync controls were changed
+from Material switches to the desktop-style checkboxes required by R80.
+Reviewed Android captures under `artifacts/flutter/sync-native/`.
+
+Limitations: only the eight portable preferences reconcile; account
+definitions, removals, other categories, automatic setup and restoration and
+credential transfer remain open; subscriptions seed only from a completed
+enrollment, so a device that only published the first profile is not
+subscribed yet; scheduling is the foreground tick and Sync now with no OS
+background scheduling; fixtures only, with no live Google, cross-client delivery
+or Apple execution claims; sync starts paused after seeding; an unproven field
+with equal values stays silently pending until either side changes.
