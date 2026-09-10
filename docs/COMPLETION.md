@@ -47,7 +47,8 @@ exit then restarts from the vault, locked keychain fails every queued caller
 without stopping the owner); the removals test now probes lane occupancy. On
 the lane, `cargo test --all-features google` passes 57, `lifecycle` 14 and
 `journal` 33 executions; `cargo test -p shep-profile-core --all-features` 70.
-Formatting, `cargo clippy --all-targets --all-features -- -D warnings` and 96
+The commit `f4575b2` passed the full pre-commit hook with **1101** test
+executions (three personal diagnostics ignored, `artifacts/logs/hooks-google-owner.log`). Formatting, `cargo clippy --all-targets --all-features -- -D warnings` and 96
 Python tests (seven skipped) pass. Native: the six Google disconnect,
 permissions and consent scenarios pass in 21 s
 (`artifacts/logs/e2e-google-owner.log`); reviewed captures in `92ffc34b5a29`
