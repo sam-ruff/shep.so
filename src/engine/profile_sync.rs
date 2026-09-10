@@ -275,6 +275,7 @@ impl Engine {
                     selection.ready && snapshot.enrollment.options.enabled,
                     "Enable a completed shared profile before syncing."
                 );
+                let catalog = paths.catalog_location(session.binding())?;
                 let mut replica = sync::replica::Replica::open(
                     paths.history(&selection.binding)?,
                     selection.binding.clone(),
@@ -282,7 +283,8 @@ impl Engine {
                 )
                 .await?;
                 let result =
-                    sync::continuous::run(&self.store, &mut replica, &session, &control).await;
+                    sync::continuous::run(&self.store, &mut replica, &session, &catalog, &control)
+                        .await;
                 let closed = replica.close().await;
                 // A later upload error must not hide already committed remote
                 // changes from the native view. Do not reload an unchanged cache.
