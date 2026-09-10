@@ -72,8 +72,11 @@ export class BulkProjection {
             "SELECT revision FROM bulk_index_jobs WHERE id=?",
             [job.id],
           );
-          // Staging is invisible; the complete review is copied once it is ready.
-          const stage = ["preparing", "interrupted"].includes(job.state);
+          // Staging and retiring rows are invisible; the complete review is
+          // copied once it is ready.
+          const stage = ["preparing", "interrupted", "cancelled"].includes(
+            job.state,
+          );
           this.exec(
             "INSERT INTO bulk_index_jobs VALUES(?,?,?,1) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,data=excluded.data,seen=1",
             [job.id, stage ? -1 : job.revision, JSON.stringify(job)],

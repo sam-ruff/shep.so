@@ -155,6 +155,13 @@ async function setup(page: Page, count = 3, seed = true) {
       if (seed)
         await env.repo.connect(account, "fixture-password", "fixture-password");
       env.executor = new BulkExecutor(profile, env.repo);
+      // Reviews prepared here belong to this fixture page, like a live tab;
+      // the sweep retires them only once the page is gone.
+      env.owner = "executor-fixture";
+      void navigator.locks.request(
+        `shep.bulk.tab.${profile}.${env.owner}`,
+        () => new Promise<void>(() => {}),
+      );
       env.prepare = async (id: string, action: unknown) => {
         const worker = new SelectionWorkerClient(profile);
         try {
@@ -171,7 +178,7 @@ async function setup(page: Page, count = 3, seed = true) {
             expected: 0,
             target: "review",
           });
-          return await worker.prepareBulk("review", 0, id, action);
+          return await worker.prepareBulk("review", 0, id, action, env.owner);
         } finally {
           await worker.close();
         }

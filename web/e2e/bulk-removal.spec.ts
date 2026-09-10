@@ -1,5 +1,27 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type BrowserContext, type Page } from "@playwright/test";
 const profile = "R".repeat(43);
+/** A separate live tab keeps a frozen review alive across this page's
+ * navigation, so the removal review must still account for it. */
+async function liveReview(context: BrowserContext, owner = "other-tab") {
+  const holder = await context.newPage();
+  await holder.route("**/review-holder", (r) =>
+    r.fulfill({
+      contentType: "text/html",
+      body: "<!doctype html><title>Review holder</title>",
+    }),
+  );
+  await holder.goto("/review-holder");
+  await holder.evaluate(
+    ({ profile, owner }) => {
+      void navigator.locks.request(
+        `shep.bulk.tab.${profile}.${owner}`,
+        () => new Promise<void>(() => {}),
+      );
+    },
+    { profile, owner },
+  );
+  return owner;
+}
 async function setup(page: Page, seed = true) {
   await page.route("**/api/session", (r) =>
     r.fulfill({
@@ -109,6 +131,7 @@ async function setup(page: Page, seed = true) {
         id = "mixed",
         action = { kind: "flags", starred: true },
         selected = rows,
+        owner?: string,
       ) =>
         BulkJournal.own(profile, (journal: any) =>
           journal.prepare(
@@ -119,6 +142,8 @@ async function setup(page: Page, seed = true) {
               for (let i = 0; i < selected.length; i += 50)
                 yield selected.slice(i, i + 50);
             })(),
+            undefined,
+            owner,
           ),
         );
       env.inspect = (fn: any) => BulkJournal.inspect(profile, fn);
@@ -488,13 +513,20 @@ test("completed, uncertain, inverse and missing group entries are reviewed and o
 for (const theme of ["light", "dark"] as const)
   test(`Preferences ${theme} review shows group counts, requires discard and rejects changed review through real controls`, async ({
     page,
+    context,
   }) => {
     await page.setViewportSize({ width: 900, height: 640 });
     await page.emulateMedia({ colorScheme: theme });
     await setup(page);
-    await page.evaluate(async () => {
-      await (window as any).removalFixture.stage();
-    });
+    const owner = await liveReview(context);
+    await page.evaluate(async (owner) => {
+      await (window as any).removalFixture.stage(
+        undefined,
+        undefined,
+        undefined,
+        owner,
+      );
+    }, owner);
     await page.goto("/");
     await page
       .getByRole("button", { name: "Preferences", exact: true })
@@ -711,11 +743,18 @@ test("schema upgrade waits for the old receipt owner and indexes both source and
 
 test("a committed removal shows its cleanup warning through real controls and reopening finishes it", async ({
   page,
+  context,
 }) => {
   await setup(page);
-  await page.evaluate(async () => {
-    await (window as any).removalFixture.stage();
-  });
+  const owner = await liveReview(context);
+  await page.evaluate(async (owner) => {
+    await (window as any).removalFixture.stage(
+      undefined,
+      undefined,
+      undefined,
+      owner,
+    );
+  }, owner);
   await page.goto("/");
   await page.getByRole("button", { name: "Preferences", exact: true }).click();
   await page

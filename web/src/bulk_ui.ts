@@ -1,4 +1,5 @@
 import { button, el, modal } from "./ui";
+import { keyCombo, keyConsumed, reviewDecision } from "./shortcut_keys";
 import type { Workspace } from "./model";
 import type { GatewayRepository } from "./provider";
 import type { BulkAction, BulkItem, BulkJob } from "./bulk_journal";
@@ -27,6 +28,20 @@ const message = (error: unknown) =>
     ? error.message
     : "Could not finish this group action. Open History to retry.";
 const count = (n: number) => `${n} ${n === 1 ? "message" : "messages"}`;
+/** Review keys for an open modal dialog. Focus falls to the body when the
+ * focused control hides after a decision; those keys still belong to the
+ * dialog, while everything else on the page is inert. */
+function dialogKeys(d: HTMLDialogElement, handler: (e: KeyboardEvent) => void) {
+  const listener = (e: KeyboardEvent) => {
+    if (!d.open || keyConsumed(e)) return;
+    const target = e.target as Node | null;
+    if (d.contains(target) || target === document.body) handler(e);
+  };
+  document.addEventListener("keydown", listener);
+  d.addEventListener("close", () =>
+    document.removeEventListener("keydown", listener),
+  );
+}
 function progress(job: BulkJob) {
   const c = job.counts;
   return [
@@ -34,11 +49,13 @@ function progress(job: BulkJob) {
       ? "Not applied"
       : job.state === "interrupted"
         ? "Review interrupted"
-        : job.paused
-          ? "Paused"
-          : job.undo
-            ? "Undo"
-            : "Group change",
+        : job.state === "cancelled"
+          ? "Review cancelled"
+          : job.paused
+            ? "Paused"
+            : job.undo
+              ? "Undo"
+              : "Group change",
     `${c.done} changed`,
     `${c.restored} restored`,
     `${c.running + c.undo_running} in progress`,
@@ -155,6 +172,13 @@ export class GroupUI {
     input.oninput = () => {
       apply.disabled = !input.value.trim();
     };
+    // Enter opens the review; it never skips the confirmation.
+    input.onkeydown = (e) => {
+      if (e.defaultPrevented || keyCombo(e) !== "Enter" || apply.disabled)
+        return;
+      e.preventDefault();
+      apply.click();
+    };
     status.textContent =
       "Each message stays in its original account. Enter an existing destination folder.";
     d.append(label, status, apply);
@@ -172,9 +196,20 @@ export class GroupUI {
     status.setAttribute("role", "status");
     d.append(status);
     this.w.changed();
+    let review: GroupReview | undefined,
+      approved = false;
+    // Declining, closing or Escape retires the frozen review. A tab closed
+    // before this runs is retired by the next owner's sweep instead.
+    d.addEventListener("close", () => {
+      if (!review || approved || this.disposed) return;
+      void this.groups.cancel(review.job).catch(() => {});
+    });
     try {
-      const review = await this.groups.prepare(snapshot, action, observed);
-      if (!d.isConnected || this.disposed) return;
+      review = await this.groups.prepare(snapshot, action, observed);
+      if (!d.isConnected || this.disposed) {
+        void this.groups.cancel(review.job).catch(() => {});
+        return;
+      }
       status.textContent = `${groupActionName(action)} ${count(review.job.total - review.job.counts.missing)}?`;
       const explanation = el(
         "p",
@@ -198,6 +233,7 @@ export class GroupUI {
             `${review.snapshot.groups.length - 20} more account/folder groups`,
           ),
         );
+      const prepared = review;
       const actions = el("div", "dialog-actions"),
         cancel = button("Cancel group action", () => d.close());
       const apply = button(
@@ -206,9 +242,10 @@ export class GroupUI {
           if (this.applying) return;
           this.applying = true;
           this.undoQueued = false;
-          const operation = this.groups.decide(review.job, "approve", false);
-          const rollback = this.w.optimisticGroup(review);
-          this.notify({ ...review.job, state: "ready" });
+          approved = true;
+          const operation = this.groups.decide(prepared.job, "approve", false);
+          const rollback = this.w.optimisticGroup(prepared);
+          this.notify({ ...prepared.job, state: "ready" });
           d.close();
           this.w.changed();
           void operation
@@ -219,7 +256,7 @@ export class GroupUI {
               else this.groups.wake();
             })
             .catch((error) => {
-              this.w.finishGroupUndo(review.job.id, false);
+              this.w.finishGroupUndo(prepared.job.id, false);
               rollback();
               this.visible = false;
               this.error = message(error);
@@ -238,6 +275,20 @@ export class GroupUI {
       );
       actions.append(cancel, apply);
       d.append(explanation, accounts, actions);
+      // Y/Enter approve and N/Escape decline, matching the desktop review.
+      // Keys consumed by their target (native Enter on a focused control) and
+      // already handled events are left alone.
+      dialogKeys(d, (e) => {
+        const decision = reviewDecision(
+          keyCombo(e),
+          this.w.preferences.shortcuts,
+        );
+        if (!decision) return;
+        e.preventDefault();
+        if (decision === "decline") d.close();
+        else if (!apply.disabled) apply.click();
+      });
+      apply.focus();
     } catch (error) {
       status.textContent = message(error);
       status.className = "form-status";
@@ -618,8 +669,13 @@ export class GroupUI {
         const describe = replace || !view || view.job.id !== selected;
         const result = await this.groups.view(selected, after, describe);
         if (!d.isConnected || request !== generation) return;
+        // Interrupted or cancelled reviews have nothing to restore.
         const preparing =
-          describe && !result.job.undo ? { id: result.job.id } : undefined;
+          describe &&
+          !result.job.undo &&
+          ["review", "ready"].includes(result.job.state)
+            ? { id: result.job.id }
+            : undefined;
         if (preparing) undoPreparing = preparing;
         // Subjects/senders are one displayed metadata page, refreshed explicitly
         // or when changing pages, never reread for every provider receipt.
@@ -727,6 +783,33 @@ export class GroupUI {
       });
     const refreshControl = button("Refresh history", () => void load());
     d.append(refreshControl, status, list, newer, older, detail);
+    // Y/Enter accept the single checked folder review; N/Escape clear checked
+    // reviews first and otherwise close History, as on the desktop.
+    dialogKeys(d, (e) => {
+      const decision = reviewDecision(
+        keyCombo(e),
+        this.w.preferences.shortcuts,
+      );
+      if (!decision) return;
+      const checked = [...rowControls.values()].filter(
+        (row) => row.checked.checked && !row.checked.parentElement!.hidden,
+      );
+      if (decision === "decline") {
+        e.preventDefault();
+        if (!checked.length) {
+          d.close();
+          return;
+        }
+        for (const row of checked) {
+          row.checked.checked = false;
+          row.resolve.disabled = true;
+        }
+        return;
+      }
+      if (checked.length !== 1 || checked[0].resolve.disabled) return;
+      e.preventDefault();
+      checked[0].resolve.click();
+    });
     d.addEventListener("close", () => {
       if (this.historyDialog === d) {
         this.historyDialog = undefined;
