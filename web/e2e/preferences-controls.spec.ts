@@ -102,6 +102,80 @@ test("a held remap press survives background completion; conflict, cancel and cl
   });
 });
 
+test("approve and decline review keys are listed, remappable, conflict-checked and honoured by the group review", async ({
+  page,
+}) => {
+  await page.route("**/api/capabilities", (route) =>
+    route.fulfill({ json: { mail: false, endpoints: [] } }),
+  );
+  await seed(page);
+  await page.getByRole("button", { name: "Preferences", exact: true }).click();
+  const approve = page.getByRole("button", {
+    name: "Remap approve review",
+    exact: true,
+  });
+  const decline = page.getByRole("button", {
+    name: "Remap decline review",
+    exact: true,
+  });
+  await expect(approve).toHaveText("y");
+  await expect(decline).toHaveText("n");
+  await approve.click();
+  await page.keyboard.press("Control+y");
+  await expect(approve).toHaveText("Control+y");
+  await decline.click();
+  await page.keyboard.press("Control+y");
+  await expect(decline).toHaveText("Already assigned");
+  await page.keyboard.press("Escape");
+  await expect(decline).toHaveText("n");
+  await decline.click();
+  await page.keyboard.press("Alt+n");
+  await expect(decline).toHaveText("Alt+n");
+  await decline.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: "../artifacts/web/preferences-review-keys.png",
+  });
+  await page.getByRole("button", { name: "Mail", exact: true }).click();
+  await page.getByRole("button", { name: "Select", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Select all messages", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Archive selected messages", exact: true })
+    .click();
+  const review = page.getByRole("dialog", {
+    name: "Review group action",
+    exact: true,
+  });
+  const apply = review.getByRole("button", {
+    name: "Archive 125 messages",
+    exact: true,
+  });
+  await expect(apply).toBeFocused();
+  // The default letters no longer act once remapped.
+  await page.keyboard.press("y");
+  await page.keyboard.press("n");
+  await expect(review).toBeVisible();
+  await page.keyboard.press("Alt+n");
+  await expect(review).toBeHidden();
+  await page
+    .getByRole("button", { name: "Select all messages", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Archive selected messages", exact: true })
+    .click();
+  await expect(apply).toBeFocused();
+  await page.keyboard.press("Control+y");
+  await expect(review).toBeHidden();
+  await expect(page.locator("main > header")).toContainText(
+    "0 messages · 0 unread",
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Preferences", exact: true }).click();
+  await expect(approve).toHaveText("Control+y");
+  await expect(decline).toHaveText("Alt+n");
+});
+
 test("leaving a capture cancels it without changing another shortcut or preference", async ({
   page,
 }) => {

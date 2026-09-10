@@ -5,6 +5,7 @@ import type { MailAlias } from "./sent_cache";
 import { BulkExecutor } from "./bulk_executor";
 import {
   BulkJournal,
+  tabLock,
   type BulkAction,
   type BulkJob,
   type BulkItem,
@@ -42,9 +43,16 @@ export class BrowserGroups extends EventTarget {
   private attentionAgain = false;
   private lastAttention: BulkAttention[] = [];
   private executionRevision = 0;
+  /** This tab's review ownership token; its lock is held until stop(). */
+  readonly owner = crypto.randomUUID();
+  private tab?: Promise<void>;
+  private releaseTab?: () => void;
+  private sweeping?: Promise<void>;
+  private sweepTimer?: ReturnType<typeof setTimeout>;
   constructor(
     private repository: GatewayRepository,
     private selection: () => SelectionWorkerClient | undefined,
+    private sweepInterval = 30000,
   ) {
     super();
     this.executor = new BulkExecutor(
@@ -113,30 +121,77 @@ export class BrowserGroups extends EventTarget {
   start() {
     if (this.started) return;
     this.started = true;
+    void this.holdTab().catch(() => {});
     this.refreshAttention();
     this.wake();
+    this.scheduleSweep();
   }
   stop() {
     this.closed = true;
+    clearTimeout(this.sweepTimer);
     this.executor.stop();
+    this.releaseTab?.();
+  }
+  private holdTab() {
+    return (this.tab ??= new Promise<void>((resolve, reject) => {
+      navigator.locks
+        .request(tabLock(this.repository.profileId, this.owner), () => {
+          resolve();
+          // A client stopped before the grant must not hold the lock.
+          if (this.closed) return;
+          return new Promise<void>((release) => {
+            this.releaseTab = release;
+          });
+        })
+        .catch(reject);
+    }));
+  }
+  private scheduleSweep() {
+    if (this.closed) return;
+    this.sweepTimer = setTimeout(() => {
+      void this.sweep().finally(() => this.scheduleSweep());
+    }, this.sweepInterval);
+  }
+  /** Bounded retirement of abandoned reviews between runs. It never contends
+   * with review preparation or a live run in this tab, and another tab's
+   * owner is left to sweep for itself. */
+  sweep(): Promise<void> {
+    if (this.sweeping) return this.sweeping;
+    if (this.closed || this.preparing || this.active) return Promise.resolve();
+    const work = this.executor
+      .sweep()
+      .then(
+        (result) => {
+          if (result?.retired && !this.closed) this.refreshAttention();
+        },
+        () => {},
+      )
+      .finally(() => {
+        if (this.sweeping === work) this.sweeping = undefined;
+      });
+    this.sweeping = work;
+    return work;
   }
   wake() {
     if (this.closed || this.preparing) return;
     this.executionRevision++;
-    const run = this.executor.run().then(
-      () => {},
-      (error) => {
-        if (!this.closed)
-          this.dispatchEvent(
-            new CustomEvent("failure", {
-              detail:
-                error instanceof Error
-                  ? error.message
-                  : "Could not finish group work. Open History to retry.",
-            }),
-          );
-      },
-    );
+    // An in-flight periodic sweep owns the journal lock; run after it.
+    const run = (this.sweeping ?? Promise.resolve())
+      .then(() => this.executor.run())
+      .then(
+        () => {},
+        (error) => {
+          if (!this.closed)
+            this.dispatchEvent(
+              new CustomEvent("failure", {
+                detail:
+                  error instanceof Error
+                    ? error.message
+                    : "Could not finish group work. Open History to retry.",
+              }),
+            );
+        },
+      );
     this.active = run;
     void run.finally(() => {
       if (this.active === run) {
@@ -162,6 +217,8 @@ export class BrowserGroups extends EventTarget {
         throw Error("Selection storage expired. Select the messages again.");
       this.executor.stop();
       await this.active;
+      await this.sweeping;
+      await this.holdTab();
       this.check();
       const copied = (await worker.selection(
         {
@@ -185,6 +242,7 @@ export class BrowserGroups extends EventTarget {
         copied.revision,
         crypto.randomUUID(),
         action,
+        this.owner,
       );
       return { job, snapshot: copied, selected: [...selected] };
     } finally {
@@ -209,6 +267,14 @@ export class BrowserGroups extends EventTarget {
     } finally {
       if (this.decision === work) this.decision = undefined;
     }
+  }
+  /** Declining or closing a frozen review fences it, then the next wake
+   * removes its staged rows. Nothing was applied, so no rollback is needed. */
+  async cancel(job: BulkJob) {
+    this.check();
+    const saved = await this.executor.cancel(job);
+    this.wake();
+    return saved;
   }
   history(before?: [number, string]) {
     this.check();

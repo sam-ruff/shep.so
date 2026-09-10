@@ -123,7 +123,9 @@ export interface Preferences {
     | "search"
     | "reader"
     | "find"
-    | "selectAll",
+    | "selectAll"
+    | "approve"
+    | "decline",
     string
   >;
 }
@@ -145,6 +147,8 @@ export const defaults: Preferences = {
     reader: "Enter",
     find: "Control+f",
     selectAll: "Control+a",
+    approve: "y",
+    decline: "n",
   },
 };
 export interface SettingsStore {

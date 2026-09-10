@@ -1,4 +1,9 @@
-import { BulkJournal, type BulkJob, type BulkItem } from "./bulk_journal";
+import {
+  BulkJournal,
+  type BulkJob,
+  type BulkItem,
+  type BulkSweep,
+} from "./bulk_journal";
 import { intentValues, type IntentLease } from "./mail_intents";
 import { MutationFailure, type Fields } from "./model";
 import {
@@ -103,6 +108,18 @@ export class BulkExecutor {
       ? apply(this.journal)
       : BulkJournal.own(this.user, apply);
   }
+  cancel(job: BulkJob) {
+    const apply = (journal: BulkJournal) => journal.cancel(job);
+    return this.journal
+      ? apply(this.journal)
+      : BulkJournal.own(this.user, apply);
+  }
+  /** Periodic cleanup between runs. A running owner already sweeps at each
+   * wake, and another tab's owner sweeps for itself. */
+  sweep(limit = 20): Promise<BulkSweep | null> {
+    if (this.running) return Promise.resolve(null);
+    return BulkJournal.own(this.user, (journal) => journal.sweep(limit));
+  }
   run(): Promise<BulkRun> {
     const requested = ++this.requested;
     this.stopped = false;
@@ -112,10 +129,17 @@ export class BulkExecutor {
       );
     this.running = BulkJournal.own(this.user, async (journal) => {
       this.journal = journal;
-      this.recovered?.();
       const total: BulkRun = { steps: 0, repairs: 0 };
+      let first = true;
       do {
         const wake = this.requested;
+        // Abandoned reviews retire before any provider step of this wake, and
+        // before the recovery status is read for the new owner.
+        await journal.sweep(4);
+        if (first) {
+          first = false;
+          this.recovered?.();
+        }
         await this.drain(journal, total);
         this.completed = wake;
       } while (this.requested > this.completed && !this.stopped);

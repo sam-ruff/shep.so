@@ -5781,3 +5781,112 @@ Not rerun on the merged tree: the full 282-flow desktop functional set, the
 latency benchmark, the full browser Playwright suite (web/ and the WASM inputs
 are unchanged by the merge) and the Android scenarios (mobile code unchanged
 apart from folder-name caching; the host suite covers it).
+
+## Clients match the desktop look — 2026-09-10
+
+R80 (client), with R67/R69/R71/R73 parity. The Flutter app and the browser
+client now share the desktop's visual language from `src/ui/components.rs` and
+`src/ui/mod.rs`: the light/dark palette tokens (background, surface, subtle,
+text, muted, border, accent, tint, flag and notice colours), the 23/16/14/13/12/10
+type scale in Noto Sans, the stroked 24-unit icon set at 1.6, radii of 12 for
+cards, 8 for buttons and fields, 7 for ghost buttons and pick lists and 5 for
+badges, and the primary violet button with white text on both schemes.
+
+Flutter: an explicit `ShepColors` theme, a Dart renderer of the desktop SVG icons,
+a drawer laid out as the desktop sidebar, outline filter buttons, rows without the
+account stripe (palette initials, left unread dot, 1.5 px flag border, quiet more
+dots, desktop date rule), a "New message" primary button in place of the Material
+FAB, a tinted bottom bar with a top border, the header preview badge, desktop
+empty and error states and toast cards, a reader with primary Reply and outline
+Reply all, label-above bordered composer fields, Preferences cards with titles
+inside, desktop pick lists and violet checkboxes (the desktop uses checkboxes, not
+switches), and the same icons and checkboxes on the Google, profile, account,
+Outbox, calendar and find screens. Browser: all tokens, hover/active/disabled
+states, `appearance: none` selects with the desktop chevron, custom checkboxes,
+sidebar sizes, palette avatars, reader sizes and date format, attachment chips,
+single-column Preferences cards, dialog radius and scrim, composer actions and
+placeholders, the login panel and destructive fills.
+
+Reviewed evidence under ignored `artifacts/visual-parity/`: `NOTES.md` with 21
+Flutter and 25 browser differences and their state, and `montages/` with
+seventeen screens (desktop, Flutter before, Flutter after, browser before,
+browser after) in light and dark. The integrator reviewed the inbox, Preferences
+and browser mail-view montages and full-size captures. Saved scenarios keep the
+checks: `flutter/e2e/web.mjs` captures the drawer, reader, composer, empty search
+and Preferences in both schemes; `web/e2e/visual-parity.spec.ts` captures
+Preferences, inbox with reader, composer, empty and error states at 1440x920 plus
+a 412 px drawer, each with an axe scan; `flutter/test/theme_test.dart` (7) and
+`web/src/format.test.ts` (2) pin the tokens, icon set, date rule and avatars.
+
+Lane verification: `flutter analyze` clean, 136 Flutter host tests, Flutter web
+Playwright default and enrollment flows, Android `--appium-only` 7/7 on
+`emulator-5554`, 129 browser units, `tsc`/prettier/build clean, browser
+Playwright 136 passed with 6 pre-existing bulk-group timing failures reproduced
+against the unmodified code on the loaded host, hooks and the parity checker.
+Integrator gates after merging the lane onto `main` `ee1305c`
+(`artifacts/logs/r80-*.log`): `flutter analyze` clean, 136 Flutter host tests,
+Flutter web Playwright default flows, 129 browser units and a clean build, the
+visual parity and workspace specs (20 passed), 37 parity contracts and strict
+Zensical, then the mandatory hooks on commit.
+
+Open, kept in TODO: the browser's light muted text (`#6C6A74`) and avatar shades
+are darker than the desktop (`#777580`) because the desktop values fail the
+existing WCAG AA axe gate on tint; mobile keeps its touch adaptations (composer
+actions in the app bar, no From pick list or Send/Attach/Save footer, full-bleed
+rows, "N unread" header, account name where the desktop shows "To:"); the browser
+has no tabbed Preferences sections or breadcrumb eyebrow; the formatted HTML frame
+styles in `shared/mail-content` were not reviewed; real-device, Apple, 120 % scale
+and compact-window review remains.
+
+## Browser group review cleanup, Undo lifecycle and review keys — 2026-09-10
+
+R42 browser increment, lane commit `a6ae2f3`. Each frozen group review now
+records the preparing tab's owner token, and the browser holds a per-tab
+liveness Web Lock from start to stop. A review is abandoned when it is
+cancelled, interrupted, or left in review with no live owner; Cancel, Close and
+Escape on the review dialog fence the job as cancelled so approval is refused.
+`BulkJournal.sweep` retires one abandoned job per strict transaction with at
+most 50 item rows, cancelled and interrupted first, then dead-owner reviews,
+leaving runnable jobs, receipts, applied intent and pending cache repair
+untouched and never running a provider step. The executor sweeps up to four
+transactions before each wake's first step and before recovery status is read;
+the browser sweeps every 30 seconds between runs, skipping while preparing or
+running and ignoring another tab's refusal. Worker projections treat cancelled
+like staging. History no longer prepares an Undo preview for interrupted or
+cancelled reviews.
+
+Undo after a changed scope or page, queued approval, partial failure,
+overlapping groups and unconfirmed results now has unit evidence against the
+real journal and executor and Chromium control evidence: newer per-field intent
+wins, exact membership and physical lineage are retained, uncertain results
+still need the checked folder review and no ambiguous write is repeated. No
+durable rule needed changing.
+
+Review keys: remappable approve (default Y) and decline (default N) shortcuts in
+Preferences; in the review dialog Y and Enter approve (the primary control is
+focused once prepared) and N and Escape decline; in History Y and Enter accept
+the single checked folder review, N and Escape clear checked reviews first and
+otherwise close. Keys respect already-handled events, text fields, selects,
+editors and native Enter/Space on controls, reach the open modal when focus was
+lost after a control hid, and are excluded from mail browsing and from the
+formatted frame's forwarded list. Enter in the Move folder field opens the
+review without approving it.
+
+Lane evidence (`artifacts/logs/bulk-*.log`): 144 browser units (new
+`bulk_journal`, `bulk_undo`, `bulk_client` and `shortcut_keys` tests over
+fake-indexeddb and a fake Web Lock manager), build, `tsc` and prettier clean,
+150 Chromium scenarios (138 passed in an eight-worker run under host load and
+20/20 on serial retry of the affected files; the unmodified tree showed the same
+parallel count failures), reviewed light/dark/compact captures with axe checks
+under `artifacts/web/`, 37 parity contracts and strict docs. Integrator gates
+after merging onto `main` `924141d` (`artifacts/logs/bulk-int-*.log`): 144
+units, build, and the changed bulk-controls, bulk-recovery and
+preferences-controls specs run serially: 17 passed with two count-progress
+assertions timing out at load average 12 to 18, one of which passed on retry;
+the partial-failure Undo scenario passed once the load average fell below 6
+(`bulk-int-e2e-retry2.log`). No deadline was relaxed.
+
+Limitations: cross-account transport, large-group performance and native
+equivalents remain open; the interrupted-review recovery banner entry is
+transient and retires at the next owner's wake; reviews prepared by direct
+journal use without an owner are treated as abandoned.
