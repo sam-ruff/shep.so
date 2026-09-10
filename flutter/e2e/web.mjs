@@ -44,7 +44,7 @@ async function openDropdown(label) {
     .boundingBox();
   await page.mouse.click(box.x + box.width - 36, box.y + box.height / 2);
 }
-async function waitText(text) {
+async function waitText(text, timeout = 30000) {
   await page.waitForFunction(
     (t) =>
       [
@@ -59,6 +59,7 @@ async function waitText(text) {
         ).includes(t),
       ),
     text,
+    { timeout },
   );
 }
 async function enterFind(value) {
@@ -85,6 +86,58 @@ async function scrollToGoogle(control) {
   }
   throw new Error("Google control did not become visible");
 }
+async function capture(name) {
+  await page.waitForTimeout(150); // Let the last frame paint before the capture.
+  await page.screenshot({ path: path.join(out, `${name}.png`) });
+}
+// Visual parity captures reviewed against the desktop client: drawer, reader,
+// composer and the empty search state in the current colour scheme.
+async function visualParity(scheme) {
+  await clickText("Open navigation menu");
+  await waitText("New message");
+  await capture(`drawer-${scheme}`);
+  await page.mouse.click(390, 600);
+  await waitText("A little room for good ideas");
+  await page
+    .getByRole("group", { name: /A little room for good ideas/ })
+    .click();
+  await waitText("Reply all");
+  await capture(`reader-${scheme}`);
+  await clickText("Back");
+  await page
+    .getByRole("group", { name: /^Read, A little room for good ideas/ })
+    .waitFor();
+  await clickText("Actions for A little room for good ideas");
+  await clickText("Mark unread");
+  await page
+    .getByRole("group", { name: /^Unread, A little room for good ideas/ })
+    .waitFor();
+  await clickText("New message");
+  await waitText("Save and close");
+  await capture(`composer-${scheme}`);
+  await clickText("Save and close");
+  await waitText("A little room for good ideas");
+  await clickText("Search");
+  const search = page.getByRole("textbox").last();
+  await search.click();
+  // Flutter attaches its semantics input a frame after focus; real keyboard
+  // input can land before it, so retry until the filtered list reacts.
+  for (let attempt = 0; ; attempt++) {
+    await page.waitForTimeout(150);
+    await page.keyboard.type("zzzz");
+    try {
+      await waitText("No matching mail", 4000);
+      break;
+    } catch (error) {
+      if (attempt === 2) throw error;
+      await search.click();
+    }
+  }
+  await capture(`empty-${scheme}`);
+  await clickText("Clear search");
+  await clickText("Search");
+  await waitText("A little room for good ideas");
+}
 try {
   await page.goto(process.env.SHEP_FLUTTER_URL ?? "http://127.0.0.1:5181");
   await page.waitForSelector("flt-semantics-placeholder", {
@@ -95,6 +148,7 @@ try {
   );
   await waitText("A little room for good ideas");
   await page.screenshot({ path: path.join(out, "inbox-light.png") });
+  await visualParity("light");
   const row = page.getByRole("group", {
     name: /^Unread, A little room for good ideas/,
   });
@@ -109,6 +163,7 @@ try {
   await waitText("A little room for good ideas");
   await clickText("Preferences");
   await waitText("Swipe left");
+  await capture("preferences-light");
   await openDropdown("Theme");
   await clickText("Dark");
   await waitText("Preferences saved");
@@ -116,6 +171,7 @@ try {
   await clickText("Mail");
   await waitText("A little room for good ideas");
   await page.screenshot({ path: path.join(out, "inbox-dark.png") });
+  await visualParity("dark");
   await page
     .getByRole("group", { name: /A little room for good ideas/ })
     .click();

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../data/outgoing.dart';
 import '../model/workspace.dart';
 import 'composer.dart';
+import 'icons.dart';
 
 class OutboxScreen extends StatefulWidget {
   const OutboxScreen({super.key, required this.workspace});
@@ -231,7 +232,7 @@ class _OutboxScreenState extends State<OutboxScreen> {
         IconButton(
           tooltip: 'Refresh Outbox',
           onPressed: busy || loading ? null : () => load(),
-          icon: const Icon(Icons.refresh),
+          icon: const ShepIcon('sync'),
         ),
       ],
     ),
@@ -303,7 +304,7 @@ class _OutboxScreenState extends State<OutboxScreen> {
                     onPressed: !busy && !loading && page!.offset > 0
                         ? () => load(page!.offset - 20)
                         : null,
-                    icon: const Icon(Icons.chevron_left),
+                    icon: const ShepIcon('left'),
                   ),
                   Text(
                     '${page!.offset + 1}–${page!.offset + page!.rows.length} of ${page!.total}',
@@ -316,7 +317,7 @@ class _OutboxScreenState extends State<OutboxScreen> {
                             page!.offset + page!.rows.length < page!.total
                         ? () => load(page!.offset + 20)
                         : null,
-                    icon: const Icon(Icons.chevron_right),
+                    icon: const ShepIcon('chevron', size: 18),
                   ),
                 ],
               ),

@@ -99,7 +99,10 @@ void main() {
       expect(tester.widget<OutlinedButton>(back).onPressed, isNull);
       await tester.pageBack();
       await tester.pumpAndSettle();
-      expect(find.text('Compose'), findsOneWidget);
+      expect(
+        find.widgetWithText(FloatingActionButton, 'New message'),
+        findsOneWidget,
+      );
       repository.pending.complete();
       await tester.pumpAndSettle();
       expect(repository.decisions, [true, true]);

@@ -14,6 +14,9 @@ import 'package:flutter/material.dart';
 import '../model/mail.dart';
 import '../model/workspace.dart';
 import 'composer.dart';
+import 'format.dart';
+import 'icons.dart';
+import 'theme.dart';
 
 class Reader extends StatefulWidget {
   const Reader({
@@ -337,14 +340,14 @@ class _ReaderState extends State<Reader> {
     child: buildReader(context),
   );
 
-  Widget actionIcon(IconData icon, bool busy) => SizedBox(
+  Widget actionIcon(String icon, bool busy) => SizedBox(
     width: 18,
     height: 18,
     child: busy
         ? const ExcludeSemantics(
             child: CircularProgressIndicator(strokeWidth: 2),
           )
-        : Icon(icon, size: 18),
+        : ShepIcon(icon, size: 18),
   );
 
   Widget readerActions(
@@ -352,12 +355,11 @@ class _ReaderState extends State<Reader> {
     List<Widget> actions,
   ) => DecoratedBox(
     decoration: BoxDecoration(
-      border: Border(
-        top: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
-      ),
+      color: ShepColors.of(context).surface,
+      border: Border(top: BorderSide(color: ShepColors.of(context).border)),
     ),
     child: Padding(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
@@ -426,6 +428,7 @@ class _ReaderState extends State<Reader> {
         );
       }
       final scheme = Theme.of(context).colorScheme;
+      final c = ShepColors.of(context);
       final document = formatted;
       final html = document?.html == true;
       final parts = (document?.prepared?.text ?? mail.body).split('\n>');
@@ -440,6 +443,7 @@ class _ReaderState extends State<Reader> {
             const SingleActivator(LogicalKeyboardKey.escape): closeFind,
         },
         child: Scaffold(
+          backgroundColor: c.surface,
           bottomNavigationBar: SafeArea(
             top: false,
             child: Column(
@@ -448,27 +452,36 @@ class _ReaderState extends State<Reader> {
                 MailActionBanner(workspace: workspace),
                 readerActions(context, [
                   for (final all in [false, true])
-                    FilledButton.tonalIcon(
-                      onPressed: !mail.bodyLoaded
-                          ? null
-                          : () async {
-                              final draft = await workspace.reply(id, all);
-                              if (draft != null && context.mounted) {
-                                unawaited(workspace.finishReading());
-                                await Navigator.push(
-                                  context,
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => Composer(
-                                      workspace: workspace,
-                                      draft: draft,
-                                    ),
-                                  ),
-                                );
-                              }
-                            },
-                      icon: Icon(all ? Icons.reply_all : Icons.reply),
-                      label: Text(all ? 'Reply all' : 'Reply'),
-                    ),
+                    () {
+                      Future<void> reply() async {
+                        final draft = await workspace.reply(id, all);
+                        if (draft != null && context.mounted) {
+                          unawaited(workspace.finishReading());
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  Composer(workspace: workspace, draft: draft),
+                            ),
+                          );
+                        }
+                      }
+
+                      final icon = ShepIcon(all ? 'reply-all' : 'reply');
+                      final label = Text(all ? 'Reply all' : 'Reply');
+                      final onPressed = mail.bodyLoaded ? reply : null;
+                      return all
+                          ? OutlinedButton.icon(
+                              onPressed: onPressed,
+                              icon: icon,
+                              label: label,
+                            )
+                          : FilledButton.icon(
+                              onPressed: onPressed,
+                              icon: icon,
+                              label: label,
+                            );
+                    }(),
                   OutlinedButton.icon(
                     onPressed: workspace.isForwarding(id)
                         ? null
@@ -491,7 +504,7 @@ class _ReaderState extends State<Reader> {
                               );
                             }
                           },
-                    icon: actionIcon(Icons.forward, workspace.isForwarding(id)),
+                    icon: actionIcon('forward', workspace.isForwarding(id)),
                     label: Text(
                       'Forward',
                       semanticsLabel: workspace.isForwarding(id)
@@ -506,10 +519,7 @@ class _ReaderState extends State<Reader> {
                             id,
                             plain: formatted?.plain ?? false,
                           ),
-                    icon: actionIcon(
-                      Icons.print_outlined,
-                      workspace.isPrinting(id),
-                    ),
+                    icon: actionIcon('print', workspace.isPrinting(id)),
                     label: Text(
                       'Print',
                       semanticsLabel: workspace.isPrinting(id)
@@ -519,7 +529,7 @@ class _ReaderState extends State<Reader> {
                   ),
                   OutlinedButton.icon(
                     onPressed: () => act(id, MailAction.move),
-                    icon: const Icon(Icons.drive_file_move_outline),
+                    icon: const ShepIcon('move'),
                     label: const Text('Move'),
                   ),
                 ]),
@@ -528,17 +538,22 @@ class _ReaderState extends State<Reader> {
           ),
           appBar: AppBar(
             titleSpacing: 0,
+            backgroundColor: c.surface,
+            bottom: const PreferredSize(
+              preferredSize: Size.fromHeight(1),
+              child: Divider(height: 1),
+            ),
             title: const Text('Message'),
             actions: [
               IconButton(
                 tooltip: 'Find in message',
                 onPressed: openFind,
-                icon: const Icon(Icons.search),
+                icon: const ShepIcon('search'),
               ),
               IconButton(
                 tooltip: 'Refresh mail',
                 onPressed: () => workspace.refresh(),
-                icon: const Icon(Icons.refresh),
+                icon: const ShepIcon('sync'),
               ),
               IconButton(
                 tooltip: 'Archive',
@@ -546,25 +561,26 @@ class _ReaderState extends State<Reader> {
                   act(id, MailAction.archive);
                   Navigator.pop(context);
                 },
-                icon: const Icon(Icons.archive_outlined),
+                icon: const ShepIcon('archive'),
               ),
               IconButton(
                 tooltip: mail.unread ? 'Mark read' : 'Mark unread',
                 onPressed: () => act(id, MailAction.read),
-                icon: Icon(
-                  mail.unread
-                      ? Icons.mark_email_read_outlined
-                      : Icons.mark_email_unread_outlined,
-                ),
+                icon: ShepIcon(mail.unread ? 'mail-open' : 'mail'),
               ),
               IconButton(
                 tooltip: mail.starred ? 'Unflag' : 'Flag',
                 onPressed: () => act(id, MailAction.star),
-                icon: Icon(
-                  mail.starred ? Icons.flag : Icons.flag_outlined,
-                  color: mail.starred ? scheme.error : null,
-                ),
+                style: mail.starred
+                    ? ButtonStyle(
+                        side: WidgetStatePropertyAll(
+                          BorderSide(color: c.flag, width: 1.5),
+                        ),
+                      )
+                    : null,
+                icon: ShepIcon('flag', color: mail.starred ? c.flag : null),
               ),
+              const SizedBox(width: 6),
             ],
           ),
           body: Column(
@@ -581,21 +597,38 @@ class _ReaderState extends State<Reader> {
               Expanded(
                 child: LayoutBuilder(
                   builder: (context, constraints) => SingleChildScrollView(
-                    padding: const EdgeInsets.all(24),
+                    padding: const EdgeInsets.fromLTRB(22, 26, 22, 22),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           mail.subject,
-                          style: Theme.of(context).textTheme.headlineSmall
-                              ?.copyWith(fontWeight: FontWeight.w600),
+                          style: TextStyle(
+                            fontSize: ShepText.heading,
+                            fontWeight: FontWeight.w600,
+                            color: c.text,
+                          ),
                         ),
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 20),
                         Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            CircleAvatar(
-                              backgroundColor: scheme.surfaceContainerHighest,
-                              child: Text(mail.sender[0]),
+                            Container(
+                              width: 41,
+                              height: 41,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: avatarColors(0).$1,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Text(
+                                avatarInitials(mail.sender),
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  color: avatarColors(0).$2,
+                                ),
+                              ),
                             ),
                             const SizedBox(width: 12),
                             Expanded(
@@ -604,8 +637,10 @@ class _ReaderState extends State<Reader> {
                                 children: [
                                   Text(
                                     mail.sender,
-                                    style: const TextStyle(
+                                    style: TextStyle(
+                                      fontSize: ShepText.body,
                                       fontWeight: FontWeight.w600,
+                                      color: c.text,
                                     ),
                                   ),
                                   if (!mail.bodyLoaded) ...[
@@ -614,39 +649,50 @@ class _ReaderState extends State<Reader> {
                                     else
                                       TextButton.icon(
                                         onPressed: () => workspace.loadBody(id),
-                                        icon: const Icon(Icons.refresh),
+                                        icon: const ShepIcon('sync'),
                                         label: const Text('Load message'),
                                       ),
                                     if (workspace.bodyError(id)
                                         case final String error)
                                       Text(
                                         error,
-                                        style: TextStyle(color: scheme.error),
+                                        style: TextStyle(color: c.flag),
                                       ),
                                     const SizedBox(height: 16),
                                   ],
+                                  const SizedBox(height: 5),
                                   SelectableText(
                                     mail.address,
                                     style: TextStyle(
-                                      color: scheme.onSurfaceVariant,
-                                      fontSize: 12,
+                                      color: c.muted,
+                                      fontSize: ShepText.caption,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 5),
+                                  Text(
+                                    'To: ${mail.account}',
+                                    style: TextStyle(
+                                      color: c.muted,
+                                      fontSize: ShepText.caption,
                                     ),
                                   ),
                                 ],
                               ),
                             ),
+                            const SizedBox(width: 12),
+                            Text(
+                              readerDate(mail.date),
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                color: c.muted,
+                                fontSize: ShepText.caption,
+                                height: 1.8,
+                              ),
+                            ),
                           ],
                         ),
-                        const SizedBox(height: 10),
-                        Text(
-                          '${mail.account} · ${mail.date.toLocal().toString().substring(0, 16)}',
-                          style: TextStyle(
-                            color: scheme.onSurfaceVariant,
-                            fontSize: 12,
-                          ),
-                        ),
                         const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 24),
+                          padding: EdgeInsets.symmetric(vertical: 20),
                           child: Divider(),
                         ),
                         if (document != null &&
@@ -710,7 +756,7 @@ class _ReaderState extends State<Reader> {
                                     Brightness.dark,
                                 quotes: showQuotes,
                               ),
-                              icon: const Icon(Icons.refresh),
+                              icon: const ShepIcon('sync'),
                               label: const Text('Retry formatted message'),
                             ),
                           ],
@@ -803,7 +849,7 @@ class _ReaderState extends State<Reader> {
                             onPressed: workspace.loadingBody(id)
                                 ? null
                                 : () => workspace.loadBody(id, force: true),
-                            icon: const Icon(Icons.refresh),
+                            icon: const ShepIcon('sync'),
                             label: const Text('Reload attachments'),
                           ),
                         ],
@@ -828,8 +874,8 @@ class _ReaderState extends State<Reader> {
                                                         strokeWidth: 2,
                                                       ),
                                                 )
-                                              : const Icon(
-                                                  Icons.save_alt,
+                                              : const ShepIcon(
+                                                  'download',
                                                   size: 18,
                                                 ),
                                           label: Text(
@@ -841,8 +887,8 @@ class _ReaderState extends State<Reader> {
                                 : mail.attachments
                                       .map(
                                         (a) => Chip(
-                                          avatar: const Icon(
-                                            Icons.attach_file,
+                                          avatar: const ShepIcon(
+                                            'clip',
                                             size: 16,
                                           ),
                                           label: Text(a),

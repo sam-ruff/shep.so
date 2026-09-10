@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../model/mail.dart';
 import '../model/workspace.dart';
+import 'icons.dart';
 
 class CalendarView extends StatefulWidget {
   const CalendarView({super.key, required this.workspace});
@@ -71,7 +72,7 @@ class _CalendarViewState extends State<CalendarView> {
                 month = DateTime(month.year, month.month - 1);
                 selected = null;
               }),
-              icon: const Icon(Icons.chevron_left),
+              icon: const ShepIcon('left'),
             ),
             IconButton(
               tooltip: 'Next month',
@@ -79,7 +80,7 @@ class _CalendarViewState extends State<CalendarView> {
                 month = DateTime(month.year, month.month + 1);
                 selected = null;
               }),
-              icon: const Icon(Icons.chevron_right),
+              icon: const ShepIcon('chevron', size: 18),
             ),
           ],
         ),
@@ -150,7 +151,7 @@ class _CalendarViewState extends State<CalendarView> {
             ),
             TextButton.icon(
               onPressed: edit,
-              icon: const Icon(Icons.add, size: 18),
+              icon: const ShepIcon('plus', size: 18),
               label: const Text('New event'),
             ),
           ],
@@ -173,8 +174,8 @@ class _CalendarViewState extends State<CalendarView> {
                 '${e.calendar} · ${e.start.hour.toString().padLeft(2, '0')}:${e.start.minute.toString().padLeft(2, '0')}${e.location.isEmpty ? '' : ' · ${e.location}'}',
               ),
               trailing: e.readOnly
-                  ? const Icon(Icons.lock_outline, size: 18)
-                  : const Icon(Icons.chevron_right),
+                  ? const ShepIcon('lock', size: 18)
+                  : const ShepIcon('chevron', size: 18),
             ),
           ),
         ),

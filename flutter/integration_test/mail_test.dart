@@ -36,7 +36,7 @@ void main() {
     expect(find.text('Swipe left'), findsOneWidget);
     await tester.tap(find.text('Mail'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Compose'));
+    await tester.tap(find.widgetWithText(FloatingActionButton, 'New message'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.widgetWithText(TextField, 'To'),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/profile_discovery.dart';
 import '../data/profile_enrollment.dart';
 import '../model/profile_discovery.dart';
+import 'icons.dart';
 
 const _labels = {
   'appearance': 'Appearance',
@@ -116,21 +117,23 @@ class _ProfileEnrollmentScreenState extends State<ProfileEnrollmentScreen> {
                   ),
                 ),
               if (review?.needsReview == true) ...[
-                SwitchListTile(
+                CheckboxListTile(
+                  controlAffinity: ListTileControlAffinity.leading,
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Account connections'),
                   value: accounts,
                   onChanged: d.busy
                       ? null
-                      : (v) => setState(() => accounts = v),
+                      : (v) => setState(() => accounts = v ?? accounts),
                 ),
-                SwitchListTile(
+                CheckboxListTile(
+                  controlAffinity: ListTileControlAffinity.leading,
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Appearance and reading preferences'),
                   value: settings,
                   onChanged: d.busy
                       ? null
-                      : (v) => setState(() => settings = v),
+                      : (v) => setState(() => settings = v ?? settings),
                 ),
                 const Text(
                   'Newer local preference edits are kept. Unselected fields stay as they are. Unsupported fields and conflicts remain in the shared profile for later review.',
@@ -213,7 +216,7 @@ class _ProfileEnrollmentScreenState extends State<ProfileEnrollmentScreen> {
                           accounts: accounts,
                           settings: settings,
                         ),
-                  icon: const Icon(Icons.check),
+                  icon: const ShepIcon('check'),
                   label: const Text('Apply selected changes'),
                 ),
               ],
@@ -240,7 +243,7 @@ class _ProfileEnrollmentScreenState extends State<ProfileEnrollmentScreen> {
                   child: const Text('Cancel review'),
                 ),
               if (review?.complete == true) ...[
-                const Icon(Icons.check_circle_outline, size: 40),
+                const ShepIcon('check-circle', size: 40),
                 const SizedBox(height: 12),
                 Semantics(
                   key: const ValueKey('profile-enrollment-summary'),

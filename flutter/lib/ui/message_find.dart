@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../data/message_search.dart';
 import '../model/message_find.dart';
+import 'icons.dart';
 
 class MessageFindBar extends StatelessWidget {
   const MessageFindBar({
@@ -48,7 +49,7 @@ class MessageFindBar extends StatelessWidget {
                 IconButton(
                   tooltip: 'Close Find',
                   onPressed: close,
-                  icon: const Icon(Icons.close),
+                  icon: const ShepIcon('close'),
                 ),
               ],
             ),
@@ -71,21 +72,21 @@ class MessageFindBar extends StatelessWidget {
                   tooltip: 'Match case',
                   isSelected: find.matchCase,
                   onPressed: find.toggleCase,
-                  icon: const Icon(Icons.text_fields),
+                  icon: const ShepIcon('type'),
                 ),
                 IconButton(
                   tooltip: 'Previous match',
                   onPressed: find.hits.isEmpty || find.pending
                       ? null
                       : () => find.next(true),
-                  icon: const Icon(Icons.keyboard_arrow_up),
+                  icon: const ShepIcon('up'),
                 ),
                 IconButton(
                   tooltip: 'Next match',
                   onPressed: find.hits.isEmpty || find.pending
                       ? null
                       : () => find.next(),
-                  icon: const Icon(Icons.keyboard_arrow_down),
+                  icon: const ShepIcon('down'),
                 ),
               ],
             ),

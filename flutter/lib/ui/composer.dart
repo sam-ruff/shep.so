@@ -6,6 +6,8 @@ import '../data/outgoing.dart';
 import 'outbox.dart';
 import '../model/mail.dart';
 import '../model/workspace.dart';
+import 'controls.dart';
+import 'icons.dart';
 
 class Composer extends StatefulWidget {
   const Composer({super.key, required this.workspace, required this.draft});
@@ -284,6 +286,12 @@ class _ComposerState extends State<Composer> {
         : TextInputType.text,
     decoration: InputDecoration(
       labelText: label,
+      hintText: switch (label) {
+        'To' || 'Cc' || 'Bcc' => 'name@example.com',
+        'Subject' => 'Add a subject',
+        'Message' => 'Write your message…',
+        _ => null,
+      },
       alignLabelWithHint: multiline,
     ),
   );
@@ -300,14 +308,14 @@ class _ComposerState extends State<Composer> {
         leading: IconButton(
           tooltip: 'Save and close',
           onPressed: busy || checking ? null : () => finish(false),
-          icon: const Icon(Icons.close),
+          icon: const ShepIcon('close'),
         ),
         actions: [
           if (widget.workspace.accountRepository != null)
             IconButton(
               tooltip: 'Discard draft',
               onPressed: locked ? null : discard,
-              icon: const Icon(Icons.delete_outline),
+              icon: const ShepIcon('trash'),
             ),
           TextButton(
             onPressed: busy || checking ? null : () => finish(false),
@@ -316,7 +324,7 @@ class _ComposerState extends State<Composer> {
           IconButton(
             tooltip: delivery == null ? 'Send' : 'Check delivery status',
             onPressed: busy || checking ? null : () => finish(true),
-            icon: Icon(delivery == null ? Icons.send_outlined : Icons.refresh),
+            icon: ShepIcon(delivery == null ? 'send' : 'sync'),
           ),
         ],
       ),
@@ -355,7 +363,7 @@ class _ComposerState extends State<Composer> {
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton.icon(
-                icon: const Icon(Icons.outbox_outlined),
+                icon: const ShepIcon('outbox'),
                 label: const Text('Open Outbox'),
                 onPressed: () async {
                   await Navigator.push(
@@ -374,6 +382,7 @@ class _ComposerState extends State<Composer> {
                   ? accountId
                   : null,
               isExpanded: true,
+              icon: dropdownChevron(),
               decoration: const InputDecoration(labelText: 'From'),
               items: native.mailAccounts
                   .map(
@@ -425,7 +434,7 @@ class _ComposerState extends State<Composer> {
             const SizedBox(height: 8),
             TextButton.icon(
               onPressed: locked ? null : attach,
-              icon: const Icon(Icons.attach_file),
+              icon: const ShepIcon('clip'),
               label: const Text('Attach files'),
             ),
           ],

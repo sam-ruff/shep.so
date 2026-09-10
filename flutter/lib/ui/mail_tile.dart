@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../model/mail.dart';
 import '../model/workspace.dart';
+import 'format.dart';
+import 'icons.dart';
 import 'theme.dart';
 
 class MailTile extends StatelessWidget {
@@ -10,11 +12,13 @@ class MailTile extends StatelessWidget {
     required this.workspace,
     required this.open,
     required this.act,
+    this.index = 0,
   });
   final Mail mail;
   final Workspace workspace;
   final VoidCallback open;
   final void Function(MailAction) act;
+  final int index;
 
   String label(MailAction action) => switch (action) {
     MailAction.read => mail.unread ? 'Mark read' : 'Mark unread',
@@ -24,20 +28,17 @@ class MailTile extends StatelessWidget {
     _ => action.label,
   };
 
-  IconData icon(MailAction action) => switch (action) {
-    MailAction.read =>
-      mail.unread
-          ? Icons.mark_email_read_outlined
-          : Icons.mark_email_unread_outlined,
-    MailAction.star => mail.starred ? Icons.flag : Icons.flag_outlined,
-    _ => actionIcon(action.name),
+  String iconName(MailAction action) => switch (action) {
+    MailAction.read => mail.unread ? 'mail-open' : 'mail',
+    MailAction.star => 'flag',
+    _ => actionIconName(action.name),
   };
 
   Widget background(BuildContext context, MailAction action, bool left) {
-    final scheme = Theme.of(context).colorScheme;
     final destructive = action == MailAction.trash || action == MailAction.spam;
-    final color = destructive ? scheme.error : scheme.primary;
-    final foreground = destructive ? scheme.onError : scheme.onPrimary;
+    final color = destructive
+        ? ShepColors.destructive
+        : ShepColors.primaryButton;
     return Container(
       color: color,
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -45,11 +46,14 @@ class MailTile extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon(action), color: foreground, size: 25),
+          ShepIcon(iconName(action), color: Colors.white, size: 24),
           const SizedBox(height: 5),
           Text(
             label(action),
-            style: TextStyle(color: foreground, fontSize: 12),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: ShepText.secondary,
+            ),
           ),
         ],
       ),
@@ -58,49 +62,65 @@ class MailTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final c = ShepColors.of(context);
     final prefs = workspace.preferences;
     final selected = workspace.selected.contains(mail.id);
+    final weight = mail.unread ? FontWeight.w600 : FontWeight.w400;
+    final (avatarBg, avatarFg) = avatarColors(index);
     final row = Material(
-      color: selected
-          ? scheme.primaryContainer.withValues(alpha: .4)
-          : mail.unread
-          ? scheme.surface
-          : scheme.surfaceContainerLow.withValues(alpha: .45),
+      color: selected ? c.tint : c.surface,
       child: InkWell(
         onTap: workspace.selected.isNotEmpty
             ? () => act(MailAction.select)
             : open,
         onLongPress: () => act(MailAction.select),
+        hoverColor: c.subtle,
         child: Container(
           decoration: BoxDecoration(
-            border: Border(
-              left: BorderSide(
-                color: mail.account == 'Personal'
-                    ? scheme.primary
-                    : const Color(0xff49958a),
-                width: 3,
-              ),
-              bottom: BorderSide(color: scheme.outlineVariant),
-            ),
+            border: Border(bottom: BorderSide(color: c.border)),
           ),
-          padding: const EdgeInsets.fromLTRB(13, 13, 4, 13),
+          padding: const EdgeInsets.fromLTRB(10, 10, 6, 10),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: SizedBox(
+                  width: 12,
+                  child: mail.unread
+                      ? Center(
+                          child: Container(
+                            width: 5,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: c.accent,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        )
+                      : null,
+                ),
+              ),
               if (prefs.avatars || selected)
                 Padding(
-                  padding: const EdgeInsets.only(right: 12, top: 2),
-                  child: CircleAvatar(
-                    radius: 20,
-                    backgroundColor: scheme.surfaceContainerHighest,
+                  padding: const EdgeInsets.only(right: 10, top: 1),
+                  child: Container(
+                    width: 30,
+                    height: 30,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: selected ? c.tint : avatarBg,
+                      shape: BoxShape.circle,
+                      border: selected ? Border.all(color: c.accent) : null,
+                    ),
                     child: selected
-                        ? Icon(Icons.check, color: scheme.primary)
+                        ? ShepIcon('check', color: c.accent, size: 16)
                         : Text(
-                            mail.sender.substring(0, 1),
+                            avatarInitials(mail.sender),
                             style: TextStyle(
-                              color: scheme.onSurfaceVariant,
-                              fontSize: 15,
+                              color: avatarFg,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                   ),
@@ -109,87 +129,69 @@ class MailTile extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            mail.sender,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontWeight: mail.unread
-                                  ? FontWeight.w600
-                                  : FontWeight.w400,
-                              fontSize: 14,
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              mail.sender,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontWeight: weight,
+                                fontSize: ShepText.body,
+                                color: c.text,
+                              ),
                             ),
                           ),
-                        ),
-                        Text(
-                          '${mail.date.hour.toString().padLeft(2, '0')}:${mail.date.minute.toString().padLeft(2, '0')}',
-                          style: TextStyle(
-                            color: mail.unread
-                                ? scheme.primary
-                                : scheme.onSurfaceVariant,
-                            fontSize: 11,
+                          if (mail.attachments.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: ShepIcon('clip', size: 13, color: c.muted),
+                            ),
+                          Text(
+                            rowDate(mail.date),
+                            style: TextStyle(
+                              color: c.muted,
+                              fontSize: ShepText.caption,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 3),
+                    const SizedBox(height: 5),
                     Text(
                       mail.subject,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: mail.unread
-                            ? FontWeight.w600
-                            : FontWeight.w400,
+                        fontSize: ShepText.body,
+                        fontWeight: weight,
+                        color: c.text,
                       ),
                     ),
                     if (prefs.previewLines > 0)
                       Padding(
-                        padding: const EdgeInsets.only(top: 3),
+                        padding: const EdgeInsets.only(top: 4),
                         child: Text(
                           mail.preview,
                           maxLines: prefs.previewLines,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 12,
-                            height: 1.5,
-                            color: scheme.onSurfaceVariant,
+                            fontSize: ShepText.secondary,
+                            height: 1.45,
+                            color: c.muted,
                           ),
                         ),
                       ),
-                    const SizedBox(height: 5),
-                    Row(
-                      children: [
-                        if (mail.unread)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 5),
-                            child: Icon(
-                              Icons.circle,
-                              size: 6,
-                              color: scheme.primary,
-                            ),
-                          ),
-                        Text(
-                          mail.account,
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                        if (mail.attachments.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 7),
-                            child: Icon(
-                              Icons.attach_file,
-                              size: 13,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                      ],
+                    const SizedBox(height: 4),
+                    Text(
+                      mail.account,
+                      style: TextStyle(
+                        fontSize: ShepText.caption,
+                        color: c.muted,
+                      ),
                     ),
                   ],
                 ),
@@ -202,27 +204,35 @@ class MailTile extends StatelessWidget {
                       tooltip: mail.starred
                           ? 'Unflag ${mail.subject}'
                           : 'Flag ${mail.subject}',
-                      iconSize: 19,
+                      iconSize: 18,
+                      style: mail.starred
+                          ? ButtonStyle(
+                              side: WidgetStatePropertyAll(
+                                BorderSide(color: c.flag, width: 1.5),
+                              ),
+                              foregroundColor: WidgetStatePropertyAll(c.flag),
+                            )
+                          : null,
                       onPressed: () => act(MailAction.star),
-                      icon: Icon(
-                        mail.starred ? Icons.flag : Icons.flag_outlined,
-                        color: mail.starred
-                            ? scheme.error
-                            : scheme.onSurfaceVariant,
+                      icon: ShepIcon(
+                        'flag',
+                        color: mail.starred ? c.flag : c.muted,
                       ),
                     ),
                     PopupMenuButton<MailAction>(
                       tooltip: 'Actions for ${mail.subject}',
-                      icon: const Icon(Icons.more_horiz, size: 19),
+                      icon: const ShepIcon('more', size: 18),
+                      style: IconButton.styleFrom(foregroundColor: c.muted),
                       onSelected: act,
                       itemBuilder: (_) => MailAction.values
                           .where((a) => a != MailAction.none)
                           .map(
                             (action) => PopupMenuItem(
                               value: action,
+                              height: 40,
                               child: Row(
                                 children: [
-                                  Icon(icon(action), size: 19),
+                                  ShepIcon(iconName(action), size: 18),
                                   const SizedBox(width: 12),
                                   Text(label(action)),
                                 ],

@@ -5,6 +5,7 @@ import 'profile_creation.dart';
 import 'profile_enrollment.dart';
 import '../data/profile_enrollment.dart';
 import '../model/preferences.dart';
+import 'icons.dart';
 
 String _count(int n, String noun) => '$n $noun${n == 1 ? '' : 's'}';
 
@@ -49,7 +50,7 @@ class ProfileDiscoveryScreen extends StatelessWidget {
                         ? 'Profile applied on this device'
                         : 'Resume profile review and application',
                   ),
-                  trailing: const Icon(Icons.chevron_right),
+                  trailing: const ShepIcon('chevron', size: 18),
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute<void>(
@@ -74,7 +75,7 @@ class ProfileDiscoveryScreen extends StatelessWidget {
                           ? 'Profile review saved on this device'
                           : 'Profile publication needs to finish',
                     ),
-                    trailing: const Icon(Icons.chevron_right),
+                    trailing: const ShepIcon('chevron', size: 18),
                     onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute<void>(
@@ -100,7 +101,7 @@ class ProfileDiscoveryScreen extends StatelessWidget {
                         ),
                       )
                     : null,
-                icon: const Icon(Icons.add),
+                icon: const ShepIcon('plus'),
                 label: const Text('Create profile'),
               ),
             ],
@@ -126,7 +127,7 @@ class ProfileDiscoveryScreen extends StatelessWidget {
                   onPressed: !d.busy && d.connected && d.configured
                       ? () => d.discover()
                       : null,
-                  icon: const Icon(Icons.cloud_sync_outlined),
+                  icon: const ShepIcon('cloud'),
                   label: Text(
                     d.error != null
                         ? 'Retry discovery'
@@ -216,11 +217,7 @@ class ProfileDiscoveryScreen extends StatelessWidget {
                             ),
                           )
                         : null,
-                    leading: Icon(
-                      profile.removed
-                          ? Icons.delete_outline
-                          : Icons.account_circle_outlined,
-                    ),
+                    leading: ShepIcon(profile.removed ? 'trash' : 'user'),
                     title: Text(
                       profile.nameConflict
                           ? 'Profile name needs review'

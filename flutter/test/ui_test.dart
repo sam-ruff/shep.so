@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shep_mobile/model/mail.dart';
 import 'package:shep_mobile/model/workspace.dart';
 import 'package:shep_mobile/ui/app.dart';
+import 'package:shep_mobile/ui/icons.dart';
 import 'support/preview_repository.dart';
 import 'workspace_test.dart' show MemorySettings;
 
@@ -158,7 +159,10 @@ void main() {
     await gesture.moveBy(const Offset(220, 0));
     await t.pump();
     expect(find.text('Mark read'), findsOneWidget);
-    expect(find.byIcon(Icons.mark_email_read_outlined), findsOneWidget);
+    expect(
+      find.byWidgetPredicate((w) => w is ShepIcon && w.name == 'mail-open'),
+      findsOneWidget,
+    );
     await gesture.up();
     await t.pumpAndSettle();
     await t.tap(find.byTooltip('Actions for A little room for good ideas'));

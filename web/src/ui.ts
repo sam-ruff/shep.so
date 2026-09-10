@@ -14,35 +14,53 @@ import {
   Workspace,
 } from "./model";
 import "./style.css";
+import { clockTime, readerDate, rowDate } from "./format";
 import { GatewayRepository } from "./provider";
 import { accountPanel } from "./accounts";
 
+// The desktop client's icon markup (src/ui/components.rs), so both clients
+// draw the same stroked shapes. Static strings only; never user content.
 const paths: Record<string, string> = {
-  up: "m6 15 6-6 6 6",
-  down: "m6 9 6 6 6-6",
-  mail: "M3 5h18v14H3z M3 5l9 7 9-7",
-  inbox: "M4 4h16l2 12v4H2v-4z M2 16h6l2 3h4l2-3h6",
-  calendar: "M4 5h16v16H4z M4 10h16 M8 2v6 M16 2v6",
-  edit: "m15 4 5 5 M4 16 16 4l4 4L8 20H4z",
-  archive: "M3 3h18v5H3z M5 8v13h14V8 M10 12h4",
-  trash: "M3 6h18 M9 6V3h6v3 M5 6l1 15h12l1-15 M9 10v7 M15 10v7",
-  flag: "M5 22V3 M5 3c5-4 9 4 14 0v11c-5 4-9-4-14 0",
-  move: "M3 6h7l2 3h9v12H3z M11 13l3 3-3 3 M7 16h7",
-  reply: "m10 6-6 6 6 6 M4 12h9c4 0 7 2 7 6",
-  print: "M6 9V3h12v6 M6 18H3V9h18v9h-3 M6 14h12v7H6z M17 11h1",
-  forward: "m14 6 6 6-6 6 M20 12h-9c-4 0-7 2-7 6",
-  search: "M20 20l-5-5 M17 10a7 7 0 1 0-14 0 7 7 0 0 0 14 0",
-  refresh: "M20 10a8 8 0 1 0-2 8 M20 3v7h-7",
-  settings: "M4 7h16 M4 17h16 M8 4v6 M16 14v6",
-  chevron: "m9 5 7 7-7 7",
-  back: "m15 5-7 7 7 7",
-  close: "m6 6 12 12 M6 18 18 6",
-  send: "m3 3 19 9-19 9 3-9z M6 12h16",
-  expand: "M8 3H3v5 M16 3h5v5 M3 16v5h5 M21 16v5h-5",
-  file: "M14 2H4v20h16V8z M14 2v6h6",
-  menu: "M3 6h18 M3 12h18 M3 18h18",
-  check: "m4 12 5 5L20 6",
-  lock: "M5 10h14v11H5z M8 10V6a4 4 0 0 1 8 0v4",
+  up: '<path d="m6 15 6-6 6 6"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/>',
+  "mail-open":
+    '<path d="m3 9 9-6 9 6v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"/><path d="m3 9 9 6 9-6M3 20l6-7m12 7-6-7"/>',
+  inbox: '<path d="M4 4h16l2 11v5H2v-5L4 4Z"/><path d="M2 15h6l2 3h4l2-3h6"/>',
+  calendar:
+    '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h2M14 15h2"/>',
+  edit: '<path d="m15 4 5 5M4 20l4-1L21 6a2 2 0 0 0-3-3L5 16l-1 4ZM13 4H5a2 2 0 0 0-2 2v14a1 1 0 0 0 1 1h14a2 2 0 0 0 2-2v-6"/>',
+  archive:
+    '<rect x="3" y="3" width="18" height="4" rx="1"/><path d="M5 7v14h14V7M10 11h4"/>',
+  trash: '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',
+  flag: '<path d="M5 21V4c5-4 9 4 14 0v11c-5 4-9-4-14 0"/>',
+  folder: '<path d="M3 7V4h6l2 3h10v13H3V7Z"/>',
+  move: '<path d="M3 7V4h6l2 3h10v13H3V7ZM8 14h8m-3-3 3 3-3 3"/>',
+  reply: '<path d="m9 4-6 6 6 6M3 10h11a7 7 0 0 1 7 7v3"/>',
+  "reply-all": '<path d="m8 5-5 5 5 5m5-10-5 5 5 5M8 10h6a7 7 0 0 1 7 7v3"/>',
+  print:
+    '<path d="M6 9V3h12v6M6 18H3V9h18v9h-3M6 14h12v7H6z"/><path d="M17 11h1"/>',
+  forward: '<path d="m15 4 6 6-6 6m6-6H10a7 7 0 0 0-7 7v3"/>',
+  search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
+  refresh:
+    '<path d="M20 9a8.25 8.25 0 0 0-14-3L3 9m0-6v6h6M4 15a8.25 8.25 0 0 0 14 3l3-3m0 6v-6h-6"/>',
+  settings:
+    '<path d="m9 3 1-1h4l1 3 3 1 3 3-1 3 1 3-3 3-3 1-1 3h-4l-1-3-3-1-3-3 1-3-1-3 3-3 3-1V3Z"/><circle cx="12" cy="12" r="3"/>',
+  chevron: '<path d="m9 5 7 7-7 7"/>',
+  back: '<path d="m15 5-7 7 7 7"/>',
+  close: '<path d="m6 6 12 12M6 18 18 6"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4L22 2ZM22 2 11 13"/>',
+  expand: '<path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/>',
+  file: '<path d="M14 2H5v20h14V7l-5-5ZM14 2v6h5M8 13h8M8 17h6"/>',
+  clip: '<path d="m21 11-9 9a6 6 0 0 1-8-8L14 2a4 4 0 0 1 6 6L10 18a2 2 0 0 1-3-3l9-9"/>',
+  menu: '<path d="M3 6h18M3 12h18M3 18h18"/>',
+  check: '<path d="m5 12 4 4L19 6"/>',
+  lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  shield:
+    '<path d="m12 2 9 4v6c0 5-9 10-9 10S3 17 3 12V6l9-4Z"/><path d="m8 12 3 3 5-6"/>',
+  cloud: '<path d="M6 18a5 5 0 0 1-1-10 7 7 0 0 1 13-2 6 6 0 0 1 0 12H6Z"/>',
+  download: '<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
 };
 export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -59,14 +77,24 @@ function icon(name: string) {
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("fill", "none");
   svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "1.5");
+  svg.setAttribute("stroke-width", "1.6");
   svg.setAttribute("stroke-linecap", "round");
   svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute("aria-hidden", "true");
-  const p = document.createElementNS(svg.namespaceURI, "path");
-  p.setAttribute("d", paths[name] ?? paths.mail);
-  svg.append(p);
+  svg.dataset.icon = name;
+  svg.innerHTML = paths[name] ?? paths.mail;
   return svg;
+}
+// Initials on the desktop avatar palette, cycled by list position.
+function avatar(name: string, index: number) {
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase();
+  return el("span", `avatar avatar-${index % 5}`, initials);
 }
 export function button(
   label: string,
@@ -83,6 +111,15 @@ export function button(
   b.onclick = fn;
   return b;
 }
+// Desktop placeholder copy for the matching fields.
+const placeholders: Record<string, string> = {
+  "Search conversations": "Search conversations…",
+  To: "name@example.com",
+  Cc: "name@example.com",
+  Bcc: "name@example.com",
+  Subject: "Add a subject",
+  Message: "Write your message…",
+};
 function field(
   label: string,
   value: string,
@@ -94,10 +131,7 @@ function field(
   const input = multiline ? el("textarea") : el("input");
   input.value = value;
   input.setAttribute("aria-label", label);
-  input.setAttribute(
-    "placeholder",
-    label === "Search conversations" ? "Search conversations…" : "",
-  );
+  input.setAttribute("placeholder", placeholders[label] ?? "");
   input.dataset.focus = label;
   input.oninput = () => onInput(input.value);
   wrap.append(input);
@@ -869,7 +903,7 @@ export function mount(
     fileInput.multiple = true;
     fileInput.hidden = true;
     fileInput.setAttribute("aria-label", "Choose attachments");
-    const attach = button("Attach files", () => fileInput.click());
+    const attach = button("Attach files", () => fileInput.click(), "clip");
     function renderFiles() {
       filePanel.replaceChildren();
       for (const file of draft.attachments ?? []) {
@@ -1025,10 +1059,13 @@ export function mount(
             "A delivery record is saved for this draft. Check its status before composing another copy.";
       }
     }
+    const send = button("Send", () => void save(true));
+    send.classList.add("primary");
     actions.append(
+      send,
       button("Save draft", () => void save(false)),
-      button("Send", () => void save(true), "send"),
     );
+    actions.classList.add("composer-actions");
     d.append(fields, status, actions);
     renderFiles();
     setControls(!!gateway);
@@ -1129,7 +1166,7 @@ export function mount(
       ["Flagged", "flag"],
       ["Sent", "send"],
       ["Archive", "archive"],
-      ["Drafts", "edit"],
+      ["Drafts", "file"],
       ["Trash", "trash"],
     ]) {
       const b = button(
@@ -1395,7 +1432,7 @@ export function mount(
       w.selection.mode,
     ]);
     rows.setAttribute("aria-label", "Emails");
-    for (const m of w.visible) {
+    for (const [index, m] of w.visible.entries()) {
       const row = el(
         "article",
         `mail-row${!w.selection.mode && w.selected === m.id ? " selected" : ""}${w.selection.selected(m.id) ? " bulk-selected" : ""}${m.unread ? " unread" : ""}`,
@@ -1424,29 +1461,19 @@ export function mount(
         w.changed();
       };
       const top = el("div", "row-top");
+      top.append(el("span", m.unread ? "unread-dot" : "unread-dot read"));
       if (w.preferences.avatars && !w.selection.mode)
-        top.append(el("span", "avatar", m.sender[0]));
-      top.append(
-        el("span", "sender", m.sender),
-        el(
-          "time",
-          "",
-          new Date(m.date).toLocaleTimeString("en-GB", {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-        ),
-      );
+        top.append(avatar(m.sender, index));
+      top.append(el("span", "sender", m.sender));
+      if (m.attachments.length) top.append(icon("clip"));
+      top.append(el("time", "", rowDate(new Date(m.date))));
       main.replaceChildren(top, el("span", "subject", m.subject));
       if (w.preferences.previewLines) {
         const preview = el("span", "preview", m.preview);
         preview.style.setProperty("--lines", `${w.preferences.previewLines}`);
         main.append(preview);
       }
-      const meta = el("span", "row-meta", m.account);
-      if (m.attachments.length) meta.append(icon("file"));
-      if (m.unread) meta.append(el("span", "unread-dot"));
-      main.append(meta);
+      main.append(el("span", "row-meta", m.account));
       const flag = button(
         `${m.starred ? "Unflag" : "Flag"} ${m.subject}`,
         () => void w.action(m.id, "star"),
@@ -1491,7 +1518,7 @@ export function mount(
     if (!w.visible.length && !w.pageLoading && !w.pageError) {
       const empty = el("div", "empty");
       empty.append(
-        icon("inbox"),
+        icon("search"),
         el(
           "h2",
           "",
@@ -1673,8 +1700,11 @@ export function mount(
   function incomingFiles(m: Mail) {
     const panel = el("div", "attachments");
     if (!gateway) {
-      for (const name of m.attachments)
-        panel.append(el("span", "attachment", name));
+      for (const name of m.attachments) {
+        const chip = el("span", "attachment");
+        chip.append(icon("clip"), el("span", "", name));
+        panel.append(chip);
+      }
       return panel;
     }
     if (attachmentState?.id !== m.id) {
@@ -1774,7 +1804,11 @@ export function mount(
     for (const [name, label, i] of [
       ["archive", "Archive", "archive"],
       ["trash", "Trash", "trash"],
-      ["read", m?.unread ? "Mark read" : "Mark unread", "mail"],
+      [
+        "read",
+        m?.unread ? "Mark read" : "Mark unread",
+        m?.unread ? "mail-open" : "mail",
+      ],
       ["star", m?.starred ? "Unflag" : "Flag", "flag"],
     ] as const) {
       const b = button(label, () => act(name), i, true);
@@ -1839,17 +1873,22 @@ export function mount(
     content.dataset.scroll = "reader";
     content.append(el("h1", "", m.subject));
     const sender = el("div", "sender-details");
-    sender.append(el("span", "avatar", m.sender[0]));
+    sender.append(avatar(m.sender, 0));
     const details = el("div");
     details.append(
       el("strong", "", m.sender),
       el("p", "", m.address),
       el("p", "", m.account),
     );
-    sender.append(
-      details,
-      el("time", "", new Date(m.date).toLocaleString("en-GB")),
+    const when = new Date(m.date);
+    const time = el("time", "");
+    time.dateTime = when.toISOString();
+    time.append(
+      el("span", "", readerDate(when)),
+      el("br"),
+      el("span", "", clockTime(when)),
     );
+    sender.append(details, time);
     content.append(sender);
     if (w.bodyLoading && !m.bodyLoaded) {
       const loading = el("p", "muted", "Loading message…");
@@ -1976,7 +2015,7 @@ export function mount(
     }
     actions.append(
       reply,
-      button("Reply all", () => void composer(m, undefined, true), "reply"),
+      button("Reply all", () => void composer(m, undefined, true), "reply-all"),
       forwardButton,
       printButton,
     );
@@ -2264,6 +2303,8 @@ export function mount(
     );
     header.firstElementChild!.classList.add("mobile-menu");
     header.append(el("h1", "", tab === "Mail" ? w.folder : tab));
+    if (tab === "Preferences")
+      header.append(el("span", "muted", "Make Shep feel like home."));
     if (tab === "Mail")
       header.append(
         el(
@@ -2327,7 +2368,7 @@ export function mount(
       const status = el("div", "status");
       status.setAttribute("role", "status");
       status.setAttribute("aria-label", "Mail status");
-      status.append(el("span", "", w.notice));
+      status.append(icon("check"), el("span", "", w.notice));
       if (!w.moves.visible && w.undo) status.append(button("Undo", w.undo));
       main.append(status);
     }
@@ -2335,7 +2376,7 @@ export function mount(
       const status = el("div", "status");
       status.setAttribute("role", "status");
       status.setAttribute("aria-label", "Move notification");
-      status.append(el("span", "", w.moves.label));
+      status.append(icon("check"), el("span", "", w.moves.label));
       if (w.undo) status.append(button("Undo", w.undo));
       status.append(
         button(

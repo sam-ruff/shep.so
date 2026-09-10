@@ -2,6 +2,8 @@ import 'account_removal.dart';
 import 'package:flutter/material.dart';
 import '../model/mail.dart';
 import '../model/workspace.dart';
+import 'controls.dart';
+import 'icons.dart';
 import 'theme.dart';
 import 'account_setup.dart';
 import 'sent_preferences.dart';
@@ -15,30 +17,17 @@ class PreferencesView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = workspace.preferences;
+    final c = ShepColors.of(context);
     Widget section(String title, List<Widget> children) => Padding(
-      padding: const EdgeInsets.only(bottom: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 4, 0, 10),
-            child: Text(title, style: Theme.of(context).textTheme.titleSmall),
-          ),
-          Card(
-            margin: EdgeInsets.zero,
-            child: Column(children: children),
-          ),
-        ],
-      ),
+      padding: const EdgeInsets.only(bottom: 18),
+      child: SettingsCard(title: title, children: children),
     );
     Widget swipe(String label, MailAction value, bool left) => ListTile(
       title: Text(label),
-      leading: Icon(
-        left ? Icons.swipe_left_outlined : Icons.swipe_right_outlined,
-      ),
-      trailing: DropdownButton<MailAction>(
+      leading: ShepIcon(left ? 'swipe-left' : 'swipe-right'),
+      trailing: pickList<MailAction>(
+        context,
         value: value,
-        underline: const SizedBox(),
         onChanged: (v) {
           if (v != null) {
             workspace.savePreferences(
@@ -55,9 +44,9 @@ class PreferencesView extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(actionIcon(a.name), size: 18),
+                    actionIcon(a.name, size: 16),
                     const SizedBox(width: 8),
-                    Text(a.label, style: const TextStyle(fontSize: 12)),
+                    Text(a.label),
                   ],
                 ),
               ),
@@ -69,13 +58,20 @@ class PreferencesView extends StatelessWidget {
       key: const ValueKey('preferences-list'),
       padding: const EdgeInsets.all(18),
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(2, 0, 2, 18),
+          child: Text(
+            'Make Shep feel like home.',
+            style: TextStyle(fontSize: ShepText.secondary, color: c.muted),
+          ),
+        ),
         section('Appearance', [
           ListTile(
             title: const Text('Theme'),
-            leading: const Icon(Icons.contrast),
-            trailing: DropdownButton<ThemeMode>(
+            leading: const ShepIcon('sun'),
+            trailing: pickList<ThemeMode>(
+              context,
               value: p.appearance,
-              underline: const SizedBox(),
               onChanged: (v) {
                 if (v != null) {
                   workspace.savePreferences(
@@ -100,11 +96,11 @@ class PreferencesView extends StatelessWidget {
           swipe('Swipe left', p.leftSwipe, true),
           const Divider(),
           swipe('Swipe right', p.rightSwipe, false),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 2, 16, 16),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
             child: Text(
               'Swipe a message to act. Every action is also in its menu.',
-              style: TextStyle(fontSize: 12),
+              style: TextStyle(fontSize: ShepText.secondary, color: c.muted),
             ),
           ),
         ]),
@@ -112,9 +108,9 @@ class PreferencesView extends StatelessWidget {
           ListTile(
             title: const Text('Preview lines'),
             subtitle: const Text('Sender and subject are always shown'),
-            trailing: DropdownButton<int>(
+            trailing: pickList<int>(
+              context,
               value: p.previewLines,
-              underline: const SizedBox(),
               onChanged: (v) {
                 if (v != null) {
                   workspace.savePreferences(
@@ -128,17 +124,20 @@ class PreferencesView extends StatelessWidget {
               ),
             ),
           ),
-          SwitchListTile(
+          CheckboxListTile(
             title: const Text('Sender pictures'),
+            controlAffinity: ListTileControlAffinity.leading,
             value: p.avatars,
             onChanged: (v) => workspace.savePreferences(
-              workspace.preferences.copy(avatars: v),
+              workspace.preferences.copy(avatars: v ?? p.avatars),
             ),
           ),
-          SwitchListTile(
+          CheckboxListTile(
             title: const Text('Unified inbox'),
+            controlAffinity: ListTileControlAffinity.leading,
             value: p.unified,
             onChanged: (v) {
+              if (v == null) return;
               workspace.savePreferences(workspace.preferences.copy(unified: v));
               workspace.navigate(
                 'Inbox',
@@ -146,13 +145,14 @@ class PreferencesView extends StatelessWidget {
               );
             },
           ),
+          const SizedBox(height: 6),
         ]),
         section('Reading', [
           ListTile(
             title: const Text('Quoted history'),
-            trailing: DropdownButton<String>(
+            trailing: pickList<String>(
+              context,
               value: p.quoteMode,
-              underline: const SizedBox(),
               onChanged: (v) {
                 if (v != null) {
                   workspace.savePreferences(
@@ -168,7 +168,7 @@ class PreferencesView extends StatelessWidget {
             ),
           ),
           const ListTile(
-            leading: Icon(Icons.shield_outlined),
+            leading: ShepIcon('shield'),
             title: Text('External images blocked'),
             subtitle: Text('Messages are displayed as selectable text.'),
           ),
@@ -178,7 +178,7 @@ class PreferencesView extends StatelessWidget {
             for (final account
                 in workspace.accountRepository!.mailAccounts) ...[
               ListTile(
-                leading: const Icon(Icons.mail_outline),
+                leading: const ShepIcon('mail'),
                 title: Text(account.name),
                 subtitle: Text(
                   workspace.needsReconnect(account.id)
@@ -198,7 +198,7 @@ class PreferencesView extends StatelessWidget {
                         ),
                         child: const Text('Sent copies'),
                       )
-                    : const Icon(Icons.chevron_right),
+                    : const ShepIcon('chevron', size: 18),
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute<void>(
@@ -209,7 +209,7 @@ class PreferencesView extends StatelessWidget {
               ),
               if (workspace.repository is AccountRemovalRepository)
                 ListTile(
-                  leading: const Icon(Icons.remove_circle_outline),
+                  leading: const ShepIcon('minus-circle'),
                   title: Text('Remove ${account.email}'),
                   onTap: () async {
                     await Navigator.push(
@@ -228,7 +228,7 @@ class PreferencesView extends StatelessWidget {
                 case final AccountRemovalRepository removal)
               if (removal.pendingCredentialCleanup > 0)
                 ListTile(
-                  leading: const Icon(Icons.key_off_outlined),
+                  leading: const ShepIcon('key-off'),
                   title: const Text('Saved passwords need cleanup'),
                   subtitle: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -247,7 +247,7 @@ class PreferencesView extends StatelessWidget {
                   ),
                 ),
             ListTile(
-              leading: const Icon(Icons.add),
+              leading: const ShepIcon('plus'),
               title: const Text('Add mail account'),
               onTap: () => Navigator.push(
                 context,
@@ -268,7 +268,7 @@ class PreferencesView extends StatelessWidget {
             GoogleConnectionCard(connection: connection)
           else
             const ListTile(
-              leading: Icon(Icons.cloud_outlined),
+              leading: ShepIcon('cloud'),
               title: Text('Google and backups'),
               subtitle: Text(
                 'Google Calendar, Drive and encrypted restore remain in the parity checklist.',
@@ -278,10 +278,10 @@ class PreferencesView extends StatelessWidget {
         if (workspace.profileDiscovery case final discovery?)
           section('Profiles and sync', [
             ListTile(
-              leading: const Icon(Icons.cloud_sync_outlined),
+              leading: const ShepIcon('cloud'),
               title: const Text('Saved Google profiles'),
               subtitle: const Text('Discover account and settings profiles'),
-              trailing: const Icon(Icons.chevron_right),
+              trailing: const ShepIcon('chevron', size: 18),
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute<void>(

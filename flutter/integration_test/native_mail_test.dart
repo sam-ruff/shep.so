@@ -216,7 +216,9 @@ void main() {
       workspace.setForeground(false);
       await tester.pumpWidget(ShepApp(key: UniqueKey(), workspace: workspace));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Compose'));
+      await tester.tap(
+        find.widgetWithText(FloatingActionButton, 'New message'),
+      );
       await tester.pumpAndSettle();
       await wait(
         tester,
@@ -238,7 +240,13 @@ void main() {
         'This text survives reopening the Rust profile.',
       );
       await tester.tap(find.text('Save draft'));
-      await wait(tester, () => find.text('Compose').evaluate().isNotEmpty);
+      await wait(
+        tester,
+        () => find
+            .widgetWithText(FloatingActionButton, 'New message')
+            .evaluate()
+            .isNotEmpty,
+      );
       await tester.pumpWidget(const SizedBox());
       workspace.dispose();
       repository = await NativeRepository.open(path, credentials: credentials);
@@ -480,7 +488,7 @@ void main() {
         tester,
         () => find.text('Welcome to Shep').evaluate().isNotEmpty,
       );
-      expect(find.text('PREVIEW · FICTIONAL DATA'), findsNothing);
+      expect(find.text('PREVIEW'), findsNothing);
       expect(find.text('A little room for good ideas'), findsNothing);
       await capture(tester, 'native-production-startup');
       await tester.tap(find.text('Preferences'));

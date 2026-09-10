@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../model/google_connection.dart';
+import 'controls.dart';
 
 class GoogleConnectionCard extends StatelessWidget {
   const GoogleConnectionCard({super.key, required this.connection});
@@ -41,7 +42,8 @@ class GoogleConnectionCard extends StatelessWidget {
                 'Permissions for the next sign-in',
                 style: TextStyle(fontSize: 12),
               ),
-              SwitchListTile(
+              CheckboxListTile(
+                controlAffinity: ListTileControlAffinity.leading,
                 key: const ValueKey('google-drive'),
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Private Drive storage'),
@@ -50,7 +52,7 @@ class GoogleConnectionCard extends StatelessWidget {
                 onChanged: editable
                     ? (value) => c.choose(
                         GooglePermissions(
-                          drive: value,
+                          drive: value ?? false,
                           calendar: requested.calendar,
                         ),
                       )
@@ -58,6 +60,7 @@ class GoogleConnectionCard extends StatelessWidget {
               ),
               DropdownButtonFormField<GoogleCalendarPermission>(
                 isExpanded: true,
+                icon: dropdownChevron(),
                 style: Theme.of(context).textTheme.bodySmall,
                 key: ValueKey('google-calendar-${requested.calendar.name}'),
                 initialValue: requested.calendar,
