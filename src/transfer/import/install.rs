@@ -141,7 +141,14 @@ fn publish(
 ) -> anyhow::Result<Option<Installed>> {
     let result = (|| {
         check_cancel(cancel)?;
-        fences::apply(prepared.path(), prepared.id, name, local, cancel)?;
+        fences::apply(
+            prepared.path(),
+            prepared.key.as_deref(),
+            prepared.id,
+            name,
+            local,
+            cancel,
+        )?;
         prepared.file.as_file().sync_all()?;
         let directory = path.parent().context("The profile has no directory")?;
         let parent = directory

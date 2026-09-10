@@ -132,30 +132,42 @@ pub struct Catalog {
     root: PathBuf,
     legacy_filename: String,
     worker: Arc<Worker>,
-    key: Option<Arc<crate::cache_cipher::Key>>,
+    owner: Option<crate::cache_cipher::bootstrap::Root>,
 }
 impl Catalog {
     /// Call on a background worker. Existing legacy installations keep their
     /// cache filename and keychain entries until an explicit profile switch.
+    /// Production startup uses `open_in`; this opens an unguarded plain root.
     pub fn open(root: &Path, legacy_filename: &str) -> anyhow::Result<Self> {
-        Self::open_with_key(root, legacy_filename, None)
+        Self::open_with(root, legacy_filename, None)
     }
 
-    /// The owning bootstrap must admit and retain the device key before opening
-    /// any catalog or profile file. This never migrates an existing plain file.
-    pub fn open_encrypted(
+    /// The bootstrap worker has already recovered and published every database
+    /// in the root under its exclusive guard. Every connection opened from this
+    /// catalog uses the root's key decision and retains its shared guard.
+    pub fn open_in(
+        root: &crate::cache_cipher::bootstrap::Root,
+        legacy_filename: &str,
+    ) -> anyhow::Result<Self> {
+        Self::open_with(root.directory(), legacy_filename, Some(root.clone()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_encrypted(
         root: &Path,
         legacy_filename: &str,
         key: Arc<crate::cache_cipher::Key>,
     ) -> anyhow::Result<Self> {
-        Self::open_with_key(root, legacy_filename, Some(key))
+        let owner = crate::cache_cipher::bootstrap::Root::keyed(root, key)?;
+        Self::open_in(&owner, legacy_filename)
     }
 
-    fn open_with_key(
+    fn open_with(
         root: &Path,
         legacy_filename: &str,
-        key: Option<Arc<crate::cache_cipher::Key>>,
+        owner: Option<crate::cache_cipher::bootstrap::Root>,
     ) -> anyhow::Result<Self> {
+        let key = owner.as_ref().and_then(|owner| owner.key());
         anyhow::ensure!(
             !legacy_filename.eq_ignore_ascii_case(CATALOG_FILE)
                 && !legacy_filename.eq_ignore_ascii_case("backup-uploads.sqlite"),
@@ -207,16 +219,21 @@ impl Catalog {
         connection.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;",
         )?;
+        let guard = owner.as_ref().map(|owner| owner.guard());
         Ok(Self {
             root,
             legacy_filename: legacy_filename.into(),
-            worker: Arc::new(Worker::named(connection, "shep-profiles")?),
-            key,
+            worker: Arc::new(Worker::owned(connection, "shep-profiles", guard)?),
+            owner,
         })
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub(crate) fn key(&self) -> Option<Arc<crate::cache_cipher::Key>> {
+        self.owner.as_ref().and_then(|owner| owner.key())
     }
     pub fn path(&self, id: Id) -> PathBuf {
         match id {
@@ -265,8 +282,9 @@ impl Catalog {
         );
         let path = self.path(profile.id);
         let id = profile.id;
-        let key = self.key.clone();
+        let owner = self.owner.clone();
         let store = tokio::task::spawn_blocking(move || {
+            let key = owner.as_ref().and_then(|owner| owner.key());
             if let Id::Imported(id) = id {
                 verify_import_marker(&path, id, key.as_deref())?;
             }
@@ -275,8 +293,8 @@ impl Catalog {
                 return crate::test_support::workspace::open(Some(&path));
             }
             let _ = demo;
-            match key {
-                Some(key) => crate::store::Store::open_encrypted(path, key),
+            match owner {
+                Some(owner) => crate::store::Store::open_in(&owner, path),
                 None => crate::store::Store::open(path),
             }
         })
@@ -314,7 +332,7 @@ impl Catalog {
     /// marker are durable. It cannot adopt an arbitrary selected database file.
     pub(crate) async fn finish(&self, id: uuid::Uuid) -> anyhow::Result<Profile> {
         let path = self.path(Id::Imported(id));
-        let key = self.key.clone();
+        let key = self.key();
         tokio::task::spawn_blocking(move || verify_import_marker(&path, id, key.as_deref()))
             .await??;
         self.worker
@@ -366,7 +384,7 @@ impl Catalog {
 
     pub async fn activate(&self, id: Id, revision: u64) -> anyhow::Result<()> {
         let path = self.path(id);
-        let key = self.key.clone();
+        let key = self.key();
         tokio::task::spawn_blocking(move || match id {
             Id::Imported(id) => verify_import_marker(&path, id, key.as_deref()).map(|_| ()),
             Id::Legacy => {
@@ -398,7 +416,7 @@ impl Catalog {
     /// record crosses a bounded channel; never collect every database in memory.
     pub async fn recover_imports(&self) -> anyhow::Result<Recovery> {
         let directory = self.root.join("profiles");
-        let key = self.key.clone();
+        let key = self.key();
         let (output, mut input) = tokio::sync::mpsc::channel(8);
         let scan = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let entries = match std::fs::read_dir(directory) {
