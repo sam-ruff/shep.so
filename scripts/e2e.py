@@ -2763,19 +2763,54 @@ class NativeFlows(unittest.TestCase):
         self.open_shared_profiles()
         before = self.mcp.call("desktop.state")["profile_drive_requests"]
         self.assertGreater(before["media"], 0)
-        self.mcp.batch(click(340, 548), check("profile_drive_requests.scoped_lists", before["scoped_lists"] + 1, "gte"),
+        # Enrolled checks poll the saved change token: no listing, no downloads.
+        self.mcp.batch(click(340, 548), check("profile_drive_requests.changes", before["changes"] + 1, "gte"),
                        check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_drive_requests.lists", before["lists"]),
                        check("profile_drive_requests.media", before["media"]),
                        check("profile_drive_requests.metadata", before["metadata"]),
                        shot("profile-cache-manual-check"), {"type": "restart"},
                        check("profile_sync.enrollment.selection.ready", True), check("account_count", 1))
         self.open_shared_profiles()
         reopened = self.mcp.call("desktop.state")["profile_drive_requests"]
-        self.mcp.batch(click(340, 548), check("profile_drive_requests.scoped_lists", reopened["scoped_lists"] + 1, "gte"),
+        self.mcp.batch(click(340, 548), check("profile_drive_requests.changes", reopened["changes"] + 1, "gte"),
                        check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_drive_requests.lists", before["lists"]),
                        check("profile_drive_requests.media", before["media"]),
                        check("profile_drive_requests.metadata", before["metadata"]),
                        check("account_reconnect_count", 1), shot("profile-cache-reopened-check"))
+
+    def test_profile_continuous_native_expired_change_token_falls_back_to_one_full_listing(self):
+        started = self.mcp.call("desktop.start", profile_sync="existing-token-expired", profile_login=True, empty_profile=True)
+        print(f"Incremental fallback evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("account_count", 1),
+                       check("tab", "Mail"), {**check("account_count", 2), "timeout_ms": 5000},
+                       check("account_reconnect_count", 2), check("tooltips", True),
+                       check("profile_sync.working", False), check("profile_sync.error", None))
+        recovered = self.mcp.call("desktop.state")["profile_drive_requests"]
+        # Discovery listed once; the rejected token forced exactly one more.
+        self.assertEqual(recovered["lists"] - recovered["scoped_lists"], 2)
+        self.assertEqual(recovered["scoped_lists"], 1)
+        self.assertGreaterEqual(recovered["changes"], 3)
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_drive_requests.changes", recovered["changes"] + 1, "gte"),
+                       check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_drive_requests.lists", recovered["lists"]),
+                       check("profile_drive_requests.media", recovered["media"]),
+                       check("profile_drive_requests.metadata", recovered["metadata"]),
+                       check("account_count", 2), shot("profile-incremental-fallback-check"), {"type": "restart"},
+                       check("profile_sync.enrollment.selection.ready", True), check("account_count", 2))
+        self.open_shared_profiles()
+        reopened = self.mcp.call("desktop.state")["profile_drive_requests"]
+        self.mcp.batch(click(340, 548), check("profile_drive_requests.changes", reopened["changes"] + 1, "gte"),
+                       check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_drive_requests.lists", recovered["lists"]),
+                       check("profile_drive_requests.media", recovered["media"]),
+                       check("tooltips", True), shot("profile-incremental-fallback-reopened"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        checkpoint = self.profile_checkpoint(started)
+        self.assertEqual(len(checkpoint["accounts"]), 2)
+        self.assertEqual(checkpoint["fields"]["setting:tooltips"]["remote"]["value"], True)
 
     def test_profile_continuous_native_receives_new_account_and_preferences_in_background(self):
         started=self.mcp.call("desktop.start",profile_sync="existing-updates",profile_login=True,empty_profile=True)

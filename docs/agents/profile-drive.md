@@ -59,9 +59,45 @@ Deletion markers remain authoritative through stale/offline edits. Conflicts
 retain both values until a revision-checked explicit resolution arrives.
 
 This is a backend kernel. Enrollment must still finish local suppression and
-account application. Its bounded coordinator fences Google lifecycle changes, retains an upload task through durable acknowledgment, and observes stop/category changes between writes. Current pulls re-read full
-history: incremental polling/caching remains required before continuous operation
-is finished. The per-workspace provider directory is protected by database-transfer guards.
+account application. Its bounded coordinator fences Google lifecycle changes, retains an upload task through durable acknowledgment, and observes stop/category changes between writes. `Replica::pull` (setup and join) still reads one complete
+scoped listing; enrolled ongoing pulls use the incremental catalog path below.
+The per-workspace provider directory is protected by database-transfer guards.
+
+## Incremental enrolled pulls
+
+`Replica::pull_catalog` serves the continuous loop. It opens the shared
+discovery catalog for the session's account/namespace, polls Drive's change
+stream from the catalog's persisted `completed_token` (`refresh(false)`), and
+downloads only the profile files that stream reports. A saved catalog error is
+retried from its exact staged page or pending download; an unfinished scan
+resumes after restart. Change-token progress, page tokens, verified file
+identities and observed bytes stay in the catalog and its per-profile
+observation journals; the desktop never reads or rewrites those tables.
+
+Google rejecting the saved token (HTTP 400, 404 or 410 on the change poll,
+recognised only when no download or staged page is outstanding), a repeated or
+duplicated page (`Integrity`) or a known file reported removed (`Missing`)
+falls back to one full listing in the same pass (`refresh(true)`), which
+re-verifies every file before the catalog can complete again. A profile whose
+summary is listed but whose observation history disagrees (a rebuilt owner)
+also takes one full listing. A profile that the completed catalog does not list
+at all is reported as missing without a listing. A second failure in the same
+pass is reported; nothing is retried indefinitely and an incomplete or failed
+scan is never an empty account.
+
+Records cross into the enrolled history through `export_record`, one at a time
+in observation order. `drive.sqlite` keeps a `catalog_copies` cursor per
+profile bound to the catalog observation's device UUID and the enrolled
+history's device UUID; either changing restarts the copy at zero. The cursor is
+saved only after the history import commits, so a lost checkpoint re-exports
+the same immutable record and the idempotent import neither duplicates nor
+skips it. Records whose parents arrive later stay waiting until the parent is
+imported, then drain before a `Pulled` proof exists. Publication with a
+catalog-sourced proof verifies the queued bytes against the catalog's verified
+inventory; an operation already on Drive with no local receipt is refused
+rather than reserving another ID. Google's actual rejection status for an
+expired change token is taken from its documented "token no longer valid"
+behaviour and the loopback fixture, not from a live account.
 
 ## Enrollment and initial publication
 
@@ -98,12 +134,11 @@ and unread badges. Device fields and backend metadata stay unchanged. Shared
 preview-line values/extensions remain in history; other portable settings still
 need shared-contract support and native implementation.
 
-Account endpoint/removal reviews, conflict resolution
-and enrolled-device incremental polling remain open. Initial enrollment is separate from a verified later publication. Password transfer still requires the outstanding protection choice.
+Global account removal choices remain open. Initial enrollment is separate from a verified later publication. Password transfer still requires the outstanding protection choice.
 
 ## Verification boundary
 
-Run `cargo test --all-features profile_`, `python3 scripts/test_profile_core.py` and `cargo test --all-features backup::drive`. The Python runner tests a disposable copy of the exact locked Git crate with its own committed test lock, leaving dependency/client checkouts untouched. `--update-lock` is only for a reviewed dependency update. Tests use production HTTP parsing against the scripted loopback server and real isolated SQLite files. They cover Unicode/extension preservation, restart/lost replies, metadata/content corruption, scope/identity rejection, pagination/revision failures, bounded reads and cancellation after queue admission. Two independent device stores exercise actual HTTP pull/publish, offline conflicts/resolution, account/profile removal, lost upload replies, both local acknowledgment gaps, stale/foreign discovery and more than 100 reverse-ordered ancestors. Existing Drive backup protocol tests protect the shared HTTP helper. This is protocol evidence; real Google enrollment and cross-client behavior remain unverified. Native fixture evidence is described below.
+Run `cargo test --all-features profile_`, `python3 scripts/test_profile_core.py` and `cargo test --all-features backup::drive`. The Python runner tests a disposable copy of the exact locked Git crate with its own committed test lock, leaving dependency/client checkouts untouched. `--update-lock` is only for a reviewed dependency update. Tests use production HTTP parsing against the scripted loopback server and real isolated SQLite files. They cover Unicode/extension preservation, restart/lost replies, metadata/content corruption, scope/identity rejection, pagination/revision failures, bounded reads and cancellation after queue admission. Two independent device stores exercise actual HTTP pull/publish, offline conflicts/resolution, account/profile removal, lost upload replies, both local acknowledgment gaps, stale/foreign discovery and more than 100 reverse-ordered ancestors. The `profile_incremental_*` suite scripts change-stream polls: unchanged and single-record polls with exact request counts, publication through a catalog-sourced proof, a rejected token falling back to one listing (and a second rejection reported), a 503 mid-page resuming after restart without re-listing, a rewound copy cursor replaying without duplicates, out-of-order arrivals, a rebuilt history or observation owner replaying every record, a removed known file failing verification, and an unlisted profile reported without a listing. Existing Drive backup protocol tests protect the shared HTTP helper. This is protocol evidence; real Google enrollment and cross-client behavior remain unverified. Native fixture evidence is described below.
 
 ## Native controls and ownership
 
@@ -272,6 +307,9 @@ a later reversion. Database import archives these source-device generations.
 New shared accounts get fresh local UUIDs and require Reconnect. Names can update;
 changed existing endpoints and removals retain local accounts for review. No
 existing credential is sent to a downloaded server. Unsupported settings remain in
-history. Linking after enrollment, endpoint/removal reviews, incremental change-token
-polling, remaining portable settings and protected credentials remain
-unfinished. Full-history checks and fixture success are not live Google evidence.
+history. Each cycle polls the catalog's persisted change token and copies only
+new verified records (see Incremental enrolled pulls); the native
+`existing-token-expired` fixture shows one rejected token forcing exactly one
+full listing. Global removal choices, remaining portable settings, protected
+credentials and live cross-client Google verification remain unfinished.
+Fixture success is not live Google evidence.
