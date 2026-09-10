@@ -477,6 +477,7 @@ async fn failure_halfway_through_preparation_rolls_back_operation_changes_and_no
     assert!(
         apply(
             prepared.path(),
+            None,
             prepared.id,
             "Broken outgoing record",
             &Preferences::default(),
@@ -577,6 +578,7 @@ async fn backup_history_old_import_marker_recovery_migrates_without_repeating_pr
     let (_alive, cancel) = watch::channel(false);
     apply(
         prepared.path(),
+        None,
         prepared.id,
         "Imported once",
         &Preferences::default(),
@@ -597,6 +599,7 @@ async fn backup_history_old_import_marker_recovery_migrates_without_repeating_pr
     // publication. Recovery must migrate it without archiving/fencing it again.
     apply(
         prepared.path(),
+        None,
         prepared.id,
         "Do not replace prior preparation",
         &Preferences::default(),
