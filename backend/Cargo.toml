@@ -1,0 +1,38 @@
+[package]
+name = "shep-beta-server"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+description = "Authenticated Shep browser beta gateway"
+
+# Standalone package: never join a parent checkout's workspace.
+[workspace]
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+mailparse = "0.16"
+shep-mail-core = { path = "../shared/mail-core" }
+axum = "0.8.9"
+async-trait = "0.1"
+anyhow = "1"
+base64 = "0.22"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+secrecy = { version = "0.10", features = ["serde"] }
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-native-tls"] }
+tokio-stream = "0.1"
+sha2 = "0.10"
+subtle = "2.6"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time", "fs"] }
+tower = { version = "0.5", features = ["util", "limit"] }
+tower-http = { version = "0.6", features = ["fs", "limit"] }
+url = "2"
+zeroize = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tempfile = "3"

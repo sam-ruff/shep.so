@@ -1,0 +1,426 @@
+{
+  "cases": [
+    {
+      "name": "golden",
+      "patches": [],
+      "error": null
+    },
+    {
+      "name": "future-minor",
+      "patches": [
+        {
+          "path": "/minor",
+          "value": 21
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "future-version",
+      "patches": [
+        {
+          "path": "/major",
+          "value": 2
+        }
+      ],
+      "error": "Upgrade"
+    },
+    {
+      "name": "required-capability",
+      "patches": [
+        {
+          "path": "/requires",
+          "value": [
+            "causal-v1",
+            "future-security-v2"
+          ]
+        }
+      ],
+      "error": "Upgrade"
+    },
+    {
+      "name": "missing-account-capability",
+      "patches": [
+        {
+          "path": "/requires",
+          "value": [
+            "causal-v1",
+            "settings-v1"
+          ]
+        }
+      ],
+      "error": "Invalid"
+    },
+    {
+      "name": "duplicate-parent",
+      "patches": [
+        {
+          "path": "/parents",
+          "value": [
+            "40000000-0000-4000-8000-000000000000",
+            "40000000-0000-4000-8000-000000000000"
+          ]
+        }
+      ],
+      "error": "Invalid"
+    },
+    {
+      "name": "self-parent",
+      "patches": [
+        {
+          "path": "/parents",
+          "value": [
+            "40000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ],
+      "error": "Invalid"
+    },
+    {
+      "name": "nil-device",
+      "patches": [
+        {
+          "path": "/device",
+          "value": "00000000-0000-0000-0000-000000000000"
+        }
+      ],
+      "error": "Invalid"
+    },
+    {
+      "name": "unsafe-namespace",
+      "patches": [
+        {
+          "path": "/namespace",
+          "value": "so.shep/other"
+        }
+      ],
+      "error": "Invalid"
+    },
+    {
+      "name": "plaintext-incoming",
+      "patches": [
+        {
+          "path": "/changes/0/account/incoming_security",
+          "value": "None"
+        }
+      ],
+      "error": "Upgrade"
+    },
+    {
+      "name": "unknown-authentication",
+      "patches": [
+        {
+          "path": "/changes/0/account/smtp_auth",
+          "value": "OAuthBearer"
+        }
+      ],
+      "error": "Upgrade"
+    },
+    {
+      "name": "bad-port",
+      "patches": [
+        {
+          "path": "/changes/0/account/smtp_port",
+          "value": 0
+        }
+      ],
+      "error": "Invalid"
+    },
+    {
+      "name": "bad-host",
+      "patches": [
+        {
+          "path": "/changes/0/account/host",
+          "value": "imap.example.test/path"
+        }
+      ],
+      "error": "Invalid"
+    },
+    {
+      "name": "bad-setting",
+      "patches": [
+        {
+          "path": "/changes/2/value",
+          "value": true
+        }
+      ],
+      "error": "Upgrade"
+    },
+    {
+      "name": "device-setting",
+      "patches": [
+        {
+          "path": "/changes/2/key",
+          "value": "window_position"
+        }
+      ],
+      "error": "Upgrade"
+    },
+    {
+      "name": "duplicate-target",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "setting",
+              "key": "appearance",
+              "value": "Dark",
+              "future_hint": {
+                "label": "night \ud83c\udf19",
+                "enabled": false
+              }
+            },
+            {
+              "kind": "setting",
+              "key": "appearance",
+              "value": "Dark",
+              "future_hint": {
+                "label": "night \ud83c\udf19",
+                "enabled": false
+              }
+            }
+          ]
+        }
+      ],
+      "error": "Invalid"
+    },
+    {
+      "name": "nested-secret",
+      "patches": [
+        {
+          "path": "/future_optional",
+          "value": {
+            "nested": {
+              "refresh_token": "fictional-do-not-log"
+            }
+          }
+        }
+      ],
+      "error": "LocalData"
+    },
+    {
+      "name": "removed-and-edited",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "account_name",
+              "id": "50000000-0000-4000-8000-000000000001",
+              "name": "\u00c9quipe"
+            },
+            {
+              "kind": "account_removed",
+              "id": "50000000-0000-4000-8000-000000000001"
+            }
+          ]
+        }
+      ],
+      "error": "Invalid"
+    },
+    {
+      "name": "profile-removal-mixed",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "setting",
+              "key": "appearance",
+              "value": "Dark",
+              "future_hint": {
+                "label": "night \ud83c\udf19",
+                "enabled": false
+              }
+            },
+            {
+              "kind": "profile_removed"
+            }
+          ]
+        }
+      ],
+      "error": "Invalid"
+    },
+    {
+      "name": "profile-removal",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "profile_removed"
+            }
+          ]
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "account-removal",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "account_removed",
+              "id": "50000000-0000-4000-8000-000000000001"
+            }
+          ]
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "setting-removal",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "setting_removed",
+              "key": "appearance"
+            }
+          ]
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "unknown-optional-connection",
+      "patches": [
+        {
+          "path": "/changes/0/account",
+          "value": {
+            "id": "50000000-0000-4000-8000-000000000001",
+            "email": "alex@example.test",
+            "protocol": "Imap",
+            "host": "imap.example.test",
+            "port": 993,
+            "username": "alex@example.test",
+            "incoming_security": "Tls",
+            "incoming_auth": "Password",
+            "smtp_host": "smtp.example.test",
+            "smtp_port": 587,
+            "smtp_username": "outgoing@example.test",
+            "smtp_security": "StartTls",
+            "smtp_auth": "Login",
+            "smtp_separate_password": true,
+            "sent_copy": "Automatic",
+            "sent_folder": "Sent/\u00c9quipe",
+            "future_server_option": {
+              "mode": "strict"
+            }
+          }
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "preparing-profile",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "profile_setup",
+              "complete": false
+            }
+          ]
+        },
+        {
+          "path": "/requires",
+          "value": [
+            "causal-v1",
+            "initialization-v1"
+          ]
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "completed-profile-marker",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "profile_setup",
+              "complete": true
+            }
+          ]
+        },
+        {
+          "path": "/requires",
+          "value": [
+            "causal-v1",
+            "initialization-v1"
+          ]
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "setup-requires-capability",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "profile_setup",
+              "complete": false
+            }
+          ]
+        }
+      ],
+      "error": "Invalid"
+    },
+    {
+      "name": "mobile-preference-fields",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "setting",
+              "key": "left_swipe",
+              "value": "move"
+            },
+            {
+              "kind": "setting",
+              "key": "right_swipe",
+              "value": "read"
+            },
+            {
+              "kind": "setting",
+              "key": "sender_pictures",
+              "value": false
+            },
+            {
+              "kind": "setting",
+              "key": "tooltips",
+              "value": true
+            }
+          ]
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "invalid-mobile-swipe",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "setting",
+              "key": "left_swipe",
+              "value": "send"
+            }
+          ]
+        }
+      ],
+      "error": "Upgrade"
+    }
+  ]
+}

@@ -192,11 +192,21 @@ impl Plan {
     pub fn ordered(&self, columns: &str) -> (String, Vec<Value>) {
         let mut values = self.values.clone();
         let mut from = self.from.to_owned();
+        let mut prefix = self.prefix.to_owned();
         let order = match self.query.sort {
             MailSort::Relevance if !self.search.is_empty() => {
                 // Score the literal match separately so rare typo alternatives
                 // cannot outrank an otherwise stronger exact match.
-                from.push_str(" LEFT JOIN mail_search(?, 'bm25(0.3, 2.0, 1.0)') AS exact_matches ON exact_matches.rowid=messages.rowid");
+                // Materialize once: a correlated FTS LEFT JOIN can repeat its
+                // full literal/rank scan for every candidate after an SQLite
+                // planner change. SQLite indexes this temporary relation by rowid.
+                let exact = "exact_matches AS MATERIALIZED (SELECT rowid,rank FROM mail_search(?, 'bm25(0.3, 2.0, 1.0)')) ";
+                prefix = if prefix.is_empty() {
+                    format!("WITH {exact}")
+                } else {
+                    format!("{}, {exact}", prefix.trim_end())
+                };
+                from.push_str(" LEFT JOIN exact_matches ON exact_matches.rowid=messages.rowid");
                 values.insert(
                     usize::from(!self.prefix.is_empty()),
                     crate::fuzzy::literal_query(&self.query.search).into(),
@@ -215,9 +225,63 @@ impl Plan {
         (
             format!(
                 "{}SELECT {columns} FROM {from} WHERE {} ORDER BY {order}",
-                self.prefix, self.condition
+                prefix, self.condition
             ),
             values,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn relevance_does_not_rescan_a_literal_fts_relation_per_candidate() {
+        let store = Store::memory().unwrap();
+        store
+            .run(|c| {
+                for folders in [
+                    None,
+                    Some(vec![FolderSelection {
+                        account: Some("fixture".into()),
+                        folder: "INBOX".into(),
+                        sent_only: false,
+                    }]),
+                ] {
+                    let query = MailQuery {
+                        search: "milestone 17".into(),
+                        sort: MailSort::Relevance,
+                        folders,
+                        ..Default::default()
+                    };
+                    let plan = Plan::new(c, &query)?;
+                    let (sql, values) = plan.ordered("messages.id");
+                    let steps = c
+                        .prepare(&format!("EXPLAIN QUERY PLAN {sql} LIMIT 50"))?
+                        .query_map(rusqlite::params_from_iter(&values), |r| {
+                            r.get::<_, String>(3)
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    // A virtual-table LEFT JOIN re-runs FTS filtering/ranking for
+                    // every outer row. Guard that expensive plan across upgrades;
+                    // search/selection tests separately verify exact ordered values.
+                    assert!(
+                        !steps
+                            .iter()
+                            .any(|s| s.contains("VIRTUAL TABLE") && s.contains("LEFT-JOIN")),
+                        "{steps:?}"
+                    );
+                    assert!(
+                        steps
+                            .iter()
+                            .any(|s| s.contains("exact_matches") && s.contains("INDEX")),
+                        "{steps:?}"
+                    );
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
     }
 }

@@ -76,8 +76,231 @@ fn prefs() -> Preferences {
     Preferences {
         google_client_id: "fixture-client".into(),
         google_client_secret: "fixture&secret+/".into(),
+        google_services: Some(crate::model::GoogleServices {
+            drive: true,
+            calendar: crate::model::GoogleCalendarRequest::ReadWrite,
+        }),
         ..Default::default()
     }
+}
+
+fn consent_preferences(drive: bool, calendar: crate::model::GoogleCalendarRequest) -> Preferences {
+    Preferences {
+        google_services: Some(crate::model::GoogleServices { drive, calendar }),
+        ..prefs()
+    }
+}
+
+#[test]
+fn google_authorization_url_requests_only_selected_services_with_pkce_and_account_choice() {
+    use crate::model::GoogleCalendarRequest::*;
+    for (calendar, events) in [
+        (Off, None),
+        (ReadOnly, Some("calendar.events.readonly")),
+        (ReadWrite, Some("calendar.events")),
+    ] {
+        for drive in [false, true] {
+            let prefs = consent_preferences(drive, calendar);
+            if !drive && calendar == Off {
+                assert!(
+                    consent::authorization_url(
+                        &prefs,
+                        "http://127.0.0.1:9876/callback",
+                        "state",
+                        "challenge",
+                        true
+                    )
+                    .is_err()
+                );
+                continue;
+            }
+            for retry in [false, true] {
+                let url = consent::authorization_url(
+                    &prefs,
+                    "http://127.0.0.1:9876/callback",
+                    "fixture-state&+",
+                    "fixture-challenge",
+                    retry,
+                )
+                .unwrap();
+                assert_eq!(url.host_str(), Some("accounts.google.com"));
+                assert_eq!(url.scheme(), "https");
+                let query: HashMap<_, _> = url.query_pairs().into_owned().collect();
+                let actual: std::collections::BTreeSet<_> =
+                    query["scope"].split_ascii_whitespace().collect();
+                let mut expected = std::collections::BTreeSet::new();
+                if drive {
+                    expected.insert("https://www.googleapis.com/auth/drive.appdata".to_owned());
+                }
+                if let Some(events) = events {
+                    expected.insert(format!("https://www.googleapis.com/auth/{events}"));
+                    expected.insert(
+                        "https://www.googleapis.com/auth/calendar.calendarlist.readonly".into(),
+                    );
+                }
+                assert_eq!(actual, expected.iter().map(String::as_str).collect());
+                assert_eq!(query["state"], "fixture-state&+");
+                assert_eq!(query["code_challenge_method"], "S256");
+                assert_eq!(query["code_challenge"], "fixture-challenge");
+                assert_eq!(query["access_type"], "offline");
+                assert_eq!(
+                    query["prompt"],
+                    if retry {
+                        "consent"
+                    } else {
+                        "consent select_account"
+                    }
+                );
+                assert!(!query.contains_key("client_secret"));
+                assert!(!query.contains_key("include_granted_scopes"));
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn google_omitted_token_scope_inherits_exact_request_and_never_all_services() {
+    use crate::model::GoogleCalendarRequest::*;
+    for (drive, calendar) in [(true, Off), (false, ReadOnly), (false, ReadWrite)] {
+        let prefs = consent_preferences(drive, calendar);
+        let credentials = Arc::new(Credentials::default());
+        let mut server = Server::start(vec![response("scoped", Some("scoped-refresh"))]).await;
+        let google = google(&server, credentials.clone());
+        let grant = google
+            .exchange_code(
+                &prefs,
+                "fixture-code",
+                "http://127.0.0.1:9876/callback",
+                "verifier",
+            )
+            .await
+            .unwrap();
+        assert_eq!(grant.access.drive, drive);
+        assert_eq!(grant.access.calendar_read, calendar != Off);
+        assert_eq!(grant.access.calendar_write, calendar == ReadWrite);
+        let saved = credentials.value();
+        assert_eq!(saved["scope"], consent::requested_scopes(&prefs).unwrap());
+        assert_eq!(saved["requested_scopes"], saved["scope"]);
+        assert_eq!(server.requests().len(), 1);
+        server.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn google_broader_returned_scopes_do_not_enable_unselected_services_after_refresh() {
+    use crate::model::GoogleCalendarRequest::*;
+    let mut prefs = consent_preferences(false, ReadOnly);
+    let credentials = Arc::new(Credentials::default());
+    let mut server = Server::start(vec![
+        scoped_response(SCOPES),
+        Reply::new(200, r#"{"items":[]}"#),
+        scoped_response(SCOPES),
+    ])
+    .await;
+    let google = google(&server, credentials.clone());
+    let grant = google
+        .exchange_code(
+            &prefs,
+            "fixture-code",
+            "http://127.0.0.1:9876/callback",
+            "verifier",
+        )
+        .await
+        .unwrap();
+    assert!(grant.access.calendar_read);
+    assert!(!grant.access.calendar_write && !grant.access.drive);
+    let (grant, identity, _) = google.prepare_grant(&prefs, grant).await.unwrap();
+    assert!(identity.is_none());
+    assert_eq!(server.requests().len(), 2);
+    prefs.google_grant = grant;
+    google.finish_activation(&prefs).await.unwrap();
+    let mut saved = credentials.value();
+    saved["expires_at"] = 0.into();
+    credentials.seed(saved);
+    drop(google);
+    prefs.google_services = consent_preferences(true, ReadWrite).google_services;
+    let restarted = self::google(&server, credentials.clone());
+    restarted
+        .token_for(&prefs, Service::CalendarRead)
+        .await
+        .unwrap();
+    assert!(
+        restarted
+            .token_for(&prefs, Service::CalendarWrite)
+            .await
+            .is_err()
+    );
+    assert!(restarted.token_for(&prefs, Service::Drive).await.is_err());
+    assert_eq!(server.requests().len(), 3);
+    assert_eq!(
+        credentials.value()["requested_scopes"],
+        consent::requested_scopes(&consent_preferences(false, ReadOnly)).unwrap()
+    );
+    server.finish().await;
+}
+
+#[tokio::test]
+async fn google_pending_login_retry_is_bound_to_requested_services_in_memory_and_after_restart() {
+    use crate::model::GoogleCalendarRequest::*;
+    let original = consent_preferences(true, Off);
+    let changed = consent_preferences(false, ReadOnly);
+    let credentials = Arc::new(Credentials::default());
+    credentials.seed(saved(chrono::Utc::now().timestamp() + 3600));
+    let mut server = Server::start(vec![response("candidate", Some("candidate-refresh"))]).await;
+    let google = google(&server, credentials.clone());
+    google.connected(&original).await.unwrap();
+    credentials.locked.store(true, Ordering::SeqCst);
+    assert!(
+        google
+            .exchange_code(
+                &original,
+                "fixture-code",
+                "http://127.0.0.1:9876/callback",
+                "verifier"
+            )
+            .await
+            .is_err()
+    );
+    credentials.locked.store(false, Ordering::SeqCst);
+    assert!(
+        google
+            .finish_pending_login(&changed)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        google.token(&original).await.unwrap().expose_secret(),
+        "old-access"
+    );
+    let candidate = google
+        .finish_pending_login(&original)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(google);
+    let restarted = self::google(&server, credentials);
+    assert!(
+        restarted
+            .finish_pending_login(&changed)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        restarted
+            .finish_pending_login(&original)
+            .await
+            .unwrap()
+            .unwrap(),
+        candidate
+    );
+    assert_eq!(
+        restarted.token(&changed).await.unwrap().expose_secret(),
+        "old-access"
+    );
+    assert_eq!(server.requests().len(), 1);
+    server.finish().await;
 }
 fn saved(expires: i64) -> Value {
     json!({"client_id":"fixture-client", "access_token":"old-access", "refresh_token":"old-refresh&+/", "expires_at":expires})

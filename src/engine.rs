@@ -1120,7 +1120,10 @@ impl Engine {
                 let _guard = self.google_connection_lock.write().await;
                 let current: Preferences = self.store.get("preferences").await?;
                 anyhow::ensure!(
-                    prefs.google_lifecycle.revision == current.google_lifecycle.revision,
+                    prefs.google_lifecycle.revision == current.google_lifecycle.revision
+                        && prefs.google_client_id == current.google_client_id
+                        && prefs.google_client_secret == current.google_client_secret
+                        && prefs.google_services == current.google_services,
                     "Google changed before sign-in started. Choose Connect Google again."
                 );
                 self.cleanup_google_locked().await?;

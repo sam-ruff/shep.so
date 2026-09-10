@@ -1,0 +1,21 @@
+# Review alongside the existing mail VPS configuration; do not replace it blindly.
+shep.so {
+    encode zstd gzip
+    @gateway path /beta /auth/* /api/* /app /app/* /healthz
+    handle @gateway {
+        reverse_proxy 127.0.0.1:3080
+    }
+    handle {
+        # Public promo assets only. Protected web assets MUST stay in /srv/shep/web,
+        # outside this root. Do not copy web/dist into /srv/shep/website/app.
+        root * /srv/shep/website
+        file_server
+    }
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+    }
+    # No access-log directive: OAuth callback URLs contain short-lived secrets.
+    # Disable/ redact those paths in any upstream proxy/CDN logs too.
+}

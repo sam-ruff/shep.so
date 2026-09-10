@@ -1,10 +1,164 @@
-# Shep handover — 2026-09-09
+# Shep handover
 
-**The full application goal remains unfinished.** Read [TODO.md](TODO.md) at the
-start of each turn. [AGENTS.md](AGENTS.md) owns operational instructions;
-[the request audit](docs/REQUEST_AUDIT.md) preserves the conversation scope and
-[the completion log](docs/COMPLETION.md) records shipped behavior and evidence.
-Historical implementation notes belong there, rather than becoming new TODOs.
+**The full product goal is unfinished.** `TODO.md` is the authoritative active
+request list; implementation and shipping evidence is in [the completion log](docs/COMPLETION.md)
+and [the request audit](docs/REQUEST_AUDIT.md). On 2026-09-09 `main` (`c414227`)
+was merged into `feat/mobile-web-clients`; from now on `main` is the single
+integration branch for the desktop, mobile and website sessions, desktop changes
+reach the client branch through merges from `main` rather than ports, and root
+desktop code follows `main` where the two disagreed (main's `src/profile_sync`
+replaced the client branch's own desktop profile implementation; the shared
+profile-core crate is the superset of both). Request numbers R67 to R80 exist on
+both sides; the audit states the collision once. The two sessions' notes follow,
+each as it stood before the merge.
+
+# Client session (feat/mobile-web-clients)
+
+Development resumed after the credit-limited checkpoint.
+
+## Working constraints
+
+Work in `shep-clients` on `feat/mobile-web-clients`. Push verified checkpoints
+promptly with the configured owner identity and Conventional Commits; never skip
+hooks. Do not replace the installed desktop from client-branch builds. Since the
+9 September merge, `main` is the single integration branch: the client and
+website worktrees keep their branch names only because git cannot check out
+`main` twice, and push verified checkpoints with `git fetch origin && git
+rebase origin/main` then `git push origin HEAD:main`. Delegated promo
+source/assets are already integrated; do not recopy the older `shep-website`
+README. Read `AGENTS.md`, `TODO.md`, the parity matrix and latest completion entry
+before continuing.
+
+The normal app was previously installed on the owner's Android phone without
+clearing data. Do not reinstall, reset or automate that phone. Its package/build
+and locked-screen observations remain in ignored `artifacts/flutter/phone-install/`
+and `artifacts/logs/phone-*`; never commit pairing details or personal screenshots.
+Use a dedicated `shep-e2e` emulator and the isolated preview package for tests.
+
+## Product decisions
+
+One monorepo: Rust + iced desktop at the root, Android/iOS in `flutter/`, a
+**separate desktop-style browser client** in `web/`, and promo in `website/`.
+The initial separate Flutter repository and hosted Flutter layout are superseded.
+Preserve the restrained shadcn theme, approved Shepherd, configurable K-9-style
+mail rows/previews/swipes and clickable equivalents.
+
+The browser beta uses server-verified Google login and an explicit owner
+allowlist, expandable later. `backend/` supplies Rust verification and authenticated
+IMAP/POP3/SMTP transport; ordinary browsers cannot use those TCP protocols directly.
+No persistent server-side mail/password storage is authorized. Browser credentials
+currently remain in tab memory; secure remembered credentials are unfinished.
+
+VPS installation is already authorized, but the SSH target, exact verified owner
+identity and Google OAuth configuration are missing. Never infer identity from Git
+contact details or ask deployment permission again. Assets are staged, **not
+deployed**. Keep unpublished store/release destinations visibly unavailable.
+
+Quality/release definitions stay `.yml.disabled`; documentation CI stays enabled.
+Remind Sam to enable quality/release when trusted runners and signing are ready.
+Apple execution, store publication and coordinated distribution remain open.
+R75 still requires provider OAuth across clients; beta login alone does not connect
+Gmail/Calendar/Drive. Keep R76's grouped scheduled automatic replies and R72's Linux
+store submissions in TODO.
+
+## Current continuation
+
+Flutter preference receipt recovery is the current checkpoint. The platform write
+now retains the original field revisions and forwards them to native enrollment;
+exact retries cannot substitute later local revisions. Legacy receipts remain
+explicitly unproven. Local reverted intent survives an earlier failed save, and
+optimistic painting checks the UI generations captured with the review. Reopened
+receipts do not flash an obsolete imported value.
+
+All 129 Flutter host tests, 81 mobile Rust tests, static analysis and the two
+Android integration scenarios pass. The saved controls leave a lost acknowledgment,
+change appearance and resume while preserving the newer choice. Appium/Playwright,
+visual evidence and exact shipping are recorded next in [completion](docs/COMPLETION.md).
+Keep the retained failure evidence there; do not count an interrupted wrapper or
+integration teardown as another passing scenario.
+
+The client branch's desktop ongoing synchronization and paged conflict reviews
+were pushed in
+[`28c2884`](https://github.com/sam-ruff/shep.so/commit/28c288448842b7d09543fc28ef1f2f14bf36f142)
+and superseded by main's desktop implementation at the merge. Their
+shared-owner, active-grant, full-rescan, original-record, durable receipt and
+newer-intent invariants still apply (see AGENTS.md "Desktop profile
+application"); their 23 native flows, three final reruns, 54 profile checks and
+498 mandatory hook tests remain recorded in completion as evidence for the
+superseded code, not for main's.
+
+**Next implementation:** connect Flutter's ongoing native subscription/edit ledger,
+platform application requests and exact receipts, then SDK-owned scheduling and
+per-field/conflict controls. The platform store currently retains one receipt;
+new sync work must serialize with enrollment before another application can replace
+it. Seed only from proven original revisions; publication and legacy receipts
+without that proof require conservative pending state. Never acknowledge a later
+local edit merely because its current value matches the imported value.
+
+All 40 requests remain active. Automatic restoration/setup, complete fields and
+categories, accounts, authenticated interchange, protected credentials and browser
+reconciliation remain unfinished. The earlier native navigation result is still
+154.81–162.33 ms against 150 ms, and the combined performance gate remains failing.
+No new performance measurement is claimed on this shared, busy host.
+
+## Restart order
+
+1. **Highest priority:** continue [OAuth/shared profiles](docs/agents/PROFILE_SYNC_HANDOVER.md).
+   Extend Flutter reconciliation and checked preference decisions with native and
+   Playwright controls. Preserve the delivered desktop reviews, exact saved
+   decisions and newer local intent protection. Continue automatic restoration/first setup, complete
+   portable settings/categories, account lifecycle and authenticated interchange.
+   Do not turn a missing remote original or another project's empty app-data
+   space into successful setup. Preserve full rescan on owner reopen, known
+   original verification, active-grant ownership and shared review serialization.
+   Copy original records into independently owned device history, never clone a
+   remote observation database/device UUID. Account application preserves mail and
+   drafts, uses explicit mappings and requires reviewed credential activation when
+   endpoints change. Keep offline conflicts/removal, setting-reset intent and local
+   edit generations. An incomplete listing or different Google project's empty
+   app-data space must not imply empty setup. The password-protection choice is
+   unanswered; legacy backups and full database migration remain separate work.
+2. Preserve shipped browser group Undo/recovery, alias/receipt and worker ownership
+   regressions. Current browser recovery checkpoint `df4f29c` passes 137 Chromium,
+   127 unit and 56 production HTTPS fixture stages. Continue abandoned review and
+   staging cleanup; exact evidence/failed baselines remain in the completion log.
+3. Connect Flutter's SQLite selection capture to durable group execution, then
+   Select/Done/Clear/all, review, Undo, History and recovery controls. Loaded-row
+   actions are not full-mailbox parity.
+4. Continue account/calendar/backup, composition, cache/large-message, remote-image,
+   keymap, lifecycle, performance and platform gaps in TODO. Desktop changes now
+   arrive through merges from `main`; review each merge for new parity gaps.
+5. Execute Apple/live-provider verification, deployment and distribution when the
+   required environments/configuration exist. Full parity remains active throughout.
+
+## Verification and artifacts
+
+Run relevant saved scenarios from [client testing](docs/CLIENT_TESTING.md); never
+substitute direct controller calls for real UI controls. Enrollment checks are
+`python3 scripts/clients/android_e2e.py --device emulator-5554 --enrollment-only`
+and `python3 scripts/clients/flutter_web_e2e.py --enrollment`. Publication checks are
+`python3 scripts/clients/android_e2e.py --device emulator-5554 --creation-only` and
+`python3 scripts/clients/flutter_web_e2e.py --creation`. Discovery checks are
+`python3 scripts/clients/android_e2e.py --device emulator-5554 --discovery-only` and
+`python3 scripts/clients/flutter_web_e2e.py --discovery`. They run explicit fixtures.
+Wait for each Flutter build/test process to terminate before editing its source or
+starting another build in that checkout.
+
+Use `CARGO_TARGET_DIR=artifacts/root-target` for mandatory root hooks and
+`artifacts/flutter-target` for native Rust checks. Flutter commands run inside
+`flutter/`; wrapper commands run from the worktree root. Logs belong in ignored
+`artifacts/logs/`. Before pushing docs run
+`artifacts/docs-venv/bin/zensical build --clean --strict`; run the parity checker and
+relevant unit/protocol/native controls. Keep snapshots, tokens and personal data
+out of source and public documentation. A pushed handover is not product completion.
+
+# Desktop session (main) — 2026-09-09
+
+Read [TODO.md](TODO.md) at the start of each turn. [AGENTS.md](AGENTS.md) owns
+operational instructions; [the request audit](docs/REQUEST_AUDIT.md) preserves
+the conversation scope and [the completion log](docs/COMPLETION.md) records
+shipped behavior and evidence. Historical implementation notes belong there,
+rather than becoming new TODOs.
 
 ## Parallel work in progress
 
@@ -170,12 +324,12 @@ on next launch; they do not hot-swap an engine or replay another device's sends.
 6. Verify real same-project Google appDataFolder visibility and OAuth across the
    participating clients/platforms. Fixture success is not live interoperability.
 
-The sibling `../shep-clients` is an independent active client worktree; preserve
-its changes. Shared initialization/harness support was published through the isolated
-`codex/profile-initialization-harness` branch. The shared source is copied from
-immutable client `184b98a`; its active uncommitted enrollment work was not used. Consume immutable reviewed revisions;
-do not merge unrelated client changes into desktop. Do not share a Cargo target
-directory between worktrees with different vendored renderer sources.
+Shared initialization/harness support was published through the isolated
+`codex/profile-initialization-harness` branch, copied from immutable client
+`184b98a`. Since the 2026-09-09 merge the shared profile-core crate lives in this
+tree as a path dependency and is the superset of both sides; the client branch is
+no longer a separate source to copy from. Do not share a Cargo target directory
+between worktrees with different vendored renderer sources.
 
 After the profile priority, continue every remaining TODO. In particular, native
 tray/temporary saving tray (R86), slow close dependencies (R90), channel ownership
@@ -204,7 +358,8 @@ Use the [MCP skill](.agents/skills/shep-e2e/SKILL.md) for native work. Keep auto
 equivalents and review actual screenshots. `--functional-only` selects the full
 functional suite and currently ignores `-k`; selected runs use `-k` alone. Do not
 run builds while native tests are active. Logs and fixtures belong under ignored
-`artifacts/`; use `login:false` for shell tools. No subagents are authorized.
+`artifacts/`; use `login:false` for shell tools. Subagents follow the R93
+parallel-delivery rules in AGENTS.md.
 
 Performance measurement remains deferred until the final idle-host phase.
 Quality/release workflows stay disabled until the self-hosted runners are ready

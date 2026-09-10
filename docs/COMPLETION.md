@@ -1,5 +1,7 @@
 # Completion audit
 
+This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
+
 ## Journal ownership, removal reviews and duplicate labels — integrated verification
 
 Three lanes were merged into `main` with `--no-ff` after each was rebased onto
@@ -1774,6 +1776,12 @@ The requested Flutter implementation handover is written in the sibling client w
 
 The client strict docs build, 31-entry scenario validation and mandatory formatting/Clippy/381-Rust-test hooks passed. The push was verified against the remote branch. Source credentials and personal data were not copied; actual cross-platform Google app-data access and the password-protection decision remain unresolved. No production installation was changed.
 
+## 8 September: OAuth/profile implementation handover
+
+Documentation checkpoint [`02c4b32`](https://github.com/sam-ruff/shep.so/commit/02c4b32a6b380c1d5312c20bf187584c683ff10f) is pushed to `feat/mobile-web-clients` and remote equality was verified. [The handover](agents/PROFILE_SYNC_HANDOVER.md) maps existing desktop/Flutter storage and credential lifecycle code, first/new/existing-device flows, configurable profiles, the proposed versioned format, conflicts/removal, outstanding credential protection and required interoperability tests. OAuth implementation now comes first in TODO and the restart notes, as requested. Continuous profile sync and full database transfer remain unimplemented; no live Google or client UI behavior is claimed by this documentation change.
+
+The pinned strict Zensical build passed, all 31 shared scenario entries passed structural validation, and normal hooks passed formatting, Clippy and 381 Rust tests. Logs are under ignored `artifacts/logs/profile-sync-client-*`. This checkpoint changes documentation and an explicitly open scenario contract only; it does not update the phone, desktop installation or deployed service. Main remains separate.
+
 The user requested a complete, polished Rust + iced mail/calendar client. Passing the current suite is evidence for specific behavior, not evidence that the whole goal is complete. This audit records outstanding work; it does not replace or narrow the original specification.
 
 ## Implemented, with local evidence
@@ -2688,6 +2696,307 @@ Each shortcut slot now has its own clear ×. Primary and secondary can both be d
 Validation: formatting and Clippy pass; 203 Rust tests pass (two live diagnostics remain ignored); 17 Python tests pass. All 58 native functional flows are verified: the full run passed 57 and exposed one incorrect assertion that right-click leaves the original message selected; the corrected saved context-action test passes separately. Evidence is under `artifacts/logs/mail-actions-*`. The strict documentation build passes. Commit `742b21e` is pushed and installed. The optimized production binary matches the installed executable at SHA-256 `8d892db4578f7954ab5e1674be49fc36c122eb9b928dc80ec4115e12696e97e8`; release checksum, extraction and bundled installer checks pass. [Documentation run 34027695701](https://github.com/sam-ruff/shep.so/actions/runs/34027695701) passes. Existing user windows were left open and need reopening for the update. WebP review covers immediate unread counts/open-envelope state, archive rollback, correct-row context actions and separate clear controls in light/dark/compact windows. Performance measurements remain deferred. R61/R64/R65 retain download installers, themed launcher and background-sync scheduling. AGENTS.md records the Dungeonwalk asset-tool credential discovery pointer without copying or exposing credentials.
 
 
+## Monorepo clients and restricted beta — uncommitted worktree checkpoint
+
+Work remains on `feat/mobile-web-clients` in `shep-clients`, based on `8af26f6`. The delegated promo agent built `website/` on `feat/promo-website` in `shep-website`; its reviewed source is copied into the combined worktree. **No client commit, main merge/push or VPS deployment has occurred.** Desktop background scheduling shipped independently upstream as `d4ecb21` / `2965ae2`; preserve it when integrating this older worktree.
+
+Flutter includes mail/reader/calendar/preferences/composer previews, configurable K-9-style swipes with matching icons and visible alternatives, optimistic change/undo/rollback, persisted nonsecret preferences and separate Android preview/production packages. Its production provider bindings are unfinished. The separate browser now connects to authenticated Rust mail endpoints: account verification/reconnect, streamed sync, IMAP flags/MOVE, local POP3 actions, per-Google-subject/client IndexedDB mail/raw/draft storage and SMTP delivery records. Passwords stay in tab memory. Visible tabs check mail every 15 seconds while connected, with independently queued manual Refresh. The browser layout retains desktop-style panes, saved dividers, configurable input-safe shortcuts and Light/Dark/System appearance.
+
+`shared/mail-core` now owns the actual common mail/MIME/reply and IMAP/POP3/SMTP implementations, with desktop compatibility exports. The VPS gateway pins administrator-approved endpoints and verifies TLS against their original hostnames, bounds concurrent operations and streams sync events. Google login protects all app/assets/API routes through verified allowlists, one-use OAuth state/PKCE, in-memory expiring sessions, CSRF/origin validation and no-store responses. Server mail/password persistence is absent; empty deployment allowlists/endpoints fail closed. SMTP requires a server-issued reservation durably saved with the browser draft before POST. Lost/uncertain/expired receipts never create automatic repeat sends. Accepted sends outlive HTTP disconnects, including supervised provider panics.
+
+Verified evidence under ignored `artifacts/logs/` and client screenshot directories:
+
+- All **203 existing Rust workspace tests** pass after extraction; two additional pinned TLS tests pass in the **13-test shared-core suite**, covering IMAP/POP3/SMTP, implicit TLS/STARTTLS and hostname rejection. Root formatting/Clippy pass. All **58 desktop native functional flows** pass in one run; synthetic native screenshots were reviewed. Performance measurements remain deferred on the busy host.
+- **21 backend tests** pass plus the explicitly selected real HTTPS browser scenario. The optimized production backend builds; its test-fixture exclusion and refusal to start without deployment configuration are verified. That browser run exercises **17 access/provider/recovery stages**, production assets and actual controls/IndexedDB, including wrong-password retry, cache/draft reload and lost/uncertain delivery status. Google identity and mail transport are test-only fixtures; separate shared-core tests exercise real loopback wire/TLS behavior.
+- **18 browser model/provider tests** and **14 Playwright scenarios** pass, including theme/compact axe scans. Account setup is additionally checked at 900×640 and 1440×920 through the Rust-backed browser flow.
+- **18 Flutter unit/widget tests**, **three Android integration scenarios**, **five Appium stages** and **five Flutter Playwright stages** pass. The latest Android runner completed integration → preview rebuild → Appium sequentially. Native/browser swipe-icon evidence was reviewed. Production Android debug APK build and fixture-exclusion inspection pass; Apple execution is unverified.
+- The promo site passes **61 Chromium/Firefox/WebKit tests**, with **two engine-specific clipboard skips** and **18 layout/accessibility scans**. Browser-aware install suggestions, approved assets and synthetic screenshots were reviewed. Store/private-beta links report actual unpublished availability.
+- **21 Python tests** pass, including protected/public staging separation, fail-closed release prerequisites and synchronized client/lockfile version stamping. Pinned strict Zensical passes. Quality/release workflows remain `.yml.disabled`; documentation CI is unchanged.
+
+This is partial implementation, not feature parity or a shipped beta. Remaining work includes Flutter native bindings/cache/credentials, browser worker-based bounded cache reads and encryption, remembered credentials, IMAP move/undo recovery, autosave/reply/attachment/Outbox/Sent behavior, calendar/backup/Google-provider parity, Apple simulator/signing, platform launcher assets, store submissions and complete coordinated release packaging. Exact permitted Google identity, OAuth configuration and VPS SSH target are still pending, so no live service was installed or tested. R67–R74 stay active. R75 tracks OAuth “Sign in with Google” in place of manual tokens; R76 tracks scheduled Automatic replies with account-group assignment. See CLIENT_PARITY.md and TODO.md for the full remaining scope.
+
+
+## Native Flutter continuation (review worktree, uncommitted)
+
+The production Flutter entry now opens a Rust profile rather than an unconnected repository. `flutter/rust` shares mail/MIME providers with the desktop and gateway, with SQLite WAL, two independent cache-read connections and bounded FIFO writes. An owned request retains its account lock/capacity through completion if its Dart waiter disappears. Password pairs use one ordered secure-storage write; no password field exists in the Rust cache schema. Account setup probes incoming/SMTP separately and displays persistent connection errors. Foreground checks run every 15 seconds; manual refresh can queue independently.
+
+Flutter now loads metadata pages from SQLite and fetches bodies on demand, keeps metadata actions optimistic, and offers native account selection, draft autosave, restart/reopen and reviewed permanent discard. SQLite revisions/tombstones reject stale draft writes. SMTP MIME/reservation is persisted before transmission; a surviving submission cannot automatically resend. Full accepted-send/Sent-copy repair and uncertain/rejected review are still open, so this does not establish desktop Outbox parity.
+
+Eight Rust tests cover paging/search/detail, POP3 local state, draft revisions/file cleanup, account identity, future-schema rejection, surviving submissions, independent reads and cancellation/FIFO ownership. Nineteen Flutter host tests pass, including a real FFI/SQLite reopen/discard test. Four additional Android scenarios pass through the real bridge/device storage: save/reopen/edit/discard controls, failed loopback account setup with untouched credentials, isolated secure credential-pair roundtrips, and the actual production entry opening its native cache/account setup without fixture mail. The existing three preview integration scenarios also pass. Native draft/error screenshots are reviewed; the shared runner preserves their host captures through `flutter drive` before rebuilding for Appium. Five Appium stages and all five Flutter browser Playwright stages pass. The production debug APK builds for arm64-v8a, armeabi-v7a and x86_64; the new artifact verifier confirms the packaged Rust libraries, Internet permission and absence of fixture markers. All 23 Python tests and pinned strict Zensical pass. This is a debug build, without distribution signing.
+
+The native-assets setup pins Rust/bridge versions, includes manifest/lockfile changes in build dependencies, honors Android minSdk 24, uses the host Perl for OpenSSL when Flutter's Snap environment mixes Perl versions, and registers generated JNI libraries through AGP 9's Variant API. Android's production manifest now grants Internet access. Disabled CI and coordinated version stamping include the native Rust crate. No quality/release workflow was enabled.
+
+This continuation remains uncommitted in `shep-clients`; no main merge/push or live/VPS action occurred. Remaining native work includes bounded body/attachment parsing and prefetch, complete outgoing recovery, account edit/remove, replies/attachments, Google/calendar/backups, cache encryption, new desktop read-on-leave/toast defaults, Apple execution and release/store packaging. Server identity/OAuth/SSH configuration is still pending. R67–R76 remain active; R75's OAuth replacement and R76's grouped, scheduled Automatic replies are recorded requirements, not implemented features.
+
+
+## Move receipts and client Undo (review worktree, uncommitted)
+
+The shared core now preserves acknowledged IMAP destination identities from COPYUID/APPENDUID and checks exact MIME fingerprints before recovering moved copies. Tagged success remains committed when logout fails; conflicting or absent mappings require recovery, and duplicate/changed copies are refused. The hosted gateway applies the same endpoint, identity and authentication restrictions to recovery. These contracts follow [IMAP MOVE](https://www.rfc-editor.org/rfc/rfc6851.html) and [UIDPLUS](https://www.rfc-editor.org/rfc/rfc4315.html).
+
+Flutter SQLite and browser IndexedDB keep a stable local message identifier as its server folder/UID changes. Sync updates that record and retains its body/raw mail; destination duplicates are merged only when their original bytes agree. Move intent is saved before transmission. A lost response or failed acknowledgment save cannot automatically issue the operation again after reopening; complete reconciliation can re-establish an unchanged source for a subsequent explicit action. Missing/conflicting mappings use exact-content recovery, with persistent errors when one copy cannot be established. Further recovery-review UX remains active.
+
+Flutter also retains the small metadata record needed by Undo after a paged folder refresh. Undo updates the display immediately while the original move waits, then runs in order. The production browser's saved HTTPS scenario holds an actual gateway response after commit, clicks Undo, and checks that the next request uses the destination identity; it also undoes after refresh. Android drives the same paged/queued cases through swipe and button controls. Its transport barrier is a test-only provider; SQLite recovery and real IMAP wire contracts have separate tests. This is not live IMAP/device-provider verification.
+
+Validation: 209 Rust workspace tests pass, including 17 shared-core protocol tests; two live diagnostics remain ignored. The standalone backend has 22 passing tests, plus 19 stages in the explicitly run Rust-backed HTTPS browser scenario. The native Rust crate has 12 passing cache/FIFO/recovery tests. Flutter has 20 passing host tests, three preview Android scenarios and five further Android scenarios; the combined integration → rebuild → five-stage Appium run passes. Browser model/provider tests pass 20 cases and Playwright passes 14 scenarios; all five Flutter browser Playwright stages also pass. Formatting, Clippy and Flutter analysis pass. Reviewed WebP evidence includes `artifacts/flutter/native/paged-swipe-undo.webp` and the browser's pending/post-refresh Undo captures; logs use `artifacts/logs/move-*` and the saved Android runner logs. All 23 Python tests and the pinned strict Zensical build pass. The current production Android debug APK includes Rust libraries for all three ABIs, Internet permission and no preview fixture markers; its SHA-256 is `cc8d60450b4c4ba41a4408a1dfbf9bdf9fbad299bf3ed8905fd3a15f9a152ade`. Distribution signing is still open. Performance remains deferred.
+
+This checkpoint is uncommitted in `feat/mobile-web-clients`. It does not close R67–R76 or establish full feature parity. Ambiguous/unrecoverable move review, cross-account moves, the newer desktop defaults, full outgoing/attachments/replies, calendars/Google/backups, encrypted/bounded caches, Apple execution and release/store distribution remain active. No main merge/push, personal-provider test or VPS deployment occurred; the exact VPS/owner/OAuth configuration is still pending. Quality/release CI remains disabled.
+
+
+## Client replies and outgoing attachments — worktree checkpoint
+
+Flutter and the separate browser now prepare Reply/Reply all from cached mail headers, preserving Reply-To, To/Cc deduplication, all configured sender exclusions, In-Reply-To/References and quoted text. Shared synthetic JSON fixtures run in both Rust and TypeScript, including deterministic September date formatting. Browser replies work before reconnecting after reload. This does not implement Google provider OAuth or scheduled Automatic replies; R75/R76 remain active TODOs.
+
+Outgoing attachment bytes have separate ownership from draft text. Native SQLite stores independent file revisions; browser IndexedDB stores file blobs separately. Text autosaves cannot restore removed associations. Native file edits flush pending text; failed imports remain atomic, removed files stay removed across reopen, and saved binary files survive deletion of their original source. Sending checks the displayed file/text versions, prepares the shared MIME, and preserves immutable submitted content. Submitted/discarded native drafts and browser delivery records reject file edits. Full Outbox/Sent-copy recovery and incoming attachment downloads remain open.
+
+The saved Android scenario uses `file_selector` and actual DocumentsUI controls: cancel, select two files, cached Reply all, save/reopen, remove/reopen, pending text persistence and send refusal without credentials. Its helper hands over a generated fixture database before the UI opens it; subsequent actions use real controls. The browser scenario uses real IndexedDB, the file chooser and the authenticated Rust HTTPS service, verifies exact binary MIME/reply headers/Bcc envelope, and recovers a lost send response without resending. Compact browser composition now keeps Save/Send visible while fields scroll. Reviewed WebP captures include `artifacts/flutter/native/native-reply-attachments.webp`, the picker cancellation/multiple-selection captures, and `artifacts/beta-browser/reply-attachments-900.webp` / `reply-attachments-1440.webp`.
+
+Validation: 210 Rust workspace tests pass (18 shared-core tests included; two opt-in live diagnostics ignored), 15 native Rust tests, 22 backend tests plus 23 stages in the explicitly run Rust HTTPS browser scenario, 28 browser data/reply tests and 14 browser Playwright scenarios. Flutter analysis and 20 host tests pass. The full sequential Android runner passes three preview scenarios, five further native/paged scenarios, the additional reply/attachment scenario, then all five Appium stages. All five Flutter browser stages, 23 Python tests and the pinned strict Zensical build pass. Rust formatting/Clippy and Dart formatting pass. The owned emulator and test servers were stopped after verification. Logs are under `artifacts/logs/compose-*` and the saved Android/Flutter runner logs. Performance measurements remain deferred.
+
+The production Android debug APK includes Rust libraries for all three ABIs, Internet permission and no checked fixture markers; SHA-256 is `1f052c83f61dfe3d8597b2f04060d5c03d2f31353096a56871733727703a0bd5`, with the report at `artifacts/android-compose-production-isolation.json`. This is not a signed distribution release. Apple execution/file selection, live providers, Google/calendar/backup parity, encrypted/bounded caches, newer desktop defaults and complete composition/move/lifecycle recovery remain active. No main merge/push, personal-provider test or VPS deployment occurred. Source remains uncommitted in `feat/mobile-web-clients`; this checkpoint closes no full client request. Quality/release workflows remain disabled, and deployment still needs the exact VPS/owner/OAuth configuration.
+
+
+## Browser Outbox review and exact Sent copies — worktree checkpoint
+
+The shared core now exports the desktop outgoing types and an exact prepared MIME/envelope contract. Browser delivery reserves an identity, saves the immutable draft, obtains prepared bytes from Rust, commits those bytes locally, then submits them. The gateway retains only a digest of the prepared content and non-secret account configuration; changed bytes/settings cannot use that reservation. Atomic cancellation prevents a still-unused reservation from later starting SMTP and cannot release a running operation. No persistent mail/password store was added to the VPS service.
+
+Browser Outbox supports status checks, cancelled/rejected return to Drafts, explicit review before uncertain return or manual mark, and keeping the original local Sent copy. Recovery clones editable text and attachment ownership to a new draft; old editor saves cannot resurrect the submitted original. A new Send remains a separate user action. Manual mark retains uncertainty in the original delivery record. Confirmed delivery/rejection stays authoritative after the backend receipt expires or restarts. Local Sent uses the exact submitted MIME and survives reload, server reconciliation and newer local flags/folder choices. Adding Sent cannot replace a pending action or be erased by a stale refresh. Provider Sent lookup/append recovery and bounded Outbox paging remain open.
+
+Validation: 210 root workspace tests, 15 native Rust tests, 25 backend tests, 39 browser model/provider/reply tests, 14 browser Playwright scenarios and all 31 stages of the explicitly run Rust HTTPS browser scenario pass. Rust formatting and Clippy with warnings denied pass for the workspace, native crate and backend; the browser production build passes. All 23 Python tests, the parity checker and the pinned strict Zensical build pass. The saved HTTPS flow observes IndexedDB before transmission, uses real Outbox/composer controls and asserts exactly four explicit SMTP attempts across accepted, uncertain and rejected cases; status checks, manual review and cancelled preparation never send. Light/dark Outbox captures at 1440×920 and 900×640 pass axe; the complete recovery card remains inside its scroll container. Reviewed WebP evidence includes `artifacts/beta-browser/outbox-review-light-1440.webp`, `outbox-review-dark-900.webp` and `outbox-reviewed-local-copy.webp`. Logs use `artifacts/logs/outbox-*`.
+
+This continuation changes the separate browser UI and shared/backend contracts; no new Android or Apple execution is claimed. Native Outbox controls, provider Sent recovery, incoming attachments, calendars/Google/backups, encrypted/bounded caches, account lifecycle and full client parity remain active. Upstream selectable HTML in 1968e37 still needs integration and client equivalents. R75 Sign in with Google and R76 grouped, scheduled Automatic replies remain recorded TODOs. Performance remains deferred. No main merge/push, personal-provider test, deployment or release occurred; source remains uncommitted in `feat/mobile-web-clients`, quality/release workflows remain disabled, and VPS/owner/OAuth configuration is still pending.
+
+## Native Outbox review and exclusive profile ownership — uncommitted checkpoint
+
+Flutter now offers a paged Outbox from navigation and submitted drafts. It reads 20 metadata rows at a time, keeps Back usable while recovery runs, and shows storage failures with retry. Rejected submissions can return to a new draft; uncertain deliveries require explicit review before return or manual marking. Return copies the original text and attachment blobs to new identities in one transaction, retains the outgoing record, and prevents stale editors from saving or sending the original again. Manual marking keeps the uncertain SMTP status; it records the user's decision without inventing a provider acknowledgment. Local Sent preserves the exact submitted MIME and newer local flags/folder changes. Provider Sent lookup/append recovery remains open.
+
+The native sender owns its account lock and admission permits through completion, including a cancelled caller or provider panic. It commits immutable MIME before transmission and the terminal SMTP result before local Sent work. A later cache failure cannot turn a known acceptance into a fresh send; an unsaved terminal result stays in shared memory for an explicit persistence retry. Canonical profile handles share their database and operation coordination. A persistent companion lock file enforces exclusive process ownership; blocking cache jobs retain the lease through cancellation. Only an exclusive replacement owner reclassifies surviving submissions as uncertain.
+
+Real Android testing exposed an unsupported standard-library file-lock implementation on the pinned Android target. The native crate now uses Bionic `flock` there and retains the standard API on other platforms. The saved Android helper checks the actual held lock from a second process, with a separate successful lock as a control. Synthetic Outbox state is handed over only before opening an isolated preview profile, including Dart's private `code_cache` location. Subsequent recovery uses actual Flutter controls. Test-only SMTP transports and fixtures are excluded from production.
+
+Validation for this continuation:
+
+- **23 native Rust tests** pass, including active-send ownership, process handover, terminal-write/Sent-write failures, exact bytes before SMTP, cancelled waiters, panics, recovery rollback, attachment ownership, stale-draft refusal and 45-record paging. Native formatting and Clippy pass. **22 Flutter host tests** and analysis pass, including recovery errors, navigation while pending and pagination/review reset.
+- The complete sequential Android runner passes **ten integration scenarios**: three preview, five native bridge, one real DocumentsUI picker and one Outbox recovery scenario. All **five Appium stages** then pass. Outbox controls cover both themes, review gating, returned files/Bcc/text, file removal, manual mark, local Sent, reopen and refusal to send without credentials. This is synthetic device/cache evidence, not live SMTP delivery.
+- All **five Flutter Playwright stages** pass after the button-theme change. Buttons now use restrained borders, 44-pixel minimum targets and rounded corners. Reviewed WebP captures under `artifacts/flutter/native/` include `native-outbox-review-light`, `native-outbox-review-dark`, `native-outbox-recovered-draft`, `native-outbox-empty` and `native-outbox-local-sent`.
+- The production debug APK builds for arm64-v8a, armeabi-v7a and x86_64. Its Rust libraries, Internet permission and fixture exclusion pass inspection; SHA-256 is `ad9f072c91bf5ddf579c6faf255fe70f405f8a879b7260f90a221e46261782c0`. This is not a signed distribution build. **23 Python tests**, the 17-contract parity review check and pinned strict Zensical build pass. Logs use `artifacts/logs/native-outbox-*` and the sequential runner's `android-*` files.
+
+The root Rust, gateway and separate-browser implementation did not change in this continuation; their previous checkpoint remains the relevant evidence. Apple runtime/file-picker/locking execution is unverified, performance measurements remain deferred, and provider Sent recovery, full composition/incoming attachments, account lifecycle, Google/calendar/backups, encrypted/bounded caches and complete parity stay active. R75 OAuth and R76 grouped, scheduled Automatic replies remain recorded TODOs. Desktop main advanced independently to 6fed03b; committed HTML/focus changes still require integration, while uncommitted HTML/find work remains untouched. **No client commit, main merge/push, deployment or release occurred.** Quality/release definitions remain disabled; the authorized VPS deployment still awaits the exact server, owner identity and OAuth configuration.
+
+
+## Native provider Sent recovery — uncommitted checkpoint
+
+Native Flutter accounts now expose Sent-copy policy and an optional server folder at setup and under Preferences → Sent copies. The default for a new IMAP account matches the desktop's Automatic policy; existing settings are preserved and POP3 stays local. Saving Sent preferences updates only those fields, and a reconnect cannot overwrite a newer Sent preference with its earlier form snapshot.
+
+SMTP acknowledgment and copying to Sent are separate operations. After confirmed delivery and local-cache persistence, the composer can close while an owned background task checks/copies Sent under the same account lock and capacity permits. The native journal snapshots the nonsecret account connection, stores the exact MIME, and commits the destination before APPEND. Unacknowledged copies remain uncertain across reopen and need a separate reviewed upload action. Checking Sent alone never uploads. Server-managed policy only looks up the copy; LocalOnly/POP3 require no upload. A changed incoming connection cannot repurpose an older submission.
+
+An acknowledged copy survives later journal or local-cache failure. Its known receipt remains available in memory for persistence retry; a persisted receipt repairs the cache without credentials or another provider request. A matching provider copy resolves the local recovery flow while retaining the original uncertain SMTP record. It also prevents stale Return/Mark decisions from creating a new draft. Manual marking retains its review history and can subsequently keep a local copy. Synced provider copies remove only untouched local copies; committed local flag/move choices are preserved. Stable UI identity and pending actions during that local/server handover, offline actions on IMAP local copies, Sent-folder grouping and history cleanup remain active work.
+
+The shared `SentConnection` contract is used by desktop and native code, with a pinned gateway adapter ready for the browser endpoints. Discovery and exact Message-ID lookup now inspect final tagged LIST/SEARCH/FETCH responses instead of accepting streamed results that discarded a final rejection. Tests reject NO, incomplete results, zero/missing/duplicate identities and conflicting headers. Real loopback TLS transcripts cover Sent discovery, lookup, binary APPEND, implicit TLS/STARTTLS and hostname refusal before authentication. These changes follow [IMAP completion and APPEND](https://www.rfc-editor.org/rfc/rfc9051.html#section-6.3.12) and [special-use discovery](https://www.rfc-editor.org/rfc/rfc6154.html); they do not establish live provider behavior.
+
+Validation: **212 root workspace tests**, **32 native Rust tests**, **25 backend tests**, formatting and Clippy with warnings denied pass. Flutter analysis and **23 host tests** pass. The complete sequential Android runner passes all **ten integration scenarios** and **five Appium stages**; all **five Flutter browser stages** pass. The expanded native Outbox scenario repairs a saved provider receipt, checks missing-credential failures and separate copy review, persists Sent preferences and reopens the profile. It uses synthetic records handed over before startup and real controls afterward, including touch scrolling to reach lazy rows. The actual Android process-lock check also passes. No personal account or real email is used.
+
+Reviewed WebP captures include `artifacts/flutter/native/native-sent-copy-review.webp` and `native-sent-preferences.webp`, alongside the existing light/dark Outbox captures. Duplicate error text and a redundant delivery-status control were removed from confirmed-copy review. The production debug APK contains the Rust library for all three Android ABIs and excludes the new fixture markers; its SHA-256 is `3d53c0b7e540c47336b97b572478c55afeb35aad34ae088e39252466f8eff900`. This is not a signed distribution artifact. **23 Python tests**, the **18-contract parity review check** and pinned strict Zensical build pass. Logs use `artifacts/logs/sent-*` and the Android runner's `android-*` files.
+
+This remains uncommitted in `feat/mobile-web-clients`. No main merge/push, deployment, release or workflow enablement occurred. Native Sent handover/offline-local behavior and complete client parity remain open; browser Sent endpoints, journal and controls are the next provider parity task. The previous separate-browser control evidence remains applicable to its unchanged implementation; no new browser-provider success is claimed here. Apple execution and live provider/VPS verification are still unproven, and performance gates remain deferred while the host is busy. Exact VPS, owner identity and OAuth configuration are still pending. Desktop main independently advanced to `c266035` / `f5f13c9` with find-in-message; those committed changes need integration/client parity, while current uncommitted composition work remains untouched. R75 Sign in with Google and R76 grouped, scheduled Automatic replies stay in TODO.
+
+
+## Offline local Sent actions and visible reader errors — uncommitted checkpoint
+
+Flutter native mutations now let Rust inspect the current stored message under the account lock before requesting a password. Local IMAP Sent copies can be flagged, marked unread or moved without opening the device credential store, including before the message has been displayed. A server-backed message returns a typed credential requirement before any flags or move journal are changed; the frontend then obtains that account's password. The account settings are reread after acquiring the lock. Routing uses the stored remote identity rather than an old page cache or a local-looking UI ID. Missing and locked credentials still refuse server actions with rollback and a recovery instruction.
+
+The inbox and open message reader now share a persistent error banner with Retry and Dismiss controls. A failed flag/read action is visible while the reader remains open, and cached content remains usable. R76's requested TODO is also clarified as named reusable Automatic replies entries: type one message, assign searchable accounts/saved groups/Select all, and set the start/end/timezone; add a separate entry for another message/group. Scheduled replies and Google-provider OAuth R75 remain recorded requirements, not implemented features.
+
+Validation: **33 native Rust tests**, native formatting/Clippy with warnings denied, Flutter analysis and **25 Flutter host tests** pass. The shared synthetic Outbox fixture is prepared before each host/device profile opens. Host tests cover no credential reads for local edits/reopen and refusal for a server UID with a local-looking UI ID. The **expanded Android Outbox scenario** passes through actual flag/unread/archive/reopen controls, locked/missing-credential rollback, visible reader errors and dismissal; the separate Android profile-lock control also passes. The first device attempt caught an incorrect test expectation: mobile currently marks read on opening. The final test checks persisted unread state before opening and the current read transition afterward; desktop read-on-leave parity remains open. The other nine Android scenarios and Appium were not rerun for this checkpoint; their prior full-suite evidence remains separate. All **five Flutter Playwright stages**, **23 Python tests**, the **18-contract parity review check** and pinned strict documentation build pass.
+
+Reviewed final WebP captures are `artifacts/flutter/native/native-imap-local-sent-offline.webp`, `native-imap-local-sent-reopened.webp` and `native-imap-credential-recovery.webp`. The last now shows the error inside the reader with readable cached content and recovery controls. The production debug APK contains all three native Android ABIs, Internet permission and no tested fixture markers; its SHA-256 is `d69f25bfeda9741c51fa56f1e9f9b5bf8e6f7c212c37d5e34da72aa9aa879f7d`. Report: `artifacts/flutter/production-sent-offline-apk.json`. This is not a signed distribution artifact. Logs are under `artifacts/logs/sent-offline-*` plus the runner's `android-outbox-*` and `flutter-web-*`; the owned emulator and browser server were stopped.
+
+This is a partial uncommitted checkpoint in `feat/mobile-web-clients`, with no main merge/push, deployment, release or workflow enablement. Stable Sent identity and pending actions during local/server handover, logical Sent-folder grouping, browser provider Sent recovery, history cleanup and complete client parity remain active. Root/shared/backend code did not change in this continuation; no new shared-wire/live-provider or Apple evidence is claimed. VPS/owner/OAuth configuration is still pending, and performance remains deferred. Desktop Forward independently shipped in `9062dcf` / `ac515a3`; the main worktree is clean at the latest check. Its committed HTML/find/Forward changes and earlier defaults need deliberate integration and mobile/browser equivalents. Quality/release CI remains disabled until the runners are ready.
+
+
+## Native Sent handover and combined checkpoint preparation
+
+A matching acknowledged server Sent copy now adopts the untouched local copy's stable ID in one SQLite transaction. Previously issued provider IDs remain aliases for detail, reply and queued actions. Adoption checks the account, saved destination, unique Message-ID and acknowledged UID when present; ambiguous copies or edited local mail remain separate. Failures roll back provider insertion, aliases, body and search updates together. Schema version 6 migrates historical Sent-folder roles atomically, while ordinary Inbox paging retains its indexed path. Logical Sent includes configured/discovered/acknowledged folders; Undo retains the actual provider destination. Original submitted MIME is never rewritten.
+
+Local flag/read/move actions finish even when all provider slots and the account lock are occupied. They commit the local-edit marker with the change, protecting it from a later sync. A POP3 UIDL that resembles a local outgoing identity cannot mark another account's Sent record. Flutter migrates body/error caches, selection, pending field generations and Undo through the returned aliases, keeping a displayed reader usable through a held handover and late body result.
+
+Validation for this continuation: **39 native Rust tests**, native formatting/Clippy, Flutter analysis and **27 host tests** pass. The complete sequential Android runner passes **eleven integration scenarios** (three preview, six native, one actual DocumentsUI picker and one Outbox recovery), then **five Appium stages**. All **five Flutter browser stages** pass. Tests exercise transaction and migration rollback, reopen/reply aliases, ambiguous identity refusal, a queued provider action during sync, and real controls for retained readers, late bodies and pre-handover Undo. The real Rust Android Outbox flow repairs a preloaded acknowledged provider row and shows one grouped copy. Fixtures are supplied before profile opening; controls perform subsequent actions. The final POP3 ownership guard has its focused native regression test and the targeted real Android Outbox rerun also passes. Final artifact checks are recorded with the shipping evidence.
+
+Reviewed WebP captures are `artifacts/flutter/native/native-sent-handover.webp`, `sent-handover-reader.webp` and `sent-handover-undo.webp`, covering the actual Rust repair and light/dark readable controls. Logs use `artifacts/logs/sent-handover-*`. The production debug APK inspection before the final POP3 guard passed all three Android native ABIs, Internet permission and tested fixture exclusion, at SHA-256 `f8c22ee851e53317cd992d5845ff05500a671bad69602e04eecf8a2b4dc65f1d`. It is not a signed distribution artifact.
+
+The combined checkpoint also retains the earlier verified browser/gateway, native desktop extraction and delegated promo website work. The final root formatting/Clippy, **212 workspace tests**, **23 Python tests** and **18-contract parity check** pass. Previously recorded unchanged-source evidence includes **25 backend tests**, **39 browser tests**, **14 browser Playwright scenarios**, **31 Rust HTTPS browser stages**, **58 iced native functional flows**, and **61 promo-site tests** with two engine-specific clipboard skips. The final push evidence records strict documentation validation and the commit.
+
+R77 authorizes promptly publishing this partial checkpoint to the review branch, without waiting for full feature parity or merging main. Native copy labels/history cleanup, reader retention outside current list membership, browser provider Sent recovery, full composition/attachments/account lifecycle, calendar/Google/backups, encryption/bounds, current desktop HTML/find/Forward/defaults, Apple execution/distribution and complete parity remain active. R75 OAuth and R76 grouped scheduled Automatic replies remain TODOs. Live providers and VPS deployment are unverified; the exact VPS/owner/OAuth configuration is still pending. Performance measurements remain deferred on the busy host. Quality/release workflows remain disabled.
+
+
+## R77 — Combined work pushed for review
+
+Published commit [`d80f539`](https://github.com/sam-ruff/shep.so/commit/d80f539ba56c0dd9631d4305d453c841bcfe5901) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), containing the combined Flutter/browser/backend/shared-core/promo-site implementation, tests, disabled CI/release definitions and request tracking. The remote branch SHA was verified against the local commit. The commit ran the required formatting, Clippy and Rust-test hooks successfully; strict pinned Zensical validation also passed. No hook was skipped. Source and intentionally public synthetic TLS/OIDC fixtures are committed; device profiles, build reports, generated binaries, logs and credentials are excluded.
+
+After the final Sent ownership guard, the targeted Android Outbox scenario passed again through actual controls, including its independent profile-lock check. The final production debug APK builds and passes native-library/Internet/fixture exclusion inspection for all three ABIs: SHA-256 `34d213c6f124535a9fea9a2c0255ba2a011cd52974158b456bb8e663461ad5a9`, report `artifacts/flutter/production-push-apk.json`. It remains an unsigned-for-distribution development artifact and is not published as a release. The owned emulator was stopped. Push and final-check logs use `artifacts/logs/push-*`.
+
+This completes the request to push the current checkpoint; it does not complete the mobile/browser feature-parity goal. Main was not merged or changed, no VPS deployment occurred, and quality/release workflows remain disabled. Re-enable those workflows only when the trusted runners and remaining release prerequisites are ready. R67–R76 and all other incomplete requests remain in TODO; the parity matrix describes their actual scope and limits. The exact VPS, permitted Google identity and OAuth configuration are still needed for the authorized deployment.
+
+
+## Browser provider Sent recovery — verified increment
+
+Browser Outbox now checks the provider's Sent folder, saves exact server copies and repairs local state after acknowledgment. Preferences → Mail accounts has an independent Sent-copy policy/folder editor; reconnect preserves newer choices. New accounts default to Automatic, while POP3/LocalOnly keep copies on the browser and ServerManaged performs lookup only. Original nonsecret account settings and immutable MIME remain in the outgoing record. A changed incoming connection cannot repurpose an older upload.
+
+The authenticated Rust gateway adds bounded, identity-scoped Sent reservations and transient receipts through the existing pinned shared transport. The browser commits the destination, copy identity and copying marker before APPEND. Duplicate requests cannot repeat an active/acknowledged copy, unknown or expired identities cannot begin an upload, and accepted work retains admission through HTTP cancellation. Supervision records uncertainty after provider errors/panics; failed lookup never uploads. The server stores no persistent mail or passwords. Client acknowledgment persistence and local-cache repair are separate: a failed acknowledgment save retains the receipt in memory, a saved receipt repairs after reload without credentials, and neither causes another APPEND. An uncertain copy requires lookup and explicit review before a new upload reservation. A matching Sent copy retains the original uncertain SMTP history and prevents returning it as a new draft.
+
+Validation: **33 backend tests** (including eight new Sent route tests), backend formatting/Clippy, **49 browser model/provider/recovery tests**, the production browser build and **14 Playwright scenarios** pass. The explicitly selected real Rust HTTPS browser test passes **36 stages**. Its new controls save/reopen Sent preferences, observe actual IndexedDB before upload, discard an HTTP response after acknowledgment, recover after reload without credentials, and resolve a reviewed uncertain APPEND through provider lookup. The Rust fixture verifies the exact original SMTP bytes and counts exactly **two explicit APPENDs** and the unchanged **four explicit SMTP attempts**. No recovery check sends or appends again. These are object-scoped synthetic transports; the existing shared-core TLS transcripts remain the wire evidence, and no live-provider success is claimed.
+
+Light/dark Outbox and 1440×920/900×640 Sent preferences pass axe and visual review. Final WebP evidence includes `artifacts/beta-browser/provider-sent-review-light-1440.webp`, `provider-sent-review-dark-900.webp`, `provider-sent-recovered-after-reload.webp` and `provider-sent-preferences-900.webp`. A compact scrolled-card assertion initially observed layout before it settled; it now waits for the unchanged full-card containment condition, with geometric failure diagnostics. The harness clears its previous result before starting so a failed run cannot leave a stale success report. Logs use `artifacts/logs/browser-sent-*`; **23 Python tests**, the **18-contract parity check** and pinned strict Zensical validation pass.
+
+Browser local/provider Sent identity handover, logical folder grouping, copy labels/history, bounded Outbox/cache reads and complete background/error lifecycle remain active. The native Flutter and shared/root provider implementation did not change in this increment; no new Android/Apple/native-desktop execution or timing evidence is claimed. Calendar/Google/backups, current desktop HTML/find/Forward/Print/defaults, distribution and full parity remain active. R75 Sign in with Google and R76 grouped scheduled Automatic replies stay in TODO. No main merge, VPS deployment or workflow enablement occurred; exact VPS/owner/OAuth configuration is still pending. Quality/release definitions remain disabled. The following shipping evidence identifies this increment's commit.
+
+
+Browser Sent recovery shipped for review as [`d24d87a`](https://github.com/sam-ruff/shep.so/commit/d24d87a5c52adb205b8bfdc18743a49354c9c3b1) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the remote SHA matches the local commit. Required hooks pass formatting, Clippy and **212 root workspace tests** without skips. The optimized production gateway also builds and excludes the checked synthetic Sent/Google fixture markers; its inspection report is `artifacts/browser-sent-production-backend.json`. This is a review-branch increment, with no main merge, live account test, deployment or workflow enablement. The full parity goal and the remaining work above stay active.
+
+
+## Browser Sent identity handover — verified increment
+
+The browser now adopts an untouched local Sent copy and its acknowledged provider copy in one IndexedDB transaction, preserving the original client ID and aliases for previously visible provider IDs. Strict, bounded Message-ID parsing and the saved submission/account/folder/UID receipt determine eligibility; ambiguous submissions and edited or moved local copies remain separate. The outgoing journal retains the exact original MIME. A version-3 IndexedDB upgrade seeds acknowledged Sent roles from earlier records, adds a submission index and preserves existing mail/raw data. Synchronous write errors now abort the entire transaction, including earlier queued writes.
+
+Logical Sent includes configured, discovered and acknowledged physical folders. Reader selection, queued flags, newer optimistic intent and existing Undo closures follow identity adoption; Archive/Undo retains the physical server destination. The open reader also retains its cached snapshot if a complete refresh removes the list row. Short account-cache locks let local edits persist while network sync is held; server mutations re-resolve aliases after acquiring provider ownership. Separate edited-copy labels, history cleanup, bounded cache/Outbox reads and the wider lifecycle audit remain active.
+
+Validation: **57 browser tests**, the production build and **15 Playwright scenarios** pass, including the real IndexedDB migration and all-store rollback contract. **34 backend tests**, backend formatting/Clippy and the optimized gateway build pass. The real Rust HTTPS browser suite passes **40 stages** and exits cleanly: it caches a provider row before receipt repair, flags/reads that row, repairs in a reopened tab without passwords, then preserves the original tab's reader and pre-handover Undo. Actual requests verify current server UIDs and the physical Sent destination. Fixture counters establish two Sent flag operations, two Sent moves, the existing four Inbox moves, **two explicit APPENDs** and **four explicit SMTP attempts**. These fixtures exercise application and transport contracts, not live providers.
+
+Reviewed light 1440×920 and dark 900×640 screenshots show the single selected Sent row and retained reader; axe passes. Evidence is under `artifacts/beta-browser/sent-handover-*.webp` and `artifacts/logs/browser-handover-*`. The expanded two-tab test exposed proxy cleanup leaks after successful controls; the harness now closes its owned raw TLS sockets and upstream HTTP agent, and writes its success report only after cleanup. Failed cleanup runs remain in separate ignored logs; the final run passes in 11.65 seconds. **23 Python tests**, the **18-contract parity check** and pinned strict Zensical validation pass. `artifacts/browser-handover-production-backend.json` records the optimized binary hash and absence of checked synthetic fixture markers.
+
+Root/shared/native Flutter implementation is unchanged by this increment. No new Android/Apple/native-desktop execution, performance measurement or live-provider success is claimed. Full parity, current-main integration, Google OAuth R75, scheduled grouped Automatic replies R76, packaging and VPS deployment remain active. No main merge or workflow enablement occurred; quality/release definitions stay disabled, and exact VPS/owner/OAuth configuration remains pending. Shipping commit evidence follows after the authorized review-branch push.
+
+Browser Sent identity handover shipped for review as [`b132fa2`](https://github.com/sam-ruff/shep.so/commit/b132fa2fa4f622315440b4a578409623d07ef1c0) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), with the remote SHA verified. Required commit hooks passed formatting, Clippy and **212 root workspace tests**, with no skips. All current combined implementation is on that review branch. Full parity and the remaining requirements above stay active; no main merge, deployment or workflow enablement occurred.
+
+
+### 2026-09-06 — Cached incoming attachments across clients (R67/R69/R71/R73/R74)
+
+Flutter and the separate browser now save cached incoming files using one `shared/mail-content` Rust implementation. Native decoding runs after releasing the SQLite read connection; browser decoding runs as WASM in a serial worker with bounded admission. Shared fixtures establish exact binary and quoted-printable Unicode bytes, duplicate-name identities, safe suggested filenames and Content-Type name-only attachments. Shared list parsing now counts those named files. Download requests reject an old content identity when the cached bytes change. A corrupt native attachment exposes an error/reload control while preserving the readable cached body.
+
+Flutter keeps the current reader independently of the filtered/paged list and retains it through move/refresh and alias adoption. Native Save distinguishes cancellation, write failure and successful completion. Android uses the actual DocumentsUI destination picker and writes off-thread. iOS has a protected temporary-file/document-export implementation, but it has **not been compiled or executed on this Linux host**. The browser retries failed worker/WASM loading and downloads from its identity-scoped IndexedDB cache without mailbox credentials or network access after its own code is loaded. It reports “Download started,” because browser downloads do not acknowledge destination persistence to the app.
+
+Validation: **41 native Rust tests**, **30 Flutter host tests**, Flutter analysis, **59 browser tests**, the production browser build, **15 Playwright scenarios**, **34 backend tests** and gateway/native formatting/Clippy pass. The real Rust HTTPS browser suite passes **43 stages**, including blocked-WASM retry and offline saves that compare downloaded bytes. The complete dedicated Android run passes **twelve integration scenarios** and **five Appium stages**; the new scenario cancels then saves through DocumentsUI, checks the destination bytes and retains the moved reader after a failed refresh. The Flutter browser runner passes its five stages. The production Android debug APK contains all three native ABIs, Internet permission and no checked fixture markers; it is not a signed distribution release. The optimized gateway and browser assets also pass recorded synthetic-marker/hash inspection.
+
+Reviewed light 1440×920 and dark 900×640 browser captures show distinct file controls, wrapping and visible status; axe passes. Android captures show the actual cancel/save picker and retained reader with its expected credential-store error and saved-file result. Evidence is under `artifacts/beta-browser/incoming-attachments-*.webp`, `artifacts/flutter/native/`, `artifacts/logs/incoming-attachments-*`, `artifacts/logs/android-*`, `artifacts/logs/flutter-web-*` and the two `artifacts/incoming-attachments-production-*.json` reports. An initial undersized emulator had a System UI failure; the dedicated AVD was restarted with more memory and the final complete suite passed. No test threshold was weakened.
+
+The shared parity review now records **19 contracts**; **23 Python tests** include coordinated manifest/lockfile stamping for the new content crate. Quality/release definitions remain disabled. Full parity, current-main integration, large-message streaming and pre-parse deep-MIME protection, cache/reader lifecycle, Apple execution/signing, Google OAuth R75, grouped scheduled Automatic replies R76 and VPS deployment remain active. No live-provider, native-iced, Apple or performance execution is claimed by these fixtures. Deployment still needs the exact VPS and verified owner/OAuth configuration. The authorized review-branch commit/push evidence follows after required hooks and strict documentation validation.
+
+
+Incoming attachment saving and reader retention shipped for review as [`abc44dc`](https://github.com/sam-ruff/shep.so/commit/abc44dcd0d85d38e607d8ff8c30315303800a03c) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), with the remote SHA verified. Required hooks passed formatting, Clippy and **215 root/shared tests**; the two opt-in personal-account diagnostics remain intentionally ignored. Pinned strict Zensical validation passed. R77's prompt-push instruction is fulfilled for this increment; full parity and the remaining requests above stay active. No main merge, deployment or workflow enablement occurred.
+
+
+## Reviewed client account removal — verified increment
+
+Flutter and browser Preferences now review local message, draft, file and delivery counts before removing an account. Both recheck the review inside a single database transaction; new mail, draft/file edits or recovery changes require another review. Active account/provider operations are protected. Discarding unfinished delivery or move records needs explicit acknowledgment and never cancels/undoes a server operation. Removal deletes owned local data, with no provider deletion request. Native FTS and dependent records participate in rollback.
+
+SQLite schema 7 records removed identities and retryable credential cleanup jobs. Reconnect cannot reuse a removed identity, and delayed draft saves cannot recreate it. Device credential failure leaves the account removed and a visible Retry cleanup action; a fresh profile handle sees the pending job. The lifecycle FIFO covers connect/removal/cleanup across native handles. IndexedDB schema 4 checks removed identities in each write transaction, so a late tab result cannot undo deletion. Browser tombstones retain only identifiers and a random retry token, without removed mail metadata, draft text or secrets. Draft entries and retained readers clear immediately, and late mutation/save results cannot restore them.
+
+Validation: **44 native Rust tests**, native formatting/Clippy, **32 Flutter host tests**, Flutter analysis, **62 browser tests**, production browser build and **16 Playwright scenarios** pass. Actual IndexedDB tests prove stale-review refusal, rollback of mixed writes, unchanged neighboring accounts, nonblocking refusal under an occupied Web Lock, absence of removed content from tombstones and stale reconnect rejection before network calls. The Rust HTTPS browser flow passes **47 stages**, including a second-tab draft edit during review, reload/cancel, removal, immediate disappearance of drafts, stale-tab reconnect/refresh and reopening. Existing SMTP/APPEND fixture counts remain unchanged. No live-provider success is inferred.
+
+The complete Android suite passed its **twelve integration scenarios and five Appium stages**. Final draft-list cleanup was then verified by rerunning the affected native incoming/removal scenario, all host tests and the five Flutter browser stages. The Android scenario uses real Preferences and file-picker controls, cancels removal, reviews light/dark counts, removes the account with a fixture credential-store failure, verifies draft disappearance and retries cleanup. The fixture is installed before the production native profile opens. The final production debug APK builds and passes three-ABI/permission/fixture-exclusion inspection; it is not a signed distribution build. Browser production assets also pass recorded fixture-marker/hash inspection.
+
+Reviewed captures under `artifacts/beta-browser/account-removal-*.webp` and `artifacts/flutter/native/native-account-removal-*.webp` show the review, counts, cancellation/removal controls and cleanup recovery. Browser review spacing was corrected after visual inspection; light/dark 1440×920 and 900×640 axe checks pass. Logs live under `artifacts/logs/account-removal-*` and the Android/Flutter runner logs. Production reports are `artifacts/account-removal-production-{android,web}.json`. **23 Python tests**, the **20-contract parity review** and pinned strict documentation validation pass.
+
+Connection editing, wider lifecycle notifications, large-cache/streaming performance, current-main integration, full mail/calendar/Google/backup parity, Apple execution/distribution and VPS deployment remain active. Main independently advanced to d3b34e7 with HTML preparation/compact layout/interface scaling; its integration/client equivalents remain tracked. R75 OAuth and R76 scheduled grouped Automatic replies stay in TODO. No native-iced, Apple, live-provider or performance execution is claimed for this increment. Quality/release workflows remain disabled. Required hook and prompt review-branch shipping evidence follows.
+
+
+Reviewed account removal shipped as [`18bf033`](https://github.com/sam-ruff/shep.so/commit/18bf0332ec4075004d5ce3ae42eb1a3271722f77) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), with the remote commit verified. Required formatting, Clippy and all **215 root/shared tests** passed; the two opt-in personal-account diagnostics remain intentionally ignored. Final pinned strict documentation validation passed. R77's prompt-push request is fulfilled for this increment. Full parity, Apple execution and VPS deployment remain active; quality/release workflows remain disabled and main was not changed by this work.
+
+
+## Atomic native credential handover — verified prerequisite
+
+Flutter reconnect now saves a candidate incoming/SMTP pair under an independent device key. SQLite schema 8 commits the matching account settings and active key pointer together, using the existing WAL/FULL durability policy. A failed OS write or activation preserves the previous pair; a lost activation acknowledgment leaves the committed new pair usable. Stale competing candidates cannot overwrite a newer connection. Reconnect preserves the current Sent preferences, and changing them during activation requires another attempt. Removal reviews also detect an intervening credential activation.
+
+Cleanup checks current owners before returning unused keys, remains within the shared Dart lifecycle FIFO through the OS acknowledgment, and never includes the active pair. Failed cleanup remains visible and survives reopening. Removed accounts include all owned credential slots in cleanup. Only slot IDs/configuration enter SQLite; passwords remain in device storage. Incoming, mutation, SMTP and Sent-recovery requests recheck their credential binding while holding the account lock, before provider work or outgoing/move journaling. Local cache actions still avoid credential reads. Legacy accounts keep their original key until reconnect, including effective implicit SMTP STARTTLS settings. Unauthenticated SMTP requests do not read a password from a locked device store; that Flutter call contract is tested separately from delivery.
+
+Validation: **49 native Rust tests**, formatting and Clippy; **37 Flutter host tests** and clean analysis. Tests cover schema-7 migration, atomic rollback/retry, idempotent activation, restart, stale settings/candidates/removal reviews, a queued mutation across activation, provider dispatch with the current binding, stale sync/move/Send/Sent refusal, lost OS/bridge acknowledgments and a held credential write against queued cleanup. The actual Rust bridge/cache remains in the host tests; probes and failure acknowledgments use object-scoped fixtures. No live-provider success is inferred.
+
+The full Android suite passed **13 integration scenarios and five Appium stages**. After the final ownership-query refinement, the affected seven-scenario native run and the incoming/removal scenario passed again. Real password fields and reconnect/retry controls retain the old pair on a simulated activation failure, activate the new pair on retry, show a cleanup failure and clear it without deleting the active pair. The existing isolated Android device-credential roundtrip also passes. Reviewed light/dark WebP captures are `artifacts/flutter/native/native-credential-activation-failure.webp`, `native-credential-cleanup-retry.webp` and the removal captures. The cleanup action now sits beneath its text to preserve readable mobile width.
+
+All **five Flutter browser stages** pass. The production debug APK builds for all three Android ABIs and passes permission/fixture-exclusion inspection, including the new connection fixture markers; its hash is recorded in `artifacts/credential-handover-production-android.json`. This is not a signed distribution build. **23 Python tests** and the **21-contract parity review** pass. Logs are under `artifacts/logs/credential-handover-*` and the saved Android/Flutter runner logs. Required root hooks and strict documentation validation are recorded with shipping evidence below.
+
+Full connection editing and reviewed mailbox-identity migration remain open in both clients, alongside broader lifecycle, calendar/Google/backups, current-main integration, Apple execution/distribution, performance and VPS deployment. Browser remembered credentials remain separate work. R75 Sign in with Google and R76 scheduled grouped Automatic replies remain TODOs. No desktop-iced, Apple, live-provider or performance run is claimed for this increment. Quality/release workflows remain disabled.
+
+
+Atomic native credential handover is committed and pushed as [`b9a0102`](https://github.com/sam-ruff/shep.so/commit/b9a0102397778444745a4afee8578284fea78748) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), with the remote SHA verified. Required formatting/Clippy hooks and **215 root/shared tests** pass; two opt-in personal-account diagnostics remain intentionally ignored. Pinned strict documentation validation passes. The owned Android emulator was stopped after verification. R77's prompt review-branch push is fulfilled for this increment; full parity remains active. Main, deployment and quality/release workflow enablement are unchanged.
+
+
+## Find in displayed client mail — verified text controls
+
+Flutter/native Rust and the separate browser share the desktop literal Unicode/whitespace search contract. Matches retain original UTF-16 offsets, case matching, counts, next/previous wrapping and visible highlights. Searches include expanded quoted text and exclude hidden history. One pending request coalesces newer edits; old query, message, quote, case and error results cannot restore obsolete hits. Native search has a separate blocking permit, and the browser preloads a dedicated Rust WASM worker for cached searches while offline.
+
+Both readers retain selectable text. Native controls reveal the entire active line with surrounding space and inherit Shep's Noto Sans theme. Browser Find supports input-safe shortcuts, remapping/disable, focus retention and worker failure/Retry. New shortcut defaults leave existing custom bindings intact. Browser-history suspension retains the Find model instead of disposing a page that can resume. Full HTML Find and large-text bounds remain separate work.
+
+Validation passes **50 native Rust tests**, native/root/backend Clippy, **41 Flutter host tests** and clean analysis, **65 browser unit tests**, **19 Playwright scenarios**, **34 backend tests** and the **48-stage real Rust HTTPS browser flow**. Shared cases exercise Unicode folding, wrapped whitespace, literal metacharacters and astral offsets. Native search also passes with every provider slot occupied; the actual FFI test verifies zero credential reads. HTTPS controls search cached MIME while networking is disabled and retain the existing exact-file and SMTP/APPEND fixture checks. These are synthetic protocol and control results, not live mail or Google verification.
+
+The **13 Android integration scenarios** have passing runs; affected incoming/Find and Outbox flows were rerun after reader and assertion updates. **Six Appium stages** also pass, including dark Find with the real keyboard. The shared host/native scenario tests case, wrapping, quotes, full-hit visibility, native selection and Copy. It keeps the fixture keychain locked while foreground polling can resume after DocumentsUI; unrelated poll reads are distinct from the zero-read FFI search contract. One emulator System UI interruption was recovered with Wait, followed by successful reruns. The picker supervisor now stops its owned driver after helper failure, and Python checks ensure it never dismisses an application failure as System UI.
+
+Reviewed captures include `artifacts/flutter/native/native-find-{tail,quoted}.webp`, `find-dark.webp` and `artifacts/web/find-{light-1440,dark-900}.webp`. Browser light/dark compact axe checks pass. The scroll assertion was strengthened after reviewing an edge-aligned native highlight. **26 Python tests**, the **22-contract parity review** and pinned strict documentation validation pass; final production-artifact and shipping evidence follows below. Logs remain under `artifacts/logs/`.
+
+Full HTML, large-text layout/search, complete mobile keymaps, current-main integration, complete mail/calendar/Google/backup parity, Apple execution/distribution, final performance and VPS deployment remain active. Main independently added Linux unread dock badges in `90776fa` / `3c7acc6`; preserve that work during integration. R75 Sign in with Google and R76 scheduled grouped Automatic replies remain TODOs. No iced, Apple, live-provider or performance execution is claimed for this increment. Quality/release workflows remain disabled.
+
+The production debug APK builds and passes all three Android ABI, Internet-permission and fixture-exclusion checks, including the Find sentinel. It is not a signed distribution build. Production browser assets also pass fixture-marker and SHA-256 inspection. Reports are `artifacts/message-find-production-{android,web}.json`. The owned Android emulator was stopped after verification.
+
+All **six Flutter browser stages** now pass, including dark Find and case controls. The saved Playwright helper reads Flutter's merged input accessibility labels as well as ordinary semantics/live regions; screenshots independently verify the visible match count and highlight. Final host analysis and all 41 host tests pass with the strengthened full-hit visibility check. The production artifact reports, 26 Python tests, 22-contract parity registry and strict documentation build are complete. Required commit-hook and prompt review-branch shipping evidence follows.
+
+
+Client Find is committed and pushed as [`50eab04`](https://github.com/sam-ruff/shep.so/commit/50eab047b3b9986b29c94b1810076e5c819b3f8a) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), with the remote SHA verified. Required formatting/Clippy hooks and **217 root/shared tests** pass; two opt-in personal-account diagnostics remain intentionally ignored. Pinned strict documentation validation passes. R77's prompt review-branch push is fulfilled for this increment. Full parity, Apple execution and VPS deployment remain active, and R75/R76 remain in TODO. Main and the disabled quality/release workflows were not changed by this work.
+
+
+## Shared MIME representation selection — verified reader prerequisite
+
+Cache ingestion and replies now select supported MIME alternatives once, prefer the last nonempty plain/HTML choice, honor multipart/related roots and detect complete mislabeled or once-escaped XHTML. Mixed HTML sections retain separate Content-ID scopes; inner resources shadow outer ones and ambiguous duplicate IDs stay unresolved. Selected inline payloads are stored once by digest. Named inline images no longer become downloadable attachments unless explicitly attached. Cache text and attachment counts do not decode optional files/images, so damaged attachments preserve readable native cache text while explicit saves still fail visibly. The root reader retains its existing legacy attachment byte API pending current-main integration.
+
+Untrusted incoming MIME passes an iterative nesting preflight before pinned mailparse 0.16.1 recursion. Tests reject 4,096 MIME levels on a small native stack and in WASM, compare accepted boundary behavior with that parser and keep the WASM instance usable after refusal. HTML text fallback also traverses iteratively; 4,096 HTML levels and 1,000 sections sharing one payload have regression tests. The 25 MiB limit remains. This is **not formatted HTML rendering**: RawHtmlPart and the low-level WASM message_body result are untrusted sender data. Resource confinement, sanitization, WebView/frame rendering, HTML Find/selection, image policy and broader parity remain open.
+
+Validation passes **225 root/shared tests** (two personal-account diagnostics intentionally ignored), **51 native Rust tests**, **41 Flutter host tests**, **67 browser unit tests**, **19 Playwright scenarios**, **34 backend tests** and the **48-stage real Rust HTTPS browser flow**. Root/native/backend formatting and Clippy pass, as does Flutter analysis. Fourteen shared representation fixtures run in native Rust and WASM; native cached-detail tests run with provider capacity occupied. The changed incoming Android scenario passes actual DocumentsUI cancellation/exact saving, reader retention, Find/Copy and removal/cleanup. **Six Appium stages** and **six Flutter browser stages** pass. Other Android integration scenarios were not rerun for this increment; Apple/live-provider execution remains open.
+
+The iced functional suite was run twice: **57/58 each time**, with different intermittent input misses during concurrent builds. Both failing scenarios pass unchanged in isolation. A first-frame settling interval now precedes the initial narrow divider drag, and that flow passes in the second full run. Rapid Archive/Delete shortcut reproducibility remains explicitly active in TODO; neither full run is represented as a clean pass. Performance measurements remain deferred. Flutter browser automation also exposed an inactive semantics input after Match case; the saved scenario now clicks the painted field and sends actual keyboard events. Its final rerun passes; original failure evidence is retained. No thresholds or assertions were weakened.
+
+Reviewed synthetic screenshots show the selected text, three real file controls and readable native/browser/iced layouts, including dark 900×640 browser and Appium Find. Evidence is under `artifacts/logs/mime-selection-*`, `artifacts/e2e/`, `artifacts/beta-browser/incoming-attachments-*.webp` and `artifacts/flutter/`. The production debug APK passes three-ABI, permission and fixture-exclusion inspection; eleven production browser files pass fixture-marker/hash checks. The optimized Rust gateway also builds and passes recorded fixture-marker/hash inspection. These are development artifacts, not signed distribution builds. **26 Python tests**, the **23-contract parity review** and pinned strict documentation validation pass. Flutter's build hook explicitly watches both shared manifests.
+
+R75 Google OAuth, R76 scheduled grouped Automatic replies, full HTML/client parity, current-main integration and VPS deployment remain active. Main independently added bounded selection groundwork in 0833456 / 2e50d50. Quality/release definitions stay disabled. Prompt review-branch shipping evidence follows after the required hooks; no main merge or deployment is included.
+
+
+Shared MIME selection and nesting protection shipped for review as [`4226f57`](https://github.com/sam-ruff/shep.so/commit/4226f577fd38f5d2e3bd353d5b15a4ab8ab36eec) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the remote SHA was verified. Required formatting/Clippy hooks and all **225 root/shared tests** pass, with two opt-in personal-account diagnostics intentionally ignored. Pinned strict documentation validation passes. The dedicated Android emulator is stopped and logs/screenshots remain under ignored artifacts. The full-run iced input limitations above remain active; R77's prompt review-branch push is fulfilled for this increment. Full parity, R75/R76, current-main integration and VPS deployment remain open. Main and disabled quality/release definitions were not changed by this work.
+
+
+### Confined browser HTML — review-branch increment
+
+Cached browser mail now retains authored HTML tables, CSS, backgrounds and bounded inline images. Shared Rust preparation sanitizes active content, tokenizes CSS resource references, converts inline images to deduplicated WebP and inventories blocked remote images. Preparation runs in an independent, cancellable browser worker. The hosted app keeps its opaque sandboxed frame mounted through control updates, preserving selection/Copy, scroll position, shared Unicode Find across inline spans, quoted-history policy and plain-text choice. Next/previous reveals the message; a compact full-reader grid regression is corrected. External links expose an address review with real Open/Copy controls. Failed preparation or a mismatched containing CSP has visible plain-text fallback and Retry.
+
+The frame permits only the exact fixed display runtime, bounded blob images and local styles. Sender scripts/forms/frames and automatic network resources are removed; the opaque origin cannot read the containing app. The gateway includes the same runtime hash because a srcdoc document inherits its parent's CSP. Build/deploy the web app and gateway from the same source revision.
+
+Verification: four shared Rust document tests cover authored layout, CSS escapes/raw-text boundaries, resource inventory, case-insensitive CID/data schemes and deduplicated conversion/error reporting. The browser has **69 unit tests** and **26 Playwright scenarios**, including seven new formatted-reader flows: actual Copy/paste, cross-span Find, quote visibility, next/previous, resize/flag updates, plain choice, hostile mail isolation, reviewed links, failed/obsolete workers, old-browser highlight fallback and mismatched-CSP recovery. The real Rust HTTPS beta flow passes **49 stages**, including the added formatted/CSP/worker-retry stage; all **34 gateway tests** pass. The native Rust bridge's **51 host tests** and root/native/gateway Clippy checks pass. All **26 Python tests** pass and the parity registry validates **24 contracts**. Pinned strict Zensical validation passes. The optimized Rust gateway and all **12 production browser files** pass fixture-marker exclusion and SHA-256 inspection, recorded in `artifacts/html-production-backend.json` and `artifacts/html-production-web.json`. Final hook/shipping evidence follows below.
+
+Reviewed synthetic WebP captures under `artifacts/web/` show the retained authored dark notification in light 1440×920 and dark 900×640 Shep controls, with visible Find highlights and usable full width. Logs use `artifacts/logs/html-*`; runtime tests use no personal accounts, tokens or live mail. The earlier iced 57/58 failures and their isolated passes remain recorded; this increment does not rerun or claim a clean iced suite. No Android/iOS HTML control execution is claimed.
+
+Remaining R38/R44/R67/R71 work: Flutter native WebView integration and Android/Apple execution, remote-image preferences/exceptions/loading, reading anchors during remote-image reflow, large-document streaming/layout bounds and full current-desktop integration. Existing 25 MiB MIME/128-level nesting limits remain; inline images currently allow dimensions up to 2048×2048 and at most 32 MiB of aggregate decoded pixels. The complete product, R75 Sign in with Google, R76 grouped Automatic replies and VPS deployment remain active. Work stays on the review branch; main and disabled quality/release definitions are unchanged.
+
+
+### Confined HTML shipping checkpoint
+
+Browser HTML rendering shipped for review as [`a9b07e2`](https://github.com/sam-ruff/shep.so/commit/a9b07e25769e4ba1424bc7016f1f66487635f9e7) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the remote SHA was verified. Required formatting/Clippy hooks and **229 root/shared tests** pass, with two opt-in personal-account diagnostics intentionally ignored. Evidence includes **69 browser unit tests, 26 Playwright scenarios, 49 Rust HTTPS stages, 34 gateway tests, 51 native Rust host tests, 26 Python tests**, strict pinned documentation validation, 24 parity contracts and inspected production artifacts. Synthetic initial-reader and Find WebPs were reviewed in light 1440×920 and dark 900×640 layouts. Logs/artifacts remain ignored. R77's prompt review-branch push is fulfilled for this increment. Flutter HTML/device execution, remote-image policy, full parity, R75/R76 and VPS deployment remain open; main and disabled quality/release definitions remain unchanged. Re-enable quality/release only when the trusted runners and release prerequisites are ready.
+
+
+### Flutter confined HTML reader — review-branch increment
+
+Flutter now prepares the shared sanitized document through two bounded native Rust slots, independent of provider work and Find. The cached alias is resolved before preparation, and a saturated renderer leaves plain text, Find and retry available. A persistent Android WebView/iOS WKWebView retains the document through flag updates, Find, quote visibility and plain-text switching. Generation/layout checks reject late events, commands coalesce, and disposal releases converted inline blob resources. Navigation, device file/content access and permission grants are denied. Reviewed external links open through the system handler. iOS now targets 14.0 for WebP; Apple execution remains open.
+
+Actual Android integration exercises the production FFI/SQLite preparation and Rust Find with locked fixture credentials: authored table/CSS and inline image observations, cross-span matches, quote counts, next/previous, scroll retention through flag updates, plain choice and damaged-message Retry. Native Appium passes **five stages**, including real selection-menu Copy and Paste, Find/quotes/plain choice, link review/address Copy and dark mode. It runs the ordinary Flutter binding with a test-only shared Rust-prepared document; it is separate from the production-bridge integration. **Nine Flutter browser stages** pass using the same prepared fixture, plus the existing **six browser stages**. Tests caught and corrected cross-origin window comparison, Find accessibility covering the frame, and retained quote visibility when switching to plain text. Native floating toolbar inspection uses all interactive windows and actual native controls. The integration helper captures the Android screen because the screenshot converter cannot reliably capture a mounted hybrid WebView; failed diagnostic logs remain under ignored artifacts.
+
+Validation passes **229 root/shared tests** (two opt-in personal-account diagnostics intentionally ignored), **52 native Rust tests**, **43 Flutter host tests**, **69 browser unit tests**, **26 separate-browser Playwright scenarios**, **34 gateway tests**, **49 actual Rust HTTPS stages** and **26 Python tests**. Flutter analysis and root/native/gateway formatting/Clippy pass. The production APK contains all three native architectures and excludes the new fixture markers; twelve production browser files and the optimized gateway pass fixture exclusion/hash inspection. These development artifacts are not signed distribution releases. The 24-contract parity registry and pinned strict documentation build pass. The existing Android incoming-file scenario also passes actual save/cancel/exact bytes, retained reader, plain-text Find and account removal/cleanup after this reader change. Other Android integration scenarios and the six general Appium stages were not rerun for this increment. Final shipping evidence follows below.
+
+Reviewed synthetic WebP captures under `artifacts/flutter/native/picker/`, `artifacts/flutter/native/formatted-appium/` and `artifacts/flutter/web-formatted/` show the authored message, visible Find matches, quote/plain controls, real Copy selection and readable fallback, including dark mode. No personal accounts, credentials or live provider verification are involved. Earlier iced 57/58 limitations remain recorded; no iced suite or performance measurement is claimed for this increment. Full remote-image policy, large-document/layout bounds, Apple execution, hardware keymap parity and current-main integration remain open, as do R75/R76 and VPS configuration/deployment. Main independently shipped bulk selection/durable Undo in `af056a9` / `10d8569`; those changes need deliberate integration. Quality/release definitions remain disabled and now include the new saved scenarios.
+
+
+### Flutter reader shipping checkpoint
+
+The Flutter formatted-reader increment shipped for review as [`6e8475f`](https://github.com/sam-ruff/shep.so/commit/6e8475f4470534fd4d16836c8a9efefa8915f1f6) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the remote SHA was verified. Required formatting/Clippy hooks and all **229 root/shared tests** pass, with two personal-account diagnostics intentionally ignored. The platform/browser/protocol evidence, production artifact inspection and remaining limits are recorded above. Pinned strict documentation validation passes. R77's prompt push is fulfilled for this increment; full parity, Apple execution, R75/R76 and VPS deployment remain active. The owned emulator is stopped, artifacts remain ignored, and main was not merged or modified by this work. Quality/release definitions remain disabled; re-enable them when trusted runners and release prerequisites are ready.
+
+## Imported desktop main history through 10d8569
+
+The following records describe the independent desktop main worktree at their cited commits. They do not establish verification of this merged client branch. Desktop request IDs R67–R71 here are main's numbers (written as `desktop-main:RNN` in older client notes); the client branch's own R67 to R80 are different requests, as stated once in [the request audit](REQUEST_AUDIT.md).
+
 ## Frequent background mail and independent refresh
 
 Mail checks now start after the cached workspace opens and repeat every 15 seconds by default. Existing saved minute-based preferences gain the new default automatically; General preferences accepts 5–3600 seconds and stores it across restarts. Calendar scheduling retains its separate cadence. Each completed account check flushes cached changes without waiting for a slower account.
@@ -3548,3 +3857,1761 @@ source/testing head **f1a6a63e18992e13f9655a61f47226b8da8944c3**.
 SFTP checkpoint `ff03b02` has green documentation CI **34359867454**.
 
 Folder checkpoint `97c9a9a` has green documentation CI **34360832298**.
+
+## Client branch history from the desktop integration onward
+
+The following entries were written on `feat/mobile-web-clients`, in their original order, and end at the merge entry. Their desktop discovery/publication/enrollment/reconciliation sections describe the client branch's own desktop implementation, which main's implementation replaced at the merge.
+
+## Client worktree integration of committed desktop main
+
+The review worktree integrates desktop main through `10d8569` (33 commits) while preserving the client work under `flutter/`, `web/`, `website/` and `backend/`. The separate main worktree's uncommitted selection/mutation work is untouched. Imported main evidence above describes its original commits; the following checks exercise the merged source.
+
+Mail protocols remain in `shared/mail-core`, including pinned/routed gateway connections, acknowledged move recovery and exact SMTP identities. Desktop render payloads extend the shared detail type without introducing iced or storage dependencies into the transport crate. Forward formatting metadata and MIME assembly are shared; `build_with_message_id` and browser reply contracts survive the merge. The desktop renderer and printing now consume shared MIME representation selection. A single-document adapter rebinds CID references before combining related sections, handles CSS URL tokens and each section's base URL, and leaves ambiguous references unresolved. It does not sanitize HTML itself; native rendering and print confinement remain responsible for that boundary. Tests cover independent/ambiguous CID scopes, CSS references, mixed text and section bases, retained forward files/formatting and rejection of damaged forward resources without a partial draft. Readable cached text remains available when an optional inline resource is damaged.
+
+The merged source passes formatting/Clippy and **372 root/shared Rust tests**, with two opt-in personal-account diagnostics intentionally ignored; **52 native bridge tests**, **34 gateway tests**, **43 Flutter host tests**, **69 browser unit tests**, **26 browser Playwright scenarios**, **49 actual Rust HTTPS stages**, **39 Python tests** and **27 parity review contracts** also pass. Both Flutter browser paths pass: nine formatted-reader stages and six standard stages. The first standard Flutter browser runner terminated with exit status 143 before its result; the unchanged rerun passed. The complete iced functional run passes **116/116** in one run. This does not erase the earlier two 57/58-run limitations recorded above or establish final timing budgets.
+
+The optimized Linux production archive passed checksum verification, extraction and the bundled installer in temporary directories. No personal desktop installation was replaced. Reviewed native captures include immediate archive/group Undo, compact per-message failures, Find's final visible match, styled HTML and its inline image in dark compact mode, forwarded attachments, the actual print dialog and a browser-created styled PDF. Full header, reflow, selection, native printing and other saved scenarios remain in the suite. Evidence is under ignored `artifacts/logs/desktop-integration-*` and `artifacts/e2e/`.
+
+The first full Android run passed swipe, native account/draft and composition scenarios, then its incoming picker helper acted on an old DocumentsUI dump and stalled. The failure log and screenshot are preserved. Helpers now remove the previous dump before observing, reject empty/malformed observations and wait for an explicit first-save intent. A regression reproduces a successful dump command that writes nothing, then recovery with current controls. The next full run passed through incoming save/Find/removal, then the formatted-reader assertion observed Flutter’s Find count before the native WebView applied its highlights. The test now awaits the actual read-only DOM highlight/scroll observations with the existing bounded deadline. Its failed log is preserved. The older Outbox handover assertion also expected a plain text widget despite the current editable/selectable reader. It now uses the same read-only body observation as the preceding Sent assertion, allowing MIME terminal whitespace. The native repository test still checks exact stored body text. Targeted completion and final shipping evidence follow below.
+
+Mobile/browser Forward/Print, selection/bulk, current read-on-leave/toast defaults, remote-image policies/anchors, OS badges/background lifecycle and the broader provider/calendar/backup gaps remain active. Apple execution, live providers, final idle-host performance and VPS deployment are unverified. R75 Google provider sign-in and R76 scheduled grouped Automatic replies remain TODOs. This integration ships only to the authorized client review branch; quality/release workflows stay disabled.
+
+
+### Android integration completion
+
+All **14 Android integration scenarios** are verified across the full runs and targeted reruns after the automation corrections, with **five formatted-reader Appium stages** and **six standard Appium stages** passing. This is not a claim of a single uninterrupted green Android wrapper run. Actual controls cover swipe/remapping/Undo, native profiles and secure-storage roundtrip, drafts and credential handover, real attachment selection/save/cancel, cached reader/Find/removal, formatted HTML/Copy/links, durable Outbox/local/provider Sent recovery and independent-process lock exclusion. The formatted and Outbox reruns pass after awaiting the native render result and observing the current selectable body. Current light/dark captures were regenerated from this run's PNGs and reviewed, including native selection, visible Find highlights, account removal and Sent handover. Production APK inspection and the prompt review-branch shipping commit are recorded below.
+
+
+The production Android APK contains all three Rust ABI libraries, has Internet permission and excludes fixture markers; its SHA-256 is `4ae8c6141583c4b8e3fb95d2b6c30af3dc7c1b077234234e0efda0545437f4a4`. It is a development-signed build, not a store-ready signed release. The Linux production binary SHA-256 is `2cf7a67aced01eaf394bd4f41f9f531532469d95dd2c7d5a20e67171adf0cd64`; archive `3d9176fc540ff7df49459e6ea37d9a1853c25374e4cf77e9acb599729a7ea30f` passed the bundled installer verification. Final Flutter analysis and pinned strict documentation validation pass. No client feature is marked complete solely by this integration, and no personal installation or VPS deployment is included. The merge commit and verified remote push follow in the shipping record.
+
+
+### Desktop integration shipping record
+
+Committed and pushed as [`72ca625`](https://github.com/sam-ruff/shep.so/commit/72ca625961bee619747e98110adcd2dfe22eb8c0) on [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), with the remote SHA verified. Required hooks passed formatting, Clippy and all **372 root/shared tests**; two personal-account diagnostics remain intentionally ignored. The tests, production artifacts, native visual review and corrected Android automation are recorded above. R77’s prompt-push request is fulfilled for this increment. The dedicated emulator is stopped, artifacts remain ignored, and the separate main worktree and personal installation were not changed. Full parity, Apple execution, R75/R76 and VPS deployment remain active. Quality/release definitions remain disabled; re-enable them when trusted runners and release prerequisites are ready.
+
+
+## Shared complete-source Forward preparation
+
+Forward preparation now lives in `shared/mail-content`, callable by native Rust and browser WASM workers. The desktop delegates to a shared-core wrapper that assigns independent draft/file identities and leaves recipients and reply-thread headers empty. Complete source text, retained HTML/styles and exact attachment/inline bytes share one selector. Editing the original quotation switches outgoing MIME to the edited plain text and keeps inline images as ordinary files; a note above the intact quote retains formatting. Existing root transactional draft tests still cover reopen, failure rollback and damaged resources without partial drafts.
+
+Attachment metadata comes from its actual MIME part. Duplicate names and identical bytes no longer inherit another file's media type; explicit attachments cannot supply an inline image's type. Suggested names use the shared path-safe filename policy. Native/WASM fixtures also cover independent and ambiguous CID scopes, alternative selection, exact binary bytes and malformed-resource recovery. Count, byte and pre-parse nesting limits remain unchanged; this does not fulfill streaming/large-mail work. WASM owns the prepared files separately from metadata JSON and exposes exact byte copies; callers must free the result and atomically persist the new draft with all files. Retained outgoing HTML is not a safe display document.
+
+The browser passes **71 unit tests**, **26 Playwright scenarios** and **49 actual Rust HTTPS stages**. The native bridge passes **52 Rust tests** and Clippy; the gateway passes **34 tests** and Clippy, with the separately invoked HTTPS test accounting for its ignored browser harness. Python reports **39 passing tests** and the parity checker validates **27 contracts**. Shared core tests verify new draft/file ownership, a reserved SMTP Message-ID, complete MIME roundtrip and edited-quote fallback. All five existing desktop Forward flows pass. Reviewed current captures include `artifacts/e2e/e9d894c86f1b/forward-composer-files.webp`, `4739ff2b1a87/forward-dark-compact.webp` and `106c4f7fbcfe/forward-pending-preserves-editor.webp`; attachments, blank-recipient recovery and independent editors remain usable. Full-suite, packaging and shipping results follow below. Logs are under ignored `artifacts/logs/shared-forward-*`.
+
+This increment does not add Flutter/browser Forward controls. Their atomic draft/file storage, quote metadata through autosave, inline identities through native persistence/Outbox and gateway attachment payloads, and actual control/device execution remain in TODO. Apple/live-provider/final performance evidence, broader parity, R75/R76 and VPS configuration remain open. Current work ships only to the review branch; no personal installation, main merge or VPS deployment is included. Quality/release workflows remain disabled.
+
+
+The complete desktop functional run passes **116/116** in one run (409.421 seconds), including Forward, HTML/Find, Print, selection/bulk, read-on-leave, account/settings and recovery regressions. Shared-content Clippy also passes for the actual WASM target with warnings denied. The inspected production browser WASM has SHA-256 `645ad52b01117b03bebdcdc49e7237f63105d78b81be001fbee81d2ad5c6f19f`; the build excludes the new synthetic message/file markers. No Android or Apple UI execution is claimed for this preparation-only increment. Optimized Linux packaging and final hook/shipping evidence follow.
+
+
+The optimized Linux archive passed SHA-256 verification, extraction and the bundled installer in temporary directories. Binary SHA-256: `93fca421da12c47c97efd699b1ee30bfae31eb229167c007287d1bca6fbda821`; archive: `e4eb45879046c0522aed8bc0eabf97d4e8b494a5511589d0d8ec62196094986c`. New fixture markers are absent. No personal desktop installation was replaced. Pinned strict documentation validation and the required commit hooks precede review-branch shipping.
+
+
+### Shared Forward preparation shipping record
+
+Committed and pushed as [`64d4936`](https://github.com/sam-ruff/shep.so/commit/64d493605a14f6a7c44e627be1d5423cc3f01772) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **377 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. The complete 116-flow native run, shared native/WASM fixtures, browser/HTTPS regressions, native bridge/gateway tests, reviewed screenshots and production package checks are recorded in the completion log. Artifacts stay ignored and the temporary target symlink is removed. R77's prompt push is fulfilled for this increment. Full parity, Flutter/browser Forward controls and durable metadata, Apple/live verification, R75/R76 and VPS deployment remain open. Quality/release workflows remain disabled; re-enable them when trusted runners and release prerequisites are ready.
+
+
+## Native Flutter and browser Forward controls
+
+Both clients now prepare a Forward from complete cached MIME on independent background capacity. They atomically save a new draft and all exact file bytes, with blank recipients and no reply-thread headers. A retained quotation keeps authored HTML and inline Content-IDs through autosave, restart and reviewed Outbox recovery; editing the quotation uses the shared plain-text fallback. Preparation uses two slots independently of provider/reader work. A failed or lost acknowledgment retries the same draft identity without overwriting edits, removed files or protected delivery/discard state. A late completion remains in Drafts and leaves a newer editor or reader open. Browser Forward is remappable, clearable and inactive in text fields.
+
+Native cache version 9 adds inline-file and Forward-origin tables without changing existing file rows. One transaction owns draft creation and all files; tests inject a failed inline insert, account removal and response loss. Text saves retain backend-owned quotation/file metadata. Outbox return clones file identities and preserves Content-IDs. The gateway accepts inline identities through its attachment contract and tests retained HTML/exact binary MIME, a reserved Message-ID and refusal of Content-ID header injection before any transport call.
+
+The native bridge passes **57 Rust tests** and Clippy; the gateway passes **35 tests** and Clippy, plus the separately selected real HTTPS browser harness. Flutter analysis and **44 host tests** pass. The browser passes **74 unit tests**, **30 Playwright scenarios** in one complete run, and **50 real Rust HTTPS stages**, including production Forward worker/CSP and saved-draft reopening. Python reports **39 passing tests**, and the parity checker validates **27 contracts**. The Android Forward scenario passes against actual FFI/SQLite, including restart, missing-credential Send refusal, damaged source, text beyond the cached preview and a held preparation while editing another draft. Composition/Outbox/Appium regressions and final production artifact results follow below.
+
+The initial browser scenario had a Node JSON-import error and incorrect labels/fixture-text expectations. A full run then exposed an observation racing optimistic file removal; it now awaits enabled controls before comparing persisted files. The HTTPS scenario now waits for Save to close the editor before reloading. Android retries exposed an offscreen field observation and a remove-file click under the toolbar after the native keyboard appeared. The saved scenario now dismisses the keyboard through actual Android Back input, observes its closure, centers the file control and verifies hit testing before clicking. Failed logs remain under ignored `artifacts/logs/client-forward-*`; failed browser traces are retained under `artifacts/web/forward-failed-*`. No test budget or production failure guard was weakened.
+
+Current light/dark composer, retry and independent-editor captures are reviewed under `artifacts/flutter/native/forward/`, `artifacts/web/forward-*` and `artifacts/beta-browser/forward-real-https-reopened.png`. The mobile title was shortened to Forward after the first capture showed truncation. Composer accessibility is tested on the active modal. The sender-authored purple-on-white HTML fixture exposed an existing lost legacy body-background/dark-contrast issue; it is explicitly retained in R38, separate from the new composer checks. Full visual/reader lifecycle parity is not claimed.
+
+Apple execution, live providers, final idle-host performance, Print, full composition/multiple editors and the broader parity backlog remain open. R75 Google provider sign-in and R76 grouped scheduled Automatic replies remain TODOs. VPS installation still needs the actual target and owner/OAuth configuration. This increment ships only to the authorized client review branch; no personal desktop installation or main merge is included. Quality/release workflow definitions remain disabled.
+
+
+The targeted Android attachment-composition and Outbox regressions pass, followed by all **six standard native Appium stages**. This turn reruns those three integration scenarios (Forward, attachments, Outbox), not the full Android wrapper or Apple simulator. Final Flutter analysis and all **44 host tests** pass. The production Android APK includes all three native ABI libraries, Internet permission and no fixture markers; SHA-256 is `8338f59a7f992fc60a7f6545749cc1d614e3a3498318d64df54e5a10001be783`. It is development-signed, not a store-ready release. The optimized Rust gateway builds successfully (SHA-256 `51fee2f9f03af892be8916018bd36e1ed981074a667f8d98c68a8a588742159b`). The inspected production browser build excludes fixture markers; its shared WASM hash remains `645ad52b01117b03bebdcdc49e7237f63105d78b81be001fbee81d2ad5c6f19f`. Pinned strict documentation validation passes. Root iced behavior and shared preparation are unchanged from the previously verified 116-flow/optimized-package checkpoint; that full native suite is not rerun for this client-control increment. Required hooks and exact remote shipping evidence follow.
+
+
+### Client Forward shipping record
+
+Committed and pushed as [`21ca299`](https://github.com/sam-ruff/shep.so/commit/21ca299907ef943aa4046166a3c934e15b4779b3) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), with the exact remote SHA verified. Required hooks passed formatting, Clippy and **377 root/shared Rust tests**; two personal-account diagnostics remain intentionally ignored. Client native/protocol/browser/HTTPS tests, reviewed captures, corrected automation and production artifact inspection are recorded in the completion log. The dedicated emulator is stopped and artifacts remain ignored. R77's prompt push is fulfilled for this increment. Main and the personal desktop installation were not changed. Full parity, Apple/live/performance evidence, R75/R76 and VPS deployment remain active. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+## Client complete-source printing
+
+Flutter and the separate browser now expose Print from the reader. Shared Rust/native/WASM preparation uses the complete cached physical message (including aliases), the chosen Formatted/Plain representation, full quoted history, Subject/From/To/Cc/Date and attachment names. Bcc and reply-thread headers are excluded. The resource sanitizer retains bounded inline WebP images without fetching remote content. Native preparation has two independent slots; the browser owns at most two independent previews/workers. Navigation and a newer composer remain usable while the original source prepares. Errors offer retry/plain-text recovery; no dialog launch or cancellation is reported as a print receipt.
+
+Android retains an owned, confined WebView until its native print adapter finishes. The saved Flutter/ADB scenario opens the actual system dialog, cancels, retries, selects Save as PDF and uses DocumentsUI to save formatted and long mail. The resulting ten-page long PDF contains the complete source ending. The formatted PDF was reviewed for readable headers, retained filenames, the authored purple text/white background and inline Shepherd image. Browser printing uses a separate protected preview with an opaque sandbox and only its fixed CSP-hashed runtime. Actual Chromium `window.print()` output is paginated and retains the same source content. The UIKit adapter is added with ephemeral WKWebView and native printing, but has not been compiled or executed on Apple hardware.
+
+Verification: **381 root/shared Rust tests**, **58 native bridge tests**, **35 gateway tests**, **51 real Rust HTTPS stages**, **46 Flutter host tests**, **75 browser unit tests**, **39 Python tests** and **27 parity contracts** pass. The browser has **35 passing scenarios across the full and targeted runs**: the final full run passed 34/35 and failed only when exporting the already-validated PDFs because a test helper import was missing; the corrected PDF scenario passes. Earlier selector errors and the export failure remain in the logs. The original 33-scenario full run and both added pending/remapping scenarios also passed. The actual HTTPS flow verifies anonymous print-page denial, authenticated source display, production worker and containing CSP. Formatting, Clippy, final analysis, production artifacts and shipping evidence follow below.
+
+The Android printer helper initially stopped at an unselected printer destination; it now explicitly selects Save as PDF. Its corrected full saved scenario passes, including an acknowledged completion handshake before fixture cleanup. **Six standard native Appium stages** pass afterward. Android captures and PDFs are under ignored `artifacts/flutter/native/print/`; browser PDFs are retained in `artifacts/web/print-output/`, with light/dark compact and HTTPS captures beside the existing evidence. These were visually reviewed. Build/test logs are under `artifacts/logs/client-print-*` and the saved `android-print-*` logs. Root iced presentation/provider behavior is unchanged; the prior 116-flow desktop run remains its latest native-control evidence, rather than claiming a new desktop UI run for these client controls.
+
+The shared reader now respects legacy body background/text attributes instead of overwriting a white message background with the dark app theme; unspecified text on that authored background defaults to dark ink. Shared contracts and an actual dark browser reader check cover this correction. The wider R38 contrast/remote-image and native/Apple audit remains open.
+
+Remaining Print parity includes Apple and other browser engines, native keymap configuration, policy-permitted cached remote images, large-document/lifecycle and final idle-host performance. Existing 25 MiB incoming and bounded resource limits remain. Full composition, selection/bulk, calendar/Google/backups and the rest of the product backlog remain active. R75 Google provider sign-in and R76 grouped scheduled Automatic replies remain TODOs. VPS deployment still needs the explicitly configured owner Google identity, OAuth configuration and SSH target. No main merge, personal desktop installation or live-provider/VPS verification is included. Quality/release definitions remain disabled.
+
+
+Final Flutter analysis passes. The production Android APK includes all three Rust ABIs, Internet permission and no fixture markers; SHA-256 `ceec75aac0ac15e57207f5cb15a65ecb70603bd2ca08f19407b4fdba605859e8`. It is development-signed, not store-ready. Browser WASM SHA-256: `af68dd35fc8b176495f1b149845c558a31bc013343c51dccb4045c373f28dff9`. The optimized Linux binary (`93fca421da12c47c97efd699b1ee30bfae31eb229167c007287d1bca6fbda821`) and archive (`cbef659466e6533a6e2fbc8c8e554b470f874a9df152d4957fb5fb225d8ba3d9`) pass extraction/checksum and bundled-installer verification in temporary directories. No personal installation is replaced. The owned emulator is stopped. Pinned strict Zensical validation passes; required commit-hook and remote shipping evidence follow.
+
+The final optimized gateway SHA-256 is `dd064c38fb2b487c1cebc54252de10f6a53743be0099c8cebba803b3ea6164c0`, with synthetic fixture markers absent. Its print-runtime hash matches the production browser; no VPS installation is included.
+
+
+### Client Print shipping record
+
+Committed and pushed as [`67f206c`](https://github.com/sam-ruff/shep.so/commit/67f206caf2a8cdab9ccf46ab66c2012f332360c8) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. The client/native/protocol/browser checks, actual Android/Chromium PDFs, corrected automation, reviewed captures and production package checks are recorded above. R77’s prompt push is fulfilled for this increment. Artifacts remain ignored and the owned emulator is stopped. Main and the personal desktop installation were not changed. Full parity, Apple/other-engine/live/performance evidence, R75/R76 and VPS configuration remain active. Quality/release definitions remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+## Client read-on-leave and independent cached paging
+
+Flutter and the browser now retain unread status while a deliberately opened message is being read. Leaving for another message, navigation, a composer or loss of foreground/focus queues a quiet read update. Startup selection, refresh and body preloading do not arm reading. Explicit read/unread controls cancel that visit so Mark unread survives later navigation. Read updates use the existing ordered optimistic mutation path before Move, preserve newer flags, retain a different reader, and expose rollback/retry without replacing Move feedback or Undo.
+
+Flutter Back uses the actual route-pop callback; disposing a widget is only cache cleanup. Native page reads no longer wait for pending provider actions. Query-only Rust projections apply the latest fields before folder/account/search/filter/sort/paging and count calculations. One SQLite read snapshot returns the projected page, global unread count, aliases and confirmed metadata for rollback, without persisting optimistic fields. Identity adoption retains queued actions and the latest per-field versions. Pages captured across an action acknowledgment are retried independently of provider completion. The unprojected query keeps its indexed path; projected queries split edited rows from unchanged rows rather than joining every message against every pending edit.
+
+The native bridge passes **59 Rust tests** and Clippy, including projected search/filter/paging/counts, aliases, original-cache preservation and reads with all provider capacity held. Flutter analysis and **53 host tests** pass; browser unit tests report **79 passes**, and one complete Playwright run passes **38 scenarios**. Python passes **39 tests** and the parity registry validates **28 contracts**. Eight Android native integration scenarios pass, including the new held-read/folder-navigation/failure/explicit-unread control flow. The additional incoming-file Android scenario verifies actual FFI/SQLite unread state before opening, after Back and after explicit Mark unread, alongside native save/cancel, move/refresh, Find and account-removal regressions.
+
+Initial host assertions incorrectly assumed an empty Archive fixture and observed a write before its acknowledgment. The widget teardown check also exposed a read side effect during disposal; it now belongs to actual route navigation. An Android command omitted Rust from its PATH; the corrected environment passed. The new HTTPS observer initially looked outside the stored record’s `core` field. Its next run exposed overlapping saved-draft buttons: Drafts inherited the mail grid’s 5 px divider column. Drafts now uses its own scrollable list with correct counts, and a compact control test reopens all four saved drafts. The final Rust HTTPS run passes **52 stages**, including provider acknowledgment and actual IndexedDB read/unread state. Final production checks are recorded below. Failed evidence remains in ignored `artifacts/logs/client-read-*`. No failure guard, test budget or performance threshold was weakened.
+
+The Android failure/new-reader and explicit-unread captures and browser read/failure captures were reviewed for legible feedback, preserved selection, spacing and visible controls. Root iced code is unchanged from the previously verified 116-flow/package checkpoint; that full native suite and Apple execution were not rerun for this client increment. Window/tab-close durability, forced termination, OS polling/error-retention lifecycle, large-cache/idle-host performance, counted move notifications and the wider parity backlog remain open. R75 Google provider sign-in, R76 grouped Automatic replies and VPS target/owner/OAuth configuration remain active. Quality/release workflows remain disabled. Commit hooks, artifact and exact review-branch shipping evidence follow.
+
+
+The final production APK contains all three Rust ABI libraries and Internet permission, with no fixture markers; SHA-256: `898a31af8fbb3252a7fbf51a183d6443ba8c7252af175f04cad51f3ab3bf5b40`. It is development-signed, not store-ready. The browser production build succeeds; shared WASM SHA-256: `af68dd35fc8b176495f1b149845c558a31bc013343c51dccb4045c373f28dff9`. Final Flutter host checks pass **53 tests**, including held read/newer unread across alias adoption. The compact Drafts count/click regression passes after the full 38-scenario browser run. The real HTTPS result is a local scripted provider/Google fixture, not live Google, IMAP or VPS verification. Final Appium, strict documentation and commit-hook results follow.
+
+All **six standard native Appium stages** pass against the rebuilt preview. The final browser production HTML/JavaScript/WASM contains no fixture markers. The Drafts list and real HTTPS unread captures were reviewed, and the pinned strict documentation builder passes. Only the nine relevant Android integration scenarios and standard Appium path were rerun in this increment; the full Android wrapper, Apple and idle-host performance remain separate work. Required commit hooks and the exact review-branch push are recorded next.
+
+
+### Read-on-leave shipping record
+
+Committed and pushed as [`5fc9560`](https://github.com/sam-ruff/shep.so/commit/5fc9560fda68109592e1be2aa6fcf16b0579d1c9) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. The client native/cache/browser/HTTPS tests, nine Android integration scenarios, six Appium stages, reviewed captures, corrected failures and inspected production artifacts are recorded above. R77’s prompt-push request is fulfilled for this increment. The dedicated emulator is stopped and artifacts remain ignored. Main and the personal desktop installation were untouched. Full client parity, close/OS/Apple lifecycle, performance, counted notifications, R75/R76 and VPS deployment remain active. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+## Counted client move notifications and grouped Undo
+
+Flutter and the separate browser now show the desktop’s six-second Archive/Delete/Move/Restored notifications. Repeated Archive/Trash actions group across accounts; other destinations group by exact account/folder. Each group keeps operation identities so a late failure removes only its own count. Dismissal and expiry survive late acknowledgments, and stale Undo callbacks cannot affect a newer group. General refresh/save feedback is independent of the move notification.
+
+Grouped Undo restores optimistic metadata immediately, cancels moves still waiting behind read-on-leave, and waits for dispatched moves before reversing their acknowledged physical destinations. Failed reversals stay in a persistent review with Retry Undo/Dismiss. An acknowledged reversal with a metadata warning offers Refresh restored mail and cannot issue a second reverse operation. Current source-scope cache confirmation is required to clear that review. The existing native/browser durable provider intents and alias contracts remain authoritative; this increment does not complete move-history/restart/cross-account recovery.
+
+Native Undo now retains metadata for every active group/failure, reconstructs off-page pending values from query projections and restores matching rows in date order. Page reads remain independent of provider completion. The footer uses the Scaffold’s measured navigation area, keeping Compose above notifications and recovery controls. Recovery buttons wrap on compact layouts. A retained reader’s flag update does not reinsert a row excluded by its authoritative page.
+
+Verification so far: **59 Flutter host tests**, **84 browser unit tests**, **40 Playwright scenarios** in one complete run, **52 real Rust HTTPS stages**, **39 Python tests** and **29 parity contracts** pass. Flutter analysis passes. All nine Android native integration scenarios pass, including the new counted partial-failure/Undo/retry flow, paged pending restoration, read-on-leave, physical Sent identity/Undo, device cache/drafts, connection failure/reconnect and isolated device credential checks. A final native rerun also checks Undo inside a different open reader and independent Refresh feedback; final Appium, production and shipping evidence follows below.
+
+Initial host failures exposed obsolete single-move labels, an unsent move correctly cancelled before dispatch, redundant unchanged-unread writes and a pending notification timer at teardown. Later control tests found missing off-page projection values and restored-row ordering, followed by Compose covering Retry Undo. These production issues are corrected and the saved controls pass; no assertion is bypassed. The first reader flow returned to Inbox after Archive. Its saved scenario now opens another reader before Undo and asserts its route; Flutter’s converted-surface capture retained an old Inbox frame, so the ordinary Appium binding provides the separate reader capture. Flutter lint findings were corrected. Failed logs remain under ignored `artifacts/logs/client-toast-*`. Android and browser captures are reviewed for readable feedback, row position, reachable recovery controls and preserved reader state.
+
+The shared Rust/provider implementation and root iced UI are unchanged from their previous verified checkpoints; the full root native suite, Apple execution and idle-host performance are not rerun for this client increment. Full client parity, durable move history/recovery, close/OS lifecycle, Google provider sign-in (R75), grouped scheduled Automatic replies (R76), and VPS owner/OAuth/SSH configuration remain active. Quality/release workflows remain disabled. This increment ships to the authorized review branch only, preserving main and the personal desktop installation.
+
+
+The final Android rerun passes all **nine native scenarios**. All **six standard Appium stages** and the **six Flutter browser stages** pass. Appium’s `reader-move-undo.png` shows the actual reader with Restored feedback; its screenshot is reviewed separately from the integration binding’s stale converted frame. Lossless WebP review copies are saved beside the counted Archive/partial-failure and browser captures. The final production browser build excludes fixture markers; shared WASM SHA-256 remains `af68dd35fc8b176495f1b149845c558a31bc013343c51dccb4045c373f28dff9`. The dedicated emulator and owned preview/Appium servers are stopped. This increment reruns the relevant nine Android scenarios and standard automation paths; the full Android wrapper, formatted-reader path and Apple simulator remain separate evidence. APK inspection, strict documentation and required commit-hook results follow.
+
+
+The production APK passes inspection for all three Rust ABIs, Internet permission and fixture exclusion; SHA-256: `4b918a341780b4951c42e961eaa58a6a07cfb1f4d32d253b1ab46ab017965a92`. It is development-signed, not store-ready. Root Rust/shared code is unchanged; required formatting/Clippy/Rust commit hooks and the exact review-branch shipping record follow.
+
+
+### Counted move feedback shipping record
+
+Committed and pushed as [`96275a1`](https://github.com/sam-ruff/shep.so/commit/96275a18e5c623bc6837578bf4227dc16c339a0e) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients), with the exact remote SHA verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Pinned strict documentation validation passes. The client host/native/browser/HTTPS checks, nine Android scenarios, six Appium stages, six Flutter browser stages, corrected failures, reviewed captures and production APK/browser inspection are recorded above. R77’s prompt-push request is fulfilled for this increment. The dedicated emulator is stopped and artifacts remain ignored. Main and the personal desktop installation were untouched. Full parity, durable move recovery/history, Apple/OS/close lifecycle, performance, R75/R76 and VPS configuration remain active. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+## Captured client selection prerequisites
+
+Native selection now retains full query membership and ranks in a dedicated SQLite connection's temporary tables, using the same projected filter/search plan as ordinary mail pages. Calls return counts/groups and at most 50 observed identities or review rows. Revision checks protect changes and frozen membership; explicit arrivals preserve earlier choices, passive refresh does not grow the capture, aliases reconcile in bounded batches, and missing mail remains visible in selected/available counts. A separate 32-slot FIFO keeps selection independent of cache reads, saves and provider capacity, including cancelled callers. No mail, flag or credential write is performed by selection.
+
+The new Dart controller bounds gestures, projects pending choices, retains offscreen intent, recovers exact committed revisions after a lost acknowledgment, retries failed changes/releases and reobserves refreshes arriving during an older response. It is a prerequisite: existing mail controls have not yet switched to captured selection. Browser selection storage/controls, native control wiring, exact reviewed durable bulk execution, range/arrival UX and final performance/Apple evidence remain active.
+
+Verification: **66 native Rust tests**, **69 Flutter host tests** (including actual FFI capture/freeze/Clear with a locked credential store), **39 Python tests**, native Clippy and Flutter analysis pass. The 100,000-message test proves complete membership and bounded bridge output, not latency. Initial Rust integer/coercion errors and Flutter syntax/lint findings were corrected; regression tests also cover scrolling with pending deselection, queued range intent, queue-overflow anchors and stale observations. Failed logs remain under ignored `artifacts/logs/client-selection-*`. Android, production artifact, strict documentation, required hook and review-branch shipping results follow.
+
+Root iced/shared/browser presentation is unchanged from its previous verified checkpoints. New selection controls have no visual evidence yet. Full parity, durable bulk/recovery, R75/R76 and VPS target/owner/OAuth configuration remain open. Quality/release workflows remain disabled.
+
+
+All **nine existing Android native scenarios** pass against the rebuilt bridge, including cache startup, drafts, connection failures, credentials and swipe/Undo controls. Reviewed dark startup and light restored-inbox captures retain readable spacing and accessible feedback; WebP copies remain in ignored artifacts. These are regressions for existing controls, not new selection UI evidence. The initial driver started before emulator boot and found no device; the boot-ready run passes. The first production build wrote its APK but its command exited 143; a separate final rebuild exits successfully. Production inspection verifies all three Rust ABIs, Internet permission and fixture exclusion; SHA-256: `388718769e63207e2c6d5ef5cbc39a288a35ae2fc10f1238ff8e675b3d2e29c4`. Signing remains developmental. Pinned strict Zensical validation and **30 parity contracts** pass. The dedicated emulator is stopped. Appium/browser suites, root iced native controls, Apple and final idle-host performance were not rerun for this prerequisite; their previous evidence and active gaps remain explicit. Required hooks and the exact review-branch shipping record follow.
+
+
+### Captured selection prerequisite shipping record
+
+Committed and pushed as [`646638d`](https://github.com/sam-ruff/shep.so/commit/646638d1e782eb938192ac83fa4e71243551a8bb) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. The completion log records 66 native Rust tests, 69 Flutter host tests, nine Android scenarios, 39 Python tests, 30 parity contracts, reviewed regression captures and production APK inspection. Strict documentation validation passes. R77's prompt push is fulfilled for this increment. Full native/browser selection controls, durable bulk execution and the wider parity backlog remain active. Main and the personal desktop installation were untouched; artifacts remain ignored and the dedicated emulator is stopped. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+## Browser captured-selection storage
+
+The browser now has a lazy repository adapter and a dedicated SQLite/WASM worker for complete ordered captures, revision-checked changes, ranges, explicit arrivals, Clear, immutable reviews and pages of at most 50 metadata rows. The worker bounds queued requests to 32; each worker owns private temporary storage, and closing or losing it expires its captures. Ordinary captures stream metadata from a readonly IndexedDB snapshot; text search alone reads cached bodies. Browser list and capture share folder/filter/search matching and deterministic identity ordering for equal timestamps. No selection operation marks mail read or contacts a provider.
+
+Mail metadata and a bounded 1024-entry change journal commit atomically with cache writes. Sleeping workers rebuild current flags, folders, aliases and missing/account state after the replay window expires, without adding passive arrivals. Alias collisions preserve chosen membership and original rank; missing targets retain account ownership. Version-five migration preserves newer acknowledged Sent roles and outgoing indexes. Failed recaptures roll SQLite membership and revisions back together. SQLite package provenance and the wrapper license ship with browser assets.
+
+The earlier same-IndexedDB selection design is not shipped. Its 100,000-row scenario timed out before draft saving committed; separate real Chromium diagnostics confirmed that disjoint readwrite transactions serialize, while a readonly snapshot allows the save to finish. The SQLite replacement passes that concurrency contract. Initial SQLite tests also exposed an empty binding-array error, which is corrected. Failed diagnostic/test evidence remains ignored under `artifacts/logs/browser-selection-*`.
+
+This remains a prerequisite: the bounded browser gesture controller, actual native/browser selection controls, reviewed durable bulk execution/recovery and full parity are open. Root iced and Flutter presentation/provider code are unchanged, so Android/Appium, Apple, root native UI and idle-host performance are not rerun for this increment. Cardinality/concurrency tests do not establish latency or live provider success. R75 Google provider sign-in, R76 grouped scheduled Automatic replies and VPS target/owner/OAuth configuration remain active. Quality/release workflows stay disabled. Final regression, production artifact, documentation, required hook and review-branch shipping evidence follows.
+
+
+Final verification passes **85 browser unit tests**, **49 Playwright scenarios**, **53 real Rust HTTPS beta/mail stages**, **39 Python tests** and **30 parity contracts**. TypeScript and the production browser build pass. The HTTPS suite loads the bundled SQLite worker under the production gateway CSP and exercises capture/freeze/page; mail and identity exchange remain synthetic fixtures. Reviewed light 1440×920 and dark 900×640 captures preserve readable list/reader spacing and reachable controls. These are existing-layout regressions, not new selection UI evidence. The production artifact contains the selection worker, SQLite WASM and license, excludes the preview entry and checked fixture markers, and preserves shared MIME WASM SHA-256 `af68dd35fc8b176495f1b149845c558a31bc013343c51dccb4045c373f28dff9`. SQLite WASM SHA-256 is `02d7e48164395fa68f81c6ec33e9da5461be397dc57602ac0cd89b4bbba1d312`. Pinned strict Zensical validation passes. Required commit hooks and exact review-branch shipping are recorded next.
+
+
+### Browser selection storage shipping record
+
+Committed and pushed as [`8295e3c`](https://github.com/sam-ruff/shep.so/commit/8295e3c40ff2a19cb211398f47e30fb9603c80d1) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. The completion log records 85 browser unit tests, 49 Playwright scenarios, 53 real Rust HTTPS stages, 39 Python tests, 30 parity contracts, reviewed layout regressions and production artifact inspection. Strict documentation validation passes. R77's prompt push is fulfilled for this checkpoint. Native/browser selection controls, durable bulk execution and the full parity backlog remain active, including R75/R76 and missing VPS/owner/OAuth configuration. Main and the personal desktop installation were untouched; artifacts remain ignored and owned test servers are stopped. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+## Browser selection controls
+
+The browser now connects complete captured membership to Select, Select all, Clear, Done, row checkboxes, Ctrl/Meta-click, Shift ranges and focused-list Mod+A. Remapping and disabling persist; ordinary search/reader text selection remains native. Mode survives page and preference changes, resets immediately when the mailbox scope changes, and preserves typed search before its 100 ms debounce. Selecting never arms reading or dispatches a retained reader's action. The summary reports captured counts, current account/folder groups and unavailable selected messages. Durable group execution is still open.
+
+The controller keeps one request in flight, at most 32 queued gestures and one observed page. It preserves newer/offscreen choices, recovers exact committed revisions after lost responses, re-observes changes arriving behind older snapshots and releases abandoned captures before replacement. Startup errors offer Retry; a stopped worker's expired storage does not prevent a new capture. Both Dart and browser controllers now keep deselection counts when Select all is pending and a row leaves the viewport, and visibly choose range endpoints before their ranks arrive. Flutter's existing loaded-row controls are not yet switched to this controller; they require the reviewed durable bulk path.
+
+Saved tests now drive six production-adapter browser selection scenarios across 125 fictional cached messages, including paging/preferences while the actual WASM request is held. Review found and fixed lost first-character typing during immediate mode exit and excluded the new Select all shortcut from the formatted-frame interception list. The existing handover test now asserts real captured choices; its first stronger run exposed missing logical Sent roles in the synthetic preview transport, which is corrected without weakening the assertion. Preview membership remains a small fixture transport excluded from the production bundle. Logs remain under ignored `artifacts/logs/browser-selection-controls-*`. Final regression, visual, artifact and shipping evidence follows.
+
+The full product goal stays active: native selection controls, reviewed durable bulk execution/receipts/history/Undo, Apple/other browser-engine execution, final performance, Google provider sign-in (R75), grouped scheduled Automatic replies (R76) and VPS target/owner/OAuth configuration remain TODOs. Root iced/provider code and Flutter presentation are unchanged; root native UI, Android/Appium and Apple suites are not rerun for these browser controls and unwired Dart-controller fixes. Fixture success does not establish live-provider or complete parity. Quality/release workflows remain disabled.
+
+
+Final verification passes **96 browser unit tests**, **55 Playwright scenarios**, **54 real Rust HTTPS beta/mail stages**, **71 Flutter host tests**, **39 Python tests** and **30 parity contracts**. Flutter analysis, TypeScript, the production browser build and pinned strict documentation validation pass. The full browser run retains the 100,000-row capture/draft-save and journal contracts; the HTTPS run adds actual Select all/Clear/Done controls without reading mail. The light 1440×920 and dark 900×640 captures are reviewed; shorter visible Select all/Clear labels keep both buttons on one compact row while retaining descriptive accessible names. The production bundle excludes preview/fixture markers and includes the SQLite license; SQLite and shared MIME WASM hashes remain those in the prior storage checkpoint. Root native/Android/Appium/Apple and idle-host performance are not rerun for this increment, as detailed above. Required hook and exact review-branch shipping evidence follows.
+
+
+### Browser selection controls shipping record
+
+Committed and pushed as [`7f6d525`](https://github.com/sam-ruff/shep.so/commit/7f6d52573f04456a01a1a5d18618d1ae3bea483e) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. The completion log records 96 browser unit tests, 55 Playwright scenarios, 54 real Rust HTTPS stages, 71 Flutter host tests, 39 Python tests, 30 parity contracts, reviewed compact/large layouts and production artifact inspection. Strict documentation validation passes. R77's prompt push is fulfilled for this checkpoint. Native control replacement and reviewed durable bulk execution/receipts/history/Undo remain active alongside full parity, R75/R76 and missing VPS/owner/OAuth configuration. Main and the personal desktop installation were untouched; artifacts remain ignored and owned test processes are stopped. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+## Browser durable group journal prerequisite
+
+Frozen selections now export exact membership and current physical identities from a readonly mailbox snapshot into worker SQLite, then copy at most 50 metadata rows per transaction to a separate per-profile IndexedDB journal. Completed staging requires a new review decision; partial preparation cannot execute or silently replace its membership after restart. The journal stores no MIME, passwords or OAuth data.
+
+Exclusive tab ownership spans claimed work and receipt persistence. Status indexes and counters allow one claimed step across groups, 20-job history and 50-item pages. The storage state machine retains acknowledged forward/inverse identities, waits for a pending forward result before Undo, excludes unsent steps after Undo, rejects stale attempts/revisions and retries only definite failures. Closing the owner tab preserves an unconfirmed forward/inverse result with its receipt for explicit review.
+
+Eight real Chromium storage scenarios pass, including complete 100,000-message export while an independent draft commits, partial staging/atomic rollback, aliases/missing mail/passive arrivals, cross-tab exclusion, abrupt owner closure, Undo/retry and bounded profile-isolated history. This is cardinality/concurrency evidence, not a latency benchmark or real provider execution. Final browser regression, production, documentation and shipping checks follow.
+
+This remains a prerequisite: provider execution, current-state and individual-intent coordination, cache/receipt recovery, account-removal review/cleanup, explicit ambiguous-result resolution, optimistic query effects, native equivalent and visible review/History/Undo controls remain active. No production control invokes the new journal yet. Flutter/root iced presentation is unchanged, so Android/Appium, Apple and root native UI are not rerun for this increment. Full parity, R75/R76 and VPS target/owner/OAuth configuration remain open; quality/release workflows remain disabled.
+
+
+Final verification passes **96 browser unit tests**, **63 Playwright scenarios**, **55 real Rust HTTPS beta/mail stages**, **39 Python tests** and **30 parity contracts**. TypeScript, production browser build and pinned strict documentation validation pass. The HTTPS worker acquires the real journal lock under the gateway CSP and refuses empty reviews. Production inspection excludes checked fixtures and retains the SQLite license; SQLite and shared MIME WASM hashes remain those recorded in the prior checkpoint. Existing light 1440×920 and dark 900×640 selection captures are reviewed; these are layout regressions, not new group controls.
+
+The first full browser run passed 62 scenarios and failed the new tab-close scenario: Chromium had acknowledged page closure before releasing its Web Lock, so the journal correctly refused ownership. The scenario now observes actual lock release before opening recovery; the complete 63-scenario rerun passes. Failed trace/capture evidence remains under ignored `artifacts/browser-bulk-journal-failures/`, with logs under `artifacts/logs/browser-bulk-journal-*`. No production guard or timeout budget was weakened. Android/Appium, Apple, root native UI and idle-host performance are not rerun for this storage prerequisite; the host is busy with separate work. Required commit-hook and exact review-branch shipping evidence follows.
+
+
+### Browser durable group prerequisite shipping record
+
+Committed and pushed as [`bae6776`](https://github.com/sam-ruff/shep.so/commit/bae677639921759d866f1147b2d08e51c5ef7263) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. The completion log records 96 browser unit tests, 63 Playwright scenarios, 55 real Rust HTTPS stages, 39 Python tests, 30 parity contracts, reviewed layout regressions, corrected tab-close observation and production inspection. Strict documentation validation passes. R77's prompt push is fulfilled for this increment. The journal is a storage prerequisite; provider execution, account cleanup/current-state coordination, native equivalent and visible review/History/Undo controls remain open alongside the full parity and deployment backlog. Main and the personal installation were untouched; artifacts remain ignored and owned browser test processes are stopped. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+## Acknowledged browser mutations and group cache recovery
+
+Browser mutations now return physical receipts independently of message-list reload. Remote acknowledgment reaches the durable writer before fallible cache updates; local/POP3 changes acknowledge their actual cache commit. Source guards reject changed physical messages before mutation. Missing destination UIDs retain exact-content size/SHA-256 proof with an explicitly absent destination identity. Cache or receipt-writing failures cannot downgrade a known server acknowledgment.
+
+Individual controls retain their confirmed flag/move after a failed display read. Counted Archive/Restored feedback retains acknowledged successes; cached receipt-backed Undo remains usable after a display-only warning. Incomplete cache/identity recovery still requires refresh, and acknowledged inverse warnings cannot issue another inverse operation.
+
+Journal schema 2 separates an acknowledged result from pending cache/identity repair, indexes runnable work, and allows read-only history observation without recovering a live owner's step. Further provider claims wait until pending cache work reconciles; attempt/source guards protect completion and recovered UIDs do not overwrite forward flag metadata. Version-one migration preserves existing progress and conservatively recovers abandoned work. This is still an execution prerequisite: the full provider loop, persistent individual-intent ordering, account-removal integration, optimistic group queries and visible approval/History/Undo controls remain active.
+
+Targeted tests cover receipts before cache failure, post-commit list failure for IMAP/POP3, exact MOVE recovery proof, no repeated MOVE, changed-source refusal, cache-repair reopen/stale results, read-only ownership and schema migration. Saved real browser controls cover retained flags and Retry without another flag write; the Archive/Undo control scenario and final regression results follow. Flutter/root Rust presentation and native provider code are unchanged; Android/Appium, Apple, root native UI and final idle-host performance are not rerun here. Full parity, R75/R76 and missing VPS target/owner/OAuth configuration remain tracked.
+
+
+The two saved production-adapter browser flows now drive actual row Flag and reader Archive/Undo through cache-committed display failures. They verify persistent flags, retained Archive/Restored counts, reachable Undo, and Retry without another flag write. Compact flag-warning and reader Archive-warning captures are reviewed for readable errors, confirmed state and accessible controls. The first Archive scenario omitted opening a message and correctly encountered a disabled action; its corrected real-input flow passes. A prior broad run was invalidated when a development source edit triggered Vite navigation during the 100,000-message test. The final run freezes source for its duration. Both failed traces remain ignored under `artifacts/browser-bulk-execution-failures/`; no product guard or timeout was weakened. Final counts and shipping evidence follow.
+
+
+Final verification passes **101 browser unit tests**, **67 Playwright scenarios** in a complete unchanged-source run, **55 real Rust HTTPS beta/mail stages**, **39 Python tests** and **30 parity contracts**. TypeScript, the production browser build and pinned strict documentation validation pass. Production inspection excludes checked fixtures and preserves the SQLite license; SQLite/shared MIME WASM hashes remain those from the prior checkpoint. Ten journal storage scenarios now include migration, pending-cache/identity completion and read-only observation, alongside the existing 100,000-row/concurrency, receipt, tab-loss and rollback contracts. Those are correctness/cardinality contracts, not latency measurements or live mail evidence. Required commit-hook and prompt review-branch shipping records follow.
+
+
+### Acknowledged mutation and cache recovery shipping record
+
+Committed and pushed as [`d2074db`](https://github.com/sam-ruff/shep.so/commit/d2074dba95a462cdc326135364477af9c4b6c2bf) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. The completion log records 101 browser unit tests, all 67 Playwright scenarios in a complete unchanged-source run, 55 real Rust HTTPS stages, 39 Python tests, 30 parity contracts, reviewed committed-action warning captures and production inspection. Strict documentation validation passes. R77's prompt push is fulfilled for this increment. Full group execution, persistent individual-intent coordination, account lifecycle integration, optimistic queries and native/visible group controls remain open alongside the original parity/deployment backlog. Main and the personal installation were untouched; artifacts remain ignored and owned browser test processes are stopped. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+## Persistent browser action ordering
+
+Browser controls now reserve per-field revisions when the user acts, before waiting for earlier provider jobs. Dispatch rechecks ownership under the operation lock and reports only accepted fields; superseded flags/moves cannot become false confirmations or counted successes. Unsent move/Undo reservations retire without a provider write. Known acknowledgments retain their receipts even if the action record cannot finish; uncertain wire outcomes remain pending and are never automatically replayed.
+
+Mail schema 6 adds a persistent clock and metadata-only intent records. Revisions distinguish newer same-value choices from an older group's ownership, and inverse claims affect only fields still owned by the original decision. Alias adoption merges field ownership inside the cache transaction; ordinary sync cannot erase it. Account removal includes pending flags and missing-message intent in its reviewed counts, deletes only the removed account's ownership and rejects stale writes. The compact review has readable controls and singular counts.
+
+Targeted verification passes 107 browser unit tests and six new real Chromium scenarios, covering two-tab ordering, group claim/Undo primitives, stale completion, aliases/atomic rollback, schema migration, clock exhaustion, queued row controls and actual account removal. These establish the individual-control and storage increment, not a visible group executor. Initial TypeScript errors in generic review sorting and a new test observation were corrected. Full regression, production/HTTPS checks, strict documentation, required hooks and shipping evidence follow.
+
+Root iced/shared/native Flutter implementation is unchanged; Android/Appium, Apple, root native controls and idle-host performance are not rerun for this browser increment. Full group execution/recovery/history, optimistic bounded queries, group cleanup and Flutter parity remain active, as do R75/R76 and missing VPS target/owner/OAuth configuration. Main and the personal desktop installation remain untouched; quality/release workflows stay disabled.
+
+
+The first full browser run passed 72 of 73 scenarios; the remaining version-two migration test still expected schema 5. Its expected current version is corrected to 6 while preserving all data/role/rollback assertions. The failure trace remains under ignored `artifacts/browser-intents-failures/schema-expectation/`. Review also extended removal tombstones to missing intent-owned and aliased identities so late raw-body writes cannot recreate removed content; the saved Chromium removal scenario checks this. The final unchanged-source run and production/HTTPS evidence follow.
+
+
+Final verification passes **107 browser unit tests**, **73 Playwright scenarios** in a complete unchanged-source run, **39 Python tests**, **30 parity contracts**, TypeScript and the production browser build. The real Rust HTTPS beta/mail integration test passes against the new production assets. The compact account-removal capture is reviewed and saved as a lossless WebP under ignored artifacts. Production inspection excludes the preview entry and checked fixture markers, includes bundled licenses, and preserves the previously recorded SQLite/shared MIME WASM hashes. Pinned strict documentation validation passes; required commit hooks and exact review-branch shipping follow.
+
+
+### Persistent browser intent shipping record
+
+Committed and pushed as [`353d259`](https://github.com/sam-ruff/shep.so/commit/353d2597ecb57fb649adea54dd312d4a01b1b6ab) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Verification includes **107 browser unit tests**, **73 Playwright scenarios**, **55 real Rust HTTPS beta/mail stages**, **39 Python tests**, **30 parity contracts**, TypeScript, production browser inspection and pinned strict documentation validation. The reviewed compact removal capture and retained migration-assertion failure evidence are recorded above.
+
+R77's prompt push is fulfilled for this increment. Group execution/recovery, bounded optimistic queries, native client parity and the wider product/deployment backlog remain active, including R75/R76 and missing VPS/owner/OAuth configuration. Main and the personal installation were untouched; artifacts remain ignored and owned test processes are stopped. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+## Browser durable provider executor
+
+Frozen membership now feeds an owned executor that claims one message at a time, binds the browser profile and approved intent revision, validates physical source identity, and stores accepted fields plus the actual receipt before finishing cache work. Undo reverses acknowledged destination identities and only fields still owned by the original action; superseded work is counted separately from success. Unsent membership remains cancelled by the job's Undo phase. Definite failures can retry, uncertain steps cannot automatically retry, and graceful stop finishes the owned receipt before a fresh executor resumes queued work.
+
+Cache writes now atomically record their applied field revisions. Receipt recovery fills only missing cache changes and uses read-only exact-identity lookup when a MOVE omitted its destination UID. It cannot repeat IMAP mutations or overwrite newer cached fields, including a later action whose separate completion record failed. Journal schema 3 preserves existing pending-cache gaps, adds saved ownership/skipped outcomes, and refuses legacy execution without the required decision metadata.
+
+Thirteen real Chromium storage/provider scenarios cover the executor and actual production adapter: complete 125-message frozen execution and Undo, same-value newer intent, partial/superseded fields, physical/source/profile refusal, transactional rollback and aliases, late cache repair after newer flags/moves, lost journal replies, unknown destination UID recovery, definite retry versus ambiguous failure, graceful stop and tab loss. These use fictional transports and real browser storage/locks; they are not visible group-control or live-provider evidence. The executor is not activated from application controls yet. Optimistic query integration, group account cleanup, review/History/Undo UI and native equivalents remain active requirements.
+
+The first fixture omitted the required frozen review and was correctly rejected. The next tab test tried reconnecting behind the intentionally held account lock; it now loads cached state without reconnecting. Chromium also releases a closed tab's Web Lock after page-close completes, so the replacement observes that specific lock ending before recovery. No production guard or timeout was weakened. Failed traces remain under ignored `artifacts/browser-executor-failures/`. Targeted scenarios and 107 browser unit tests pass; full regression, production/HTTPS, documentation, hook and shipping results follow. Root Rust/native Flutter implementation is unchanged; Android/Appium, Apple, root native UI and idle-host performance are not rerun here. Full parity, R75/R76 and missing VPS/owner/OAuth configuration remain open.
+
+
+Final verification passes **107 browser unit tests**, **86 Playwright scenarios**, **55 real Rust HTTPS beta/mail stages**, **39 Python tests** and **30 parity contracts**. TypeScript, the production browser build and pinned strict documentation validation pass. All 13 executor scenarios pass in the complete unchanged-source browser run. Light 1440×920 and dark 900×640 layout regressions are reviewed; lossless WebP copies remain ignored. These captures show existing controls, not new group UI. Production inspection excludes the preview entry and checked fixture markers, includes bundled licenses and preserves the previously recorded SQLite/shared MIME WASM hashes. Required hooks and prompt review-branch shipping follow; quality/release workflows remain disabled.
+
+
+Final review found a mixed-version writer gap: a schema-six tab could save an acknowledged mail change without the new atomic cache-applied record. Mail schema 7 now closes older database connections before this executor can use the cache and prevents older-version reopening. A real Chromium upgrade scenario preserves the old clock, status and Sent roles, verifies the old connection cannot write, and confirms no cache acknowledgment is invented from an earlier acknowledgment-only status. The executor implementation was committed locally in `3467937` but held from pushing until this compatibility fix and its full regression passed. Updated final evidence follows.
+
+
+The final schema-seven revision passes **107 browser unit tests**, all **87 Playwright scenarios** (including 14 executor/storage scenarios), the **55-stage real Rust HTTPS test**, TypeScript and the rebuilt production browser. Python's 39 tests and 30 parity contracts remain passing; the final change affects only browser storage/version tests and documentation. Production fixture exclusion, licenses and unchanged shared WASM artifacts are verified. Strict documentation and required hooks precede the combined review-branch push. Full group UI/optimistic-query/account-cleanup integration and the wider parity/deployment backlog remain active.
+
+
+### Browser durable executor shipping record
+
+The executor [`3467937`](https://github.com/sam-ruff/shep.so/commit/346793738fda85502a8395c5578f86cc691c875a) and older-writer compatibility fix [`302bac2`](https://github.com/sam-ruff/shep.so/commit/302bac26e742c55883af5cf528c7f4fa8ec72d42) are pushed to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests** for each commit, with two personal-account diagnostics intentionally ignored. Final evidence includes **107 browser unit tests**, **87 Playwright scenarios**, **55 real Rust HTTPS beta/mail stages**, **39 Python tests**, **30 parity contracts**, TypeScript, production bundle inspection, reviewed layout regressions and pinned strict documentation validation.
+
+R77's prompt push is fulfilled for this increment. The executor API is verified but not activated by application controls. Visible group review/History/Undo, optimistic query effects, group account cleanup, explicit ambiguous-result resolution and native equivalents remain active, alongside full client parity, R75/R76 and missing VPS/owner/OAuth configuration. Main and the personal installation were untouched; artifacts remain ignored and owned browser test processes are stopped. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+## Browser group-aware account removal
+
+Preferences now includes the account's group-history entries and unfinished changes in its removal review. Changed group decisions require fresh counts and explicit discard remains required for queued, failed, uncertain, inverse and pending-cache work. Actual light/dark controls verify this at 900×640; reviewed captures show readable counts, recovery instructions and reachable actions.
+
+Removal retains group ownership around the existing draft/account/cache locks. The committed mail-removal token is authoritative across the two databases: failures before it preserve local data/history, a lost committed reply is recognized, and cleanup failure afterward keeps the account removed with a visible instruction. Every fresh journal owner reconciles committed removals before claiming provider work. Cleanup deletes at most 50 source/destination-owned entries per strict transaction, adjusts surviving job counts, preserves unrelated receipts and records content-free completed fences against stale frozen captures. Tab loss and a failed second cleanup page resume without replaying removed work.
+
+Journal schema 4 migrates account ownership indexes and preserves receipts; read-only inspection waits for an older receipt owner before upgrading its database. Mail schema 8 closes older account-removal code that lacks group coordination while preserving existing cache/intent metadata. Review counting retains one item/job; the global group revision deliberately invalidates an open review if another group changes. General bounded cache reads remain separate work.
+
+Ten targeted Chromium scenarios pass with real browser storage and locks, including three actual Preferences flows. They cover stale/discard decisions, failed/lost mail replies, page rollback, cross-tab ownership, tab loss, completed/uncertain/inverse/missing entries, source/destination history migration, old-owner upgrade protection and post-commit cleanup feedback/reopen. The first control run caught an incorrect plural, corrected before the passing rerun; its traces remain under ignored `artifacts/browser-group-removal-failures/`. Full regression, production/HTTPS, strict documentation, required hooks and prompt review-branch shipping follow.
+
+This increment does not activate group execution from the application UI. Visible group review/History/Undo, optimistic query effects, explicit ambiguous-result resolution and native equivalents remain active alongside the full parity/deployment backlog, R75/R76 and missing VPS/owner/OAuth configuration. Root Rust/native Flutter code is unchanged; Android/Appium, Apple, root native UI and final idle-host performance are not rerun for this browser increment. Main and the personal installation remain untouched; quality/release workflows remain disabled.
+
+
+The first complete browser run passed 94/97 scenarios. Startup cleanup unnecessarily created group storage in profiles without removals, preempting the legacy migration fixture; it now consults mail removal records first and opens the group journal only when needed. The occupied-account fixture now obtains the complete production removal review before testing the held account lock. A separate Print click completed without a popup while the formatted iframe received focus; its unchanged focused rerun passes, and the reflow/scroll hit-testing investigation remains explicitly active in R63. No click bypass or timeout relaxation was added. All three traces remain under ignored `artifacts/browser-group-removal-failures/full-first/`. The 31 affected executor/removal/storage/printing regressions pass together. The final unchanged-source full run follows.
+
+
+Final verification passes **107 browser unit tests**, all **97 Playwright scenarios** in an unchanged-source run, **55 real Rust HTTPS beta/mail stages**, **39 Python tests** and **30 parity contracts**. TypeScript, pinned Prettier checks and the production browser build pass. Production inspection excludes the preview entry and checked fixture markers, includes bundled licenses and preserves the recorded SQLite/shared MIME WASM hashes. The three new Preferences captures are reviewed and saved as lossless WebP under ignored artifacts. Strict documentation validation and required hooks precede prompt review-branch shipping. The retained intermittent Print input observation remains an active R63 investigation despite the passing final suite; Apple/live-provider/native parity and the wider product backlog remain open.
+
+
+### Browser group account-removal shipping record
+
+Committed and pushed as [`92452c3`](https://github.com/sam-ruff/shep.so/commit/92452c35523deb357ec4ee921fe887ee476487f2) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Final verification includes **107 browser unit tests**, **97 Playwright scenarios**, **55 real Rust HTTPS stages**, **39 Python tests**, **30 parity contracts**, TypeScript, pinned formatting, production fixture/license/WASM inspection and pinned strict documentation validation. Reviewed light/dark removal and cleanup-warning captures are retained as ignored WebP artifacts.
+
+R77's prompt push is fulfilled for this increment. Group-aware account review/cleanup and restart protection are verified; visible group execution/review/History/Undo, optimistic query effects, explicit ambiguity resolution and native equivalents remain active. R63 retains the intermittent Print click/reflow observation despite its passing focused and final full reruns. Full parity, R75/R76 and missing VPS/owner/OAuth configuration remain open. Main and the personal installation were untouched; owned test processes are stopped and the worktree contains no root log files. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+## Stable browser reader actions and native activation
+
+The retained Print trace is now reproduced deterministically: attachment and formatted-body preparation moved Print after the pointer had been positioned, eventually placing it below the window. Reply/Reply all/Forward/Print now stay in a responsive footer outside body scrolling. Preparation keeps visible labels and column sizing stable while displaying an accessible busy state. Light/dark pointer scenarios exercise the original target through delayed preparation without forcing a hit test.
+
+A second regression holds the mouse button while preparation completes. Reusing a disconnected/reinserted button still cancelled native activation; `reader_actions.ts` now retains the same-message footer and its ancestor branch continuously while replacing surrounding controls and rebinding current callbacks. The actual press then opens exactly one preview on release. The formatted sandbox retains its separate lifetime, text selection and scroll behavior.
+
+Native Enter/Space now activates focused action controls before mail accelerators run. Row Flag activation is isolated from the reader shortcut, and opening a message uses the focused row and configured reader binding, including remapping/disable. Saved keyboard input verifies focus through preparation, Enter printing, scrolling with a reachable footer and Reply's explicit missing-cache-header recovery. That print-only fixture does not establish Reply success; the broader existing Reply tests remain separate.
+
+The ten focused printing/input scenarios pass, including five new regressions. Retained failure evidence under ignored `artifacts/reader-click-investigation/` includes the original geometry mismatch, cancelled activation after reinsertion, intercepted Enter and the corrected Reply-fixture expectation. No timeout, native input or hit-testing guard was weakened. Full regression, production/HTTPS, strict documentation, hooks and prompt review-branch shipping follow.
+
+This fixes the identified browser reader-action defects, not the whole R63/native/list-input audit. Full browser/native group controls, optimistic bounded queries, explicit ambiguity resolution, full client parity, R75/R76 and VPS/owner/OAuth deployment configuration remain active. Root Rust and native Flutter are unchanged; Android/Appium, Apple, root native UI and final idle-host performance are not rerun for this browser increment. Main and the personal installation remain untouched; quality/release workflows remain disabled.
+
+
+Source review also confirms Flutter still places Reply/Forward/Print/Move in its scrolling reader body. The corresponding native footer/reachability work is explicitly retained in R67 and the parity matrix; the browser verification does not establish Android or Apple behavior. Reviewed light 1280×720 and dark 900×640 footer captures show stable four-column/two-column actions and readable content; WebP evidence is retained under ignored artifacts.
+
+
+Final verification passes **107 browser unit tests**, all **102 Playwright scenarios** in an unchanged-source run, **55 real Rust HTTPS beta/mail stages**, **39 Python tests** and **30 parity contracts**. TypeScript, pinned formatting and the production browser build pass. Production inspection excludes the preview entry and checked fixture markers, includes bundled licenses and preserves the recorded SQLite/shared MIME WASM hashes. Light/dark footer and existing layout captures are reviewed; lossless WebP evidence is ignored. Required hooks and strict documentation validation precede prompt review-branch shipping. The identified browser reader input defects are fixed; native footer parity, the wider input audit and full product/deployment backlog remain active.
+
+
+### Browser reader-action shipping record
+
+Committed and pushed as [`cebcbe2`](https://github.com/sam-ruff/shep.so/commit/cebcbe24d990dbe7d889b71a4234f6395aa0e58a) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Final verification includes **107 browser unit tests**, **102 Playwright scenarios**, **55 real Rust HTTPS stages**, **39 Python tests**, **30 parity contracts**, TypeScript, pinned formatting, reviewed light/dark footer and layout captures, production fixture/license/WASM inspection and pinned strict documentation validation. The reproducible failed baselines remain ignored and are described above.
+
+R77's prompt push is fulfilled for this increment. The identified browser reader-action movement, cancelled press and native activation defects are fixed. Native footer/touch parity, the wider R63 input audit, browser/native group controls and optimistic queries, full client parity, R75/R76 and missing VPS/owner/OAuth configuration remain active. Main and the personal installation were untouched; owned test processes are stopped and root logs are absent. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+### Flutter reader-action continuation
+
+The original Flutter reader placed Reply/Reply all/Forward/Print/Move after scrolling content. The new saved host regression reproduces their movement from the visible reader to thousands of pixels below the viewport when delayed body preparation completes; the failing baseline is retained in `artifacts/logs/flutter-reader-footer-before.log`. Actions now occupy a responsive bottom safe-area footer, with counted feedback/Undo above it. Forward and Print preserve their visible labels, button size and native element while preparation runs; semantic labels expose the busy state. Existing action handlers, read-on-leave, independent print preparation and persistent formatted WebView remain in use.
+
+The shared host/Android scenario uses actual touches: press Print before delayed detail/files and formatted text arrive, release afterward, verify exactly one launch, refuse a duplicate while pending, recover a Forward preparation error, scroll and Reply. The first fixture iterations corrected an exact-type finder, observed actual route-animation completion and disposed the test workspace before the timer invariant. Compact 150% text also exposed an existing Inbox filter-chip overflow; the filters now wrap while Sort remains visible. The overflow evidence stays in `artifacts/logs/flutter-reader-footer-scaled.log`.
+
+Flutter analysis and all **74 host tests** pass, including the three new reader scenarios and existing FFI/cache tests. Native Android, printer/PDF, formatted controls, production inspection and shipping checks follow below. Apple execution, native keymap/large-mail/lifecycle parity and the full original client/deployment backlog remain active. R75/R76 and the pending VPS/owner/OAuth configuration are unchanged. Main and the personal installation remain untouched; quality/release workflows stay disabled.
+
+
+The first Android Forward regression stopped at its deliberate preparation barrier because the old helper called `pumpAndSettle` while the new busy icon intentionally kept animating. The captured screen shows usable reader controls and the pending Forward. The owned driver was stopped; the helper now waits for that specific transport barrier without waiting for all animations, then presses the real Back control and continues the independent-editor assertions. No timeout or action guard was weakened. Logs remain in `artifacts/flutter-reader-footer-failures/` and the screen in `artifacts/flutter/native/reader-footer-forward-investigation.png`; final rerun evidence follows.
+
+
+The wider Android Outbox run exposed an obsolete test expecting read-on-open after reopening a locally stored IMAP Sent message. Current read-on-leave correctly retains unread while that reader stays open. The saved scenario now checks the visible Mark read control, uses Back, waits for the actual mutation and verifies both cached/native persisted read state with no credential access. Its earlier failure remains in `artifacts/flutter-reader-footer-failures/outbox/`. This updates the assertion to the already-approved behavior; it does not change mail-action production code.
+
+
+All **16 targeted Android integration scenarios** now pass: eleven native mail/cache/account/control scenarios plus incoming files, complete Forward, complete Print/PDF, formatted WebView and Outbox. Both **six-stage Appium suites** pass. The existing general preview/composer integration targets were not rerun; their Android gestures and native mail paths remain covered as described above. Print again cancels/retries, saves exact formatted content and a **10-page** complete long-message PDF. Reviewed captures include native footer light/dark, the dark formatted Appium footer and the formatted PDF. The Forward barrier and Outbox assertion reruns pass with their original deadlines. Production action code was unchanged by those test corrections. The dedicated emulator and owned native test drivers are stopped.
+
+
+The Flutter browser preflight rejected a stale frozen formatted fixture: it still carried older default body colors despite the current shared renderer's authored-color preservation. Regeneration changes only that CSS in the test document; MIME text, signature and display runtime/CSP hash remain unchanged. Android Appium now runs the same fixture-freshness guard before building its formatted preview. The old fixture and preflight error remain under `artifacts/flutter-reader-footer-failures/`; both formatted previews are rerun against current generated source. The production renderer is unchanged.
+
+
+The new Flutter Playwright geometry assertion then found desktop adaptive visual density shrinking a nominal 44-pixel footer button to 36 pixels. The footer now explicitly uses standard visual density, retaining the same touch size across Flutter platforms. The assertion remains at 44 pixels; its screenshot/DOM/log are saved in `artifacts/flutter-reader-footer-failures/desktop-density/`. Android already used standard density. Final host/native/browser checks are rerun with this explicit setting.
+
+
+The next formatted browser run observed replacement text being appended after switching to Plain text: the capture contains `AlphaPlain alternative`, so the intended replacement was appended. The saved helper now observes the actual focused input and native selection range before typing, retaining pointer clicks and keyboard Select all. No controller/value assignment or timeout increase replaces those inputs. Failure evidence is in `artifacts/flutter-reader-footer-failures/find-focus/`; the wider rapid-input lifecycle audit remains R63 work.
+
+
+The corrected formatted browser scenario subsequently completed Move and Reply; its final generic text oracle could not see prefilled values in inactive Flutter editing proxies. The captured composer visibly contains the correct subject and recipient. The saved test now focuses those real fields before observing their native input values. That assertion failure is retained under `artifacts/flutter-reader-footer-failures/reply-observation/`; the actual Reply action and application source are unchanged.
+
+
+### Flutter reader footer — final verification
+
+The final application passes Flutter analysis/formatting, **74 host tests** and the **eleven native mail/cache/account/control scenarios** rerun with explicit standard footer density. This increment also passed the five native incoming-file/Forward/Print/formatted/Outbox scenarios and **twelve Appium stages** recorded above. Both Flutter browser paths pass: **six general scenarios** and **ten formatted-reader scenarios**, including actual 44-pixel bounds, stable scrolling, Move and prefilled Reply. The last JavaScript-only observation corrections ran on the unchanged final Flutter build; the owned server stopped afterward. Final native and browser captures were reviewed. **39 Python tests**, **30 parity contracts**, pinned formatting and generated-fixture freshness checks pass.
+
+The production-flavor debug APK contains all three native libraries, Internet permission and no checked fixture markers, including the new reader fixtures. SHA-256: `2a0626c2aee2b14b089fabc55ade94f09c4041dd9e43b22f12e93cec3da1b002`. This is a development build; distribution signing remains separate. Logs use `artifacts/logs/flutter-reader-footer-*` plus the saved Android/Flutter browser runner logs. Failure evidence remains under the ignored paths above. Required root hooks, pinned strict documentation validation and prompt review-branch shipping follow.
+
+The root desktop UI, separate hosted browser implementation and native bridge source are unchanged. Root native UI, Apple, live providers and final idle-host performance were not rerun. Full client parity, native keymaps and lifecycle, browser/native group controls and bounded queries, R75/R76 and VPS/owner/OAuth configuration remain active. Main and the personal desktop installation were untouched. Owned emulators/browser servers/Appium drivers are stopped; quality/release workflows remain disabled.
+
+
+### Flutter reader-action shipping record
+
+Committed and pushed as [`48c6c18`](https://github.com/sam-ruff/shep.so/commit/48c6c18cf5e841c3e168720bbf2a01e69eb45ea0) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Verification includes **74 Flutter host tests**, the targeted **16 Android integration scenarios**, **12 Appium stages**, both Flutter browser previews (**16 scenarios**), **39 Python tests**, **30 parity contracts**, production APK isolation, final visual review and pinned strict documentation validation. The final density setting reruns eleven native scenarios and both browser paths; the preceding Android printer/attachment/Outbox/formatted evidence and test corrections are detailed above.
+
+R77's prompt push is fulfilled for this increment. Flutter reader actions remain reachable through loading and scrolling, retain native held touches and keep 44-pixel targets. The full original goal remains active: native keymaps/lifecycle, group controls and bounded queries, remaining mail/calendar/Google/backup parity, Apple execution, distribution and VPS deployment are unfinished. R75/R76 remain tracked TODOs, and exact VPS/owner/OAuth configuration is still pending. Main and the personal installation were untouched; artifacts stay ignored and owned test processes are stopped. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+### Browser persistent mailbox query prerequisite
+
+The current browser application still loads the complete cached mailbox and bodies before filtering/displaying 50 rows. The new, not-yet-connected query worker instead derives a per-profile SQLite/OPFS index from authoritative IndexedDB. Mail schema 9 assigns a fresh cache incarnation while preserving revision/floor, messages, intents and acknowledged Sent roles. Each request coordinates VFS installation/acquisition through a Web Lock and closes/pauses handles before releasing it. The worker returns at most 50 metadata rows and supports separate single-message body requests. Current substring/filter/folder/Sent semantics, pending individual fields and bounded alias observations share the source snapshot. Full desktop fuzzy ranking remains separate work.
+
+The first two Chromium storage scenarios pass, covering pages/search/projection, aliases/current Sent roles, separate bodies, cooperating tabs and a recreated source with the same revision. The initial 100,000-message recovery scenario exceeded its unchanged 180-second deadline; its trace/log remain under ignored `artifacts/browser-mailbox-failures/initial/`. Index construction now reuses its prepared writer and builds FTS after a complete cursor pass, inside the same rollback transaction. Final verification follows below; no latency/performance success is inferred from cardinality tests.
+
+Application paging, the bounded retained-reader/body lifecycle, stale-result and optimistic rollback/count integration, removed-account cleanup of derived storage, independent body capacity during indexing, provider sync/Outbox bounds, visible bulk review/History/Undo and actual controls remain active. The existing UI and native clients are unchanged; root native UI, Android/Apple, live providers and final idle-host performance are not rerun for this storage prerequisite. R75/R76 and exact VPS/owner/OAuth configuration remain open. Quality/release definitions stay disabled; main and the personal installation remain untouched.
+
+
+All **six targeted Chromium storage scenarios** now pass. The optimized large-cache case completes within its original 180-second deadline, including the independent draft commit, failed incremental update rollback, full replay-window rebuild and account exclusion. Additional scenarios verify the 32-request bound under a held Web Lock, abrupt worker interruption/recovery, punctuation/combining-character/NUL search against the existing list predicate, and schema-eight migration preserving clocks/intents/Sent roles while assigning one stable incarnation. These establish storage correctness; the worker is not yet connected to application list/reader controls or included through the production entry point. Full browser regression, production/HTTPS, strict documentation and required-hook shipping checks follow.
+
+
+The complete browser run passed **106/108 scenarios** on the final application source. The two failures are older schema-four/five migration assertions that require the previous exact state shape; the received revision/floor and protected data are correct, with schema nine's new UUID. Both assertions now require a valid UUID in addition to their unchanged exact revision/floor and data checks. Their traces are retained under ignored `artifacts/browser-mailbox-failures/migration-expectations/`. The two corrected migration scenarios pass in a targeted rerun. Final query API review also adds explicit refusal of a damaged non-text cached body, with a focused storage regression; the application UI path is unchanged. Shipping evidence follows.
+
+
+Final verification includes **107 browser unit tests**, **108 Playwright scenarios verified across the full run and the two corrected migration reruns**, the focused damaged-body regression, **55 real Rust HTTPS beta/mail stages**, **39 Python tests** and **30 parity contracts**. The complete run itself remains recorded as 106/108, with the two exact schema-expectation failures described above; there was no blanket rerun after those test-only corrections. TypeScript, pinned formatting and the production browser build pass. Production inspection excludes the preview entry and checked fixture markers, includes licenses and preserves the recorded SQLite/shared MIME WASM hashes. The unused query worker has dedicated real-browser storage evidence; its production-entry/UI/HTTPS activation remains unfinished. Required hooks and pinned strict documentation validation precede prompt review-branch shipping.
+
+
+### Browser mailbox query shipping record
+
+Committed and pushed as [`3dd0837`](https://github.com/sam-ruff/shep.so/commit/3dd08372ad0ebcd9383a1611142906209948cea0) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Verification includes **107 browser unit tests**, the **108 Playwright scenarios covered by the 106/108 full run plus two corrected migration reruns**, the focused damaged-body regression, **55 real Rust HTTPS stages**, **39 Python tests**, **30 parity contracts**, TypeScript, pinned formatting, production fixture/license/WASM inspection and pinned strict documentation validation. The full-run failures and initial large-cache timeout remain recorded in the completion log and ignored artifacts; they are not described as a clean single full run.
+
+R77's prompt push is fulfilled for this increment. Persistent query storage is a tested prerequisite; application list/reader activation, optimistic counts/rollback, independent body capacity during rebuilding, derived account-removal cleanup, bulk controls and full feature parity remain open. R75/R76 stay tracked TODOs; exact VPS/owner/OAuth configuration and Apple/distribution verification remain pending. Main and the personal installation were untouched. Root logs are absent, test artifacts stay ignored and owned browser/HTTPS processes are stopped. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+### Browser application paging — R42/R50/R60/R63/R67/R69/R71/R73/R74/R77
+
+The pending integration connects the persistent query worker to the production browser Gateway/Workspace. Startup and list reloads no longer materialize every cached body. Coalesced queries return at most 50 metadata rows; two independent foreground readers, separate scan/speculative capacity and an eight-body/32 MiB cache preserve navigation and the active reader. Schema 10 adds account/folder/server-identity indexes without resetting schema 9's source incarnation or protected clocks. Sync scans return metadata pages; each flag-cache write retains one body.
+
+Initial verification exposed a real input regression: body arrival detached a row Flag button during a held press. The saved scenario fails before the control-retention fix; its trace remains under ignored `artifacts/browser-paging-failures/initial/`. The same run's search test used a nonexistent searchbox role; its corrected target is the actual Search conversations textbox. Controlled unit checks also exposed a stale pending page overwriting immediate rollback after a synchronous reservation failure. Failed projections now retire before that result can publish. Shutdown cannot recreate read workers, removed-account projections are discarded, and evicted-metadata Undo reports missing source mail for review. Final regression and shipping evidence follow after validation.
+
+The full product goal remains active. Bulk controls/projections, whole-client Outbox/draft/removal-snapshot bounds, provider known-ID/reconciliation metadata, physical derived-index cleanup retries, fuzzy relevance, large-message preparation, performance, Apple/live-provider execution and VPS deployment remain unfinished. R75/R76 remain tracked TODOs; exact VPS/owner/OAuth configuration is still pending. This browser-only change does not rerun native root/Flutter UI suites. Main and the personal installation remain untouched; quality/release definitions stay disabled.
+
+
+The complete Chromium run passes **113/113 scenarios**, including both schema-eight/nine migration paths, 100,000-message cardinality/recovery, actual paging/selection/Undo, retained row/footer presses, account removal and reader layouts. Final review adds explicit Gateway shutdown and cache-incarnation guards: late callers cannot recreate workers, and old mutation results cannot paint reused IDs in a replacement cache. All **120 browser unit tests** pass; **31 affected production-control scenarios** pass again after those guards. The full 113-scenario run preceded those final guards; the unchanged storage/formatting/printing coverage is not described as a second full run.
+
+TypeScript, pinned formatting, **39 Python tests**, **30 parity contracts** and pinned strict documentation validation pass. Reviewed light/dark/compact captures retain readable rows, reachable reader actions and explicit Retry. Production build inspection confirms the active query/read workers, required licenses, excluded preview fixture markers and unchanged recorded SQLite/shared-MIME WASM hashes. Real Rust HTTPS verification and required-hook shipping evidence follow.
+
+
+The built application passes **55 real Rust HTTPS beta/mail stages** with the paged query path active. These use the production service and isolated scripted providers, not personal/live mail. Final shipping runs the mandatory formatting, Clippy and root/shared Rust hooks; the exact commit and verified remote branch are recorded next. Quality/release definitions remain disabled.
+
+
+### Browser application paging shipping record
+
+Committed and pushed as [`2cb6a46`](https://github.com/sam-ruff/shep.so/commit/2cb6a46404aaabf03995984e0a5abc602bac1703) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Verification includes **120 browser unit tests**, a **113/113 Playwright run** followed by **31 affected control reruns** after the final shutdown/incarnation guards, **55 real Rust HTTPS beta/mail stages**, **39 Python tests**, **30 parity contracts**, TypeScript, pinned formatting, production fixture/license/WASM inspection, reviewed light/dark/compact WebP evidence and pinned strict documentation validation. Earlier failed held-input and test-selector evidence remains recorded above and under ignored artifacts.
+
+The production inbox now uses coalesced metadata pages with independent body reads, retained-reader/body budgets, current pending fields, explicit Retry and preserved counted Undo. R77's prompt push is fulfilled for this increment; the combined review branch also contains the prior Flutter, Rust beta backend and delegated promo website work. Full client parity remains active: bulk projection/review/History/Undo, whole-client Outbox/draft/removal bounds, physical derived-index cleanup retries, full search ranking, large-message preparation, Apple/live-provider execution, distribution and VPS deployment are unfinished. R75/R76 remain tracked TODOs; exact VPS/owner/OAuth configuration is still pending. Main and the personal installation were untouched. Test artifacts remain ignored, root logs are absent and owned browser/HTTPS processes are stopped. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+### Browser group controls — R42/R50/R60/R63/R67/R69/R71/R73/R74/R77
+
+The browser now connects captured selection to frozen action reviews, approved full-membership execution, worker query/selection projections, bounded History, Pause/Resume, Undo and explicit failed/uncertain recovery. Mail schema 11 invalidates derived intent state; journal schema 5 tracks changed items and its own incarnation. Source-cache replacement guards protect dispatch and cache-only repair. Accepting an uncertain result retires only its unresolved local intent and never infers a provider outcome.
+
+Targeted real controls verify mixed-account cancellation, all 125 messages, 50-item History pages, pending/acknowledged Undo, retained native presses through receipts, explicit failure/review and conservative startup recovery. The first control run exposed observational lock contention that stranded Undo; current-schema readers now observe without taking execution ownership. Its failure trace is retained under ignored `artifacts/browser-bulk-failures/controls-initial/`. A later recovery test used an incorrect appearance selector; the saved test now uses the actual Theme combobox. Both corrected scenarios pass. Shared projection checks cover off-page counts, newer individual choices and incremental journal transfer. Final regression, visual review and shipping follow.
+
+Full parity remains active. Synchronous Undo rows/counts while local decision persistence is held, startup recovery notifications, abandoned-review cleanup, staging/alias/overlapping-group lifecycle, cross-account transport, large-group performance and native equivalents remain open. Broader mail/calendar/Google/backup parity, Apple/live-provider execution, distribution and VPS deployment remain open too. R75/R76 remain tracked TODOs; exact VPS/owner/OAuth configuration is pending. This browser-only increment does not rerun unchanged root/Flutter native UI suites. Main and the personal installation remain untouched; quality/release workflows stay disabled.
+
+
+The initial full regression run passes 117/120 scenarios. Its failures expose a real concurrency regression and two outdated assertions: adding `removedAccounts` to the long projection snapshot blocked draft commits; the schema assertion expected 10 instead of 11; selection-summary assertions expected raw flags/folders instead of the newly shared optimistic values. Projections now derive valid owners from accounts in the same mail snapshot, leaving draft-fence storage outside the long read. Physical export remains separate from displayed values. Failed evidence stays under ignored `artifacts/browser-bulk-failures/full-initial/`; final reruns follow. History now identifies messages by subject/sender and original folder using a bounded metadata page.
+
+
+The focused concurrency rerun passes all storage contracts, including draft saving during the 100,000-message capture. Its History test exposed repeated subject lookups slowing provider progress; History now retains one displayed metadata page until navigation or explicit Refresh. The same unchanged completion assertion passes with this fix; the timeout was not relaxed. That intermediate evidence remains under ignored `artifacts/browser-bulk-failures/history-metadata/`.
+
+
+Final Chromium regression passes **120/120 scenarios**, and all **121 browser unit tests** pass. TypeScript, pinned formatting, **35 Rust backend tests** (the separate browser test is explicitly ignored here), backend Clippy, **39 Python tests**, **30 parity contracts** and pinned strict documentation validation pass. Reviewed light/dark/compact WebP captures show readable reviews, subject-labelled History and reachable recovery controls. The production build contains the query/read/selection workers and licenses, excludes fixture markers, and retains the recorded SQLite/shared-MIME WASM SHA-256 values. The public promo and protected app assets are staged for review, not deployed. Production Rust HTTPS and mandatory-hook shipping evidence follow.
+
+
+The built application passes **56 real Rust HTTPS beta/mail stages**, including actual captured Flag/Undo controls and exact per-message transport calls. These use the production service with isolated identity/mail fixtures, not live personal providers. The promo build and separated site staging pass. Required formatting/Clippy/root Rust hooks run during the prompt review-branch commit; the verified commit and remote follow.
+
+
+### Browser group controls shipping record
+
+Committed and pushed as [`74082c7`](https://github.com/sam-ruff/shep.so/commit/74082c71458970f32dae1d7b252d23478bbffa5c) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Mandatory hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Final verification passes **120/120 Chromium scenarios**, **121 browser unit tests**, **35 backend tests**, **56 real Rust HTTPS beta/mail stages**, backend Clippy, **39 Python tests**, **30 parity contracts**, TypeScript, pinned formatting, strict documentation, production fixture/license/WASM checks and promo build/site staging. Reviewed synthetic WebP evidence is retained in ignored `artifacts/browser-bulk-visuals/`. The initial failures and their fixes remain recorded above; no timeout or performance threshold was relaxed.
+
+R77's prompt push is fulfilled for this increment. The combined review branch includes Flutter, the browser client, Rust beta backend and the delegated promo website. Full parity stays active: synchronous Undo before local persistence, startup/review cleanup, staging/alias/overlapping-group lifecycle, cross-account transport, native group controls, broader account/calendar/Google/backups, performance, Apple/live-provider execution, distribution and VPS deployment remain open. R75/R76 remain tracked TODOs. Exact VPS/owner/OAuth configuration is pending; assets are staged, not deployed. Main and the personal installation were untouched, the client worktree was clean after the code push, root logs are absent and owned browser/HTTPS processes are stopped. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready.
+
+
+### Browser group identity continuity
+
+R42/R50/R60/R67/R73/R77 continuation in the client review worktree. A real 125-message control scenario reproduced the previous failure: a Flag review captured during an earlier Archive group changed one row and rejected the other 124 after their physical folder changed. Mail metadata now retains an origin only through an acknowledged local/provider transition or validated alias adoption. Frozen review metadata stays distinct from the physical dispatch and Undo receipts. Journal version 6 and mail version 12 fence older writers; worker projections apply the same origin rule. Unproven source changes remain rejected, and ambiguous moves are not automatically replayed.
+
+Targeted protocol/storage cases cover individual moves with acknowledged or recovered destination UIDs, canonical aliases, rollback without changing caller inputs, flattened merges, lost cache checkpoints, inverse receipts and stale replacement projections. The control flow also exposed History retaining the previous group's details during a new read; selecting another group now clears its old actions/details immediately and late decisions cannot replace a newer selection.
+
+Initial failure evidence is retained under ignored `artifacts/browser-lineage-failures/`. The first diagnostic assertion combined two sequential 125-row jobs in one wait; the saved test now observes each job through the existing five-second completion assertion. That exposed stale History text allowing an assertion to pass against the previous job; the held-read regression checks the actual newly selected heading and empty loading state. A new projection fixture initially queried a nonexistent physical Flagged folder and now uses the production Inbox/Flagged filter contract. No responsiveness threshold was relaxed. Final validation and shipping follow below; full parity remains active.
+
+
+Final validation passes **125/125 Chromium scenarios**, **121 browser unit tests**, **56 real Rust HTTPS beta/mail stages**, TypeScript, formatting of changed browser files, **39 Python tests**, **30 parity contracts**, pinned strict documentation, production build/fixture/license/WASM inspection and promo build/separated site staging. The SQLite/shared-MIME WASM hashes match the previous checkpoint. Reviewed light/dark/compact synthetic WebP captures are in ignored `artifacts/browser-lineage-visuals/`; logs use `artifacts/logs/browser-lineage-*`.
+
+The full protocol/control rerun initially found one obsolete regression expecting rejection after an acknowledged individual move; its stale-source test now performs an unverified physical replacement, while two separate cases verify acknowledged/recovered moves. The first production HTTPS run also expected the old two-field alias shape. It now verifies the original provider lineage and canonical target lineage against their respective metadata. Both failed runs remain in `artifacts/browser-lineage-failures/`; final runs above pass. The broad formatter inspection included generated WASM glue and an unchanged pre-existing test with style differences; changed-file formatting passes, without modifying those unrelated files.
+
+This increment does not rerun unchanged desktop/Flutter native suites or claim live-provider, Apple or performance verification. Full parity remains active: synchronous Undo before local storage, remaining startup/review/staging lifecycle, native group controls, cross-account transport, broader account/calendar/Google/backup behavior, distribution and VPS deployment stay in TODO. R75/R76 remain tracked. Exact VPS/owner/OAuth configuration is pending; the site is staged, not deployed. Quality/release workflows remain disabled and main/the personal installation remain untouched. Mandatory commit-hook and prompt shipping evidence follow.
+
+
+### Browser identity-continuity shipping record
+
+Committed and pushed as [`396b806`](https://github.com/sam-ruff/shep.so/commit/396b806156e2fe91b74334b9d40a0b42c860ff88) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA was verified. Required hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Final evidence is **125/125 Chromium scenarios**, **121 browser unit tests**, **56 real Rust HTTPS beta/mail stages**, TypeScript, changed-file formatting, **39 Python tests**, **30 parity contracts**, pinned strict documentation, production fixture/license/WASM checks and promo/site staging. Light/dark/compact and production HTTPS WebP captures were reviewed in ignored `artifacts/browser-lineage-visuals/`; earlier failures remain recorded above. No responsiveness budget was relaxed.
+
+R77's prompt push is fulfilled for this increment. The combined branch contains Flutter, the separate browser client, Rust beta backend and delegated promo website. Main and the personal installation remain untouched; owned browser/HTTPS processes have stopped, and root log files are absent. Full parity and VPS deployment remain active with the explicit TODO limitations above. Quality/release workflows stay disabled; re-enable them when the trusted runners and release prerequisites are ready.
+
+
+### Browser immediate group Undo — R42/R50/R60/R63/R67/R69/R71/R73/R74/R77
+
+The pending increment prepares one additional metadata page in worker SQLite and restores the expected rows/counts synchronously when Undo is clicked, before decision persistence or a subsequent query. Durable jobs and provider execution remain authoritative. Rejected decisions restore the display while preserving newer flag intent and the open reader body; their recovery error survives closing History. Restored rows retain their physical baseline so a follow-up action can run before another page arrives. Counterfactual queries never modify durable source data, and an in-flight successive move uses its actual dispatch folder rather than obsolete frozen-review metadata.
+
+Initial held-storage controls reproduced delayed first paint. Subsequent runs exposed query contention and History progress waiting for repeated preview preparation. Query-only calculations now run after releasing the mail snapshot; History renders observed progress independently while its first Undo preview prepares. Receipt projection uses per-field applied revisions when journal acknowledgment is ahead of cache. No assertion deadline or performance budget was relaxed. Earlier failures remain under ignored `artifacts/browser-undo-failures/`, including `push-targeted/`. A protocol fixture also incorrectly resolved every move to the last unrelated message; its object-scoped provider now retains exact per-message identities and content proofs. New controller checks caught missing source metadata on restored rows and verified the fix; the stale-scope fake was corrected to hold the original request instead of returning an Inbox response for Trash.
+
+All 123 browser unit tests pass, as do 39 Python tests and 30 parity contracts. Final Chromium, production HTTPS, visual review, documentation and mandatory-hook shipping evidence follow. These browser-only changes do not require rerunning unchanged Android/desktop UI suites and do not establish Apple or live-provider execution. Full client parity, native group controls, the wider Undo/lifecycle/performance audit, distribution and VPS deployment remain active. R75/R76 retain Google OAuth and grouped scheduled automatic replies as TODOs. Exact VPS/owner/OAuth configuration remains pending. Quality/release workflows stay disabled.
+
+
+The full Chromium run passes **128/129** scenarios; the unchanged Find-remapping file then passes **9/9** over three repetitions. The isolated failure remains open under R63 with its trace in `artifacts/browser-undo-failures/full-first/`; this is not a clean full-suite pass. All 28 targeted bulk controls/executor scenarios and 123 unit tests pass. Light/dark/compact WebP captures are reviewed, and production build, changed-file formatting, Python/parity and strict documentation checks pass.
+
+R78 requests a credit-limited handover and final push. Root `handover.md` records the worktrees, superseded choices, implementation, actual verification, remaining requirements and commands. TODO history was consolidated while preserving all 40 active request entries and their order; unfinished features stay open. The user requested stopping feature development after this checkpoint. Independent main work remains untouched. Final production HTTPS, hooks and shipping evidence follow.
+
+
+### Immediate Undo and credit-limited handover shipping
+
+Committed and pushed as [`d4da04c`](https://github.com/sam-ruff/shep.so/commit/d4da04c4ebcf39358f9227fb6190c822f8094a8c) to `feat/mobile-web-clients`; the exact remote SHA is verified. Mandatory hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Final production HTTPS passes **56 fixture stages**. Other evidence: **123 browser unit tests**, **28 targeted bulk scenarios**, **128/129 full Chromium scenarios followed by 9/9 unchanged Find reruns**, **39 Python tests**, **30 parity contracts**, TypeScript, changed-file formatting, strict pinned documentation, production fixture/license/WASM inspection, promo build and site staging. The intermittent Find failure remains explicitly open; no deadline was weakened. Reviewed synthetic WebP captures and failed traces remain in ignored artifacts.
+
+R78 is complete: `handover.md` and the consolidated TODO list are shipped, preserving unfinished product requests. Only the completed handover entry is removed from active TODO. R77's prompt push is fulfilled for this checkpoint. The combined branch includes all client/backend/promo work; the independent main worktree and personal installation are untouched. Assets are staged, not deployed; full parity, Apple/live-provider execution, performance and VPS configuration remain open. Quality/release workflows stay disabled; re-enable only when requested and trusted runners are ready. **Feature development stops here at the user's request.**
+
+
+### Android phone installation — R79
+
+On 2026-09-08, paired the owner-authorized phone over wireless ADB and installed Shep **0.1.0 (1)** for its active Android user. The normal `production` flavor uses `lib/main.dart` and the packaged native Rust library; no preview fixtures were installed. Flutter 3.44.2 / Dart 3.12.2 built the ARM64 release APK successfully. A separate copy was signed with the existing development key, verified with `apksigner`, and installed successfully without clearing data. This is a development-signed installation, not a store release. Its unchanged Flutter/shared source is from [`67544dc`](https://github.com/sam-ruff/shep.so/commit/67544dc28a04b137d4c689b9f2d2fa9d1eaf0d80).
+
+Android reported a successful cold activity launch for `so.shep.shep_mobile/.MainActivity`; package/version checks passed and the process remained running. The phone was locked during the final UI observation, so rendered screen contents were not verified. No personal accounts, messages or credentials were used by automation. Pairing details and device identifiers are excluded from repository records.
+
+The local installable APK is in ignored `artifacts/flutter/phone-install/shep-0.1.0-arm64.apk`, SHA-256 `cbe6780f67b922dfc4a31e19bd12ec5ffd0552d3aef52b824ee96957acd2fe83`. Build/signature logs are under `artifacts/logs/phone-*`. R79 installation is fulfilled; documentation shipping follows with the resumed browser checkpoint. Full parity and platform/distribution testing remain open.
+
+### Browser shortcut capture during background completion — R63/R44/R67/R69/R73/R77
+
+After the user explicitly resumed work, two real-input regressions reproduced the saved Find-remapping failure: a provider completion could discard active capture/focus or detach a button held between mouse-down and mouse-up. Shortcut capture now belongs to the mounted UI, with retained buttons/ancestors and callbacks rebound to current preferences. Remapping checks current conflicts, saves current settings and cancels on Escape or focus departure. Clear remains clickable during capture.
+
+Before-fix failures are retained in ignored `artifacts/browser-capture-failures/reproduce/`. The first corrected targeted run passed 15 scenarios and all 123 browser unit tests passed. TypeScript subsequently caught optional-state narrowing; that compile error is corrected before final validation. An additional saved control scenario checks switching captures, theme changes and leaving/reopening Preferences. Final full controls, production HTTPS, screenshot review, mandatory hooks and shipping evidence follow. This browser change does not claim complete native keymap parity, Apple execution, live-provider verification or performance results.
+
+
+The first resumed full Chromium run passed **131/132** scenarios, including all three new shortcut controls. A successive-group History observation stayed at 5 changed after its durable Archive job had completed all 125 writes; the following Flag job had already progressed to 102. The trace established a stale display, not a failed server/cache move. Holding both the initial History observation and Undo preview reproduced this deterministically with the unchanged five-second assertion. The first preview-only hold had passed because a separate observation could win the refresh race; both runs are retained in `artifacts/logs/browser-history-preview-reproduce*`, and the failing controls in `artifacts/browser-capture-failures/history-preview-held/`.
+
+History now starts preview preparation separately from its progress refresh, with an independent request token that rejects late preparation after changing groups. A preview failure leaves progress and other actions usable, keeps Undo unavailable until prepared and offers a persistent Refresh-history recovery. The saved successive-group test holds the relevant observation/provider/preview boundaries; another control scenario retries a rejected preview and completes Undo. No timeout was relaxed. Initial shortcut screenshot review also caught missing fictional service capabilities and a saved light capture that did not scroll to Find; those fixture/evidence issues are corrected before final review.
+
+
+Final Chromium regression passes **133/133 scenarios**. All **123 browser unit tests**, TypeScript, changed-file formatting, **39 Python tests** and **30 parity contracts** pass; all 15 focused History/Find/Preferences controls pass too. Reviewed WebP captures in ignored `artifacts/browser-capture-visuals/` show persisted light/dark bindings, completed History progress with preparation held, and visible failed-preview recovery. Earlier failures remain recorded above. Production build/HTTPS, strict documentation and mandatory-hook shipping evidence follow. Unchanged desktop/Flutter UI suites were not rerun for this browser-only increment; the separately requested phone build/install evidence is R79 above.
+
+
+### Shortcut/History and phone-installation shipping record
+
+Committed and pushed as [`1ea12a6`](https://github.com/sam-ruff/shep.so/commit/1ea12a677829dcd71c4246b87cae46327f9c749f) to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients); the exact remote SHA is verified. Mandatory hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Final evidence passes **133/133 Chromium scenarios**, **123 browser unit tests**, **15 targeted History/Find/Preferences scenarios**, **56 real Rust HTTPS fixture stages**, **39 Python tests**, **30 parity contracts**, TypeScript, changed-file formatting and pinned strict documentation. Production fixture/license/WASM checks, promo build and separate site staging pass. Reviewed synthetic WebP captures and the earlier failed traces remain in ignored artifacts. No assertion deadline or performance threshold was relaxed.
+
+R79 is complete: the owner-authorized phone has the normal Shep 0.1.0 ARM64 application installed and Android confirmed its launch, with the locked-screen observation limit recorded above. Its development-signed APK remains local, not published as a store release. Only R79 leaves the active TODO. R77 prompt shipping is fulfilled for this increment. The resumed handover now starts with remaining group/lifecycle/native parity work; the prior credit-limited stop remains superseded.
+
+Full client parity, R75 provider Google OAuth, R76 grouped scheduled automatic replies, Apple/live-provider execution, performance, distribution and VPS deployment remain active. Exact VPS/owner/OAuth configuration is still pending. The combined branch includes Flutter, browser, backend and delegated promo work; assets are staged, not deployed. Main and the installed desktop remain untouched. Quality/release workflows remain disabled; re-enable them when trusted runners and distribution prerequisites are ready. Final documentation shipping records this checkpoint without claiming completion of the full product goal.
+
+
+### Browser saved group recovery at startup — R42/R63/R67/R69/R71/R73/R74/R77
+
+The resumed parity increment reads failed, unconfirmed, interrupted-review and pending cache-receipt state across all History pages using existing IndexedDB indexes. It returns at most four recovery targets and no MIME or membership list. Startup recovery publishes the observed status before unrelated queued provider work finishes; the notice opens the affected group directly even when it is older than the first 20 History entries. Observational reads never recover another tab’s running step. Active receipt/cache handshakes are not presented as failed cache repairs.
+
+Status checks coalesce to one read and one replacement, retain known targets when inspection fails, and stop publishing after client disposal. A new ordering test reproduced an obsolete cache-repair notice after execution completed. Execution revisions now reject a status read crossing that boundary; the failed unit baseline remains in `artifacts/logs/browser-recovery-units-first.log`. All 127 units pass after the fix. The initial light/dark startup controls pass with 52 failed messages, one abandoned result, one interrupted review, 25 newer reviews and unrelated provider work held open. Broader retry/cache/tab-loss controls, visual review, production checks and shipping follow.
+
+This is a browser parity increment. Native captured-group controls/execution and their recovery notices remain open, as do abandoned-review/staging cleanup, remaining Undo/lifecycle/performance work, the broader client/account/calendar/Google/backup goal, Apple/live-provider execution and deployment/distribution. No personal phone or account is used by these fixtures.
+
+
+All **137 Chromium scenarios**, **127 browser unit tests**, **13 focused group/recovery controls**, **39 Python tests**, **31 parity contracts**, TypeScript and changed-file formatting pass. The full run includes light/dark accessibility checks for both compact and expanded recovery notices. Reviewed synthetic WebP evidence is in ignored `artifacts/browser-recovery-visuals/`: the default summary leaves room for the inbox, while explicit Review opens the detailed targets. The original expanded-first layout was readable but crowded the compact inbox and was replaced before shipping. Cache retry completes the saved receipt without repeating its acknowledged mail action; another tab observes live ownership without recovering it, then reports uncertainty only after the owner’s lock is gone. Production HTTPS/build/docs and mandatory-hook shipping evidence follow.
+
+During this increment, concurrent documentation commits `02c4b32` and `59578f3` added the owner-requested highest-priority OAuth/profile handover and a 31st parity contract. These changes are preserved. After shipping the already-started recovery increment, resume with OAuth and cross-device profiles from `docs/agents/PROFILE_SYNC_HANDOVER.md`, preserving the outstanding credential-protection choice and separate database-transfer requirements.
+
+
+Production build and all **56 real Rust HTTPS fixture stages** pass for saved-group recovery. Production output excludes the preview entry and injected failure data, retains the SQLite/font licenses and expected shared WASM, and stages with the promo site in ignored `artifacts/site-recovery-20260908/`. The pinned strict documentation build passes. Logs are under `artifacts/logs/browser-recovery-*`; mandatory hooks and verified review-branch shipping follow.
+
+
+### Saved-group recovery shipping record
+
+Committed and pushed as [`df4f29c`](https://github.com/sam-ruff/shep.so/commit/df4f29c2e12d21fc71353920696dd4958cde363a) to `feat/mobile-web-clients`; the exact remote SHA is verified. Mandatory hooks pass formatting, Clippy and **381 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Relevant browser evidence passes **137 Chromium scenarios**, **127 unit tests**, **13 focused recovery/group controls**, **56 real Rust HTTPS fixture stages**, **39 Python tests**, **31 parity contracts**, TypeScript, formatting, production build/staging and strict documentation. Synthetic light/dark/compact WebP captures were reviewed; the stale cache-observation failed baseline is retained. No deadline or performance threshold was relaxed.
+
+Only browser startup saved-group discovery/review is delivered in this increment. R42 remains active for remaining Undo lifecycle, review/staging cleanup, cross-account transport, performance and native captured-group execution/controls. Full client parity, Google OAuth/profiles, automatic replies, Apple/live-provider verification and deployment/distribution remain open. Main, the installed desktop and the personal phone remain untouched. Quality/release CI remains disabled; re-enable it when the trusted runners are ready. OAuth/shared profiles are the next priority.
+
+
+### Shared profile metadata prerequisite — desktop-main:R92/R75/R02/R49/R67/R73/R77
+
+The next-priority increment adds a pure shared Rust operation codec with explicit account connection/name/settings/deletion records, stable identities and causal parents. It preserves optional data, requires explicit security/capabilities, rejects ambiguous duplicate fields/targets and bounds parsing/output per record. Shared desktop/Flutter account mappings resolve legacy SMTP defaults and produce review candidates without importing data or credentials. The native validation request has separate bounded background capacity; a standalone WASM ABI uses the same golden fixtures. See `docs/agents/PROFILE_FORMAT.md` for the implemented subset and limits.
+
+Initial tests caught a mistaken fixture field-count expectation and, more substantially, two flattened Serde deserializers retaining known action fields as extensions: re-encoding created duplicate keys. Explicit known-field consumption fixes the latter while retaining unknown fields. Failed evidence is retained in `artifacts/logs/profile-codec-tests*.log`, `profile-codec-native.log` and `profile-codec-wasm.log`; subsequent corrected fixtures pass. Final native/Dart/WASM/regression and shipping evidence follow.
+
+This is not complete OAuth or profile sync. Platform consent/verified identity, live same-project app-data visibility, discovery/enrollment, durable causal merge/application, remaining portable settings/categories, protected credential transfer and full database migration remain active. No production profile files are uploaded. The pending password-protection choice is preserved; main, installed applications and personal accounts are untouched.
+
+
+Final profile-codec checks pass **9 codec/account-mapping Rust tests**, **67 Flutter native Rust tests**, **14 actual Dart FFI tests**, **23 common WASM cases plus duplicate/size/depth checks**, **35 backend tests** (the explicit production HTTPS test is ignored in that default run), **39 Python tests** and **31 parity contracts**. Root/native Clippy, formatting and pinned strict documentation pass. The native test holds all provider capacity while validating fixtures; the Dart FFI verifies existing accounts and untouched credential access. Earlier duplicate-extension failures remain recorded. The existing browser UI and Android/Apple control suites are unchanged and were not rerun for this metadata-only feature; no new control, live-provider or performance claim follows from these tests. Flutter analysis and mandatory-hook shipping evidence follow.
+
+
+### Shared profile codec shipping record
+
+Committed and pushed as [`80979d2`](https://github.com/sam-ruff/shep.so/commit/80979d26db8d44e2f9caaed4f02e535807f9b826) to `feat/mobile-web-clients`; the exact remote SHA is verified. Mandatory hooks pass formatting, Clippy and **390 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Additional verification passes **67 mobile native Rust tests**, **14 actual Dart FFI tests**, **23 shared WASM cases plus malformed-record checks**, **35 backend tests**, **39 Python tests**, **31 parity contracts**, Flutter analysis, native Clippy and strict pinned documentation. Shared release stamping includes the crate and its path lockfile entries; the new WASM gate is recorded only in the deliberately disabled quality workflow.
+
+The codec/account review adapters and common fixtures are delivered prerequisites. Full OAuth/provider consent, verified cross-client Google access, discovery/enrollment, durable causal merge/application, remaining settings/category mappings, protected credentials and complete database transfer remain unfinished. The next turn continues this highest-priority work from the handover; the browser recovery increment was separately pushed as `df4f29c`. All work remains on the review branch, with main, installed applications and personal accounts untouched. Quality/release CI stays disabled until the trusted runners are ready.
+
+
+### Desktop feature-scoped Google consent — desktop-main:R92/R75/R02/R49/R63/R67/R73/R77
+
+Preferences now separates the next sign-in's Drive/Calendar permission choices from the active grant. Fresh setup selects no services implicitly; legacy known grants supply initial choices until an explicit selection is saved. Drive uses app-private storage; Calendar can be off, read-only or editable with its required list scope. Google token responses omitting scope inherit only the exact requested set. Pending candidate metadata is bound to that set across failed keychain saves/restart; refresh retains the original selection, and broader returned scope cannot activate unselected services. Changed preferences fence queued sign-in, its saved-form acknowledgment and final activation, retaining the prior grant/cache.
+
+All 46 selected Google protocol/lifecycle/UI-ordering tests pass, including exact URL/PKCE parameters, partial and broader grants, scope fallback/refresh, candidate replay prevention, changed selection and opt-in persistence. Existing denial/callback/rotation tests remain. Native control/visual/regression and shipping evidence follow; this desktop change does not implement mobile/browser provider consent, verified cross-client profile identity, enrollment or continuous sync.
+
+Implementation follows [Google installed-app authorization](https://developers.google.com/identity/protocols/oauth2/native-app), [Calendar scopes](https://developers.google.com/workspace/calendar/api/auth) and [OAuth token-response scope](https://www.rfc-editor.org/rfc/rfc6749.html#section-5.1). It keeps the installed-app system-browser/PKCE flow and does not assume incremental authorization support. Real Google client registration and live cross-platform access remain unverified.
+
+
+Initial native verification retained two fixture-coordinate failures: the taller Google card required scrolling before clicking Disconnect, and a compact test tried to click a large-layout agenda target outside its owned 900-pixel display after resizing the window. The saved tests now reach the visible Disconnect and compact agenda controls directly. Deadlines are unchanged. Light saved/refused-sign-in controls and compact dark requested-versus-active permissions pass; the compact event remains read-only after requesting future editing access. Reviewed WebP captures show both permission states clearly. Full functional native regression and shipping follow; logs remain under `artifacts/logs/google-consent-*`.
+
+
+Final desktop consent verification passes **118/118 native functional scenarios**, **398 root/shared Rust tests** (two personal-account diagnostics intentionally ignored), **46 selected Google tests**, **39 Python tests** and **31 parity contracts**. Root Clippy/formatting and pinned strict documentation pass. Light 1440×920 and dark 900×640 captures were reviewed, including requested editing versus an active read-only event. Earlier coordinate failures remain in the ignored logs; assertion deadlines were unchanged. This was a functional run on the development host, with no new latency, live Google or Apple claim. Mandatory-hook and remote shipping evidence follow. Full mobile/browser provider authorization and continuous profiles remain open.
+
+
+### Desktop consent shipping record
+
+Committed and pushed as [`3e1181b`](https://github.com/sam-ruff/shep.so/commit/3e1181ba68692b63104cec4f926f3391ecfab470) to `feat/mobile-web-clients`; the exact remote SHA is verified. Mandatory hooks pass formatting, Clippy and **398 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. All **118 native functional scenarios**, **39 Python tests**, **31 parity contracts** and pinned strict documentation pass; synthetic light/dark/compact captures are reviewed.
+
+Desktop feature-scoped consent is delivered. Full R75 OAuth parity and R02/R49/profile sync remain unfinished: mobile/browser provider grants, verified cross-client identity/app-data visibility, discovery/enrollment, causal merge/application, remaining portable categories and protected credentials are next. No request is removed for this partial delivery. The personal phone, installed desktop and independent main worktree remain untouched. Quality/release CI stays disabled; re-enable when requested and trusted runners are ready.
+
+
+### Flutter native Google consent continuation — R75/R02/R49/desktop-main:R92/R63/R67/R69/R73/R77
+
+Flutter's production entry now supplies the supported native Google SDK adapter and secure connection metadata to Preferences. Identity comes from SDK authentication and is bound to the configured application; access tokens remain in the SDK. Requested Drive/Calendar permissions stay separate from committed access. One SDK operation and a coalescing preference writer preserve ordering; changed choices, denial, different identity/application and failed storage cannot activate a replacement. Disconnection commits before local-only sign-out, with retryable cleanup after restart. Background token requests use only an already authenticated session and enabled scopes.
+
+All nine lifecycle tests, two actual compact/held-consent widget scenarios, the configured SDK-adapter contract and secure-store lost-reply regression pass. The host regression passed 87 tests before the additional secure-store test. Initial control failures exposed lazy-list test navigation and a real narrow Calendar dropdown overflow; saved controls now scroll the actual settings list, and the expanded dropdown fits its field. The first emulator launch used an unsupported GPU mode and terminated; the owned dedicated AVD booted with its supported SwiftShader mode. No personal device was used. Full native/Appium, final Playwright capture, strict documentation and shipping evidence follow.
+
+This increment is not full provider or profile parity. Real Google configuration/callbacks/refresh, safe seamless account switching, automatic session restoration, Calendar/Drive use, discovery/enrollment/merge, credentials and Apple execution remain open. The SDK has one active account on some platforms; reconnect therefore keeps the saved identity and never implicitly signs it out just to show a picker. Configured builds currently require explicit local disconnection to select another account. See `docs/agents/GOOGLE_MOBILE.md`.
+
+
+The first Android control run reached the saved light connection but stalled in the new capture helper. Comparing the working native capture helper showed the missing frame pump between surface conversion and screenshot. That owned driver was explicitly interrupted and is not counted as a pass; its log and separate ADB observation are retained. The runner now also requires both scenario completion markers in a fresh report, because an interrupted `flutter drive` can exit zero. A follow-up test build caught a misplaced import in the capture change; it was corrected before the next run. Final native evidence follows.
+
+
+Android's corrected capture run passes both named Google scenarios and saves four screenshots; compact dark and changed-consent captures are reviewed. Final browser capture review exposed insufficient real scrolling in the new script, which is being corrected using the existing dropdown pointer helper. Dependency review also found that the combined Google plugin automatically loads its web SDK during registration. The adapter now uses the maintained native platform packages directly through their pinned interface, and the preview Playwright flow rejects external requests. This changes dependency registration; final SDK/Android/browser checks must use the native-only package set.
+
+
+Further storage review separated an unconfirmed write/readback from a definite rejected write. Google operations now pause until an explicit successful read reconciles the committed record, preserving newer unsaved choices. A lost disconnection acknowledgment cannot lead to a new sign-in before cleanup is recovered. Actual secure-store method-channel and controller regressions pass, alongside the existing compact controls; native controls also retain a saved unconfirmed-storage/read-retry path.
+
+
+The real-pointer browser run reproduced merged accessibility semantics: the Calendar dropdown inherited the whole Google card's label/bounds and a click could hit the Drive switch. A separate explicit child-semantics boundary fixes the product issue; the browser/Appium assertions now require Drive to remain off when only Calendar is selected. Before-fix DOM/captures are retained under `artifacts/flutter/web/google-semantics-before-*`. The preview's new external-request gate additionally caught CanvasKit's unconditional fallback Roboto download. The same SDK-provided Roboto font and its license are now bundled locally; Shep's Noto Sans theme stays configured. Final offline/native regression follows.
+
+
+The first complete Appium run passed six existing flows, then its generic label helper selected the non-clickable “Preferences saved” status instead of the Preferences tab. The saved native tree distinguishes those controls. The helper now requires clickable elements and waits for actual Preferences content before scrolling; the failure screen/tree/log are retained in `artifacts/flutter/google-appium-first-failure/`. This is a test-navigation correction, not a successful Google flow. Final execution follows.
+
+
+Final Flutter source verification passes **89 host tests**, the separately configured SDK-boundary test, **two named Android Google control scenarios**, **seven offline Flutter Playwright flows**, clean analysis, **40 Python tests** and **31 parity contracts**. Five Android Google screenshots were saved and the compact light/dark, held-consent and unknown-storage states reviewed. The production ARM64 release APK builds with the Rust bridge and local Roboto/Noto font/license assets; checked preview-only identity/token/message markers are absent. Native Google plugin registration was exercised by Android platform initialization, without account authentication. This development-signed build has no registered Google client configuration and was not installed on the personal phone. Final Appium and shipping follow.
+
+The second Appium attempt reached Preferences but the new high-level scroll command left the list stationary. Its saved tree/screen are retained under `artifacts/flutter/google-appium-scroll-failure/`. The scenario now injects an actual W3C touch swipe and requires a changed visible tree before continuing, keeping the existing assertion deadlines. The final Appium corrections change test navigation only.
+
+
+**Final Appium verification passes all seven flows**, including scoped consent, cancellation retaining Drive-off/Calendar-read-only access, retry and reviewed local disconnection. The last intermediate run had already saved the correct connection but its added account details pushed the confirmation below the viewport; its capture/tree remain under `artifacts/flutter/google-appium-notice-failure/`. The saved scenario now scrolls to newly inserted confirmation/error text through actual touch input. The final cancellation capture is reviewed and retained as WebP. Final logs are `artifacts/logs/mobile-google-appium-complete.log` and `android-appium-e2e.log`. The final Appium corrections change test navigation only. Flutter formatting, configured SDK fixture, Python/parity and pinned strict documentation pass. Mandatory hooks and remote shipping follow; live Google, Apple, providers and continuous profiles remain open.
+
+
+### Flutter scoped consent shipping record
+
+Committed and pushed as [`6c4bb65`](https://github.com/sam-ruff/shep.so/commit/6c4bb65fbc02c96dd258ed9942e64e6282bca181) to `feat/mobile-web-clients`; the exact remote SHA is verified. Mandatory hooks pass formatting, Clippy and **398 root/shared Rust tests**, with two personal-account diagnostics intentionally ignored. Final source checks pass **89 Flutter host tests**, the configured SDK contract, **two Android Google scenarios**, **seven Appium flows**, **seven offline Flutter Playwright flows**, **40 Python tests**, **31 parity contracts**, clean Flutter analysis/formatting, the production ARM64 release build and pinned strict documentation. Synthetic compact light/dark and cancellation/storage-recovery captures are reviewed. Intermediate failures remain explicitly recorded above; none counts as a passing run.
+
+This delivers the native consent/permission/local-cleanup increment. Full R75/profile parity remains active: registered live Google clients, safe switching/automatic restoration, actual Calendar/Drive use, verified profile discovery/enrollment/merge, protected credentials and Apple execution are unfinished. The test emulator and inspection server were stopped. Main, installed desktop and personal phone were untouched; quality/release CI remains disabled until requested with trusted runners ready. The next restart continues OAuth/shared profiles from the handover.
+
+## 2026-09-09 — Native causal profile history checkpoint
+
+R75/R02/R49/desktop-main:R92 adds durable metadata history in
+`shared/profile-core`, a bounded owning worker and the production Flutter native
+bridge. Two local stores retain exact operations, merge independent fields,
+preserve concurrent versions for review, reject stale resolutions and retain
+account/profile tombstones through offline edits and restart. Local edits are
+idempotent after lost replies; reserved upload IDs and byte digests persist.
+Accepted worker writes outlive cancelled observers. SQL failure rolls back record,
+ancestry, field versions and counters together. See [the API and integration
+boundaries](agents/PROFILE_HISTORY.md).
+
+The history uses its own database and worker, independent of occupied mail
+provider capacity. Native binding changes drain the previous journal; a stale
+close cannot close another binding. Flutter encodes/decodes profile metadata off
+its UI isolate. Root/native rusqlite moves to 0.40.2 / SQLite 3.53.2, deliberately
+porting the dependency fix inspected in desktop `db8c82a`; that commit's entire
+mail-cache owning-worker migration is not included here.
+
+Verification before shipping: **17 shared profile tests** (10 history, one worker,
+six codec), **68 native Rust tests**, **90 Flutter host tests**, clean native Rust
+Clippy/Flutter analysis, **41 Python tests**, **31 parity contracts**, strict pinned
+documentation and **23 common WASM cases** plus duplicate/size/depth rejection
+pass. The shared actual Dart FFI scenario also passes on the isolated Android
+emulator: two stores exchange synthetic account/settings records, retain/resolve
+a conflict and reopen queued work without accessing credentials. Its completion
+marker is required by the wrapper; it is backend integration, not a new Settings
+control E2E. Production ARM64 APK builds successfully with the native library;
+this new artifact is unsigned. The earlier installed phone checkpoint was
+development-signed. Final root hooks, performance and shipping evidence
+follow below.
+
+Retained failed-before evidence under ignored `artifacts/logs/profile-history-*`:
+initial SQL integer-conversion compile errors; symlink lock alias failure; duplicate
+tombstones counted as conflicts; the planner choosing a competing index; two
+Clippy style findings; the first Dart fixture's missing import; and two Android
+runs failing temporary-directory setup before opening history. Corrected ownership,
+tombstone/index logic and fixture setup pass the corresponding unchanged contracts.
+The full Android setup failure log is retained separately. No interrupted or failed
+run counts as a pass. The history-only code did not change product UI. The subsequent required storage
+benchmark exposed the search query issue below and extended desktop verification.
+Unchanged Appium/Playwright control suites were not rerun for the metadata bridge;
+earlier control evidence remains separately recorded.
+
+**Remaining:** authenticated Google identity/owned-file transport, complete
+creation/discovery/enrollment checkpoints, category/profile switches, actual
+account/preferences application, complete portable settings and protected
+credentials. A supplied binding is not verified Google identity; matching a local
+reserved ID/digest is not proof of a cloud upload. Zero missing ancestry is not a
+complete cloud listing. Large-history/compaction, device-ID rebinding during full
+transfer, encrypted local SQLite, Apple and genuine cross-client Google access
+remain open. The full product goal stays active; personal phone/main/installed
+desktop were untouched and quality/release CI stays disabled.
+
+
+## 2026-09-09 — Search plan correction during storage verification
+
+The required 100,000-message benchmark passed page budgets but spent several
+minutes in search. It was stopped for diagnosis; that incomplete run is not a
+search p95 or a passing benchmark. The original plan used a virtual-table LEFT
+JOIN, repeating literal FTS filtering/ranking for each fuzzy candidate. A preserved
+synthetic database and the pinned SQLite plan comparison reproduce that expensive
+plan; an attempted debugger attachment was unavailable and provides no profiling
+evidence. Logs stay under ignored `artifacts/logs/profile-history-*`.
+
+`store/mail_query.rs` now materializes exact-match rowids/ranks once in SQLite and
+joins the indexed relation. It preserves short exact-body priority, exact-versus-
+fuzzy scores, Unicode, filters and shared list/selection ordering. The new planner
+regression rejects a virtual-table LEFT JOIN for both ordinary and combined folder
+scopes. Existing search/selection/bulk tests pass (21 tests), plus the plan guard.
+Mobile/browser fuzzy-ranking parity remains explicitly open in TODO and the shared
+scenario matrix. Final native controls and unchanged performance budgets are
+verified below before shipping.
+
+
+The first complete benchmark after materializing exact ranks measured search at
+68.94 ms against the unchanged 50 ms gate (Inbox 33.38 ms, account page 30.47 ms).
+It failed before body/navigation measurements, and remains preserved as
+`artifacts/logs/profile-history-backend-benchmark-final.log`. A separate pinned
+SQLite diagnostic isolated the per-page unread badge query: the original plan
+looked up message rows and sorted account groups. A covering
+`(folder, unread, account)` index removes both steps. On that synthetic database,
+the diagnostic component measured 45.204 ms before and 4.668 ms after; those are
+diagnostic component timings, not final release benchmark results.
+
+The cache now creates the covering index on open, including existing caches. A
+reopen/plan regression protects that path; existing unread projection, search,
+selection and bulk tests retain their behavioral assertions. Full native
+verification before this additional index passed all 118 functional scenarios;
+final targeted controls and fresh performance evidence follow below. No query
+predicate, result ordering or budget was weakened.
+
+
+The first 14-scenario native index rerun during compilation passed 12 and failed
+two existing input flows: compact bulk selection stayed at zero after consecutive
+checkbox clicks, and the badge preference expected four while the underlying mail
+state had already changed to three unread messages. Screenshots/state were reviewed
+(`68972d6b03cb` and `c51b45348c43`); these are retained input-under-load evidence for
+R63, not proof of an index-counting error or a fixed input race. The unchanged suite
+is rerun after compilation, without forced clicks, added delays or relaxed checks.
+The earlier full 118-scenario run passed. See final results below.
+
+
+## 2026-09-09 — Final profile-history and storage verification
+
+Code checkpoints: [`e9115f9`](https://github.com/sam-ruff/shep.so/commit/e9115f978d6753fb66400178927ffb5b4bd61c97)
+(profile history), [`e568c84`](https://github.com/sam-ruff/shep.so/commit/e568c84)
+(materialized search) and [`da6f2e8`](https://github.com/sam-ruff/shep.so/commit/da6f2e803fbddf1e485418b925923eeeb08afd1e)
+(covering unread counts). Mandatory hooks pass formatting, Clippy and **411
+root/shared Rust tests**, with two personal-account diagnostics intentionally
+ignored. Native Rust passes **68**, Flutter host **90**, Python **41**, shared WASM
+**23 cases** plus malformed-record checks, and parity **32 contracts**. Native
+Clippy, Flutter analysis, the backend's locked dependency check and strict pinned
+documentation pass. No provider/platform claim is inferred from these fixtures.
+
+The actual profile-history FFI scenario passes on Android. Its wrapper verifies a
+fresh named completion marker. The final ARM64 production build contains the Rust
+bridge, configured NotoSans/Roboto fonts, license notices and checked production
+identity, with checked fixture markers absent. This single-ABI artifact is
+**unsigned**, confirmed by `apksigner`; it is not the earlier development-signed
+phone installation or the complete distribution gate. An initial ad-hoc package
+check assumed the wrong font family; the corrected inspection checks the configured
+files. No phone installation was repeated.
+
+All **118 native functional scenarios** pass before the final index; all **14
+relevant index/badge/search/selection/bulk scenarios** pass unchanged afterward
+with compilation stopped. The earlier 12/14 run's input failures remain R63.
+Reviewed synthetic exact-body-first/after-refresh, compact dark selection and
+light page-two captures are copied to ignored `artifacts/profile-history-reviewed/`.
+The original run directories and failed screenshots are retained.
+
+The final backend benchmark passes: Inbox **6.030 ms**, account **3.106 ms**, search
+**35.537 ms**, body **0.025 ms** p95. Native navigation remains over budget:
+**154.81, 162.33, 154.88 and 155.14 ms** in four 30-transition runs against **150 ms**.
+The combined gate was executed and **fails on navigation**; its handler measurement
+passes at 0.010 ms. A previous cached worktree test executable also failed three
+runs at 159.31–168.24 ms. This supports retaining the existing responsiveness
+investigation, not attributing it to the new index or claiming it is fixed. The
+current executable and report were restored after comparison and verified. See
+[measurement scope](PERFORMANCE.md); no timing deadline, click flow or threshold
+was changed to produce a pass.
+
+Logs are under ignored `artifacts/logs/profile-history-*`; comparison hashes and
+reports under `artifacts/profile-navigation-comparison/`. Final source checks and
+code shipping are recorded here separately from full product completion. R75
+provider identity/transport/discovery/enrollment/category controls, real
+account/preferences application, protected credentials, browser history, Apple,
+VPS configuration and the broader parity/performance work remain in TODO. Main,
+installed desktop and personal phone were untouched. Quality/release workflows
+remain disabled; re-enable only when requested with trusted runners ready.
+
+
+The three code checkpoints are **pushed to `feat/mobile-web-clients`**, with exact
+remote head `da6f2e803fbddf1e485418b925923eeeb08afd1e` verified. This fulfills prompt
+review-branch shipping for the profile-history/storage increment, with the native
+navigation failure explicitly retained. Full goal completion and release readiness
+are not claimed. Final handover/evidence documentation follows this code head.
+
+
+## 2026-09-09 — Shared Google profile transport
+
+The optional native `drive` feature in `shared/profile-core` now verifies the
+Drive principal, validates owned app-data operation metadata and exact media,
+returns bounded 50-file pages and connects immutable uploads/imports to the
+existing owning journal. Reserved IDs persist before POST; a lost response or
+restart reconciles the same file, and only matching remote bytes acknowledge it.
+Conflicting files cannot be overwritten or deleted. The wire format and remaining
+integration are in [Google profile files](agents/PROFILE_DRIVE.md).
+
+The shared metadata/media fixture and **34 profile core tests** pass. The scripted
+production-transport tests cover identity and namespace refusal, access failures
+and redirects, invalid/partial/oversized pages, byte/metadata mismatches, separate
+real journals, missing ancestry, persisted reservation before POST, response loss,
+409 verification, exact-ID retry, cancellation and restart. The first durability
+fixture queried a nonexistent table; its failed log is retained, and the corrected
+assertion reads the real operations table through an independent connection. No
+production schema or safeguard was weakened to fix the fixture.
+
+Compatibility checks pass **68 mobile Rust tests**, **23 shared WASM fixtures**
+plus malformed-record checks, **41 Python tests**, **33 parity contracts**, and
+the backend's locked dependency check. Mandatory hooks, strict documentation and
+exact shipping confirmation are recorded with the code commit below. Logs remain
+in ignored `artifacts/logs/profile-drive-*`. No personal data or credentials are
+used by these tests.
+
+This transport is optional infrastructure, not yet enabled/called by desktop or
+Flutter Settings. It has no durable discovery catalog, enrollment/category UI or
+real account/preferences application. Its bounded page API cannot prove an atomic
+cloud snapshot; a configured namespace cannot prove cross-client Google-project
+visibility. Live registered Google, browser transport, Android/Apple provider
+execution, protected credentials and full sync remain active TODOs. Existing
+Android/UI evidence belongs to earlier increments, not this HTTP fixture suite.
+No UI/E2E, APK or timing rerun is claimed for this provider-only change. The prior
+combined performance gate still fails native navigation. Main, installed desktop
+and personal phone were untouched. Quality/release CI remains disabled; re-enable
+when trusted runners are ready and the user requests it.
+
+
+Profile transport code [`557f8d5`](https://github.com/sam-ruff/shep.so/commit/557f8d5d1dd01ed9d2eee2decbd2a5235f036cac)
+and fixture portability [`9289f53`](https://github.com/sam-ruff/shep.so/commit/9289f5327b71bb6aaff463ee965eab48c13df85a)
+are **pushed to `feat/mobile-web-clients`**, with the exact remote `9289f53` head
+verified. Mandatory hooks pass formatting, Clippy and **428 root/shared Rust
+tests**, including the 34 profile core tests; two personal-account diagnostics
+remain intentionally ignored. Strict pinned Zensical passes. A real Git checkout
+with `core.autocrlf=true` confirms that the two wire fixtures preserve their exact
+bytes, size and digest under the explicit LF attributes. This is a checkout
+conversion check on Linux, not Windows or Apple execution.
+
+Final shipping logs are `profile-drive-commit.log`,
+`profile-drive-portability-commit.log`, `profile-drive-line-endings.log`,
+`profile-drive-docs-final.log`, `profile-drive-docs-portability.log` and
+`profile-drive-push.log` under ignored `artifacts/logs/`. Updated TODO/handover
+evidence follows these code checkpoints. The full product goal remains active;
+durable catalog/enrollment, real client application, live access and the previous
+native performance failure are not completed by this push.
+
+Final review also shares the HTTP client policy between production and loopback tests, so redirect rejection is verified through the same builder instead of a duplicated fixture policy. Production keeps its fixed HTTPS endpoint; the fixture changes only local connection settings and its deadline. The final mandatory-hook result and push cover this refinement with the existing redirect cases.
+
+
+## 2026-09-09 — Durable remote profile discovery
+
+R75/R02/R49/desktop-main:R92/R67/R69/R73/R77 continuation adds a per-principal,
+application-scoped catalog under the optional shared native Drive feature. Saved
+metadata pages, file identities and change replay preserve progress across
+interruption. Prepared file identities commit before remote history import, so a
+failed later receipt cannot hide a file disappearing during a full rescan.
+Missing/reclassified files and pagination conflicts retain explicit errors and
+cached observations. Profile summaries preserve missing ancestry, concurrent names,
+setting reset intents and tombstones. Remote observation journals remain separate
+from enrolled local history and offline edits. See [the contract](agents/PROFILE_DISCOVERY.md).
+
+**49 shared core tests pass**: 32 unit/protocol/worker, 6 codec and 11 history.
+New scenarios cover held success/error results after a rescan, retry/reopen,
+arrivals and repeated changes, long cycles, duplicate IDs, 52-profile paging,
+conflicts, missing parents, removal and a real SQLite receipt failure after history
+commits. Queue saturation, cancelled observations, canonical aliases and an
+independent child process verify ownership. An overview test initially treated an
+explicit reset as no setting; the final test verifies the retained reset intent
+and zero visible settings only after a profile tombstone. Failed compile/fixture
+logs remain in ignored `artifacts/logs/profile-discovery-*`; no production
+history semantics or test budget was weakened.
+
+Compatibility checks pass **68 mobile Rust tests**, **23 WASM fixtures** plus
+malformed-record checks, **41 Python tests**, **34 parity contracts**, the backend
+locked dependency check and strict pinned Zensical. Core Clippy passes. Final
+mandatory-hook results and the code commit are recorded in the shipping entry.
+Logs use the `profile-discovery-` prefix, including `final-core`, `native`, `wasm`,
+`python`, `backend`, `clippy` and `docs` under ignored `artifacts/logs/`.
+
+This optional catalog has no client Settings caller or live Google grant. Actual
+creation/enrollment, platform lifecycle binding, own-upload identity integration,
+first-setup publication completeness, account/preferences application, category
+controls and credential protection remain open. A caught-up scan is not proof of
+complete ancestry, successful enrollment or shared Google-project visibility.
+Browser/Apple/Android discovery and catalog performance are unverified. No new UI,
+E2E or APK result is claimed. The earlier native navigation/combined timing gate
+still fails. Main, installed desktop and personal phone are untouched; quality
+and release workflows remain disabled. The full product goal remains active.
+
+The unchanged 100,000-message storage benchmark also passes: inbox p95
+6.101 ms, account 3.007 ms, search 36.017 ms and cached body 0.074 ms, with
+60 query samples. The optimized build finished before measurement; the desktop
+session and other applications remained open, so this is not an idle-host claim.
+This verifies mail storage budgets, not catalog latency or native presentation.
+The prior native navigation failure remains unchanged.
+
+
+Discovery code [`3c9b98d`](https://github.com/sam-ruff/shep.so/commit/3c9b98d514bf667064f5cd92a22d4dda84998de7) is **pushed to `feat/mobile-web-clients`**; the exact remote
+head was verified. Mandatory hooks pass formatting, Clippy and **443 root/shared
+Rust tests**, with two personal-account diagnostics intentionally ignored. The
+49 profile tests and all compatibility/strict-docs/storage results above cover
+this code. No client control, live Google or full parity completion is implied.
+Shipping logs are `profile-discovery-commit.log`, `profile-discovery-push.log` and
+`profile-discovery-docs-final.log` under ignored `artifacts/logs/`; the saved
+benchmark is `artifacts/profile-discovery-backend.json`. The final documentation
+checkpoint follows this code in branch history.
+
+
+## 2026-09-09 — Flutter Google profile discovery controls
+
+R75/R02/R49/desktop-main:R92/R67/R69/R73/R77 continuation connects Flutter's saved
+Google grant to the shared Drive catalog. Preferences now offers discovery,
+retry/rescan, pause/resume and 50-summary paging with explicit missing/conflicting
+history. The verified principal commits to device secure metadata before profile
+contents appear. Same-account re-consent retains it; stale grants, failed writes
+and unconfirmed storage cannot silently replace the binding. The native session
+owns accepted work through close, and both old data and errors are fenced from
+replacement sessions. See [the client contract](agents/PROFILE_MOBILE.md).
+
+Verification passes **71 mobile Rust tests** and native Clippy, **104 Flutter host
+tests**, clean analysis and the separately configured SDK-boundary test. Android
+executes two discovery control scenarios (retry, 52-profile pagination, appearance,
+pause while reading mail, resume), the existing two Google consent scenarios and
+the real native two-store history/conflict/restart scenario. The same four saved
+flows pass with **UiAutomator2/Appium and Flutter Playwright**: failed discovery and
+retry, dark appearance, local disconnect and return to mail. UI providers are
+isolated fixtures; Rust session/catalog tests exercise actual native ownership
+separately. These results do not establish live Google or separate browser-client
+profile integration. **41 Python tests** and **35 parity contracts** pass.
+
+Final synthetic WebP captures are under ignored
+`artifacts/profile-client-reviewed/final/`: browser and Android light/dark profile
+rows, persistent errors, disconnected recovery, pagination and paused discovery
+were reviewed. Singular/plural labels and row spacing were corrected. The first
+Android Appium run was obstructed by a System UI unresponsive dialog; its capture
+and diagnostics are retained, with no claimed root cause. After choosing the OS
+Wait control, later tests ran without that dialog. Further failures exposed a tap
+on Theme's trailing padding and a Back-transition accessibility race. The saved
+flow now targets the painted dropdown and waits for the actual clickable control
+under its existing deadline. No forced clicks, hidden ANR handler or relaxed
+functional/performance thresholds were added. Failed web accessible-name matching,
+widget scrolling and the initially misplaced native async-trait dependency are
+also retained under `artifacts/profile-client-failures/` and
+`artifacts/logs/profile-client-*`.
+
+Result logs include `profile-client-native-fixed`, `native-clippy`, `analyze-final`,
+`host-final`, `sdk-final`, `android-history-final`, `android-google-final`,
+`web-final`, `appium-final`, `python-final` and `parity-final` under
+`artifacts/logs/` (each has the `profile-client-` prefix). Named Android reports are
+under `artifacts/flutter/native/`; the Appium/browser results are in
+`artifacts/flutter/discovery-native/` and `discovery-web/`. Production build,
+mandatory hooks, strict documentation and shipping are recorded below when verified.
+
+Initialized first-profile publication, own-upload receipts, reviewed enrollment,
+real account/preferences application, complete category mappings, credentials,
+legacy migration and desktop/browser/Apple/live Google integration remain active.
+The unanswered password-protection choice is preserved. The prior native timing
+failure remains; no new latency claim is made. Main, installed desktop and personal
+phone are untouched. The new flows are wired into the **disabled** quality
+workflow; documentation publishing remains enabled. The full product goal is open.
+
+The production ARM64 release APK builds successfully with the Rust and Flutter
+libraries, bundled fonts/licenses, production package identity and Internet
+permission. The inspected fixture markers are absent, including the new discovery
+entrypoint/provider markers. It is **unsigned**, has no registered Google project
+configuration and was not installed on the personal phone. This ARM64-only check
+does not satisfy the all-architecture distribution gate. Inspection and SHA-256
+are in ignored `artifacts/profile-client-apk.json`; the build/inspection logs have
+`profile-client-apk-` names. Dart formatting, strict pinned Zensical and diff checks
+pass. TODO cleanup preserves all **40 active request entries** in their original
+order; older completed prerequisite prose remains traceable in this log.
+
+
+Flutter discovery code [`438682e`](https://github.com/sam-ruff/shep.so/commit/438682e277c93832a95168034b9940afe8de0cc0) is **pushed to `feat/mobile-web-clients`** with
+exact remote verification. Mandatory hooks pass formatting, Clippy and **443
+root/shared Rust tests**, with two personal-account diagnostics intentionally
+ignored. The final mobile/Android/browser/APK and strict-docs evidence above
+covers this code. Shipping logs are `profile-client-commit.log` and
+`profile-client-push.log`; the remote verification record is ignored
+`artifacts/profile-client-shipping.json`. A final documentation checkpoint follows
+in branch history. Creation/enrollment, real account/preferences application and
+all remaining parity work stay active.
+
+## 2026-09-09 — Reviewed Flutter profile publication
+
+Flutter **Profiles and sync → Create profile** now prepares a named account/settings
+review and publishes it through the production native Drive transport. The review
+shows all eight current Flutter preferences and 50 account rows at a time, with
+selectable connection details. Changed local accounts/preferences invalidate approval.
+No passwords, OAuth grants, mail or drafts enter the portable records. This is
+publication; enrollment, real account/preferences application and continuous sync
+remain active. See [the publication contract](agents/PROFILE_PUBLICATION.md).
+
+Native schema 10 retains frozen reviews, explicit account mappings, exact history
+requests and publication progress. Lost staging/approval receipts retry the original
+identities. Shared `initialization-v1` history requires a preparing root and causal
+completion before a profile becomes initialized. Tracked upload records the verified
+owned file in discovery before confirming the local queue; a failed catalog receipt
+keeps the same remote reservation for retry. Pause/close finishes accepted work,
+and grant/session generations prevent late results reaching a replacement account.
+
+Verification passes **52 shared profile tests**, **74 mobile Rust tests**, native
+Clippy, **111 Flutter host tests**, clean analysis and the configured SDK-boundary
+fixture. The **28 shared codec cases** pass native Rust, actual Dart FFI and standalone
+Rust WASM, including additional duplicate/size/depth rejection. Native tests exercise
+75 accounts/78 operations, 50-row reviews, legacy IDs, stale account/settings reviews,
+lost cross-database receipts and close/reopen while an upload and mail capacity are
+held. They preserve cached accounts and credential slots. **41 Python tests** and
+**36 parity contracts** pass. Final Android regressions, strict docs, production APK
+and mandatory shipping hooks are recorded below.
+
+The two saved publication scenarios pass on Android, and four matching publication
+flows pass through **Appium/UiAutomator2 and Flutter Playwright**. They cover entered
+names, frozen values, account details/pages, failed upload and Resume, light/dark
+appearance, Pause and actual mail reading while a step is held. Providers in these
+controls are isolated fixtures; shared/native protocol tests separately cover the
+real transport and persistence. No live Google or Apple success is claimed.
+
+Synthetic final captures under ignored `artifacts/profile-publication-reviewed/final/`
+were reviewed for readable settings/account details, paged controls, persistent errors,
+paused progress, mail navigation and light/dark completion. Browser account details
+were initially visible but absent from the accessibility tree; replacing their
+`SelectableText` with `SelectionArea(Text)` preserves selection and exposes the
+content. The same saved Playwright assertion now passes. Native Appium initially
+met a System UI unresponsive dialog; its screenshot/tree and logs are retained,
+and only the dedicated emulator's OS dialog was dismissed. No root cause is claimed.
+A missed initial Preferences tap and unfocused name entry are also retained; the
+saved flow waits for Appearance and focuses the real field before typing/asserting
+the entered name. No forced clicks or relaxed deadlines were added. The broader
+native input-under-load audit remains active.
+
+Failures are retained under `artifacts/profile-publication-failures/` and
+`artifacts/logs/profile-publish-*`, including initial SQL integer conversions,
+old schema expectations, Dart lint/control-route checks and native Clippy. Final
+core/native/host/SDK/Android/web result logs carry the same prefix; named Android
+reports live under `artifacts/flutter/native/`. Fixture captures contain no personal
+mail. The website, main worktree, installed desktop and personal phone are unchanged.
+The new flows are wired into the deliberately **disabled** quality definition;
+documentation CI remains enabled.
+
+All **40 active requests** remain in TODO. Reviewed enrollment/application,
+desktop/browser publication, full portable categories, credential protection,
+legacy migration, automatic native SDK restoration, Apple/live Google and complete
+product parity remain unfinished. The prior native navigation gate still fails
+154.81–162.33 ms against 150 ms; this increment makes no new latency claim. The
+password-protection choice remains unanswered.
+
+Final Android regression executes **seven named scenarios**: two publication,
+two discovery, two Google consent and one actual two-store native history/restart
+flow. Publication and discovery each pass four Appium and four Flutter Playwright
+flows, **eight flows per automation surface**. The shared harness retains actual
+click/touch input and both earlier discovery recovery/dark/disconnect flows.
+Final named reports and WebP captures are retained under the paths above. Final
+analysis and all **111 host tests** pass after the account-detail accessibility fix.
+
+The production ARM64 release APK builds and passes scoped inspection for the Rust
+and Flutter libraries, absent fixture markers, bundled fonts/licenses, production
+package and Internet permission. SHA-256 and details are in ignored
+`artifacts/profile-publication-apk.json`. `apksigner` confirms it is **unsigned**;
+no registered Google project is configured and no phone installation occurred.
+All-architecture distribution, signed releases and Apple verification remain open.
+The dedicated emulator and preview servers have been stopped after testing.
+
+The unchanged 100,000-message storage benchmark passes: Inbox p95 **6.28 ms**,
+account page **3.10 ms**, FTS search **36.10 ms** (each under 50 ms), cached body
+**0.02 ms** (under 10 ms). Owned Android/browser builds and the emulator finished
+before measurement; host observations are retained in `profile-publish-bench-host.log`,
+without claiming an otherwise idle host. This is a storage regression check, not
+native input-to-pixel evidence or a fix for the prior combined-gate failure.
+Strict pinned Zensical, Rust/Dart formatting and diff checks also pass.
+
+
+Publication code [`184b98a`](https://github.com/sam-ruff/shep.so/commit/184b98afafcf53bc3fd7c32a497fad04746304bf) is **pushed to `feat/mobile-web-clients`**, with exact
+remote verification and a clean worktree at the code checkpoint. Mandatory hooks
+pass formatting, Clippy and **446 root/shared Rust tests**, with two personal-account
+diagnostics intentionally ignored. No hooks were skipped. Shipping logs are
+`profile-publish-commit.log` and `profile-publish-push.log`; the machine-readable
+record is ignored `artifacts/profile-publication-shipping.json`. A documentation
+checkpoint follows in branch history. TODO and handover retain all 40 active
+requests, with enrollment and actual account/preferences application next.
+
+
+## 2026-09-09 — Reviewed Flutter profile enrollment
+
+Flutter can now open an initialized discovered profile, review account connections
+and eight portable preferences, and apply the selected changes on this device.
+Review pages contain at most 50 items; connection details, category switches and
+individual choices remain visible. Pause/Resume and lost-reply recovery retain the
+same account IDs and settings receipt. See [the enrollment contract](agents/PROFILE_ENROLLMENT.md).
+This advances actual client application; continuous synchronization and complete
+cross-client parity remain unfinished.
+
+Shared catalog export returns one original immutable operation, fenced by source
+revision and scope. Native schema 11 copies those records into an independently
+owned editable journal, without cloning device identity or upload queues. Approval
+checks the source, local history revision and frozen account fingerprint. Each
+account application atomically records its connection, independent empty credential
+slot, shared mapping, Reconnect marker and receipt. Existing matching accounts keep
+their credentials and cached mail; changed endpoints require an explicitly selected
+separate account. Newer local changes and removed mappings remain protected.
+
+Imported accounts refuse credential lookup/provider work until reviewed credential
+activation, and remain removable before reconnecting. Preference writes retain
+per-field revisions and the application receipt together. Delta saves and UI edit
+generations preserve unrelated changes, including edits made while a write is held
+or changed away and back. Two actual preference controls tapped before the next
+repaint now merge current state; the saved regression failed before the callback
+fix. Metadata refresh preserves the reader, cached messages and unsaved drafts.
+
+Verification passes 79 mobile Rust tests, 54 shared profile tests, native Clippy,
+125 initial Flutter host tests, clean analysis, the configured Google SDK fixture, 28 WASM
+codec cases with malformed-record rejection, 41 Python tests and 37 parity
+contracts. Native enrollment tests use original production history records and the
+real SQLite application path; control providers are isolated fixtures. These layers
+do not establish fully authenticated Google-to-Flutter interchange, live provider
+success or Apple execution. Final control, packaging and shipping results follow
+below after verification.
+
+Retained failures under ignored `artifacts/profile-enrollment-failures/` include
+old schema expectations and the removal-before-reconnect defect, widget cleanup
+and independent storage ownership, offscreen/ambiguous control locators, rapid
+preference overwrites and the browser completion accessibility omission. The latter
+was painted but missing from the accessibility tree; explicit live-region semantics
+now expose the same visible summary. A final Android rerun was canceled before
+building because Flutter discovery blocked on a stale wireless debugging transport;
+it is not a pass. The host transport was detached and testing resumed on the
+isolated emulator. No phone installation or personal-data automation occurred.
+
+All 40 active requests remain in TODO, including provider OAuth, grouped scheduled
+automatic replies and Linux store submissions. Desktop/browser publication and
+enrollment, ongoing reconciliation, all portable categories, credentials, automatic
+SDK restoration, same-project interchange, Apple/live-provider evidence, VPS
+configuration/deployment and full feature parity remain open. The prior native
+navigation gate still fails at 154.81–162.33 ms against 150 ms; this increment does
+not resolve it. Quality/release definitions remain disabled, documentation CI
+remains enabled, and main and the installed desktop remain separate.
+
+
+Android enrollment passes both named scenarios and four Appium flows; publication
+regressions also pass both named scenarios and four Appium flows. The rapid preference regression failed before the fix and passes through
+real host and Android controls. Review then added a device-inset test: existing
+footer spacing passed a small inset but failed a 60-logical-pixel inset. The new
+SafeArea uses the actual device inset. All 126 final host tests pass, including the larger-inset regression. Its initial
+run also exposed a saved test scroll direction that could not reach an earlier row
+after paging; the helper now scrolls toward that row through real input. Native
+and browser verification follow below. This is not a claim that every navigation
+mode has been run.
+
+
+Final Android verification passes **five named scenarios**: two enrollment, two
+publication and one actual two-store native history/restart scenario. Enrollment
+and publication each pass four Appium flows, **eight total**, with no recorded
+external requests or runtime errors. The final enrollment controls also assert
+footer clearance and both saved rapid preference changes. Android reports are in
+ignored `artifacts/flutter/native/integration-{enrollment,creation,profiles}-result.json`;
+Appium reports are under `artifacts/flutter/{enrollment,creation}-native/`.
+The dedicated emulator was stopped after these runs.
+
+
+Final Flutter Playwright verification passes **eight flows**: four enrollment and
+four publication, with empty runtime-error and external-request reports. All
+preview servers stopped normally. These are Flutter automation surfaces, not a
+claim about the separate hosted browser client's provider parity. Reviewed WebP
+captures under ignored `artifacts/profile-enrollment-reviewed/final/` cover
+light/dark reviews, current/profile values, details, paging/footer controls,
+application retry, paused progress, completion, reconnect status and preserved mail.
+
+
+The production ARM64 release APK builds and passes scoped inspection for the Rust
+and Flutter libraries, bundled fonts/licenses, production package, Internet
+permission and absence of fixture markers. Its digest and checks are in ignored
+`artifacts/profile-enrollment-apk.json`. It is **unsigned**, has no registered Google
+project configuration and was not installed on the phone. All-architecture signed
+distribution and Apple execution remain open. Final Dart/Rust formatting, clean
+Flutter analysis and pinned strict Zensical pass; later shipping documentation is
+built again before pushing.
+
+
+New storage timing is **deferred** because unrelated compilations saturated the
+host during finalization, as required by AGENTS.md. Host observations are saved in
+ignored `artifacts/logs/profile-enroll-bench-host-before.json`. Only benchmark
+compilation was requested; it is not timing evidence. Run the unchanged storage
+benchmark after these jobs settle, and keep the prior native/combined performance
+gate failure active. Functional/protocol/control results above do not imply a new
+latency result or full performance completion.
+
+
+Enrollment code [`9d6a6c6`](https://github.com/sam-ruff/shep.so/commit/9d6a6c6df644d340c1192ba13215c298ce8ac8b0) is **pushed to `feat/mobile-web-clients`**, with exact
+remote verification and a clean worktree at the code checkpoint. Mandatory hooks
+pass formatting, Clippy and **448 root/shared Rust tests**, with two personal-account
+diagnostics intentionally ignored. No hooks were skipped. Shipping logs are
+`profile-enroll-commit.log` and `profile-enroll-push.log`; the verification record is
+ignored `artifacts/profile-enrollment-shipping.json`. Benchmark compilation also
+finished successfully; timing remains deferred because unrelated compiler jobs are
+still active. A final documentation checkpoint follows in branch history. Full
+parity, continuous synchronization and all 40 active requests remain unfinished.
+
+
+## 9 September: desktop Google profile discovery
+
+Preferences → Profiles and sync now uses the saved active Google grant and the
+shared Drive catalog. Verified principal, OAuth client/lifecycle revision and local
+request generations fence old data and errors. The separate bounded queue keeps
+cached mail and ordered local saves independent. Pause stops subsequent steps;
+retry, reopening and rescan retain original history and saved progress. Reopening
+a completed catalog checks changes again. Profile pages contain at most 50 rows.
+
+The initial compact layout test exposed a wrapped tab row that shifted existing
+controls. A horizontal strip now retains their positions and brings the selected
+tab into view. The native controls cover light/compact dark discovery, failed scan,
+pause/browse/resume, completion, close/reopen, incremental/full refresh and refusal
+without active Drive permission. The full **121-flow native functional suite passes**
+(`artifacts/logs/desktop-profile-native-full.log`, 474.582 s). Reviewed captures are
+in `artifacts/e2e/54d226133fd6`, `767783b22836` and `ad5d2e748927`; the initial compact
+failure remains in `dd3e9c0180a8/failure-8.webp`.
+
+Five targeted desktop/controller tests pass, including real shared HTTP/SQLite
+recovery across 51 profiles and a new catalog owner, invalid-page retention,
+foreign-principal refusal, grant replacement and namespace edits. The fixture
+transport is available only with nondefault test-support and cannot target remote
+hosts or accept real tokens. **41 Python checks**, **37 parity contracts** and the
+pinned strict Zensical build pass. The mandatory commit hook runs formatting,
+Clippy and the full Rust suite; its result is recorded with the shipping receipt.
+
+This is read-only desktop discovery. The eight desktop preference mappings are
+preparation for reviewed application. Desktop/browser publication and enrollment,
+native large-page controls, automatic restoration, continuous reconciliation,
+remaining portable categories/settings, protected credentials, Apple/live Google
+and fully authenticated cross-client interchange remain open. Stale parity notes
+that still called all Flutter enrollment unfinished were corrected. All 40 active
+requests remain in TODO. Native performance measurements were omitted on the busy
+host; the earlier 150 ms navigation gate still fails. No phone installation, main
+merge, VPS deployment or quality/release CI enablement is part of this checkpoint.
+
+
+Desktop discovery code [`9e666a5`](https://github.com/sam-ruff/shep.so/commit/9e666a55582746fa59a1849ecc2d870a4c9d4b3c) is pushed to `feat/mobile-web-clients`; exact remote
+verification matched that commit. Normal hooks pass formatting, Clippy and **454
+Rust tests**, with only two opt-in personal-account diagnostics ignored. The
+production configuration also passes `cargo check --lib` without test-support.
+Shipping and gate logs are under `artifacts/logs/desktop-profile-*`. This receipt
+delivers the discovery increment, not full profile sync or product parity.
+
+
+## Desktop reviewed profile publication
+
+Preferences → Profiles and sync now publishes a named selection of saved account
+connections and eight supported portable preferences. The review freezes source
+values, pages account metadata in groups of 50 and shows connection details.
+Changing accounts or selected preferences rejects approval. Displayed preferences
+must finish saving before preparation or approval enters the profile queue.
+
+The mail owner stores exact planned operations and explicit account mappings.
+Each history request is durable before crossing into an independent journal;
+tracked Drive uploads retain reserved IDs and exact media before confirmation.
+Pause/navigation stops subsequent steps, and reopening retains the review and
+receipts. The active grant fences each accepted step; changed OAuth clients force
+full discovery while retaining known files. Publication never copies mail,
+passwords, tokens or device-only settings.
+
+Ten targeted Rust tests pass, including 75-account preparation/paging, changed
+reviews, lost staging receipts, and a full mail-database/session reopen after a
+failed Drive confirmation. The latter publishes five records with five distinct
+POSTs and verifies the initialized result through another catalog. The save-order
+controller test covers mismatched acknowledgments, pause, save failure and changed
+grants. Native controls pass both saved `test_desktop_profile_publication_*` flows:
+selection/name input, details, pause/browse, failed confirmation/retry, reopened
+receipts, compact dark review, changed preferences/cancel and account exclusion.
+
+Reviewed targeted captures are in `artifacts/e2e/ce56a55b4f59`, `77a412dc2c44` and
+`10259a2a8af5`; final-suite publication captures in `e9fe87150127` and
+`30226a395d57` were also reviewed. Earlier evidence caught a moved Retry control (`53e08622ea48`) and
+an upload error below account details (`ee445bb4cbc3`); the final layout preserves
+Retry and places publication errors beside recovery controls. A test initially
+used the compact Dark coordinate in a wide window (`5be7c1a7416a`); the corrected
+scenario targets the actual wide control before resizing.
+
+The full **123-flow native functional suite passes** in 483.337 seconds
+(`artifacts/logs/desktop-publication-native-full.log`). **41 Python checks**,
+**37 parity contracts** and the pinned strict Zensical build also pass. The final
+commit-hook and shipping receipt follows below. All 40 active requests remain.
+Desktop enrollment, native large-page controls, browser publication/application,
+ongoing reconciliation, complete portable categories/settings, protected passwords,
+authenticated cross-client interchange, Apple/live Google and full product parity
+remain open. Fixture HTTP/SQLite/native success does not establish live Google.
+Performance measurements remain deferred on the busy host; the earlier navigation
+gate still fails. Quality/release CI remains disabled. No phone reinstall, main
+merge or VPS deployment accompanies this worktree increment.
+
+
+Desktop publication code [`35f11ba`](https://github.com/sam-ruff/shep.so/commit/35f11ba0627621624659455dfebf6f341ea18893) is pushed to
+`feat/mobile-web-clients`; the exact remote SHA matches the source commit and the
+worktree was clean after shipping. Mandatory hooks pass formatting, Clippy and
+**459 Rust tests**, with only the two opt-in personal-account diagnostics ignored.
+`cargo check --lib` also passes without test-support. The 123 native functional
+flows, 41 Python checks, 37 parity contracts and strict docs build are recorded
+above. Shipping evidence is `artifacts/desktop-publication-shipping.json`; logs
+remain under `artifacts/logs/desktop-publication-*`. This completes the publication
+increment, not desktop enrollment, continuous sync, live Google or full parity.
+
+
+## Desktop reviewed enrollment continuation — 2026-09-09
+
+Preferences → Profiles and sync now prepares and applies an existing shared
+profile. Original records enter independently owned local history without taking
+the catalog's device identity or upload queue. Source/history revisions fence
+approval. Reviews page 50 items, show account connection details and offer category
+and individual choices. Matching identities preserve local metadata, mail, drafts
+and credentials; different connections require explicit selection as a separate
+account. Unsupported fields stay unavailable and retain their original history.
+
+Account metadata, mappings, reconnect guards and receipts commit atomically.
+Imported accounts cannot use saved password entries or server operations until
+explicit reconnect succeeds. Incoming and separate SMTP writes must both succeed;
+partial failure, changed metadata and removal retain the guard. Backups skip those
+password entries, and restore cannot silently activate guarded metadata. Local
+cached actions remain available. Profile preferences use per-field revisions and
+explicit GUI edit masks, preserving newer/reverted intent and unrelated settings.
+Accepted values update inbox/reader behavior without another preference save.
+
+The source passes **470 Rust tests**, with the two opt-in personal live diagnostics
+ignored; Clippy and production compilation without test-support pass. **41 Python
+checks**, **37 parity contracts** and all **seven targeted native profile flows**
+pass. Tests include lost copy/application receipts and database reopen, matching
+mail/draft preservation, differing connections, removal after approval, an
+independent offline journal, 78 items in 50/28-row pages, unsupported settings,
+partial keychain failure, protected backup/restore and exact preference-save
+ordering. Google/layout controller tests now assert the actual preference-patch
+command while retaining their ordering and queue-saturation assertions.
+
+Native evidence includes final targeted runs `d9ba56c8abe3` and `e5d8cef42318`:
+review/details, application, Reconnect required, incoming setup with an empty
+password, independent mail navigation, saved enrollment reopen, compact dark
+cancellation and a newer Light preference kept during application. Reviewed
+captures also include `eae4d48e8e4c`, `5ec88fd015d2`, `03000c59bea5`,
+`c662aa276e45` and `0015523d36da`. Initial failures `68c8715e7d2e` and
+`5bf106e8feb5` caught Retry moving after removal of obsolete explanatory text;
+`ea3479414d09` caught a profile row whose click area was too narrow. Final rows
+span the available width and saved controls target the actual Retry position.
+All artifacts/logs stay ignored under `artifacts/desktop-enrollment-*`,
+`artifacts/logs/desktop-enrollment-*` and `artifacts/e2e/`.
+
+The full **125-flow native functional suite passes** in 477.553 seconds
+(`artifacts/logs/desktop-enrollment-native-full.log`); the strict Zensical build
+also passes. Final-suite captures `bb572a9ac551` and `8df5119fca63` were reviewed.
+The mandatory-hook and shipping receipt follows below. All 40 active requests
+remain. Automatic setup, ongoing reconciliation, full categories/settings,
+credential protection/transfer, browser application, native large-page controls,
+Apple and live Google/cross-client verification remain open. The earlier
+performance gate still fails; new timing is deferred on the busy host. Quality
+and release CI remain disabled. No main merge, phone reinstall or VPS deployment
+accompanies this worktree increment.
+
+
+Desktop enrollment code [`8f969cd`](https://github.com/sam-ruff/shep.so/commit/8f969cd91d45ac2e4a821c927c360a86e64569cd) is pushed to
+`feat/mobile-web-clients`; its exact remote SHA matches. Mandatory hooks pass
+formatting, Clippy and **470 Rust tests**, with only the two opt-in personal live
+diagnostics ignored. The source worktree was clean after shipping. All **125
+native functional flows**, 41 Python checks, 37 parity contracts, production
+compilation and strict docs pass as recorded above. The shipping receipt is
+`artifacts/desktop-enrollment-shipping.json`. This completes reviewed initial
+desktop enrollment; the full product goal and all 40 active requests remain open.
+
+
+## Desktop profile pages — 2026-09-09
+
+Changing an enrollment choice on a later page no longer returns the review to
+page one. Recoverable failures retain the page for the same review; opening a new
+review starts at the first page. The 78-row protocol/storage regression failed
+before this fix and passes afterward (`artifacts/logs/profile-pages-before.log`
+and `profile-pages-rust.log`). Skipped new connections say **Not imported**;
+publication guidance now describes the delivered reviewed import.
+
+Three saved native scenarios use a bounded loopback fixture with 51 profiles,
+75 local accounts and 75 offered accounts. Discovery exercises 50/1 profiles in
+light and compact dark. Publication reviews 50/25 accounts, connection details,
+First/More and cancellation without uploading. Enrollment exercises 50/26 rows,
+repeated second-page choices, details and page revisits, then applies 74 chosen
+accounts while excluding one. All 74 imports retain reconnect guards; the chosen
+Dark appearance applies. Original local accounts remain intact.
+
+The full native run passed **127 of 128 flows** in 570.506 seconds. Its only failure
+was the existing badge preference test expecting its initial count of four after
+read-on-leave navigation correctly changed the count to three. The private-bus
+trace confirms 0 → 4 → 0 → 3; the saved screen and mailbox agree. The test now
+checks the current global unread total before re-enabling badges, retaining
+zero/hidden, preference persistence and account-scope assertions. Focused rerun
+and final Rust/shipping results follow below. Logs are
+`artifacts/logs/profile-pages-native-full.log` and `profile-pages-badge-rerun.log`.
+
+Reviewed full-run captures are `0c03527d1547` (discovery), `b35109af89ab`
+(enrollment) and `c5d1ee4520df` (publication); targeted captures include
+`08470e12e865`, `dadd38d66249` and `b63beeeb0ac0`. Retained failed-before captures
+include `5e0f787d867f` (General retained scroll), `5994de8400de` and `d95d3d518d6e`
+(test cursor assumptions), `b63beeeb0ac0` (cancelled reviews remain durable) and
+`b2ed904d168a` (the badge count). No control was forced or deadline relaxed.
+
+The fixture/targeted Rust checks, 42 Python checks, 37 parity contracts and strict
+Zensical build pass. Flutter already retains its selected enrollment page; its
+existing mobile controls remain the counterpart. Separate browser enrollment,
+continuous reconciliation, automatic setup, complete settings/categories,
+protected credentials and live Google/Apple remain open. All 40 active requests
+remain. Performance is deferred on the busy host and its earlier failure remains
+tracked. Quality/release CI stays disabled; no phone reinstall, main merge or VPS
+deployment accompanies this checkpoint.
+
+
+All four badge flows pass in the focused rerun (26.535 seconds), including the
+corrected current-count assertion. Its compact capture `d34cbac780b9` is reviewed.
+Thus all **128 native functional scenarios pass across the full run and focused
+rerun**; this is not a claim that the initial full invocation had no failure.
+The other 127 scenarios already passed on the same production source; only that
+test's stale baseline/navigation checks changed before the rerun. Final mandatory
+Rust hooks and remote shipping are recorded below.
+
+
+Profile page code [`0b0ffcb`](https://github.com/sam-ruff/shep.so/commit/0b0ffcbf4bdb4e6501cf3d098d7691d4c9eef497) is pushed to `feat/mobile-web-clients`; the exact
+remote SHA matches and the source worktree was clean after shipping. Mandatory
+hooks pass formatting, Clippy and **471 Rust tests**, with only the two opt-in
+personal live diagnostics ignored. Production compilation without test-support,
+42 Python checks, 37 parity contracts and strict Zensical pass. Native results
+are the 127-pass full run plus the corrected four-flow badge rerun described
+above, covering all 128 scenarios. The receipt is
+`artifacts/profile-pages-shipping.json`. All 40 active requests remain; next is
+ongoing Flutter/desktop reconciliation and automatic first setup/restoration.
+
+## Desktop reconciliation engine — 2026-09-09
+
+A durable local edit ledger and bounded runner now exchange later preference
+changes through independent enrolled histories and the shared Drive provider.
+Exact requests survive lost acknowledgments and newer local edits. Remote
+application and its receipt commit atomically, preserve device-only settings and
+do not echo. Concurrent values remain available for review. Copy cursors are
+bound to the observation history identity and reset after rebuilding that cache.
+Missing, replaced or rolled-back enrolled histories fail explicitly. Pausing
+retains requests/upload identities and cannot authorize a workspace switch.
+
+**This is an engine prerequisite.** Automatic scheduling, reviewed subscription
+creation, active-grant ownership, sync/conflict controls, account/category
+reconciliation and Flutter/browser equivalents remain unfinished. Existing
+publication/enrollment does not silently enable it. The full product goal and all
+40 active requests remain open. The [engine contract](agents/PROFILE_RECONCILIATION.md)
+and handover record the next concrete integration steps.
+
+Twelve new regressions comprise seven Store and five runner tests. The runner
+uses actual reviewed enrollment, independent device identities and loopback Drive
+HTTP. It verifies two-device changes and concurrent versions, original-record
+replay after a lost receipt, cache rebuild, a delayed local receipt followed by
+another device's value, missing/replaced/rolled-back history, and a committed
+upload with a lost reply across Pause/restart without another upload. The complete
+profile-focused run passes **41 checks**; all five runner regressions pass after
+the final rollback guard. Initial fixture failures (missing synthetic grant
+identity and Drive change type) remain in
+`artifacts/logs/profile-sync-runner-fixture-before.log` and
+`profile-sync-runner-change-feed-before.log`.
+
+The updated synthetic Drive fixture also passes all **10 saved native profile
+flows** in 131.276 seconds: discovery/permissions, publication/retry, enrollment,
+page retention and light/dark/compact layouts. Reviewed captures include
+`bacfd0e3f8f7` and `b451ae5e1283` (discovery), `630f3bb5ec11` (74 guarded imports,
+page exclusion and compact footer), and `334ed6552462` / `fd1141808e3f`
+(publication and connection details). The subsequent rollback guard changes only
+the unconnected runner and has its separate Rust regression. This native run
+checks the existing controls; it cannot prove an ongoing-sync UI exists.
+
+Forty-two Python checks, 37 parity contracts, Clippy and strict Zensical pass.
+Production compilation passes before the final guard; final production and
+mandatory-hook results are recorded with shipping below. Logs use
+`artifacts/logs/profile-sync-*`. Performance remains deferred on the shared host;
+the earlier native/combined performance failure remains open. No live Google,
+Apple, authenticated Flutter interchange, deployment or full-parity claim is
+made. Quality/release definitions remain disabled. Phone data, the installed
+desktop and the independent main worktree remain untouched.
+
+
+Reconciliation engine code [`ecd98c5`](https://github.com/sam-ruff/shep.so/commit/ecd98c59254d59b270ec0ef521aa6e70fff29bd6) is pushed to
+`feat/mobile-web-clients`; its exact remote SHA matches and the source worktree
+was clean after shipping. The normal hooks pass formatting, Clippy and **483 Rust
+tests**, with only the two opt-in live diagnostics ignored. Final production
+compilation and strict documentation pass. The 42 Python checks, 37 parity
+contracts and 10 native profile flows described above also pass. No full native
+suite or performance remeasurement is claimed for this engine-only checkpoint.
+The shipping receipt is `artifacts/profile-sync-shipping.json`.
+
+Before exposing automatic sync, extend recovery coverage to partial catalog loss
+(retained observation histories) and missing remote ancestry after a rebuild.
+The current cache-rebuild test removes the complete observation directory while
+all original remote files remain available. It does not prove that broader
+recovery case. Then connect authenticated scheduling, reviewed subscriptions and
+sync/conflict controls, followed by Flutter/account/category reconciliation.
+All 40 active requests and the full product goal remain open.
+
+
+## Connected desktop preference sync — 2026-09-09
+
+Completed publication/enrollment reviews now offer **Sync these preferences**.
+Setup derives original selected values and preference revisions from the backend
+review and starts paused. Master and per-preference switches preserve newer
+choices behind one revision-checked request. A bounded background owner runs
+outside Preferences, yields to occupied provider/lifecycle capacity and suspends
+for frozen reviews. Local Pause remains available during Google connection work.
+Canonical snapshots preserve pending native edits; status distinguishes unchecked
+uploads, queued operations and failures. Status rows keep switch positions stable.
+
+Recovery verifies acknowledged original records against the provider inventory,
+including when only catalog metadata is lost and observation history survives.
+Every new/reconnected owner performs a full inventory scan. A regression first
+reproduced upload into another project's empty space using cached proof; it now
+stops before upload. Restoring a missing original and rescanning reuses saved
+operations. Shared export uses a partial index and excludes unsent records.
+
+The profile-focused run passes 46 checks, including atomic reverted-intent setup,
+real reviewed publication/enrollment, source ownership, lost receipts, rapid UI
+choice ordering, provider saturation, Google lifecycle changes and wrong-project
+recovery. Sixteen relevant Flutter Rust bridge tests and 43 Python checks pass;
+37 parity contracts remain valid. Shared full-suite results are included in the
+mandatory gates below.
+
+All **22 native profile/Google/Preferences flows pass** in 221.987 seconds. The
+ongoing flow searches Mail through a remote Light appearance change, edits Dark
+with the field paused, resumes, retains a lost-upload error/count and recovers. Protocol regressions separately
+verify retry without another upload or operation. It also operates the compact field switch. Publication
+controls preserve seven selected preferences and review light/compact pages.
+Reviewed runs include `bfe6e5d12db4` (ongoing) and `26437ba96d3f` (publication).
+Final wording-only screenshots and mandatory shipping results follow below.
+
+Retained failures include `profile-sync-ancestry-before.log`,
+`profile-sync-project-before.log`, `profile-sync-status-before.log` and
+`profile-sync-native-footers-before.log` under `artifacts/logs/`. The first proves
+the partial-catalog gap, the second the Google-project gap, and the third a status
+update hiding the frozen-review wait. The native run passed 19/22 before the
+footer correction; grouped sync controls restore the paging/retry footer layout.
+Earlier native authoring failures retain search-focus and batch-validation logs;
+the saved scenario now waits for actual search focus and uses bounded batches.
+The existing no-force-input and timeout requirements are unchanged.
+
+The full goal and all 40 active requests remain unfinished. Checked conflict
+resolution, complete portable settings/categories/accounts, Flutter/browser
+ongoing sync, first setup/restoration and live authenticated interchange remain.
+No live Google, Apple, deployment, complete parity or performance claim is made.
+The host had other active work; the earlier navigation/combined performance
+failure remains open. Quality/release CI is disabled. Phone data, the installed
+desktop and the independent main worktree are unchanged.
+
+
+The two new sync control flows also pass after final wording changes (39.962
+seconds). Reviewed final captures are `92c482b10061` (queued-error recovery,
+compact field controls and Mail search) and `7604433c3ceb` (seven-preference
+publication and compact pages). Counters use clear labels, unchecked uploads
+remain distinct from zero, and values reuse the existing human-readable formatter.
+Mandatory hooks, production compilation, strict docs and exact remote shipping
+are recorded next; this is not yet a shipping receipt.
+
+
+Connected desktop sync code [`13e056d`](https://github.com/sam-ruff/shep.so/commit/13e056dcc836fbf41e418de220085540fe174dbc) is pushed to
+`feat/mobile-web-clients`, and its exact remote SHA matches. Normal hooks pass
+formatting, Clippy and **490 Rust tests**, with two opt-in personal live diagnostics
+ignored. Production compilation without test-support and pinned strict Zensical
+pass. The 43 Python checks, 37 parity contracts, 16 Flutter Rust bridge checks,
+22 native regressions and two final wording/control flows above also pass.
+The source worktree was clean after shipping. The final receipt is
+`artifacts/profile-sync-connected-shipping.json`. No full native suite or new
+performance measurement is claimed for this increment. All 40 active requests
+remain; next is checked conflict resolution and ongoing Flutter integration,
+followed by the remaining profile/product scope.
+
+
+## Checked desktop preference decisions — 2026-09-09
+
+Desktop preference conflicts now open a durable review with 50-version pages,
+local/shared choices, explicit cancellation and exact saved-decision retry.
+Every version page must be opened before saving. The backend rechecks the local
+field generation, subscription/device/workspace binding and history versions;
+newer or reverted local edits remain pending. A staged decision survives restart
+and cannot be discarded while its result is uncertain. Preferences and the
+completed receipt commit atomically. Cached browsing/cancellation still work
+after Google disconnection; new decisions require the active grant.
+
+The saved native flow passes in **26.282 seconds**. It reviews 51 versions,
+clicks the disabled premature save, cancels/reopens, chooses the last-page Light
+value, reviews 900×640 dark controls, recovers a failed local receipt, then retries
+a committed cloud upload with a lost reply while searching Mail. Reviewed WebP
+captures are in `artifacts/e2e/3804d69ea8da/`; earlier successful save/retry captures
+are in `e5c8e8e23d7d/`. Native fixtures do not access personal Google or mail.
+
+Retained authoring failures: `profile-resolution-native-first.log` used an invalid
+comparison operator; `profile-resolution-native-save.log` exceeded the harness's
+30-wheel-action bound. The corrected saved flow uses existing `gte` and bounded
+real scrolling. `profile-resolution-native-complete.log` clicked a row after
+reopening retained scroll position; its failure capture is
+`16c3948ceb12/failure-23.webp`. The corrected flow scrolls to the actual page
+controls. No forced inputs, state mutations or relaxed deadlines were introduced.
+`profile-resolution-controls-rust.log` retains the initial macro-import compile
+error; `profile-resolution-ui-ordering.log` retains a test wired to the profile
+channel instead of the existing separate preference-save channel. Both fixes pass.
+
+Final surrounding regression checks and verified shipping are recorded below
+when complete. Ongoing Flutter/browser reconciliation, complete settings,
+accounts/categories, automatic setup/restoration, secure credential portability,
+live Google/Apple execution and the full product goal remain open. All 40 active
+requests remain in TODO. No performance budget or CI enablement changed.
+
+
+Final decision checks pass: **54 profile Rust checks**, **44 Python checks** and
+**37 parity contracts**, plus production compilation and strict Zensical. The
+independent-device runner regression now resolves a conflict through the review,
+uploads it via the loopback Drive transport and verifies the other enrolled
+device converges. The surrounding **23 native flows pass in 219.995 seconds**.
+
+A new ordering regression reproduced Back being undone by a late review-page
+reply (`profile-resolution-navigation-before.log`). Review visibility now follows
+explicit navigation; replies update cached review data without reopening it.
+The regression passes. All **three final affected native flows pass in 64.050
+seconds**: conflict decisions, reviewed publication and ongoing background sync.
+Final conflict Back/reopen, compact footer and lost-receipt captures in
+`artifacts/e2e/b5255ffe7d09/` were reviewed. Normal commit hooks and remote shipping
+are the remaining checkpoint steps. The full native suite and performance gates
+were not rerun; their earlier limits remain active.
+
+
+Decision code [`28c2884`](https://github.com/sam-ruff/shep.so/commit/28c288448842b7d09543fc28ef1f2f14bf36f142) is pushed to `feat/mobile-web-clients`, with exact remote SHA
+verification. Normal hooks pass formatting, Clippy with warnings denied and
+**498 Rust tests**; two opt-in personal live diagnostics remain ignored. Strict
+documentation and final production checks pass. The shipping receipt is
+`artifacts/profile-resolution-shipping.json`. Source/UI files, tests, request
+tracking, parity notes and handover are included; the main worktree and installed
+phone/desktop were not changed. Quality/release CI remains disabled. Next continue
+Flutter ongoing reconciliation and its native/Playwright conflict controls.
+
+
+## Flutter original preference receipts — 2026-09-09
+
+Platform profile applications now save the original eight field revisions alongside
+their values and receipt. Native enrollment validates and durably acknowledges
+that exact map. A retry still returns current preferences for display, while newer
+local revisions cannot replace the original proof. Legacy receipts omit the map
+and cannot acquire fabricated current revisions. Explicit same-value local intent
+advances its field generation after a failed intermediate save.
+
+The UI now checks the generations captured with the review before optimistic
+painting. A changed-and-reverted preference, an already applied receipt or a
+reopened application cannot briefly repaint obsolete imported values. Unchanged
+reviewed fields still project immediately. Navigation and local editing stay
+available while a reopened receipt is checked.
+
+All **129 Flutter host tests** and **81 mobile Rust tests** pass, with formatting,
+Flutter analysis and Clippy clean. The **two named Android integration scenarios**
+pass (43 seconds reported by the integration suite; teardown is not a third flow).
+New Rust checks cover failed native receipt transactions, original revisions after
+restart, malformed/missing/older revisions, exact retry and legacy proof. Saved
+controls cover losing the native acknowledgment, leaving to change appearance,
+resuming and preserving the newer Light theme. Its original revision map is
+asserted separately from current display preferences.
+
+Retained evidence: `mobile-sync-optimism-before.log` reproduces the obsolete
+optimistic repaint; the fixed host suite passes. `mobile-sync-receipt-controls-host.log`
+records a test using the pending label after completion; it now opens **Profile
+applied on this device**. `artifacts/mobile-sync-appium-system-ui-failure/` retains
+Android's System UI ANR over the initial mailbox. The existing dedicated-emulator
+Wait helper recovered it without changing deadlines. The next Appium run retained
+an off-screen Appearance expectation after returning to scrolled Preferences in
+`artifacts/mobile-sync-appium-scroll-failure/`; the flow now waits for Preferences
+and uses its existing real-scroll Theme helper.
+
+Final verification on the resumed session, 9 September evening: the Flutter web
+enrollment flow first failed at **Resume profile review and application** because
+Flutter web merges a list tile's title and subtitle into one clickable node and the
+Playwright harness anchored its name match at the start; `artifacts/flutter/enrollment-web/failure.txt`
+retains that tree. The shared harness now matches a label at the start of a name or
+after whitespace, matching Android's contains-selectors. After the fix all **5 web
+enrollment flows**, **5 native Appium flows** and the **two Android integration
+scenarios** pass, and the harness-sharing web discovery and creation flows pass
+again. Root hooks (formatting, Clippy, tests) pass with `artifacts/root-target`;
+44 Python tests and 37 parity contracts pass. Lane `codex/profile-catalog-harness`
+(`33d222d`) was superseded by the stricter fixture transport in `9e666a5`; its
+positive-path regression is ported as a shared `test-support` test, the local branch
+and desktop-side worktree are removed, and the origin branch waits for Sam.
+
+This increment is a prerequisite for ongoing Flutter reconciliation, not its
+completion. The native sync ledger/runner, SDK scheduler, field/conflict controls,
+all settings/categories, accounts, automatic setup/restoration, authenticated
+interchange, live Google and Apple execution remain open. All 40 active requests
+remain; no performance budget or CI enablement changed.
+## Main merged into the client branch — 2026-09-09
+
+`main` at `c414227` was merged into `feat/mobile-web-clients` at `724f764` with `git merge --no-commit --no-ff`, producing the first tree that contains the desktop, mobile, browser and website sessions together. From this point `main` is the single integration branch for all three sessions; desktop changes are no longer ported into the client branch separately, and the client TODO/AGENTS porting instructions were removed.
+
+Resolution rules applied:
+
+- **Root code: main wins.** Main's desktop profile sync implementation (`src/profile_sync`, `src/engine/profile_sync.rs`, `src/store/profile_sync` and the related desktop UI) replaced this branch's own desktop implementation (`src/profiles/discovery.rs`, `src/profiles/enrollment` and related files). The client branch's desktop discovery/publication/enrollment/reconciliation entries above remain as history of that superseded implementation; the desktop behaviour that ships is main's.
+- **Shared profile core: superset.** The shared profile-core crate became a superset of both sides, and main's git pin (`e3e69a4`) became a path dependency on the crate in this tree.
+- **Provider changes ported.** Main's `a81d767`/`5eabb52` provider changes (destination recovery, folder mutation plans and checked provider commands) were ported into `shared/mail-core` at this branch's paths so the shared clients and the desktop use the same transport behaviour.
+- **Hooks: union.** `.githooks/pre-commit` runs every gate either branch required: formatting, Clippy with `-D warnings`, `cargo test --all-features`, the `shep-html-pixbuf` tests and `scripts/test_profile_core.py` (main's hook was already a superset of the client hook; the client branch's `scripts/check.sh` added nothing main lacked). The commit-msg hook is unchanged. `core.hooksPath` must be the relative `.githooks` at the repository level so each worktree runs its own checkout's hooks rather than the main checkout's.
+- **Tracking files: union.** TODO.md, this log, the request audit, AGENTS.md, README.md, the docs navigation and PERFORMANCE.md keep both histories. Request numbers R67 to R80 exist on both sides and are not renumbered; [the request audit](REQUEST_AUDIT.md) states the collision once and marks the client rows.
+
+No request is closed by the merge. Performance figures from either side were not re-measured on the merged tree; the client branch's failing native navigation gate stands until rechecked on an idle host. Quality and release workflows remain `.yml.disabled`; documentation CI stays enabled.
+
+Kept from the client branch in root code, each with its earlier completion record:
+desktop feature-scoped Google consent (`3e1181b`), the materialised exact-match
+search relation (`e568c84`), the covering unread-account badge index (`da6f2e8`),
+shared MIME parsing in store/print/reader tests (`4226f57`) and one divider
+settle wait in the native harness. Everything else in `src/`, `tests/` and
+`scripts/` follows main; this branch's own desktop profile implementation under
+`src/profiles`, `src/store/profile_*` and `src/ui/profiles` was deleted.
+`Drive::connect_fixture` keeps main's `Option<&str>` signature and fixed token
+with the union of both loopback checks. `scripts/test_profile_core.py` now
+verifies the workspace-member path dependency and tests it in place; the copied
+`tests/support/profile-core.Cargo.lock` is removed. `vendor/shep-html-pixbuf`
+requests litehtml's `vendored` feature so its own test target resolves inside
+the explicit workspace. `flutter/rust` and `backend` carry an empty
+`[workspace]` table so a nested checkout never joins a parent workspace. Main's
+shared `MailSyncItem` folder hierarchy and inbox lifecycle events reach the
+clients, which still cache flat selectable names (recorded under R30).
+
+Gates on the merged tree, logs under `artifacts/logs/merge-*.log`:
+
+| Gate | Result |
+| --- | --- |
+| Desktop fmt, Clippy `-D warnings`, `cargo test --all-features` | 990 passed, 3 ignored |
+| `cargo test -p shep-html-pixbuf`, `scripts/test_profile_core.py` | 2 passed; 47+6+13+3 passed |
+| Python `unittest discover` | 96 ran, 7 skipped (Windows installer) |
+| Selected native flows (`scripts/e2e.py`, 23 flows: Google consent, divider, search, forward, HTML, badges, folders, moves, preferences, read-on-leave, reply, backups, profile sync, print, move recovery) | 23/23 |
+| Shared crates: profile-core all-features/test-support/history/default; mail-core; mail-content | 69, 69, 29, 6; 41; 25 passed |
+| Flutter `analyze`, `flutter test` | clean; 129 passed |
+| Mobile Rust, backend, real browser beta gate | 81; 35 passed, 1 ignored; 1 passed |
+| Browser `npm test`, `npm run build` | 127 passed; built |
+| Parity checker, strict Zensical | 37 contracts; no issues |
+
+Not rerun on the merged tree: the full 282-flow desktop functional set, the
+latency benchmark, the full browser Playwright suite (web/ and the WASM inputs
+are unchanged by the merge) and the Android scenarios (mobile code unchanged
+apart from folder-name caching; the host suite covers it).

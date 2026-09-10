@@ -1,4 +1,4 @@
-"""Pinned dependency testing never modifies a checkout or chooses another source."""
+"""Shared crate testing runs the workspace member under the root lock and never another source."""
 import importlib.util
 import tempfile
 import unittest
@@ -11,47 +11,39 @@ spec.loader.exec_module(runner)
 
 
 class ProfileCoreRunnerTests(unittest.TestCase):
-    def test_resolves_exact_published_pin_and_rejects_local_or_other_git_versions(self):
-        revision = "a" * 40
-        manifest = {"dependencies": {"shep-profile-core": {
-            "git": "https://example.test/repository", "rev": revision}}}
-        package = {"name": "shep-profile-core", "manifest_path": "/fixture/shared/profile-core/Cargo.toml",
-                   "source": f"git+https://example.test/repository?rev={revision}#{revision}"}
-        self.assertEqual(runner.source_package(manifest, {"packages": [package]}),
-                         Path("/fixture/shared/profile-core"))
-        for source in [None, package["source"].replace("#" + revision, "#" + "b" * 40)]:
-            with self.assertRaises(ValueError):
-                runner.source_package(manifest, {"packages": [{**package, "source": source}]})
-        with self.assertRaises(ValueError):
-            runner.source_package(manifest, {"packages": [package, package]})
-        manifest["dependencies"]["shep-profile-core"]["rev"] = "branch-name"
-        with self.assertRaises(ValueError):
-            runner.source_package(manifest, {"packages": [package]})
-
-    def test_copy_preserves_exact_fixture_bytes_and_source_and_uses_locked_workspace(self):
+    def test_workspace_member_path_is_only_accepted_when_cargo_lists_it_as_a_member(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            source = root / "checkout/shared/profile-core"
-            source.mkdir(parents=True)
-            manifest = b'[package]\nname="shep-profile-core"\nversion="0.1.0"\n'
-            (source / "Cargo.toml").write_bytes(manifest)
-            (source / "target").mkdir()
-            (source / "target/leave-original").write_text("original")
-            (source / "Cargo.lock").write_text("checkout lock")
-            fixture = 'Unicode é 🌙\r\n'.encode()
-            for name in runner.FIXTURES:
-                (source.parent / name).write_bytes(fixture)
-            lock = root / "reviewed.lock"
-            lock.write_bytes(b"reviewed lock\n")
-            copied = runner.prepare(source, root / "isolated", lock)
-            self.assertIn("[workspace]", copied.read_text())
-            self.assertEqual((source / "Cargo.toml").read_bytes(), manifest)
-            self.assertFalse((copied.parent / "target").exists())
-            self.assertEqual((copied.parent / "Cargo.lock").read_bytes(), lock.read_bytes())
-            self.assertEqual((source / "Cargo.lock").read_text(), "checkout lock")
-            for name in runner.FIXTURES:
-                self.assertEqual((copied.parent.parent / name).read_bytes(), fixture)
-                self.assertEqual((source.parent / name).read_bytes(), fixture)
+            root = Path(temporary).resolve()
+            crate = root / "shared/profile-core"
+            crate.mkdir(parents=True)
+            manifest = {"dependencies": {"shep-profile-core": {"path": "shared/profile-core"}}}
+            package = {"name": "shep-profile-core", "id": "path+file://member#0.1.0",
+                       "manifest_path": str(crate / "Cargo.toml"), "source": None}
+            metadata = {"packages": [package], "workspace_members": [package["id"]]}
+            self.assertEqual(runner.workspace_member(manifest, metadata, root), crate)
+            with self.assertRaises(ValueError):
+                runner.workspace_member(manifest, {"packages": [package], "workspace_members": []}, root)
+            with self.assertRaises(ValueError):
+                runner.workspace_member(manifest, {**metadata, "packages": [
+                    {**package, "manifest_path": str(root / "elsewhere/Cargo.toml")}]}, root)
+            with self.assertRaises(ValueError):
+                runner.workspace_member(manifest, {**metadata, "packages": [package, package]}, root)
+
+    def test_git_pins_and_sibling_checkouts_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            revision = "a" * 40
+            package = {"name": "shep-profile-core", "id": "git+example#0.1.0",
+                       "manifest_path": str(root / "shared/profile-core/Cargo.toml"),
+                       "source": f"git+https://example.test/repository?rev={revision}#{revision}"}
+            metadata = {"packages": [package], "workspace_members": [package["id"]]}
+            for dependency in (
+                {"git": "https://example.test/repository", "rev": revision},
+                {"path": "shared/profile-core", "git": "https://example.test/repository"},
+                {"path": "../other-worktree/shared/profile-core"},
+            ):
+                with self.assertRaises(ValueError):
+                    runner.workspace_member({"dependencies": {"shep-profile-core": dependency}}, metadata, root)
 
 
 if __name__ == "__main__":

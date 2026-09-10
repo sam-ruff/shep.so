@@ -389,7 +389,11 @@ async fn forwarding_retains_html_inline_images_and_files_without_inheriting_reci
     assert_eq!(files[0].bytes, [0, 255, 1, 13, 10]);
     assert_eq!(files[0].attachment.media_type, "application/x-example");
     assert_eq!(files[1].bytes, b"inline fixture");
-    assert_eq!(files[1].attachment.content_id.as_deref(), Some("diagram"));
+    let forwarded_cid = files[1]
+        .attachment
+        .content_id
+        .clone()
+        .expect("The image stays inline");
     assert_eq!(files[1].attachment.media_type, "image/png");
     let wire = compose::build(&account(), &forward, files)
         .unwrap()
@@ -401,7 +405,7 @@ async fn forwarding_retains_html_inline_images_and_files_without_inheriting_reci
         parsed.headers.get_first_value("Message-ID").as_deref(),
         Some("<original@example.test>")
     );
-    let content = shep::email_content::extract(&parsed);
+    let content = shep::email_content::extract(&parsed).unwrap();
     let html = content.html.unwrap();
     assert!(html.source.contains("<table>"));
     assert!(
@@ -410,7 +414,7 @@ async fn forwarding_retains_html_inline_images_and_files_without_inheriting_reci
     );
     assert!(html.source.contains("td{color:purple}"));
     assert!(!html.source.contains("<script"));
-    assert_eq!(html.inline["diagram"].as_ref(), b"inline fixture");
+    assert_eq!(html.inline[&forwarded_cid].as_ref(), b"inline fixture");
     assert_eq!(content.attachments[0].bytes, [0, 255, 1, 13, 10]);
     assert!(store.detail(source.clone()).await.unwrap().summary.unread);
     assert_eq!(
@@ -434,7 +438,7 @@ fn editing_forwarded_text_uses_the_edited_plain_body_and_retains_image_bytes() {
         .unwrap()
         .formatted();
     let parsed = mailparse::parse_mail(&wire).unwrap();
-    let content = shep::email_content::extract(&parsed);
+    let content = shep::email_content::extract(&parsed).unwrap();
     assert!(content.html.is_none());
     assert!(content.text.contains("Edited café quote."));
     assert!(!content.text.contains("Complete original café."));
@@ -516,6 +520,34 @@ async fn failed_forward_file_insert_rolls_back_the_whole_draft_and_retry_is_clea
         .unwrap();
     let state = store.forward_draft(source, "retry".into()).await.unwrap();
     assert_eq!(state.drafts[0].attachments.len(), 2);
+}
+
+#[tokio::test]
+async fn damaged_forward_resources_refuse_without_saving_a_partial_draft() {
+    for disposition in [
+        "attachment; filename=broken.png",
+        "inline; filename=broken.png",
+    ] {
+        let store = Store::memory().unwrap();
+        let raw = format!(
+            "Content-Type: multipart/related; boundary=r\r\n\r\n--r\r\nContent-Type: text/html\r\n\r\n<p>Readable letter</p><img src='cid:broken'>\r\n--r\r\nContent-Type: image/png\r\nContent-ID: <broken>\r\nContent-Disposition: {disposition}\r\nContent-Transfer-Encoding: base64\r\n\r\n%%%bad%%%\r\n--r--\r\n"
+        );
+        let stored =
+            shep::model::parse_mail("work", "broken", "INBOX", raw.into_bytes(), true, false)
+                .unwrap();
+        let id = stored.summary.id.clone();
+        store.upsert(vec![stored]).await.unwrap();
+        assert!(
+            store
+                .detail(id.clone())
+                .await
+                .unwrap()
+                .body
+                .contains("Readable letter")
+        );
+        assert!(store.forward_draft(id, "new-forward".into()).await.is_err());
+        assert!(store.draft_state().await.unwrap().drafts.is_empty());
+    }
 }
 
 #[tokio::test]

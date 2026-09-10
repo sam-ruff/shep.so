@@ -1,6 +1,6 @@
 use super::*;
 fn read(raw: &str) -> Content {
-    extract(&mailparse::parse_mail(raw.as_bytes()).unwrap())
+    extract(&shep_mail_core::mime::parse(raw.as_bytes()).unwrap()).unwrap()
 }
 #[test]
 fn mislabeled_and_escaped_xhtml_render_as_content_but_prose_and_code_stay_text() {
@@ -49,7 +49,14 @@ fn related_start_selects_body_and_keeps_inline_image_out_of_attachment_bar() {
     assert_eq!(content.text.trim(), "Letter");
     assert!(content.attachments.is_empty());
     let html = content.html.unwrap();
-    assert_eq!(&*html.inline["logo@example"], b"picture");
+    let doc = scraper::Html::parse_document(&html.source);
+    let src = doc
+        .select(&scraper::Selector::parse("img").unwrap())
+        .next()
+        .unwrap()
+        .attr("src")
+        .unwrap();
+    assert_eq!(&*html.inline[src.strip_prefix("cid:").unwrap()], b"picture");
     assert!(!html.source.contains("Unrelated"));
 }
 #[test]

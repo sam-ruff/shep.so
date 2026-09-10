@@ -11,6 +11,20 @@ __pycache__/
 /site/
 /.cache/
 /.venv-docs/
+**/node_modules/
+**/test-results/
+**/playwright-report/
+/web/dist/
+/website/dist/
+/flutter/coverage/
+
+/web/dist-preview/
+
+/backend/target/
+/backend/.env*
+/backend/deploy/beta.env
+
+/web/src/wasm/
 
 # Per-workstation tool permissions are not project configuration.
 /.claude/

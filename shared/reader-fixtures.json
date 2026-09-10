@@ -1,0 +1,281 @@
+[
+  {
+    "name": "last-alternatives",
+    "raw": "Content-Type: multipart/alternative; boundary=\"alts\"\r\n\r\n--alts\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nOld plain\r\n--alts\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Old HTML</p>\r\n--alts\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nLatest plain\r\n--alts\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Latest HTML</p>\r\n--alts--\r\n",
+    "body": {
+      "text": "Latest plain",
+      "html": [
+        {
+          "source": "<p>Latest HTML</p>",
+          "inline": {}
+        }
+      ],
+      "resources": {}
+    },
+    "files": []
+  },
+  {
+    "name": "empty-plain-fallback",
+    "raw": "Content-Type: multipart/alternative; boundary=\"empty\"\r\n\r\n--empty\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n \r\n\t\r\n--empty\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<style>p{color:red}</style><p>Café</p><blockquote>Earlier</blockquote>\r\n--empty--\r\n",
+    "body": {
+      "text": "Café\n> Earlier",
+      "html": [
+        {
+          "source": "<style>p{color:red}</style><p>Café</p><blockquote>Earlier</blockquote>",
+          "inline": {}
+        }
+      ],
+      "resources": {}
+    },
+    "files": []
+  },
+  {
+    "name": "related-root-after-image",
+    "raw": "Content-Type: multipart/related; boundary=\"rel\"; start=\"<body>\"\r\n\r\n--rel\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nZmlyc3Q=\r\n--rel\r\nContent-Type: text/html\r\nContent-ID: <body>\r\n\r\n<h1>Selected root</h1><img src=\"cid:logo\">\r\n--rel\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Unselected resource</p>\r\n--rel--\r\n",
+    "body": {
+      "text": "Selected root",
+      "html": [
+        {
+          "source": "<h1>Selected root</h1><img src=\"cid:logo\">",
+          "inline": {
+            "logo": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e"
+          }
+        }
+      ],
+      "resources": {
+        "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e": [
+          102,
+          105,
+          114,
+          115,
+          116
+        ]
+      }
+    },
+    "files": []
+  },
+  {
+    "name": "independent-mixed-cid-scopes",
+    "raw": "Content-Type: multipart/mixed; boundary=\"mix\"\r\n\r\n--mix\r\nContent-Type: multipart/related; boundary=\"rela\"\r\n\r\n--rela\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>First</p><img src=\"cid:logo\">\r\n--rela\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nZmlyc3Q=\r\n--rela--\r\n\r\n--mix\r\nContent-Type: multipart/related; boundary=\"relb\"\r\n\r\n--relb\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Second</p><img src=\"cid:logo\">\r\n--relb\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nc2Vjb25k\r\n--relb--\r\n\r\n--mix--\r\n",
+    "body": {
+      "text": "First\n\nSecond",
+      "html": [
+        {
+          "source": "<p>First</p><img src=\"cid:logo\">",
+          "inline": {
+            "logo": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e"
+          }
+        },
+        {
+          "source": "<p>Second</p><img src=\"cid:logo\">",
+          "inline": {
+            "logo": "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4"
+          }
+        }
+      ],
+      "resources": {
+        "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e": [
+          102,
+          105,
+          114,
+          115,
+          116
+        ],
+        "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4": [
+          115,
+          101,
+          99,
+          111,
+          110,
+          100
+        ]
+      }
+    },
+    "files": []
+  },
+  {
+    "name": "inner-cid-shadows-outer",
+    "raw": "Content-Type: multipart/related; boundary=\"outer\"\r\n\r\n--outer\r\nContent-Type: multipart/mixed; boundary=\"inner\"\r\n\r\n--inner\r\nContent-Type: multipart/related; boundary=\"rela\"\r\n\r\n--rela\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>First</p><img src=\"cid:logo\">\r\n--rela\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nZmlyc3Q=\r\n--rela--\r\n\r\n--inner\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Outer section</p><img src=\"cid:logo\">\r\n--inner--\r\n\r\n--outer\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nb3V0ZXI=\r\n--outer--\r\n",
+    "body": {
+      "text": "First\n\nOuter section",
+      "html": [
+        {
+          "source": "<p>First</p><img src=\"cid:logo\">",
+          "inline": {
+            "logo": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e"
+          }
+        },
+        {
+          "source": "<p>Outer section</p><img src=\"cid:logo\">",
+          "inline": {
+            "logo": "560e3e12b1e0dafa161e62fb3327ad65c98b7cd53849b17c627e8d3e1d419d6a"
+          }
+        }
+      ],
+      "resources": {
+        "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e": [
+          102,
+          105,
+          114,
+          115,
+          116
+        ],
+        "560e3e12b1e0dafa161e62fb3327ad65c98b7cd53849b17c627e8d3e1d419d6a": [
+          111,
+          117,
+          116,
+          101,
+          114
+        ]
+      }
+    },
+    "files": []
+  },
+  {
+    "name": "named-html-is-a-file",
+    "raw": "Content-Type: multipart/mixed; boundary=\"files\"\r\n\r\n--files\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nBody\r\n--files\r\nContent-Type: text/html; name=\"attached.html\"\r\n\r\n<h1>Attachment</h1>\r\n--files\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: attachment; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nZXhwbGljaXQ=\r\n--files--\r\n",
+    "body": {
+      "text": "Body",
+      "html": [],
+      "resources": {}
+    },
+    "files": [
+      "attached.html",
+      "logo.webp"
+    ]
+  },
+  {
+    "name": "mislabeled-xhtml",
+    "raw": "Content-Type: text/plain; charset=utf-8\r\n\r\n<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>Complete XHTML</p></body></html>",
+    "body": {
+      "text": "Complete XHTML",
+      "html": [
+        {
+          "source": "<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>Complete XHTML</p></body></html>",
+          "inline": {}
+        }
+      ],
+      "resources": {}
+    },
+    "files": []
+  },
+  {
+    "name": "escaped-xhtml-once",
+    "raw": "Content-Type: text/plain; charset=utf-8\r\n\r\n&lt;?xml version=\"1.0\"?&gt;&lt;html xmlns=\"http://www.w3.org/1999/xhtml\"&gt;&lt;body&gt;&lt;p&gt;Complete XHTML&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;",
+    "body": {
+      "text": "Complete XHTML",
+      "html": [
+        {
+          "source": "<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>Complete XHTML</p></body></html>",
+          "inline": {}
+        }
+      ],
+      "resources": {}
+    },
+    "files": []
+  },
+  {
+    "name": "ordinary-code-stays-text",
+    "raw": "Content-Type: text/plain; charset=utf-8\r\n\r\nHere is <div>some code</div> &lt;html&gt;",
+    "body": {
+      "text": "Here is <div>some code</div> &lt;html&gt;",
+      "html": [],
+      "resources": {}
+    },
+    "files": []
+  },
+  {
+    "name": "empty-alternative-does-not-replace",
+    "raw": "Content-Type: multipart/alternative; boundary=\"last\"\r\n\r\n--last\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Keep</p>\r\n--last\r\nContent-Type: text/html; charset=utf-8\r\n\r\n \t\r\n--last--\r\n",
+    "body": {
+      "text": "Keep",
+      "html": [
+        {
+          "source": "<p>Keep</p>",
+          "inline": {}
+        }
+      ],
+      "resources": {}
+    },
+    "files": []
+  },
+  {
+    "name": "mixed-plain-and-html",
+    "raw": "Content-Type: multipart/mixed; boundary=\"mixed\"\r\n\r\n--mixed\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nBefore <code>\r\n--mixed\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>After</p>\r\n--mixed--\r\n",
+    "body": {
+      "text": "Before <code>\n\nAfter",
+      "html": [
+        {
+          "source": "<pre style=\"white-space:pre-wrap\">Before &lt;code&gt;</pre>",
+          "inline": {}
+        },
+        {
+          "source": "<p>After</p>",
+          "inline": {}
+        }
+      ],
+      "resources": {}
+    },
+    "files": []
+  },
+  {
+    "name": "duplicate-cid-unresolved",
+    "raw": "Content-Type: multipart/related; boundary=\"dups\"\r\n\r\n--dups\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Ambiguous</p>\r\n--dups\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nb25l\r\n--dups\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\ndHdv\r\n--dups--\r\n",
+    "body": {
+      "text": "Ambiguous",
+      "html": [
+        {
+          "source": "<p>Ambiguous</p>",
+          "inline": {
+            "logo": null
+          }
+        }
+      ],
+      "resources": {}
+    },
+    "files": []
+  },
+  {
+    "name": "inner-ambiguous-cid-shadows-outer",
+    "raw": "Content-Type: multipart/related; boundary=\"duplicateouter\"\r\n\r\n--duplicateouter\r\nContent-Type: multipart/related; boundary=\"duplicateinner\"\r\n\r\n--duplicateinner\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Ambiguous inner</p>\r\n--duplicateinner\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nb25l\r\n--duplicateinner\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\ndHdv\r\n--duplicateinner--\r\n\r\n--duplicateouter\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nb3V0ZXI=\r\n--duplicateouter--\r\n",
+    "body": {
+      "text": "Ambiguous inner",
+      "html": [
+        {
+          "source": "<p>Ambiguous inner</p>",
+          "inline": {
+            "logo": null
+          }
+        }
+      ],
+      "resources": {}
+    },
+    "files": []
+  },
+  {
+    "name": "alternative-keeps-only-selected-resources",
+    "raw": "Content-Type: multipart/alternative; boundary=\"choose\"\r\n\r\n--choose\r\nContent-Type: multipart/related; boundary=\"rela\"\r\n\r\n--rela\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>First</p><img src=\"cid:logo\">\r\n--rela\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nZmlyc3Q=\r\n--rela--\r\n\r\n--choose\r\nContent-Type: multipart/related; boundary=\"relb\"\r\n\r\n--relb\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Second</p><img src=\"cid:logo\">\r\n--relb\r\nContent-Type: image/webp; name=\"logo.webp\"\r\nContent-ID: <logo>\r\nContent-Disposition: inline; filename=\"logo.webp\"\r\nContent-Transfer-Encoding: base64\r\n\r\nc2Vjb25k\r\n--relb--\r\n\r\n--choose--\r\n",
+    "body": {
+      "text": "Second",
+      "html": [
+        {
+          "source": "<p>Second</p><img src=\"cid:logo\">",
+          "inline": {
+            "logo": "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4"
+          }
+        }
+      ],
+      "resources": {
+        "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4": [
+          115,
+          101,
+          99,
+          111,
+          110,
+          100
+        ]
+      }
+    },
+    "files": []
+  }
+]

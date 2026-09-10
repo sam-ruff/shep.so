@@ -139,3 +139,39 @@ The method and boundaries described above still apply. Reports and fictional
 WebP captures remain under ignored `artifacts/`; these results do not establish
 all possible HTML complexity, remote download speed, monitor scanout or another
 operating system's performance. Other final performance gates remain deferred.
+
+## Client worktree checkpoint — 9 September 2026
+
+Measured on the mobile/web client branch before `main` was merged into it. The
+profile-history SQLite update prompted a fresh storage check. Relevance now
+materializes exact-match ranks once; a covering unread-account index avoids
+per-page message-row lookups and sorting. Release benchmark: 100,000 synthetic
+messages/four accounts, 60 samples per query and 100 body loads, Linux x86_64.
+Compilation and the owned Android emulator had stopped; ordinary desktop services
+remained active. No fully idle-host claim is made.
+
+| Measurement | Measured p95 | Gate |
+| --- | ---: | ---: |
+| Inbox page | 6.030 ms | 50 ms |
+| Account page | 3.106 ms | 50 ms |
+| Fuzzy full-text search | 35.537 ms | 50 ms |
+| Cached body | 0.025 ms | 10 ms |
+| UI handler, latest native run | 0.010 ms | 8 ms |
+| Native tab navigation, latest run | **155.144 ms** | **150 ms — fails** |
+
+**The combined performance gate fails.** Four native runs, each with 30 transitions,
+measured navigation p95 at 154.81–162.33 ms. The cached test executable built before
+this checkpoint also failed three runs at 159.31–168.24 ms. This comparison does
+not identify the underlying cause or certify an exact earlier source commit. The
+current test executable was restored and verified by hash; no installed app was
+used. Retain R03/R09 and the native input-under-load audit.
+
+The initial search benchmark was interrupted for diagnosis; the first complete
+materialized-search run failed at 68.94 ms. Both remain recorded alongside the
+passing final storage report. Native functional coverage passed 118 scenarios
+before the final index and 14 relevant scenarios after it with compilation stopped.
+The first 14-scenario rerun during compilation had two input failures; it is not a
+pass. See [the completion log](COMPLETION.md) for evidence and shipping. No threshold
+was weakened, and input-to-state timing is not proof of presented pixels or 60 Hz.
+The merged tree has not been re-measured; the navigation gate result above must be
+rechecked after the merge on an idle host.

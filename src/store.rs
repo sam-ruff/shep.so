@@ -142,6 +142,7 @@ impl Store {
             CREATE INDEX IF NOT EXISTS mail_folder_time ON messages(folder, timestamp DESC);
             CREATE INDEX IF NOT EXISTS mail_account_folder_time ON messages(account, folder, timestamp DESC);
             CREATE INDEX IF NOT EXISTS mail_folder_unread ON messages(folder,unread);
+            CREATE INDEX IF NOT EXISTS mail_inbox_badge_counts ON messages(folder,unread,account);
             CREATE INDEX IF NOT EXISTS mail_account_unread ON messages(account,folder,unread);
             CREATE INDEX IF NOT EXISTS mail_flagged ON messages(starred,folder);
             CREATE INDEX IF NOT EXISTS mail_sender ON messages(sender COLLATE NOCASE,timestamp DESC);
@@ -529,8 +530,8 @@ impl Store {
             summary.starred = starred;
             summary.folder = folder;
             move_journal::project_detail(c, &mut summary)?;
-            let parsed = mailparse::parse_mail(&raw)?;
-            let content = crate::email_content::extract(&parsed);
+            let parsed = shep_mail_core::mime::parse(&raw)?;
+            let content = crate::email_content::extract(&parsed)?;
             let (body, attachments) = (content.text, content.attachments);
             let body_truncated = body.chars().count() > 32000;
             let body: String = body.chars().take(32000).collect();
