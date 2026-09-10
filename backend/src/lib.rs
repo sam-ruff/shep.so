@@ -1,6 +1,7 @@
 pub mod config;
 pub mod google;
 pub mod mail;
+pub mod profiles;
 
 use axum::{
     Json, Router,
@@ -27,7 +28,7 @@ use zeroize::Zeroizing;
 
 const SESSION_SECONDS: u64 = 8 * 3600;
 const LOGIN_SECONDS: u64 = 600;
-const SESSION_COOKIE: &str = "__Host-shep_session";
+pub(crate) const SESSION_COOKIE: &str = "__Host-shep_session";
 const LOGIN_COOKIE: &str = "__Host-shep_login";
 struct Pending {
     created: Instant,
@@ -36,28 +37,36 @@ struct Pending {
     nonce: String,
 }
 #[derive(Clone)]
-struct Session {
+pub(crate) struct Session {
     created: Instant,
-    identity: Identity,
+    pub(crate) identity: Identity,
     csrf: String,
 }
 #[derive(Clone)]
 pub struct AppState {
     config: Arc<Config>,
     verifier: Arc<dyn LoginVerifier>,
+    provider: Arc<dyn profiles::ProfileProvider>,
     pending: Arc<Mutex<HashMap<String, Pending>>>,
     sessions: Arc<Mutex<HashMap<String, Session>>>,
+    profiles: Arc<profiles::ProfileState>,
     auth_slots: Arc<Semaphore>,
     mail: Arc<mail::MailHub>,
 }
 impl AppState {
-    pub fn new(config: Arc<Config>, verifier: Arc<dyn LoginVerifier>) -> Self {
+    pub fn new(
+        config: Arc<Config>,
+        verifier: Arc<dyn LoginVerifier>,
+        provider: Arc<dyn profiles::ProfileProvider>,
+    ) -> Self {
         Self {
             mail: Arc::new(mail::MailHub::new(config.mail_endpoints.clone())),
             config,
             verifier,
+            provider,
             pending: Default::default(),
             sessions: Default::default(),
+            profiles: Default::default(),
             auth_slots: Arc::new(Semaphore::new(8)),
         }
     }
@@ -68,18 +77,22 @@ impl AppState {
             s.created.elapsed() < Duration::from_secs(SESSION_SECONDS)
                 && self.config.permits(&s.identity.email, &s.identity.subject)
         });
+        // Provider grants live exactly as long as their session.
+        self.profiles
+            .retain_sessions(|key| sessions.contains_key(key))
+            .await;
         sessions.get(&hash(&token)).cloned()
     }
 }
-fn token() -> String {
+pub(crate) fn token() -> String {
     let mut value = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut value);
     URL_SAFE_NO_PAD.encode(value)
 }
-fn hash(value: &str) -> String {
+pub(crate) fn hash(value: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(value.as_bytes()))
 }
-fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+pub(crate) fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     let mut found = None;
     for value in headers.get_all(header::COOKIE) {
         for part in value.to_str().ok()?.split(';') {
@@ -115,6 +128,7 @@ pub fn app(state: AppState) -> Router {
         .route("/api/capabilities", get(capabilities))
         .merge(mail::routes(state.clone()))
         .merge(mail::receipt_routes())
+        .merge(profiles::routes())
         .route("/app", get(|| async { Redirect::to("/app/") }))
         .nest_service("/app/", web)
         .layer(middleware::from_fn_with_state(state.clone(), authorize));
@@ -123,6 +137,7 @@ pub fn app(state: AppState) -> Router {
         .route("/beta", get(beta))
         .route("/auth/start", get(start))
         .route("/auth/callback", get(callback))
+        .merge(profiles::callback_routes())
         .merge(private)
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .layer(middleware::from_fn(security_headers))
@@ -253,6 +268,7 @@ async fn callback(
     sessions.retain(|_, s| s.created.elapsed() < Duration::from_secs(SESSION_SECONDS));
     if let Some(old) = cookie(&headers, SESSION_COOKIE) {
         sessions.remove(&hash(&old));
+        state.profiles.forget(&hash(&old)).await;
     }
     if sessions.len() >= 1024 {
         return (
@@ -332,6 +348,7 @@ async fn session_info(
 async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if let Some(token) = cookie(&headers, SESSION_COOKIE) {
         state.sessions.lock().await.remove(&hash(&token));
+        state.profiles.forget(&hash(&token)).await;
     }
     let mut response = StatusCode::NO_CONTENT.into_response();
     set_cookie(&mut response, SESSION_COOKIE, "", 0);

@@ -11,6 +11,9 @@ pub struct Config {
     pub web_dir: PathBuf,
     pub bind: SocketAddr,
     pub mail_endpoints: Vec<crate::mail::policy::Endpoint>,
+    /// Shared Shep application namespace for profile app data; absent means
+    /// profile sync is not offered by this server.
+    pub profile_namespace: Option<String>,
 }
 impl Config {
     pub fn from_env() -> Result<Self, &'static str> {
@@ -43,9 +46,25 @@ impl Config {
                 &std::env::var("SHEP_MAIL_ENDPOINTS").unwrap_or_else(|_| "[]".into()),
             )
             .map_err(|_| "Invalid mail endpoint configuration")?,
+            profile_namespace: std::env::var("SHEP_PROFILE_NAMESPACE")
+                .ok()
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty()),
         };
         config.validate()?;
         Ok(config)
+    }
+    fn namespace_valid(value: &str) -> bool {
+        value.len() <= 128
+            && value.contains('.')
+            && value.split('.').all(|s| {
+                !s.is_empty()
+                    && s.len() <= 63
+                    && !s.starts_with('-')
+                    && !s.ends_with('-')
+                    && s.bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            })
     }
     pub fn validate(&self) -> Result<(), &'static str> {
         let url = Url::parse(&self.origin).map_err(|_| "Invalid public HTTPS origin")?;
@@ -68,6 +87,13 @@ impl Config {
         }
         crate::mail::policy::validate(&self.mail_endpoints)?;
         if self
+            .profile_namespace
+            .as_deref()
+            .is_some_and(|n| !Self::namespace_valid(n))
+        {
+            return Err("Use a dotted lowercase profile namespace such as so.shep.profiles");
+        }
+        if self
             .allowed_emails
             .iter()
             .any(|s| !s.contains('@') || s.contains(['\r', '\n', ' ']))
@@ -82,5 +108,9 @@ impl Config {
     }
     pub fn callback(&self) -> String {
         format!("{}/auth/callback", self.origin)
+    }
+    /// Separate redirect for provider consent, registered alongside the login one.
+    pub fn google_callback(&self) -> String {
+        format!("{}/auth/google/callback", self.origin)
     }
 }
