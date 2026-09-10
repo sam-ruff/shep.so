@@ -25,17 +25,24 @@ polls with exact request counts, publish through the catalog proof, rejected
 token fallback plus a reported second rejection, 503 mid-page resuming after
 restart without re-listing, rewound cursor replay, out-of-order arrivals,
 rebuilt history/observation owners, removed known file, unlisted profile);
-`cargo test --all-features profile_` passes 120 (one personal diagnostic
-ignored); `scripts/test_profile_core.py` passes 70 shared-crate tests; Clippy
-with `-D warnings` and `python3 -m unittest discover` (96, seven skipped) pass.
+after merging `main` at `9ea8ad1` (browser profile work and the no-feature
+build fix) and declaring the `incremental` module the lane commit omitted,
+`cargo test --all-features profile_` passes 120 library tests plus four
+integration tests (one personal diagnostic ignored);
+`scripts/test_profile_core.py` passes 73 shared-crate tests; `cargo fmt`, both
+Clippy runs with `-D warnings` and `python3 -m unittest discover` (96, seven
+skipped) pass.
 The loopback fixture's continuous modes now trigger on the second change poll,
-and the new `existing-token-expired` mode rejects the saved token once. All 14
-`profile_continuous`/`profile_account` native scenarios pass (81.8 s), including
+and the new `existing-token-expired` mode rejects the saved token once. On the
+merged test-ui binary all 18 selected `profile_continuous`/`profile_account`/
+`profile_join` native scenarios pass (70.2 s,
+`artifacts/logs/e2e-incremental-final.log`), including
 the new `test_profile_continuous_native_expired_change_token_falls_back_to_one_full_listing`
 (exactly one listing beyond discovery, no repeated metadata/media, second account
 and Tooltips received, durable across restart) with reviewed captures under
-`artifacts/e2e/feea17edbf3d`; the three `profile_setting_review` scenarios also
-pass. Google's exact expired-token status is taken from the fixture and
+`artifacts/e2e/51f1d36d3d0c`; the three `profile_setting_review` scenarios passed
+on the lane before the merge. The merge commit's hook passes 1116 tests across
+53 binaries (three ignored). Google's exact expired-token status is taken from the fixture and
 documentation, not a live account; integration and push remain with the root.
 
 ## 10 September: Google lifecycle channel ownership (R91)
