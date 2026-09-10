@@ -6049,3 +6049,64 @@ subscribed yet; scheduling is the foreground tick and Sync now with no OS
 background scheduling; fixtures only, with no live Google, cross-client delivery
 or Apple execution claims; sync starts paused after seeding; an unproven field
 with equal values stays silently pending until either side changes.
+
+## Browser profile consent, discovery, publication, enrollment and onboarding — 2026-09-10
+
+R92 / R75 (client) / R02 / R49, lane commits `5e337e5` (shared crate),
+`f16016b` (backend) and `5e013d1` (browser). The shared profile-core crate moves
+its history protocol types out of the SQLite-gated module and adds an in-memory
+journal with the same command contract and derived state as the native journal,
+tested side by side, plus a WASM `ProfileHistory` entry; `test_profile_codec.mjs`
+now exercises the history entry and the browser build compiles the profile-core
+glue. Native paths are unchanged, so the desktop and Flutter keep compiling.
+
+The backend gains a session-bound second OAuth consent behind a provider trait:
+PKCE, state and nonce, the exact desktop scope list, the subject must equal the
+beta identity, the Drive principal is verified, granted scopes are intersected
+with the request, refresh happens server-side, and tokens live only in the
+in-memory session store (pruned with sessions, logout and replacing login),
+never in logs or the browser. Denied, failed or mismatched consent keeps the
+existing grant and choices. A fixture provider and two HTTPS gate stages cover
+denied-then-connected consent and discovery/publication through the proxy; the
+production Google provider is implemented but unexercised.
+
+Browser Preferences gains "Profiles and sync": a Google connection card with
+requested versus saved permissions, Drive app data and Calendar choices,
+Connect, Reconnect and Disconnect with retryable local cleanup, and an explicit
+note when live provider access is not connected. A browser history worker and a
+per-identity IndexedDB store hold the discovery catalog and receipts. Find
+profiles verifies pages and saves an incomplete listing as a failure that retries
+from the same step. Reviewed first-profile publication freezes a fingerprinted
+review, stages exact edits behind the initialisation barrier, uploads one owned
+file per step, retries a lost reply without duplicating files and supports pause,
+browse and resume. Reviewed enrollment copies originals into an independently
+owned journal with a fresh device identity, pages account rows with connection
+details, imports accounts without passwords and marks them Reconnect required
+until a reviewed reconnect, keeps mail, drafts and Sent preferences for mapped
+accounts, offers changed connections as separate accounts and applies the four
+browser portable preferences through frozen-revision receipts. First-setup
+onboarding offers the opt-in, automatic enrollment for a single profile and a
+picker for several; a durable Not now is reversible from Preferences.
+
+Lane evidence (`artifacts/logs/browser-profiles-*.log`): 40 backend tests plus
+the ignored HTTPS gate, backend Clippy and formatting clean, 72 shared crate
+tests with native and wasm32 Clippy clean, 28 codec fixtures plus the history
+entry in Node, 154 browser units, build, `tsc` and prettier clean, 26 Chromium
+scenarios (seven profile scenarios with axe checks and eleven light/dark
+captures under `artifacts/web/profiles/`), 37 parity contracts, strict docs and
+1097 hook tests per commit. Integrator gates after merging onto `main`
+`1d86831` (`artifacts/logs/bp-int-*.log`): 73 shared crate tests and Clippy,
+40 backend tests, 89 mobile Rust tests, 154 browser units, build, the profile
+and workspace specs (21 passed after one capture race), Flutter analysis clean
+and 143 Flutter host tests. The capture helper in `profiles.spec.ts` re-resolves
+the region when a preference save redraws Preferences mid-scroll; three repeated
+runs then pass 21/21. Reviewed captures: discovery dark and the enrollment
+review dialog.
+
+Limitations: no live Google or same-project cross-client verification; ongoing
+browser reconciliation, conflict decisions, shared removal reviews, credential
+protection and the remaining portable categories stay open (appearance, preview
+lines, sender pictures and quoted history are the browser's portable set).
+Browser storage is keyed by the beta identity hash with the Drive principal
+bound in every journal binding; a name row counts inside its account
+application.

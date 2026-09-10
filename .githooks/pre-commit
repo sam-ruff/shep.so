@@ -2,6 +2,8 @@
 set -euo pipefail
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
+# Release and installer builds use no features; keep that build compiling.
+cargo clippy --no-default-features -- -D warnings
 cargo test --all-features
 cargo test -p shep-html-pixbuf
 python3 scripts/test_profile_core.py
