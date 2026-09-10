@@ -10,6 +10,12 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 
 The desktop summaries below are newest first and were written on `main` before the merge.
 
+R22 lane checkpoint: guarded legacy WAL checkpoint/close, journalled atomic
+publication with keyed verification before plaintext disposal, deterministic
+crash recovery from every step and guarded orphan cleanup are implemented with
+ten publication tests; startup stays plaintext and the remaining activation
+blockers are listed in completion and the encryption boundary document.
+
 9 September consolidation (R91, R02/R49/R92, R15, R22, R32): the restarted
 desktop session resolved the interrupted backup-history cherry-pick as
 `c35e2b5`, then merged bounded backup journal ownership (`42c69b4`), remote
