@@ -1,4 +1,6 @@
 use super::*;
+use rusqlite::{Connection, params};
+use uuid::Uuid;
 
 pub(super) fn initialize(db: &mut Connection, binding: &Binding) -> Result<Uuid> {
     let tx = db.transaction()?;
