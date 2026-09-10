@@ -37,6 +37,8 @@ crash recovery from every step and guarded orphan cleanup are implemented with
 ten publication tests; startup stays plaintext and the remaining activation
 blockers are listed in completion and the encryption boundary document.
 
+10 September (R02/R49, desktop lane `worktree-agent-a8d052821715bfeee`): incremental enrolled-history pulls are implemented and lane-verified. Each cycle polls the shared catalog's persisted change token, copies only new verified records through a durable copy cursor bound to the observation and history device UUIDs, and falls back to one full listing per pass on a rejected token or failed verification (eight targeted tests, 120 profile tests, 70 shared-crate tests, 96 Python tests, 17 native profile scenarios including the new `existing-token-expired` fallback with reviewed captures). Integration and push remain with the primary agent; credential protection, global removal choices and live Google verification stay open in TODO.
+
 10 September (R02/R49, desktop lane `worktree-agent-adfeba145fe019aee`): post-enrollment account linking and suppression on populated devices is implemented and lane-verified (seven targeted tests, 115 profile tests, three native `existing-link` scenarios with light and compact-dark captures); a new shared definition matching an unmapped native account is held for Link/Add new/Keep local instead of silently creating a reconnecting account. Integration and push remain with the primary agent; incremental pulls, credential protection and live Google verification stay open in TODO.
 
 9 September consolidation (R91, R02/R49/R92, R15, R22, R32): the restarted

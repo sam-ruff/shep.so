@@ -665,26 +665,34 @@ automatic result must not change the active tab. Review prompt and import WebPs.
 These are after-sign-in fixture tests, not live Google or cross-client evidence.
 
 
-Continuous profile scenarios use `existing-updates`, `existing-update-failure`
-and `existing-upload-failure`.
-Both seed one complete profile, then publish a fictional second-device operation
-on the next enrolled-history check: a new account and Tooltips preference. The
-failure mode rejects the first ongoing list; native Sync now retries it. This is
-an owned HTTP fixture, never a direct application-state mutation or real Google
-request. Preserve all `test_profile_continuous_native_*` equivalents: background
-application while Mail remains open, local publication/restart, offline recovery,
-and received changes remaining visible when a later upload fails. The upload
-failure retains its exact queued operation across restart. Read owned checkpoints only after graceful
-close. Review the actual Preferences/reconnect/error screenshots.
+Continuous profile scenarios use `existing-updates`, `existing-update-failure`,
+`existing-upload-failure` and `existing-token-expired`.
+Each seeds one complete profile, then publishes a fictional second-device
+operation on the enrolled device's first ongoing change poll (the second
+`/drive/v3/changes` request; discovery makes the first): a new account and
+Tooltips preference. The update-failure mode rejects that first ongoing poll
+with 503; native Sync now retries it. The token-expired mode rejects the saved
+change token once with 400 after seeding, so the desktop must fall back to one
+full listing and still receive the record. This is an owned HTTP fixture, never
+a direct application-state mutation or real Google request. Preserve all
+`test_profile_continuous_native_*` equivalents: background application while
+Mail remains open, local publication/restart, offline recovery, received changes
+remaining visible when a later upload fails, and the expired-token fallback.
+The upload failure retains its exact queued operation across restart. Read owned
+checkpoints only after graceful close. Review the actual Preferences/reconnect/
+error screenshots.
 
 
 The saved `test_profile_continuous_native_reuses_verified_downloads_after_restart`
 uses `existing-single` and ordinary Sync now/restart controls. Read-only
-`profile_drive_requests` reports counters from the owned loopback HTTP server;
-wait for a new scoped listing and completed UI work, then verify unchanged
-records were not downloaded again. This is request-count correctness evidence,
-not a latency benchmark or live Google verification. Review the saved native
-Preferences screenshots alongside the restart/corruption protocol tests.
+`profile_drive_requests` reports counters from the owned loopback HTTP server:
+`lists`, `scoped_lists`, `changes`, `metadata` and `media`. Enrolled checks poll
+the persisted change token, so wait for a new `changes` count and completed UI
+work, then verify that `lists`, `metadata` and `media` did not move. The
+fallback scenario expects exactly one unscoped listing beyond discovery. This is
+request-count correctness evidence, not a latency benchmark or live Google
+verification. Review the saved native Preferences screenshots alongside the
+restart/corruption protocol tests.
 For native tray lifecycle use `desktop.start(tray="available" | "missing")`.
 The owned GTK host renders Shep's actual StatusNotifierItem and DBusMenu on the
 isolated X display; its separate D-Bus service records saving notifications.

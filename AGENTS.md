@@ -1198,8 +1198,14 @@ atomically. Only a completed scan exposes metadata pages for application, at mos
 50 at a time; no whole-history collection/page ceiling. Scan replacement must
 preserve uploads and merge history. Keep the protocol/journal/scan regressions
 and existing Drive backup tests. Run JSON/hash/SQL/network work only in backend
-workers. Ongoing polling/application now has a bounded coordinator; account
-linking, conflict/removal reviews and incremental pulls remain TODO.
+workers. Ongoing polling/application now has a bounded coordinator. Enrolled
+cycles pull through `profile_sync::incremental`: the shared catalog's persisted
+change token, one full-listing fallback per pass on a rejected token or failed
+verification, and a `catalog_copies` cursor bound to both the observation and
+history device UUIDs. Keep the copy cursor saved only after import, keep
+setup/join on the complete scoped listing, and never let a failed or
+incomplete catalog scan read as an empty account. Global removal choices and
+live cross-client verification remain TODO.
 
 The pre-commit hook, full check script and disabled quality workflow also run
 `python3 scripts/test_profile_core.py`. Since the merge, `shep-profile-core` is a
@@ -1222,7 +1228,7 @@ The shared Drive metadata fixture now fixes appProperties/category/file naming
 across implementations; preserve exact bytes with the repository Git attributes.
 The earlier bb87ac2 desktop prototype had a different unconnected wire convention.
 Real same-project cross-client visibility remains unverified. The kernel still
-needs account linking/reviews, remaining settings and incremental pulls. Native
+needs remaining settings and global removal choices. Native
 continuous-update fixtures do not prove actual cross-client Google delivery.
 
 `scripts/test_profile_core.py` checks through Cargo metadata that
@@ -1241,7 +1247,7 @@ persists all seed UUIDs/account mappings, and checkpoints the exact expected
 history revision before each edit. Retry that original request, never resnapshot
 its values or assign another UUID. Keep an admitted upload owned through both
 journal receipts even after stop; subsequent requests must observe newer intent.
-Ongoing account application/linking and incremental polling remain open. Metadata review alone must not connect a
+Global removal choices and protected credential transfer remain open. Metadata review alone must not connect a
 remote-specified server using existing credentials. See the profile reference
 and TODO for supported settings and remaining behavior; preserve held-response,
 restart, malformed seed, settings rollback and import-fence tests.
