@@ -2,6 +2,26 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## Mobile and web clients merged into main — shipped
+
+The desktop session merged `feat/mobile-web-clients` (`d8d5c1e`, itself a
+`--no-ff` merge of main `c414227`) into `main` as `ee1305c` on 10 September
+2026 and pushed it; remote equality is verified. The merge also carried the
+held aggregate folder account chooser (`1abc4b9`, merged as `d99b111`). The
+only conflict was `TODO.md`: the client branch's combined list was taken and
+the desktop receipts written after `c414227` were re-applied. The root
+workspace now includes the shared crates, `shep-profile-core` is a path
+dependency on `shared/profile-core`, and the pre-commit hook covers the whole
+workspace. Gates on `ee1305c`: **1066 hook test executions** (zero failures,
+three personal diagnostics ignored; `artifacts/logs/hooks-merge-mobile.log`),
+**96 Python tests** (seven skipped), the strict documentation build and **45
+native desktop scenarios** in 202 s covering folder controls, search,
+conversations, badges, profile account reviews and removals, Google flows and
+backup history (`artifacts/logs/e2e-main-ee1305c.log`). Flutter, browser and
+backend gates are the client session's, recorded in "Main merged into the
+client branch — 2026-09-09". Live provider, Windows and macOS execution remain
+unverified.
+
 ## Journal ownership, removal reviews and duplicate labels — integrated verification
 
 Three lanes were merged into `main` with `--no-ff` after each was rebased onto
