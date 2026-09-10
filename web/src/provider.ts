@@ -456,6 +456,10 @@ export class GatewayRepository implements Repository, SelectionRepository {
   drafts: Draft[] = [];
   accounts: Account[] = [];
   removedAccounts = new Set<string>();
+  /// Accounts imported from a synced profile without credentials. They refuse
+  /// provider work until a reviewed reconnect activates a password pair.
+  reconnectRequired = new Set<string>();
+  onCredentialActivated?: (id: string) => Promise<void>;
   private attachmentReader?: AttachmentReader;
   private documentLoader?: DocumentLoader;
   private forwardLoader?: ForwardLoader;
@@ -678,6 +682,34 @@ export class GatewayRepository implements Repository, SelectionRepository {
         ...this.accounts.filter((a) => a.id !== account.id),
         account,
       ];
+      if (this.reconnectRequired.delete(account.id))
+        await this.onCredentialActivated?.(account.id);
+    });
+  }
+  /// Save an account definition from a synced profile. No probe, no password:
+  /// the account stays unusable until a reviewed reconnect activates one.
+  /// Existing cached mail, drafts and Sent preferences of a mapped account are
+  /// preserved; only its definition metadata is updated.
+  async importAccount(account: Account) {
+    await this.exclusive(`account.${account.id}`, async () => {
+      if (await this.store.get("removedAccounts", account.id))
+        throw new Error(
+          "This account was removed from this browser. Choose a new identity before adding it again.",
+        );
+      const existing = await this.store.get<Account>("accounts", account.id);
+      const value: Account = existing
+        ? {
+            ...account,
+            sent_copy: existing.sent_copy,
+            sent_folder: existing.sent_folder,
+          }
+        : account;
+      await this.store.commit([{ store: "accounts", key: account.id, value }]);
+      this.accounts = [
+        ...this.accounts.filter((a) => a.id !== account.id),
+        value,
+      ];
+      if (!existing) this.reconnectRequired.add(account.id);
     });
   }
   async removalPreview(id: string) {
