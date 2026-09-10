@@ -956,6 +956,95 @@ class NativeFlows(unittest.TestCase):
                        check("notice", "Sending is disabled in preview", "contains"),
                        check("tray.visible", True), check("editor", "Continue working", "contains"), shot("tray-open-cancels-quit"))
 
+    def start_backup_all(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), click(1080, 334),
+                       check("backup_run.0.status", "Saved"), check("backup_run.1.status", "Uploading"))
+
+    def test_tray_native_close_during_slow_backup_upload_notifies_then_exits_when_saved(self):
+        started = self.mcp.call("desktop.start", tray="available", backup_run="ready")
+        directory = Path(started["artifacts"])
+        print(f"Close during slow backup upload: {directory}", flush=True)
+        self.mcp.batch(check("tray.available", True))
+        self.start_backup_all()
+        report = self.mcp.batch({"type": "close_request"}, check("close_pending", True),
+                                check("tray.temporary", True), check("tray.visible", False),
+                                check("tray_host.notifications.0.title", "Shep is finishing your changes"),
+                                check("tray_host.notifications.0.body", "Quit Shep", "contains"),
+                                shot("tray-backup-upload-saving"), {"type": "wait_exit"})
+        self.assertEqual(report["actions"][-1]["result"]["returncode"], 0)
+        self.assertEqual(len(list((directory / "backup-targets" / "first").glob("*.shepbackup"))), 1)
+        self.assertEqual(len(list((directory / "backup-targets" / "second").glob("*.shepbackup"))), 1)
+        with sqlite3.connect(f"file:{directory / 'backup-uploads.sqlite'}?mode=ro", uri=True) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0], 0)
+
+    def test_tray_native_quit_leaves_held_backup_upload_journaled_and_process_exits(self):
+        started = self.mcp.call("desktop.start", tray="available", backup_run="held")
+        directory = Path(started["artifacts"])
+        print(f"Quit during held backup upload: {directory}", flush=True)
+        self.mcp.batch(check("tray.available", True))
+        self.start_backup_all()
+        # The stalled transfer never acknowledges: the first close waits in the
+        # tray with a notice, and the tray menu's Quit leaves at once because the
+        # reserved copy is journaled. wait_exit bounds the actual process exit.
+        report = self.mcp.batch({"type": "close_request"}, check("close_pending", True),
+                                check("tray.temporary", True), check("tray.visible", False),
+                                check("tray_host.notifications.0.title", "Shep is finishing your changes"),
+                                shot("tray-held-upload-saving"), {"type": "wait", "ms": 1500},
+                                check("close_pending", True), check("tray.exiting", False),
+                                {"type": "tray_menu"}, key("End"), key("Return"), {"type": "wait_exit"})
+        self.assertEqual(report["actions"][-1]["result"]["returncode"], 0)
+        self.assertEqual(len(list((directory / "backup-targets" / "first").glob("*.shepbackup"))), 1)
+        self.assertEqual(list((directory / "backup-targets" / "second").glob("*.shepbackup")), [])
+        with sqlite3.connect(f"file:{directory / 'backup-uploads.sqlite'}?mode=ro", uri=True) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0], 1)
+        restarted = self.mcp.call("desktop.restart")
+        self.assertNotEqual(started["pid"], restarted["pid"])
+        self.mcp.batch(check("ready", True), key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), shot("held-upload-retained-after-restart"))
+        with sqlite3.connect(f"file:{directory / 'backup-uploads.sqlite'}?mode=ro", uri=True) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM uploads").fetchone()[0], 1)
+
+    def test_tray_native_repeated_quit_with_pending_send_shows_reason_and_keeps_reply(self):
+        for compact in (False, True):
+            started = self.mcp.call("desktop.start", tray="available", mail_actions="slow",
+                                    **({"width": 900, "height": 640} if compact else {}))
+            print(f"Repeated Quit during pending send ({'compact dark' if compact else 'light'}): {started['artifacts']}", flush=True)
+            self.mcp.batch(check("tray.available", True))
+            if compact:
+                self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                               key("ctrl+1"), check("tab", "Mail"))
+            self.mcp.batch(key("r"), check("focused_input", "compose-body"), type_text("Keep this reply through a repeated Quit."))
+            draft = self.mcp.call("desktop.state")["composer"]["id"]
+            # A send is not journaled until the server answers, so Quit cannot
+            # abandon it: the window returns with the reason and close intent stays.
+            self.mcp.batch(click(581, 563) if compact else click(675, 564), check("busy", "send:"+draft, "contains"),
+                           {"type": "close_request"}, check("tray.temporary", True), check("tray.visible", False),
+                           {"type": "tray_menu"}, key("End"), key("Return"), check("tray.visible", True),
+                           check("close_pending", True), check("tray.temporary", False),
+                           check("notice", "Shep will quit as soon as this is saved", "contains"),
+                           {"type": "focus_app"}, shot("tray-repeated-quit-reason-dark-compact" if compact else "tray-repeated-quit-reason-light"),
+                           check("notice", "Sending is disabled in preview", "contains"), check("close_pending", False),
+                           check("tray.exiting", False), check("editor", "Keep this reply", "contains"))
+
+    def test_tray_native_quit_during_held_readonly_sync_exits_and_keeps_cache(self):
+        started = self.mcp.call("desktop.start", tray="available", persistent=True, held_account_sync=True)
+        directory = Path(started["artifacts"])
+        print(f"Quit during held read-only sync: {directory}", flush=True)
+        self.mcp.batch(check("tray.available", True), check("account_sync_waiting", True))
+        self.open_tray_preferences()
+        report = self.mcp.batch(click(288, 342), check("tray.saved_enabled", True), key("ctrl+1"), check("tab", "Mail"),
+                                {"type": "close_request"}, check("tray.visible", False), check("close_pending", False),
+                                check("account_sync_waiting", True), shot("tray-hidden-during-held-sync"),
+                                {"type": "tray_menu"}, key("End"), key("Return"), {"type": "wait_exit"})
+        self.assertEqual(report["actions"][-1]["result"]["returncode"], 0)
+        with sqlite3.connect(f"file:{directory / 'fixture.sqlite'}?mode=ro", uri=True) as cache:
+            before = cache.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        self.assertGreater(before, 0)
+        restarted = self.mcp.call("desktop.restart")
+        self.assertNotEqual(started["pid"], restarted["pid"])
+        self.mcp.batch(check("ready", True), check("total", before), check("tray.saved_enabled", True))
+
     def test_close_during_send_failure_reopens_work_without_losing_the_reply(self):
         started = self.mcp.call("desktop.start", persistent=True, mail_actions="slow")
         print(f"Close during rejected send: {started['artifacts']}", flush=True)

@@ -1819,7 +1819,8 @@ impl App {
                     self.pending_close = Some(window);
                     self.notice("Finishing your mail changes before closing…", false);
                 } else if self.removal.removing.is_some()
-                    || self.busy.contains("credential-cleanup")
+                    || self.required_busy("credential-cleanup")
+                        && self.busy.contains("credential-cleanup")
                 {
                     self.notice("Finishing credential cleanup before closing…", false);
                 } else if self.busy.contains("google-disconnect") || self.busy.contains("google") {
@@ -1831,11 +1832,16 @@ impl App {
                     self.notice("Finishing Sent-copy recovery before closing…", false);
                 } else if self.calendar_setup.saving.is_some() {
                     self.notice("Saving the calendar connection before closing…", false);
+                } else if self
+                    .busy
+                    .iter()
+                    .any(|key| key.starts_with("backup:") && self.required_busy(key))
+                {
+                    self.notice("Finishing the backup copy before closing…", false);
                 } else if self.busy.iter().any(|key| {
                     key.starts_with("send:")
                         || key.starts_with("event:")
                         || key.starts_with("account:")
-                        || key.starts_with("backup:")
                 }) {
                     self.notice("Finishing your changes before closing…", false);
                 } else if self.composer.discard_pending {

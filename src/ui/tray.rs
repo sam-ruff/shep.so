@@ -2,6 +2,10 @@
 use super::*;
 use crate::desktop_tray::{Action, Event};
 
+/// Longest a windowless process may linger on abandoned background work.
+#[cfg(not(test))]
+const EXIT_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
 #[derive(Default)]
 pub(super) struct State {
     pub window: Option<iced::window::Id>,
@@ -10,6 +14,8 @@ pub(super) struct State {
     pub temporary: bool,
     pub exiting: bool,
     saving_fallback: bool,
+    /// An explicit repeated Quit leaves journaled work for the next launch.
+    pub insisted: bool,
     pub ready: bool,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     initialization: Option<(
@@ -101,6 +107,16 @@ impl App {
     }
 
     pub(super) fn request_main_close(&mut self, window: iced::window::Id) -> Task<Message> {
+        if self.pending_close.is_some() {
+            // The visible fallback window told the user Shep closes here once
+            // saved; closing it again is an explicit Quit. A repeated native
+            // close event while hiding is not.
+            return if self.tray.saving_fallback {
+                self.quit_now(window)
+            } else {
+                Task::none()
+            };
+        }
         if self.preferences.close_to_tray {
             if self.composer.picker.is_some() {
                 self.notice(
@@ -127,36 +143,64 @@ impl App {
     }
 
     fn quit_main(&mut self, window: iced::window::Id) -> Task<Message> {
-        if self.pending_close.is_none() {
-            self.tray.saving_fallback = false;
+        if self.pending_close.is_some() {
+            return self.quit_now(window);
         }
+        self.tray.saving_fallback = false;
+        self.tray.insisted = false;
         self.handle(Message::WindowClose(window))
     }
 
+    /// An explicit Quit leaves journaled work to the next launch. Anything
+    /// else must still acknowledge, and the reason stays visible until it does.
+    pub(super) fn quit_now(&mut self, window: iced::window::Id) -> Task<Message> {
+        self.tray.insisted = true;
+        let previous_notice = self.notice.as_ref().map(|(_, _, at)| *at);
+        let task = self.handle(Message::WindowClose(window));
+        if self.tray.exiting || self.pending_close.is_none() {
+            return task;
+        }
+        let refreshed = self.notice.as_ref().map(|(_, _, at)| *at) != previous_notice;
+        let reason = match &self.notice {
+            Some((text, false, _)) if refreshed => text.trim_end_matches('…').to_owned(),
+            _ => "Finishing the current mail change".to_owned(),
+        };
+        self.notice(
+            format!("{reason}. Shep will quit as soon as this is saved."),
+            false,
+        );
+        self.tray.temporary = false;
+        self.tray.saving_fallback = true;
+        if self.tray.window.is_none() {
+            return Task::batch([task, self.open_main_window()]);
+        }
+        task
+    }
+
     pub(super) fn continue_tray_close(&mut self) -> Task<Message> {
-        if self.pending_close.is_some()
+        let waiting = self.pending_close.is_some()
             && self.tray.available
-            && self.tray.window.is_some()
             && self.composer.picker.is_none()
             && !self.tray.temporary
             && !self.tray.saving_fallback
-            && (self.has_required_close_work() || self.bulk.jobs.iter().any(|job| job.running > 0))
-        {
-            self.tray.temporary = true;
-            let notification = Task::perform(
-                crate::desktop_tray::saving_notification(self.demo),
-                |result| Message::Tray(Event::SavingNotification(result)),
-            );
-            return Task::batch([self.hide_main_window(), notification]);
+            && (self.has_required_close_work() || self.bulk.jobs.iter().any(|job| job.running > 0));
+        // Quit from an already hidden window announces the wait the same way.
+        if !waiting || (self.tray.window.is_none() && !self.tray.hidden) {
+            return Task::none();
         }
-        Task::none()
+        self.tray.temporary = true;
+        let notification = Task::perform(
+            crate::desktop_tray::saving_notification(self.demo),
+            |result| Message::Tray(Event::SavingNotification(result)),
+        );
+        Task::batch([self.hide_main_window(), notification])
     }
 
     pub(super) fn tray_event(&mut self, event: Event) -> Task<Message> {
         match event {
             Event::SavingNotification(result) => {
                 if result.is_err() && self.tray.temporary && !self.tray.exiting {
-                    self.notice("Desktop notifications are unavailable. Shep will close here when your changes are saved.", false);
+                    self.notice("Desktop notifications are unavailable. Shep will close here when your changes are saved; close again to leave now and resume journaled uploads next time.", false);
                     self.tray.temporary = false;
                     self.tray.saving_fallback = true;
                     return self.open_main_window();
@@ -191,6 +235,7 @@ impl App {
         self.pending_close = None;
         self.composer.close = None;
         self.tray.temporary = false;
+        self.tray.insisted = false;
         self.resume_folder_close_barrier();
         self.open_main_window()
     }
@@ -221,6 +266,15 @@ impl App {
         self.tray.exiting = true;
         self.tray.temporary = false;
         self.pending_close = None;
+        // Every required acknowledgment is in; only abandoned background work
+        // could still hold the runtime open after the last window is gone.
+        #[cfg(not(test))]
+        crate::lifecycle::bound_exit(EXIT_GRACE, || {
+            tracing::warn!(
+                "Background work did not stop within the exit grace period; exiting now"
+            );
+            std::process::exit(0);
+        });
         iced::exit()
     }
 }
@@ -463,6 +517,137 @@ mod tests {
         assert!(!app.tray.exiting);
         let _ = app.update(Message::Tray(Event::Action(Action::Quit)));
         assert!(app.tray.exiting);
+    }
+
+    #[test]
+    fn quit_from_temporary_tray_exits_when_only_journaled_work_remains() {
+        for key in ["backup:one", "credential-cleanup"] {
+            let (mut app, _) = App::new();
+            let window = iced::window::Id::unique();
+            app.tray.window = Some(window);
+            app.tray.available = true;
+            app.bulk.stopped = true;
+            app.busy.insert(key.into());
+            let _ = app.update(Message::WindowCloseRequested(window));
+            assert!(app.tray.temporary, "{key}");
+            assert_eq!(app.pending_close, Some(window), "{key}");
+            assert!(!app.tray.exiting, "first close waits: {key}");
+            let _ = app.update(Message::Tray(Event::Action(Action::Quit)));
+            assert!(app.tray.exiting, "Quit must leave now: {key}");
+            assert!(app.tray.window.is_none(), "{key}");
+        }
+    }
+
+    #[test]
+    fn repeated_quit_with_unjournaled_save_reopens_with_reason_and_still_auto_exits() {
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.tray.available = true;
+        app.bulk.stopped = true;
+        app.busy.extend(["send:one".into(), "backup:one".into()]);
+        let _ = app.update(Message::WindowCloseRequested(window));
+        assert!(app.tray.temporary);
+        assert!(app.tray.window.is_none());
+        let _ = app.update(Message::Tray(Event::Action(Action::Quit)));
+        assert!(!app.tray.exiting, "an unjournaled send must still finish");
+        assert!(app.tray.window.is_some(), "the reason must be visible");
+        assert!(!app.tray.temporary);
+        assert!(app.pending_close.is_some(), "Quit keeps close intent");
+        let (text, error, _) = app.notice.as_ref().unwrap();
+        assert!(text.contains("quit"), "{text}");
+        assert!(!error);
+        let _ = app.update(Message::Tick);
+        assert!(app.tray.window.is_some(), "no repeated hiding");
+        let _ = app.update(Message::Backend(crate::engine::Event::Busy(
+            "send:one".into(),
+            false,
+        )));
+        assert!(
+            app.tray.exiting,
+            "the journaled backup no longer holds exit"
+        );
+    }
+
+    #[test]
+    fn quit_from_ordinary_hidden_tray_notifies_and_second_quit_abandons_journaled_upload() {
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.tray.available = true;
+        app.preferences.close_to_tray = true;
+        app.bulk.stopped = true;
+        app.busy.insert("backup:one".into());
+        let _ = app.update(Message::WindowCloseRequested(window));
+        assert!(app.tray.hidden);
+        assert!(!app.tray.temporary);
+        let _ = app.update(Message::Tray(Event::Action(Action::Quit)));
+        assert!(app.pending_close.is_some());
+        assert!(app.tray.temporary, "Quit while hidden must announce saving");
+        assert!(!app.tray.exiting);
+        let _ = app.update(Message::Tray(Event::Action(Action::Quit)));
+        assert!(app.tray.exiting);
+    }
+
+    #[test]
+    fn second_close_on_visible_saving_window_acts_as_quit_but_first_double_click_does_not() {
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.tray.available = true;
+        app.bulk.stopped = true;
+        app.busy.insert("backup:one".into());
+        let _ = app.update(Message::WindowCloseRequested(window));
+        let _ = app.update(Message::Tray(Event::SavingNotification(Err(
+            "No notification daemon".into(),
+        ))));
+        assert!(app.tray.window.is_some());
+        assert_eq!(app.pending_close, Some(window));
+        let visible = app.tray.window.unwrap();
+        let _ = app.update(Message::WindowCloseRequested(visible));
+        assert!(
+            app.tray.exiting,
+            "closing the visible saving window again leaves"
+        );
+
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.tray.available = true;
+        app.bulk.stopped = true;
+        app.busy.insert("backup:one".into());
+        let _ = app.update(Message::WindowCloseRequested(window));
+        let _ = app.update(Message::WindowCloseRequested(window));
+        assert!(
+            !app.tray.exiting,
+            "a repeated native close event is not Quit"
+        );
+        assert!(app.tray.temporary);
+    }
+
+    #[test]
+    fn restore_after_insisted_quit_cancels_abandonment() {
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.tray.available = true;
+        app.bulk.stopped = true;
+        app.busy.extend(["send:one".into(), "backup:one".into()]);
+        let _ = app.update(Message::WindowCloseRequested(window));
+        let _ = app.update(Message::Tray(Event::Action(Action::Quit)));
+        let _ = app.update(Message::Tray(Event::Action(Action::Open)));
+        assert!(app.pending_close.is_none());
+        let visible = app.tray.window.unwrap();
+        let _ = app.update(Message::Backend(crate::engine::Event::Busy(
+            "send:one".into(),
+            false,
+        )));
+        let _ = app.update(Message::WindowCloseRequested(visible));
+        assert!(app.pending_close.is_some());
+        assert!(
+            !app.tray.exiting,
+            "a fresh close waits for the backup again"
+        );
     }
 
     #[test]

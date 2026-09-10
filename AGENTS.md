@@ -1374,7 +1374,13 @@ local preference, off by default. With it off, pending writes can temporarily hi
 behind the tray with a saving notification; failure, Open or tray loss restores
 an accessible window and cancels close intent. Do not wait for optional read-only
 sync or notify for an idle bulk-stop handshake. Preserve per-operation error
-ownership and late-acknowledgment tests.
+ownership and late-acknowledgment tests. A close must never lack a way out: a
+repeated explicit Quit (`quit_now`) leaves journaled work (`backup:*`,
+`credential-cleanup`) to the next launch and otherwise reopens the window with
+the reason while keeping close intent; unjournaled provider writes and local
+saves still block exit. `finish_exit` arms `lifecycle::bound_exit` because
+dropping the iced Tokio runtime joins every running blocking task; keep the
+`backup_run="held"` native fixture that proves the process still ends.
 
 Tray callback actions use a capacity-one watch retaining the latest Open/Quit; Linux watcher availability
 uses a separate coalescing watch value so saturated actions cannot discard host
