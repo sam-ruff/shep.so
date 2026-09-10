@@ -1,7 +1,9 @@
 # Local cache encryption work
 
 R22 is in progress. Normal startup still opens the existing cache; the staged
-encryption APIs are not activated until migration and recovery are complete.
+encryption APIs, including guarded publication and crash recovery, are not
+activated until the blockers listed at the end of the publication section are
+resolved.
 No personal database has been changed by the development fixtures.
 
 The desktop pins SQLCipher 4.19.0 (SQLite 3.53.4) in the vendored
@@ -36,8 +38,9 @@ the connection before deleting its directory. Reopened sessions start empty.
 Read-move TEMP projections are bounded at 128 entries. A separate shared-source
 follow-up replaces ancestry TEMP/recursive sets with an indexed main-database
 table and a 128-ID frontier; the published source is included in the desktop pin.
-The remaining SQLite sort/temporary-index audit, crash-orphan cleanup and
-portable-transfer scratch still block production activation. Known remaining
+The remaining SQLite sort/temporary-index audit and portable-transfer scratch
+still block production activation; guarded crash-orphan cleanup is described
+below. Known remaining
 queries include all-account/folder selection summaries, workspace DISTINCT and
 Inbox GROUP BY counts, and recovered-view automatic indexes. File-based plaintext
 sorting is preserved; those queries are not claimed safe for a large keyed cache.
@@ -67,8 +70,62 @@ read-only source transaction. SQLCipher logical export preserves schema, FTS
 and BLOBs; application/user versions are copied explicitly. The candidate must
 pass SQLite integrity and SQLCipher authentication checks before it can be
 considered for publication. Cancellation removes the candidate and keeps the
-source. Guarded legacy WAL checkpoint/close, atomic replacement and crash
-recovery are unfinished; never rename a main database beside old WAL/SHM files.
+source. The candidate records a cheap fingerprint of the plaintext (length,
+mtime, header change counter, WAL length) and publication refuses a candidate
+whose source changed afterwards.
+
+Publication (`cache_cipher::publication`) runs under the exclusive ownership
+guard with the candidate in the cache folder and no open connection to the
+plaintext. Its steps are, in order: checkpoint the legacy WAL with TRUNCATE and
+switch the file to DELETE journalling so no WAL/SHM sidecar can outlive a
+rename (a busy checkpoint or refused mode change means another connection
+still holds the file and fails the step; an empty leftover log is removed, a
+non-empty one fails); write `<cache>.encryption-journal` naming the candidate,
+its user/application versions and the checkpointed plaintext fingerprint, and
+stop the candidate from deleting itself; rename the plaintext to
+`<cache>.plaintext-recovery`; rename the candidate to the cache name (same
+folder, directory fsync after each rename); reopen the published file with the
+key and confirm an authenticated schema read plus the journalled versions;
+delete the plaintext recovery file; delete the journal. Never rename a main
+database beside old WAL/SHM files.
+
+The plaintext is disposed of by ordinary deletion only after the keyed reopen
+passed, because the contract requires recovery material until a verified
+replacement commits and nothing else; keeping a plaintext copy beside an
+encrypted cache would defeat the feature. Earlier copies and storage-device
+history are a documented limit, not an overwrite promise.
+
+Startup recovery (`publication::recover`) derives the state from the journal
+plus which of main/candidate/recovery exist and the main file header, then
+resumes or rolls back deterministically: a checkpointed candidate is fully
+re-verified (integrity, cipher authentication, versions) and continues; a
+retired plaintext with a verified candidate continues; a published file whose
+keyed reopen fails while the plaintext recovery file exists is moved aside and
+the plaintext restored (no write reaches the encrypted file before
+verification, so nothing is lost); a published file whose plaintext is already
+disposed of and whose key is wrong is kept with its journal and reported, never
+reset; a lost candidate restores or keeps the plaintext; any layout this
+machine does not produce is refused with every file kept. A recovery file with
+no journal is reported and kept, and blocks a new publication until reviewed.
+Orphan cleanup then removes `.shep-encrypted-*.partial` candidates (and their
+SQLite sidecars) not named by a journal and `.shep-cache-scratch-*` session
+folders; import staging files are not touched. Cleanup is only safe because the
+exclusive guard proves no cooperating owner, which is why legacy process
+exclusion remains an activation blocker. Ten tests cover full publication with
+uncheckpointed WAL rows, stale candidates with retry, a held plaintext
+connection with retry, foreign guards, interruption before each of the seven
+steps with resume, wrong-key rollback and refusal, lost candidates, ambiguous
+layouts and orphan cleanup.
+
+Activation is still blocked on: bootstrap routing of `recover` before any
+catalog/profile open and of `stage`/`publish` on a worker with the exclusive
+guard held from key creation through publication; the store and profile workers
+holding the reader guard for every admitted write; excluding legacy Shep
+processes that do not take the guard, since checkpoint refusal detects an open
+connection only when it holds a lock; keyed import staging and catalog routing;
+bounded selection-summary, catalog and recovered-view sorting; native key
+recovery and platform startup checks, including Windows rename semantics under
+antivirus or indexer handles, which are only compiled, not executed.
 
 The root ownership guard allows current readers and excludes migration/key
 creation while another cooperating process owns the cache. It explicitly
