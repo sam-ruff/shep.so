@@ -10,6 +10,8 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 
 The desktop summaries below are newest first; the first entry was written after the merge.
 
+10 September (R22, encrypted cache bootstrap lane): production startup now routes through one owning root worker that holds the exclusive guard from key lookup through recover/stage/publish, re-takes it shared and hands it to the catalog, store and backup-journal workers until their admitted writes drain; the production policy keys only roots that already own a key, so every install still starts plaintext and migration is test-only; keyed import staging/fences/installation and a subprocess legacy-process exclusion fixture are added. Evidence: 38 cache_cipher tests (nine bootstrap), 13 profile tests, the keyed import test, clippy, fmt, 96 Python tests, with hook, Windows check and native import/export/catalog counts recorded in the lane report. In progress: a way to select migration, profile transport guard retention, bounded sorting, native key recovery and platform startup checks.
+
 10 September (R91, lifecycle/Google ownership lane): the engine's Google
 RwLock, connection lifecycle and calendar setup mutexes are replaced by bounded
 FIFO lane coordinators, and the shared Google token mutex by a thread-owned

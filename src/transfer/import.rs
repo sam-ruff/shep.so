@@ -19,6 +19,8 @@ use std::{
 };
 use tokio::sync::{oneshot, watch};
 
+const FIXTURE_APPLICATION_ID: i32 = 0x5348_5054;
+
 mod fences;
 mod install;
 pub use install::{InstallPhase, Installation, Installed};
@@ -65,11 +67,17 @@ pub struct Review {
 pub struct Prepared {
     file: tempfile::NamedTempFile,
     id: uuid::Uuid,
+    /// The copy is keyed exactly when the receiving workspace is keyed.
+    key: Option<std::sync::Arc<crate::cache_cipher::Key>>,
     pub review: Review,
 }
 impl Prepared {
     pub fn path(&self) -> &Path {
         self.file.path()
+    }
+
+    pub fn encrypted(&self) -> bool {
+        self.key.is_some()
     }
 }
 
@@ -147,6 +155,7 @@ async fn stage_checked(
     // Derive executable schema only from application code, never from the
     // selected file or a live cache that could contain foreign additions.
     let expected = Store::memory()?.run(|c| schema(c)).await?;
+    let key = store.connection_key();
     let (cancel, cancellation) = watch::channel(false);
     let (updates, progress) = watch::channel(Progress::default());
     let (reply, result) = oneshot::channel();
@@ -154,6 +163,7 @@ async fn stage_checked(
         let result = prepare(
             &source,
             &directory,
+            key,
             &expected,
             require_fixture,
             &cancellation,
@@ -216,9 +226,15 @@ fn integrity(connection: &Connection, full: bool) -> anyhow::Result<()> {
 }
 
 fn schema(connection: &Connection) -> anyhow::Result<Schema> {
+    schema_in(connection, "main")
+}
+
+/// `database` is always a literal chosen by application code.
+fn schema_in(connection: &Connection, database: &str) -> anyhow::Result<Schema> {
     let mut result = Schema::new();
-    let mut statement =
-        connection.prepare("SELECT name,type,tbl_name,sql FROM sqlite_schema ORDER BY name")?;
+    let mut statement = connection.prepare(&format!(
+        "SELECT name,type,tbl_name,sql FROM {database}.sqlite_schema ORDER BY name"
+    ))?;
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
         let name: String = row.get(0)?;
@@ -245,7 +261,16 @@ fn schema(connection: &Connection) -> anyhow::Result<Schema> {
 }
 
 fn validate_schema(connection: &Connection, expected: &Schema) -> anyhow::Result<()> {
-    let version: u32 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    validate_schema_in(connection, "main", expected)
+}
+
+fn validate_schema_in(
+    connection: &Connection,
+    database: &str,
+    expected: &Schema,
+) -> anyhow::Result<()> {
+    let version: u32 =
+        connection.query_row(&format!("PRAGMA {database}.user_version"), [], |r| r.get(0))?;
     anyhow::ensure!(
         (2..=crate::store::DATABASE_VERSION).contains(&version),
         "This database version is not supported. Use matching, current Shep versions on both devices."
@@ -258,15 +283,16 @@ fn validate_schema(connection: &Connection, expected: &Schema) -> anyhow::Result
         expected.retain(|_, (_, owner, _)| owner != "imported_operations");
     }
     anyhow::ensure!(
-        schema(connection)? == expected,
+        schema_in(connection, database)? == expected,
         "This database has an unsupported schema. Use matching, current Shep versions on both devices and export again."
     );
     Ok(())
 }
 
 fn prepare(
-    source: &Path,
+    source_path: &Path,
     directory: &Path,
+    key: Option<std::sync::Arc<crate::cache_cipher::Key>>,
     expected: &Schema,
     require_fixture: bool,
     cancel: &watch::Receiver<bool>,
@@ -274,11 +300,11 @@ fn prepare(
 ) -> anyhow::Result<Prepared> {
     check_cancel(cancel)?;
     anyhow::ensure!(
-        source.metadata()?.is_file(),
+        source_path.metadata()?.is_file(),
         "Choose a SQLite database file."
     );
     let source = Connection::open_with_flags(
-        source,
+        source_path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
     defensive(&source, cancel)?;
@@ -292,7 +318,7 @@ fn prepare(
     if require_fixture {
         let marker: i32 = snapshot.query_row("PRAGMA application_id", [], |r| r.get(0))?;
         anyhow::ensure!(
-            marker == 0x5348_5054,
+            marker == FIXTURE_APPLICATION_ID,
             "Preview can import only an owned fixture database"
         );
     }
@@ -301,45 +327,36 @@ fn prepare(
         .prefix(".shep-import-")
         .suffix(".sqlite")
         .tempfile_in(directory)?;
-    let mut copy = Connection::open(file.path())?;
-    defensive(&copy, cancel)?;
-    copy.execute_batch(
-        "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA cache_size=-2048;",
-    )?;
-    let latest = {
-        let backup = Backup::new(&snapshot, &mut copy)?;
-        let mut stalled = None;
-        loop {
-            check_cancel(cancel)?;
-            match backup.step(PAGES_PER_STEP)? {
-                step @ (StepResult::More | StepResult::Done) => {
-                    stalled = None;
-                    let value = backup.progress();
-                    let total_pages = u32::try_from(value.pagecount)?;
-                    let remaining = u32::try_from(value.remaining)?;
-                    let latest = Progress {
-                        phase: Phase::Copying,
-                        copied_pages: total_pages.saturating_sub(remaining),
-                        total_pages,
-                    };
-                    progress(latest);
-                    if step == StepResult::Done {
-                        break latest;
-                    }
-                }
-                StepResult::Busy | StepResult::Locked => {
-                    anyhow::ensure!(
-                        stalled.get_or_insert_with(Instant::now).elapsed() < BUSY_LIMIT,
-                        "The source stayed busy. Close other database tools and retry the import."
-                    );
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                _ => anyhow::bail!("SQLite returned an unsupported import state"),
-            }
+    let latest = match key.as_deref() {
+        // The SQLite backup API cannot convert plaintext pages into a keyed
+        // copy, so a keyed workspace converts logically instead. Implicit
+        // import scratch never exists as plaintext beside an encrypted cache.
+        Some(key) => {
+            drop(snapshot);
+            drop(source);
+            keyed_copy(
+                source_path,
+                key,
+                file.path(),
+                expected,
+                require_fixture,
+                cancel,
+                &mut progress,
+            )?
+        }
+        None => {
+            let mut copy = Connection::open(file.path())?;
+            defensive(&copy, cancel)?;
+            copy.execute_batch(
+                "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA cache_size=-2048;",
+            )?;
+            let latest = page_copy(&snapshot, &mut copy, cancel, &mut progress)?;
+            drop(snapshot);
+            drop(source);
+            copy.close().map_err(|(_, error)| error)?;
+            latest
         }
     };
-    drop(snapshot);
-    drop(source);
     progress(Progress {
         phase: Phase::CheckingCopy,
         ..latest
@@ -347,6 +364,12 @@ fn prepare(
     check_cancel(cancel)?;
     // Copying is followed by a full check of the actual private file. No data
     // query, migration, trigger or provider recovery runs before schema approval.
+    let copy = crate::cache_cipher::open(
+        key.as_deref(),
+        file.path(),
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    defensive(&copy, cancel)?;
     integrity(&copy, true)?;
     validate_schema(&copy, expected)?;
     anyhow::ensure!(
@@ -367,8 +390,123 @@ fn prepare(
     Ok(Prepared {
         file,
         id: uuid::Uuid::new_v4(),
+        key,
         review,
     })
+}
+
+fn page_copy(
+    snapshot: &Connection,
+    copy: &mut Connection,
+    cancel: &watch::Receiver<bool>,
+    progress: &mut impl FnMut(Progress),
+) -> anyhow::Result<Progress> {
+    let backup = Backup::new(snapshot, copy)?;
+    let mut stalled = None;
+    loop {
+        check_cancel(cancel)?;
+        match backup.step(PAGES_PER_STEP)? {
+            step @ (StepResult::More | StepResult::Done) => {
+                stalled = None;
+                let value = backup.progress();
+                let total_pages = u32::try_from(value.pagecount)?;
+                let remaining = u32::try_from(value.remaining)?;
+                let latest = Progress {
+                    phase: Phase::Copying,
+                    copied_pages: total_pages.saturating_sub(remaining),
+                    total_pages,
+                };
+                progress(latest);
+                if step == StepResult::Done {
+                    return Ok(latest);
+                }
+            }
+            StepResult::Busy | StepResult::Locked => {
+                anyhow::ensure!(
+                    stalled.get_or_insert_with(Instant::now).elapsed() < BUSY_LIMIT,
+                    "The source stayed busy. Close other database tools and retry the import."
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            _ => anyhow::bail!("SQLite returned an unsupported import state"),
+        }
+    }
+}
+
+/// Logical conversion into a keyed private copy. The source is attached
+/// read-only and unkeyed to a connection keyed before ATTACH; its schema is
+/// checked again inside the copying transaction because this connection does
+/// not share the earlier snapshot.
+fn keyed_copy(
+    source: &Path,
+    key: &crate::cache_cipher::Key,
+    destination: &Path,
+    expected: &Schema,
+    require_fixture: bool,
+    cancel: &watch::Receiver<bool>,
+    progress: &mut impl FnMut(Progress),
+) -> anyhow::Result<Progress> {
+    let copy = key.open(
+        destination,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    copy.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
+    copy.set_db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
+    copy.set_limit(Limit::SQLITE_LIMIT_ATTACHED, 1)?;
+    copy.set_limit(Limit::SQLITE_LIMIT_SQL_LENGTH, 131_072)?;
+    copy.set_limit(Limit::SQLITE_LIMIT_EXPR_DEPTH, 100)?;
+    copy.busy_timeout(Duration::from_millis(100))?;
+    copy.execute_batch(
+        "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA cache_size=-2048;",
+    )?;
+    let source = source.canonicalize()?;
+    let mut uri = url::Url::from_file_path(source)
+        .map_err(|_| anyhow::anyhow!("This database path cannot be represented for SQLite"))?;
+    uri.query_pairs_mut().append_pair("mode", "ro");
+    copy.execute("ATTACH DATABASE ? AS plaintext KEY ''", [uri.as_str()])?;
+    let cancellation = cancel.clone();
+    copy.progress_handler(1000, Some(move || cancelled(&cancellation)))?;
+    let pages = (|| -> anyhow::Result<u32> {
+        let tx = copy.unchecked_transaction()?;
+        tx.query_row("SELECT count(*) FROM plaintext.sqlite_schema", [], |_| {
+            Ok(())
+        })?;
+        validate_schema_in(&tx, "plaintext", expected)?;
+        let pages: u32 = tx.query_row("PRAGMA plaintext.page_count", [], |r| r.get(0))?;
+        progress(Progress {
+            phase: Phase::Copying,
+            copied_pages: 0,
+            total_pages: pages,
+        });
+        let version: i64 = tx.query_row("PRAGMA plaintext.user_version", [], |r| r.get(0))?;
+        // Logical export does not carry header fields the page copy keeps.
+        let application: i32 = tx.query_row("PRAGMA plaintext.application_id", [], |r| r.get(0))?;
+        anyhow::ensure!(
+            !require_fixture || application == FIXTURE_APPLICATION_ID,
+            "Preview can import only an owned fixture database"
+        );
+        tx.query_row(
+            "SELECT sqlcipher_export('main','plaintext')",
+            [],
+            |_| Ok(()),
+        )?;
+        tx.pragma_update(None, "user_version", version)?;
+        tx.pragma_update(None, "application_id", application)?;
+        tx.commit()?;
+        Ok(pages)
+    })();
+    copy.progress_handler(0, None::<fn() -> bool>)?;
+    let pages =
+        pages.context("Could not convert the database into this workspace's encrypted copy.")?;
+    copy.execute_batch("DETACH DATABASE plaintext;")?;
+    copy.close().map_err(|(_, error)| error)?;
+    let latest = Progress {
+        phase: Phase::Copying,
+        copied_pages: pages,
+        total_pages: pages,
+    };
+    progress(latest);
+    Ok(latest)
 }
 
 fn setting<T: serde::de::DeserializeOwned + Default>(

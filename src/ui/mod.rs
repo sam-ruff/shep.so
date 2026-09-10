@@ -3987,10 +3987,13 @@ impl App {
             "reply": self.composer.current.draft.reply_context,
         });
         self.bulk_test_state(&mut data);
-        data["database_transfer"] = self.database_transfer.observation();
-        data["database_import"] = self.database_import.observation();
-        data["profiles"] = self.profiles.observation();
-        data["profile_sync"] = self.profile_sync.observation();
+        #[cfg(feature = "test-support")]
+        {
+            data["database_transfer"] = self.database_transfer.observation();
+            data["database_import"] = self.database_import.observation();
+            data["profiles"] = self.profiles.observation();
+            data["profile_sync"] = self.profile_sync.observation();
+        }
         data["mail_drag"] = self.mail_drag.observation();
         #[cfg(feature = "test-support")]
         {
@@ -4297,9 +4300,9 @@ impl App {
         #[cfg(feature = "test-support")]
         {
             data["keys"] = serde_json::json!(self.test_keys);
+            data["inbox_reveal_height"] = serde_json::json!(self.inbox_reveal_height);
         }
         data["inbox_scroll"] = serde_json::json!(self.inbox_scroll);
-        data["inbox_reveal_height"] = serde_json::json!(self.inbox_reveal_height);
         Task::perform(
             async move {
                 static SNAPSHOT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

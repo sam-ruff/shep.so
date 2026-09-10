@@ -16,12 +16,24 @@ impl Journal {
             Some(path) => Connection::open(path)?,
             None => Connection::open_in_memory()?,
         };
-        Self::from_connection(connection)
+        Self::from_connection(connection, None)
     }
+    #[cfg(test)]
     pub fn open_encrypted(path: &Path, key: &crate::cache_cipher::Key) -> anyhow::Result<Self> {
-        Self::from_connection(key.open(path, rusqlite::OpenFlags::default())?)
+        Self::from_connection(key.open(path, rusqlite::OpenFlags::default())?, None)
     }
-    fn from_connection(connection: Connection) -> anyhow::Result<Self> {
+    /// The journal beside a bootstrapped cache follows the cache's key decision
+    /// and keeps the root guard until its admitted writes drain.
+    pub fn open_beside(path: &Path, store: &crate::store::Store) -> anyhow::Result<Self> {
+        let key = store.connection_key();
+        let connection =
+            crate::cache_cipher::open(key.as_deref(), path, rusqlite::OpenFlags::default())?;
+        Self::from_connection(connection, store.root_guard())
+    }
+    fn from_connection(
+        connection: Connection,
+        guard: Option<Arc<crate::cache_cipher::ownership::Guard>>,
+    ) -> anyhow::Result<Self> {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
@@ -30,9 +42,10 @@ impl Journal {
                 size INTEGER NOT NULL, sha256 TEXT NOT NULL, session TEXT,
                 committed INTEGER NOT NULL DEFAULT 0, archive BLOB NOT NULL);",
         )?;
-        Ok(Self(Arc::new(crate::store::worker::Worker::named(
+        Ok(Self(Arc::new(crate::store::worker::Worker::owned(
             connection,
             "shep-backup-journal",
+            guard,
         )?)))
     }
     async fn run<T: Send + 'static>(

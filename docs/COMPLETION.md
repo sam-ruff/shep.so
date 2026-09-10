@@ -2,6 +2,55 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## Encrypted cache bootstrap, guard retention and keyed import: lane checkpoint
+
+R22 gains the startup routing that the publication checkpoint left open.
+`cache_cipher::bootstrap` owns one `shep-cache-root` thread behind a bounded
+channel of a single request. The engine's `open_workspace` hands it the data
+folder, legacy cache name and a policy, and awaits the reply; dropping that
+future cancels staging and keeps the plaintext. The thread takes the exclusive
+root guard, reads the device-local `.cache-root` marker, loads the key through
+the bounded credential actor (`Existing` never creates one; `Migrate` creates
+the key first and writes the marker second), walks a deterministic inventory
+of every database in the root and its profile folders, runs `recover` for each
+main before anything opens, authenticates the key against already keyed files,
+stages and publishes any plaintext file under the same guard, then re-takes
+the guard shared and hands `Root { key, guard }` out. `Catalog::open_in`,
+`Store::open_in` and `Journal::open_beside` route every connection through
+that root and give the shared guard to their `Worker`, whose owner drops it
+after the connection, so ownership ends only when the last admitted write has
+drained. A second cooperating Shep joins a plaintext root as a reader.
+Production uses `Policy::Existing`, so every current install still starts
+plaintext; there is no staging flag, and `Migrate` is reachable only from
+tests. Import staging in a keyed workspace now converts logically into a keyed
+private copy (schema re-validated inside the copying transaction, then the
+same full integrity/schema/foreign-key/review checks on the reopened keyed
+copy), with keyed fences and installation. Older guard-less Shep processes are
+excluded by the checkpoint step: SQLite refuses to leave WAL mode while any
+other connection has the file open, including an idle one in another process.
+
+Verification: nine bootstrap tests (plaintext fallback with no key request,
+full migration of catalog/legacy/profile/profile-sync databases and key reuse
+with straggler conversion, interrupted publication recovered before the
+catalog opens, cancellation during key admission, a locked key store, missing
+and wrong keys leaving every byte unchanged, a second process excluded from
+migration while admitted as a reader, and a subprocess modelling an idle
+legacy Shep that blocks publication until it exits), a worker test proving the
+guard outlives admitted writes and the last handle, a catalog/store retention
+test and a keyed import staging/installation test. `cargo test --all-features
+cache_cipher` passes 38 tests, `bootstrap` passes 9 and `profiles` passes 13
+in the desktop crate (plus two shared drive tests matching the filter).
+Clippy with `-D warnings`, fmt and 96 Python tests (seven skipped) pass; the
+hook run, Windows GNU check and native import/export/catalog scenarios are
+recorded in the request audit. Not verified: actual Windows/macOS execution,
+any personal database, and a native scenario on a migrated root (the demo
+fixture opener is plaintext-only).
+
+Still blocking activation: a user-facing or setting-driven way to select
+`Policy::Migrate`, reader-guard retention in the profile transport/history
+workers, bounded selection-summary/catalog/recovered-view sorting, native key
+recovery and platform startup checks.
+
 ## 10 September: Google lifecycle channel ownership (R91)
 
 The audit covered every shared lock-managed state on the Google lifecycle

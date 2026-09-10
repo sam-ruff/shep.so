@@ -33,7 +33,11 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::{path::Path, sync::Arc};
 
 #[derive(Clone)]
-pub struct Store(Arc<worker::Worker>, Option<Arc<crate::cache_cipher::Key>>);
+pub struct Store(
+    Arc<worker::Worker>,
+    Option<Arc<crate::cache_cipher::Key>>,
+    Option<Arc<crate::cache_cipher::ownership::Guard>>,
+);
 
 pub(crate) const DATABASE_VERSION: u32 = 4;
 
@@ -99,30 +103,45 @@ impl Store {
         key: Arc<crate::cache_cipher::Key>,
     ) -> anyhow::Result<Self> {
         let connection = key.open(path.as_ref(), rusqlite::OpenFlags::default())?;
-        Self::from_connection_key(connection, Some(key))
+        Self::from_connection_key(connection, Some(key), None)
+    }
+    /// Open a database inside a bootstrapped data root. The root decides the
+    /// key, and its shared guard stays held until this worker drains and closes.
+    pub fn open_in(
+        root: &crate::cache_cipher::bootstrap::Root,
+        path: impl AsRef<Path>,
+    ) -> anyhow::Result<Self> {
+        let connection = root.open(path.as_ref(), rusqlite::OpenFlags::default())?;
+        Self::from_connection_key(connection, root.key(), Some(root.guard()))
     }
     /// Independent snapshot/journal owners share immutable key material, never
     /// the cache connection. The key is absent from workspace serialization.
     pub fn connection_key(&self) -> Option<Arc<crate::cache_cipher::Key>> {
         self.1.clone()
     }
+    /// Independent owners of files in the same data root retain the guard too.
+    pub fn root_guard(&self) -> Option<Arc<crate::cache_cipher::ownership::Guard>> {
+        self.2.clone()
+    }
     pub fn memory() -> anyhow::Result<Self> {
         Self::from_connection(Connection::open_in_memory()?)
     }
     fn from_connection(conn: Connection) -> anyhow::Result<Self> {
-        Self::from_connection_key(conn, None)
+        Self::from_connection_key(conn, None, None)
     }
     fn from_connection_key(
         conn: Connection,
         key: Option<Arc<crate::cache_cipher::Key>>,
+        guard: Option<Arc<crate::cache_cipher::ownership::Guard>>,
     ) -> anyhow::Result<Self> {
         let scratch = scratch::attach(&conn, key.as_deref())?;
         // The initializer owns the connection. On failure it closes that handle
         // before this scope removes scratch, including on Windows.
         let conn = Self::initialize_connection(conn)?;
         Ok(Self(
-            Arc::new(worker::Worker::with_scratch(conn, scratch)?),
+            Arc::new(worker::Worker::with_scratch(conn, scratch, guard.clone())?),
             key,
+            guard,
         ))
     }
     fn initialize_connection(mut conn: Connection) -> anyhow::Result<Connection> {
