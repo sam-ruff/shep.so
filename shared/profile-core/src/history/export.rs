@@ -1,13 +1,6 @@
 use super::*;
+use rusqlite::OptionalExtension;
 
-/// One original portable operation. Local device identity, queue state and
-/// reserved upload IDs never leave the source journal through this interface.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Record {
-    pub position: u64,
-    pub operation: Uuid,
-    pub record: String,
-}
 impl Journal {
     /// Read a stable history one bounded record at a time. The caller captures
     /// the initialized revision first; any intervening change rejects the copy.

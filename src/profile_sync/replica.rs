@@ -23,18 +23,47 @@ pub struct Replica {
 
 /// Minted after a complete verified pull and causal drain. A different device,
 /// newer local edit or replacement scan must obtain a fresh proof before push.
-#[derive(Debug)]
 pub struct Pulled {
-    scan: journal::Scan,
+    source: Source,
     state: State,
     published: bool,
+    imported: u64,
+}
+/// Either this device's own complete scoped listing or the shared catalog's
+/// completed change-stream scan. Both are verified before records are applied.
+enum Source {
+    Listing(journal::Scan),
+    Catalog(Box<incremental::Verified>),
+}
+impl std::fmt::Debug for Pulled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Pulled")
+            .field(
+                "source",
+                &match &self.source {
+                    Source::Listing(scan) => format!("listing({})", scan.files()),
+                    Source::Catalog(verified) => format!("catalog({})", verified.records()),
+                },
+            )
+            .field("state", &self.state)
+            .field("published", &self.published)
+            .field("imported", &self.imported)
+            .finish()
+    }
 }
 impl Pulled {
     pub fn state(&self) -> &State {
         &self.state
     }
     pub fn remote_records(&self) -> u64 {
-        self.scan.files()
+        match &self.source {
+            Source::Listing(scan) => scan.files(),
+            Source::Catalog(verified) => verified.records(),
+        }
+    }
+    /// Records imported into the enrolled history by this pull.
+    pub fn imported(&self) -> u64 {
+        self.imported
     }
 }
 
@@ -137,6 +166,17 @@ impl Replica {
             fields: values,
         })
     }
+    #[cfg(test)]
+    pub(crate) async fn queued_record(&self) -> anyhow::Result<Option<Record>> {
+        match self.history.request(Command::NextUpload).await? {
+            Reply::Upload(Some(upload)) => Ok(Some(Record::decode(
+                &self.binding.namespace,
+                upload.record.into_bytes(),
+            )?)),
+            Reply::Upload(None) => Ok(None),
+            _ => anyhow::bail!("The profile worker returned an unexpected queued edit."),
+        }
+    }
     pub(crate) async fn next_upload_changes(
         &self,
     ) -> anyhow::Result<Option<Vec<shep_profile_core::Change>>> {
@@ -214,6 +254,7 @@ impl Replica {
             scan = self.journal.append_page(&scan, page).await?;
         }
         let mut after = None;
+        let mut imported = 0;
         loop {
             control.check()?;
             let page = self.journal.scan_entries(&scan, after).await?;
@@ -236,19 +277,52 @@ impl Replica {
                     })
                     .await?;
                 after = Some(entry.position);
+                imported += 1;
             }
         }
+        let current = self.drain(control).await?;
+        Ok(Pulled {
+            source: Source::Listing(scan),
+            state: current,
+            published: false,
+            imported,
+        })
+    }
+
+    /// Enrolled pull through the shared catalog's persisted change token. Only
+    /// records after the saved copy cursor cross into this history; the catalog
+    /// falls back to a full listing when Google rejects the token or its
+    /// inventory fails verification.
+    pub(crate) async fn pull_catalog(
+        &mut self,
+        session: &drive::Session,
+        location: &incremental::Location,
+        control: &control::Control,
+    ) -> anyhow::Result<Pulled> {
+        self.check_session(session)?;
+        let target = incremental::Target {
+            binding: &self.binding,
+            journal: &self.journal,
+            history: &self.history,
+        };
+        let copied = incremental::copy(location, session, &target, control).await?;
+        let current = self.drain(control).await?;
+        Ok(Pulled {
+            source: Source::Catalog(Box::new(copied.verified)),
+            state: current,
+            published: false,
+            imported: copied.imported,
+        })
+    }
+
+    async fn drain(&self, control: &control::Control) -> anyhow::Result<State> {
         let mut current = self.state().await?;
         while current.ready != 0 {
             control.check()?;
             current = state(self.history.request(Command::Drain).await?)?;
         }
         anyhow::ensure!(current.waiting == 0, history::Error::Incomplete);
-        Ok(Pulled {
-            scan,
-            state: current,
-            published: false,
-        })
+        Ok(current)
     }
 
     /// Publish one durable edit per call, allowing an owning coordinator to
@@ -262,18 +336,27 @@ impl Replica {
     ) -> anyhow::Result<bool> {
         self.check_session(session)?;
         let current = self.state().await?;
+        let current_source = match &pulled.source {
+            Source::Listing(scan) => {
+                scan.binding() == session.binding()
+                    && scan.profile() == Some((self.binding.profile, self.binding.generation))
+            }
+            Source::Catalog(verified) => {
+                verified.check_session(session)?;
+                verified.binding() == &self.binding
+            }
+        };
         anyhow::ensure!(
             current.device == pulled.state.device
                 && current.revision == pulled.state.revision
-                && pulled.scan.binding() == session.binding()
-                && pulled.scan.profile() == Some((self.binding.profile, self.binding.generation)),
+                && current_source,
             "The profile changed after discovery. Pull again before publishing its saved edits."
         );
         anyhow::ensure!(
             current.waiting == 0 && current.ready == 0,
             history::Error::Incomplete
         );
-        if pulled.scan.files() == 0 && !pulled.published {
+        if pulled.remote_records() == 0 && !pulled.published {
             anyhow::ensure!(
                 intent == PublishIntent::ReviewedNewProfile && current.operations == current.queued,
                 "The existing cloud profile is missing. Check the Google application or restore it; the local profile was not uploaded as a new one."
@@ -295,9 +378,16 @@ impl Replica {
                     },
             "The saved profile edit has inconsistent identity or bytes. Keep it for review."
         );
-        // This query also verifies that discovery is still the current complete
+        // Both queries also verify that discovery is still the current complete
         // scan, including when no matching operation exists remotely.
-        let observed = self.journal.scan_record(&pulled.scan, record.key()).await?;
+        let (observed, remote_exists) = match &pulled.source {
+            Source::Listing(scan) => {
+                let observed = self.journal.scan_record(scan, record.key()).await?;
+                let exists = observed.is_some();
+                (observed, exists)
+            }
+            Source::Catalog(verified) => (None, verified.observed(&record).await?),
+        };
         let saved = self.journal.load(session.binding(), record.key()).await?;
         let mut id = pending.file_id;
         for candidate in observed
@@ -315,6 +405,10 @@ impl Replica {
         if let Some(observed) = &observed {
             observed.verify(&record)?;
         }
+        anyhow::ensure!(
+            !remote_exists || id.is_some(),
+            "This profile change is already on Drive, but this device has no upload receipt for it. The change was kept and not uploaded again; discover the profile again to refresh its receipts."
+        );
         let upload = match id {
             Some(id) => ReservedUpload {
                 binding: session.binding().clone(),

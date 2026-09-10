@@ -3,9 +3,10 @@
 //! Decoding is only structural validation: enrollment must separately verify the
 //! Google identity/namespace, causal ancestry, immutable IDs and local revisions.
 pub mod account;
+#[cfg(target_arch = "wasm32")]
+mod browser;
 #[cfg(all(feature = "drive", not(target_arch = "wasm32")))]
 pub mod drive;
-#[cfg(all(feature = "history", not(target_arch = "wasm32")))]
 pub mod history;
 mod json;
 
@@ -325,16 +326,4 @@ fn namespace(value: &str) -> bool {
                 && s.bytes()
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         })
-}
-
-#[cfg(target_arch = "wasm32")]
-mod browser {
-    use wasm_bindgen::prelude::*;
-    /// Structural metadata validation only; it cannot enroll or apply a profile.
-    #[wasm_bindgen]
-    pub fn validate_profile_operation(bytes: &[u8]) -> std::result::Result<Vec<u8>, JsError> {
-        super::Operation::decode(bytes)
-            .and_then(|v| v.encode())
-            .map_err(|e| JsError::new(&e.to_string()))
-    }
 }
