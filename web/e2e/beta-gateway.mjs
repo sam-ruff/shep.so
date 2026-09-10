@@ -258,6 +258,98 @@ try {
     session,
   );
 
+  // Provider consent through the real Rust router: the browser never sees a
+  // token, denied consent keeps the saved state, and the app-data proxy
+  // serves discovery and a complete publication from the fixture Drive.
+  let consent = "denied";
+  await context.route("https://accounts.google.com/**", async (route) => {
+    const provider = new URL(route.request().url());
+    assert.equal(provider.pathname, "/o/oauth2/v2/auth");
+    const params = provider.searchParams;
+    assert.equal(params.get("client_id"), "synthetic-browser-client");
+    assert.equal(params.get("code_challenge_method"), "S256");
+    assert.equal(params.get("access_type"), "offline");
+    assert.equal(params.get("redirect_uri"), `${origin}/auth/google/callback`);
+    assert.ok(
+      params
+        .get("scope")
+        .includes("https://www.googleapis.com/auth/drive.appdata"),
+    );
+    const query =
+      consent === "denied"
+        ? { state: params.get("state"), error: "access_denied" }
+        : { state: params.get("state"), code: "consent-fixture" };
+    await route.fulfill({
+      status: 302,
+      headers: {
+        location: `${origin}/auth/google/callback?${new URLSearchParams(query)}`,
+      },
+    });
+  });
+  await page.getByRole("button", { name: "Preferences", exact: true }).click();
+  const google = page.getByRole("region", { name: "Google connection" });
+  await expect(google).toContainText("Not connected");
+  await expect(google).toContainText(
+    "Live Google provider access is not connected on this beta server",
+  );
+  await page
+    .getByRole("combobox", { name: "Calendar access", exact: true })
+    .selectOption("read");
+  await page
+    .getByRole("button", { name: "Connect Google", exact: true })
+    .click();
+  await expect(page).toHaveURL(`${origin}/app/`);
+  await expect(google).toContainText(
+    "Google did not grant the requested access. The saved connection is unchanged.",
+  );
+  await expect(google).toContainText("Not connected");
+  consent = "connected";
+  await page
+    .getByRole("button", { name: "Connect Google", exact: true })
+    .click();
+  await expect(google).toContainText("Google connected.");
+  await expect(google).toContainText(
+    "Saved permissions: Drive app data · Drive identity verified",
+  );
+  const connection = await (
+    await context.request.get(`${origin}/api/profiles/connection`)
+  ).json();
+  assert.equal(connection.connected, true);
+  assert.equal(connection.granted.calendar_read, false);
+  assert.ok(!JSON.stringify(connection).includes("access-"));
+  const discovery = page.getByRole("status", { name: "Discovery status" });
+  await expect(discovery).toContainText(
+    "Discovery complete: 0 files verified.",
+  );
+  await page
+    .getByRole("button", { name: "Create profile", exact: true })
+    .click();
+  await page
+    .getByRole("textbox", { name: "Profile name" })
+    .fill("HTTPS profile");
+  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await expect(
+    page.getByRole("status", { name: "Publication progress" }),
+  ).toContainText("Published 3 files to Google app data.");
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Find profiles", exact: true })
+    .click();
+  await expect(discovery).toContainText(
+    "Discovery complete: 3 files verified.",
+  );
+  await expect(
+    page.getByRole("region", { name: "Synced profiles" }).getByRole("listitem"),
+  ).toContainText(["HTTPS profile"]);
+  // Reconnect exchanges again; the saved permissions stay bound to the grant.
+  await page
+    .getByRole("button", { name: "Reconnect Google", exact: true })
+    .click();
+  await expect(google).toContainText("Google connected.");
+  await page.screenshot({ path: path.join(output, "profiles-consent.png") });
+  await page.getByRole("button", { name: "Mail", exact: true }).click();
+
   // A forged action cannot revoke a legitimate session.
   const forged = await context.request.post(`${origin}/api/logout`, {
     headers: {
@@ -297,6 +389,8 @@ try {
       "secure-cookie-no-store",
       "production-sqlite-selection-worker",
       "production-durable-journal-empty-review-refusal",
+      "profiles-consent-denied-then-connected",
+      "profiles-discovery-publication-proxy",
       "csrf-origin",
       "ui-logout-revocation",
     ],
