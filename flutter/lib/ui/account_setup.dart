@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../data/accounts.dart';
 import '../model/workspace.dart';
+import 'controls.dart';
+import 'icons.dart';
 
 class AccountSetup extends StatefulWidget {
   const AccountSetup({super.key, required this.workspace, this.account});
@@ -158,6 +160,7 @@ class _AccountSetupState extends State<AccountSetup> {
     child: DropdownButtonFormField<String>(
       initialValue: value,
       isExpanded: true,
+      icon: dropdownChevron(),
       decoration: InputDecoration(labelText: label),
       items: choices.entries
           .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
@@ -205,7 +208,7 @@ class _AccountSetupState extends State<AccountSetup> {
                         height: 18,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.link),
+                    : const ShepIcon('link'),
                 label: Text(
                   busy
                       ? 'Checking connections…'
@@ -292,11 +295,14 @@ class _AccountSetupState extends State<AccountSetup> {
               (v) => smtpAuthentication = v,
             ),
             field(smtpUsername, 'SMTP username (optional)', required: false),
-            SwitchListTile(
+            CheckboxListTile(
+              controlAffinity: ListTileControlAffinity.leading,
               contentPadding: EdgeInsets.zero,
               title: const Text('Separate SMTP password'),
               value: separate,
-              onChanged: busy ? null : (v) => setState(() => separate = v),
+              onChanged: busy
+                  ? null
+                  : (v) => setState(() => separate = v ?? separate),
             ),
           ],
           if (separate) field(smtpPassword, 'SMTP password', secret: true),

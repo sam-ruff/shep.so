@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../data/profile_creation.dart';
 import '../model/preferences.dart';
 import '../model/profile_discovery.dart';
+import 'icons.dart';
 
 class ProfileCreationScreen extends StatefulWidget {
   const ProfileCreationScreen({
@@ -72,7 +73,8 @@ class _ProfileCreationScreenState extends State<ProfileCreationScreen> {
                   maxLength: 256,
                   decoration: const InputDecoration(labelText: 'Profile name'),
                 ),
-                SwitchListTile(
+                CheckboxListTile(
+                  controlAffinity: ListTileControlAffinity.leading,
                   title: const Text('Include mail accounts'),
                   subtitle: const Text(
                     'All saved account definitions; reconnect on another device.',
@@ -80,9 +82,10 @@ class _ProfileCreationScreenState extends State<ProfileCreationScreen> {
                   value: accounts,
                   onChanged: d.busy
                       ? null
-                      : (v) => setState(() => accounts = v),
+                      : (v) => setState(() => accounts = v ?? accounts),
                 ),
-                SwitchListTile(
+                CheckboxListTile(
+                  controlAffinity: ListTileControlAffinity.leading,
                   title: const Text('Include app settings'),
                   subtitle: const Text(
                     'Appearance, swipes, previews and reading preferences.',
@@ -90,13 +93,13 @@ class _ProfileCreationScreenState extends State<ProfileCreationScreen> {
                   value: settings,
                   onChanged: d.busy
                       ? null
-                      : (v) => setState(() => settings = v),
+                      : (v) => setState(() => settings = v ?? settings),
                 ),
                 const SizedBox(height: 12),
                 FilledButton.icon(
                   key: const ValueKey('prepare-profile'),
                   onPressed: d.canCreate ? prepare : null,
-                  icon: const Icon(Icons.preview_outlined),
+                  icon: const ShepIcon('eye'),
                   label: const Text('Review profile'),
                 ),
                 const SizedBox(height: 12),
@@ -162,7 +165,7 @@ class _ProfileCreationScreenState extends State<ProfileCreationScreen> {
                                     : widget.preferences().profileSettings(),
                               )
                             : null,
-                        icon: const Icon(Icons.cloud_upload_outlined),
+                        icon: const ShepIcon('cloud-upload'),
                         label: const Text('Publish profile'),
                       ),
                       TextButton(
@@ -179,7 +182,7 @@ class _ProfileCreationScreenState extends State<ProfileCreationScreen> {
                     ],
                   ),
                 ] else if (c.complete) ...[
-                  const Icon(Icons.cloud_done_outlined, size: 36),
+                  const ShepIcon('cloud-check', size: 36),
                   const SizedBox(height: 8),
                   const Text('Profile saved to Google'),
                   const SizedBox(height: 8),
@@ -214,7 +217,7 @@ class _ProfileCreationScreenState extends State<ProfileCreationScreen> {
                       onPressed: d.busy || !d.connected
                           ? null
                           : d.resumeCreation,
-                      icon: const Icon(Icons.cloud_sync_outlined),
+                      icon: const ShepIcon('cloud'),
                       label: const Text('Resume publication'),
                     ),
                   const SizedBox(height: 8),
@@ -269,7 +272,7 @@ class _AccountReview extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
         ),
         isThreeLine: true,
-        trailing: const Icon(Icons.info_outline),
+        trailing: const ShepIcon('info'),
         onTap: () => showDialog<void>(
           context: context,
           builder: (context) => AlertDialog(

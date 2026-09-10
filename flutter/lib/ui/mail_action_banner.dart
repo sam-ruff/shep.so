@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import '../model/workspace.dart';
+import 'controls.dart';
+import 'icons.dart';
+import 'theme.dart';
 
 /// Shared by the inbox and pushed reader; errors remain separate from expiry.
 class MailActionBanner extends StatelessWidget {
@@ -7,7 +10,7 @@ class MailActionBanner extends StatelessWidget {
   final Workspace workspace;
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context).colorScheme;
+    final c = ShepColors.of(context);
     final label = workspace.actionNotice;
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -15,57 +18,33 @@ class MailActionBanner extends StatelessWidget {
         if (workspace.notice != null && workspace.notice != 'Message updated')
           Semantics(
             liveRegion: true,
-            child: Material(
-              color: theme.surfaceContainerLow,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: Text(workspace.notice!),
-                ),
-              ),
-            ),
+            child: NoticeBar(child: Text(workspace.notice!)),
           ),
         if (label != null)
           Semantics(
             liveRegion: true,
-            child: Material(
-              color: theme.surfaceContainerLow,
-              child: Padding(
-                padding: const EdgeInsets.only(left: 16, right: 4),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.check_circle_outline,
-                      size: 18,
-                      color: theme.primary,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text(label)),
-                    if (workspace.undo != null)
-                      TextButton(
-                        onPressed: workspace.undo,
-                        child: const Text('Undo'),
-                      ),
-                    if (workspace.moves.visible)
-                      IconButton(
-                        tooltip: 'Dismiss move notification',
-                        onPressed: workspace.moves.dismiss,
-                        icon: const Icon(Icons.close, size: 18),
-                      ),
-                  ],
-                ),
-              ),
+            child: ToastCard(
+              trailing: [
+                if (workspace.undo != null)
+                  TextButton(
+                    onPressed: workspace.undo,
+                    child: const Text('Undo'),
+                  ),
+                if (workspace.moves.visible)
+                  IconButton(
+                    tooltip: 'Dismiss move notification',
+                    onPressed: workspace.moves.dismiss,
+                    icon: const ShepIcon('close', size: 18),
+                  ),
+              ],
+              child: Text(label),
             ),
           ),
         if (workspace.undoFailures.isNotEmpty)
           Semantics(
             liveRegion: true,
             child: Material(
-              color: theme.errorContainer,
+              color: c.errorSurface,
               child: Padding(
                 padding: const EdgeInsets.only(left: 16, right: 4),
                 child: Column(
@@ -76,13 +55,13 @@ class MailActionBanner extends StatelessWidget {
                         Expanded(
                           child: Text(
                             '${workspace.undoFailures.length} ${workspace.undoFailures.length == 1 ? 'move needs' : 'moves need'} review.',
-                            style: TextStyle(color: theme.onErrorContainer),
+                            style: TextStyle(color: c.text),
                           ),
                         ),
                         IconButton(
                           tooltip: 'Dismiss Undo errors',
                           onPressed: workspace.dismissUndoFailures,
-                          icon: const Icon(Icons.close, size: 18),
+                          icon: const ShepIcon('close', size: 18),
                         ),
                       ],
                     ),

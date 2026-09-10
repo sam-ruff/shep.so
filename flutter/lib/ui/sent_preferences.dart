@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../data/accounts.dart';
 import '../model/workspace.dart';
+import 'controls.dart';
 
 class SentPreferencesScreen extends StatefulWidget {
   const SentPreferencesScreen({
@@ -70,6 +71,7 @@ class _SentPreferencesState extends State<SentPreferencesScreen> {
           DropdownButtonFormField<String>(
             initialValue: policy,
             isExpanded: true,
+            icon: dropdownChevron(),
             decoration: const InputDecoration(labelText: 'Sent-copy policy'),
             items: const [
               DropdownMenuItem(

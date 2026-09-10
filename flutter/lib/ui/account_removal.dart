@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../data/accounts.dart';
 import '../model/workspace.dart';
+import 'icons.dart';
 
 class AccountRemovalScreen extends StatefulWidget {
   const AccountRemovalScreen({
@@ -113,7 +114,7 @@ class _AccountRemovalState extends State<AccountRemovalScreen> {
           ),
         TextButton.icon(
           onPressed: busy ? null : reload,
-          icon: const Icon(Icons.refresh),
+          icon: const ShepIcon('sync'),
           label: const Text('Reload removal counts'),
         ),
         if (busy) const LinearProgressIndicator(),

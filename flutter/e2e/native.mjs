@@ -131,7 +131,7 @@ async function step(name, fn) {
 try {
   await step("isolated preview inbox", async () => {
     await waitText("A little room for good ideas");
-    await waitText("FICTIONAL DATA");
+    await waitText("PREVIEW");
     await driver.saveScreenshot(path.join(out, "inbox-light.png"));
   });
   await step("real native swipe and undo", async () => {

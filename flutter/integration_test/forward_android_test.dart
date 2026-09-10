@@ -248,7 +248,9 @@ void main() {
       await wait(() => repository.started!.isCompleted, settle: false);
       await tester.tap(find.byTooltip('Back'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Compose'));
+      await tester.tap(
+        find.widgetWithText(FloatingActionButton, 'New message'),
+      );
       await editable();
       await tester.enterText(field('Subject'), 'Independent note');
       repository.release!.complete();
