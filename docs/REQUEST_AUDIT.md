@@ -10,6 +10,16 @@ Audited against the user messages, source, AGENTS.md and completion evidence on 
 
 The desktop summaries below are newest first; the first entry was written after the merge.
 
+10 September (R91, lifecycle/Google ownership lane): the engine's Google
+RwLock, connection lifecycle and calendar setup mutexes are replaced by bounded
+FIFO lane coordinators, and the shared Google token mutex by a thread-owned
+vault whose admitted refreshes persist after caller cancellation. A Linux
+child-process regression shows the journal lock is close-on-exec and never
+inherited; 15 shared-crate reruns show no `Owned`, so the R64 transient stays
+unreproduced. Lane tests, 57 google, 14 lifecycle, 33 journal, 96 Python and
+six native Google scenarios pass; independent-process coordination and live
+Google verification remain open. In progress on the lane branch, not pushed.
+
 10 September (R90/R86, Sam's first phase-2 request: closing blocked by saving):
 three blocked-close paths were reproduced and fixed on the lane branch. A
 repeated explicit Quit now leaves when only journaled uploads or credential
