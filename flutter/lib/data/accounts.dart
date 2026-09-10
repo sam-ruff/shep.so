@@ -140,8 +140,9 @@ class AccountRemoval {
   final Map<String, dynamic> data;
   String get id => data['id'];
   String get email => data['email'];
-  int count(String key) => data[key] as int;
-  bool get unfinished => count('unresolved') > 0 || count('moves') > 0;
+  int count(String key) => data[key] as int? ?? 0;
+  bool get unfinished =>
+      count('unresolved') > 0 || count('moves') > 0 || count('groups') > 0;
 }
 
 abstract interface class AccountRemovalRepository {
