@@ -2,6 +2,79 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## Encrypted cache bootstrap, guard retention and keyed import: lane checkpoint
+
+R22 gains the startup routing that the publication checkpoint left open.
+`cache_cipher::bootstrap` owns one `shep-cache-root` thread behind a bounded
+channel of a single request. The engine's `open_workspace` hands it the data
+folder, legacy cache name and a policy, and awaits the reply; dropping that
+future cancels staging and keeps the plaintext. The thread takes the exclusive
+root guard, reads the device-local `.cache-root` marker, loads the key through
+the bounded credential actor (`Existing` never creates one; `Migrate` creates
+the key first and writes the marker second), walks a deterministic inventory
+of every database in the root and its profile folders, runs `recover` for each
+main before anything opens, authenticates the key against already keyed files,
+stages and publishes any plaintext file under the same guard, then re-takes
+the guard shared and hands `Root { key, guard }` out. `Catalog::open_in`,
+`Store::open_in` and `Journal::open_beside` route every connection through
+that root and give the shared guard to their `Worker`, whose owner drops it
+after the connection, so ownership ends only when the last admitted write has
+drained. A second cooperating Shep joins a plaintext root as a reader.
+Production uses `Policy::Existing`, so every current install still starts
+plaintext; there is no staging flag, and `Migrate` is reachable only from
+tests. Import staging in a keyed workspace now converts logically into a keyed
+private copy (schema re-validated inside the copying transaction, then the
+same full integrity/schema/foreign-key/review checks on the reopened keyed
+copy), with keyed fences and installation. Older guard-less Shep processes are
+excluded by the checkpoint step: SQLite refuses to leave WAL mode while any
+other connection has the file open, including an idle one in another process.
+
+Review fixes before integration: the bootstrap fixture helper no longer
+unwraps a journal-mode change that returns SQLITE_BUSY while a worker is still
+closing (it failed the first hook run); two Shep processes starting together
+wait up to two seconds for each other's exclusive opening phase
+(`Guard::join`, and a bounded wait inside `Guard::share`) instead of failing,
+and the marker is re-read after sharing so a key created in between is
+refused; the keyed import copy now keeps the source application ID, which
+logical export drops, and re-checks the preview fixture marker inside its
+copying transaction; the keyed install test's progress channel is bounded.
+
+Verification after merging `main` at `ca28e69`: ten bootstrap tests
+(plaintext fallback with no key request, full migration of
+catalog/legacy/profile/profile-sync databases and key reuse with straggler
+conversion, interrupted publication recovered before the catalog opens,
+cancellation during key admission, a locked key store, missing and wrong keys
+leaving every byte unchanged, a second process excluded from migration while
+admitted as a reader, a concurrent start waiting for another Shep's opening
+phase, and a subprocess modelling an idle legacy Shep that blocks publication
+until it exits), an ownership join/timeout test, a worker test proving the
+guard outlives admitted writes and the last handle, a catalog/store retention
+test, and keyed import staging/installation and cancellation tests.
+`cargo test --all-features` passes 40 tests for `cache_cipher`, 10 for
+`bootstrap`, 15 for `profiles` (13 desktop plus two shared drive tests) and 32
+for `import`, summed across binaries. fmt, both Clippy runs with
+`-D warnings`, 96 Python tests (seven skipped) and
+`cargo check --target x86_64-pc-windows-gnu --all-targets --all-features`
+pass. The lane commit `400b836` hook passed 1117 tests across 51 binaries
+(three ignored), and the merge commit hook passed 1132 tests across 53
+binaries (three ignored). On the merged test-ui binary the `database_import`,
+`database_export`, `profile_catalog` and `local_profile` selectors ran eight
+native scenarios, all `database_*` (no scenario is named for the other two),
+and all pass in 44.6 s (`artifacts/logs/e2e-cache-bootstrap.log`; the profile
+rename/restart path's evidence is under `artifacts/e2e/7af082792006` and
+`artifacts/e2e/bbcac60fcc72`). These scenarios use the plaintext fixture
+workspace, so they prove the bootstrap-routed plaintext path and unchanged
+import routing, not keyed import. Not verified: actual Windows/macOS
+execution, any personal database, and a native scenario on a migrated root
+(the demo fixture opener is plaintext-only).
+
+Still blocking activation: a user-facing or setting-driven way to select
+`Policy::Migrate`; reader-guard retention in the profile transport/history
+workers; bounded selection-summary/catalog/recovered-view sorting and the
+index builds inside `sqlcipher_export` during migration staging and keyed
+import, which sort under memory temporary storage; native key recovery; a
+native migrated-root scenario; and actual Windows/macOS startup checks.
+
 ## 10 September: incremental enrolled profile pulls (R02/R49 lane)
 
 Enrolled devices now poll the shared discovery catalog's persisted Drive change

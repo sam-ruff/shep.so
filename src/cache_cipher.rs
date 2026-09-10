@@ -5,6 +5,7 @@ use rusqlite::{Connection, OpenFlags};
 use secrecy::{ExposeSecret, SecretBox};
 use std::{fmt, path::Path};
 use zeroize::Zeroizing;
+pub mod bootstrap;
 pub mod key_store;
 pub mod migration;
 pub mod ownership;

@@ -2,7 +2,7 @@
 //! even when their caller leaves; SQL never borrows state from the UI thread.
 use anyhow::Context;
 use rusqlite::Connection;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, oneshot};
 
 const CAPACITY: usize = 32;
@@ -13,6 +13,9 @@ struct Owner {
     // Drop after the connection, including when the final observer cancelled.
     _scratch: Option<tempfile::TempDir>,
     leases: HashMap<String, oneshot::Receiver<()>>,
+    // Root ownership ends only after the last admitted write has drained and
+    // the connection is closed, so no migration can start beneath a write.
+    _guard: Option<Arc<crate::cache_cipher::ownership::Guard>>,
 }
 
 pub(crate) struct Worker {
@@ -32,20 +35,31 @@ impl Worker {
     }
 
     pub fn named(connection: Connection, name: &'static str) -> anyhow::Result<Self> {
-        Self::start(connection, name, None)
+        Self::start(connection, name, None, None)
+    }
+
+    /// An owner of a database inside a guarded data root.
+    pub fn owned(
+        connection: Connection,
+        name: &'static str,
+        guard: Option<Arc<crate::cache_cipher::ownership::Guard>>,
+    ) -> anyhow::Result<Self> {
+        Self::start(connection, name, None, guard)
     }
 
     pub fn with_scratch(
         connection: Connection,
         scratch: Option<tempfile::TempDir>,
+        guard: Option<Arc<crate::cache_cipher::ownership::Guard>>,
     ) -> anyhow::Result<Self> {
-        Self::start(connection, "shep-mail-cache", scratch)
+        Self::start(connection, "shep-mail-cache", scratch, guard)
     }
 
     fn start(
         connection: Connection,
         name: &'static str,
         scratch: Option<tempfile::TempDir>,
+        guard: Option<Arc<crate::cache_cipher::ownership::Guard>>,
     ) -> anyhow::Result<Self> {
         let (commands, mut input) = mpsc::channel::<Job>(CAPACITY);
         // Bundle resources before spawning so failure to create the thread
@@ -54,6 +68,7 @@ impl Worker {
             connection,
             _scratch: scratch,
             leases: HashMap::new(),
+            _guard: guard,
         };
         std::thread::Builder::new()
             .name(name.into())

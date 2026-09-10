@@ -437,3 +437,42 @@ async fn encrypted_catalog_rejects_stale_changes_between_owners() {
         "Current encrypted name"
     );
 }
+
+#[tokio::test]
+async fn catalog_and_active_store_keep_root_ownership_until_their_writes_drain() {
+    use crate::cache_cipher::{bootstrap::Root, ownership::Guard};
+    let directory = tempfile::tempdir().unwrap();
+    let root = Root::reader(directory.path()).unwrap();
+    let catalog = Catalog::open_in(&root, "shep.sqlite").unwrap();
+    let (store, session) = catalog.clone().open_active(false).await.unwrap();
+    assert!(store.root_guard().is_some());
+    drop(root);
+    assert!(Guard::migration(directory.path()).is_err());
+    let (started, waiting) = tokio::sync::oneshot::channel();
+    let (release, held) = tokio::sync::oneshot::channel();
+    let mut rename = Box::pin(catalog.worker.run(move |c| {
+        started.send(()).unwrap();
+        held.blocking_recv().unwrap();
+        c.execute("UPDATE profiles SET name='Renamed while owned'", [])?;
+        Ok(())
+    }));
+    assert!(futures::poll!(rename.as_mut()).is_pending());
+    waiting.await.unwrap();
+    drop(rename);
+    drop((store, session, catalog));
+    assert!(Guard::migration(directory.path()).is_err());
+    release.send(()).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while Guard::migration(directory.path()).is_err() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "ownership never released"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let reopened = Catalog::open(directory.path(), "shep.sqlite").unwrap();
+    assert_eq!(
+        reopened.active().await.unwrap().1.name,
+        "Renamed while owned"
+    );
+}

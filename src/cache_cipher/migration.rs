@@ -41,7 +41,7 @@ pub fn stage_plaintext(
     })
 }
 
-fn stage(
+pub(super) fn stage(
     source: &Path,
     directory: &Path,
     key: &Key,

@@ -12,13 +12,14 @@ const REVIEW_NOTE: &str = "Imported from another device. This action may have fi
 
 pub(super) fn apply(
     path: &Path,
+    key: Option<&crate::cache_cipher::Key>,
     id: uuid::Uuid,
     name: &str,
     local: &Preferences,
     cancel: &watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     check_cancel(cancel)?;
-    let mut c = Connection::open(path)?;
+    let mut c = crate::cache_cipher::open(key, path, OpenFlags::default())?;
     defensive(&c, cancel)?;
     c.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")?;
     let tx = c.transaction()?;

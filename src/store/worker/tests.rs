@@ -148,6 +148,57 @@ async fn local_leases_release_without_free_queue_space_and_cancelled_grants_do_n
 }
 
 #[tokio::test]
+async fn root_ownership_outlives_admitted_writes_and_the_last_handle() {
+    use crate::cache_cipher::ownership::Guard;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("owned.sqlite");
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("CREATE TABLE saved(value INTEGER NOT NULL)")
+        .unwrap();
+    let guard = Arc::new(Guard::reader(directory.path()).unwrap());
+    let worker = Worker::owned(connection, "shep-owned-fixture", Some(guard.clone())).unwrap();
+    drop(guard);
+    let (started, waiting) = oneshot::channel();
+    let (release, held) = oneshot::channel();
+    let mut first = Box::pin(worker.run(move |_| {
+        started.send(()).unwrap();
+        held.blocking_recv().unwrap();
+        Ok(())
+    }));
+    assert!(poll!(first.as_mut()).is_pending());
+    waiting.await.unwrap();
+    drop(first);
+    let (committed, observed) = oneshot::channel();
+    let mut save = Box::pin(worker.run(move |connection| {
+        connection.execute("INSERT INTO saved VALUES(4)", [])?;
+        committed.send(()).unwrap();
+        Ok(())
+    }));
+    assert!(poll!(save.as_mut()).is_pending());
+    drop(save);
+    drop(worker);
+    // Every handle is gone, yet a migration cannot start beneath the
+    // admitted write that is still running on the owning thread.
+    assert!(Guard::migration(directory.path()).is_err());
+    release.send(()).unwrap();
+    observed.await.unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while Guard::migration(directory.path()).is_err() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "ownership never released"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let reopened = Connection::open(&path).unwrap();
+    let saved: i64 = reopened
+        .query_row("SELECT value FROM saved", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(saved, 4);
+}
+
+#[tokio::test]
 async fn worker_failure_rejects_pending_and_new_requests() {
     let worker = memory();
     let (started, waiting) = oneshot::channel();
