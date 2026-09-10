@@ -29,7 +29,7 @@ the seven steps followed by resume, wrong-key rollback and refusal, lost
 candidates, ambiguous layouts, a stray recovery file and orphan cleanup.
 `cargo test --all-features cache_cipher` passes 28 tests and the `migration`
 filter passes seven. The lane's hook run on the merged workspace (`ee1305c`)
-passes 1,007 test executions with zero failures and three ignored, clippy
+passes 1,076 test executions with zero failures and three ignored, clippy
 with `-D warnings`, fmt, 96 Python tests (seven skipped) and the Windows GNU
 `cargo check --all-targets --all-features`.
 Production startup is unchanged and plaintext, so no native scenario exercises
