@@ -2,6 +2,62 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## 10 September: Google lifecycle channel ownership (R91)
+
+The audit covered every shared lock-managed state on the Google lifecycle
+path. Each confirmed case now has a bounded owning worker; nothing else on the
+path held a mutex.
+
+| State | Before | After |
+| --- | --- | --- |
+| Google connection (status, calendar sync, event edits, Drive backups, restore, profile sync sessions; login, disconnect, cleanup) | `Arc<RwLock<()>>` on the engine | `engine/lifecycle_work.rs` lane: 32-request FIFO coordinator, shared/exclusive grants by one-shot, abandoned requests skipped, drop releases, close drains |
+| Connection lifecycle (account/calendar saves, removal, cleanup retry, restore, Google activation) | `Arc<Mutex<()>>` | exclusive lane on the same coordinator type |
+| Calendar setup namespace | `Arc<Mutex<()>>` | exclusive lane |
+| Token vault (grants, candidate, pending login, refresh, activation pruning, clear) | `Arc<Mutex<State>>` held across HTTP and keychain calls | `providers/google/owner.rs`: one thread owns `State`, 32-job FIFO; admitted jobs drain even when the caller is cancelled or the last handle drops; a stopped owner reports an error |
+| OS credential entry | already a bounded 32-request thread (`credentials.rs`) | unchanged |
+| `google_lifecycle`, `google_archived`, cleanup jobs, revisions | SQLite through the cache worker | unchanged |
+
+Contracts are preserved: disconnect keeps cached calendars and events
+read-only, cleanup pending survives restart, stale reviews and snapshots are
+rejected, and the Google-exclusive-before-lifecycle order and reconnect
+ordering are unchanged. The Google lane is strict FIFO, so provider work queued
+behind a disconnect waits for it rather than starving it. The engine field name
+`google_connection_lock` is retained because the profile sync lane reads it.
+The behavioural improvement is in the token owner: a sync cycle cancelled
+mid-refresh no longer drops the HTTP/keychain future, so a rotated refresh
+token is always persisted.
+
+The R64 `Owned` follow-up: a new Linux regression in the shared crate opens a
+Journal, reads `/proc/self/fdinfo` to assert the lock descriptor carries
+`O_CLOEXEC`, execs a child while the lock is held, and the child asserts no
+descriptor names the lock file, that `Journal::open` returns `Owned`, and that
+it can claim the journal after the parent drops it while the child lives. The
+only shared-crate change is that test plus a test-only descriptor accessor.
+Descriptor inheritance across exec is therefore not the mechanism; the
+fork-to-exec window was already neutralised by the explicit unlock on drop
+(`e3e69a4`). Fifteen full reruns of the shared crate (70 tests each) show no
+`Owned` (`artifacts/logs/journal-owned-stress.log`); the original transient
+remains unreproduced and undiagnosed.
+
+Tests: five lane coordinator tests (FIFO with shared behind exclusive,
+abandoned requests, failing holder release, 32-bound with drained overflow,
+close waits for the holder) and three token owner tests (cancelled refresh
+observer still persists in order, last handle drains the running save before
+exit then restarts from the vault, locked keychain fails every queued caller
+without stopping the owner); the removals test now probes lane occupancy. On
+the lane, `cargo test --all-features google` passes 57, `lifecycle` 14 and
+`journal` 33 executions; `cargo test -p shep-profile-core --all-features` 70.
+Formatting, `cargo clippy --all-targets --all-features -- -D warnings` and 96
+Python tests (seven skipped) pass. Native: the six Google disconnect,
+permissions and consent scenarios pass in 21 s
+(`artifacts/logs/e2e-google-owner.log`); reviewed captures in `92ffc34b5a29`
+(disconnect review, disconnected state, cached read-only event),
+`f64efd4453a0` (compact dark disconnect and mail navigation), `41a08b14baeb`
+and `5555027e3c8a` (consent light/dark). These are fixture grants, not live
+Google. Limitations: independent-process Google/lifecycle coordination and
+live Google verification remain open; the profile sync lane should add `?`
+handling if the lane API ever becomes fallible.
+
 ## Mobile and web clients merged into main — shipped
 
 The desktop session merged `feat/mobile-web-clients` (`d8d5c1e`, itself a
