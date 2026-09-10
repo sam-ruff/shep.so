@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -15,29 +16,306 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
-    def test_profile_conflicts_requires_a_boolean_before_launch(self):
+    def test_tray_fixture_validates_mode_and_keeps_its_bus_isolated(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:
-            for value in (1, "true", None):
-                with self.assertRaises(ValueError):
-                    desktop.start(profile_conflicts=value)
+            for value in (True, 1, "session", "personal"):
+                with self.assertRaisesRegex(ValueError, "Unknown native tray"):
+                    desktop.start(tray=value)
+            with self.assertRaisesRegex(ValueError, "separate owned buses"):
+                desktop.start(tray="available", desktop_badges=True)
+            launch.assert_not_called()
+        tool = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["tray"]["enum"], ["available", "missing"])
+
+    def test_profile_fixture_is_validated_before_launch_and_describes_owned_modes(self):
+        desktop=harness.Desktop()
+        with patch.object(harness.subprocess,"Popen") as launch:
+            for value in (True,1,"google","https://example.test"):
+                with self.assertRaisesRegex(ValueError,"Unknown profile sync fixture"):
+                    desktop.start(profile_sync=value)
+            launch.assert_not_called()
+        tool=next(t for t in harness.TOOLS if t["name"]=="desktop.start")
+        self.assertEqual(tuple(tool["inputSchema"]["properties"]["profile_sync"]["enum"]),harness._profile_fixture.MODES)
+    def test_profile_login_fixture_cannot_use_real_google_or_nonboolean_flags(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for name in ("profile_login", "empty_profile"):
+                for value in ("true", 1, None):
+                    with self.assertRaisesRegex(ValueError, "must be booleans"):
+                        desktop.start(**{name:value})
+                with self.assertRaisesRegex(ValueError, "owned Drive server"):
+                    desktop.start(**{name:True})
             launch.assert_not_called()
 
-    def test_profile_sync_requires_a_boolean_before_launch(self):
+    def test_nonblocking_close_uses_only_owned_native_window(self):
         desktop = harness.Desktop()
-        for value in (1, "true", None):
-            with self.assertRaises(ValueError):
-                desktop.start(profile_sync=value)
+        desktop.app = Mock()
+        desktop.app.poll.return_value = None
+        desktop.window = "12345"
+        desktop.env["DISPLAY"] = ":owned"
+        desktop.state = Mock(return_value={})
+        try:
+            with tempfile.TemporaryDirectory() as directory, patch.object(harness, "request_window_close") as close:
+                desktop.directory = Path(directory)
+                desktop.batch([{"type":"close_request"}])
+                close.assert_called_once_with(":owned", "12345")
+        finally:
+            desktop.app = None
 
-    def test_profile_pages_requires_a_boolean_before_launch(self):
-        for value in (1, "true", None, {}):
+    def test_held_provider_slots_fixture_is_validated_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in ("true", 1, None):
+                with self.assertRaisesRegex(ValueError, "Held provider slots fixture"):
+                    desktop.start(held_provider_slots=value)
+            launch.assert_not_called()
+        tool = next(tool for tool in harness.TOOLS if tool["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["held_provider_slots"], {"type":"boolean", "default":False})
+
+    def test_held_database_import_fixture_is_validated_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in ("true", 1, None):
+                with self.assertRaisesRegex(ValueError, "Held database import fixture"):
+                    desktop.start(held_database_import=value)
+            launch.assert_not_called()
+        tool = next(tool for tool in harness.TOOLS if tool["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["held_database_import"], {"type":"boolean", "default":False})
+
+    def test_key_sequence_is_bounded_and_sends_distinct_native_arguments(self):
+        desktop=harness.Desktop()
+        desktop.command,desktop.screenshot=Mock(),Mock()
+        with self.assertRaisesRegex(RuntimeError,"desktop.start"):
+            desktop.batch([{"type":"key_sequence","keys":["m","Escape"]}])
+        desktop.app=Mock()
+        desktop.app.poll.return_value=None
+        try:
+            for keys in (None,"m Escape",[],["m"]*33,[None],[""],["m Escape"],["x"*81]):
+                with self.assertRaisesRegex(RuntimeError,"Key sequence requires"):
+                    desktop.batch([{"type":"key_sequence","keys":keys}])
+            desktop.command.assert_not_called()
+            with tempfile.TemporaryDirectory() as directory:
+                desktop.directory=Path(directory)
+                desktop.state=Mock(return_value={})
+                desktop.batch([{"type":"key_sequence","keys":["m","Escape","ctrl+d"]}])
+                desktop.command.assert_called_once_with("xdotool","key","--clearmodifiers","--delay","1","--","m","Escape","ctrl+d")
+                report=json.loads(next(Path(directory).glob("batch-*.json")).read_text())
+                self.assertEqual(report["actions"][0]["type"],"key_sequence")
+        finally:
+            desktop.app=None
+        tool=next(t for t in harness.TOOLS if t["name"]=="desktop.batch")
+        properties=tool["inputSchema"]["properties"]["actions"]["items"]["properties"]
+        self.assertIn("key_sequence",properties["type"]["enum"])
+        self.assertEqual(properties["keys"]["maxItems"],32)
+
+    def test_held_sync_fixture_is_explicit_and_validated_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in ("true", 1, None):
+                with self.assertRaisesRegex(ValueError, "Held account sync fixture"):
+                    desktop.start(held_account_sync=value)
+            launch.assert_not_called()
+        tool = next(tool for tool in harness.TOOLS if tool["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["held_account_sync"], {"type":"boolean", "default":False})
+
+    def test_reading_mail_fixture_is_explicit_and_validated_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in ("true", 1, None):
+                with self.assertRaisesRegex(ValueError, "Reading mail fixture"):
+                    desktop.start(reading_mail=value)
+            launch.assert_not_called()
+        tool = next(tool for tool in harness.TOOLS if tool["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["reading_mail"], {"type":"boolean", "default":False})
+
+    def test_move_recovery_fixture_rejects_unrecognized_modes_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (0, 1, None, "live", "host", "unknown", []):
+                with self.assertRaisesRegex(ValueError, "move recovery"):
+                    desktop.start(move_recovery=value)
+            launch.assert_not_called()
+
+    def test_notification_delivery_fixture_is_explicit_and_validated_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (True, 42, "native", "host", "unknown"):
+                with self.assertRaisesRegex(ValueError, "notification delivery fixture"):
+                    desktop.start(notification_delivery=value)
+            launch.assert_not_called()
+        start = next(tool for tool in harness.TOOLS if tool["name"] == "desktop.start")
+        self.assertEqual(start["inputSchema"]["properties"]["notification_delivery"]["enum"], ["slow", "fail-once"])
+
+    def test_pixel_measurement_validates_current_resized_window_before_input(self):
+        from scripts import native_pixels
+        desktop = harness.Desktop()
+        desktop.app = Mock()
+        desktop.app.poll.return_value = None
+        desktop.window, desktop.launch_size = "123", (1440, 920)
+        desktop.env["DISPLAY"] = ":owned"
+        desktop.command, desktop.screenshot = Mock(), Mock()
+        probe = Mock()
+        probe.dimensions.return_value = (900, 640)
+        points = [[10, 20, 0, 0, 0]]*8
+        with patch.dict(sys.modules, {"native_pixels": native_pixels}), patch.object(native_pixels, "Window", return_value=probe):
+            with self.assertRaisesRegex(RuntimeError, "inside the owned window"):
+                desktop.batch([{"type": "measure_pixels", "x": 1000, "y": 400, "points": points}])
+            desktop.command.assert_not_called()
+            probe.click_until_visible.assert_not_called()
+            probe.close.assert_called_once()
+        desktop.app = None
+
+    def test_clipboard_paste_requires_owned_display_and_preserves_unicode_whitespace(self):
+        desktop = harness.Desktop()
+        desktop.command = Mock()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (None, 1, "x"*10001):
+                with self.assertRaises(ValueError):
+                    desktop.paste_text(value)
+            with self.assertRaisesRegex(RuntimeError, "owned fixture"):
+                desktop.paste_text("日本語")
+            launch.assert_not_called()
+        desktop.app, desktop.xvfb, desktop.clipboard = Mock(), Mock(), Mock()
+        desktop.app.poll.return_value = desktop.xvfb.poll.return_value = desktop.clipboard.poll.return_value = None
+        previous = desktop.clipboard
+        clipboard = Mock()
+        clipboard.poll.return_value = None
+        desktop.env["DISPLAY"] = ":owned"
+        text = " 日本語\n"
+        try:
+            with patch.object(harness.subprocess, "Popen", return_value=clipboard) as launch, patch.object(harness.subprocess, "run", return_value=Mock(stdout=text.encode())) as read:
+                desktop.paste_text(text)
+                previous.terminate.assert_called_once()
+                previous.wait.assert_called_once()
+                self.assertEqual(launch.call_args.kwargs["env"]["DISPLAY"], ":owned")
+                self.assertEqual(read.call_args.kwargs["env"]["DISPLAY"], ":owned")
+                clipboard.stdin.write.assert_called_once_with(text.encode())
+                clipboard.stdin.close.assert_called_once()
+                desktop.command.assert_called_once_with("xdotool","key","--clearmodifiers","--delay","1","ctrl+v")
+            desktop.stop()
+            clipboard.terminate.assert_called_once()
+        finally:
+            desktop.app = desktop.xvfb = desktop.clipboard = None
+        batch = next(tool for tool in harness.TOOLS if tool["name"]=="desktop.batch")
+        self.assertIn("paste", batch["inputSchema"]["properties"]["actions"]["items"]["properties"]["type"]["enum"])
+
+    def test_clipboard_failure_never_pastes_stale_content_and_remains_owned_for_cleanup(self):
+        desktop = harness.Desktop()
+        desktop.app, desktop.xvfb = Mock(), Mock()
+        desktop.app.poll.return_value = desktop.xvfb.poll.return_value = None
+        desktop.command = Mock()
+        clipboard = Mock()
+        clipboard.poll.return_value = None
+        try:
+            with patch.object(harness.subprocess, "Popen", return_value=clipboard), patch.object(harness.subprocess, "run", return_value=Mock(stdout=b"stale")), patch.object(harness.time, "monotonic", side_effect=[0,4]):
+                with self.assertRaisesRegex(RuntimeError, "did not accept"):
+                    desktop.paste_text("日本語")
+            desktop.command.assert_not_called()
+            desktop.stop()
+            clipboard.terminate.assert_called_once()
+        finally:
+            desktop.app = desktop.xvfb = desktop.clipboard = None
+
+    def test_held_mouse_requires_an_owned_app_and_cleanup_releases_only_its_display(self):
+        desktop = harness.Desktop()
+        desktop.command = Mock()
+        with self.assertRaisesRegex(RuntimeError, "owned fixture"):
+            desktop.mouse_button(True)
+        desktop.command.assert_not_called()
+        desktop.app, desktop.xvfb = Mock(), Mock()
+        desktop.app.poll.return_value = desktop.xvfb.poll.return_value = None
+        desktop.mouse_button(True)
+        self.assertTrue(desktop.mouse_held)
+        with self.assertRaisesRegex(RuntimeError, "already held"):
+            desktop.mouse_button(True)
+        desktop.mouse_button(False)
+        self.assertFalse(desktop.mouse_held)
+        with self.assertRaisesRegex(RuntimeError, "not held"):
+            desktop.mouse_button(False)
+        desktop.mouse_button(True)
+        desktop.stop()
+        self.assertFalse(desktop.mouse_held)
+        self.assertEqual(desktop.command.call_args_list[-1].args, ("xdotool", "mouseup", "1"))
+
+    def test_persistent_fixture_and_crash_mode_require_booleans(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (0, 1, "1", None):
+                with self.assertRaisesRegex(ValueError, "Persistent fixture"):
+                    desktop.start(persistent=value)
+                with self.assertRaisesRegex(ValueError, "Crash restart"):
+                    desktop.close_app(crash=value)
+            with self.assertRaisesRegex(RuntimeError, "owned persistent fixture"):
+                desktop.restart()
+            launch.assert_not_called()
+
+    def test_graceful_close_timeout_keeps_the_owned_process_and_never_relaunches(self):
+        desktop = harness.Desktop()
+        desktop.persistent, desktop.launch_args = True, ["owned-fixture"]
+        desktop.app, desktop.xvfb = Mock(), Mock()
+        desktop.app.poll.return_value = desktop.xvfb.poll.return_value = None
+        desktop.app.wait.side_effect = subprocess.TimeoutExpired("fixture", 10)
+        desktop.env["DISPLAY"], desktop.window = ":owned", "123"
+        desktop.launch_app = Mock()
+        try:
+            with patch.object(harness, "request_window_close") as close:
+                with self.assertRaisesRegex(RuntimeError, "No replacement was launched"):
+                    desktop.restart()
+                close.assert_called_once_with(":owned", "123")
+            desktop.launch_app.assert_not_called()
+            desktop.app.kill.assert_not_called()
+            desktop.app.terminate.assert_not_called()
+        finally:
+            desktop.app = desktop.xvfb = None
+
+    def test_crash_restart_retains_cache_archives_old_observations_and_targets_only_owned_app(self):
+        with tempfile.TemporaryDirectory() as directory:
             desktop = harness.Desktop()
-            with patch.object(harness.subprocess, "Popen") as launch:
-                with self.assertRaisesRegex(ValueError, "Profile page fixture"):
-                    desktop.start(profile_pages=value)
-                launch.assert_not_called()
-        start = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
-        self.assertEqual(start["inputSchema"]["properties"]["profile_pages"]["type"], "boolean")
+            desktop.directory = Path(directory)
+            database = desktop.directory / "fixture.sqlite"
+            database.write_bytes(b"fixture cache")
+            (desktop.directory / "state.json").write_text('{"ready":true}')
+            desktop.persistent, desktop.launch_args = True, ["owned-fixture"]
+            desktop.app, desktop.xvfb = Mock(pid=123,returncode=-9), Mock()
+            desktop.app.poll.return_value = desktop.xvfb.poll.return_value = None
+            def launch():
+                self.assertFalse((desktop.directory / "state.json").exists())
+                self.assertTrue((desktop.directory / "state-before-restart-1.json").exists())
+                self.assertEqual(database.read_bytes(),b"fixture cache")
+                return {"pid":456}
+            desktop.launch_app = Mock(side_effect=launch)
+            try:
+                with patch.object(harness, "request_window_close") as close:
+                    result = desktop.restart(crash=True)
+                    close.assert_not_called()
+                self.assertEqual(result["previous_process"]["pid"],123)
+                self.assertEqual(result["pid"],456)
+                desktop.app.kill.assert_called_once()
+                desktop.xvfb.kill.assert_not_called()
+                desktop.xvfb.terminate.assert_not_called()
+            finally:
+                desktop.app = desktop.xvfb = None
+
+    def test_nested_folder_fixture_is_validated_and_declared(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess,"Popen") as launch:
+            for value in (0,1,"yes",None):
+                with self.assertRaisesRegex(ValueError,"Nested folder fixture"):
+                    desktop.start(nested_folders=value)
+            launch.assert_not_called()
+        schema=next(t for t in harness.TOOLS if t["name"]=="desktop.start")["inputSchema"]["properties"]
+        self.assertEqual(schema["nested_folders"],{"type":"boolean","default":False})
+
+    def test_idle_navigation_fixture_is_validated_and_declared(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (0, 1, "yes", None):
+                with self.assertRaisesRegex(ValueError, "Idle navigation fixture"):
+                    desktop.start(idle_navigation=value)
+            launch.assert_not_called()
+        schema = next(t for t in harness.TOOLS if t["name"] == "desktop.start")["inputSchema"]["properties"]
+        self.assertEqual(schema["idle_navigation"], {"type": "boolean", "default": False})
 
     def test_badge_fixture_requires_a_boolean_before_launch(self):
         desktop = harness.Desktop()
@@ -76,6 +354,29 @@ class HarnessTests(unittest.TestCase):
                 bus, monitor = desktop.badge_bus, desktop.badge_monitor
             finally:
                 desktop.stop()
+            self.assertIsNotNone(bus.poll())
+            self.assertIsNotNone(monitor.poll())
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux launcher protocol")
+    def test_badge_bus_long_worktree_path_uses_owned_alias_and_cleans_up(self):
+        desktop = harness.Desktop()
+        with tempfile.TemporaryDirectory() as directory:
+            desktop.directory = Path(directory) / ("worktree-" + "x" * 100)
+            desktop.directory.mkdir()
+            try:
+                desktop.start_badge_bus()
+                address = desktop.env["DBUS_SESSION_BUS_ADDRESS"]
+                socket = Path(address.removeprefix("unix:path="))
+                self.assertLess(len(os.fsencode(str(socket))), 100)
+                self.assertEqual(socket.resolve(), desktop.directory / "badge-bus")
+                activatable = json.loads(desktop.command("busctl", f"--address={address}", "--json=short", "call",
+                    "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListActivatableNames"))
+                self.assertEqual(activatable["data"], [["org.freedesktop.DBus"]])
+                alias = Path(desktop.badge_alias.name)
+                bus, monitor = desktop.badge_bus, desktop.badge_monitor
+            finally:
+                desktop.stop()
+            self.assertFalse(alias.exists())
             self.assertIsNotNone(bus.poll())
             self.assertIsNotNone(monitor.poll())
 
@@ -181,6 +482,9 @@ class HarnessTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Unknown Google permissions"):
                 desktop.start(google_permissions="unsupported")
             launch.assert_not_called()
+            with self.assertRaisesRegex(ValueError, "Held database export"):
+                desktop.start(held_database_export="yes")
+            launch.assert_not_called()
 
     def test_native_file_picker_uses_real_input_and_restricts_files_to_the_run(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -207,6 +511,29 @@ class HarnessTests(unittest.TestCase):
             desktop.command.reset_mock()
             with self.assertRaises(ValueError):
                 desktop.choose_file(str(ROOT / "Cargo.toml"))
+            desktop.command.assert_not_called()
+
+    def test_save_picker_accepts_only_new_files_inside_the_owned_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            desktop = harness.Desktop()
+            desktop.directory = Path(directory)
+            desktop.window = "main"
+            target = desktop.directory / "new export.sqlite"
+            # The path is entered through the same native input helper used for
+            # attachments. Save merely permits a not-yet-existing leaf file.
+            with patch.object(desktop, "enter_picker_path") as enter, patch.object(harness.time, "sleep"):
+                windows = iter(["picker", ""])
+                desktop.command = Mock(side_effect=lambda *args: next(windows) if "search" in args else "")
+                self.assertEqual(desktop.choose_file(target, save=True), {"selected": str(target)})
+                enter.assert_called_once_with("picker", target)
+            desktop.command.reset_mock()
+            for path in (Path(directory).parent / "outside.sqlite", Path(directory), target.parent / "missing/file.sqlite"):
+                with self.assertRaises(ValueError):
+                    desktop.choose_file(path, save=True)
+            with self.assertRaises(ValueError):
+                desktop.choose_file(target, save="yes")
+            with self.assertRaises(FileNotFoundError):
+                desktop.choose_file(target)
             desktop.command.assert_not_called()
 
     def test_picker_retries_ignored_input_and_requires_gtk_clipboard_ownership(self):
@@ -382,6 +709,17 @@ class HarnessTests(unittest.TestCase):
                 desktop.batch([{"type": "resize", "width": size[0], "height": size[1]}])
         desktop.command.assert_not_called()
         desktop.app = None
+
+class FolderHarnessTests(unittest.TestCase):
+    def test_folder_action_fixtures_are_explicit_and_validated_before_launch(self):
+        desktop=harness.Desktop()
+        with patch.object(harness.subprocess,"Popen") as launch:
+            for mode in (True,"broken","",123):
+                with self.assertRaisesRegex(ValueError,"folder action"):
+                    desktop.start(folder_actions=mode)
+            launch.assert_not_called()
+        start=next(t for t in harness.TOOLS if t["name"]=="desktop.start")
+        self.assertEqual(start["inputSchema"]["properties"]["folder_actions"]["enum"],["slow","fail","uncertain"])
 
 
 if __name__ == "__main__":

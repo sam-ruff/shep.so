@@ -63,22 +63,27 @@ def install(binary, prefix, data, uninstall=False, pin=False):
     destination = prefix / "bin" / "shep"
     desktop = data / "applications" / f"{APP_ID}.desktop"
     icon = data / "icons" / "hicolor" / "128x128" / "apps" / f"{APP_ID}.png"
+    symbolic = data / "icons" / "hicolor" / "scalable" / "apps" / f"{APP_ID}-symbolic.svg"
+    symbolic_source = ROOT / "assets" / "shepherd-symbolic.svg"
     if uninstall:
         if pin:
             pin_gnome(remove=True)
-        for path in (destination, desktop, icon):
+        for path in (destination, desktop, icon, symbolic):
             path.unlink(missing_ok=True)
         print("Removed Shep's binary, launcher and icon. Your accounts, mail and backups are preserved.")
     else:
         if not binary or not binary.is_file():
             raise ValueError("Supply --binary PATH or run scripts/install-linux.sh to build the release version")
+        icon_name = APP_ID + "-symbolic" if symbolic_source.is_file() else APP_ID
         launcher = ("[Desktop Entry]\nVersion=1.0\nType=Application\nName=Shep\n"
                     "GenericName=Email and Calendar\nComment=A calm home for your mail and calendar\n"
-                    f"Exec={exec_value(destination)}\nIcon={APP_ID}\nTerminal=false\n"
+                    f"Exec={exec_value(destination)}\nIcon={icon_name}\nTerminal=false\n"
                     "Categories=Network;Email;Office;Calendar;\nKeywords=mail;email;calendar;imap;pop3;\n"
                     f"StartupWMClass={APP_ID}\nStartupNotify=true\n")
         atomic_install(binary, destination, 0o755)
         atomic_install(ROOT / "assets" / "launcher.png", icon, 0o644)
+        if symbolic_source.is_file():
+            atomic_install(symbolic_source, symbolic, 0o644)
         atomic_install(launcher.encode(), desktop, 0o644)
         print(f"Installed release binary: {destination}\nApplication launcher: {desktop}")
         if pin:

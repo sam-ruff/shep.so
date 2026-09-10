@@ -9,45 +9,47 @@ const NAMESPACE: &str = "so.shep.fixture";
 const PRINCIPAL: &str = "drive:fixture-owner";
 const FILE_ID: &str = "reserved-fixture-file";
 
-#[cfg(feature = "test-support")]
 #[tokio::test]
 async fn fixture_transport_rejects_non_loopback_and_ambiguous_endpoints_before_connecting() {
     for endpoint in [
-        "https://127.0.0.1/",
-        "http://localhost/",
-        "http://192.0.2.1/",
-        "http://127.0.0.1@192.0.2.1/",
-        "http://user@127.0.0.1/",
-        "http://127.0.0.1/path",
-        "http://127.0.0.1/?x",
-        "http://127.0.0.1/#x",
+        "https://127.0.0.1:1234/",
+        "http://localhost:1234/",
+        "http://192.0.2.1:1234/",
+        "http://127.0.0.1@192.0.2.1:1234/",
+        "http://user@127.0.0.1:1234/",
+        "http://127.0.0.1:1234/path",
+        "http://127.0.0.1:1234/?x",
+        "http://127.0.0.1:1234/#x",
     ] {
         assert!(matches!(
-            Drive::connect_fixture(Url::parse(endpoint).unwrap(), NAMESPACE.into(), PRINCIPAL)
-                .await,
+            Drive::connect_fixture(
+                Url::parse(endpoint).unwrap(),
+                NAMESPACE.into(),
+                Some(PRINCIPAL)
+            )
+            .await,
             Err(Error::Invalid)
         ));
     }
 }
-#[cfg(feature = "test-support")]
 #[tokio::test]
 async fn fixture_transport_uses_only_the_fake_token_and_verifies_the_owned_identity() {
     let server = Server::start(vec![Box::new(|request| {
         assert_eq!(
             request.headers.get("authorization").map(String::as_str),
-            Some("Bearer synthetic-profile-fixture")
+            Some("Bearer fixture-profile-token")
         );
         TestResponse::json(json!({"user":{"permissionId":"fixture-owner"}}))
     })])
     .await;
-    let drive = Drive::connect_fixture(server.base.clone(), NAMESPACE.into(), PRINCIPAL)
+    let drive = Drive::connect_fixture(server.base.clone(), NAMESPACE.into(), Some(PRINCIPAL))
         .await
         .unwrap();
     assert_eq!(drive.principal(), PRINCIPAL);
     assert_eq!(server.finish().await.len(), 1);
     let server = Server::start(vec![identity()]).await;
     assert!(matches!(
-        Drive::connect_fixture(server.base.clone(), NAMESPACE.into(), "drive:another").await,
+        Drive::connect_fixture(server.base.clone(), NAMESPACE.into(), Some("drive:another")).await,
         Err(Error::Identity)
     ));
     server.finish().await;
@@ -879,4 +881,42 @@ async fn publication_records_own_file_before_ack_and_recovers_failed_catalog_rec
     );
     catalog.close().await.unwrap();
     worker.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn external_fixture_entry_rejects_unowned_endpoints_and_uses_only_a_fake_token() {
+    for url in [
+        "https://www.googleapis.com/",
+        "http://example.test:8080/",
+        "http://127.0.0.1/",
+        "http://127.0.0.1:1234/path",
+        "http://user@127.0.0.1:1234/",
+        "http://127.0.0.1:1234/?token=forbidden",
+        "http://127.0.0.1:1234/#fragment",
+    ] {
+        assert!(matches!(
+            Drive::connect_fixture(Url::parse(url).unwrap(), NAMESPACE.into(), Some(PRINCIPAL))
+                .await,
+            Err(Error::Invalid)
+        ));
+    }
+    let server = Server::start(vec![Box::new(|request| {
+        assert_eq!(
+            request.headers.get("authorization").map(String::as_str),
+            Some("Bearer fixture-profile-token")
+        );
+        TestResponse::json(json!({"user":{"permissionId":"fixture-owner"}}))
+    })])
+    .await;
+    let drive = Drive::connect_fixture(server.base.clone(), NAMESPACE.into(), Some(PRINCIPAL))
+        .await
+        .unwrap();
+    assert_eq!(drive.principal(), PRINCIPAL);
+    server.finish().await;
+    let server = Server::start(vec![identity()]).await;
+    assert!(matches!(
+        Drive::connect_fixture(server.base.clone(), NAMESPACE.into(), Some("drive:another")).await,
+        Err(Error::Identity)
+    ));
+    server.finish().await;
 }

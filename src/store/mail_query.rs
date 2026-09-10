@@ -2,9 +2,11 @@
 use super::*;
 use rusqlite::types::Value;
 
+const EXACT_BODY_PRIORITY: &str = "CASE WHEN octet_length(messages.body)<=? THEN CASE WHEN trim(messages.body,char(9)||char(10)||char(13)||' ')=? COLLATE NOCASE THEN 0 ELSE 1 END ELSE 1 END";
+
 pub(super) struct Plan {
     prefix: &'static str,
-    from: &'static str,
+    from: String,
     condition: String,
     values: Vec<Value>,
     query: MailQuery,
@@ -13,14 +15,32 @@ pub(super) struct Plan {
 
 impl Plan {
     pub fn new(c: &Connection, query: &MailQuery) -> anyhow::Result<Self> {
+        let scope = query.search_scope();
+        let query = scope.as_ref();
         let mut filters = vec!["1=1".to_string()];
         let mut values = Vec::new();
         let sent = "((folder='Sent' AND (id LIKE '%:local-sent-%' OR account NOT IN (SELECT account FROM sent_folders))) OR (account,folder) IN (SELECT account,folder FROM sent_folders))";
         let prefix = if let Some(folders) = &query.folders {
-            // A single bound JSON value avoids SQLite parameter/expression limits.
-            values.push(serde_json::to_string(folders)?.into());
-            filters.push(format!("((account,folder) IN (SELECT account,folder FROM selected_folders WHERE account IS NOT NULL AND NOT sent_only) OR folder IN (SELECT folder FROM selected_folders WHERE account IS NULL AND NOT sent_only) OR ({sent} AND EXISTS(SELECT 1 FROM selected_folders s WHERE s.sent_only AND (s.account IS NULL OR s.account=messages.account))))"));
-            "WITH selected_folders AS (SELECT json_extract(value,'$.account') AS account,json_extract(value,'$.folder') AS folder,json_extract(value,'$.sent_only') AS sent_only FROM json_each(?)) "
+            if folders.iter().all(|f| f.folder.is_empty() && !f.sent_only) {
+                if !folders.iter().any(|f| f.account.is_none()) {
+                    filters.push("account IN (SELECT value FROM json_each(?))".into());
+                    values.push(
+                        serde_json::to_string(
+                            &folders
+                                .iter()
+                                .filter_map(|f| f.account.as_deref())
+                                .collect::<Vec<_>>(),
+                        )?
+                        .into(),
+                    );
+                }
+                ""
+            } else {
+                // A single bound JSON value avoids SQLite parameter/expression limits.
+                values.push(serde_json::to_string(folders)?.into());
+                filters.push(format!("((account,folder) IN (SELECT account,folder FROM selected_folders WHERE account IS NOT NULL AND NOT sent_only) OR folder IN (SELECT folder FROM selected_folders WHERE account IS NULL AND NOT sent_only) OR ({sent} AND EXISTS(SELECT 1 FROM selected_folders s WHERE s.sent_only AND (s.account IS NULL OR s.account=messages.account))))"));
+                "WITH selected_folders AS (SELECT json_extract(value,'$.account') AS account,json_extract(value,'$.folder') AS folder,json_extract(value,'$.sent_only') AS sent_only FROM json_each(?)) "
+            }
         } else {
             if let Some(account) = &query.account {
                 filters.push("account=?".into());
@@ -34,6 +54,10 @@ impl Plan {
             }
             ""
         };
+        if !query.exclude_folders.is_empty() {
+            filters.push("NOT EXISTS(SELECT 1 FROM json_each(?) e WHERE json_extract(e.value,'$.account')=messages.account AND json_extract(e.value,'$.folder')=messages.folder)".into());
+            values.push(serde_json::to_string(&query.exclude_folders)?.into());
+        }
         if query.unread_only {
             filters.push("unread=1".into());
         }
@@ -50,22 +74,21 @@ impl Plan {
         if search.is_empty() && !query.search.trim().is_empty() {
             filters.push("0=1".into());
         }
-        let projected = super::bulk::has_effects(c)?;
-        let from = if search.is_empty() {
-            if projected {
-                "visible_mail AS messages"
-            } else {
-                "messages"
-            }
-        } else {
+        let mut source = read_moves::source(c)?;
+        if !query.project_moves.is_empty() {
+            source = match source {
+                "messages" => "read_visible_mail",
+                "visible_mail" => "read_visible_bulk",
+                "recovered_mail" => "read_recovered_mail",
+                _ => "read_recovered_bulk",
+            };
+        }
+        let mut from = format!("{source} AS messages");
+        if !search.is_empty() {
             filters.push("mail_search.mail_search MATCH ?".into());
             values.push(search.clone().into());
-            if projected {
-                "visible_mail AS messages JOIN mail_search ON mail_search.rowid=messages.rowid"
-            } else {
-                "messages JOIN mail_search ON mail_search.rowid=messages.rowid"
-            }
-        };
+            from.push_str(" JOIN mail_search ON mail_search.rowid=messages.rowid");
+        }
         Ok(Self {
             prefix,
             from,
@@ -76,16 +99,93 @@ impl Plan {
         })
     }
 
+    pub fn selection(c: &Connection, query: &MailQuery) -> anyhow::Result<Self> {
+        let mut plan = Self::new(c, query)?;
+        plan.condition
+            .push_str(" AND NOT EXISTS(SELECT 1 FROM mail_moves j WHERE j.cache_id=messages.id)");
+        Ok(plan)
+    }
+
     pub fn counts(&self, c: &Connection) -> anyhow::Result<(usize, usize)> {
-        let (total, unread): (i64, i64) = c.query_row(
+        Ok(c.query_row(
             &format!(
                 "{}SELECT COUNT(*),COALESCE(SUM(unread),0) FROM {} WHERE {}",
                 self.prefix, self.from, self.condition
             ),
             rusqlite::params_from_iter(&self.values),
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        Ok((total as usize, unread as usize))
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as usize,
+                    row.get::<_, i64>(1)? as usize,
+                ))
+            },
+        )?)
+    }
+
+    pub(super) fn affected_query(&self, token: &str) -> (String, Vec<Value>) {
+        let mut values = self.values.clone();
+        values.push(token.to_owned().into());
+        (
+            format!(
+                "{}SELECT COUNT(*),COALESCE(SUM(messages.unread),0) FROM {} WHERE {} AND EXISTS(SELECT 1 FROM scratch.folder_projection_folders AS targets WHERE targets.token=? AND targets.account=messages.account AND targets.folder=messages.folder)",
+                self.prefix, self.from, self.condition
+            ),
+            values,
+        )
+    }
+
+    pub fn affected_counts(&self, c: &Connection, token: &str) -> anyhow::Result<(usize, usize)> {
+        let (sql, values) = self.affected_query(token);
+        Ok(
+            c.query_row(&sql, rusqlite::params_from_iter(&values), |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as usize,
+                    row.get::<_, i64>(1)? as usize,
+                ))
+            })?,
+        )
+    }
+
+    /// Populate an already-indexed scratch table without an unbounded sort.
+    /// Keep these keys identical to `ordered`; query/selection equivalence tests
+    /// cover every sort, literal/fuzzy search, folder scope and ranking tie.
+    pub fn selection_order(&self) -> (String, Vec<Value>) {
+        let mut values = self.values.clone();
+        let mut from = self.from.clone();
+        let (priority, missing, score) = if self.query.sort == MailSort::Relevance
+            && !self.search.is_empty()
+        {
+            from.push_str(" LEFT JOIN mail_search(?, 'bm25(0.3, 2.0, 1.0)') AS exact_matches ON exact_matches.rowid=messages.rowid");
+            let index = usize::from(!self.prefix.is_empty());
+            values.splice(
+                index..index,
+                [
+                    (self.query.search.trim().len().saturating_add(8) as i64).into(),
+                    self.query.search.trim().to_owned().into(),
+                    crate::fuzzy::literal_query(&self.query.search).into(),
+                ],
+            );
+            (
+                EXACT_BODY_PRIORITY,
+                "exact_matches.rowid IS NULL",
+                "COALESCE(exact_matches.rank,bm25(mail_search.mail_search,0.3,2.0,1.0))",
+            )
+        } else {
+            ("0", "0", "0")
+        };
+        let label = match self.query.sort {
+            MailSort::Sender => "messages.sender",
+            MailSort::Subject => "messages.subject",
+            _ => "''",
+        };
+        (
+            format!(
+                "{}INSERT INTO scratch.mail_selection_order(id,priority,missing,score,label,time)
+            SELECT messages.id,{priority},{missing},{score},{label},timestamp FROM {from} WHERE {}",
+                self.prefix, self.condition
+            ),
+            values,
+        )
     }
 
     /// `columns` is a static projection supplied by our store methods, not input.

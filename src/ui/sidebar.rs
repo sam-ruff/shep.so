@@ -1,4 +1,5 @@
 use super::*;
+mod reveal;
 use iced::{
     Alignment, Length,
     widget::{button, column, container, image, row, scrollable, space, text},
@@ -6,13 +7,74 @@ use iced::{
 
 pub(super) struct SidebarItem {
     pub label: String,
+    account_email: Option<String>,
     pub icon: &'static str,
     pub action: Message,
     pub active: bool,
-    pub depth: u16,
+    pub depth: usize,
     pub section: bool,
 }
+impl SidebarItem {
+    fn widget_id(&self) -> String {
+        format!("sidebar-row:{:?}", self.action)
+    }
+}
 impl App {
+    pub(super) fn sidebar_folder_context(&self, action: &Message) -> Option<(String, String)> {
+        if let Message::AccountFolder(account, path) | Message::ToggleFolderGroup(account, path) =
+            action
+        {
+            return Some((account.clone(), path.clone()));
+        }
+        let account = self
+            .query
+            .account
+            .as_deref()
+            .and_then(|id| self.workspace.accounts.iter().find(|a| a.id == id))
+            .or_else(|| {
+                (self.workspace.accounts.len() == 1).then(|| &self.workspace.accounts[0])
+            })?;
+        let path = match action {
+            Message::Folder(folder) => folder.clone(),
+            Message::SentFolder if !account.sent_folder.is_empty() => account.sent_folder.clone(),
+            Message::SentFolder => "Sent".into(),
+            Message::AccountFolderUnified => "INBOX".into(),
+            _ => return None,
+        };
+        Some((account.id.clone(), path))
+    }
+    pub(super) fn reveal_sidebar_focus(&self) -> Task<Message> {
+        self.sidebar_items()
+            .get(self.sidebar_index)
+            .map(|item| Task::done(Message::RevealSidebar(item.widget_id(), 0)))
+            .unwrap_or_else(Task::none)
+    }
+    pub(super) fn reveal_sidebar(&self, target: String, attempt: u8) -> Task<Message> {
+        if !self.sidebar_focus
+            || self.tab != Tab::Mail
+            || self.dialog.is_some()
+            || self
+                .sidebar_items()
+                .get(self.sidebar_index)
+                .is_none_or(|item| item.widget_id() != target)
+        {
+            return Task::none();
+        }
+        reveal::reveal(target.clone()).then(move |found| {
+            if found || attempt >= 8 {
+                Task::none()
+            } else {
+                let target = target.clone();
+                Task::perform(
+                    async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(32)).await;
+                        target
+                    },
+                    move |target| Message::RevealSidebar(target, attempt + 1),
+                )
+            }
+        })
+    }
     fn inbox_label(&self, account: Option<&str>, name: &str) -> String {
         let unread = account
             .map(|id| self.page.inbox_unread.get(id).copied().unwrap_or(0))
@@ -25,8 +87,16 @@ impl App {
     }
     pub(super) fn sidebar_items(&self) -> Vec<SidebarItem> {
         let mut items = Vec::new();
+        let mut email_counts = HashMap::<&str, usize>::new();
+        for account in &self.workspace.accounts {
+            *email_counts.entry(&account.email).or_default() += 1;
+        }
+        let duplicate = |account: &Account| {
+            email_counts[account.email.as_str()] > 1 && !account.name.trim().is_empty()
+        };
         if self.preferences.unified_inbox {
             items.push(SidebarItem {
+                account_email: None,
                 label: self.inbox_label(None, "Inbox"),
                 icon: "inbox",
                 action: Message::AccountFolderUnified,
@@ -37,7 +107,15 @@ impl App {
             if self.inbox_expanded {
                 for account in &self.workspace.accounts {
                     items.push(SidebarItem {
-                        label: self.inbox_label(Some(&account.id), &account.email),
+                        account_email: duplicate(account).then(|| account.email.clone()),
+                        label: self.inbox_label(
+                            Some(&account.id),
+                            if duplicate(account) {
+                                &account.name
+                            } else {
+                                &account.email
+                            },
+                        ),
                         icon: "mail",
                         action: Message::AccountFolder(account.id.clone(), "INBOX".into()),
                         active: self.query.folder == "INBOX"
@@ -55,6 +133,7 @@ impl App {
             ("Trash", "trash", "Trash"),
         ] {
             items.push(SidebarItem {
+                account_email: None,
                 label: label.into(),
                 icon,
                 action: if folder.is_empty() {
@@ -75,6 +154,7 @@ impl App {
         }
         if self.workspace.outgoing_pending > 0 {
             items.push(SidebarItem {
+                account_email: None,
                 label: format!("Outbox · {}", self.workspace.outgoing_pending),
                 icon: "send",
                 action: Message::OpenOutbox,
@@ -83,14 +163,21 @@ impl App {
                 section: false,
             });
         }
-        let drafts: Vec<_> = self
-            .workspace
-            .drafts
-            .iter()
-            .filter(|d| !self.workspace.outgoing_drafts.contains(&d.id))
-            .collect();
+        if !self.folder_controls.jobs.is_empty() {
+            items.push(SidebarItem {
+                account_email: None,
+                label: "Folder changes".into(),
+                icon: "clock",
+                action: Message::Folders(folder_controls::Message::History(0)),
+                active: self.dialog == Some(Dialog::FolderHistory),
+                depth: 0,
+                section: false,
+            });
+        }
+        let drafts = self.draft_labels();
         if !drafts.is_empty() {
             items.push(SidebarItem {
+                account_email: None,
                 label: format!("Drafts ({})", drafts.len()),
                 icon: "file",
                 action: Message::ToggleDrafts,
@@ -99,16 +186,17 @@ impl App {
                 section: false,
             });
             if !self.preferences.collapsed_drafts {
-                for draft in drafts {
+                for (id, subject) in drafts {
                     items.push(SidebarItem {
-                        label: if draft.subject.is_empty() {
+                        account_email: None,
+                        label: if subject.is_empty() {
                             "Untitled draft".into()
                         } else {
-                            draft.subject.clone()
+                            subject.to_owned()
                         },
                         icon: "compose",
-                        action: Message::Draft(draft.id.clone()),
-                        active: false,
+                        action: Message::Draft(id.to_owned()),
+                        active: self.compose_visible() && self.composer.current.draft.id == id,
                         depth: 1,
                         section: false,
                     });
@@ -117,7 +205,12 @@ impl App {
         }
         for account in &self.workspace.accounts {
             items.push(SidebarItem {
-                label: account.email.clone(),
+                account_email: duplicate(account).then(|| account.email.clone()),
+                label: if duplicate(account) {
+                    account.name.clone()
+                } else {
+                    account.email.clone()
+                },
                 icon: "mail",
                 action: Message::ToggleAccountFolders(account.id.clone()),
                 active: false,
@@ -127,25 +220,36 @@ impl App {
             if self.preferences.collapsed_accounts.contains(&account.id) {
                 continue;
             }
-            let folders = self.workspace.account_folders.get(&account.id);
-            let default = vec!["INBOX".into()];
-            for folder in folders.unwrap_or(&default) {
+            let fallback =
+                crate::folders::Tree::new(&[crate::folders::Mailbox::flat("INBOX".into())]);
+            let tree = self
+                .folder_tree(&account.id)
+                .map(Arc::as_ref)
+                .unwrap_or(&fallback);
+            for (depth, node) in tree.visible(self.preferences.expanded_folders.get(&account.id)) {
+                let folder = &node.mailbox.name;
                 if self.preferences.unified_inbox
                     && matches!(folder.as_str(), "INBOX" | "Sent" | "Archive" | "Trash")
+                    && node.children.is_empty()
                 {
                     continue;
                 }
                 items.push(SidebarItem {
+                    account_email: None,
                     label: if folder == "INBOX" {
                         self.inbox_label(Some(&account.id), "Inbox")
                     } else {
-                        folder.clone()
+                        node.label.clone()
                     },
                     icon: "folder",
-                    action: Message::AccountFolder(account.id.clone(), folder.clone()),
+                    action: if node.mailbox.selectable {
+                        Message::AccountFolder(account.id.clone(), folder.clone())
+                    } else {
+                        Message::ToggleFolderGroup(account.id.clone(), node.path.clone())
+                    },
                     active: self.query.account.as_deref() == Some(&account.id)
-                        && self.query.folder == *folder,
-                    depth: 1,
+                        && self.query.folder == self.original_folder(&account.id, folder),
+                    depth: depth + 1,
                     section: false,
                 });
             }
@@ -201,25 +305,37 @@ impl App {
             .width(Length::Fill)
             .padding([12, 14])
             .style(primary)
-            .on_press(Message::Open(Dialog::Compose)),
+            .on_press(Message::NewMessage),
             space().height(12)
         ]
         .spacing(3)
         .width(Length::Fill);
         for (index, item) in self.sidebar_items().into_iter().enumerate() {
+            let row_id = item.widget_id();
             if item.section {
                 content = content.push(space().height(17));
             }
             let focus = self.sidebar_focus && self.sidebar_index == index;
-            let mut label = row![
-                icon(item.icon, 18.),
-                super::ellipsis::Ellipsis::new(
-                    item.label.clone(),
-                    if item.section { 11. } else { 12. }
-                )
-            ]
-            .spacing(9)
-            .align_y(Alignment::Center);
+            let label_size = if item.section { 11. } else { 12. };
+            let title: Element<'_, Message> = if let Some(email) = &item.account_email {
+                // The saved name can contain the only distinction between two
+                // endpoints. Wrap it so a suffix such as "(previous setup)"
+                // remains visible even at the minimum sidebar width.
+                column![
+                    text(item.label.clone())
+                        .size(label_size)
+                        .width(Length::Fill),
+                    super::ellipsis::Ellipsis::new(email.clone(), 11.)
+                ]
+                .spacing(3)
+                .width(Length::Fill)
+                .into()
+            } else {
+                super::ellipsis::Ellipsis::new(item.label.clone(), label_size).into()
+            };
+            let mut label = row![icon(item.icon, 18.), title]
+                .spacing(9)
+                .align_y(Alignment::Center);
             if self.preferences.unified_inbox && index == 0 {
                 label = label.push(
                     button(icon(
@@ -255,6 +371,21 @@ impl App {
                     16.,
                 ));
             }
+            if let Some((account, path)) = self.sidebar_group(&item.action) {
+                label = label.push(
+                    button(icon(
+                        if self.folder_expanded(&account, &path) {
+                            "down"
+                        } else {
+                            "chevron"
+                        },
+                        16.,
+                    ))
+                    .padding(4)
+                    .style(ghost)
+                    .on_press(Message::ToggleFolderGroup(account, path)),
+                );
+            }
             let control = button(label.width(Length::Fill))
                 .width(Length::Fill)
                 .padding([9, 10])
@@ -273,23 +404,51 @@ impl App {
                     }
                     style
                 })
-                .on_press(Message::SidebarAction(index));
+                .on_press_maybe(
+                    (!matches!(item.action, Message::Noop))
+                        .then_some(Message::SidebarAction(index)),
+                );
+            let drop_target = self.sidebar_drop_target(&item.action);
+            let reveal = self.sidebar_drag_reveal(&item.action);
             let control = if let Message::Draft(id) = item.action {
                 super::context_menu::ContextArea::draft(control, id)
+            } else if let Some((account, path)) = self.sidebar_folder_context(&item.action) {
+                super::context_menu::ContextArea::folder(control, account, path)
             } else {
                 super::context_menu::ContextArea::sidebar(control)
             };
-            content = content.push(container(control).width(Length::Fill).clip(true).padding(
-                iced::Padding {
-                    left: f32::from(item.depth) * 12.,
-                    ..Default::default()
-                },
-            ));
+            let control = if let Some(target) = drop_target {
+                control.with_drag(super::drag_mail::Region::Target(
+                    self.mail_drag.clone(),
+                    target,
+                    self.drag_rules(),
+                ))
+            } else {
+                control
+            };
+            let control = if let Some(reveal) = reveal {
+                super::context_menu::ContextArea::sidebar(control).with_drag(
+                    super::drag_mail::Region::Reveal(self.mail_drag.clone(), reveal),
+                )
+            } else {
+                control
+            };
+            content = content.push(
+                container(control)
+                    .id(row_id)
+                    .width(Length::Fill)
+                    .clip(true)
+                    .padding(iced::Padding {
+                        left: item.depth.min(5) as f32 * 12.,
+                        ..Default::default()
+                    }),
+            );
         }
 
         container(
             column![
                 scrollable(content)
+                    .id(reveal::SCROLLER)
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .direction(scrollable::Direction::Vertical(
@@ -329,7 +488,13 @@ impl App {
     pub(super) fn sidebar_folder(&self, action: &Message) -> Option<FolderSelection> {
         let (account, folder, sent_only) = match action {
             Message::AccountFolder(account, folder) => {
-                (Some(account.clone()), folder.clone(), false)
+                // Ctrl-selection and active highlights use the same cache
+                // identity as ordinary clicks while a folder rename is pending.
+                (
+                    Some(account.clone()),
+                    self.original_folder(account, folder),
+                    false,
+                )
             }
             Message::AccountFolderUnified => (None, "INBOX".into(), false),
             Message::Folder(folder) => (self.query.account.clone(), folder.clone(), false),
@@ -343,6 +508,7 @@ impl App {
         })
     }
     pub(super) fn toggle_folder_selection(&mut self, folder: FolderSelection) {
+        self.close_composer();
         let folders = self.query.folders.get_or_insert_with(|| {
             if self.query.folder.is_empty() {
                 Vec::new()
@@ -367,5 +533,124 @@ impl App {
         self.selected = None;
         self.detail = None;
         self.request_page();
+    }
+}
+
+impl App {
+    pub(super) fn folder_expanded(&self, account: &str, path: &str) -> bool {
+        self.preferences
+            .expanded_folders
+            .get(account)
+            .is_some_and(|folders| folders.contains(path))
+    }
+    pub(super) fn set_folder_expanded(&mut self, account: &str, path: &str, expanded: bool) {
+        if self
+            .folder_tree(account)
+            .and_then(|tree| tree.node(path))
+            .is_none_or(|node| node.children.is_empty())
+        {
+            return;
+        }
+        let folders = self
+            .preferences
+            .expanded_folders
+            .entry(account.into())
+            .or_default();
+        let changed = if expanded {
+            folders.insert(path.into())
+        } else {
+            folders.remove(path)
+        };
+        if changed {
+            self.save_preferences();
+        }
+    }
+    pub(super) fn sidebar_group(&self, action: &Message) -> Option<(String, String)> {
+        let (account, path) = match action {
+            Message::AccountFolder(account, path) | Message::ToggleFolderGroup(account, path) => {
+                (account, path)
+            }
+            _ => return None,
+        };
+        let node = self.folder_tree(account)?.node(path)?;
+        (!node.children.is_empty()).then(|| (account.clone(), node.path.clone()))
+    }
+    pub(super) fn sidebar_tree_key(&mut self, expand: bool) -> Task<Message> {
+        let items = self.sidebar_items();
+        let Some(item) = items.get(self.sidebar_index) else {
+            return Task::none();
+        };
+        if let Message::ToggleAccountFolders(account) = &item.action {
+            let collapsed = self.preferences.collapsed_accounts.contains(account);
+            if expand == collapsed {
+                return self.handle(item.action.clone());
+            }
+            if expand
+                && items
+                    .get(self.sidebar_index + 1)
+                    .is_some_and(|next| next.depth > 0)
+            {
+                self.sidebar_index += 1;
+            }
+            return Task::none();
+        }
+        if matches!(item.action, Message::AccountFolderUnified) {
+            self.inbox_expanded = expand;
+            return Task::none();
+        }
+        if let Some((account, path)) = self.sidebar_group(&item.action) {
+            let expanded = self.folder_expanded(&account, &path);
+            if expand != expanded {
+                self.set_folder_expanded(&account, &path, expand);
+                return Task::none();
+            }
+            if expand
+                && items
+                    .get(self.sidebar_index + 1)
+                    .is_some_and(|next| next.depth > item.depth)
+            {
+                self.sidebar_index += 1;
+                return Task::none();
+            }
+        }
+        if !expand && item.depth > 0 {
+            // The preceding shallower visible row is the parent, including its
+            // account heading. Moving focus must not toggle that parent closed.
+            if let Some(index) = (0..self.sidebar_index)
+                .rev()
+                .find(|&i| items[i].depth < item.depth)
+            {
+                self.sidebar_index = index;
+            }
+        }
+        Task::none()
+    }
+}
+
+impl App {
+    pub(super) fn move_folder_label<'a>(&'a self, folder: &'a str) -> std::borrow::Cow<'a, str> {
+        let account = if !self.field("move_account").is_empty() {
+            Some(self.field("move_account"))
+        } else if self.mail_selection.mode {
+            // The reader may belong to another account after a move. Match
+            // the selected membership used by move_folders, including encoding.
+            self.mail_selection
+                .snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.accounts.keys().next())
+                .map(String::as_str)
+        } else {
+            self.action_mail().map(|mail| mail.account_id.as_str())
+        };
+        self.workspace.folder_label(account, folder)
+    }
+    pub(super) fn ranked_move_folders(&self) -> Vec<String> {
+        crate::fuzzy::ranked_labels(
+            self.field("folder_search"),
+            self.move_folders().into_iter().map(|folder| {
+                let label = self.move_folder_label(&folder).into_owned();
+                (folder, label)
+            }),
+        )
     }
 }

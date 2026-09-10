@@ -15,11 +15,10 @@ async fn google_login_waits_for_saved_permissions_and_rejects_changed_choices() 
         let (saves, mut saved) = engine::CommandSender::persistence_test_channel();
         app.tx = Some(saves);
         let _ = app.handle(Message::GoogleLogin(true));
-        let Command::SaveProfilePreferences(request, prefs, fields) = saved.try_recv().unwrap()
-        else {
+        let Command::SavePreferences(request, write) = saved.try_recv().unwrap() else {
             panic!()
         };
-        assert!(fields.is_empty());
+        let prefs = write.value;
         assert_eq!(prefs.google_services, app.preferences.google_services);
         assert!(app.pending_google_login.is_some());
         if changed {
@@ -28,7 +27,7 @@ async fn google_login_waits_for_saved_permissions_and_rejects_changed_choices() 
             ));
             assert!(matches!(
                 saved.try_recv().unwrap(),
-                Command::SaveProfilePreferences(..)
+                Command::SavePreferences(..)
             ));
         }
         let (network, mut commands) = engine::CommandSender::network_test_channel();

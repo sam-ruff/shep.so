@@ -1,5 +1,7 @@
 # Desktop profiles
 
+**Superseded at the 2026-09-09 merge of `main`.** This page describes the client branch's own desktop discovery/publication/enrollment implementation. The desktop code that ships is main's `src/profile_sync` implementation, documented in [Database transfer and profiles](profiles.md) and [Profile Drive records](profile-drive.md). The invariants below still apply to the Flutter/browser equivalents and are carried forward in AGENTS.md.
+
 Preferences → Profiles and sync discovers existing setups through the shared
 Drive catalog. Sign in with Drive access first, then enter the application
 namespace configured for the same Google Cloud project as the other devices.

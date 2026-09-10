@@ -786,7 +786,9 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                     MailSyncItem::Flags(flags)=>db.write(move|db|{
                         if !pop {let tx=db.transaction()?;for(id,unread,starred)in flags{tx.execute("UPDATE mail SET unread=?2,starred=?3 WHERE account_id || ':' || folder || ':' || remote_id = ?1 AND moved=0",params![id,unread,starred])?;}tx.commit()?;}Ok(())
                     }).await,
-                    MailSyncItem::Folders(account,folders)=>db.write(move|db|{db.execute("INSERT INTO folders VALUES(?1,?2) ON CONFLICT(account_id) DO UPDATE SET names=excluded.names",params![account,serde_json::to_string(&folders)?])?;Ok(())}).await,
+                    // Mobile caches selectable names only; the hierarchy is a desktop feature.
+                    MailSyncItem::Folders(account,folders)=>db.write(move|db|{let names:Vec<&str>=folders.iter().filter(|folder|folder.selectable).map(|folder|folder.name.as_str()).collect();db.execute("INSERT INTO folders VALUES(?1,?2) ON CONFLICT(account_id) DO UPDATE SET names=excluded.names",params![account,serde_json::to_string(&names)?])?;Ok(())}).await,
+                    MailSyncItem::InboxSyncStarted{..}|MailSyncItem::InboxSyncFinished{..}=>Ok(()),
                     MailSyncItem::Reconcile{account,folder,live_ids}=>{reconcile.push((account,folder,live_ids));Ok(())},
                     MailSyncItem::SkippedLarge=>{skipped+=1;Ok(())},
                     MailSyncItem::SentFolder(account,folder)=>db.write(move|db|{

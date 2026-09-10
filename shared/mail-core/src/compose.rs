@@ -238,8 +238,9 @@ pub fn build_with_message_id(
         !draft.subject.contains(['\r', '\n', '\0']),
         "The subject must be a single line."
     );
+    let body = draft.delivery_body();
     anyhow::ensure!(
-        draft.body.len() <= MAX_MESSAGE_BYTES,
+        body.len() <= MAX_MESSAGE_BYTES,
         "This message exceeds the current 25 MiB sending limit."
     );
     let envelope = lettre::address::Envelope::new(Some(from.email.clone()), addresses)?;
@@ -318,7 +319,7 @@ pub fn build_with_message_id(
             );
         }
     }
-    let plain = SinglePart::plain(draft.body.clone());
+    let plain = SinglePart::plain(body.into_owned());
     let message = if html.is_none() && attachments.is_empty() {
         builder.singlepart(plain)?
     } else {

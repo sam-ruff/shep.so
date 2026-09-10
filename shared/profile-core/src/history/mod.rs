@@ -1,10 +1,13 @@
 //! Device-local causal history. The caller must authenticate the provider and
 //! verify cloud file ownership before importing records. This journal does not
 //! authenticate Google, apply accounts, or acknowledge a network upload itself.
+mod connection;
 mod export;
 mod merge;
 pub use export::Record;
+pub(crate) mod ownership;
 mod schema;
+pub use connection::ConnectionFactory;
 mod worker;
 pub use worker::Worker;
 
@@ -219,10 +222,19 @@ pub struct Journal {
     db: Connection,
     binding: Binding,
     device: Uuid,
-    _lock: Option<File>,
+    _lock: Option<ownership::OwnedLock>,
 }
 impl Journal {
     pub fn open(path: &Path, binding: Binding) -> Result<Self> {
+        Self::open_with(path, binding, &ConnectionFactory::default())
+    }
+    /// Open under the ordinary file-ownership guard using a client-owned factory.
+    /// The factory must key/configure the connection before returning it.
+    pub fn open_with(
+        path: &Path,
+        binding: Binding,
+        connections: &ConnectionFactory,
+    ) -> Result<Self> {
         binding.validate()?;
         // Choose the companion lock from the actual file, including symlinks.
         private_file(path)?;
@@ -238,21 +250,25 @@ impl Journal {
                 Error::Storage
             }
         })?;
-        let db = Connection::open(&path)?;
+        let lock = ownership::OwnedLock::acquired(lock);
+        let db = connections.open(&path)?;
         Self::initialize(db, binding, Some(lock))
     }
     pub fn memory(binding: Binding) -> Result<Self> {
-        Self::initialize(Connection::open_in_memory()?, binding, None)
+        let connection = Connection::open_in_memory()?;
+        connection.pragma_update(None, "temp_store", "FILE")?;
+        Self::initialize(connection, binding, None)
     }
-    fn initialize(mut db: Connection, binding: Binding, lock: Option<File>) -> Result<Self> {
+    fn initialize(
+        mut db: Connection,
+        binding: Binding,
+        lock: Option<ownership::OwnedLock>,
+    ) -> Result<Self> {
         binding.validate()?;
         db.execute_batch(
             "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;",
         )?;
         let device = schema::initialize(&mut db, &binding)?;
-        db.execute_batch(
-            "PRAGMA temp_store=FILE; CREATE TEMP TABLE history_ancestors(id TEXT PRIMARY KEY);",
-        )?;
         Ok(Self {
             db,
             binding,

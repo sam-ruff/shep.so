@@ -94,7 +94,7 @@ impl PinnedMail {
                     folder.eq_ignore_ascii_case("INBOX"),
                     "POP3 downloads Inbox only; other folders stay on the device."
                 );
-                sync_pop_connection(
+                sync_pop_session(
                     pop_routed(account, password, &self.incoming).await?,
                     account,
                     known,

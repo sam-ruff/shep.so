@@ -2,7 +2,7 @@
 
 ## Monorepo and feature parity
 
-The Rust + iced desktop application stays at the repository root. `flutter/` is the Android/iOS client; `web/` is the separate browser client matching the desktop behavior; `website/` is the promotional website. The earlier separate `shep.flutter` repository and hosted Flutter-client proposals are superseded. All current mobile/web/website development stays in Git worktrees; do not merge or push these changes to main during this phase. Combining agent work inside a review worktree is allowed. The latest shipping request explicitly authorizes committing and pushing all combined work promptly to `feat/mobile-web-clients` for review, without waiting for full parity. Keep incomplete features tracked; do not merge into main as part of this checkpoint push. The latest request authorizes installing the Rust beta service on the email VPS once its target and OAuth/owner configuration are supplied; do not invent another permission step.
+The Rust + iced desktop application stays at the repository root. `flutter/` is the Android/iOS client; `web/` is the separate browser client matching the desktop behavior; `website/` is the promotional website. The earlier separate `shep.flutter` repository and hosted Flutter-client proposals are superseded. Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is the single integration branch for the desktop, mobile and website sessions: desktop changes reach the client branch through merges from `main`, never through hand-ported commits, and root desktop code follows `main` when the two disagree. Mobile/web/website development continues in Git worktrees; combining agent work inside a review worktree is allowed. The shipping request authorizes committing and pushing combined client work promptly to `feat/mobile-web-clients` for review, without waiting for full parity; keep incomplete features tracked, and treat merging client work into `main` as an explicit integrator step rather than part of a checkpoint push. The latest request authorizes installing the Rust beta service on the email VPS once its target and OAuth/owner configuration are supplied; do not invent another permission step.
 
 `shared/mail-core` owns common mail/MIME/reply and IMAP/POP3/SMTP contracts. `shared/mail-content` owns MIME representation/CID selection, cached attachment identities, filenames and exact decoding for native Rust and browser WASM workers. Untrusted raw input must pass `mime::parse`; its iterative boundary preflight is coupled to pinned mailparse 0.16.1 and must be reviewed when upgrading that dependency. RawHtmlPart/message_body is untrusted sender HTML, never safe to insert directly into a page or WebView. Formatted rendering requires resource confinement and sanitizer/CSP tests. Keep shared byte fixtures in agreement; browser builds generate ignored WASM glue using the pinned CLI in docs/CLIENT_TESTING.md. Include both shared crates in coordinated version stamping. Root compatibility exports and the VPS service use this crate; platform credentials/cache/UI stay outside it. Keep gateway endpoint pinning and TLS hostname validation intact. Browser mail/drafts/submission IDs belong in per-Google-identity client storage, passwords in tab memory until secure remembered credentials are implemented. Persist a reserved SMTP identity before sending and never turn an unknown/uncertain delivery into a new automatic send.
 
@@ -44,44 +44,55 @@ Flutter first-profile publication uses mail schema 10 frozen reviews and exact s
 
 ## Desktop profile application
 
-Desktop enrollment lives in `src/profiles/enrollment/`, `src/store/profile_enrollment.rs`
-and `src/ui/profiles/enrollment.rs`; see [the contract](docs/agents/PROFILE_DESKTOP.md).
-Keep original records in the independent publication/history owner. Reviews and
-application receipts belong to the existing mail Store connection, through its
-background worker. Preserve 50-row paging and the displayed enrollment page after row choices or
-recoverable failures. Keep source/history revision checks, stable
-mappings and newer account/removal intent. Imported accounts retain a durable
-reconnect guard through both explicit password writes and checked activation;
-provider/backup/restore paths must never bypass it. Local cached actions remain usable.
-GUI preference saves pass through `App::try_command` to preserve actual portable
-field intent, including reverted edits. Never replace these patches with an old
-whole-preferences snapshot. Keep exact save ordering, canonical-value effects and
-newer UI-edit protection alongside the native enrollment and publication flows.
-
-Desktop ongoing reconciliation is connected through `src/profiles/sync/`
-and `src/store/profile_sync.rs`; see [its current boundary](docs/agents/PROFILE_RECONCILIATION.md).
-Keep the exact staged local request until its own history receipt is saved.
-An idempotent history Edit reply reports current history, not the original field
-revision: never use that whole-history revision to acknowledge unseen remote
-intent. Scope remote record cursors to the observation history's device identity
-and reset them before replay after rebuilding that cache. Preserve the enrolled
-history identity, immutable upload reservations, atomic preferences/receipt
-transaction and newer field generations. Pausing cannot authorize a workspace
-switch. The runner alone does not authorize background work: its engine caller
+The desktop profile implementation is main's: `src/profile_sync/`,
+`src/engine/profile_sync.rs`, `src/store/profile_sync/` and the Preferences
+profile pages, described under "Database import and local profiles" and
+"Continuous profile transport" below and in `docs/agents/profiles.md` and
+`docs/agents/profile-drive.md`. The client branch's own desktop enrollment and
+reconciliation (`src/profiles/enrollment/`, `src/profiles/sync/`,
+`src/store/profile_enrollment.rs`, `src/ui/profiles/enrollment.rs`) were
+replaced at the 2026-09-09 merge; `docs/agents/PROFILE_DESKTOP.md` and
+`docs/agents/PROFILE_RECONCILIATION.md` describe that superseded implementation
+and remain as history and as the invariants the Flutter/browser equivalents
+still follow. Carry these invariants forward whichever implementation owns the
+path: keep original records in the independent publication/history owner;
+imported accounts retain a durable reconnect guard through both explicit
+password writes and checked activation, which provider/backup/restore paths must
+never bypass; portable preference saves preserve actual field intent, including
+reverted edits, and never replace patches with an old whole-preferences
+snapshot; keep the exact staged local request until its own history receipt is
+saved; an idempotent history Edit reply reports current history, not the
+original field revision, so never use that whole-history revision to acknowledge
+unseen remote intent; scope remote record cursors to the observation history's
+device identity; pausing cannot authorize a workspace switch; background sync
 must serialize history ownership with publication/enrollment, check the active
-Google grant and own provider capacity/lifecycle locks. Checked preference conflict decisions use the existing history owner plus durable
-mail-store reviews. Freeze and page exact versions, recheck local intent before
-staging, and replay the same staged request after a lost receipt. Never retire an
-uncertain pending edit without its exact History.Edit result. Cached review and
-cancellation stay available when Google disconnects; accepted decisions cannot be
-cancelled as if they had never been recorded. Preserve the saved native conflict
-scenario and atomic receipt/newer-intent/restart tests.
+Google grant and own provider capacity/lifecycle locks; and checked preference
+conflict decisions freeze and page exact versions, recheck local intent before
+staging, replay the same staged request after a lost receipt, never retire an
+uncertain pending edit without its exact History.Edit result, and cannot be
+cancelled as if they had never been recorded.
 
 ## Request tracking — required every turn
 
 `TODO.md` is the authoritative active request list. At the start of each turn, read it alongside the original goal and relevant completion evidence. When the user adds, changes or reports a requirement, add/update its TODO entry immediately, before implementation; record corrections so obsolete defaults are not restored. Check the whole conversation when auditing scope, not just the latest message.
 
 Do not remove an entry because code exists, a plan was proposed, or unrelated tests pass. Remove it only after the requested behavior and relevant unit/protocol/native tests pass, visual evidence is reviewed where appropriate, and the authorized shipping step is complete. Record the completed behavior, tests, limitations and commit in `docs/COMPLETION.md`; update `docs/REQUEST_AUDIT.md` so every original request remains traceable. Partially completed features stay in TODO with their remaining work stated. Never silently drop a request at compaction or replace the full product goal with the newest request.
+
+The current stopping point and restart order are in [handover.md](handover.md). Keep TODO authoritative; a pushed handover is not completion of the full product goal.
+
+## Parallel delivery
+
+The user explicitly requests parallel agents in isolated Git worktrees to finish
+the entire TODO list. Assign independent feature lanes, with the primary agent
+owning integration and pushes to `main`. Each lane must add relevant tests,
+review native visual evidence where applicable, and report exact commits,
+verification and remaining limitations before integration. Keep each worktree's
+Cargo target separate and cap its builds at four jobs. Isolated correctness-only
+native flows may run alongside unrelated capped builds; every harness owns its
+display, credentials fixture and files. Reserve quiet windows for latency or
+renderer pixel measurements, and never relax a timeout or budget because a host
+is busy. Parallel coding continues throughout. Do not bypass hooks or mark work
+complete before verified shipping.
 
 ## Product direction
 
@@ -106,7 +117,7 @@ Quality and release workflow definitions remain deliberately named `.github/work
 To enable when Sam asks:
 
 1. Provision trusted self-hosted runner labels from the CI matrix: `[self-hosted, Linux, X64]`, `[self-hosted, Windows, X64]`, `[self-hosted, macOS, ARM64]`. Adjust labels to the actual machines first. Do not run untrusted fork code on persistent self-hosted runners.
-2. Install Rust with `rustfmt` and `clippy`, CMake and a C++ compiler for vendored litehtml, Python 3, Node 24, and platform development libraries. The Linux GUI harness additionally needs `Xvfb`, `xdotool`, `zenity`, `xclip`, `dbus-daemon`, `busctl`, and ImageMagick `import` with WebP support. Print flows need Chrome/Chromium, Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and ImageMagick `convert`. Linux needs OpenSSL/dbus/X11/Wayland development packages and a Secret Service for real credentials.
+2. Install Rust with `rustfmt` and `clippy`, CMake and a C++ compiler for vendored litehtml, Python 3.11+, Node 24, and platform development libraries. The Linux GUI harness additionally needs `Xvfb`, `xdotool`, `zenity`, `xclip`, `dbus-daemon`, `busctl`, and ImageMagick `import` with WebP support. Print flows need Chrome/Chromium, Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and ImageMagick `convert`. Linux needs OpenSSL/dbus/X11/Wayland development packages and a Secret Service for real credentials.
 3. Rename both `.yml.disabled` files to `.yml`.
 4. `gh api --method PUT repos/sam-ruff/shep.so/actions/permissions -F enabled=true`
 5. Run the quality workflow manually, inspect results, then let the release workflow run only after a successful push build on `main`.
@@ -119,16 +130,21 @@ bash scripts/install-hooks.sh              # install repository Git hooks
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
+python3 scripts/test_profile_core.py # shared codec/history/Drive contracts
+cargo test -p shep-html-pixbuf             # dependency cache regressions
 python3 -m unittest discover -s tests -p 'test_*.py'
 cargo bench --bench responsiveness
 cargo build --profile test-ui --features test-support
 python3 scripts/e2e.py                      # real native UI flows through MCP
+python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html.json
 bash scripts/check.sh                      # all of the above
 ```
 
-The pre-commit hook runs formatting, Clippy and Rust tests. The commit-msg hook requires Conventional Commits. Do not skip failing hooks or weaken a budget just to get a commit through. `SHEP_SKIP_E2E=1 bash scripts/check.sh` runs the non-GUI checks on machines without Linux/X11; report that omission. CI repeats the checks; Rust compiles/tests run on all three platform runners, native E2E currently runs on Linux.
+The pre-commit hook runs formatting, Clippy, `cargo test --all-features`, the `shep-html-pixbuf` tests and `scripts/test_profile_core.py`. The commit-msg hook requires Conventional Commits. `core.hooksPath` is the relative `.githooks` (set by `scripts/install-hooks.sh` from the checkout root); keep it relative so every worktree runs its own checkout's hooks rather than another checkout's, and re-run `git config core.hooksPath .githooks` if `git config --show-origin core.hooksPath` shows an absolute path. Do not skip failing hooks or weaken a budget just to get a commit through. `SHEP_SKIP_E2E=1 bash scripts/check.sh` runs the non-GUI checks on machines without Linux/X11; report that omission. CI repeats the checks; Rust compiles/tests run on all three platform runners, native E2E currently runs on Linux.
 
 Defer performance measurements while the PC is saturated with other work; run them at the end on an otherwise idle machine. `python3 scripts/e2e.py --functional-only` runs correctness flows without the latency benchmark. Never weaken thresholds based on a loaded-host result.
+
+The latest user priority is HTML opening latency (R72). They explicitly authorize measuring native selection-to-visible-HTML now and iterating on it until the wait is imperceptible. This supersedes the earlier measurement deferral for HTML opening work. Preserve the distinction between body loaded, HTML prepared/rendered, and actually presented pixels; cover cold, warm and prefetched navigation and document the host conditions without inventing an idle-host claim.
 
 During development run targeted tests after backend changes, the benchmark after storage/scheduling changes, and the MCP E2E suite after UI changes. Run the complete relevant set before pushing. Do not claim live Google, IMAP, POP3, SMTP, CalDAV, Windows or macOS verification based solely on fixture tests.
 
@@ -161,21 +177,67 @@ Read-on-leave and action feedback requirements: selecting an inbox message and t
 - Prefer 40–44 px click targets; visible focus, descriptive labels/tooltips, persistent errors with a clear recovery, no text clipping at 900×640 and 1440×920. Mouse and keyboard should reach the same core actions.
 - User-visible messages should explain the problem and next action. Do not present sample data as live accounts, pretend a sync succeeded after errors, or silently lose unsent drafts.
 
-Run `python3 scripts/performance_gate.py` after backend and native timing reports have been generated. It fails on missing, invalid, undersampled or over-budget evidence.
+Run `python3 scripts/performance_gate.py` after backend, native navigation and HTML pixel timing reports have been generated. It fails on missing, invalid, undersampled or over-budget evidence.
 
 The inbox/reader divider must remain mouse-draggable with saved preferences and minimum widths. Filtering and sorting must invalidate stale page prefetches; flags map to IMAP `\Flagged` and remain local for POP3. Cover drag persistence, mouse flagging/filtering/sorting and page navigation in the MCP suite.
 
 See `docs/PERFORMANCE.md` for measured results and what the measurements do and do not cover.
 
+## Account synchronization and channel ownership
+
+`engine/account_work.rs` owns account and calendar scheduling in a background coordinator. Its request channel and waiting queue each hold at most 32 entries; one-shot channels grant work, interrupt read-only sync and acknowledge completion. Pending writes retain FIFO order; separate accounts can proceed independently. Abandoned requests must release their place, and a queued sync must yield to writes without starting another download. Do not restore shared account/calendar mutex maps.
+
+`engine/account_sync.rs` keeps an owned task until already-started cache writes settle, even when the containing refresh cycle is cancelled. Interrupt only read-only provider/setup work. Drain received cache items before releasing account ownership; `try_join!` would detach an active SQLite `spawn_blocking` operation on provider error and can let old state overwrite a newer write. An interrupted check is not a complete folder listing or Inbox baseline. Preserve the deterministic held-provider/cache-commit, failure, timeout, cancelled-owner, bounded-queue and ordering regressions.
+
+The saved native held-sync flows use `desktop.start(held_account_sync=true)`. They exercise the production coordinator/download pipeline against an indefinitely held fictional provider, without real network or keychain access. Closing must persist an explicitly selected message's read-on-leave change; flagging must interrupt the read-only provider, and a failed write must restore the flag and allow another attempt. Actual personal-server sync/close diagnosis and temporary close-to-tray remain separate unfinished work.
+
 ## Architecture and data safety
+
+Use bounded channels and state-owning workers for application state coordination, rather than shared lock-managed state. The user explicitly corrected the account scheduling approach during R90: interactive writes must interrupt read-only sync through the coordinator, and durable completion acknowledgments must preserve ordering. Keep UI sends nonblocking, bound queued work, and handle abandoned requests without leaving an account occupied. Audit other application-level coordination when changing those paths.
 
 The full product goal is still active. Keep [docs/COMPLETION.md](docs/COMPLETION.md) current with implemented evidence and remaining work; do not infer feature completeness from a passing fixture suite.
 
-`src/ui/` owns presentation and small caches. `engine.rs` bridges bounded channels and background work. `store.rs` runs SQLite WAL/FTS work through `spawn_blocking`. `providers::MailProvider`, `CalendarProvider`, and `backup::BackupProvider` are extension points: add a provider without teaching the UI its wire protocol.
+`src/ui/` owns presentation and small caches. `engine.rs` bridges bounded channels and background work. `store/worker.rs` owns the mail-cache SQLite connection and local operation leases on one thread, behind a bounded 32-command FIFO. Accepted SQL jobs drain even if their observation is cancelled or the last Store handle is dropped; a request cancelled before admission must not become a later write. Local lease release uses a one-shot channel's closure, so it cannot wait for queue space. Keep worker ordering/cancellation/failure tests, temporary selection tables and independent-process file leases intact. Long database copies must use a separate online snapshot path rather than holding this worker for the entire transfer. Backup-journal/Google/lifecycle coordination remains in the channel-ownership audit. `providers::MailProvider`, `CalendarProvider`, and `backup::BackupProvider` are extension points: add a provider without teaching the UI its wire protocol.
 
-The software renderer is patched through `vendor/iced_tiny_skia` (released iced 0.14.0, MIT). Cached dropdown text must intersect its own viewport with the damaged layer, and raw text must reset a shared clip mask after preceding text. Otherwise scrolled controls leave stray pixels that only a full repaint clears. Keep `tests/software_rendering.rs` and the saved filtered-preferences native regression when updating iced; remove the patch only after both pass upstream. The release archive includes the vendor license and patch provenance. Do not edit the Cargo registry cache or replace partial redraws with continuous full-window redraws to hide defects.
+The cache worker exposed a bundled SQLite 3.51.1 Unix WAL open/close deadlock in the existing notification restart test. A debugger trace showed opposite inode/global mutex acquisition inside SQLite itself. Use the updated bundled SQLite (3.53.2 through rusqlite 0.40.2); do not restore 3.51.1 or hide the fault with an application lock. Preserve `partial_initial_import_stays_quiet_across_restart_then_new_mail_alerts_once` and the cache/worker close tests. See SQLite's [3.51.2 deadlock fix](https://www.sqlite.org/releaselog/3_51_2.html) and [3.51.3 WAL fix](https://www.sqlite.org/releaselog/3_51_3.html). This was fixture evidence, not a diagnosis of the personal account's remaining delays.
 
-Multi-selection storage lives in `store/selection.rs`; native controls in `ui/mail_selection.rs` use their own bounded FIFO channel in `engine/selections.rs`. Native group actions use frozen reviews and the durable journal described below. Keep shipping and remaining verification status in the completion log. `store/mail_query.rs` owns the common scope/ranking plan for inbox pages and captured membership. Keep selected IDs/ranks in SQLite and return at most one metadata page to iced. The controller keeps one request in flight and at most 32 pending gestures, projects visible selection immediately, and releases an abandoned snapshot before capturing a new scope. Scope changes clear selection immediately; page changes preserve it. New arrivals do not silently join a selection, but another explicit Select All captures them. Clear unchecks messages; Done/Escape exits selection mode. Checkbox/modifier gestures must not mark mail as read. Select All is remappable and scoped to native list focus at both key input and asynchronous focus-check completion. Preserve normal text Ctrl+A, sidebar focus and double-click reading.
+The R22 foundation uses vendored SQLCipher 4.19 / SQLite 3.53.4 without
+activating existing-cache migration yet. Preserve its source hashes, licenses and
+`vendor/libsqlite3-sys/shep-lifecycle.patch`: automatic process-exit/finalizer
+cleanup freed codec state beneath a channel-owned cache worker, reproduced as
+SIGSEGV in the saved subprocess/GDB fixture. The static build omits those global
+exit handlers and initializes OpenSSL before its first RNG call; explicit
+`sqlite3_shutdown()` still cleans up after all connections close. Keep the exit
+read, OpenSSL positive control, explicit shutdown/reinitialize, keyed WAL,
+wrong-key/corruption, staged migration and scratch drain/reopen regressions.
+Preserve the native temporary-storage policy: default/plain connections use FILE;
+a keyed main forces MEMORY even after an authorizer change, while keying scratch
+alone does not change a plain main. Keep the VFS spill positive/negative controls.
+Do not activate keyed startup before unbounded selection/catalog summaries and
+recovered-view automatic indexes have bounded encrypted scratch plans.
+
+Keep `vendor/libsqlite3-sys/shep-export.patch`: SQLCipher export must preserve
+unindexed rowids as well as indexed mail/external-FTS identities. The explicit
+raw SQLite export remains unencrypted and excludes credentials; its atomic
+candidate in the chosen export folder is intentional user output. Implicit
+cache/import/migration candidates must stay encrypted.
+Selection/frozen-review scratch lives in a private attached encrypted database;
+its connection must close before the owning temporary directory is removed.
+Conversation duplicate selection/rank also uses indexed scratch and returns at
+most 20 metadata rows. Session scratch uses DELETE/OFF with normal rollback but
+no crash-durability guarantee; restart creates fresh scratch. Main cache and
+receipt journals remain FULL. Qualify `PRAGMA main.journal_mode=WAL` so it cannot
+overwrite the attached scratch policy. Preserve index-plan, duplicate/focus,
+spilled rollback, cleanup and orphan-restart regressions.
+Shared ancestry uses transaction-cleared indexed main-database scratch with a
+bounded frontier. Finish legacy publication/recovery, remaining sorter/temp
+paths, profile catalog/portable transfer routing and native key recovery before
+activating encryption for personal data. See
+[the encryption boundary](docs/agents/CACHE_ENCRYPTION.md).
+
+The software renderer is patched through `vendor/iced_tiny_skia` (released iced 0.14.0, MIT). Cached dropdown text must intersect its own viewport with the damaged layer, and raw text must reset a shared clip mask after preceding text. Shadows must honor damage/layer clipping and include their full bounds in invalidation, including when only the shadow intersects the changed area. Otherwise moving or scrolled controls leave stray pixels that only a full repaint clears. Keep `tests/software_rendering.rs`, the filtered-preferences and scrolled mail-drag native regressions when updating iced; remove the patch only after these pass upstream. The release archive includes the vendor license and patch provenance. Do not edit the Cargo registry cache or replace partial redraws with continuous full-window redraws to hide defects.
+
+Multi-selection storage lives in `store/selection.rs`; native controls in `ui/mail_selection.rs` use their own bounded FIFO channel in `engine/selections.rs`. Native group actions use frozen reviews and the durable journal described below. Keep shipping and remaining verification status in the completion log. `store/mail_query.rs` owns the common scope/ranking plan for inbox pages and captured membership. Keep selected IDs/ranks in SQLite and return at most one metadata page to iced. The controller keeps one request in flight and at most 32 pending gestures, projects visible selection immediately, and releases an abandoned snapshot before capturing a new scope. Scope changes clear selection immediately; page changes preserve it. New arrivals do not silently join a selection, but another explicit Select All captures them. Clear unchecks messages; Done/Escape exits selection mode. Checkbox/modifier gestures must not mark mail as read. Select All is remappable and scoped to the native field focus captured with its key and the controller pane scope when dispatching that key. Preserve normal text Ctrl+A, sidebar focus and double-click reading.
 
 `capture_selection` ignores page offset, `change_selection` checks the expected revision atomically, and `freeze_selection` copies exact selected membership for a review. Missing mail remains explicit in selected versus available counts. Snapshot metadata pages read current flags/folders; immutable membership does not freeze message content. Temporary selection tables disappear on connection close; the bulk journal copies reviewed membership into durable jobs before execution. Preserve `tests/selections.rs`, controller ordering/cleanup tests, provider-saturation coverage and the saved `test_mail_selection_*` native scenarios when changing query scopes, ranking, pagination or selection lifecycle. Preserve the group toolbar, confirmation, failure and Undo native scenarios when changing this path.
 
@@ -185,6 +247,20 @@ Bulk mail changes live in `bulk.rs`, `store/bulk.rs`, `engine/bulk.rs` and `ui/b
 A capacity-one wake channel coalesces requests; queued job IDs remain durable in SQLite. The worker uses one shared provider slot at a time, and updates progress at bounded intervals. Successful provider receipts are observed through persistence; do not drop them at a generic timeout. An owned `fs2` file lock prevents two processes from recovering/executing the same job. Memory stores must never create lock files in the repository. Startup does not repeat an unacknowledged running step: retain its ownership and show an unconfirmed result for explicit review. Never treat that conservative classification as proof that the server rejected the write.
 
 Undo cancels unsent steps and reverses acknowledged steps using their actual receipt identities, including when a forward write is still running. Preserve newer unrelated flag intent. Definite inverse failures may retry; ambiguous outcomes need explicit acceptance after checking folders. Query snapshots observe forward/Undo phase alongside counts, preventing double projection when a page arrives before its acknowledgment. Temporary restored rows cannot issue body/provider requests with obsolete IDs. Bulk toasts carry weighted group counts and adjust after failures.
+
+
+Close intent must survive independent draft, account/calendar, Google and mail
+save acknowledgments, in either order with the bulk stop barrier. A failed
+current write cancels close before the busy dependency is released; an obsolete
+draft error must not cancel a newer pending save. Track write admission before
+provider capacity is available. Bulk work acquires interruptible capacity before
+claiming a journal item, while an already claimed step retains its receipt.
+`lifecycle::Signal` uses a capacity-one watch channel for stop/activity state;
+folder preflight cancellation must not restore a polling loop.
+The native `held_provider_slots=true` fixture owns all eight provider permits,
+skips unrelated fixture startup cleanup, and checks that closing preserves
+unstarted group steps. `close_request` sends WM_DELETE_WINDOW to the owned window
+without waiting, so pending/failure UI can be exercised in a batch.
 
 Closing requests the bulk worker to stop after its current receipt is durable; remaining queued work resumes with a fresh engine. An error cancels pending close. An explicitly resumed/new group can continue after another close dependency failed. Account-removal reviews include related group state and history; changed reviews are rejected, unfinished changes require the existing cancellation checkbox, and removal deletes only affected account entries/receipts. Preserve the independent-process lock test, query/receipt/restart/close/account-removal tests and all saved `test_bulk_*` native scenarios.
 
@@ -217,7 +293,7 @@ Block external images by default. Message/sender/domain exceptions and a manuall
 
 The Fastmail sync regression was missing parentheses around IMAP FETCH attribute lists. `imap_sync_uses_valid_fetch_lists_and_batches_bodies` drives the production sync function against a local IMAP transcript and validates both metadata and batched BODY.PEEK[] requests. Live diagnostics are ignored tests requiring an explicit `SHEP_LIVE_ACCOUNT_ID`; they read the saved OS credential and never send, move or flag mail. `saved_account_inbox_sync_to_local_cache` limits downloads to Inbox while using the same sync path. Run live diagnostics only for an account the user has authorized.
 
-Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite has 116 functional flows plus the navigation performance gate.
+Release preparation also runs `scripts/verify_release.py`: it checks SHA-256, extracts into a temporary directory, and exercises the bundled installer without Rust. You can rerun it with `python3 scripts/verify_release.py dist/shep-VERSION-linux-x86_64.tar.gz`. Native key injection uses an explicit 1 ms xdotool delay; performance budgets remain unchanged. The native suite discovers functional flows in `scripts/e2e.py` alongside separate navigation and HTML pixel performance gates; distinguish selected reruns from full-suite evidence in the completion log.
 
 Calendar provider writes return the committed event, including its server identity/ETag. Do not make a successful write depend on a subsequent calendar refresh, or retry it as a fresh create. Google creates use a stable per-form ID and verified conflict recovery. CalDAV edits GET the complete resource, retain alarms/attendees/extensions, and use If-Match; a successful PUT without an ETag requires a sync before another edit. Only 2xx acknowledges a commit; redirects are not success. Serialize sync and mutations per calendar. Remote IDs are scoped by calendar in the UI, command keys and storage; the v2 cache migration converts legacy composite keys. Completion events identify their form so they cannot close an unrelated dialog.
 
@@ -228,6 +304,8 @@ Calendar protocol tests use the scripted loopback server in `src/providers/test_
 Google connection status is checked by a provider command after the cached workspace is ready. Do not await OS credential-store access before emitting `Ready`. Failed speculative sends must clear their pending prefetch markers so the message/page can be requested again.
 
 Preferences use client edit generations and persistent store revisions. `SavePreferences` returns a small `PreferencesSaved` snapshot; do not reload an entire workspace for each preference change. `ui/preference_sync.rs` preserves newer local edits and rejects older store snapshots, including while the pane divider's save is debouncing. Backup completion must use `Store::update_preferences` to change only its metadata; never write the preferences captured before a long upload back over current settings. UI saves preserve backend-owned `last_backup`. Google OAuth starts after its settings save is acknowledged, and the provider job must not rewrite the old settings. `tests/preferences.rs` covers persistence/revisions and the metadata race; the native suite combines appearance, unified/cross-account preferences and resizing and waits for `preferences_saved`.
+
+Pending individual moves attach bounded `MailMoveProjection` hints only to cloned read queries, never to the logical selection scope. `store/read_moves.rs` projects folder/account/flags in a connection-local temporary view within the read transaction; it preserves full-text ranking and page boundaries without updating source data or publishing an obsolete remote UID. Selection capture rejects display hints. Temporary destination rows use cached bodies and cannot issue provider mutations; receipt handling replaces their metadata with the actual acknowledged identity without losing the selected reader. Keep the move-projection storage/controller tests and native pending-destination, failure/Undo and cross-account scenarios. A move without a destination UID still needs durable recovery (R73); this display projection does not resolve that backend gap.
 
 Message-detail requests/results carry `detail_revision`, independent of page/search generations. Increment it and clear pending prefetch markers when mail changes. Ignore both data and errors from earlier revisions; a late body load must not undo new flags or a completed move. `ui/reading_tests.rs` controls backend-result ordering; native MCP mouse flagging/moving remains the control-level test.
 
@@ -405,7 +483,7 @@ Archive/move finishes an armed read first and waits for its flag acknowledgment 
 
 Archive/delete/move toast regressions: create feedback in the same update as the optimistic row change, even while waiting behind a read/flag save. Count archive and delete across accounts in the unified inbox; custom folders group by destination account/folder. Failures remove only their correlated count and retain the error. Successful completion must not recreate an expired/dismissed toast or replace a newer action. The current display lifetime is six seconds, refreshed by each action. Cross-account moves have typed completions and wait for source flags; keep that ordering when adding Undo and persistent action recovery.
 
-A focused iced text input may leave an unhandled modified key uncaptured (for example Ctrl+D). Before dispatching mail-target shortcuts, query native search focus with a widget operation; do not infer editing focus from `event::Status` or the harness focus observation alone. Test both mouse/shortcut search focus and remapped destructive keys, then verify the action still works outside search. Ignore delayed focus-check replies after changing tabs/dialogs. Inline composition must extend this guard to its editable controls when implemented.
+A focused iced text input may leave an unhandled modified key uncaptured (for example Ctrl+D). While processing the native key event, inspect search/Find focus with a widget operation before dispatching mail-target shortcuts; do not infer editing focus from capture status or the harness focus observation alone. Test both mouse/shortcut search focus and remapped destructive keys, then verify the action still works outside search. Do not restore asynchronous key focus-check replies; they can revive cancelled intent or observe a later clicked field. Inline composition must extend this guard to its editable controls when implemented.
 
 
 ## Undo for optimistic mail moves
@@ -427,7 +505,7 @@ Owned visible-text geometry supports selection/copy without raw DOM pointers, ex
 
 No email JavaScript, CSS imports, filesystem or automatic network loader is installed in the renderer. CID/data images decode off-thread to WebP; remote resources use the existing per-message/sender/domain/Contacts policy and public-address/redirect validation. Preserve natural dimensions when converting small images. External HTTP(S) links open through a background system-browser task; mailto opens a draft and cannot inject hidden headers or attachments.
 
-`vendor/shep-html-pixbuf` is the MIT-licensed upstream 0.2.6 drawing adapter with corrected image sizing/position/repetition/device scale. The layout engine stays pinned to upstream litehtml. Keep its license/provenance in release archives. Worker pixel tests prove scaled image contents and repeated backgrounds; native screenshots prove clipping and controls remain visible. Static email HTML is supported; this is not a JavaScript browser or full support for every advanced browser CSS feature.
+`vendor/shep-html-pixbuf` is the MIT-licensed upstream 0.2.6 drawing adapter with corrected image sizing/position/repetition/device scale. The layout engine is version-pinned with a focused table-layout patch in `vendor/litehtml-sys`; its original BSD-3-Clause litehtml, Apache-2.0 Gumbo and MIT wrapper licenses stay in release archives. Keep its license/provenance in release archives. Worker pixel tests prove scaled image contents and repeated backgrounds; native screenshots prove clipping and controls remain visible. Static email HTML is supported; this is not a JavaScript browser or full support for every advanced browser CSS feature.
 
 
 ## Find within the open message
@@ -503,12 +581,24 @@ indicators belong inside the body allocation rather than a temporary extra row.
 The interactive HTML worker retains its own font discovery across documents;
 never share iced's font lock. A separate speculative worker has a replaceable
 mailbox of at most two neighboring cached messages. Its first-frame cache holds
-at most four frames / 32 MiB, keyed by body signature, message identity, geometry,
-font, quote policy, image permission and cached-image revision. It performs no
+at most eight frames / 32 MiB (including retained image bytes), keyed by body
+signature, message identity, geometry, font, quote policy and image permission.
+Frames acknowledge their actual decoded image inputs; a download invalidates only
+frames using that URL, never unrelated mail. Retain valid partial/failed-image
+layouts too, but never label pixels with an image that has not been applied.
+Visited frames seed their exact images on reopening even after shared cache
+eviction. The shared WebP byte cache is bounded to 128 entries / 16 MiB. It performs no
 network requests and cannot use the interactive renderer's capacity. Seed only
 permitted cached WebP bytes, decoded lazily when that document references them.
 Keep document font handles, glyphs and decoded resources isolated. Same-size
-repaints clear/reuse the viewport allocation.
+repaints clear/reuse the viewport allocation. Touch body-cache recency when a
+message is opened. Completed remote WebP bytes must not be decoded/re-encoded
+before the renderer decodes them.
+
+Root document background colors are observed on the renderer worker. The
+reader surround uses that color and readable native controls, retaining the same
+widget tree while frames arrive. Ordinary conversation refreshes must not
+reschedule its initial scroll position; explicit new-page navigation still may.
 
 The saved native preparation flow checks cache use, rapid selection, End/Home,
 pane drag and compact resize through actual input; observe html_view_current,
@@ -558,7 +648,7 @@ matching the installed desktop entry and iced application ID. A watch channel
 retains only the newest count. Zero hides the badge; disconnection retries off
 thread; a new `com.canonical.Unity` owner receives the current value. Keep IPC
 bounded and never invoke a shell command from an iced handler. Windows/macOS
-adapters remain desktop-main:R70 work; show the preference only on implemented platforms.
+adapters are integrated in `1595fb3` (desktop R70); their actual Windows/macOS execution remains open, so show the preference only on implemented platforms.
 
 The badge counts unread Inbox messages across all connected mail accounts,
 independent of the open folder, filter, search or unified-inbox setting. Removing
@@ -597,11 +687,14 @@ This observation is not evidence of display scanout or a performance result.
 The root `ContextArea` preserves motion-event cursor positions before dispatch
 into scrollable coordinates. iced 0.14 supplies the final pointer position for an
 input batch; using that for every queued click can toggle the same checkbox
-twice. Preserve overlay exclusion and clear the captured position on redraw.
+twice. Preserve overlay exclusion and retain the captured position through redraws.
+`ui/pointer.rs` shares tracking with captured dropdown/nested-overlay events so
+closing a popup cannot leave a stale base position. Clear on pointer leave,
+window blur or interface-scale changes; never clear just because a frame drew.
 The native bulk flows intentionally click different rows consecutively, without
 inserting sleeps between clicks; the widget regression submits both clicks in
-one event batch. Do not mask this regression by slowing down native input.
-
+one event batch, including redraws between motion and press. Do not mask this
+regression by slowing down native input.
 
 ## Mobile and browser printing
 
@@ -613,3 +706,828 @@ Flutter reader actions stay outside the scrolling body in a responsive safe-area
 Desktop relevance queries in `store/mail_query.rs` materialize literal FTS rowids/ranks once, then join that SQLite relation. Do not restore a virtual-table LEFT JOIN that repeats FTS filtering/ranking for every candidate. Preserve exact short-body priority, literal-versus-fuzzy scoring, combined folder parameter order and the shared list/selection plan. Keep the query-plan guard, `tests/search.rs`, `tests/selections.rs`, bulk projection tests and native search/sort/selection flows. Run the unchanged 100,000-message responsiveness benchmark after planner or SQLite changes; an interrupted run is not timing evidence.
 
 `mail_inbox_badge_counts(folder,unread,account)` covers the global unread-account count requested with each mail page. Preserve its existing-cache creation and `tests/unread_counts.rs` plan/reopen regression; a narrower index requires a message-row lookup per unread item plus sorting. Pending bulk projections still use the visible-mail source. Keep value/projection and native badge tests alongside the unchanged backend budget.
+
+## Desktop selection ownership, History and process recovery
+
+Active selections retain their normalized query in a temporary SQLite row.
+Explicit clicks on arrivals and Shift ranges rebase query order while retaining
+previously selected identities, including unavailable ones. New rows stay
+unselected until an explicit gesture chooses them. Frozen reviews never rebase.
+Validate range endpoints against the current query before appending retained
+choices outside it. Keep all membership/ranking work in SQL; send at most one
+metadata page to iced. A rejected gesture preserves confirmed membership, and
+a failed passive observation retries without clearing it.
+
+Individual Move/Transfer/Undo/read/flag paths check group ownership inside their
+account mutation lock. Group paths validate the running item phase and atomically
+claim a resolved Undo identity without replacing another item’s ownership.
+Keep old receipt ownership until completion; a finished or cancelled phase
+cannot acquire new claims. Row/context controls reflect pending ownership, while
+other messages remain usable. This does not establish cross-process serialization
+of individual provider writes; that remains in the provider/platform audit.
+
+Disabled nested flag buttons must still absorb their mouse press; wrap them in
+`opaque` so the inbox row does not open or start read-on-leave tracking instead.
+The saved pending-group native flow verifies the reader stays on its original
+message when that disabled control is clicked.
+
+
+The MCP harness supports explicitly persistent fixture workspaces via
+`desktop.start(persistent=true)`. `tests/support/workspace.rs` marks new fixture
+SQLite files with an application ID and rejects unmarked existing databases
+before migrations. Demo seeding runs once, preserving native test changes across
+processes. Production builds exclude this opener and all fixture seeds.
+`desktop.close` sends WM_DELETE_WINDOW on the owned Xvfb display (including
+hosts whose xdotool predates windowquit), waits for normal exit, and refuses a
+replacement after timeout. `desktop.restart` retains the fixture cache/display;
+its explicit `crash=true` option kills only the owned app. Restart is batchable.
+Keep the graceful-close/crash native tests and harness ownership/timeout tests.
+See [xdotool's close/quit distinction](https://github.com/jordansissel/xdotool/blob/main/xdotool.pod).
+
+Continue must clear a group's persisted pause before waking the coalesced worker.
+It must not replay completed receipts or bypass the worker's execution lease.
+History fixture seeds are setup data, never an action interface; pagination,
+Continue, Undo/retry and uncertainty acceptance use real native input.
+
+History keeps its visible 20-job page separate from active progress tracking.
+Worker updates replace matching displayed entries in place; they must not jump
+an older page or forget running work. Pagination resets the modal scroll. Close
+asks an initialized engine to stop even when the visible History page has no
+running jobs, while flushing pending pane sizes before waiting.
+
+HTML and neighbor-preparation subscriptions own cancellation guards that wake
+blocking renderer receives when iced tears down, including while UI state still
+retains its senders. Do not rely on those senders dropping before Tokio shutdown.
+Preserve renderer cancellation unit tests and the actual formatted-reader native
+close/restart regression; a window disappearing does not prove process exit.
+
+Unconfirmed group results require explicit review. Acceptance retires only those
+steps without replaying provider work or inventing receipts, replaces the stale
+recovery instruction with an accepted-state note, and preserves Undo for the
+other acknowledged messages. Test mouse acceptance, Y/Enter and N/Escape, and
+reopening History without a stale confirmation.
+
+## Dragging messages into folders
+
+`ui/drag_mail.rs` validates cached account/folder rules; its widget module owns the
+pointer gesture. Reuse `context_menu::ContextArea` and the root pointer tracker so
+batched native motions, redraws and scroll coordinates keep their actual targets.
+Move only after six logical pixels of motion. Flag/checkbox presses cannot start
+a drag. Escape, focus/cursor loss and right-click cancel; swallow the subsequent
+release so it cannot select a row, open a reader or run a sidebar action. Ordinary
+clicks and release-based double-click reading retain their existing behavior.
+
+Payloads contain one message's metadata or the acknowledged selection snapshot,
+never all selected messages or MIME. Passive snapshot observations do not disable
+dragging; pending membership edits require their acknowledgment. At drop, recheck
+the source identity/current selection revision and destination. Inbox, Archive and Trash use each source account; the combined Sent/Flagged
+views are not destinations. Explicit destinations honor the cross-account
+preference and require two IMAP accounts. Provider operations still validate
+actual server capabilities. Only Inbox is a case-insensitive folder alias.
+Single drops use optimistic mail actions and Undo. Groups freeze through the
+existing review/journal path, including selections spanning other pages.
+
+Hover opens collapsed accounts/Inbox after 600 ms; it never toggles a group shut.
+Sidebar scrolling remains available while holding. Pointer motion requests local
+redraws; target transitions and completed gestures publish bounded app messages.
+Draw the floating label in its own renderer layer above pane clips. Preserve the
+shadow damage/clip regression; full repaint is not an acceptable substitute.
+
+The MCP batch actions `mouse_down` / `mouse_up` hold/release the left button on the
+owned fixture display, allowing hover, wheel input, assertions, short waits and
+screenshots during a drag. Duplicate presses/releases fail; cleanup releases a
+held button before stopping the owned display. `pop3_account=true` changes only
+the fictional personal account for local/cross-account destination checks.
+`mail_drag` is observation-only. Preserve all ten `test_drag_*` native scenarios,
+controller/widget/selection tests and harness ownership checks. The scrolled
+Unicode-folder scenario also checks saved WebP pixels for a stale shadow trail.
+
+## Mailbox trees and folder navigation
+
+Preserve IMAP LIST names, per-name hierarchy delimiters (including NIL),
+selectability and encoding in `folder_catalogs`. Never infer a slash hierarchy
+from a legacy name. A nonselectable or NonExistent entry may be a visible
+container, but must never enter SELECT, Move or drop destinations; cached mail
+cannot make its canonical/trailing-delimiter name selectable again. Keep cached
+originals accessible to recovery instead of deleting them during LIST refresh.
+
+`folders::Tree` builds missing ancestors and decoded display paths on the storage
+worker; Workspace shares trees through Arc. Only metadata crosses UI channels.
+Preserve exact wire names in queries, operations and receipts. Decode modified
+UTF-7 only for an IMAP session using that encoding, including ampersands and
+encoded delimiter characters; UTF-8 names with the same spelling remain literal.
+Display lookup is account-specific. Move search ranks readable labels but returns
+wire names. Review, history and toast labels must use the same display mapping.
+
+Selectable parent labels open mail; their chevrons only expand. Nonselectable
+parents expand without selecting. Groups default collapsed and persist per-account
+expansion; closing a parent retains its descendants' remembered state. Common
+unified-folder shortcuts must not hide real children under the account tree.
+Left/Right navigates hierarchy; Up/Down moves focus without toggling containers.
+Keyboard targets scroll into view using native widget bounds, not guessed row
+heights. Retry only missing new layout rows, and reject superseded targets.
+Mouse wheel position remains alone unless keyboard navigation requests a reveal.
+Drag hover opens a closed folder group after the existing dwell without changing
+the reading selection or turning a container into a drop target.
+
+The MCP `nested_folders=true` fixture includes slash/dot/NIL hierarchies,
+nonselectable/trailing-delimiter containers, selectable parents and modified-UTF-7
+Japanese mailboxes. Preserve its five saved native scenarios: mouse/restart,
+keyboard/delimiters, hover/drop/Undo, Unicode Move/review/Ctrl-selection, and
+compact dark/120% keyboard reveal with saved window size. Backend tests use actual
+loopback IMAP protocol and reopened isolated SQLite files. This is not live
+personal-server evidence. Folder delete/move controls and their remaining lifecycle work are tracked under R30.
+
+MCP `paste` writes only the owned Xvfb clipboard and sends native Ctrl+V after
+verifying exact bytes. It shares the existing owned clipboard cleanup, preserves
+Unicode/whitespace and refuses operation without a live fixture display. A failed
+clipboard setup must never paste stale content. Use it for Unicode tests; the
+initial Japanese xdotool typing scenario intermittently delivered no text even
+after native input focus was acknowledged. Keep ASCII typing and real keyboard
+shortcut coverage; paste is not direct application-state injection.
+
+Harness startup waits for the metadata page, not the message body. Use
+`selected_id` and its `mail_rows` entry when remembering an action's source.
+The reader's `selected` subject may still be null; waiting for it would hide the
+requirement that metadata actions remain available while bodies load.
+
+## Folder mutation work in progress
+
+`ui/folder_controls` supplies native right-click/Shift+F10 folder menus, fuzzy
+parent search, explicit move/delete review and bounded recovery history.
+`engine/folders` routes options/reviews/history through local read workers and
+staging/retry/stop through the selection FIFO. The coalesced bulk wake worker
+executes durable folder jobs serially with the existing provider/account locks
+and close barrier. R30 remains open for its wider lifecycle and scope audit.
+
+Project reviewed folder changes immediately; projected moved paths browse the
+original cache until commit. Rollback must retain later navigation, even when a
+user leaves and returns to the same Inbox. Job revisions reject stale history
+and progress; history-fetch state must not unlock a separate recovery action.
+Unconfirmed results cannot retry or stop without the appropriate explicit review.
+Accepting uncertainty stops remaining work, retains cached originals and says the
+result is unconfirmed; it is never a successful server acknowledgment. Keep
+source/destination labels decoded on the storage worker after the source leaves
+LIST. Never perform MIME or mailbox encoding work in iced handlers.
+An older Workspace snapshot must retain the newer folder trees together with
+account-folder names at its connection revision. A closing folder job waiting
+for provider capacity or its account lock stays queued and releases that wait;
+only an already-started command needs to persist its receipt before exit.
+
+IMAP RENAME moves descendants; DELETE does not. Delete reviewed descendants
+deepest first and protect Inbox. Preserve NoInferiors/NonExistent metadata and
+exact wire names. A complete, tagged-OK LIST is required for preflight: async-imap's
+streamed name helper can hide a final NO. Recheck the remaining subtree before
+each destructive step; a new descendant or recreated completed folder requires
+another review. An absent nonselectable container needs only cache cleanup.
+
+Persist Running before a provider command, then Acknowledged before cache work.
+Only tagged rejection is retryable as a rejected command; lost acknowledgments
+remain Uncertain and require explicit review. A later LIST failure cannot repeat
+an acknowledged RENAME. The runner observes database commits to completion and
+can stop between durable receipts. Local POP3 work can resume after interruption
+because its cache update and Done state commit atomically. Workspace preparation
+initializes local POP3 catalogs and discovers later imported local folders. Keep
+literal slash names flat and never recreate a deleted empty folder. Do not change
+an IMAP namespace or an unfinished folder review during this preparation.
+
+The owned per-job filesystem lease excludes another executor/process. A shared
+in-process claim also protects memory stores without creating disk lock files;
+release it on errors, cancellation and drop. This does not establish cross-process serialization of every ordinary provider write;
+that remains R01/R06. Pending folder changes gate account writes/sync and group
+staging. Account removal reviews include the journal and delete its records after
+confirmation. Cache moves copy MIME inside SQLite, rekey IMAP metadata, preserve
+local POP3 identities, conversation/restored markers, Sent mappings and relevant
+Undo receipts. Deleting a referenced folder retires only affected history items.
+Retain the protocol and `tests/folder_actions.rs` recovery/collision regressions.
+
+HTML opening measurements use the owned X11 pixel sampler in
+`scripts/native_pixels.py` and the saved MCP equivalent `scripts/html_latency.py`.
+See the repository E2E skill for timing boundaries and fixture limitations. Keep
+20 samples per case and the 100 ms cold-document / 50 ms cached-document p95
+limits in `performance-budgets.json`. `--html-only` checks only this explicitly
+authorized work while other final performance measurements remain deferred.
+Bounded document-local text/glyph caches and visited initial-frame reuse must
+preserve font, content, viewport, image-policy and generation identity. The
+software renderer coalesces overlapping damage and paints only visible solid
+panel interiors; keep full/partial pixel and fractional-scale regressions.
+
+
+Deeply nested HTML tables must not redo the same subtree layout exponentially.
+`vendor/litehtml-sys` retains one table layout per complete containing-block
+constraint within the current normal-flow document render. Compare typed width,
+height, min/max, context index and sizing mode; a parent-adjusted box width is
+not proof of an identical layout. Caption displacement applies to the cells exactly once; do not accumulate a
+second offset on their row parents. Disable reuse in positioned layout and never
+reuse across render calls, resize or image updates. Preserve paired uncached/
+cached pixel, selection, span/caption/float/position and reflow tests, plus the
+exact inline-offset and caption-height expectations shared by both modes. The
+`shep-test-support` dependency feature exposes only thread-scoped test controls;
+normal and native test-support application builds do not enable it. Never edit
+the Cargo registry source. The cold/visited deep-table MCP pixel gates use a
+fictional 16-level template with 1,182 utility CSS rules; simplified letters alone
+failed to reproduce the user's 1–2 second delay. Read-only personal diagnostics
+remain explicitly ignored and cannot add mail content to public fixtures or logs.
+
+While selection mode is active, row clicks toggle that one message and preserve
+all other choices, including other pages. Shift ranges add to that selection.
+Only Clear/Done/Escape or a scope change clears the group deliberately. Native
+checkbox/row/modifier inputs must not count as reading. Preserve the additive
+row/range/cross-page bulk-review test and the separate double-click reader flow.
+
+Editor viewport bounds do not include partial glyph extents. The software
+renderer must always intersect editor text with its local viewport and damage
+mask, even if the editor box lies wholly inside that damaged area. Preserve the
+partially visible final-line renderer test and long-reply native typing captures.
+
+Inline fragment elements retain only their relative offset; `line_box.cpp` resets it before each application. This prevents wrapped fragments and repeated table measurements from accumulating a superscript/span offset. Keep the exact 5px/2px selection-geometry and repeated-layout regressions.
+
+
+## New-mail notifications
+
+`Preferences.notifications` independently controls popups, sound and sender/subject details; all default on. Native delivery runs on a separate coalescing watch worker, never on iced or the sync worker. A fixed 150 ms burst window groups arrivals; one delivery runs at a time, with bounded observation output. Turning both outputs off consumes arrivals without replaying them when re-enabled. Test requests must finish even if muted before delivery. Desktop rejection stays visible with a recovery instruction; an acknowledgment is not proof that the OS displayed pixels or played sound under Do Not Disturb.
+
+Arrival identity and initial-import readiness are persisted in `store/notifications.rs`. Initial Inbox import and IMAP UIDVALIDITY changes stay quiet until that Inbox completes; later unread Inbox arrivals notify at most once per account/content identity. Imports/restores/moved copies remember identity without alerting. A crash between cache commit and desktop delivery can lose that alert, but restarting must not replay old alerts. Read toggles and unread badge changes are not arrival sources. Remove the notification ledger when removing an account.
+
+Sync SEARCH/FETCH helpers in `providers/mail/sync_queries.rs` require matching tagged OK, including after partial data. The upstream async-imap collection helpers discard completion status; do not restore those helpers in this path. A failed command must not produce reconciliation or mark a baseline complete. Preserve loopback failure, partial-data, disconnect and logout cases. Other collection helpers remain part of the provider audit.
+
+Linux uses `org.freedesktop.Notifications` with Shep's desktop identity, escaped body markup and explicit sound/suppress-sound hints. Sound-only mode uses `canberra-gtk-play`; Windows uses a per-user Shep AUMID and WinRT toast, with the system mail sound; macOS uses the Shep bundle identity, initialized once, and native notification delivery. Actual Windows/macOS delivery and bundle/install integration remain open platform work. Never silently borrow another application's identity.
+
+The native MCP fixture bypasses all real popup/audio delivery. `desktop.start` accepts `notification_delivery: "slow" | "fail-once"` for isolated delayed/error/retry scenarios. Save every interaction in `scripts/e2e.py`; the notification flows cover defaults, independent outputs/privacy, persistence, arrival/restart deduplication, compact dark layout and navigation during a delayed failure. Real Linux protocol tests start their own private bus and never touch the user's notification service. Keep logs/screenshots in ignored artifacts.
+
+## Mail move recovery
+
+The a81d767 recovery checkpoint uses `mail_actions/journal.rs`, `runner.rs` and
+`store/move_journal.rs`. IMAP preflight finishes before durable preparation;
+Started/Copied/Committed/Located/Kept records retain the source MIME and actual
+acknowledgments. Do not repeat an unconfirmed MOVE/APPEND. In particular, tagged
+MOVE NO may have partial effects (RFC 6851 §3.3); only atomic APPEND rejection is
+classified as not applied. Keep matching-tag and disconnect protocol tests.
+
+Provider commands have individual timeouts. Never cancel observing a SQLite
+receipt commit, or let waiting for LOGOUT/closed UI output negate a confirmed
+write. Cross-account recovery verifies the destination's exact raw bytes and
+canonical identity before source cleanup, preserving any original APPENDUID.
+The legacy transfer tuple migrates atomically; an uploading tuple remains
+unconfirmed. Account identity checks use the original incoming connections.
+
+Protected cached originals remain readable through restart and reconciliation.
+Destination queries carry bounded recovery metadata and clear provider UIDs;
+selection capture and older selections must exclude these protected identities
+from available provider targets. Detail reads can follow a completed cache alias
+when rekeying overtakes a pending read. Keep the late-read error-toast regression.
+The runner requires the existing account locks, sorted for two-account work;
+this does not establish independent-process coordination of all mail operations.
+
+Automatic recovery considers at most three committed records per pass and
+rate-limits attempts. Manual recovery/review and confirmed Keep local copy controls
+now have storage/runner/controller and native tests. Kept copies receive local
+identities, never an obsolete provider UID; retiring their old Undo avoids a
+false server reversal. Active recovery must save its receipt before app close,
+and a failure cancels close. This checkpoint is installed/pushed with all 167
+native functional scenarios passing. Complete adapter wire/journal, broader
+Undo/history/alias integration and live-account verification remain in TODO;
+do not close R73 based on fixture happy-path coverage.
+Native `move_recovery=true` uses only a protected fictional cache and a fixture
+Refresh acknowledgment; see the repository MCP skill and saved automated flow.
+
+
+## Search across folders
+
+Interactive message search sets `MailQuery.search_all_folders` while retaining
+its browsing folder and account selection. `MailQuery::search_scope` is shared
+by the SQLite query plan and optimistic UI membership; selection captures use
+that same plan. Search spans folders in the selected accounts, preserves explicit
+read/flag/attachment filters, and keeps an empty account selection empty. Clearing
+search returns to the browsing scope. Do not restore the old Inbox-only search.
+Folder labels in result rows must remain readable at compact sizes. Preserve the
+storage scope/ranking/paging/selection tests and all three `test_search_*` native
+cross-folder scenarios. Search and move-dialog folder matching are distinct.
+
+
+## Default reading layout
+
+MIME preparation computes `HtmlBody.reading_column` off the UI thread. Plain
+letters and HTML with typography/color styling get a centered column with
+comfortable padding. HTML tables, explicit dimensions/positioning and authored
+layout CSS retain sender geometry; do not apply the simple-column CSS to them.
+Font-size changes scale the column. Keep rendered Find/selection geometry and
+native full/compact pixel checks alongside any default CSS changes.
+
+Expanded conversation cards share the active document's opaque background and
+choose light/dark control colors for that surface. Their themer/container tree
+stays identical while rendering discovers a background, so theme updates cannot
+reset the scroller or native text selection. Preserve contrasting-message,
+cached-switching and refresh/scroll tests, as well as the standalone reader tests.
+
+
+## Manual refresh animation
+
+Refresh defaults to Mod+R with F5 as its secondary binding. The v2 keymap migration
+adds F5 only for an absent secondary slot with a nonempty primary and no conflict.
+An explicit clear stays clear. Record an empty migration decision when F5 is
+already owned or Sync is disabled, so freeing F5 later does not silently bind it.
+
+`ui/refresh.rs` owns manual animation phase. Accepted input starts feedback before
+the worker acknowledgment; repeated/coalesced requests retain phase. Only the
+scheduler's manual Busy(false) ends it, including failures. Background Busy and
+MailSyncFinished cannot cancel a queued manual refresh. Run the 16 ms animation
+subscription only while the mail header is visible. Frame updates change the SVG
+only, bypassing mail scheduling/body preparation and interaction timing samples.
+Use floating rotation to preserve the click target and layout.
+
+The patched SVG pipeline caches an unrotated raster by physical size, applies the
+complete translation/rotation transform when painting, and honors its local
+viewport plus damage/layer clips. Matrix diagonals are not rotation-independent
+scale values. Preserve the direct center/fractional-scale/partial-paint tests and
+native light/dark/compact/120% refresh captures. Native tests compare actual icon
+pixels, remap/clear/restart F5, queue manual work during background checks, and
+navigate through failure/retry. These are functional tests, not latency evidence.
+
+
+## Native keyboard ordering
+
+The root `ContextArea` publishes keyboard presses after its native child handles
+that event, into the same message stream as mouse controls. Do not route presses
+through the asynchronous event subscription: an earlier Escape can otherwise
+arrive after a later Review click and close its new dialog. Nested areas do not
+publish duplicate keys. Captured popup events belong to their native overlay.
+
+`ui/native_input.rs::Focus` observes actual search/Find focus in that widget event;
+its immutable snapshot protects uncaptured modified chords such as Ctrl+D even
+if a later mouse event changes focus. The controller retains pane/action scope
+and ordinary captured-key handling. Find Enter uses this focus and the key's own
+modifiers directly. Remove rather than revive old KeyFocusChecked/GuardedKey
+round trips. This does not replace the layout-aware focus tasks that open fields.
+
+The MCP batch action `key_sequence` accepts 1–32 separate key chords, each at most
+80 characters without whitespace, and sends them with the existing native 1 ms
+xdotool delay. It changes no observation state. Keep its ownership/validation
+Python test and the three `test_native_*` ordering/isolation scenarios. The rapid
+Move/Escape reproduction fails on the previous installed executable. These flows
+intentionally omit waits between earlier keys and already-visible later controls;
+independent scenarios may still await focus/layout to isolate their own behavior.
+
+
+## Inline composer ownership
+
+`ui/composing::Session` owns recipient/account/subject metadata, the native editor,
+its pending save revision and UI key. `ui/composing/sessions.rs` parks sessions by
+draft ID when navigating. Generic dialog fields must never hold composer text.
+Keep one save in flight per session, coalesce newer edits and use the bounded
+persistence channel. A manual Save applies to the current session even when its
+previous autosave is pending. Navigation must never wait for its acknowledgment.
+
+`Draft.reply_context` keeps original quoted text separate from the editable reply
+and persists its association. MIME submission uses `delivery_body()` and the
+Include original choice. Legacy drafts still deserialize without this context.
+Do not replace forward HTML handling with the reply quoting path.
+
+Window close must observe every dirty/pending session, then save newer revisions.
+A failed save cancels close and retains text. Background reader results cannot
+restore a composer while close or list selection is pending. Account-removal
+review waits for that account's owned draft saves/file imports; successful removal
+retires only its sessions. Discard must wait for an attachment import to finish.
+Late file/send/save results must preserve unrelated editors and newer revisions.
+
+The draft-keyed reader scroller separates different editors and keeps the same
+editor tree through asynchronous HTML rendering. Find and HTML reflow target
+`compose-reader` while replying. Native focus guards protect To/Cc/Bcc/Subject
+and the editor from mail shortcuts, preserve text Ctrl+A and ordinary Tab, and
+clear hidden focus when collapsing. Preserve the saved inline switching/restart,
+selection, Find, send-preparation and compact typing scenarios, alongside all
+existing forwarding, recipients, file picker, discard and Outbox flows.
+
+
+## Complete database export
+
+`transfer.rs` copies SQLite pages from a separate read-only connection with a
+pinned read transaction. Never copy the live cache with ordinary filesystem reads
+or hold the mail-cache worker for the full transfer. Keep the private temporary
+file in the selected destination directory, bounded page steps/progress and atomic
+publication. Cancellation before commit must preserve the previous file; a
+post-commit warning must still report a saved copy. Protect active cache, WAL/SHM,
+backup-journal and operation-lock paths, including aliases. On Unix, compare
+metadata/inodes without opening and closing an ordinary descriptor to a live
+SQLite file, which can release process advisory locks.
+
+`engine/database_transfers.rs` owns one active job through a capacity-one command
+channel, independent of provider capacity and mail reads/saves. Progress uses a
+latest-value watch channel; cancellation and completion use one-shot channels.
+The UI waits for its exact preferences acknowledgment and all current/parked
+draft saves/file imports before starting. Keep stale-result rejection, failed-save
+recovery, cancellation under backpressure and close waiting for cleanup.
+
+Preserve `transfer::tests`, UI ordering tests, the dispatcher saturation test and
+all three `test_database_export_*` native flows. The native held-copy fixture
+requires both test-support demo mode and `--hold-database-export`; it waits for
+ordinary Cancel/window-close input, never a state-file mutation. Export keeps all
+database-backed records, including pending-operation history, but excludes OS
+credentials. The import path below consumes this format; encrypted backup Restore
+is a separate operation.
+
+## Database import and local profiles
+
+`transfer/import.rs` stages a private copy before review. Derive the accepted
+schema from an independent Store, validate supported v2/v3 schema, integrity,
+foreign keys and credential-owning identifiers, and reject foreign/newer schemas
+or triggers. SQLite validation/copying runs off the UI/cache worker with bounded
+progress and cancellation. Never add a raw-mail payload ceiling to this format.
+Consume the exact reviewed copy on confirmation; never reopen its source path.
+
+`transfer/import/fences.rs` archives changed metadata in `imported_operations`
+and prevents imported pending sends, Sent uploads, bulk/folder changes and
+credential cleanup from replaying. Keep original MIME and acknowledged recovery
+identities. Pending work needs native review. Preserve quiet notification setup,
+device-specific window/backup paths and disconnected Google/automatic-backup
+state. An import is not a server acknowledgment or a successful credential import.
+
+`transfer/import/install.rs` closes SQLite before no-overwrite file publication.
+Publication is the commit boundary: later cancellation or catalog/flush errors
+must preserve the copy and report saved-with-warning. Recovery adopts its marker
+and same file, rather than creating a duplicate. Never recursively delete a
+profile folder on cleanup. Malformed unselected profiles must not hide valid ones.
+
+`profiles.sqlite` uses its own bounded 32-command worker and revision-checked
+rename/selection. Keep lists at 50 rows. The running `profiles::Session` retains
+its Store/credential scope; selection applies on next launch after normal close
+saves. Imported paths/namespaces come from a fresh device-owned UUID, never data
+inside the import or a shared Google profile ID. Preserve legacy paths/keys.
+Export must protect the registry and every profile's cache/journal/operation files.
+
+`credentials.rs` owns the engine's OS-keychain operations on one bounded
+32-command FIFO thread. Account, SMTP, calendar, Google, backup and removal
+adapters share it. Accepted writes finish even if their observer disappears;
+RestoreMissing checks/writes in that FIFO. Imported profiles never fall back to
+legacy/other-profile credentials. Validate portable account/CalDAV identifiers
+against reserved/SMTP keys and case-insensitive collisions before accepting an
+import or encrypted backup. Preserve discovered `caldav:<64 hex digits>` IDs.
+
+Keep import validation/cancel/version tests, fences/rollback tests, installation
+commit/recovery tests, catalog pagination/CAS/isolation tests, credential FIFO
+tests, and the saturated-provider dispatcher test. Preserve all five
+`test_database_import_*` native scenarios, all three export scenarios and affected
+backup/Google/draft/restart flows. See the repository E2E skill for owned fixtures.
+Live diagnostics remain explicitly ignored; `SHEP_LIVE_PROFILE_ID` optionally
+selects a canonical local profile UUID alongside the required authorized
+`SHEP_LIVE_ACCOUNT_ID`. Without it, diagnostics retain legacy-profile semantics.
+
+OAuth cross-client profile implementation remains the top TODO priority. Use the
+[Flutter handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md)
+and shared format; do not present local database transfer as continuous sync.
+
+## Continuous profile transport
+
+`profile_sync` uses the pinned shared `shep-profile-core` codec; keep the exact
+operation bytes and optional fields. `providers/drive_http.rs` supplies bounded
+HTTP decoding to profiles and backups. Profile files use their own stable
+category, names and custom properties in appDataFolder; never select them with
+backup retention or serialize local Preferences/credentials wholesale. The wire
+contract and live limitations are in `docs/agents/profile-drive.md`.
+
+The profile transport journal owns a separate 32-command SQLite worker. Reserve
+the remote ID and commit exact bytes before obtaining a `DurableUpload`; a retry
+cannot replace its reservation. Verify the actual server checksum, or fetch the
+content when omitted. A lost/conflicting reply and a failed local acknowledgment
+must retain the same pending operation. Never turn file-name equality into proof
+of an immutable upload. Profile transport has no overwrite/delete operation.
+
+Persist discovery tokens/record IDs and revisions. Empty pages with another token
+remain incomplete; reject loops, duplicate identities and stale or foreign pages
+atomically. Only a completed scan exposes metadata pages for application, at most
+50 at a time; no whole-history collection/page ceiling. Scan replacement must
+preserve uploads and merge history. Keep the protocol/journal/scan regressions
+and existing Drive backup tests. Run JSON/hash/SQL/network work only in backend
+workers. Ongoing polling/application now has a bounded coordinator; account
+linking, conflict/removal reviews and incremental pulls remain TODO.
+
+The pre-commit hook, full check script and disabled quality workflow also run
+`python3 scripts/test_profile_core.py`. Since the merge, `shep-profile-core` is a
+path dependency on this repository's own `shared/profile-core` (a superset of
+main's former `e3e69a4` Git pin and the client crate); keep fixture provenance
+explicit when the codec/history contract changes, and never use a sibling
+worktree path as a shipped dependency. Keep production Drive/history paths protected in database export/import guards alongside the other active provider journals.
+
+`profile_sync::replica::Replica` privately owns the shared history worker. Complete
+verified pulls mint revision/device/scan proofs; publishing compares core, Drive
+journal and discovered identities before reserving. Preserve core-reserve →
+transport-prepare → verified-upload → transport-ack → core-confirm ordering and
+all restart tests. A lost observer must not choose another operation/file ID.
+Keep the owner alive through upload acknowledgment; check lifecycle/category
+changes between requests. Empty discovery is not permission to recreate an
+existing profile. Account/profile tombstones and explicit conflict resolutions
+come from the shared merge worker, never timestamp-based local replacement.
+
+The shared Drive metadata fixture now fixes appProperties/category/file naming
+across implementations; preserve exact bytes with the repository Git attributes.
+The earlier bb87ac2 desktop prototype had a different unconnected wire convention.
+Real same-project cross-client visibility remains unverified. The kernel still
+needs account linking/reviews, remaining settings and incremental pulls. Native
+continuous-update fixtures do not prove actual cross-client Google delivery.
+
+`scripts/test_profile_core.py` checks through Cargo metadata that
+`shep-profile-core` resolves to the workspace member `shared/profile-core` (a Git
+pin or a sibling checkout path is rejected) and runs `cargo test -p
+shep-profile-core --locked --all-features` against the root `Cargo.lock`; the
+former copied-crate runner and `tests/support/profile-core.Cargo.lock` are gone.
+Python 3.11+ is required. Keep the runner's source-check tests and all shared
+protocol/history tests in addition to the desktop bridge tests.
+
+Enrollment and seeds use device-local KV records on the cache owning worker.
+Keep revision checks, independent offline option saves and same-transaction
+Google-disconnect pausing. Database import archives/removes both records.
+`profile_sync::setup` creates only from a current complete discovery review,
+persists all seed UUIDs/account mappings, and checkpoints the exact expected
+history revision before each edit. Retry that original request, never resnapshot
+its values or assign another UUID. Keep an admitted upload owned through both
+journal receipts even after stop; subsequent requests must observe newer intent.
+Ongoing account application/linking and incremental polling remain open. Metadata review alone must not connect a
+remote-specified server using existing credentials. See the profile reference
+and TODO for supported settings and remaining behavior; preserve held-response,
+restart, malformed seed, settings rollback and import-fence tests.
+
+
+Profile setup now has a dedicated bounded 32-command engine owner and native
+Accounts → Profiles and sync controls. Keep category saves as touched-field
+patches; an old full-options snapshot must not disable a newly created profile
+or re-enable a disconnected one. UI pending gestures remain separate from the
+single admitted save, including repeated values after an older failure.
+Read-only HTTP/provider-slot waits cancel on Stop/close; admitted uploads and
+cache/history writes keep their receipts before ownership is released. Pending
+setup progress must not retire the job or let shutdown skip its final receipt.
+
+Per-workspace sync files live in `profile-sync/` beside the cache: `drive.sqlite`,
+hashed-binding history databases and their sidecars/ownership files. Protect all
+members and hard-link/symlink aliases during database export/import. New desktop
+profiles use namespace `so.shep`; existing bindings retain their namespace. Keep
+this value aligned with the participating clients and the live OAuth project.
+Initial publication/import is explicitly labeled; ongoing cycles have their own
+status and controls. Do not imply unfinished conflict/recovery paths are delivered.
+The new native fixture modes/scenarios are documented in the E2E skill.
+
+Profile controls remain disabled until their local enrollment snapshot loads.
+Keep newer unsent choices after failed writes/status reads for explicit retry,
+but do not treat failed, unadmitted intent as a shutdown dependency. An actual
+admitted save/upload still drains. Preserve the controller ordering test and
+`invalid-local` native fixture's disabled controls, navigation and graceful restart.
+
+
+Native profile discovery uses the shared durable catalog pinned at `43cdcf0f`.
+The extra shared `test-support` feature exposes only an owned loopback transport
+with a fixed fake token; normal releases cannot use it. Keep nested catalog
+observations and directory/hard-link aliases protected during database transfer.
+Do not share a Cargo target directory between worktrees with different vendored
+renderer sources: stale path-dependency artifacts can hide or invent build failures.
+
+Existing-profile import uses a sealed discovery/history/local-revision review.
+Only small summaries reach iced; acceptance reads current values on background
+owners and atomically commits enrollment, supported preferences and fresh local
+account IDs. Persist `profile_join_v1` shared-to-local mappings and the applied
+review UUID for lost-acknowledgment retry; database import archives this source
+mapping. Never reuse remote account IDs as existing OS credential slots.
+`profile_reconnect_v1` keeps imported accounts out of background sync and provider
+lookup until SaveAccount has persisted their device credentials. Preserve this
+marker in newer workspace snapshots; remove it on explicit account removal.
+Keep catalog restart/change-token/ownership, join category/stale/rollback/tombstone,
+unknown-connection and native review/import/restart regressions. Joining is an
+initial import; account linking, conflict/removal/endpoint reviews and credential
+transfer remain TODO work. The protection choice is still
+unanswered. Follow the shared handover before extending the format.
+
+Enrollment saves `profile_replication_v1` on the cache owner. First-device setup
+verifies the seed's current field values and saves their common basis before any
+remote pull; retries must not replace it with newer native settings. Existing
+profile import commits raw accepted fields, local/shared mappings and that basis
+in the same transaction. Database import archives/removes the source checkpoint.
+Never infer an old missing basis from a history that has since changed.
+
+Local capture retains one exact operation UUID, field revision, native value and
+portable value until acknowledgment. Preserve optional change/connection fields.
+`Replica::admit_local` checks the actual current field after Edit (including an
+idempotent retry) before minting the receipt accepted by the Store. A newer whole
+history revision alone is not proof the local edit is still current. Acknowledging
+admitted work must not restore old preferences, category choices or Google state.
+Existing unmapped accounts stay local; local removal records suppression, not a
+profile-wide tombstone. Keep restart, category pause, concurrent successor/conflict,
+seed, native enrollment and import-fence tests when connecting the continuous loop.
+
+The continuous loop connects safe polling/application; conflict controls remain TODO. Capture/admit
+pending local changes before pulling remote records, and preserve per-field common
+revisions when local edits race remote application. Dirty UI preferences also need
+per-field merging so a later whole-form save cannot erase untouched remote changes.
+Desktop uses client `184b98a`'s `initialization-v1` contract through immutable
+harness distribution `43cdcf0f`. Keep start/data/completion seed operation identities
+and expected revisions durable. Complete setup must be verified by the shared
+worker before import or local-change admission; listing completion is not enough.
+Never rewrite an admitted legacy operation to insert new ancestry. Only an empty
+history with no admitted seed operations may acquire markers while retaining its
+metadata/UUIDs. Previously started/finished legacy setup recovery stays in TODO.
+Preserve incomplete/legacy/out-of-order and native alternative-profile tests.
+Tooltips is the eighth supported portable setting; unsupported touch-only fields
+stay in shared history. Preserve active sibling work; no shared target directory
+across differing vendor worktrees.
+
+
+After verified Google connection status, `ui/profile_sync/onboarding.rs` coalesces
+one discovery request per connection/session and waits for saved preferences.
+Local `Options.discover_on_login` defaults on; Not now persists off even without
+an enrollment and never re-enables on reconnect. The Google grant remains local.
+The background coordinator owns catalog reads and automatic joining. Only a
+single complete profile in an untouched workspace can import automatically;
+`Review.automatic` rechecks that condition and opt-out in the acceptance transaction.
+Existing local choices or multiple profiles require the ordinary picker/review.
+Keep stale Google/generation guards, reconnect-only account staging, atomic joins,
+failed/held discovery and native login flows. Prompt completion must not steal
+focus or switch tabs. Ongoing sync has separate receipt/application guards.
+
+
+Continuous profile cycles use the existing owning coordinator and check local
+intent before pulling. `profile_replication_v1.deferred` retains exact requests
+when a category pauses or a field needs review, allowing unrelated fields to
+progress. Only the history owner constructs `continuous::Observed`; cache
+application checks current binding/consent/field values atomically. Never advance
+an edited field's basis past an unseen remote change. New remote accounts get
+fresh local credential identities and Reconnect markers; changed existing
+endpoints/removals are retained for explicit review, not automatically applied.
+
+Native preference writes carry typed portable edits via `preference_edits::Write`.
+Use `queue_preference_write` or `persist_preferences` in UI paths, not a full
+`Preferences.into()` edit. The latter is reserved for deliberate whole-value store
+callers/fixtures. Per-field generations preserve reversions and queued retries;
+untouched remote fields merge both on the cache owner and into a dirty UI form.
+`profile_native_edits_v1` records native preference/account-name generations in
+the same cache transaction as their writes. Initial reviews fence those baselines;
+an acknowledgment records only its captured generation. Remote applies never
+record themselves as native edits. Database import archives source generations.
+Keep the race, restart, category, deferred-conflict and native continuous-update
+regressions. Polling lists full history and reuses verified immutable records
+from the separate profile journal. Cache hits require the exact record metadata
+in a current complete scan; decode/hash/namespace checks run on its bounded owner.
+Corrupt or oversized cache bytes are misses, repaired only by verified downloads.
+Never turn a missing/failed listing into success because old bytes are cached.
+Incremental change-token pulls and conflict/link/removal controls remain TODO.
+
+Native tray/window lifecycle uses an iced daemon: destroying the visible native
+window must leave engine subscriptions running, while final Quit uses
+`iced::exit()` only after required saves/receipts acknowledge. Close-to-tray is a
+local preference, off by default. With it off, pending writes can temporarily hide
+behind the tray with a saving notification; failure, Open or tray loss restores
+an accessible window and cancels close intent. Do not wait for optional read-only
+sync or notify for an idle bulk-stop handshake. Preserve per-operation error
+ownership and late-acknowledgment tests.
+
+Tray callback actions use a capacity-one watch retaining the latest Open/Quit; Linux watcher availability
+uses a separate coalescing watch value so saturated actions cannot discard host
+loss. Linux uses StatusNotifierItem/DBusMenu, Windows/macOS use their native event
+thread. Cross-compilation does not establish actual platform/menu-bar execution.
+`desktop.start(tray="available" | "missing")` owns its own D-Bus socket, GTK host
+and notification service; Python GI/GTK3 and python3-dbus are harness dependencies,
+not production requirements. Never use the user's desktop session bus for these
+tests. Keep normal non-tray close/restart native flows alongside tray regressions.
+
+Ordinary tray hiding also preserves required-write error visibility. Track actual
+hidden-window ownership separately from startup's absent window. A fresh error
+while an ordinary-hidden write is pending reopens the work; an old error or an
+optional read-only refresh does not. If Quit was already pending, use the existing
+operation-owned cancellation state before reopening: a stale attachment/discard
+result cannot cancel a newer close dependency. Queue-rejected draft saves keep
+the visible window. Preserve `test_tray_native_ordinary_hide_reopens_when_pending_send_fails`
+and its actual tray-menu Quit variant alongside the typed-result regressions.
+
+Windows badge images are prepared on the existing count watch worker; iced's
+native window callback only owns the HWND overlay and its recovery subclass.
+`TaskbarButtonCreated` reapplies the latest prepared frame after Explorer restart;
+`WM_NCDESTROY` releases the subclass owner. Reopening from tray reapplies the current
+count. macOS Dock labels use one acknowledged main-queue operation at a time,
+with a capacity-one watch signal retaining the latest count while AppKit is busy,
+including when no iced window is open. Preserve held-delivery, zero/large-count,
+Linux private-bus and saved native badge regressions. `scripts/check_badge_adapters.py`
+checks exact platform adapter source separately from full-app compilation and OS
+execution; do not report it as Windows/macOS desktop verification.
+
+
+The raw Linux entry point is `scripts/install-release-linux.sh`; it fetches the
+standard-library helper `scripts/install_release.py`, resolves a published native
+asset, verifies `SHA256SUMS`, validates/extracts into private staging, then invokes
+the archive's existing Linux installer. It defaults to the current user and offers
+an interactive scope/cancel choice; sudo runs only for an explicitly chosen
+all-user installation after the archive is ready. Never enable release CI, publish
+an asset or install onto a developer's account merely to validate this script.
+`tests/test_release_installer.py` uses an owned loopback release server, fictional
+binaries, temporary prefixes/menu entries, staged failure/cancellation and a fake
+bootstrap curl. Missing release/platform assets must remain explicit; a working
+fixture does not prove a binary is publicly available.
+
+The raw macOS entry point is `scripts/install-release-macos.sh`. It uses system
+Bash, JXA/Foundation JSON parsing, curl/tar/shasum, plutil and sips/iconutil to stage
+a native application bundle. Only exact unique regular binary/icon members stream
+out of the verified archive. The destination copy has a rollback slot; an explicit
+system install elevates only that final operation. Keep Gatekeeper unchanged and
+never describe generated bundles as signed/notarized. `tests/test_macos_installer.py`
+executes the shell/download/filesystem paths against isolated native-tool fixtures;
+it is not actual macOS execution. No Python runtime is required by this installer.
+
+The raw Windows entry point is `scripts/install-release-windows.ps1`. It targets
+built-in PowerShell 5.1 and Windows tar.exe, streams binary extraction outside
+PowerShell's text pipeline, creates a PNG-backed native ICO and WScript Start-menu
+shortcut, and defaults to LocalAppData/Programs/Shep. Explicit all-user installation
+uses a prepared script/data manifest and RunAs; encoded invocation quotes literal
+paths and never evaluates release metadata. Keep checksum/member validation,
+rollback and missing-asset errors. `tests/test_windows_installer.py` uses temporary
+folders, loopback downloads and explicit COM/UAC/environment boundary fixtures;
+set `SHEP_POWERSHELL` to an existing PowerShell binary for Linux contract execution.
+Do not install a runtime or invoke real UAC on the developer's desktop for tests.
+Actual Windows PowerShell 5.1/COM/UAC execution remains distinct from Linux fixtures.
+
+Portable-setting reviews live in `profile_sync/reviews.rs` and the corresponding
+store/UI modules. Keep their scalar payloads bounded by the supported setting
+list and shared version limit. The history owner rereads the selected immutable
+change, preserves opaque extensions and reserves one exact operation before
+admission. Persist reviewed concurrent UUIDs with that request; restart must not
+regenerate them. Native setting generations, enrollment/Google lifecycle and
+history revisions reject stale reviews, including change-and-revert input.
+Unrelated settings and newer edits after reservation must survive acknowledgments.
+Native actions retain the exact displayed review identity; removing an earlier
+row must never retarget an already queued button or dropdown event.
+Reviewing uses cached history, without waiting for credentials or a provider slot.
+A choice is locally saved before background publication; never describe that as
+confirmed Google success. Preserve the `profile_setting_review_*` Rust and saved
+native scenarios, including compact dropdown/mouse choices, restart and stale
+native preference recovery. Account endpoint/removal/linking reviews remain
+separate unfinished work.
+
+Transparent icon sources live in `assets/shepherd-{light,dark,symbolic}.svg`;
+approved original PNG references stay unchanged. Regenerate WebP/launcher PNGs
+with `uv run --with cairosvg --with pillow python scripts/build_icons.py`.
+The Linux installer ships `so.shep.Shep-symbolic.svg` for native system-theme
+recoloring and keeps the application/desktop/StartupWMClass identity unchanged.
+The StatusNotifier IconName uses that symbolic asset with transparent full-color
+pixmap fallback; macOS uses the symbolic raster as a native template. Never add
+an app-owned theme watcher that rewrites personal icons on every frame.
+Keep alpha/interior regressions, installer update/uninstall checks and the saved
+native GTK tray-theme flow. Its `tray_theme` action clicks the owned GTK host's
+button; it cannot change the user's desktop theme. Distinguish GTK fixture evidence
+from actual GNOME shell, Windows and macOS review.
+
+Compact mail rows share `ui/mail_list::ROW_HEIGHT` (60 logical pixels). Native
+keyboard reveal must use actual scrollable layout bounds and reject stale
+scope/selection results; do not restore estimated window-height offsets. Tests
+use `mail_row_y` and await the layout observation before comparing scroll after
+deleting the last visible row. The isolated Xvfb harness uses GTK's Cairo picker
+renderer; clipboard ownership and exact path validation remain mandatory. This
+setting does not alter production rendering.
+
+## Color palette persistence
+
+Preferences → Colors has independent light/dark RGB roles. `appearance::edits`
+tracks each role with fixed-size edit generations; `preference_edits` merges those
+intents with current stored preferences before saving. Preserve untouched roles,
+explicit reversions and newer edits through old acknowledgments. The editor
+projects staged changes onto current palettes, and the UI owns its small iced
+theme cache without a shared lock. Keep native palette invalid-input, light/dark
+restart, compact Reset/Undo, low-contrast recovery and held-provider save flows.
+Custom palettes are exported with the local database; cross-client color sync
+still needs a shared-codec key and interoperability tests.
+
+
+Shared-profile import can explicitly link an exactly matching native account.
+Compare the complete portable incoming/SMTP connection, preserve its local ID,
+mail, keychain slot, local-name intent and any existing reconnect marker. Never
+send an existing credential to a changed downloaded endpoint. Reviews render
+eight accounts per page and prohibit reusing one local account twice. Both the
+live control and durable join receipt retain the exact chosen links; stale events
+and a lost-acknowledgment retry with other choices are rejected. Preserve
+`profile_join_*` storage/controller tests and all `test_profile_join_link_native_*`
+scenarios. This does not implement post-enrollment linking or password transfer.
+
+Native account connection edits have their own durable profile field generation,
+separate from name changes. Keep incoming/SMTP/security/auth/sent-copy reversions
+through pulls and restart. Rename/no-op saves must not create connection intent.
+Do not turn these generations into permission to retarget saved credentials.
+
+SFTP session/channel setup has explicit deadlines in addition to transport
+inactivity and per-request SFTP timeouts. Keep the real held-channel regression: it
+advances virtual time only after the SSH handshake, verifies visible timeout and
+recovery, and must not write a backup file before setup succeeds. Keep host-key
+verification before authentication and never use keepalive activity as proof that
+a requested operation is progressing.
+
+
+Shared connection reviews live in `profile_sync/account_reviews.rs` and
+`store/profile_sync/account_reviews.rs`. Keep native account identities separate
+when adopting changed endpoints: preserve the previous account/mail/credentials
+as local-only and add a fresh account requiring reconnect. Freeze history versions,
+native edit generations and Google/consent revisions; reserve native identity and
+pending shared operation in one transaction before history admission. Preserve
+restart/lost-reply, stale native/history/Google/removal, UID collision and real
+native Keep/Add/compact review regressions. Remote removal reviews are separate;
+never revive a tombstoned account through an old connection review.
+
+
+Shared remote account removals never delete local mail automatically. A reviewed
+Keep choice suppresses that shared identity durably without moving credentials
+or publishing another connection. The ordinary local-data removal dialog retains
+its current draft/receipt guards and clears stale shared review cards after a
+successful local removal. Keep exact history and local lifecycle validation,
+`profile_account_review` Rust tests and the saved `profile_account_removal`
+native flows when changing these paths.

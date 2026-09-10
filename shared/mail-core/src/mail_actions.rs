@@ -68,6 +68,9 @@ pub struct MoveReceipt {
     pub fingerprint: Option<Fingerprint>,
     #[serde(default)]
     pub connections: Vec<(String, String)>,
+    /// Links acknowledged results to protected cache/restart recovery.
+    #[serde(default)]
+    pub recovery: Option<String>,
 }
 impl MoveReceipt {
     pub fn server(
@@ -91,6 +94,7 @@ impl MoveReceipt {
             current,
             fingerprint: Some(fingerprint),
             connections: Vec::new(),
+            recovery: None,
         }
     }
     pub fn local(source: &Mail, folder: &str) -> Self {
@@ -102,6 +106,7 @@ impl MoveReceipt {
             current: Some(mail),
             fingerprint: None,
             connections: Vec::new(),
+            recovery: None,
         }
     }
 }

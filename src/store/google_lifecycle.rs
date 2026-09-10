@@ -41,6 +41,7 @@ impl Store {
                 !value.google_lifecycle.cleanup_pending,
                 "Finish Google cleanup before reconnecting."
             );
+            let previous_backups = value.clone();
             if let Some(identity) = drive_identity {
                 anyhow::ensure!(
                     identity.starts_with("drive:") && identity.len() > 6,
@@ -72,6 +73,7 @@ impl Store {
                 .checked_add(1)
                 .context("Google connection revision overflow")?;
             value.google_lifecycle.disconnected = false;
+            crate::backup::config::preserve_metadata(&previous_backups, &mut value);
             put(&tx, "preferences", &value)?;
             refresh_sources(&tx, sources)?;
             let revision = get(&tx, "preferences_revision")?;
@@ -102,6 +104,9 @@ impl Store {
                 prefs.auto_backup = false;
                 prefs.backup_ready = false;
             }
+            let previous_backups = prefs.clone();
+            crate::backup::config::preserve_metadata(&previous_backups, &mut prefs);
+            profile_sync::pause(&tx)?;
             let mut sources: Vec<CalendarSource> = get(&tx, "calendars")?;
             let mut archived: HashSet<String> = get(&tx, "google_archived")?;
             for source in &mut sources {

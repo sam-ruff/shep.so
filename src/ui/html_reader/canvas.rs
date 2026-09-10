@@ -282,6 +282,15 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
             && (frame.viewport.scale - self.scale).abs() < 0.001
         {
             renderer.with_layer(body_clip, |renderer| {
+                if let Some([r, g, b, 255]) = frame.background {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: body_clip,
+                            ..Default::default()
+                        },
+                        iced::Color::from_rgb8(r, g, b),
+                    );
+                }
                 renderer.draw_image(
                     image::Image::new(handle.clone()),
                     Rectangle {

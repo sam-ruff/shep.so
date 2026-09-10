@@ -101,11 +101,22 @@ fn score_normalized(query: &str, candidate: &str) -> Option<usize> {
 }
 
 pub fn ranked(query: &str, choices: impl IntoIterator<Item = String>) -> Vec<String> {
+    ranked_labels(
+        query,
+        choices.into_iter().map(|value| (value.clone(), value)),
+    )
+}
+
+/// Rank visible folder names while retaining their exact protocol identifiers.
+pub fn ranked_labels(
+    query: &str,
+    choices: impl IntoIterator<Item = (String, String)>,
+) -> Vec<String> {
     let query = normalized(query.trim());
     let mut matches: Vec<_> = choices
         .into_iter()
-        .filter_map(|value| {
-            let key = normalized(&value);
+        .filter_map(|(value, label)| {
+            let key = normalized(&label);
             score_normalized(&query, &key).map(|score| (score, key, value))
         })
         .collect();

@@ -111,25 +111,35 @@ impl App {
             // Keep the base widget tree alive as dialogs open and close. Replacing the
             // root Stack with a Container drops native input focus and shaped text.
             let mut layers = stack![base];
-            if self.context_menu.is_some() || self.composer.context.is_some() {
+            if self.context_menu.is_some()
+                || self.composer.context.is_some()
+                || self.folder_controls.menu.is_some()
+            {
                 layers = layers.push(opaque(
                     mouse_area(container(space()).width(Length::Fill).height(Length::Fill))
                         .on_press(Message::DismissContext)
                         .on_right_press(Message::DismissContext),
                 ));
-                layers = layers.push(if self.composer.context.is_some() {
+                layers = layers.push(if self.folder_controls.menu.is_some() {
+                    self.folder_context_view()
+                } else if self.composer.context.is_some() {
                     self.draft_context_view()
                 } else {
                     self.mail_context_view()
                 });
             }
             let mut toasts = column![].spacing(8).align_x(Alignment::End);
+            let profile_offer = self.shared_profile_offer();
+            let show_profile_offer = profile_offer.is_some();
+            if let Some(offer) = profile_offer {
+                toasts = toasts.push(opaque(offer));
+            }
             if let Some(toast) = &self.action_toasts.current {
                 toasts = toasts.push(opaque(
                     container(
                         row![
                             icon("check", 18.),
-                            text(toast.label()).size(13),
+                            text(toast.display_label(&self.workspace)).size(13),
                             if toast.undo_tokens().is_empty() {
                                 Element::from(space().width(0))
                             } else {
@@ -191,7 +201,8 @@ impl App {
                     .style(card),
                 ));
             }
-            if self.saved_toast.is_some()
+            if show_profile_offer
+                || self.saved_toast.is_some()
                 || self.action_toasts.current.is_some()
                 || !self.mail_actions.undo_failures().is_empty()
             {
@@ -222,14 +233,18 @@ impl App {
             .into()
     }
     fn mail_view(&self) -> Element<'_, Message> {
-        let title = if let Some(folders) = &self.query.folders {
+        let title = if self.query.searches_all_folders() {
+            "Search results".to_owned()
+        } else if let Some(folders) = &self.query.folders {
             match folders.as_slice() {
                 [] => "No folders selected".to_string(),
                 [folder] => {
                     if folder.folder == "INBOX" {
                         "Inbox".into()
                     } else {
-                        folder.folder.clone()
+                        self.workspace
+                            .folder_label(folder.account.as_deref(), &folder.folder)
+                            .into_owned()
                     }
                 }
                 folders => format!("{} folders", folders.len()),
@@ -239,7 +254,9 @@ impl App {
         } else if self.query.folder == "INBOX" {
             "Inbox".into()
         } else {
-            self.query.folder.clone()
+            self.workspace
+                .folder_label(self.query.account.as_deref(), &self.query.folder)
+                .into_owned()
         };
         let header = row![
             heading(title),
@@ -376,21 +393,16 @@ impl App {
             input("Search conversations…", &self.query.search, Message::Query)
                 .id("search")
                 .width(Length::Fill),
-            button(
-                text(if self.mail_selection.mode {
-                    "Done"
+            self.toggle_icon_action(
+                "select-square",
+                if self.mail_selection.mode {
+                    "Finish selecting messages"
                 } else {
-                    "Select"
-                })
-                .size(11)
-            )
-            .padding([12, 9])
-            .style(if self.mail_selection.mode {
-                primary
-            } else {
-                outline
-            })
-            .on_press(Message::ToggleSelection),
+                    "Select messages"
+                },
+                self.mail_selection.mode,
+                Message::ToggleSelection,
+            ),
         ]
         .spacing(6)
         .align_y(Alignment::Center);
@@ -418,137 +430,32 @@ impl App {
             filters.into()
         };
         // Fixed-height rows let us shape only visible text plus a small overscan.
-        let row_height = 104.;
+        let row_height = super::mail_list::ROW_HEIGHT;
         let first = ((self.inbox_scroll / row_height) as usize)
             .saturating_sub(2)
             .min(self.page.rows.len());
         let count = ((self.size.height / (self.preferences.interface_scale as f32 / 100.) - 220.)
-            .max(104.)
+            .max(row_height)
             / row_height)
             .ceil() as usize
             + 5;
         let end = (first + count).min(self.page.rows.len());
         let mut messages = column![space().height(first as f32 * row_height)].spacing(0);
-        for (index, mail) in self.page.rows.iter().enumerate().take(end).skip(first) {
+        for mail in self.page.rows.iter().take(end).skip(first) {
             let active = if self.mail_selection.mode {
                 self.mail_selection.visible.contains(&mail.id)
             } else {
                 self.selected.as_deref() == Some(&mail.id)
             };
-            let unread = mail.unread;
-            let sender = sender_name(&mail.sender);
-            let date = chrono::DateTime::from_timestamp(mail.timestamp, 0)
-                .unwrap_or_default()
-                .with_timezone(&chrono::Local);
-            let date = if date.date_naive() == chrono::Local::now().date_naive() {
-                date.format("%H:%M").to_string()
-            } else {
-                date.format("%d %b").to_string()
-            };
-            let mut top = row![
-                if self.mail_selection.mode {
-                    button(
-                        checkbox(self.mail_selection.visible.contains(&mail.id))
-                            .size(18)
-                            .on_toggle({
-                                let id = mail.id.clone();
-                                move |_| Message::CheckMail(id.clone())
-                            }),
-                    )
-                    .padding(6)
-                    .style(ghost)
-                    .on_press(Message::CheckMail(mail.id.clone()))
-                    .into()
-                } else {
-                    avatar(&sender, index, 30.)
-                },
-                text(truncate(&sender, 23)).size(12).font(if unread {
-                    BOLD
-                } else {
-                    iced::Font::DEFAULT
-                }),
-                space().width(Length::Fill),
-                muted(date).size(10),
-                button(flag_icon(mail.starred, 18.))
-                    .padding(6)
-                    .style(if mail.starred { flagged } else { ghost })
-                    .on_press_maybe(
-                        (!self.mail_actions.restoring(&mail.id))
-                            .then(|| Message::FlagRow(mail.id.clone()))
-                    )
-            ]
-            .spacing(9)
-            .align_y(Alignment::Center);
-            if self.mail_actions.restoring(&mail.id) {
-                top = top.push(muted("Restoring…").size(10));
-            }
-            if unread {
-                top = top.push(
-                    container(space())
-                        .width(5)
-                        .height(5)
-                        .style(|t| container::Style {
-                            background: Some(colors(t).accent.into()),
-                            border: Border {
-                                radius: 3.into(),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        }),
-                );
-            }
-            let bottom = row![
-                muted(truncate(&mail.preview, 84))
-                    .wrapping(text::Wrapping::None)
-                    .height(17)
-                    .size(12)
-                    .width(Length::Fill),
-                if mail.attachment_count > 0 {
-                    icon("clip", 16.)
-                } else {
-                    space().into()
-                }
-            ]
-            .spacing(8);
-            let entry = button(
-                column![
-                    top,
-                    text(truncate(&mail.subject, 57))
-                        .wrapping(text::Wrapping::None)
-                        .height(18)
-                        .size(12)
-                        .font(if unread { BOLD } else { iced::Font::DEFAULT }),
-                    bottom
-                ]
-                .spacing(5),
-            )
-            .padding([10, 16])
-            .height(row_height - 1.)
-            .width(Length::Fill)
-            .style(move |t, status| {
-                let p = colors(t);
-                button::Style {
-                    background: Some(
-                        if active {
-                            p.tint
-                        } else if matches!(status, button::Status::Hovered) {
-                            p.subtle
-                        } else {
-                            p.surface
-                        }
-                        .into(),
-                    ),
-                    text_color: p.text,
-                    ..Default::default()
-                }
-            })
-            .on_press(Message::Select(mail.id.clone()));
+            let entry = self.mail_row(mail, active);
             let entry = super::context_menu::ContextArea::new(
-                mouse_area(entry)
-                    .on_enter(Message::Hover(mail.id.clone()))
-                    .on_double_click(Message::OpenMessage(mail.id.clone())),
+                mouse_area(entry).on_enter(Message::Hover(mail.id.clone())),
                 mail.id.clone(),
-            );
+            )
+            .with_drag(super::drag_mail::Region::Source(
+                self.mail_drag.clone(),
+                self.drag_payload(mail),
+            ));
             #[cfg(feature = "test-support")]
             let entry = entry.with_draw_witness(
                 self.mail_selection.draw_epoch,
@@ -603,26 +510,34 @@ impl App {
                 )
         ]
         .align_y(Alignment::Center);
-        column![
-            container(column![filters, search].spacing(15)).padding(18),
-            line(),
-            iced::widget::keyed_column([(
-                self.list_revision,
-                scrollable(messages)
-                    .id("inbox-list")
-                    .height(Length::Fill)
-                    .on_scroll(|v| Message::InboxScroll(v.absolute_offset().y))
-                    .into()
-            )])
+        container(
+            column![
+                container(column![filters, search].spacing(15)).padding(18),
+                line(),
+                iced::widget::keyed_column([(
+                    self.list_revision,
+                    scrollable(messages)
+                        .id("inbox-list")
+                        .height(Length::Fill)
+                        .on_scroll(|v| Message::InboxScroll(v.absolute_offset().y))
+                        .into()
+                )])
+                .height(Length::Fill),
+                line(),
+                container(pages).padding([3, 12])
+            ]
+            .width(Length::Fill)
             .height(Length::Fill),
-            line(),
-            container(pages).padding([3, 12])
-        ]
-        .width(Length::Fill)
+        )
+        .id(self.inbox_context())
         .height(Length::Fill)
+        .width(Length::Fill)
         .into()
     }
     fn reader(&self) -> Element<'_, Message> {
+        if self.compose_visible() {
+            return self.inline_reader();
+        }
         if self.mail_selection.mode && !self.full_reader {
             return self.group_reader();
         }
@@ -657,9 +572,15 @@ impl App {
             container(self.reader_toolbar(detail)).padding([10, 18]),
             line(),
             self.find_bar(),
-            scrollable(container(self.reader_body(detail, true)).padding(self.reader_padding()))
+            self.reader_surface(
+                detail,
+                scrollable(
+                    container(self.reader_body(detail, true)).padding(self.reader_padding())
+                )
                 .id("message-reader")
-                .height(Length::Fill),
+                .height(Length::Fill)
+                .into()
+            ),
             container(footer).padding([10, 20])
         ]
         .width(Length::Fill)
@@ -807,6 +728,11 @@ impl App {
             ]
             .spacing(gap);
         }
+        if self.page.move_recovery.contains_key(&detail.summary.id) {
+            reading = column![self.move_recovery_bar(&detail.summary.id), reading].spacing(gap);
+        } else if detail.summary.is_local_copy() {
+            reading = reading.push(muted("Local copy").size(11));
+        }
         let formatted = self.formatted(detail);
         if detail.html.is_some() {
             reading = reading.push(
@@ -868,8 +794,9 @@ impl App {
             }
             return reading;
         }
-        reading =
-            reading.push(self.find_highlights(detail, 0, self.selectable_body(detail, 0, body)));
+        let mut message =
+            column![self.find_highlights(detail, 0, self.selectable_body(detail, 0, body))]
+                .spacing(gap);
         if self.preferences.reply_display != ReplyDisplay::LatestOnly {
             for (index, reply) in detail.replies.iter().enumerate() {
                 let expanded = self.expanded_replies.contains(&index)
@@ -895,7 +822,7 @@ impl App {
                         self.selectable_body(detail, index + 1, &reply.body),
                     ));
                 }
-                reading = reading.push(
+                message = message.push(
                     container(section)
                         .padding(12)
                         .width(Length::Fill)
@@ -912,13 +839,13 @@ impl App {
                     .iter()
                     .find(|(url, _)| url == &remote.url)
                 {
-                    reading = reading.push(
+                    message = message.push(
                         image(handle.clone())
                             .width(Length::Fill)
                             .content_fit(iced::ContentFit::Contain),
                     );
                 } else {
-                    reading = reading.push(
+                    message = message.push(
                         muted(
                             self.image_errors
                                 .get(&remote.url)
@@ -931,9 +858,9 @@ impl App {
             }
         }
         if detail.body_truncated {
-            reading=reading.push(muted("Showing the first 32,000 characters. Export the original email to read the full message."));
+            message=message.push(muted("Showing the first 32,000 characters. Export the original email to read the full message."));
         }
-        reading
+        reading.push(self.text_column(message.into()))
     }
     pub(super) fn reader_actions<'a>(&'a self, detail: &'a MailDetail) -> Element<'a, Message> {
         let mut footer = row![
@@ -1262,7 +1189,6 @@ impl App {
             (SettingsTab::Shortcuts, "Shortcuts"),
             (SettingsTab::Privacy, "Privacy"),
             (SettingsTab::Contacts, "Contacts"),
-            (SettingsTab::Profiles, "Profiles and sync"),
         ] {
             tabs = tabs.push(
                 button(text(label).size(12))
@@ -1286,7 +1212,6 @@ impl App {
                 SettingsTab::Shortcuts => self.shortcut_settings(),
                 SettingsTab::Privacy => self.privacy_settings(),
                 SettingsTab::Contacts => self.contacts_settings(),
-                SettingsTab::Profiles => self.profile_settings(),
             }
         };
         let content: Element<'_, Message> = if self.settings_group.is_some() {
@@ -1300,12 +1225,7 @@ impl App {
             column![
                 muted("WORKSPACE  /  PREFERENCES").size(10).font(BOLD),
                 header,
-                scrollable(tabs)
-                    .id("settings-tabs")
-                    .direction(scrollable::Direction::Horizontal(
-                        scrollable::Scrollbar::new().width(3.).scroller_width(3.)
-                    ))
-                    .height(Length::Shrink),
+                tabs.wrap(),
                 line(),
                 scrollable(container(content).max_width(940).width(Length::Fill))
                     .height(Length::Fill)
@@ -1459,6 +1379,7 @@ impl App {
                 .spacing(19)
                 .into()
             ),
+            self.notification_settings(),
             self.settings_card(
                 "Tooltips",
                 "",
@@ -1473,6 +1394,30 @@ impl App {
                 .spacing(16)
                 .into()
             ),
+            self.settings_card(
+                "System tray",
+                "",
+                column![
+                    checkbox(self.preferences.close_to_tray)
+                        .label("Keep Shep running in the system tray when closing the window")
+                        .on_toggle(Message::PrefCloseToTray),
+                    muted(if self.tray.available {
+                        "Open Shep or quit from the tray menu."
+                    } else {
+                        "A system tray is not currently available on this desktop."
+                    })
+                    .size(12),
+                    button(text("Quit Shep").size(13))
+                        .padding([10, 14])
+                        .style(outline)
+                        .on_press(Message::Tray(crate::desktop_tray::Event::Action(
+                            crate::desktop_tray::Action::Quit
+                        )))
+                ]
+                .spacing(14)
+                .into()
+            ),
+            self.palette_settings(),
             self.settings_card(
                 "About Shep",
                 "",
@@ -1514,8 +1459,8 @@ impl App {
                         .spacing(4),
                         space().width(Length::Fill),
                         action(
-                            if self.workspace.profile_reconnect.contains(&account.id) {
-                                "Reconnect required"
+                            if self.workspace.account_reconnect.contains(&account.id) {
+                                "Reconnect"
                             } else {
                                 "Edit account"
                             },
@@ -1536,6 +1481,22 @@ impl App {
                 .push(line());
         }
         accounts = accounts.push(action("Add mail account", Message::Open(Dialog::Account)));
+        if self.workspace.move_pending_total > 0 {
+            accounts = accounts.push(
+                button(
+                    text(format!(
+                        "Review unfinished moves ({})",
+                        self.workspace.move_pending_total
+                    ))
+                    .size(12),
+                )
+                .padding([11, 14])
+                .style(outline)
+                .on_press(Message::MoveRecovery(
+                    super::move_recovery::Message::Open(None),
+                )),
+            );
+        }
         if self.workspace.credential_cleanup > 0 {
             accounts = accounts.push(self.cleanup_preferences());
         }
@@ -1545,7 +1506,9 @@ impl App {
                 "Use IMAP or POP3 with an app password. Add as many accounts as you need.",
                 accounts.into()
             ),
-            self.google_settings()
+            self.google_settings(),
+            self.shared_profile_card(),
+            self.profiles_card()
         ]
         .spacing(if self.settings_group.is_some() { 0 } else { 22 })
         .into()
@@ -1612,7 +1575,7 @@ impl App {
             column![
                 text("Permissions for the next sign-in").size(12).font(BOLD),
                 checkbox(services.drive)
-                    .label("Drive backups and profiles · private app data")
+                    .label("Drive backups · private app data")
                     .on_toggle(Message::GoogleDriveAccess),
                 pick_list(
                     [GoogleCalendarRequest::Off, GoogleCalendarRequest::ReadOnly, GoogleCalendarRequest::ReadWrite],
@@ -1648,9 +1611,9 @@ impl App {
                     })
                     .size(12),
                     text(if access.drive {
-                        "Drive backups and profiles · granted"
+                        "Drive backup · granted"
                     } else {
-                        "Drive backups and profiles · not granted"
+                        "Drive backup · not granted"
                     })
                     .size(12),
                 ]
@@ -1738,19 +1701,23 @@ impl App {
     }
     fn backup_settings(&self) -> Element<'_, Message> {
         let target = self.configured_backup_target();
-        let matches_saved = target == BackupTarget::from_preferences(&self.workspace.preferences);
-        let ready = matches_saved && self.workspace.preferences.backup_ready;
-        let last_backup = if matches_saved {
-            self.workspace.preferences.last_backup
-        } else {
-            None
-        };
+        let saved = crate::backup::config::resolve(&self.workspace.preferences, &target).ok();
+        let ready = saved
+            .as_ref()
+            .is_some_and(|p| p.backup_ready && p.backup_format == self.preferences.backup_format);
+        let last_backup = saved.and_then(|p| p.last_backup);
         let mut form = column![
             row![
                 text("Save to").size(13),
                 space().width(Length::Fill),
                 pick_list(
-                    [BackupDestination::Local, BackupDestination::GoogleDrive],
+                    [
+                        BackupDestination::Local,
+                        BackupDestination::GoogleDrive,
+                        BackupDestination::S3,
+                        BackupDestination::Sftp,
+                        BackupDestination::Ftp
+                    ],
                     Some(self.preferences.backup_destination),
                     Message::BackupDestination
                 )
@@ -1762,6 +1729,109 @@ impl App {
             .align_y(Alignment::Center)
         ]
         .spacing(18);
+        if !self.preferences.backup_destinations.is_empty() {
+            let mut destinations = column![].spacing(8);
+            for destination in &self.preferences.backup_destinations {
+                let selected = self.preferences.backup_selected.as_ref() == Some(&destination.id);
+                let status = if self
+                    .busy
+                    .contains(&destination.target(&self.preferences).work_key())
+                {
+                    "Working…"
+                } else if destination.automatic && if selected { ready } else { destination.ready }
+                {
+                    "Automatic"
+                } else if destination.automatic {
+                    "Needs setup"
+                } else {
+                    "Manual"
+                };
+                let id = destination.id.clone();
+                destinations = destinations.push(
+                    row![
+                        checkbox(destination.included)
+                            .label("Include")
+                            .text_size(11)
+                            .on_toggle(move |included| Message::IncludeBackup(
+                                id.clone(),
+                                included
+                            )),
+                        button(row![
+                            text(&destination.name).size(13),
+                            space().width(Length::Fill),
+                            text(status).size(11)
+                        ])
+                        .padding([12, 14])
+                        .width(Length::Fill)
+                        .style(if selected { primary } else { outline })
+                        .on_press(Message::SelectBackupDestination(destination.id.clone()))
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                );
+                if let Some(run) = self.backup_run.iter().find(|row| row.id == destination.id) {
+                    use crate::backup::run::Status;
+                    let mut result =
+                        row![container(text(run.status.label()).size(12)).width(Length::Fill)]
+                            .spacing(12)
+                            .align_y(Alignment::Center);
+                    if matches!(run.status, Status::Failed(_)) {
+                        result = result.push(
+                            button(text("Retry").size(12))
+                                .padding([10, 14])
+                                .style(outline)
+                                .on_press_maybe(
+                                    (destination.included
+                                        && self.pending_backup_all.is_none()
+                                        && !self.busy.contains(&run.target.work_key()))
+                                    .then(|| Message::RetryBackup(destination.id.clone())),
+                                ),
+                        );
+                    }
+                    if matches!(
+                        run.status,
+                        Status::Failed(_) | Status::NeedsSetup(_) | Status::SavedWithWarning(_)
+                    ) {
+                        result = result.push(action(
+                            "Setup",
+                            Message::SelectBackupDestination(destination.id.clone()),
+                        ));
+                    }
+                    destinations =
+                        destinations.push(container(result).padding([8, 12]).style(subtle));
+                }
+            }
+            let mut management =
+                row![action("Add destination", Message::AddBackupDestination)].spacing(12);
+            if self.preferences.backup_destinations.len() > 1 {
+                management =
+                    management.push(action("Remove destination", Message::ReviewBackupRemoval));
+            }
+            management = management.push(space().width(Length::Fill)).push(
+                button(text("Back up all").size(12))
+                    .padding([11, 17])
+                    .style(primary)
+                    .on_press_maybe(
+                        (self.pending_backup.is_none()
+                            && self.pending_backup_all.is_none()
+                            && !self.backup_run.iter().any(|row| row.status.pending()))
+                        .then_some(Message::BackupAll),
+                    ),
+            );
+            form = column![
+                management,
+                destinations,
+                form_field(
+                    "Destination name",
+                    "Home backup",
+                    self.field("backup_name"),
+                    "backup_name",
+                    false
+                ),
+                form
+            ]
+            .spacing(18);
+        }
         if self.preferences.backup_destination == BackupDestination::Local {
             form = form.push(
                 row![
@@ -1777,6 +1847,12 @@ impl App {
                 .spacing(12)
                 .align_y(Alignment::End),
             );
+        } else if self.preferences.backup_destination == BackupDestination::Ftp {
+            form = form.push(self.ftp_backup_settings());
+        } else if self.preferences.backup_destination == BackupDestination::Sftp {
+            form = form.push(self.sftp_backup_settings());
+        } else if self.preferences.backup_destination == BackupDestination::S3 {
+            form = form.push(self.s3_backup_settings());
         } else if !self.google_connected || !self.preferences.google_grant.access.drive_allowed() {
             form = form.push(action(
                 "Connect Google / approve Drive access",
@@ -1810,18 +1886,72 @@ impl App {
                     .text_size(12),
             );
         if self.preferences.auto_backup && !ready {
-            form = form.push(container(muted("Finish setup: enter a passphrase and choose Back up now. Automatic backups start after that copy is saved and the passphrase is stored in your OS keychain.").size(12)).padding(12).style(subtle));
+            form = form.push(container(muted("Finish setup with Back up now. Automatic backups start after a copy with these options is saved.").size(12)).padding(12).style(subtle));
         }
-        form = form.push(checkbox(self.preferences.backup_accounts).label("Include account passwords in the encrypted backup").on_toggle(Message::BackupAccounts).text_size(12))
-        .push(form_field("Backup passphrase", "At least 12 characters", self.field("passphrase"), "passphrase", true))
-        .push(muted("Keep the passphrase somewhere safe for restoring. A successful copy also stores it in your OS keychain for this destination. Google tokens are never included. Current snapshot limit: 256 MiB of mail.").size(11))
-        .push(row![action("Save backup preferences", Message::SavePreferences),
-            button(text(if self.busy.contains("backup") { "Backing up…" } else { "Back up now" }).size(12)).padding([11,17]).style(primary)
-                .on_press_maybe((!self.busy.contains("backup") && self.pending_backup.is_none()).then_some(Message::Backup))
-        ].spacing(12))
-        .push(if let Some(time) = last_backup {
-            muted(format!("Last backup: {}", chrono::DateTime::from_timestamp(time,0).unwrap_or_default().with_timezone(&chrono::Local).format("%d %b %Y at %H:%M")))
-        } else { muted("No successful backup at this destination yet.") });
+        form = form.push(
+            row![
+                checkbox(self.preferences.backup_format.compressed())
+                    .label("Compress copies")
+                    .on_toggle(Message::BackupCompression)
+                    .text_size(12),
+                checkbox(self.preferences.backup_format.encrypted())
+                    .label("Encrypt with a passphrase")
+                    .on_toggle(Message::BackupEncryption)
+                    .text_size(12)
+            ]
+            .spacing(24),
+        );
+        if self.preferences.backup_format.encrypted() {
+            form = form.push(checkbox(self.preferences.backup_accounts).label("Include account passwords in the encrypted backup").on_toggle(Message::BackupAccounts).text_size(12))
+                .push(form_field("Backup passphrase", "At least 12 characters", self.field("passphrase"), "passphrase", true))
+                .push(muted("Keep the passphrase for restoring. A successful copy stores it in your OS keychain for this destination. Google tokens are never included.").size(11));
+        } else {
+            form = form.push(container(muted("These copies are not encrypted. Anyone with file access can read your mail and account settings. Account passwords are excluded.").size(12)).padding(12).style(subtle));
+        }
+        form = form
+            .push(muted("Current snapshot limit: 256 MiB of mail.").size(11))
+            .push(
+                row![
+                    action("Save backup preferences", Message::SavePreferences),
+                    button(
+                        text(if self.backup_busy() {
+                            "Backing up…"
+                        } else {
+                            "Back up now"
+                        })
+                        .size(12)
+                    )
+                    .padding([11, 17])
+                    .style(primary)
+                    .on_press_maybe(
+                        (!self.backup_busy() && self.pending_backup.is_none())
+                            .then_some(Message::Backup)
+                    ),
+                    action(
+                        if self.backup_activity.open {
+                            "Hide activity"
+                        } else {
+                            "Recent activity"
+                        },
+                        Message::ToggleBackupHistory
+                    )
+                ]
+                .spacing(12),
+            )
+            .push(if let Some(time) = last_backup {
+                muted(format!(
+                    "Last backup: {}",
+                    chrono::DateTime::from_timestamp(time, 0)
+                        .unwrap_or_default()
+                        .with_timezone(&chrono::Local)
+                        .format("%d %b %Y at %H:%M")
+                ))
+            } else {
+                muted("No successful backup at this destination yet.")
+            });
+        if self.preferences.backup_destinations.is_empty() {
+            form = form.push(action("Add destination", Message::AddBackupDestination));
+        }
         let visible = self.visible_backups();
         let mut copies = column![
             row![
@@ -1854,21 +1984,321 @@ impl App {
                 .align_y(Alignment::Center),
             );
         }
-        column![
-            self.settings_card(
-                "Backups",
-                "Choose a destination, schedule and number of copies to keep.",
-                form.into()
-            ),
-            self.settings_card(
+        let mut cards = column![self.settings_card(
+            "Backups",
+            "Choose where to keep copies. Include selects destinations for Back up all.",
+            form.into()
+        )]
+        .spacing(if self.settings_group.is_some() { 0 } else { 22 });
+        if self.backup_activity.open {
+            cards = cards.push(self.backup_history_view());
+        }
+        cards
+            .push(self.settings_card(
                 "Restore a copy",
                 "Restoring merges messages and accounts into this device. Existing mail is kept.",
-                copies.into()
-            )
-        ]
-        .spacing(if self.settings_group.is_some() { 0 } else { 22 })
-        .into()
+                copies.into(),
+            ))
+            .push(self.database_transfer_card())
+            .into()
     }
+    fn backup_history_view(&self) -> Element<'_, Message> {
+        let mut entries = column![
+            row![
+                text("Recent activity").font(BOLD).size(14),
+                space().width(Length::Fill),
+                action("Refresh activity", Message::RefreshBackupHistory)
+            ]
+            .align_y(Alignment::Center)
+        ]
+        .spacing(14);
+        if let Some(error) = &self.backup_activity.error {
+            entries = entries.push(text(error).size(12));
+        } else if self.backup_activity.loading {
+            entries = entries.push(muted("Loading activity…").size(12));
+        }
+        if self.backup_activity.target.as_ref() == Some(&self.configured_backup_target()) {
+            if self.backup_activity.entries.is_empty() && !self.backup_activity.loading {
+                entries = entries
+                    .push(muted("No backup attempts recorded for this destination yet.").size(12));
+            }
+            for (index, entry) in self.backup_activity.entries.iter().enumerate() {
+                let time = chrono::DateTime::from_timestamp_millis(entry.started)
+                    .unwrap_or_default()
+                    .with_timezone(&chrono::Local)
+                    .format("%d %b %Y at %H:%M")
+                    .to_string();
+                let mut heading = row![
+                    text(entry.outcome.label()).size(13).font(BOLD),
+                    space().width(Length::Fill),
+                    muted(time).size(11)
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center);
+                if index == 0 && entry.outcome.attention() {
+                    heading = heading.push(
+                        button(text("Retry").size(12))
+                            .padding([10, 14])
+                            .style(outline)
+                            .on_press_maybe(
+                                (!self.backup_busy() && self.pending_backup.is_none())
+                                    .then(|| Message::RetryBackupHistory(entry.id.clone())),
+                            ),
+                    );
+                }
+                let mut row = column![
+                    heading,
+                    muted(format!(
+                        "{} · {}",
+                        if entry.format.encrypted() {
+                            "Encrypted"
+                        } else {
+                            "Unencrypted"
+                        },
+                        if entry.format.compressed() {
+                            "Compressed"
+                        } else {
+                            "Uncompressed"
+                        }
+                    ))
+                    .size(11)
+                ]
+                .spacing(8);
+                if !entry.detail.is_empty() {
+                    row = row.push(text(&entry.detail).size(12));
+                }
+                if entry.outcome == crate::backup::history::Outcome::Unfinished {
+                    row = row.push(muted("This attempt has no final result. Retry checks the reserved copy before uploading.").size(12));
+                }
+                entries = entries.push(container(row).padding(12).style(subtle));
+            }
+        }
+        self.settings_card(
+            "Backup activity",
+            "The latest 20 attempts for this destination, including previous sessions.",
+            entries.into(),
+        )
+    }
+
+    fn ftp_backup_settings(&self) -> Element<'_, Message> {
+        use crate::backup::ftp::Security;
+        let testing = self
+            .ftp_connection
+            .as_ref()
+            .is_some_and(|(_, target, result)| {
+                *target == self.configured_backup_target() && result.is_none()
+            });
+        let mut form = column![
+            row![
+                form_field(
+                    "FTP server",
+                    "backup.example.test",
+                    self.field("ftp_host"),
+                    "ftp_host",
+                    false
+                ),
+                container(form_field(
+                    "Port",
+                    "21",
+                    self.field("ftp_port"),
+                    "ftp_port",
+                    false
+                ))
+                .width(100)
+            ]
+            .spacing(18),
+            column![
+                text("Connection security").size(12),
+                pick_list(
+                    [
+                        Security::ExplicitTls,
+                        Security::ImplicitTls,
+                        Security::Plain
+                    ],
+                    Some(self.preferences.backup_ftp.security),
+                    Message::FtpSecurity
+                )
+                .width(Length::Fill)
+                .padding(11)
+                .text_size(12)
+                .style(select_input)
+                .menu_style(select_menu)
+            ]
+            .spacing(7),
+            row![
+                form_field(
+                    "Username",
+                    "backup-user",
+                    self.field("ftp_username"),
+                    "ftp_username",
+                    false
+                ),
+                form_field(
+                    "Remote folder",
+                    "/backups/shep",
+                    self.field("ftp_directory"),
+                    "ftp_directory",
+                    false
+                )
+            ]
+            .spacing(18),
+        ]
+        .spacing(18);
+        if self.preferences.backup_ftp.security == Security::Plain {
+            form=form.push(text("Plain FTP sends your login and transferred data without connection encryption. Choose FTPS when your server supports it.").size(12));
+        }
+        form=form.push(form_field("Password", "Leave blank to reuse the saved password", self.field("ftp_password_secret"), "ftp_password_secret", true))
+            .push(button(text(if testing {"Testing connection…"} else {"Test and save connection"}).size(12)).padding([11,17]).style(outline).on_press_maybe((!self.backup_busy() && self.pending_backup.is_none()).then_some(Message::TestFtpConnection)))
+            .push(muted("The test checks read access. Your first backup checks upload permissions. Passwords are saved in your OS keychain only after a successful test.").size(11));
+        if let Some((_, target, Some(result))) = &self.ftp_connection
+            && *target == self.configured_backup_target()
+        {
+            form = form.push(match result {
+                Ok(()) => text("Connected · password saved").size(12),
+                Err(error) => text(error).size(12),
+            });
+        }
+        form.into()
+    }
+
+    fn sftp_backup_settings(&self) -> Element<'_, Message> {
+        let probing = self
+            .sftp_host_key
+            .as_ref()
+            .is_some_and(|review| review.result.is_none());
+        let testing = self
+            .sftp_connection
+            .as_ref()
+            .is_some_and(|(_, target, result)| {
+                *target == self.configured_backup_target() && result.is_none()
+            });
+        let mut form = column![
+            row![
+                form_field(
+                    "SFTP server",
+                    "backup.example.com",
+                    self.field("sftp_host"),
+                    "sftp_host",
+                    false
+                ),
+                container(form_field(
+                    "Port",
+                    "22",
+                    self.field("sftp_port"),
+                    "sftp_port",
+                    false
+                ))
+                .width(100),
+            ]
+            .spacing(18),
+            row![
+                form_field(
+                    "Username",
+                    "Your server login",
+                    self.field("sftp_username"),
+                    "sftp_username",
+                    false
+                ),
+                form_field(
+                    "Remote folder",
+                    "/home/user/backups",
+                    self.field("sftp_directory"),
+                    "sftp_directory",
+                    false
+                ),
+            ]
+            .spacing(18),
+            form_field(
+                "Verified server fingerprint",
+                "SHA256:… from your trusted server settings",
+                self.field("sftp_fingerprint"),
+                "sftp_fingerprint",
+                false
+            ),
+            button(
+                text(if probing {
+                    "Checking server identity…"
+                } else {
+                    "Check server fingerprint"
+                })
+                .size(12)
+            )
+            .padding([11, 17])
+            .style(outline)
+            .on_press_maybe((!probing).then_some(Message::ProbeSftpFingerprint)),
+        ]
+        .spacing(18);
+        if let Some(review) = &self.sftp_host_key
+            && let Some(result) = &review.result
+        {
+            let review_panel: Element<'_, Message> = match result {
+                Err(error) => text(error).size(12).into(),
+                Ok(fingerprint) => {
+                    let changed = !self.field("sftp_fingerprint").is_empty()
+                        && self.field("sftp_fingerprint") != fingerprint;
+                    container(column![
+                        text(if changed { "The server key differs from your saved key" } else { "Verify this server key" }).font(BOLD).size(13),
+                        row![text(fingerprint).font(iced::Font::MONOSPACE).size(11), space().width(Length::Fill), self.icon_action("copy", "Copy fingerprint", Message::CopyAddress(fingerprint.clone()))].align_y(Alignment::Center).spacing(12),
+                        muted("Compare this fingerprint with your server's trusted settings before sending a password.").size(12),
+                        checkbox(review.verified).label("I verified this fingerprint").text_size(12).on_toggle(Message::VerifySftpFingerprint),
+                        button(text(if changed { "Replace verified fingerprint" } else { "Use verified fingerprint" }).size(12)).padding([11,17]).style(primary)
+                            .on_press_maybe(review.verified.then_some(Message::AcceptSftpFingerprint)),
+                    ].spacing(12)).padding(14).style(subtle).into()
+                }
+            };
+            form = form.push(review_panel);
+        }
+        form = form.push(form_field("Password", "Leave blank to reuse the saved password", self.field("sftp_password_secret"), "sftp_password_secret", true))
+            .push(button(text(if testing { "Testing connection…" } else { "Test and save connection" }).size(12)).padding([11,17]).style(outline)
+                .on_press_maybe((!self.backup_busy() && self.pending_backup.is_none()).then_some(Message::TestSftpConnection)))
+            .push(muted("The test checks read access. Your first backup checks upload permissions. Passwords are saved in your OS keychain only after a successful test.").size(11));
+        if let Some((_, target, Some(result))) = &self.sftp_connection
+            && *target == self.configured_backup_target()
+        {
+            form = form.push(match result {
+                Ok(()) => text("Connected · password saved").size(12),
+                Err(error) => text(error).size(12),
+            });
+        }
+        form.into()
+    }
+
+    fn s3_backup_settings(&self) -> Element<'_, Message> {
+        let testing = self
+            .s3_connection
+            .as_ref()
+            .is_some_and(|(_, target, result)| {
+                *target == self.configured_backup_target() && result.is_none()
+            });
+        let mut form = column![
+            form_field("S3 endpoint", "https://s3.eu-west-1.amazonaws.com", self.field("s3_endpoint"), "s3_endpoint", false),
+            row![
+                form_field("Bucket", "my-backups", self.field("s3_bucket"), "s3_bucket", false),
+                form_field("Signing region", "eu-west-1", self.field("s3_region"), "s3_region", false),
+            ].spacing(18),
+            form_field("Folder prefix", "shep", self.field("s3_prefix"), "s3_prefix", false),
+            checkbox(self.preferences.backup_s3.path_style).label("Use path-style bucket addresses").on_toggle(Message::S3PathStyle).text_size(12),
+            row![
+                form_field("Access key", "Leave blank to reuse saved keys", self.field("s3_access_secret"), "s3_access_secret", true),
+                form_field("Secret key", "Leave blank to reuse saved keys", self.field("s3_key_secret"), "s3_key_secret", true),
+            ].spacing(18),
+            button(text(if testing { "Testing connection…" } else { "Test and save connection" }).size(12))
+                .padding([11, 17]).style(outline)
+                .on_press_maybe((!self.backup_busy() && self.pending_backup.is_none()).then_some(Message::TestS3Connection)),
+            muted("Enter keys once, then Test and save connection. The test checks read access; the first backup checks upload permissions.").size(11),
+        ].spacing(18);
+        if let Some((_, target, result)) = &self.s3_connection
+            && *target == self.configured_backup_target()
+            && let Some(result) = result
+        {
+            form = form.push(match result {
+                Ok(()) => text("Connected · credentials saved").size(12),
+                Err(error) => text(error).size(12),
+            });
+        }
+        form.into()
+    }
+
     fn shortcut_settings(&self) -> Element<'_, Message> {
         let mut actions = column![
             row![
@@ -1942,6 +2372,9 @@ impl App {
     }
     fn dialog_view(&self, dialog: Dialog) -> Element<'_, Message> {
         let (title, subtitle) = match dialog {
+            Dialog::FolderChange => (self.folder_change_title(), ""),
+            Dialog::FolderHistory => ("Folder changes", ""),
+            Dialog::MoveRecovery => ("Recover a move", ""),
             Dialog::Removal => ("Remove connection?", ""),
             Dialog::GoogleDisconnect => ("Disconnect Google?", ""),
             Dialog::Outbox => ("Outbox", ""),
@@ -1961,20 +2394,13 @@ impl App {
                 },
                 "Choose a destination folder.",
             ),
-            Dialog::Compose => (
-                if self.composer.draft.forward.is_some() {
-                    "Forward message"
-                } else {
-                    "New message"
-                },
-                "",
-            ),
             Dialog::DiscardDraft => ("Discard draft?", ""),
             Dialog::Event => ("Calendar event", "Times use this device's timezone."),
             Dialog::Export => (
                 "Save a copy",
                 "Choose a full file path. Existing files will never be overwritten.",
             ),
+            Dialog::RemoveBackup => ("Remove backup destination?", ""),
             Dialog::Restore => (
                 "Restore this backup?",
                 "Messages and account details will be merged into this device.",
@@ -1993,8 +2419,11 @@ impl App {
         .align_y(Alignment::Center);
         let mut body = column![header, line()].spacing(20);
         match dialog {
+            Dialog::FolderChange => body=body.push(self.folder_change_form()),
+            Dialog::FolderHistory => body=body.push(self.folder_history_form()),
             Dialog::BulkReview => body=body.push(self.bulk_review_form()),
             Dialog::BulkHistory => body=body.push(self.bulk_history_form()),
+            Dialog::MoveRecovery => body=body.push(self.move_recovery_form()),
             Dialog::Removal => body = body.push(self.removal_form()),
             Dialog::GoogleDisconnect => {
                 let pending = self.google_disconnect_pending.is_some();
@@ -2020,7 +2449,7 @@ impl App {
                     let chosen = choices.iter().find(|c| c.0 == id).cloned();
                     body = body.push(column![text("Destination account").size(12), pick_list(choices, chosen, |c:Choice| Message::Field("move_account", c.0)).text_size(12).padding(11).style(select_input).menu_style(select_menu).width(Length::Fill)].spacing(8));
                 }
-                let folders = crate::fuzzy::ranked(self.field("folder_search"), self.move_folders());
+                let folders = self.ranked_move_folders();
                 body=body.push(input("Find a folder…",self.field("folder_search"),|v|Message::Field("folder_search",v)).id("folder-search").on_submit(Message::MoveFirst));
                 if folders.is_empty() {
                     body=body.push(muted(if self.field("folder_search").is_empty() { "No shared destination folders. Refresh mail to load each account’s folders." } else { "No matching folders." }).size(12));
@@ -2028,10 +2457,9 @@ impl App {
                 for (index, folder) in folders.iter().enumerate() {
                     let target = index == 0;
                     let trailing: Element<'_, Message> = if target { muted("Enter ↵").size(11).into() } else { icon("chevron", 14.) };
-                    body = body.push(button(row![icon("folder",18.), text(if folder.eq_ignore_ascii_case("INBOX") { "Inbox".to_owned() } else { folder.clone() }).size(13), space().width(Length::Fill), trailing].spacing(12).align_y(Alignment::Center)).padding(13).width(Length::Fill).style(if target { selected } else { outline }).on_press(Message::Move(folder.clone())));
+                    body = body.push(button(row![icon("folder",18.), text(self.move_folder_label(folder).into_owned()).size(13), space().width(Length::Fill), trailing].spacing(12).align_y(Alignment::Center)).padding(13).width(Length::Fill).style(if target { selected } else { outline }).on_press(Message::Move(folder.clone())));
                 }
             }
-            Dialog::Compose => body = body.spacing(14).push(self.compose_form()),
             Dialog::DiscardDraft => body = body.push(self.discard_draft_form()),
             Dialog::Event if self.editing_event.is_some() && !self.event_access().update => body = body.push(self.read_only_event()),
             Dialog::Event=>{
@@ -2046,22 +2474,26 @@ impl App {
                     .push(row![button(text("Save event").size(12)).padding([12,18]).style(primary).on_press_maybe((!self.field("source").is_empty()).then_some(Message::SaveEvent)),space().width(Length::Fill),if self.editing_event.is_some() && self.event_access().delete {Element::from(action("Delete event",Message::DeleteEvent))}else{Element::from(space())}].spacing(10));
             }
             Dialog::Export=>body=body.push(form_field("Full destination path","/home/you/Downloads/message.eml",self.field("path"),"path",false)).push(action("Browse…",Message::BrowseExport)).push(button(text("Save file").size(12)).padding([12,18]).style(primary).on_press(Message::SaveExport)),
-            Dialog::Restore=>body=body.push(form_field("Backup passphrase","Enter the original passphrase",self.field("passphrase"),"passphrase",true)).push(muted("Existing mail, connection settings and passwords are kept. Missing account passwords are filled from the copy when available. Google sign-in and preferences stay unchanged.").size(11)).push(row![action("Cancel",Message::Close),button(text("Restore & merge").size(12)).padding([12,18]).style(primary).on_press(Message::ConfirmRestore)].spacing(10)),
+            Dialog::RemoveBackup => body = body
+                .push(text(self.field("backup_name")).font(BOLD))
+                .push(muted("This stops its schedule and removes these settings. Saved copies and pending upload receipts are kept; adding the same destination again can recover them."))
+                .push(row![action("Keep destination", Message::Close), button(text("Remove destination").size(12)).padding([12,18]).style(destructive).on_press(Message::RemoveBackupDestination)].spacing(10)),
+            Dialog::Restore=>body=body.push(form_field("Passphrase · encrypted copies only","Leave blank for an unencrypted copy",self.field("passphrase"),"passphrase",true)).push(muted("Existing mail, connection settings and passwords are kept. Missing account passwords are filled from the copy when available. Google sign-in and preferences stay unchanged.").size(11)).push(row![action("Cancel",Message::Close),button(text("Restore & merge").size(12)).padding([12,18]).style(primary).on_press(Message::ConfirmRestore)].spacing(10)),
         }
         if let Some((notice, true, _)) = &self.notice
-            && dialog != Dialog::BulkHistory
+            && !matches!(dialog, Dialog::BulkHistory | Dialog::MoveRecovery)
         {
             body = body.push(container(text(notice).size(11)).padding(12).style(subtle));
         }
-        container(scrollable(container(body).padding(27)).height(Length::Shrink))
-            .max_height((self.size.height - 65.).max(400.))
-            .width(if dialog == Dialog::Compose {
-                680.
-            } else {
-                570.
-            })
-            .style(card)
-            .into()
+        container(
+            scrollable(container(body).padding(27))
+                .id("dialog-scroll")
+                .height(Length::Shrink),
+        )
+        .max_height((self.size.height - 65.).max(400.))
+        .width(570.)
+        .style(card)
+        .into()
     }
 }
 impl App {

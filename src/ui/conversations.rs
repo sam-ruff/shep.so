@@ -16,12 +16,13 @@ pub(super) struct Conversation {
     pub focus: Option<String>,
     pub collapsed: bool,
     pub error: Option<String>,
+    pub scroll: f32,
 }
 
 impl App {
     pub(super) fn action_mail(&self) -> Option<&Mail> {
         let id = self.reader_id()?;
-        if self.mail_actions.restoring(id) || self.page.bulk_pending.contains(id) {
+        if self.mail_actions.restoring(id) || self.bulk_owns_mail(id) {
             return None;
         }
         let mail = self
@@ -37,7 +38,7 @@ impl App {
                     .find(|mail| mail.id == id)
             })
             .or_else(|| self.page.rows.iter().find(|mail| mail.id == id))?;
-        Some(self.mail_actions.effective(mail))
+        (!mail.remote_id.is_empty()).then(|| self.mail_actions.effective(mail))
     }
 
     pub(super) fn reader_id(&self) -> Option<&str> {
@@ -53,7 +54,7 @@ impl App {
             || self
                 .selected
                 .as_ref()
-                .is_some_and(|id| self.mail_actions.restoring(id))
+                .is_some_and(|id| self.mail_actions.restoring(id) || self.page.is_placeholder(id))
         {
             return;
         }
@@ -71,11 +72,7 @@ impl App {
         self.conversation.focus = Some(id.clone());
         self.conversation.collapsed = false;
         self.expanded_replies.clear();
-        self.detail = self
-            .detail_cache
-            .iter()
-            .find(|d| d.summary.id == id)
-            .cloned();
+        self.detail = self.cached_detail(&id);
         if self.detail.is_none() {
             self.send(Command::Detail {
                 revision: self.detail_revision,
@@ -131,6 +128,9 @@ impl App {
                 );
             }
             Ok(page) => {
+                let previous_reader = self.reader_id().map(str::to_owned);
+                let changed_page =
+                    !self.conversation_visible() || self.conversation.page.offset != page.offset;
                 self.conversation.page = page;
                 if !self
                     .conversation
@@ -139,8 +139,21 @@ impl App {
                     .iter()
                     .any(|mail| Some(mail.id.as_str()) == self.reader_id())
                 {
-                    if let Some(first) = self.conversation.page.rows.first() {
-                        self.focus_conversation_message(first.id.clone());
+                    // A move can replace an expanded reply's server identity while
+                    // the selected Inbox anchor remains in this thread. Keep that
+                    // anchor on refresh; explicit paging still opens its first row.
+                    let fallback = (!changed_page)
+                        .then(|| {
+                            self.conversation
+                                .page
+                                .rows
+                                .iter()
+                                .find(|mail| mail.id == anchor)
+                        })
+                        .flatten()
+                        .or_else(|| self.conversation.page.rows.first());
+                    if let Some(mail) = fallback {
+                        self.focus_conversation_message(mail.id.clone());
                     }
                 } else if let Some(id) = self.reader_id().map(str::to_owned) {
                     // Warm adjacent messages without resetting the open body or quote state.
@@ -156,7 +169,12 @@ impl App {
                         }
                     }
                 }
-                if self.conversation_visible() {
+                self.restore_reply();
+                // Periodic sync/read/flag refreshes update the same thread.
+                // They must not reposition a person already reading further down.
+                if self.conversation_visible()
+                    && (changed_page || previous_reader.as_deref() != self.reader_id())
+                {
                     return Task::perform(
                         async move {
                             tokio::time::sleep(std::time::Duration::from_millis(32)).await;
@@ -175,7 +193,10 @@ impl App {
             && self.conversation.page.total > 1
     }
     pub(super) fn conversation_scroll(&self, generation: u64) -> Task<Message> {
-        if generation != self.conversation.generation || !self.conversation_visible() {
+        if generation != self.conversation.generation
+            || !self.conversation_visible()
+            || self.compose_visible()
+        {
             return Task::none();
         }
         let i = self
@@ -193,15 +214,8 @@ impl App {
             },
         )
     }
-    pub(super) fn conversation_reader(&self) -> Element<'_, Message> {
+    pub(super) fn conversation_cards(&self) -> Element<'_, Message> {
         let page = &self.conversation.page;
-        let title = self
-            .page
-            .rows
-            .iter()
-            .find(|mail| Some(&mail.id) == self.selected.as_ref())
-            .map(|mail| mail.subject.as_str())
-            .unwrap_or("Conversation");
         let mut cards = column![].spacing(10);
         for original in &page.rows {
             let mail = self.mail_actions.effective(original);
@@ -287,7 +301,16 @@ impl App {
                     .align_y(Alignment::Center),
                 );
             }
-            cards = cards.push(
+            let background = expanded
+                .then(|| {
+                    self.detail
+                        .as_ref()
+                        .filter(|detail| detail.summary.id == mail.id)
+                        .and_then(|detail| self.document_background(detail))
+                })
+                .flatten();
+            cards = cards.push(widget::themer(
+                super::reading::document_theme(background),
                 container(content)
                     .height(if expanded {
                         Length::Shrink
@@ -297,10 +320,26 @@ impl App {
                     .align_y(Alignment::Center)
                     .padding(14)
                     .width(Length::Fill)
-                    .style(if active { selected_card } else { card }),
-            );
+                    .style(move |theme| {
+                        let mut style = if active {
+                            selected_card(theme)
+                        } else {
+                            card(theme)
+                        };
+                        if let Some(background) = background {
+                            style.background = Some(background.into());
+                            style.text_color = Some(colors(theme).text);
+                        }
+                        style
+                    }),
+            ));
         }
-        let controls = row![
+        cards.into()
+    }
+
+    pub(super) fn conversation_controls(&self) -> Element<'_, Message> {
+        let page = &self.conversation.page;
+        row![
             text(format!("{} messages", page.total)).size(12),
             space().width(Length::Fill),
             button(text("Earlier").size(11))
@@ -322,7 +361,20 @@ impl App {
                 )
         ]
         .spacing(6)
-        .align_y(Alignment::Center);
+        .align_y(Alignment::Center)
+        .into()
+    }
+
+    pub(super) fn conversation_reader(&self) -> Element<'_, Message> {
+        let title = self
+            .page
+            .rows
+            .iter()
+            .find(|mail| Some(&mail.id) == self.selected.as_ref())
+            .map(|mail| mail.subject.as_str())
+            .unwrap_or("Conversation");
+        let cards = self.conversation_cards();
+        let controls = self.conversation_controls();
         let toolbar: Element<'_, Message> = match &self.detail {
             Some(detail) => self.reader_toolbar(detail),
             None => container(muted("Opening message…")).height(36).into(),
@@ -341,6 +393,7 @@ impl App {
             container(heading).padding([14, 20]),
             scrollable(container(cards).padding([0, 20]))
                 .id("conversation-reader")
+                .on_scroll(|viewport| Message::ConversationViewport(viewport.absolute_offset().y))
                 .height(Length::Fill),
             container(self.reader_navigation()).padding([8, 20])
         ]

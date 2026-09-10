@@ -1,6 +1,8 @@
 # Desktop reconciliation engine
 
-`src/profiles/sync/runner.rs` and `src/store/profile_sync.rs` implement bounded
+**Superseded at the 2026-09-09 merge of `main`.** The paths below belong to the client branch's own desktop implementation, which main's `src/profile_sync` and `src/store/profile_sync` replaced; see [Database transfer and profiles](profiles.md) for the shipped desktop behaviour. The reconciliation invariants remain the contract for the Flutter/browser equivalents.
+
+`src/profiles/sync/runner.rs` and `src/store/profile_sync.rs` implemented bounded
 ongoing preference reconciliation. Completed publication/enrollment reviews offer
 **Sync these preferences**, followed by explicit master and per-preference choices.
 The background owner continues outside Preferences. Flutter/browser equivalents,

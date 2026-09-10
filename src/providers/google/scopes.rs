@@ -26,13 +26,15 @@ pub(super) fn access(scope: Option<&str>) -> GoogleAccess {
 #[derive(Clone, Copy)]
 pub(crate) enum Service {
     Drive,
+    ProfileSync,
     CalendarRead,
     CalendarWrite,
 }
 impl Service {
     pub(super) fn check(self, access: GoogleAccess) -> anyhow::Result<()> {
         let (allowed, name) = match self {
-            Self::Drive => (access.drive_allowed(), "Drive backups and profiles"),
+            Self::Drive => (access.drive_allowed(), "Drive backup"),
+            Self::ProfileSync => (access.drive_allowed(), "Profile sync"),
             Self::CalendarRead => (access.calendar_allowed(), "Calendar sync"),
             Self::CalendarWrite => (access.calendar_write_allowed(), "Calendar editing"),
         };
@@ -41,5 +43,32 @@ impl Service {
             "Google did not grant {name} access. Reconnect Google in Preferences and approve that permission."
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn profile_sync_requires_drive_permission_and_names_the_affected_service() {
+        let denied = GoogleAccess {
+            known: true,
+            ..Default::default()
+        };
+        assert!(
+            Service::ProfileSync
+                .check(denied)
+                .unwrap_err()
+                .to_string()
+                .contains("Profile sync")
+        );
+        assert!(
+            Service::ProfileSync
+                .check(GoogleAccess {
+                    drive: true,
+                    ..denied
+                })
+                .is_ok()
+        );
     }
 }

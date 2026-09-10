@@ -1,4 +1,5 @@
 use super::*;
+use crate::providers::drive_http::{response_bytes, response_json, valid_id};
 use reqwest::{Response, StatusCode};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -9,7 +10,6 @@ mod tests;
 
 const FILE_FIELDS: &str =
     "id,name,createdTime,trashed,spaces,mimeType,appProperties,size,sha256Checksum";
-const JSON_LIMIT: u64 = 2 * 1024 * 1024;
 const CHUNK: usize = 1024 * 1024;
 
 // Only the production wrapper chooses credentials and endpoints. Contract tests
@@ -404,13 +404,6 @@ fn received_offset(range: Option<&str>, size: usize) -> anyhow::Result<usize> {
     );
     Ok(end + 1)
 }
-fn valid_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 512
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
-}
 fn owned(file: &Value) -> anyhow::Result<()> {
     anyhow::ensure!(
         file["id"].as_str().is_some_and(valid_id)
@@ -430,31 +423,6 @@ fn file_size(file: &Value) -> anyhow::Result<u64> {
         .as_str()
         .context("Google Drive omitted the backup size")?
         .parse()?)
-}
-async fn response_bytes(mut response: Response, limit: u64) -> anyhow::Result<Vec<u8>> {
-    anyhow::ensure!(
-        response.status().is_success(),
-        "Google Drive request failed (HTTP {}).",
-        response.status()
-    );
-    anyhow::ensure!(
-        response.content_length().is_none_or(|size| size <= limit),
-        "Google Drive response exceeds the size limit."
-    );
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
-        anyhow::ensure!(
-            bytes.len() as u64 + chunk.len() as u64 <= limit,
-            "Google Drive response exceeds the size limit."
-        );
-        bytes.extend(chunk);
-    }
-    Ok(bytes)
-}
-async fn response_json(response: Response) -> anyhow::Result<Value> {
-    Ok(serde_json::from_slice(
-        &response_bytes(response, JSON_LIMIT).await?,
-    )?)
 }
 
 impl DriveBackup {

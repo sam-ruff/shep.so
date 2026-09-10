@@ -385,6 +385,12 @@ async fn restart_preserves_receipts_and_never_replays_an_unacknowledged_step() {
         .unwrap();
     let accepted = reopened.accept_bulk_uncertainty(&lease).await.unwrap();
     assert_eq!(accepted.uncertain, 0);
+    let items = reopened.bulk_items("move".into(), None).await.unwrap();
+    assert_eq!(items[1].status, "cancelled");
+    assert_eq!(
+        items[1].error.as_deref(),
+        Some(shep::bulk::ACCEPTED_STATE_NOTE)
+    );
     assert_eq!(
         reopened.bulk_items("move".into(), None).await.unwrap()[0]
             .receipt
@@ -431,6 +437,7 @@ async fn a_failed_inverse_stage_cannot_erase_the_acknowledged_forward_receipt() 
         .unwrap();
     store.request_bulk_undo("first".into()).await.unwrap();
     let receipt = MoveReceipt {
+        recovery: None,
         account: "work".into(),
         folder: "Archive".into(),
         current: Some(current.clone()),
@@ -592,4 +599,124 @@ async fn a_definitely_failed_inverse_can_retry_without_repeating_the_forward_act
         .unwrap();
     assert!(item.undo);
     assert!(matches!(item.receipt, Some(Receipt::Move(_))));
+}
+
+#[tokio::test]
+async fn resolved_undo_claims_cannot_steal_another_item_or_survive_a_finished_phase() {
+    let store = Store::memory().unwrap();
+    seed(&store, 1).await;
+    let original = store.query(MailQuery::default()).await.unwrap().rows[0].clone();
+    store
+        .start_bulk(
+            "moving".into(),
+            freeze(&store, MailQuery::default()).await,
+            moved("Archive"),
+        )
+        .await
+        .unwrap();
+    let forward = store
+        .claim_bulk_item("moving".into())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .claim_bulk_identity(forward.clone(), original.id.clone())
+        .await
+        .unwrap();
+    assert!(
+        store
+            .claim_bulk_identity(forward.clone(), "unrelated-forward-id".into())
+            .await
+            .is_err()
+    );
+    let receipt = MoveReceipt::server(
+        &original,
+        "work",
+        "Archive",
+        None,
+        store
+            .message_fingerprint(original.id.clone())
+            .await
+            .unwrap(),
+    );
+    store
+        .finish_bulk_item(forward.clone(), Ok(Receipt::Move(Box::new(receipt))))
+        .await
+        .unwrap();
+    assert!(
+        store
+            .claim_bulk_identity(forward, original.id.clone())
+            .await
+            .is_err()
+    );
+    store.request_bulk_undo("moving".into()).await.unwrap();
+    let undo = store
+        .claim_bulk_item("moving".into())
+        .await
+        .unwrap()
+        .unwrap();
+    // The acknowledged MOVE had no destination UID. Another group now owns
+    // this cache identity; recovering the first group must not take that claim.
+    store
+        .start_bulk(
+            "other".into(),
+            freeze(&store, MailQuery::default()).await,
+            read(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        store
+            .claim_bulk_identity(undo.clone(), original.id.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store.bulk_owner(original.id).await.unwrap(),
+        Some("other".into())
+    );
+    store
+        .claim_bulk_identity(undo.clone(), "work:Archive:resolved".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .bulk_owner("work:Archive:resolved".into())
+            .await
+            .unwrap(),
+        Some("moving".into())
+    );
+    store
+        .finish_bulk_item(undo.clone(), Err(("Definite rejection".into(), false)))
+        .await
+        .unwrap();
+    assert!(
+        store
+            .bulk_owner("work:Archive:resolved".into())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .claim_bulk_identity(undo, "work:Archive:resolved".into())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn memory_job_leases_exclude_competing_clones_without_disk_files() {
+    let store = Store::memory().unwrap();
+    let clone = store.clone();
+    let owned = store.bulk_lease("owned".into()).await.unwrap();
+    assert!(clone.bulk_lease("owned".into()).await.is_err());
+    let different = clone.bulk_lease("different".into()).await.unwrap();
+    drop(owned);
+    assert!(clone.bulk_lease("owned".into()).await.is_ok());
+    drop(different);
+    let folder = store.folder_lease("owned".into()).await.unwrap();
+    assert!(clone.folder_lease("owned".into()).await.is_err());
+    drop(folder);
+    assert!(clone.folder_lease("owned".into()).await.is_ok());
 }

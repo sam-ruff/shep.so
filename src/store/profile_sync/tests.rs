@@ -1,520 +1,583 @@
 use super::*;
-use crate::model::Appearance;
-use shep_profile_core::history::{Binding, Journal};
-use std::collections::{BTreeMap, BTreeSet};
+use crate::profile_sync::enrollment::Origin;
+use serde_json::json;
+use shep_profile_core::{Action, Change, SettingKey, history};
+use uuid::Uuid;
 
-fn change(key: SettingKey, value: impl Into<serde_json::Value>) -> Change {
-    Change {
-        action: Action::Setting {
-            key,
-            value: value.into(),
-        },
-        extra: Default::default(),
-    }
-}
-fn binding() -> Binding {
-    Binding {
-        namespace: "so.shep.fixture".into(),
-        principal: "drive:fixture".into(),
-        profile: Uuid::new_v4(),
-        generation: Uuid::new_v4(),
-    }
-}
-fn shared(b: &Binding) -> Journal {
-    let mut j = Journal::memory(b.clone()).unwrap();
-    for changes in [
-        vec![Change {
-            action: Action::ProfileSetup { complete: false },
-            extra: Default::default(),
-        }],
-        vec![
-            change(SettingKey::Appearance, "System"),
-            change(SettingKey::Tooltips, true),
-        ],
-        vec![Change {
-            action: Action::ProfileSetup { complete: true },
-            extra: Default::default(),
-        }],
-    ] {
-        j.edit(LocalEdit {
-            operation: Uuid::new_v4(),
-            expected_revision: j.state().unwrap().revision,
-            changes,
-            resolutions: vec![],
+#[tokio::test]
+async fn profile_login_opt_out_is_durable_before_enrollment_and_survives_reconnection() {
+    let legacy: Options =
+        serde_json::from_value(json!({"enabled":false,"accounts":true,"settings":true})).unwrap();
+    assert!(legacy.discover_on_login);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cache.sqlite");
+    let store = Store::open(&path).unwrap();
+    connected(&store).await;
+    let first = store.profile_enrollment().await.unwrap();
+    assert!(first.empty_workspace && crate::profile_sync::onboarding::eligible(&first));
+    let declined = store
+        .change_profile_sync_options(enrollment::Changes {
+            discover_on_login: Some(false),
+            ..Default::default()
         })
-        .unwrap();
-    }
-    j
-}
-async fn subscribe(db: &Store, b: &Binding, j: &Journal) -> Subscription {
-    let seed = Seed {
-        baseline: None,
-        local_intent: Default::default(),
-        binding: b.clone(),
-        device: j.state().unwrap().device,
-        name: "Work".into(),
-        history_revision: j.state().unwrap().revision,
-        fields: BTreeMap::from([
-            (
-                SettingKey::Appearance,
-                Some(change(SettingKey::Appearance, "System")),
-            ),
-            (
-                SettingKey::Tooltips,
-                Some(change(SettingKey::Tooltips, true)),
-            ),
-        ]),
-    };
-    let s = db.profile_sync_seed(seed).await.unwrap();
-    db.profile_sync_enable(b.storage_key().unwrap(), s.revision, true)
-        .await
-        .unwrap()
-}
-async fn appearance(db: &Store, value: Appearance) {
-    let mut p: Preferences = db.get("preferences").await.unwrap();
-    p.appearance = value;
-    db.save_profile_preferences(p, BTreeSet::from([SettingKey::Appearance]))
         .await
         .unwrap();
+    assert!(declined.enrollment.revision > first.enrollment.revision);
+    assert!(!crate::profile_sync::onboarding::eligible(&declined));
+    drop(store);
+    let reopened = Store::open(&path).unwrap();
+    let prefs: Preferences = reopened.get("preferences").await.unwrap();
+    let disconnected = reopened
+        .disconnect_google(prefs.google_lifecycle.revision)
+        .await
+        .unwrap();
+    reopened
+        .finish_google_cleanup(disconnected.revision)
+        .await
+        .unwrap();
+    let prefs: Preferences = reopened.get("preferences").await.unwrap();
+    let activated = reopened
+        .activate_google(
+            prefs.clone(),
+            GoogleGrant {
+                id: "fixture-reconnected".into(),
+                ..prefs.google_grant.clone()
+            },
+            Some("drive:fixture-user".into()),
+            vec![],
+        )
+        .await
+        .unwrap();
+    assert!(activated.value.google_lifecycle.revision > disconnected.revision);
+    let saved = reopened.profile_enrollment().await.unwrap();
+    assert!(!saved.enrollment.options.discover_on_login && saved.enrollment.selection.is_none());
+    let accepted = reopened
+        .change_profile_sync_options(enrollment::Changes {
+            discover_on_login: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(crate::profile_sync::onboarding::eligible(&accepted));
+    assert!(accepted.enrollment.selection.is_none());
 }
 
 #[tokio::test]
-async fn exact_local_request_and_newer_edit_survive_lost_receipt_and_reopen() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("mail.sqlite");
-    let b = binding();
-    let key = b.storage_key().unwrap();
-    let mut history = shared(&b);
-    let db = Store::open(&path).unwrap();
-    subscribe(&db, &b, &history).await;
-    appearance(&db, Appearance::Dark).await;
-    assert_eq!(
-        db.profile_sync_subscription(key.clone())
-            .await
-            .unwrap()
-            .pending,
-        1
-    );
-    let first = db
-        .profile_sync_prepare_edit(key.clone(), SettingKey::Appearance)
+async fn profile_login_checks_local_settings_and_draft_intent_before_automatic_import() {
+    let store = Store::memory().unwrap();
+    connected(&store).await;
+    assert!(store.profile_enrollment().await.unwrap().empty_workspace);
+    store
+        .update_preferences(|p| p.appearance = Appearance::Dark)
+        .await
+        .unwrap();
+    assert!(!store.profile_enrollment().await.unwrap().empty_workspace);
+    let accounts_only = store
+        .change_profile_sync_options(enrollment::Changes {
+            settings: Some(false),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(accounts_only.empty_workspace);
+    store.put("drafts_revision", 1_u64).await.unwrap();
+    assert!(!store.profile_enrollment().await.unwrap().empty_workspace);
+}
+
+pub(super) async fn connected(store: &Store) {
+    store
+        .update_preferences(|p| {
+            p.google_client_id = "fixture-client".into();
+            p.google_connection_id = "drive:fixture-user".into();
+            p.google_grant = GoogleGrant {
+                id: "fixture-grant".into(),
+                client_id: "fixture-client".into(),
+                access: GoogleAccess {
+                    known: true,
+                    drive: true,
+                    calendar_read: false,
+                    calendar_write: false,
+                },
+            };
+        })
+        .await
+        .unwrap();
+}
+pub(super) fn selection() -> Selection {
+    Selection {
+        binding: history::Binding {
+            namespace: "so.shep.fixture".into(),
+            principal: "drive:fixture-user".into(),
+            profile: Uuid::new_v4(),
+            generation: Uuid::new_v4(),
+        },
+        name: "Personal".into(),
+        origin: Origin::Create,
+        ready: false,
+    }
+}
+async fn begin(store: &Store) -> Snapshot {
+    let reviewed = store.profile_enrollment().await.unwrap();
+    store
+        .begin_profile_enrollment(
+            reviewed,
+            selection(),
+            Options {
+                enabled: true,
+                ..Default::default()
+            },
+        )
         .await
         .unwrap()
-        .unwrap();
-    let saved = history.edit(first.request.clone()).unwrap();
-    appearance(&db, Appearance::Light).await;
-    drop(db);
-    let db = Store::open(&path).unwrap();
-    let replay = db
-        .profile_sync_prepare_edit(key.clone(), SettingKey::Appearance)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        serde_json::to_value(&first).unwrap(),
-        serde_json::to_value(&replay).unwrap()
-    );
-    assert_eq!(
-        history.edit(replay.request.clone()).unwrap().operations,
-        saved.operations
-    );
-    db.profile_sync_edit_saved(replay, saved.revision)
-        .await
-        .unwrap();
-    let latest = db
-        .profile_sync_prepare_edit(key.clone(), SettingKey::Appearance)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_ne!(latest.operation, first.operation);
-    assert_eq!(
-        latest.request.changes[0],
-        change(SettingKey::Appearance, "Light")
-    );
+}
+fn setting(key: SettingKey, value: serde_json::Value) -> Change {
+    Change {
+        action: Action::Setting { key, value },
+        extra: Default::default(),
+    }
+}
+
+#[tokio::test]
+async fn profile_enrollment_keeps_original_pending_choice_across_restart_and_rejects_stale_reviews()
+{
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cache.sqlite");
+    let store = Store::open(&path).unwrap();
+    connected(&store).await;
+    let initial = store.profile_enrollment().await.unwrap();
+    assert!(!initial.enrollment.options.enabled);
+    let pending = begin(&store).await;
+    assert!(!pending.enrollment.selection.as_ref().unwrap().ready);
+    assert!(pending.enrollment.last_success.is_none());
     assert!(
-        db.profile_sync_edit_saved(first, saved.revision)
+        store
+            .begin_profile_enrollment(
+                initial,
+                selection(),
+                Options {
+                    enabled: true,
+                    ..Default::default()
+                }
+            )
             .await
             .is_err()
     );
-    let saved = history.edit(latest.request.clone()).unwrap();
-    db.profile_sync_edit_saved(latest, saved.revision)
+    let same = store
+        .begin_profile_enrollment(
+            pending.clone(),
+            pending.enrollment.selection.clone().unwrap(),
+            pending.enrollment.options,
+        )
         .await
         .unwrap();
-    assert_eq!(db.profile_sync_subscription(key).await.unwrap().pending, 0);
+    assert_eq!(same.enrollment, pending.enrollment);
+    assert!(
+        store
+            .begin_profile_enrollment(pending.clone(), selection(), pending.enrollment.options)
+            .await
+            .is_err()
+    );
+    drop(store);
+    let store = Store::open(path).unwrap();
     assert_eq!(
-        db.get::<Preferences>("preferences")
+        store.profile_enrollment().await.unwrap().enrollment,
+        pending.enrollment
+    );
+    let confirmed = store.profile_sync_succeeded(pending, 123).await.unwrap();
+    assert!(confirmed.enrollment.selection.unwrap().ready);
+    assert_eq!(confirmed.enrollment.last_success, Some(123));
+}
+
+#[tokio::test]
+async fn profile_controls_and_google_disconnect_fence_late_results_without_network_or_credentials()
+{
+    let store = Store::memory().unwrap();
+    connected(&store).await;
+    let started = begin(&store).await;
+    let disabled = store
+        .set_profile_sync_options(
+            started.enrollment.revision,
+            Options {
+                enabled: false,
+                accounts: false,
+                settings: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        store
+            .profile_sync_succeeded(started.clone(), 123)
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .set_profile_sync_options(started.enrollment.revision, started.enrollment.options)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store.profile_enrollment().await.unwrap().enrollment,
+        disabled.enrollment
+    );
+    let enabled = store
+        .set_profile_sync_options(disabled.enrollment.revision, started.enrollment.options)
+        .await
+        .unwrap();
+    store
+        .disconnect_google(enabled.google_revision)
+        .await
+        .unwrap();
+    let paused = store.profile_enrollment().await.unwrap();
+    assert!(!paused.available);
+    assert!(!paused.enrollment.options.enabled);
+    assert!(store.profile_sync_succeeded(enabled, 123).await.is_err());
+    assert!(
+        store
+            .set_profile_sync_options(paused.enrollment.revision, started.enrollment.options)
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .profile_enrollment()
+            .await
+            .unwrap()
+            .enrollment
+            .selection
+            .is_some()
+    );
+    assert_eq!(store.get::<usize>("unrelated-test-key").await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn invalid_profile_enrollment_cannot_prevent_google_disconnect_or_become_a_fresh_setup() {
+    let store = Store::memory().unwrap();
+    connected(&store).await;
+    store
+        .put(STORAGE_KEY, json!({"unsupported_future_shape":true}))
+        .await
+        .unwrap();
+    assert!(store.profile_enrollment().await.is_err());
+    store.disconnect_google(0).await.unwrap();
+    assert!(
+        store
+            .get::<Preferences>("preferences")
+            .await
+            .unwrap()
+            .google_lifecycle
+            .disconnected
+    );
+    assert_eq!(
+        store.get::<serde_json::Value>(STORAGE_KEY).await.unwrap(),
+        json!({"unsupported_future_shape":true})
+    );
+    assert!(store.profile_enrollment().await.is_err());
+}
+
+#[tokio::test]
+async fn profile_settings_apply_atomically_preserve_device_fields_and_refuse_newer_local_intent() {
+    let store = Store::memory().unwrap();
+    connected(&store).await;
+    store
+        .update_preferences(|p| {
+            p.reader_split = 0.6;
+            p.backup_folder = "/fixture/device-only".into();
+            p.google_client_secret = "fixture-secret-not-portable".into();
+            p.contacts = vec!["local@example.test".into()];
+        })
+        .await
+        .unwrap();
+    let expected = begin(&store).await;
+    let before: Preferences = store.get("preferences").await.unwrap();
+    for changes in [
+        vec![
+            setting(SettingKey::Appearance, json!("Dark")),
+            setting(SettingKey::UnifiedInbox, json!("not a bool")),
+        ],
+        vec![
+            setting(SettingKey::Appearance, json!("Dark")),
+            setting(SettingKey::Appearance, json!("Light")),
+        ],
+    ] {
+        assert!(
+            store
+                .apply_profile_settings(expected.clone(), changes)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            store.get::<Preferences>("preferences").await.unwrap(),
+            before
+        );
+    }
+    let (applied, preferences) = store
+        .apply_profile_settings(
+            expected,
+            vec![
+                setting(SettingKey::Appearance, json!("Dark")),
+                setting(SettingKey::UnifiedInbox, json!(false)),
+            ],
+        )
+        .await
+        .unwrap();
+    let mut wanted = before.clone();
+    wanted.appearance = Appearance::Dark;
+    wanted.unified_inbox = false;
+    assert_eq!(preferences.value, wanted);
+    let (same, _) = store
+        .apply_profile_settings(
+            applied.clone(),
+            vec![setting(SettingKey::Appearance, json!("Dark"))],
+        )
+        .await
+        .unwrap();
+    assert_eq!(same.preferences_revision, applied.preferences_revision);
+    store
+        .update_preferences(|p| p.appearance = Appearance::Light)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .apply_profile_settings(
+                applied,
+                vec![setting(SettingKey::Appearance, json!("Dark"))]
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store
+            .get::<Preferences>("preferences")
             .await
             .unwrap()
             .appearance,
         Appearance::Light
     );
-}
-
-#[tokio::test]
-async fn remote_application_is_atomic_and_does_not_echo_or_replace_device_settings() {
-    let b = binding();
-    let key = b.storage_key().unwrap();
-    let history = shared(&b);
-    let db = Store::memory().unwrap();
-    let prefs = Preferences {
-        google_connection_id: "drive:device-only".into(),
-        backup_folder: "/fixture/device-only".into(),
-        reader_font_size: 23,
-        ..Default::default()
-    };
-    db.put("preferences", prefs).await.unwrap();
-    subscribe(&db, &b, &history).await;
-    let revision = history.state().unwrap().revision + 1;
-    let ApplyResult::Applied(snapshot) = db
-        .profile_sync_apply_setting(
-            key.clone(),
-            SettingKey::Appearance,
-            change(SettingKey::Appearance, "Dark"),
-            revision,
+    let review = store.profile_enrollment().await.unwrap();
+    let paused = store
+        .set_profile_sync_options(
+            review.enrollment.revision,
+            Options {
+                enabled: true,
+                accounts: true,
+                settings: false,
+                ..Default::default()
+            },
         )
-        .await
-        .unwrap()
-    else {
-        panic!("remote preference must apply")
-    };
-    assert_eq!(snapshot.value.appearance, Appearance::Dark);
-    assert_eq!(snapshot.value.google_connection_id, "drive:device-only");
-    assert_eq!(snapshot.value.backup_folder, "/fixture/device-only");
-    assert_eq!(snapshot.value.reader_font_size, 23);
-    assert!(
-        db.profile_sync_prepare_edit(key.clone(), SettingKey::Appearance)
-            .await
-            .unwrap()
-            .is_none()
-    );
-    assert!(matches!(
-        db.profile_sync_apply_setting(
-            key,
-            SettingKey::Appearance,
-            change(SettingKey::Appearance, "System"),
-            revision - 1
-        )
-        .await
-        .unwrap(),
-        ApplyResult::Unchanged
-    ));
-    assert_eq!(
-        db.get::<Preferences>("preferences")
-            .await
-            .unwrap()
-            .appearance,
-        Appearance::Dark
-    );
-}
-
-#[tokio::test]
-async fn remote_change_preserves_newer_reverted_local_intent_and_other_fields_continue() {
-    let b = binding();
-    let key = b.storage_key().unwrap();
-    let history = shared(&b);
-    let db = Store::memory().unwrap();
-    subscribe(&db, &b, &history).await;
-    appearance(&db, Appearance::Dark).await;
-    appearance(&db, Appearance::System).await;
-    let revision = history.state().unwrap().revision + 1;
-    assert!(matches!(
-        db.profile_sync_apply_setting(
-            key.clone(),
-            SettingKey::Appearance,
-            change(SettingKey::Appearance, "Light"),
-            revision
-        )
-        .await
-        .unwrap(),
-        ApplyResult::ReviewRequired
-    ));
-    assert_eq!(
-        db.get::<Preferences>("preferences")
-            .await
-            .unwrap()
-            .appearance,
-        Appearance::System
-    );
-    let fields = db.profile_sync_fields(key.clone()).await.unwrap();
-    let field = fields
-        .iter()
-        .find(|f| f.key == SettingKey::Appearance)
-        .unwrap();
-    assert_eq!(
-        field.incoming,
-        Some(change(SettingKey::Appearance, "Light"))
-    );
-    assert_eq!(field.local, serde_json::json!("System"));
-    assert!(field.pending && field.error.is_some());
-    assert!(matches!(
-        db.profile_sync_apply_setting(
-            key.clone(),
-            SettingKey::Tooltips,
-            change(SettingKey::Tooltips, false),
-            revision
-        )
-        .await
-        .unwrap(),
-        ApplyResult::Applied(_)
-    ));
-    assert!(!db.get::<Preferences>("preferences").await.unwrap().tooltips);
-    assert_eq!(
-        db.profile_sync_subscription(key).await.unwrap().conflicts,
-        1
-    );
-}
-
-#[tokio::test]
-async fn pause_keeps_pending_receipts_and_stale_toggles_cannot_resume() {
-    let b = binding();
-    let key = b.storage_key().unwrap();
-    let mut history = shared(&b);
-    let db = Store::memory().unwrap();
-    let active = subscribe(&db, &b, &history).await;
-    appearance(&db, Appearance::Dark).await;
-    let edit = db
-        .profile_sync_prepare_edit(key.clone(), SettingKey::Appearance)
-        .await
-        .unwrap()
-        .unwrap();
-    let paused = db
-        .profile_sync_enable(key.clone(), active.revision, false)
         .await
         .unwrap();
     assert!(
-        db.profile_sync_enable(key.clone(), active.revision, true)
+        store
+            .apply_profile_settings(paused, vec![setting(SettingKey::Appearance, json!("Dark"))])
             .await
             .is_err()
     );
-    assert!(
-        db.profile_sync_prepare_edit(key.clone(), SettingKey::Appearance)
-            .await
-            .is_err()
-    );
-    assert!(
-        db.profile_sync_apply_setting(
-            key.clone(),
-            SettingKey::Tooltips,
-            change(SettingKey::Tooltips, false),
-            history.state().unwrap().revision + 1
-        )
-        .await
-        .is_err()
-    );
-    // A step accepted before Pause may still acknowledge its durable receipt.
-    let saved = history.edit(edit.request.clone()).unwrap();
-    db.profile_sync_edit_saved(edit, saved.revision)
-        .await
-        .unwrap();
-    assert!(
-        !db.profile_sync_subscription(key.clone())
-            .await
-            .unwrap()
-            .enabled
-    );
-    let enabled = db
-        .profile_sync_enable(key.clone(), paused.revision, true)
-        .await
-        .unwrap();
-    let disabled = db
-        .profile_sync_field_enable(key.clone(), enabled.revision, SettingKey::Appearance, false)
-        .await
-        .unwrap();
-    appearance(&db, Appearance::Light).await;
-    assert!(
-        db.profile_sync_prepare_edit(key.clone(), SettingKey::Appearance)
-            .await
-            .unwrap()
-            .is_none()
-    );
-    db.profile_sync_field_enable(key.clone(), disabled.revision, SettingKey::Appearance, true)
-        .await
-        .unwrap();
-    assert!(
-        db.profile_sync_prepare_edit(key, SettingKey::Appearance)
-            .await
-            .unwrap()
-            .is_some()
-    );
 }
 
 #[tokio::test]
-async fn different_principals_cannot_share_the_active_subscription_or_pending_request() {
-    let first = binding();
-    let mut second = first.clone();
-    second.principal = "drive:other-fixture".into();
-    let history = shared(&first);
-    let db = Store::memory().unwrap();
-    subscribe(&db, &first, &history).await;
-    let other = db
-        .profile_sync_seed(Seed {
-            baseline: None,
-            local_intent: Default::default(),
-            binding: second.clone(),
-            device: Uuid::new_v4(),
-            name: "Other".into(),
-            history_revision: 0,
-            fields: BTreeMap::from([(SettingKey::Appearance, None)]),
-        })
-        .await
-        .unwrap();
-    assert!(
-        db.profile_sync_enable(second.storage_key().unwrap(), other.revision, true)
-            .await
-            .is_err()
-    );
-    appearance(&db, Appearance::Dark).await;
-    let edit = db
-        .profile_sync_prepare_edit(first.storage_key().unwrap(), SettingKey::Appearance)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(edit.binding, first);
-    assert!(
-        !db.profile_sync_subscription(second.storage_key().unwrap())
-            .await
-            .unwrap()
-            .enabled
-    );
-}
-
-#[tokio::test]
-async fn failed_remote_receipt_rolls_back_preference_value_and_revisions() {
-    let b = binding();
-    let key = b.storage_key().unwrap();
-    let history = shared(&b);
-    let db = Store::memory().unwrap();
-    subscribe(&db, &b, &history).await;
-    let before: Preferences = db.get("preferences").await.unwrap();
-    let revision: u64 = db.get("preferences_revision").await.unwrap();
-    db.run(|db| {db.execute_batch("CREATE TEMP TRIGGER failed_sync_receipt BEFORE UPDATE OF shared_revision ON profile_sync_fields BEGIN SELECT RAISE(FAIL,'synthetic failed sync receipt');END;")?;Ok(())}).await.unwrap();
-    let apply_revision = history.state().unwrap().revision + 1;
-    assert!(
-        db.profile_sync_apply_setting(
-            key.clone(),
-            SettingKey::Appearance,
-            change(SettingKey::Appearance, "Dark"),
-            apply_revision
-        )
-        .await
-        .unwrap_err()
-        .to_string()
-        .contains("synthetic failed sync receipt")
-    );
-    assert_eq!(db.get::<Preferences>("preferences").await.unwrap(), before);
-    assert_eq!(
-        db.get::<u64>("preferences_revision").await.unwrap(),
-        revision
-    );
-    assert_eq!(
-        db.profile_sync_subscription(key.clone())
-            .await
-            .unwrap()
-            .pending,
-        0
-    );
-    db.run(|db| {
-        db.execute_batch("DROP TRIGGER failed_sync_receipt")?;
-        Ok(())
-    })
-    .await
+async fn profile_metadata_maps_explicit_auth_and_keeps_unimplemented_settings_and_extensions() {
+    use crate::profile_sync::metadata;
+    let operation = shep_profile_core::Operation::decode(include_bytes!(
+        "../../../tests/support/profile-operation.json"
+    ))
     .unwrap();
-    assert!(matches!(
-        db.profile_sync_apply_setting(
-            key,
-            SettingKey::Appearance,
-            change(SettingKey::Appearance, "Dark"),
-            apply_revision
-        )
-        .await
-        .unwrap(),
-        ApplyResult::Applied(_)
-    ));
+    let Action::AccountConnection { account } = &operation.changes[0].action else {
+        panic!()
+    };
+    let native = metadata::review_account(account, "Équipe").unwrap();
+    let exported = metadata::export_account(&native, account.id).unwrap();
+    assert_eq!(exported[0], operation.changes[0]);
+    assert_eq!(exported[1], operation.changes[1]);
+    assert!(metadata::export_account(&native, Uuid::new_v4()).is_err());
+    let mut extended = account.clone();
+    extended
+        .extra
+        .insert("future_connection".into(), json!("preserve"));
+    assert!(metadata::review_account(&extended, "Équipe").is_err());
+    let mut preferences = Preferences::default();
+    assert!(metadata::apply_setting(&mut preferences, &operation.changes[2]).unwrap());
+    assert_eq!(preferences.appearance, Appearance::Dark);
+    assert!(!metadata::apply_setting(&mut preferences, &operation.changes[3]).unwrap());
+    assert!(metadata::setting_value(SettingKey::PreviewLines, &preferences).is_none());
+    let tooltip = Change {
+        action: Action::Setting {
+            key: SettingKey::Tooltips,
+            value: json!(false),
+        },
+        extra: Default::default(),
+    };
+    assert!(metadata::apply_setting(&mut preferences, &tooltip).unwrap());
+    assert!(!preferences.tooltips);
+    assert!(
+        preferences.shortcut_tooltips,
+        "The independent shortcut hint choice stays local."
+    );
+    for (key, value) in [
+        (SettingKey::LeftSwipe, json!("archive")),
+        (SettingKey::RightSwipe, json!("read")),
+        (SettingKey::SenderPictures, json!(false)),
+    ] {
+        assert!(
+            !metadata::apply_setting(
+                &mut preferences,
+                &Change {
+                    action: Action::Setting { key, value },
+                    extra: Default::default()
+                }
+            )
+            .unwrap()
+        );
+        assert!(metadata::setting_value(key, &preferences).is_none());
+    }
 }
 
 #[tokio::test]
-async fn pausing_a_profile_does_not_authorize_switching_its_workspace() {
-    let first = binding();
-    let history = shared(&first);
-    let db = Store::memory().unwrap();
-    let initial = subscribe(&db, &first, &history).await;
-    db.profile_sync_enable(first.storage_key().unwrap(), initial.revision, false)
+async fn profile_seed_freezes_legacy_account_mapping_and_chunk_retries_across_restart() {
+    use crate::profile_sync::{
+        enrollment::{SEED_KEY, Seed},
+        metadata,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cache.sqlite");
+    let store = Store::open(&path).unwrap();
+    connected(&store).await;
+    let operation = shep_profile_core::Operation::decode(include_bytes!(
+        "../../../tests/support/profile-operation.json"
+    ))
+    .unwrap();
+    let connection = operation
+        .changes
+        .iter()
+        .find_map(|c| match &c.action {
+            Action::AccountConnection { account } => Some(account),
+            _ => None,
+        })
+        .unwrap();
+    let mut accounts = vec![];
+    for index in 0..70 {
+        let mut account =
+            metadata::review_account(connection, &format!("Account {index}")).unwrap();
+        account.id = format!("legacy-{index}");
+        accounts.push(account);
+    }
+    store.put("accounts", accounts).await.unwrap();
+    let original = begin(&store).await;
+    let seed = store.profile_seed(original.clone()).await.unwrap();
+    assert!(seed.chunks.len() > 1);
+    assert_eq!(seed.account_ids.len(), 70);
+    assert!(
+        store
+            .checkpoint_profile_seed(original.clone(), seed.chunks[0].operation, u64::MAX)
+            .await
+            .is_err()
+    );
+    assert!(
+        store.profile_seed(original.clone()).await.unwrap().chunks[0]
+            .expected_revision
+            .is_none()
+    );
+    let first = store
+        .checkpoint_profile_seed(original.clone(), seed.chunks[0].operation, 0)
         .await
         .unwrap();
-    let second = binding();
-    let other = db
-        .profile_sync_seed(Seed {
-            baseline: None,
-            local_intent: Default::default(),
-            binding: second.clone(),
-            device: Uuid::new_v4(),
-            name: "Other setup".into(),
-            history_revision: 0,
-            fields: BTreeMap::from([(SettingKey::Appearance, None)]),
+    let repeated = store
+        .checkpoint_profile_seed(original.clone(), first.operation, 999)
+        .await
+        .unwrap();
+    assert_eq!(repeated.expected_revision, Some(0));
+    assert_eq!(
+        serde_json::to_vec(&repeated.changes).unwrap(),
+        serde_json::to_vec(&first.changes).unwrap()
+    );
+    drop(store);
+    let store = Store::open(&path).unwrap();
+    let reopened = store.profile_seed(original.clone()).await.unwrap();
+    assert_eq!(reopened.account_ids, seed.account_ids);
+    assert_eq!(reopened.chunks[0].operation, first.operation);
+    assert_eq!(reopened.chunks[0].expected_revision, Some(0));
+    assert_eq!(
+        store.get::<Vec<Account>>("accounts").await.unwrap()[0].id,
+        "legacy-0"
+    );
+
+    let saved = store.get::<Option<Seed>>(SEED_KEY).await.unwrap().unwrap();
+    for kind in 0..3 {
+        let mut corrupt = saved.clone();
+        match kind {
+            0 => {
+                corrupt.chunks[1].operation = corrupt.chunks[0].operation;
+            }
+            1 => {
+                corrupt.account_ids.remove("legacy-0");
+            }
+            _ => {
+                corrupt.chunks[0].changes[0]
+                    .extra
+                    .insert("password".into(), json!("forbidden"));
+            }
+        }
+        store.put(SEED_KEY, corrupt).await.unwrap();
+        assert!(store.profile_seed(original.clone()).await.is_err());
+        assert!(
+            store
+                .checkpoint_profile_seed(original.clone(), first.operation, 1)
+                .await
+                .is_err()
+        );
+    }
+    store.put(SEED_KEY, saved).await.unwrap();
+    assert_eq!(
+        store.profile_seed(original).await.unwrap().account_ids,
+        seed.account_ids
+    );
+}
+
+#[tokio::test]
+async fn profile_field_choices_preserve_new_enrollment_and_disconnected_master_switch() {
+    use crate::profile_sync::enrollment::Changes;
+    let store = Store::memory().unwrap();
+    connected(&store).await;
+    let pending = begin(&store).await;
+    // An earlier UI snapshot need not know setup has just enabled the profile.
+    let edited = store
+        .change_profile_sync_options(Changes {
+            accounts: Some(false),
+            ..Default::default()
         })
         .await
         .unwrap();
+    assert!(edited.enrollment.options.enabled);
+    assert!(!edited.enrollment.options.accounts);
+    assert_eq!(edited.enrollment.selection, pending.enrollment.selection);
+    store
+        .disconnect_google(edited.google_revision)
+        .await
+        .unwrap();
+    let offline = store
+        .change_profile_sync_options(Changes {
+            accounts: Some(true),
+            settings: Some(false),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(!offline.enrollment.options.enabled);
+    assert!(offline.enrollment.options.accounts);
+    assert!(!offline.enrollment.options.settings);
     assert!(
-        db.profile_sync_enable(second.storage_key().unwrap(), other.revision, true)
+        store
+            .change_profile_sync_options(Changes {
+                enabled: Some(true),
+                ..Default::default()
+            })
             .await
-            .unwrap_err()
-            .to_string()
-            .contains("Review a profile switch")
+            .is_err()
     );
-    assert!(db.profile_sync_active().await.unwrap().is_none());
-    let paused = db
-        .profile_sync_subscription(first.storage_key().unwrap())
-        .await
-        .unwrap();
-    db.profile_sync_enable(first.storage_key().unwrap(), paused.revision, true)
-        .await
-        .unwrap();
-}
-
-#[tokio::test]
-async fn reviewed_setup_captures_reverted_intent_atomically_and_preserves_saved_choices() {
-    let db = Store::memory().unwrap();
-    let b = binding();
-    let history = shared(&b);
-    let baseline = db
-        .run(|db| Ok(profile_preferences::state(db)?.revisions))
-        .await
-        .unwrap();
-    appearance(&db, Appearance::Dark).await;
-    appearance(&db, Appearance::System).await;
-    let seed = Seed {
-        binding: b.clone(),
-        device: history.state().unwrap().device,
-        name: "Reviewed".into(),
-        history_revision: history.state().unwrap().revision,
-        baseline: Some(baseline),
-        local_intent: Default::default(),
-        fields: BTreeMap::from([(
-            SettingKey::Appearance,
-            Some(change(SettingKey::Appearance, "System")),
-        )]),
-    };
-    let subscription = db.profile_sync_seed(seed.clone()).await.unwrap();
-    assert!(!subscription.enabled);
-    assert_eq!(subscription.pending, 1);
-    let key = b.storage_key().unwrap();
-    let enabled = db
-        .profile_sync_enable(key.clone(), subscription.revision, true)
-        .await
-        .unwrap();
-    let queued = db
-        .profile_sync_prepare_edit(key.clone(), SettingKey::Appearance)
-        .await
-        .unwrap()
-        .unwrap();
-    let reseeded = db.profile_sync_seed(seed).await.unwrap();
-    assert_eq!(reseeded.revision, enabled.revision);
-    assert!(reseeded.enabled);
     assert_eq!(
-        db.profile_sync_prepare_edit(key, SettingKey::Appearance)
-            .await
-            .unwrap()
-            .unwrap()
-            .operation,
-        queued.operation
+        store.profile_enrollment().await.unwrap().enrollment,
+        offline.enrollment
     );
 }

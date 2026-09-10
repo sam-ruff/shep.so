@@ -33,6 +33,8 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --all-targets --all-features -- -D warnings
           cargo test --all-features
+          cargo test -p shep-html-pixbuf
+          python3 scripts/test_profile_core.py
           cargo build --release --no-default-features
       - name: Harness unit tests
         shell: bash
@@ -44,6 +46,7 @@ jobs:
           cargo bench --bench responsiveness
           cargo build --profile test-ui --features test-support
           python3 scripts/e2e.py
+          python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html.json
           python3 scripts/performance_gate.py
       - uses: actions/upload-artifact@v4
         if: always() && matrix.e2e

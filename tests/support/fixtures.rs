@@ -1,8 +1,49 @@
 use crate::{model::*, store::Store};
+pub mod backups;
+mod bulk_history;
 #[path = "html_mail.rs"]
 mod html_mail;
+mod move_recovery;
+mod reading_mail;
+pub use move_recovery::recover_move;
+pub mod workspace;
 
 pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
+    if store.get::<bool>("fixture_seeded").await? {
+        return Ok(());
+    }
+    seed_demo_contents(store).await?;
+    if std::env::args().any(|a| a == "--bulk-history") {
+        bulk_history::seed(store).await?;
+    }
+    move_recovery::seed(store).await?;
+    if std::env::args().any(|arg| arg == "--reading-mail") {
+        reading_mail::seed(store).await?;
+    }
+    // These seeded accounts model a completed initial import. Only subsequent
+    // fixture sync arrivals exercise notification delivery policy.
+    for account in store.get::<Vec<Account>>("accounts").await? {
+        let epoch = match account.protocol {
+            Protocol::Imap => "imap:1",
+            Protocol::Pop3 => "pop3",
+        };
+        store
+            .begin_notification_sync(account.id.clone(), epoch.into())
+            .await?;
+        store
+            .finish_notification_sync(account.id, epoch.into())
+            .await?;
+    }
+    backups::seed(store).await?;
+    store.put("fixture_seeded", true).await
+}
+
+async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
+    if std::env::args().any(|a| a == "--profile-empty-workspace")
+        && std::env::args().any(|a| a.starts_with("--profile-drive-url="))
+    {
+        return seed_profile_google(store).await;
+    }
     store
         .put(
             "preferences",
@@ -37,22 +78,14 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
             id: "preview-personal".into(),
             name: "Personal".into(),
             email: "alex@example.com".into(),
-            ..account.clone()
+            protocol: if std::env::args().any(|a| a == "--pop3-personal") {
+                Protocol::Pop3
+            } else {
+                Protocol::Imap
+            },
+            ..account
         })
         .await?;
-    if std::env::args().any(|arg| arg == "--profile-pages") {
-        for index in 2..75 {
-            store
-                .save_account(Account {
-                    id: format!("preview-paged-{index:02}"),
-                    name: format!("Local account {index:02}"),
-                    email: format!("local-{index}@example.test"),
-                    username: format!("local-{index}"),
-                    ..account.clone()
-                })
-                .await?;
-        }
-    }
     let entries = [
         (
             "Maya Chen",
@@ -254,15 +287,27 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
             )
             .await?;
     }
+    if std::env::args().any(|arg| arg == "--nested-folders") {
+        seed_nested_folders(store).await?;
+    }
     if std::env::args().any(|a| a == "--empty-calendars") {
         return Ok(());
     }
     let source = CalendarSource {
         access: Default::default(),
-        id: "preview-calendar".into(),
+        id: if backups::active() {
+            "google:studio@example.test"
+        } else {
+            "preview-calendar"
+        }
+        .into(),
         name: "Studio calendar".into(),
         kind: CalendarKind::Google,
-        url: String::new(),
+        url: if backups::active() {
+            "studio@example.test".into()
+        } else {
+            String::new()
+        },
         username: String::new(),
     };
     store.save_source(source.clone()).await?;
@@ -272,7 +317,17 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
         } else {
             CalendarAccess::default()
         },
-        id: "preview-home-calendar".into(),
+        id: if backups::active() {
+            "google:home@example.test"
+        } else {
+            "preview-home-calendar"
+        }
+        .into(),
+        url: if backups::active() {
+            "home@example.test".into()
+        } else {
+            String::new()
+        },
         name: "Home calendar".into(),
         ..source.clone()
     };
@@ -346,6 +401,17 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
                 sources,
             )
             .await?;
+    }
+    if std::env::args().any(|a| a == "--invalid-profile-enrollment") {
+        store
+            .put(
+                crate::profile_sync::enrollment::STORAGE_KEY,
+                serde_json::json!({"future_format":true}),
+            )
+            .await?;
+    }
+    if std::env::args().any(|a| a.starts_with("--profile-drive-url=")) {
+        seed_profile_google(store).await?;
     }
     Ok(())
 }
@@ -550,8 +616,22 @@ pub async fn forward_delay(store: &Store) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Attachment storage fails once under the same isolated delayed-failure mode.
+pub async fn attachment_delay(store: &Store) -> anyhow::Result<()> {
+    if std::env::args().any(|arg| arg == "--mail-actions=fail")
+        && !store.get::<bool>("preview-attachment-failed").await?
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+        store.put("preview-attachment-failed", true).await?;
+        anyhow::bail!("Fixture storage failure. Choose the attachment again.");
+    }
+    Ok(())
+}
+
 /// A new arrival proves that an automatic cycle reaches the ordinary cache/UI.
-pub async fn sync_mail(store: &Store) -> anyhow::Result<u64> {
+pub async fn sync_mail(
+    store: &Store,
+) -> anyhow::Result<(u64, Option<crate::notifications::Arrival>)> {
     let background = std::env::args().any(|arg| arg == "--background-sync");
     let fail_once = std::env::args().any(|arg| arg == "--sync-failure-once");
     let round = store.get::<u64>("preview-sync-round").await? + 1;
@@ -566,11 +646,14 @@ pub async fn sync_mail(store: &Store) -> anyhow::Result<u64> {
         !fail_once || round != 1,
         "Fixture mail server is temporarily unavailable. Try Refresh again."
     );
-    if background {
-        store.upsert(vec![parse_mail("preview-work", "1.9000", "INBOX",
-            b"From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: New mail from the background\r\n\r\nThis fictional message arrived through the automatic refresh.".to_vec(), true, false)?]).await?;
-    }
-    Ok(round)
+    move_recovery::refresh(store).await?;
+    let arrival = if background {
+        store.sync_message(parse_mail("preview-work", "1.9000", "INBOX",
+            b"From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: New mail from the background\r\n\r\nThis fictional message arrived through the automatic refresh.".to_vec(), true, false)?).await?
+    } else {
+        None
+    };
+    Ok((round, arrival))
 }
 
 /// Controlled print delay/retry uses only isolated fixture storage.
@@ -595,4 +678,134 @@ pub async fn image_delay() {
         .unwrap_or(0)
         .min(5000);
     tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+}
+
+async fn seed_nested_folders(store: &Store) -> anyhow::Result<()> {
+    use crate::folders::{Mailbox, NameEncoding};
+    for (account, delimiter, folders) in [
+        (
+            "preview-work",
+            '/',
+            vec![
+                ("INBOX", true),
+                ("Archive", true),
+                ("Sent", true),
+                ("Trash", true),
+                ("Projects", true),
+                ("Projects/Design", true),
+                ("Projects/Design/&ZeVnLIqe-", true),
+                ("Projects/Travel", true),
+                ("Teams/", false),
+                ("Teams/Remote", false),
+                ("Teams/Remote/Meetings", true),
+                ("Empty container", false),
+            ],
+        ),
+        (
+            "preview-personal",
+            '.',
+            vec![
+                ("INBOX", true),
+                ("Archive", true),
+                ("Sent", true),
+                ("Trash", true),
+                ("Home", false),
+                ("Home.Plans", true),
+                ("Home.Plans.2026", true),
+                ("Notes/flat.name", true),
+            ],
+        ),
+    ] {
+        let catalog = folders
+            .into_iter()
+            .map(|(name, selectable)| Mailbox {
+                name: name.into(),
+                delimiter: if name == "Notes/flat.name" {
+                    None
+                } else {
+                    Some(delimiter)
+                },
+                selectable,
+                encoding: NameEncoding::ImapUtf7,
+                no_inferiors: false,
+                non_existent: false,
+            })
+            .collect();
+        store.save_folder_catalog(account.into(), catalog).await?;
+    }
+    for (index, (account, folder, subject)) in [
+        ("preview-work", "Projects", "Project overview"),
+        ("preview-work", "Projects/Design", "Design brief"),
+        (
+            "preview-work",
+            "Projects/Design/&ZeVnLIqe-",
+            "Japanese folder note",
+        ),
+        ("preview-work", "Projects/Travel", "Travel plans"),
+        (
+            "preview-work",
+            "Teams/Remote/Meetings",
+            "Remote team agenda",
+        ),
+        ("preview-personal", "Home.Plans", "Home plans"),
+        ("preview-personal", "Home.Plans.2026", "Plans for 2026"),
+        ("preview-personal", "Notes/flat.name", "A flat folder"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        store.upsert(vec![parse_mail(account,&format!("nested-{index}"),folder,
+            format!("From: Folder fixture <folders@example.test>\r\nSubject: {subject}\r\n\r\nFictional nested folder contents.").into_bytes(),true,false)?]).await?;
+    }
+    Ok(())
+}
+
+/// Desktop failure/latency fixtures never contact a desktop service or audio device.
+pub async fn notification_delivery(attempt: u64) -> anyhow::Result<()> {
+    let mode = std::env::args().find_map(|arg| {
+        arg.strip_prefix("--notification-delivery=")
+            .map(str::to_owned)
+    });
+    if let Some(mode) = mode {
+        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+        anyhow::ensure!(
+            mode != "fail-once" || attempt != 1,
+            "Fixture notification service unavailable. Check desktop permissions, then try Test notification again."
+        );
+    }
+    Ok(())
+}
+
+async fn seed_profile_google(store: &Store) -> anyhow::Result<()> {
+    store
+        .update_preferences(|p| {
+            p.google_client_id = "fixture-profile-client".into();
+            p.google_connection_id = "drive:fixture".into();
+            p.google_grant = GoogleGrant {
+                id: "fixture-profile-grant".into(),
+                client_id: "fixture-profile-client".into(),
+                access: GoogleAccess {
+                    known: true,
+                    drive: true,
+                    calendar_read: true,
+                    calendar_write: true,
+                },
+            };
+        })
+        .await?;
+    Ok(())
+}
+
+/// Fictional host-key review controls; the native fixture never contacts SSH.
+pub fn sftp_fingerprint(host: &str) -> anyhow::Result<String> {
+    use base64::Engine as _;
+    let bytes = match host {
+        "backup.example.test" => [1; 32],
+        "changed.example.test" => [2; 32],
+        _ => anyhow::bail!("The fixture SFTP server is unavailable. Check the server and retry."),
+    };
+    Ok(format!(
+        "SHA256:{}",
+        base64::engine::general_purpose::STANDARD_NO_PAD.encode(bytes)
+    ))
 }

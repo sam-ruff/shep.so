@@ -167,10 +167,19 @@ struct Catalog {
     scope: Scope,
     remote_root: PathBuf,
     projection: Option<(Binding, Journal)>,
-    _lock: std::fs::File,
+    connections: history::ConnectionFactory,
+    _lock: history::ownership::OwnedLock,
 }
 impl Catalog {
+    #[cfg(test)]
     fn open(path: &Path, scope: Scope) -> Result<Self> {
+        Self::open_with(path, scope, history::ConnectionFactory::default())
+    }
+    fn open_with(
+        path: &Path,
+        scope: Scope,
+        connections: history::ConnectionFactory,
+    ) -> Result<Self> {
         scope.validate()?;
         storage::directory(path.parent().ok_or(Error::Storage)?)?;
         storage::private_file(path)?;
@@ -185,8 +194,11 @@ impl Catalog {
                 Error::Storage
             }
         })?;
-        let mut db = Connection::open(&path)?;
-        db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA temp_store=FILE;")?;
+        let lock = history::ownership::OwnedLock::acquired(lock);
+        let mut db = connections.open(&path)?;
+        db.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;",
+        )?;
         storage::initialize(&mut db, &scope)?;
         let mut root = path.as_os_str().to_owned();
         root.push(".observations");
@@ -197,6 +209,7 @@ impl Catalog {
             scope,
             remote_root,
             projection: None,
+            connections,
             _lock: lock,
         })
     }
@@ -258,7 +271,7 @@ impl Catalog {
             let path = self
                 .remote_root
                 .join(format!("{}.sqlite", binding.storage_key()?));
-            let journal = Journal::open(&path, binding.clone())?;
+            let journal = Journal::open_with(&path, binding.clone(), &self.connections)?;
             self.projection = Some((binding, journal));
         }
         Ok(&mut self.projection.as_mut().unwrap().1)
@@ -332,3 +345,6 @@ impl Catalog {
         Ok((state.revision, work))
     }
 }
+
+#[cfg(test)]
+mod connection_tests;

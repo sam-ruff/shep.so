@@ -52,17 +52,19 @@ fn fixture() -> Snapshot {
 
 fn engine(credentials: Arc<Credentials>) -> Engine {
     Engine {
+        profiles: None,
+        credentials: Default::default(),
         store: Store::memory().unwrap(),
         google: Default::default(),
         demo: false,
-        account_locks: Default::default(),
-        calendar_locks: Default::default(),
+        account_work: Default::default(),
+        calendar_work: Default::default(),
         calendar_setup_lock: Default::default(),
         connection_lifecycle_lock: Default::default(),
-        secret_remover: Arc::new(removals::OsSecretRemover),
-        outbound: Arc::new(providers::outgoing::Servers),
+        secret_remover: Arc::new(removals::OsSecretRemover::default()),
+        outbound: Arc::new(providers::outgoing::Servers::default()),
         google_connection_lock: Default::default(),
-        passphrases: Arc::new(backup::OsPassphraseStore),
+        passphrases: Arc::new(backup::OsPassphraseStore::default()),
         restore_credentials: credentials,
         backup_uploads: Default::default(),
         mail_sync_settings: Default::default(),
@@ -70,6 +72,44 @@ fn engine(credentials: Arc<Credentials>) -> Engine {
         printing: Default::default(),
         bulk_control: Default::default(),
     }
+}
+
+#[tokio::test]
+async fn discovered_caldav_ids_and_passwords_survive_encrypted_backup_and_restore() {
+    let mut snapshot = fixture();
+    let id = format!("caldav:{}", "a".repeat(64));
+    snapshot.calendars[0].id = id.clone();
+    snapshot
+        .credentials
+        .iter_mut()
+        .find(|(owner, _)| owner == "home")
+        .unwrap()
+        .0 = id.clone();
+    let passphrase = SecretString::from("Synthetic transfer passphrase");
+    let ciphertext = backup::encrypt(&snapshot, &passphrase).unwrap();
+    let decoded = backup::decrypt(&ciphertext, &passphrase).unwrap();
+    let credentials = Arc::new(Credentials::default());
+    let engine = engine(credentials.clone());
+    let (mut output, _events) = futures::channel::mpsc::channel(32);
+    engine.import_snapshot(decoded, &mut output).await.unwrap();
+    assert!(
+        engine
+            .store
+            .workspace()
+            .await
+            .unwrap()
+            .calendars
+            .iter()
+            .any(|c| c.id == id)
+    );
+    assert_eq!(
+        credentials.entries.lock().unwrap()[&id].expose_secret(),
+        "calendar-original"
+    );
+    assert_eq!(
+        engine.store.query(Default::default()).await.unwrap().total,
+        2
+    );
 }
 
 #[tokio::test]
@@ -148,6 +188,7 @@ async fn restore_rejects_all_invalid_references_before_any_local_or_keychain_mut
                 .push(("google-oauth".into(), "replacement".into()))
         },
         |s| s.accounts[0].id = "google-oauth".into(),
+        |s| s.accounts[0].id = "GOOGLE-OAUTH".into(),
         |s| s.accounts[0].id = "backup-passphrase".into(),
         |s| s.accounts[0].id = "backup-passphrase:drive-target".into(),
         |s| s.accounts[0].id = "home:smtp".into(),
@@ -162,6 +203,7 @@ async fn restore_rejects_all_invalid_references_before_any_local_or_keychain_mut
         |s| s.credentials.push(s.credentials[0].clone()),
         |s| s.accounts[0].smtp_separate_password = false,
         |s| s.calendars[0].id = "work".into(),
+        |s| s.calendars[0].id = "WORK".into(),
         |s| s.calendars[0].url = "https://user:secret@example.com/dav".into(),
         |s| s.calendars[0].url = "http://calendar.example.com/dav".into(),
         |s| s.calendars[0].url.push_str("#fragment"),

@@ -230,7 +230,7 @@ impl Store {
                 Action::Move{folder,..}=>anyhow::ensure!(!folder.trim().is_empty() && !folder.contains(['\r','\n','\0']),"Choose a valid destination folder"),
                 Action::Flags(flags)=>anyhow::ensure!(!flags.is_empty(),"Choose a mail action"),
             }
-            let frozen: bool = tx.query_row("SELECT frozen FROM temp.mail_selections WHERE id=?",[selection.to_string()],|r|r.get(0))?;
+            let frozen: bool = tx.query_row("SELECT frozen FROM scratch.mail_selections WHERE id=?",[selection.to_string()],|r|r.get(0))?;
             anyhow::ensure!(frozen,"Review the selected messages before changing them");
             tx.execute("INSERT INTO bulk_jobs(id,action,source,created) VALUES(?,?,?,?)",params![id,serde_json::to_string(&action)?,selection.to_string(),chrono::Utc::now().timestamp_millis()])?;
             tx.execute("INSERT INTO bulk_items(job,position,id,original,status,error)
@@ -238,20 +238,25 @@ impl Store {
                 '$.account_id',m.account,'$.folder',m.folder,'$.unread',json(CASE m.unread WHEN 1 THEN 'true' ELSE 'false' END),
                 '$.starred',json(CASE m.starred WHEN 1 THEN 'true' ELSE 'false' END)) END,
                 CASE WHEN m.id IS NULL THEN 'failed' ELSE 'queued' END,
-                CASE WHEN m.id IS NULL THEN 'This message is no longer in the cache. Refresh its folder.' END
-                FROM temp.mail_selection_rows s LEFT JOIN messages m ON m.id=s.id WHERE s.selection=? AND s.selected=1",
+                CASE WHEN m.id IS NULL THEN 'This message is unavailable. Refresh its folder or review its pending move.' END
+                FROM scratch.mail_selection_rows s LEFT JOIN selectable_mail m ON m.id=s.id WHERE s.selection=? AND s.selected=1",
                 params![id,selection.to_string()])?;
             let (account,folder,unread,starred) = match &action {
                 Action::Move{account,folder} => (account.clone(),Some(folder.clone()),None,None),
                 Action::Flags(flags) => (None,None,flags.unread,flags.starred),
             };
+            for account in tx.prepare("SELECT DISTINCT json_extract(original,'$.account_id') FROM bulk_items WHERE job=? AND original IS NOT NULL")?
+                .query_map([&id], |r| r.get::<_,String>(0))? {
+                folder_actions::idle(&tx, &account?)?;
+            }
+            if let Some(account) = &account { folder_actions::idle(&tx, account)?; }
             tx.execute("INSERT INTO bulk_effects(id,job,position,account,folder,unread,starred)
                 SELECT id,job,position,?,?,?,? FROM bulk_items WHERE job=? AND status='queued'",
                 params![account,folder,unread,starred, id]).context("Some selected messages already have pending changes. Wait for them, or review their group in History.")?;
             bump(&tx)?;
             let result=job(&tx,&id)?;
             anyhow::ensure!(result.total>0,"Select at least one message");
-            tx.execute("DELETE FROM temp.mail_selections WHERE id=?",[selection.to_string()])?;
+            tx.execute("DELETE FROM scratch.mail_selections WHERE id=?",[selection.to_string()])?;
             tx.commit()?;
             Ok(result)
         }).await
@@ -332,6 +337,10 @@ impl Store {
     pub async fn request_bulk_undo(&self, id: String) -> anyhow::Result<Job> {
         self.run(move |c| {
             let tx=c.transaction()?;
+            for account in tx.prepare("SELECT json_extract(original,'$.account_id') FROM bulk_items WHERE job=?1 AND original IS NOT NULL UNION SELECT json_extract(receipt,'$.Move.account') FROM bulk_items WHERE job=?1 AND json_extract(receipt,'$.Move.account') IS NOT NULL")?
+                .query_map([&id], |r| r.get::<_,String>(0))? {
+                folder_actions::idle(&tx, &account?)?;
+            }
             tx.execute("UPDATE bulk_jobs SET undo_requested=1,paused=0 WHERE id=?",[&id])?;
             // The in-flight provider retains ownership, but Undo immediately
             // restores the cached source's display until its receipt arrives.
@@ -355,6 +364,24 @@ impl Store {
             bump(&tx)?;let result=job(&tx,&id)?;tx.commit()?;Ok(result)
         }).await
     }
+    /// Claim the actual identity discovered during Undo before any provider
+    /// write. Never steal another group's claim or revive a completed phase.
+    pub async fn claim_bulk_identity(&self, item: Item, id: String) -> anyhow::Result<()> {
+        self.run(move |c| {
+            let tx=c.transaction()?;
+            let current: (String,bool)=tx.query_row("SELECT status,undo FROM bulk_items WHERE job=? AND position=?",
+                params![item.job,item.position as i64],|r|Ok((r.get(0)?,r.get(1)?)))?;
+            anyhow::ensure!(current == ("running".into(),item.undo),"This group operation is no longer current");
+            anyhow::ensure!(item.undo || id==item.id,"The forward message identity changed");
+            let inserted=tx.execute("INSERT INTO bulk_effects(id,job,position) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING",
+                params![id,item.job,item.position as i64])?;
+            let owner: (String,i64)=tx.query_row("SELECT job,position FROM bulk_effects WHERE id=?",[&id],|r|Ok((r.get(0)?,r.get(1)?)))?;
+            anyhow::ensure!(owner == (item.job,item.position as i64),"Another group owns this message. Finish or review that change first.");
+            if inserted>0 { bump(&tx)?; }
+            tx.commit()?;
+            Ok(())
+        }).await
+    }
     pub async fn bulk_owner(&self, id: String) -> anyhow::Result<Option<String>> {
         self.run(move |c| {
             Ok(
@@ -372,14 +399,17 @@ pub(super) fn has_effects(c: &Connection) -> anyhow::Result<bool> {
     Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM bulk_effects WHERE account IS NOT NULL OR folder IS NOT NULL OR unread IS NOT NULL OR starred IS NOT NULL)",[],|r|r.get(0))?)
 }
 /// One owned, nonduplicated advisory lock per database job. Memory fixtures need
-/// no disk file; production leases are checked before execution or recovery.
+/// no disk file; every store also excludes competing in-process executors.
 pub struct BulkLease {
     store: Store,
     id: String,
     _file: Option<std::fs::File>,
+    _local: worker::Lease,
 }
 impl Store {
     pub async fn bulk_lease(&self, id: String) -> anyhow::Result<BulkLease> {
+        // Own the claim across awaits; cancellation and disk-lock errors release it.
+        let local = self.0.lease(id.clone()).await?;
         let path = self
             .run(|c| {
                 Ok(c.path()
@@ -412,6 +442,7 @@ impl Store {
             store: self.clone(),
             id,
             _file: file,
+            _local: local,
         })
     }
     /// Called only after obtaining the job lease: a recorded running step now
@@ -441,13 +472,28 @@ impl Store {
         self.run(move |c| {
             let tx=c.transaction()?;
             tx.execute("DELETE FROM bulk_effects WHERE job=? AND position IN (SELECT position FROM bulk_items WHERE job=? AND status='uncertain')",params![id,id])?;
-            tx.execute("UPDATE bulk_items SET status='cancelled' WHERE job=? AND status='uncertain'",[&id])?;
+            tx.execute("UPDATE bulk_items SET status='cancelled',error=? WHERE job=? AND status='uncertain'",params![crate::bulk::ACCEPTED_STATE_NOTE,id])?;
             bump(&tx)?;let result=job(&tx,&id)?;tx.commit()?;Ok(result)
         }).await
     }
 }
 
 impl Store {
+    /// Make an explicitly continued group eligible for the worker. Only its
+    /// lease holder may recover an interrupted running item or execute work.
+    pub async fn continue_bulk(&self, id: String) -> anyhow::Result<()> {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            let current = job(&tx, &id)?;
+            if current.paused {
+                tx.execute("UPDATE bulk_jobs SET paused=0 WHERE id=?", [&id])?;
+                bump(&tx)?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
     pub async fn next_pending_bulk(&self, after: String) -> anyhow::Result<Option<String>> {
         self.run(move |c|Ok(c.query_row("SELECT id FROM bulk_jobs WHERE id>? AND paused=0 AND EXISTS(SELECT 1 FROM bulk_items WHERE job=bulk_jobs.id AND status IN ('queued','running')) ORDER BY id LIMIT 1",[after],|r|r.get(0)).optional()?)).await
     }

@@ -67,23 +67,81 @@ impl fmt::Display for MailFilter {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailQuery {
+    /// UI-only folder projection for cached reads, never provider identities or
+    /// a captured selection scope. Missing on older serialized queries.
+    #[serde(default)]
+    pub project_moves: Vec<MailMoveProjection>,
     /// Small pending-action identities observed in the same snapshot as counts.
     /// This does not alter the folder/search result scope.
     pub observe: Vec<String>,
     pub observe_bulk: Vec<String>,
     pub folders: Option<Vec<FolderSelection>>,
+    /// Concrete folders temporarily excluded by a reviewed pending deletion.
+    #[serde(default)]
+    pub exclude_folders: Vec<FolderSelection>,
     pub sent_only: bool,
     pub account: Option<String>,
     pub folder: String,
     pub search: String,
+    /// Interactive search spans the folders of the selected accounts. Keep the
+    /// browsing scope so clearing the text returns to the previous folder.
+    #[serde(default)]
+    pub search_all_folders: bool,
     pub unread_only: bool,
     pub read_only: bool,
     pub attachments_only: bool,
     pub sort: MailSort,
     pub starred_only: bool,
     pub offset: usize,
+}
+
+impl MailQuery {
+    pub fn searches_all_folders(&self) -> bool {
+        self.search_all_folders && !self.search.trim().is_empty()
+    }
+    /// Shared by SQLite results, frozen selections and optimistic UI membership.
+    /// Explicit folder groups keep their account set, including an empty set.
+    pub fn search_scope(&self) -> std::borrow::Cow<'_, Self> {
+        if !self.searches_all_folders() {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let mut scope = self.clone();
+        scope.search_all_folders = false;
+        scope.folder.clear();
+        scope.sent_only = false;
+        if let Some(folders) = &self.folders {
+            scope.account = None;
+            if folders.iter().any(|f| f.account.is_none()) {
+                scope.folders = None;
+            } else {
+                let mut folders: Vec<_> = folders
+                    .iter()
+                    .map(|f| FolderSelection {
+                        account: f.account.clone(),
+                        folder: String::new(),
+                        sent_only: false,
+                    })
+                    .collect();
+                folders.sort_by(|a, b| a.account.cmp(&b.account));
+                folders.dedup();
+                scope.folders = Some(folders);
+            }
+        }
+        std::borrow::Cow::Owned(scope)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailMoveProjection {
+    pub id: String,
+    pub source_account: String,
+    pub source_folder: String,
+    pub account: String,
+    pub folder: String,
+    pub unread: bool,
+    pub starred: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +153,10 @@ pub struct FolderSelection {
 
 #[derive(Debug, Clone, Default)]
 pub struct MailPage {
+    pub move_pending_total: usize,
+    pub relocated: std::collections::HashMap<String, Mail>,
+    pub move_recovery: std::collections::HashMap<String, crate::mail_actions::journal::MoveRecord>,
+    pub move_placeholders: std::collections::HashSet<String>,
     pub bulk_observed: std::collections::HashMap<String, bool>,
     pub bulk_placeholders: std::collections::HashSet<String>,
     pub bulk_revision: u64,
@@ -102,8 +164,20 @@ pub struct MailPage {
     pub rows: Vec<Mail>,
     pub total: usize,
     pub unread: usize,
+    /// One reviewed deletion scope; ordinary pages carry no folder summary.
+    pub folder_count: Option<(usize, usize)>,
     pub inbox_unread: std::collections::BTreeMap<String, usize>,
     pub observed: std::collections::HashMap<String, Option<MailMembership>>,
+}
+
+impl MailPage {
+    /// Durable recovery IDs address protected cached MIME and can be read cold.
+    pub fn is_transient_placeholder(&self, id: &str) -> bool {
+        self.is_placeholder(id) && !self.move_recovery.contains_key(id)
+    }
+    pub fn is_placeholder(&self, id: &str) -> bool {
+        self.bulk_placeholders.contains(id) || self.move_placeholders.contains(id)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,12 +269,18 @@ pub enum BackupDestination {
     #[default]
     Local,
     GoogleDrive,
+    S3,
+    Sftp,
+    Ftp,
 }
 impl fmt::Display for BackupDestination {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Local => "Local folder",
             Self::GoogleDrive => "Google Drive",
+            Self::S3 => "S3-compatible storage",
+            Self::Sftp => "SFTP",
+            Self::Ftp => "FTP / FTPS",
         })
     }
 }
@@ -215,12 +295,14 @@ pub struct WindowSize {
 #[serde(default)]
 pub struct Preferences {
     pub appearance: Appearance,
+    pub palettes: crate::appearance::Palettes,
     pub reader_split: f32,
     pub sidebar_width: Option<f32>,
     pub window_size: Option<WindowSize>,
     pub mail_sort: MailSort,
     pub unified_inbox: bool,
     pub collapsed_accounts: Vec<String>,
+    pub expanded_folders: std::collections::HashMap<String, std::collections::HashSet<String>>,
     pub collapsed_drafts: bool,
     pub cross_account_moves: bool,
     pub reader_font_size: u16,
@@ -228,6 +310,8 @@ pub struct Preferences {
     pub tooltips: bool,
     pub shortcut_tooltips: bool,
     pub unread_badge: bool,
+    pub close_to_tray: bool,
+    pub notifications: crate::notifications::Settings,
     pub image_policy: ImagePolicy,
     pub reply_display: ReplyDisplay,
     pub group_conversations: bool,
@@ -235,8 +319,14 @@ pub struct Preferences {
     pub image_senders: Vec<String>,
     pub image_domains: Vec<String>,
     pub image_messages: Vec<String>,
+    pub backup_destinations: Vec<crate::backup::config::Destination>,
+    pub backup_selected: Option<String>,
     pub backup_destination: BackupDestination,
+    pub backup_s3: crate::backup::s3::Settings,
+    pub backup_sftp: crate::backup::sftp::Settings,
+    pub backup_ftp: crate::backup::ftp::Settings,
     pub backup_folder: String,
+    pub backup_format: crate::backup::format::Options,
     pub backup_copies: usize,
     pub backup_hours: u64,
     pub backup_accounts: bool,
@@ -258,12 +348,14 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             appearance: Appearance::System,
+            palettes: Default::default(),
             reader_split: 0.315,
             sidebar_width: None,
             window_size: None,
             mail_sort: MailSort::Newest,
             unified_inbox: true,
             collapsed_accounts: Vec::new(),
+            expanded_folders: Default::default(),
             collapsed_drafts: false,
             cross_account_moves: false,
             reader_font_size: 14,
@@ -271,6 +363,8 @@ impl Default for Preferences {
             tooltips: true,
             shortcut_tooltips: true,
             unread_badge: true,
+            close_to_tray: false,
+            notifications: Default::default(),
             image_policy: ImagePolicy::BlockAll,
             reply_display: ReplyDisplay::Collapsed,
             group_conversations: true,
@@ -278,8 +372,14 @@ impl Default for Preferences {
             image_senders: Vec::new(),
             image_domains: Vec::new(),
             image_messages: Vec::new(),
+            backup_destinations: Vec::new(),
+            backup_selected: None,
             backup_destination: BackupDestination::Local,
+            backup_s3: Default::default(),
+            backup_sftp: Default::default(),
+            backup_ftp: Default::default(),
             backup_folder: String::new(),
+            backup_format: Default::default(),
             backup_copies: 7,
             backup_hours: 24,
             backup_accounts: false,
@@ -447,6 +547,7 @@ impl Preferences {
             (80..=140).contains(&self.interface_scale),
             "Interface size must be 80–140%."
         );
+        crate::backup::config::validate(self)?;
         self.shortcuts.validate()?;
         Ok(())
     }

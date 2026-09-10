@@ -41,6 +41,9 @@ pub(super) fn adjust(
 }
 
 pub(super) fn confirm_flags(page: &mut MailPage, mail: &Mail) {
+    // A reviewed folder scalar belongs to the complete cache snapshot. An
+    // intervening receipt must refresh that review before folder confirmation.
+    page.folder_count = None;
     let before = member(page, mail);
     let after = before.clone().map(|mut state| {
         state.unread = mail.unread;
@@ -51,6 +54,7 @@ pub(super) fn confirm_flags(page: &mut MailPage, mail: &Mail) {
 }
 
 pub(super) fn confirm_move(page: &mut MailPage, source: &Mail, current: Option<&Mail>) {
+    page.folder_count = None;
     let before = member(page, source);
     let after = current.map(MailMembership::from);
     // A missing observed source means this snapshot already includes the move.
@@ -64,6 +68,7 @@ pub(super) fn confirm_move(page: &mut MailPage, source: &Mail, current: Option<&
 }
 
 pub(super) fn confirm_restore(page: &mut MailPage, record: &undo::Record, receipt: &MoveReceipt) {
+    page.folder_count = None;
     let previous = record.receipt.as_ref().and_then(|r| r.current.as_ref());
     let before = previous
         .and_then(|mail| member(page, mail))

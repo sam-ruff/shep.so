@@ -6,6 +6,9 @@ publish = false
 license = "MIT"
 description = "Authenticated Shep browser beta gateway"
 
+# Standalone package: never join a parent checkout's workspace.
+[workspace]
+
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 mailparse = "0.16"

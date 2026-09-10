@@ -8,7 +8,7 @@ exclude = ["backend", "flutter/rust"]
 name = "shep"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 description = "A calm email and calendar client with excellent mouse and keyboard support"
 license = "MIT"
 
@@ -25,14 +25,14 @@ scraper = "0.27"
 cssparser = "0.37"
 litehtml = "=0.2.6"
 shep-html-pixbuf = { path = "vendor/shep-html-pixbuf" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs"] }
+shep-profile-core = { path = "shared/profile-core", features = ["drive"] }
+tokio ={ version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs"] }
 futures = "0.3"
 async-trait = "0.1"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.40.2", features = ["bundled"] }
-shep-profile-core = { path = "shared/profile-core", features = ["drive"] }
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled-sqlcipher-vendored-openssl", "cache", "backup", "hooks", "limits"] }
 directories = "6"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
@@ -40,13 +40,19 @@ uuid = { version = "1", features = ["v4", "serde"] }
 async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
 tokio-native-tls = "0.3"
 native-tls = "0.2"
+curl = { version = "0.4.50", features = ["protocol-ftp", "static-curl"] }
+curl-sys = "0.4.89"
 mailparse = "0.16"
 mime_guess = "2"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-native-tls"] }
+rusty-s3 = { version = "0.10.2", default-features = false, features = ["rustcrypto", "xml"] }
+russh = { version = "0.63.2", default-features = false, features = ["ring", "rsa"] }
+russh-sftp = "3.0.0"
+tokio-util = { version = "0.7", features = ["codec", "io"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 secrecy = { version = "0.10", features = ["serde"] }
-aes-gcm = "0.10"
+aes-gcm = { version = "0.10", features = ["stream"] }
 argon2 = "0.5"
 rand = "0.8"
 sha2 = "0.10"
@@ -69,14 +75,39 @@ unicode-normalization = "0.1"
 fs2 = "0.4.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+ksni = "=0.3.6"
 zbus = { version = "5.19", default-features = false, features = ["tokio"] }
 
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+tray-icon = "=0.24.2"
+notify-rust = { version = "=4.17.0", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.4"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSApplication", "NSDockTile", "NSResponder"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["NSString"] }
+dispatch2 = "=0.3.1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+ab_glyph = "=0.2.32"
+windows = { version = "=0.62.2", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_Com"] }
+winreg = "0.55"
+same-file = "1"
+
 [dev-dependencies]
+rcgen = "0.14.10"
+rand_sftp = { package = "rand", version = "0.10" }
+ab_glyph = "=0.2.32"
+shep-profile-core = { path = "shared/profile-core", features = ["test-support"] }
+litehtml-sys = { version = "=0.2.5", features = ["shep-test-support"] }
 tokio = { version = "1", features = ["test-util"] }
 iced_tiny_skia = "=0.14.0"
 tiny-skia = "0.11"
 
 [patch.crates-io]
+curl = { path = "vendor/curl" }
+libsqlite3-sys = { path = "vendor/libsqlite3-sys" }
+litehtml-sys = { path = "vendor/litehtml-sys" }
 iced_tiny_skia = { path = "vendor/iced_tiny_skia" }
 
 [[bench]]

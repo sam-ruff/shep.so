@@ -1,5 +1,1733 @@
 # Completion audit
 
+This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
+
+## Journal ownership, removal reviews and duplicate labels — integrated verification
+
+Three lanes were merged into `main` with `--no-ff` after each was rebased onto
+`c35e2b5` in its own worktree by an integration agent. `42c69b4` integrates the
+bounded backup journal owner (`d36dca8`): the journal is a named 32-slot FIFO
+worker, keyed constructors and `open_encrypted` are intact, and three ownership
+tests cover bounded admission after observer cancellation, last-handle close
+draining and non-poisoning failed transactions. `61c6dfc` integrates remote
+account-removal reviews (`ede75aa`): a shared tombstone offers Keep on this
+device or Review removal, Keep persists local suppression and stale native,
+Google, option or history changes reject the choice. `c0ebf3f` integrates
+duplicate-address sidebar labels (`d5c7683`): each duplicate shows its saved
+name with the address beneath in inbox children and account headings.
+
+Lane verification: the journal lane passes 935 hook executions, 114 backup,
+23 journal and 18 cipher tests, 84 Python tests and eight native backup
+history/all/formats scenarios (evidence `bdc0ecad2916`, `554466f91d27`,
+`025cc924046a`, `9e8faa7055c5`, `b9f487068789`, `0ffc69ca42f2`,
+`930f3dc1d1f8`, `8ce9ef2f1139`). The removal lane passes 935 hook
+executions, 104 profile tests, 84 Python tests and five native removal/review
+scenarios (`3acebfccaf97`, `e5d37c008543`, `6d2961a62066`, `b8fc277cc1bc`,
+`2c008d1829f2`) with reviewed Keep, Remove confirmation, kept and removed
+states. The sidebar lane passes 933 hook executions, six sidebar tests, 84
+Python tests and seven native scenarios (`d54ade8b16da`, `6374378f2a4e`,
+`5e5dafdd2411`, `ca32be155096`) with reviewed default, 160 px and 900x640
+captures. On `main`, the merge commits ran the full hook suite on the merged
+trees: **938** executions for `61c6dfc` and **939** for `c0ebf3f`, zero
+failures, three personal diagnostics ignored (`artifacts/logs/hooks-merge-*`).
+The combined pre-push gate on `c0ebf3f` passes: **84 Python tests** (seven
+skipped), the strict documentation build, and **18 native scenarios** in 86 s
+covering backup history/all/formats, removal and connection reviews,
+duplicate-address labels and sidebar flows (`artifacts/logs/e2e-main-c0ebf3f.log`).
+Limitations: removal rows lack light and compact-dark captures,
+duplicates with identical or empty names stay indistinguishable, and
+lifecycle/Google channel ownership remains under audit.
+
+## Backup history, encrypted export and ranked scratch — consolidation checkpoint
+
+The session restart on 9 September 2026 resolved the interrupted cherry-pick on
+`main` and committed `c35e2b5`, which integrates persistent per-destination
+backup history (`895fe2d`), keyed raw SQLite export (`f0ff98a`) and indexed
+encrypted conversation ranking (`8d45a9e`). The `store.rs` resolution keeps the
+lane's version 4 bump and the encrypted initialiser's bare connection return;
+the interrupted `codex/encrypted-cache` rebase was aborted because every code
+file it would have produced is byte-identical to the committed index. Normal
+startup remains plaintext; no personal database or installed process changed.
+
+Verification on `c35e2b5`: the mandatory pre-commit hooks (format, Clippy,
+`cargo test --all-features`, renderer cache tests and the shared profile-core
+script) passed at commit time; the full execution count was not captured by
+the truncated log and is re-established by the pre-push gate run recorded in
+the next entry. **84 Python tests** pass (seven skipped, including actual
+PowerShell execution), the pinned strict documentation build reports no issues,
+and **31 selected native scenarios** pass in 189 s: backup history, formats and
+Back up all, database export/import, conversation reading and ranked search.
+Logs are `artifacts/logs/python-main-c35e2b5.log`, `docs-main-c35e2b5.log`
+and `e2e-main-c35e2b5.log`; evidence directories are listed in that log.
+
+Lane consolidation: three read-only classification passes compared every
+`codex/*` branch with `main` by code and tests. `profile-links`,
+`profile-reviews`, `profile-cache`, `profile-account-reviews`,
+`bounded-folder-delete`, `aggregate-folder-choice`, `combined-folder-delete`,
+`folder-convergence`, `compact-mail`, `backup-history`, `backup-formats`,
+`backup-all`, `ftp-backups`, `sftp-backups`, `multiple-backups`,
+`encrypted-cache`, `native-tray`, `s3-before-main-adaptation` and
+`native-palette-before-rebase-1854c62` were byte-identical or strict subsets
+of `main` and were deleted with their worktrees. Unique work remains on
+`codex/backup-journal-owner` (`d36dca8`), `codex/aggregate-folder-choice-v2`
+(`1abc4b9`), `codex/profile-account-removals` (`ede75aa`, the previously
+uncommitted removal-review work, 782 hook executions passing on the lane) and
+`codex/sidebar-account-labels` (`d5c7683`, the previously uncommitted
+duplicate-address labels, 916 hook executions passing on the lane). This is a
+local checkpoint; the push receipt follows in the next entry.
+
+## Shared account-removal review — worktree verification
+
+Remote account tombstones now offer Keep on this device or Review removal.
+Keep preserves the original account, mail and credential identity and persists
+local suppression; changed local endpoints then remain local. The other action
+opens the existing local-data confirmation. Cancel preserves everything; an
+explicit confirmed removal survives restart and does not import the account
+again. Successful removal clears stale shared-account review controls.
+
+Keep validates exact remote history and current binding, consent, Google,
+account and native edit generations. It never revives the remote tombstone or
+issues a new remote connection. Existing endpoint-choice checks also continue to
+reject a review invalidated by a remote removal. The ordinary local-data dialog
+retains its existing draft/mail-change/credential-cleanup contracts.
+
+The initial eight targeted tests, all 98 matching profile tests, 84 Python tests
+and three saved native Keep/Cancel/Remove/restart flows pass. Visual review then
+caught the already-removed account card remaining visible; the final source
+clears it and adds a controller/native assertion. All 35 final native profile
+scenarios pass in 171.199 seconds, including the corrected stale-card assertion;
+root reviewed the final Keep and Remove WebPs in `be426d49a6b1` and
+`52457d6367e4`. Normal hooks and main integration remain pending. Final native
+SHA-256:
+`5530a6ebc51207a0be89efc6c48c83f440dd2760b9514ff6c5a6bff808ead354`.
+Logs use `artifacts/logs/profile-account-removals-*` in the isolated worktree.
+No live Google access, real account removal, password transfer or main shipping
+is claimed. Global account removal and post-enrollment linking controls remain
+separate work.
+
+## Shared account reviews, backup formats and bounded folder deletion — integrated verification
+
+The current integration combines `18413e7` (safe shared connection choices),
+`7ef6c56` (per-destination compression/encryption), `6d7c392` + `9b300af`
+(bounded combined-folder deletion), and the staged encrypted-cache foundation
+`2890fe8`, keyed catalog `7485cfc` and temporary-storage correction `86d9c6c`.
+Normal startup remains plaintext pending guarded migration and the remaining
+sorter/recovery audit. No personal database or installed process was changed.
+
+The integrated build passes **850 Rust tests**, with three personal diagnostics
+ignored, **84 Python tests** (including actual PowerShell), the complete Windows
+GNU all-target/all-feature check and the pinned strict documentation build.
+Native SHA-256 is
+`5275064fcbd3520fba48e3082c900ba17c68b8e8744cf60a01f16bf016f1fe1e`.
+All **273 native correctness scenarios** pass across two invocations: the full
+run was terminated with exit 143 after 269 passes at 20m17s; the four unfinished
+tray scenarios then pass unchanged in 17.300s. No assertion failure occurred in
+the interrupted run. Its termination cause remains under investigation; this is
+complete scenario coverage, not one uninterrupted successful suite. **915 normal hook test executions pass**, with zero failures and three personal
+diagnostics ignored. Source is pushed as `1c0fc4500b1fe568cd64bf2c6d28287bb52a013f`;
+remote equality is verified. Logs use `artifacts/logs/profiles-formats-folders-main-*`.
+
+The preceding foundation-only native run passed 266 of 267 scenarios. Its one
+failure captured selection state before the keyboard row reveal completed.
+The saved test now observes that actual reveal while the write remains pending,
+then retains the same rollback/scroll/reader assertions. That corrected path
+passes in the new full run, with reviewed evidence in `db208df12e53`.
+Root also reviewed integrated backup options, unencrypted warning and compact
+dark passphrase controls in `cd98d8d9cb1d`, shared account review in `14a1a3bf11e1`
+and `2ce3f9442284`, and folder rollback/uncertainty in `5175f9f7afef`,
+`7c92548b3036` and `9cd2124ccb6c`. This is isolated fixture evidence;
+actual provider/platform execution and final idle-host performance gates remain
+separate.
+
+The previous `cf76976` push also has green documentation CI run `34365629009`.
+
+## Back up included destinations — integrated checkpoint
+
+`c515b80` adds persisted Include choices and Back up all, with independent
+progress, Retry and Setup controls. Each destination uses its own saved key,
+reserved upload and retention rules. Lost acknowledgments and restart retain the
+same encrypted bytes and filename; closing waits for durable receipts. Optional
+archive formats and persistent destination failure history remain open.
+
+All **13 integrated native scenarios** pass in 69.878 seconds, including actual
+isolated encrypted Local copies, two-destination progress, exclusion/restart,
+first-copy setup, lost-reply retry and close. Root reviewed light progress and
+compact dark WebPs in `artifacts/e2e/db729f04f50f`. Native SHA-256:
+`f88a3e6f515e2c831bb4719374cfec2d63213171e931277399e1bacf87cefd69`.
+All **84 Python tests**, full Windows GNU all-target/all-feature checking and
+strict Zensical pass. Lane hooks passed 811 executions with three personal
+checks ignored. Source **`cf76976`** is pushed to main, with 843 normal hook executions
+passing and exact remote equality verified.
+Logs use `artifacts/logs/backup-all-main-*`. No live cloud or actual Windows/macOS
+verification is inferred, and the installed production app remains unchanged.
+
+## FTP/FTPS and shared credential guards — shipped checkpoint
+
+FTP/FTPS checkpoint `17de158` uses verified TLS by default, clearly selectable
+plain FTP, per-destination keychain setup and owned resumable uploads/retention.
+All 28 FTP/SFTP lane regressions and six lane native flows pass; normal hooks
+passed 802 executions with three personal diagnostics ignored. Main protocol
+checks pass. Root preserves the current symbolic launcher release asset alongside
+the new libcurl licenses. Optional archive formats, Back up all, richer history,
+actual platforms and live providers remain open.
+
+Integrated verification passes: all **13 native scenarios** in 60.678 seconds,
+all **81 Python tests** with actual PowerShell, full Windows GNU all-target and
+all-feature checking, and strict Zensical. Root reviewed FTP’s plain-connection
+warning and compact credentials WebPs in `artifacts/e2e/3baf8f15714b`.
+Final native SHA-256:
+`ccb2b2672ded47898d260cd93104546f09df834fbfe48816024f6065c9201d29`.
+Logs use `artifacts/logs/ftp-credentials-main-*`. Source **`13f9c36`** is pushed
+to main with exact remote equality verified. All **834 normal hook executions**
+pass (three personal diagnostics ignored). Documentation CI **34362323848**
+is green. This source checkpoint is not a new production installation.
+
+## Shared account connection reviews — implementation checkpoint
+
+The native review offers keeping the current device connection or adding the
+reviewed shared setup. Changed endpoints get a fresh native UUID requiring
+reconnection. The previous account, cached mail, credentials and server IDs remain
+at their original endpoints as a local-only “previous setup”. Keeping local
+publishes that reviewed connection while preserving unrelated field edits.
+
+Six targeted storage/history/controller tests pass, including same remote IDs on
+old/new accounts, lost admission reply/restart, preserved unrelated preferences,
+stale native/history/Google/consent changes, remote tombstones and replaced UI
+rows. All **32 profile-related native scenarios** pass in 130.488 seconds, including
+Add/restart/sync and compact Keep/version selection. All **96 matching profile
+Rust tests** and **84 Python tests** pass. Final native SHA-256:
+`4df84fef2a8c8aaa7d506d5940c7223213c42957446fa34e00fe64fec6fefc29`.
+Reviewed final WebPs include `8b79718ab48e`, `16a1186fee12` and `31e57cf69c34`
+under the lane artifacts. The compact test reproduced
+iced's Escape picker-dismissal gap; it is retained in R15/R63 and its corrected
+mouse selection follows the actual overlay positions. Strict Zensical passes. Normal hooks, root integration and publication remain
+required. Logs use `artifacts/logs/profile-account-reviews-*`. Remote removal decisions,
+post-enrollment links, protected credential transfer and live interoperability
+stay in TODO.
+
+## First-profile native fixture synchronization
+
+The first-device scenario now waits for a loopback upload to be held, navigates
+the real Mail controls while it stays pending, then releases the response. It
+keeps the existing completion deadline instead of accumulating one-second delays
+for every setup record. The held mode and release action control only the owned
+fictional server; shutdown also releases pending responses. Three actual HTTP /
+batch isolation / cleanup tests pass. All **eight integrated native scenarios**
+pass in 43.079 seconds, covering held navigation, interrupted setup/restart and
+post-login profile choices. All **84 Python tests** pass, including actual
+PowerShell execution. Root reviewed the saved/reopened profile WebP in
+`artifacts/e2e/7299297b2b38`. The native binary remains the verified
+`ccb2b2672ded47898d260cd93104546f09df834fbfe48816024f6065c9201d29`.
+Logs use `artifacts/logs/profile-held-upload-main-*`. Source **`91c59a4`** is
+pushed with 834 normal hook executions passing and exact remote equality
+verified. Documentation CI **34363018089** is green. The broader functionality
+audit stays open.
+
+## Shared account reconnection credential guard
+
+Connection tests and saves refuse old keychain credentials while an imported or
+shared account requires reconnection. Fresh explicit credentials remain usable;
+SMTP with authentication disabled needs no separate password. Saving resolves all
+required secrets before writing any, and only a successful account commit clears
+the reconnect marker. Tests alone never clear it. Connection tests now use the
+existing account coordinator, so an endpoint review can share that ordering.
+
+Four targeted tests pass through actual engine commands and an owned fake
+credential worker, covering incoming/shared/separate SMTP, failed writes and
+SQLite restart, preserved cached mail, explicit probes, and ordinary saved-secret
+reuse. No network or OS credential access is used in these fixtures. All **773 lane hook executions** pass (three personal diagnostics ignored).
+Integrated source is pushed as `13f9c36`; endpoint/removal review UI
+is still open. Logs: `artifacts/logs/profile-account-credential-guards.log`.
+
+
+
+## 9 September: bounded combined-folder deletion counts
+
+The `codex/bounded-folder-delete` correction replaces the held `6d7c392`
+all-folder count map with one optional affected total/unread scalar. Exact
+reviewed folder membership and the original query stay in indexed encrypted
+scratch, using the worker-owned 2 MiB scratch cache from the R22 foundation.
+The scalar and bounded 50-row preview share one cache snapshot; confirmation
+refreshes stale reviews, including intervening mail receipts. No folder/search
+limit or truncated count is introduced.
+
+One unsubmitted review replaces abandoned reviews without letting an older read
+remove a newer snapshot. At most 32 admitted operations retain projection
+contexts. Binding is atomic with the durable folder job; completion consumes its
+scalar observation and releases scratch even if the UI disappears or the count
+read fails. Cancellation and removed accounts release snapshots too; reopening
+a cache creates empty scratch. Provider acknowledgments and accepted uncertainty
+retain their existing distinct meanings.
+
+All 47 targeted folder/cache/controller tests pass, including 4,096 unrelated
+folders, exact filtered counts, partial deletion, review/receipt ordering,
+capacity release, ciphertext and restart cleanup. Eight source-view query plans
+verify that the added affected-count query needs no temporary grouping/sorting
+B-tree or materialization. Existing workspace/group queries and automatic indexes
+in recovered views remain a separate encrypted-startup activation audit; these
+checks do not declare every existing cache query bounded.
+
+All 15 selected native flows pass on the final executable in 94.817 seconds:
+11 folder-control scenarios plus selection, bulk Undo, conversation and sidebar
+regressions. All 763 hook test executions pass (698 application Rust, two HTML
+dependency and 63 shared profile-core tests; three live diagnostics ignored),
+alongside formatting, all-target Clippy, 56 Python tests and strict docs.
+Reviewed WebPs
+show pending/success (`cbfc961d624a`), light rollback (`d5e01ad44257`), dark newer
+selection/reader (`18f6644b7e28`), accepted uncertainty with cached mail after
+restart (`caecf27b443f`), and compact dark confirmation (`76a68ae559ce`).
+The executable SHA-256 is
+`88fb775f31f121cfcfe2a494011b81d0169936757b0fe8a7a8108451b45aa182`.
+Logs are under ignored `artifacts/logs/bounded-folder-*`.
+
+This correction depends on the R22 scratch foundation (original `2890fe8`,
+isolated cherry-pick `0aeedbe`) and the held deletion commit. Primary-agent
+integration/push, aggregate account choice and broader history/scope convergence
+remain open. No live-provider, Windows/macOS execution, installed-release or
+latency claim is made. Performance gates remain for the final quiet host window.
+
+## 9 September: optimistic deletion in combined folders
+
+The original isolated `6d7c392` checkpoint below passed functional checks but was
+held from integration: its all-folder count map and grouped count query were
+unbounded. The bounded replacement is recorded separately; this original commit
+is not shipping evidence.
+
+R30/R50 deletion immediately removes the reviewed account's affected folders,
+rows and query-wide total/unread contributions from combined views. The original SQLite implementation
+returned folder counts with the same snapshot as the bounded 50-row page;
+selected membership uses the same explicit exclusions. This also preserves
+other accounts in aggregate choices and all-folder search. Cache pages arriving
+before the operation receipt cannot apply deletion twice.
+
+Rejected or unconfirmed steps restore only their affected membership. Confirmed
+steps stay removed after a partial failure. Later folder choices, surviving
+readers and unrelated mail moves remain current. A surviving reader opened after
+refill can remain outside the restored first page; its cache identity is observed
+on refresh and ordinary scope navigation releases that retention. Acknowledged
+mail flags/moves/Undo keep the group counts aligned before the next page arrives.
+Accepting uncertainty retains cached originals and the explicit unconfirmed
+status; it does not acknowledge a server deletion.
+
+Eight deterministic controller/cache cases cover counts beyond one page,
+selection capture, stale generations, receipt ordering, success/rejection,
+partial success, accepted uncertainty, aggregate account boundaries, search,
+newer choices/readers and unrelated acknowledged mail writes.
+The three saved native scenarios pass in 30.556 seconds, including light rollback
+and dark newer navigation. Their normal controls delete four fictional folders,
+retain the Inbox reader, restart after success/rejection/accepted uncertainty,
+and inspect only the owned fixture database read-only after graceful close.
+Reviewed WebPs include pending deletion (`e9bab5e2cf8d`), restored selection
+(`bf11a8c3b976`), newer dark selection (`e9eef084db5a`) and uncertainty review,
+retained cache and restart (`4ea06fbca9f4`). Logs are under ignored
+`artifacts/logs/combined-delete-*`.
+
+The complete selected folder run passes all 11 native scenarios in 86.180 seconds.
+Five related selection/Undo/conversation/sidebar checks pass in 36.328 seconds,
+including an explicit assertion that the newer reader is opened while deletion
+is still pending. These are selected reruns, not a full native-suite claim.
+All 668 Rust tests pass (three authorized-live tests remain ignored), as do
+Clippy, 56 Python tests and the strict pinned Zensical build. Normal commit hooks
+also run the HTML dependency and shared profile-core contracts. The reviewed
+native binary SHA-256 is
+`7aa7439f5aba3e61d75642cdd29673d79d003bd844a4781c70ef47ddec6ec03b`.
+
+This is the isolated `codex/combined-folder-delete` checkpoint based on 66e6cb8;
+primary-agent integration/push remains required. Aggregate common-folder account
+choice and broader mail/history/provider convergence remain in TODO. No live
+provider, other-platform or latency claim is made. Grouped cached-query and
+renderer performance gates remain for the final quiet host window.
+
+## 9 September: combined folders during pending changes
+
+R30 Ctrl-click now uses the same retained cache path as a plain click while a
+folder rename is pending. Selected-folder highlighting follows that identity.
+Removing and restoring a folder in a combined selection keeps its actual mail
+and counts; committed renames update the selected paths, rejected renames retain
+the sources, and newer unrelated folder choices survive either result.
+
+R50/R60 removes an excluded row's unread contribution from the filtered header
+immediately. This covers unflagging unread mail in Flagged and marking a Read
+result unread. Global Inbox unread badges remain independent of that filter.
+The test-support `page_unread` observation reports the actual header value.
+
+Two new controller tests pass: production SQLite rename/rejection with combined
+selection, and eight filtered success/failure/cache-before-receipt cases with
+an overlapping aggregate/account selection. The first rename regression failed
+against the previous code as expected. Both new native scenarios pass in
+12.199 seconds, covering slow rename success/rejection, real Ctrl-clicks,
+filtered headers and newer choices while flag writes are pending. The first
+filter setup used the Read menu row; inspection corrected it to the actual
+Flagged row without changing assertions or timeouts.
+
+Reviewed WebPs under `artifacts/e2e/` include pending filtered counts
+(`c660b422247c`), dark rollback (`9136758288da`), renamed combined selection
+(`1e6c3bdabd36`) and rejected rename (`c9ca6a0ada10`). Logs remain under
+`artifacts/logs/combined-folder-{before,unit,native-corrected}.log`.
+The first broader native run passed 11 of 13 scenarios. Its POP3 drag still used
+an inherited 104-pixel row coordinate; this lane now copies main's existing
+`mail_row_y(2)` correction. The badge fixture failed before app launch because
+the deep worktree exceeded the Unix socket path limit. Its socket now uses an
+owned private short directory, cleaned after the bus and observer stop; logs stay
+in artifacts. The Python harness regression exercises a long artifact path,
+actual bus access, private permissions and process/directory cleanup.
+
+The corrected complete selected run passes all **13 native scenarios** in
+90.117 seconds (`artifacts/logs/combined-folder-native-final.log`), including
+folder review/retry/uncertainty/close/POP3 restart, combined choices, filters,
+read-on-leave and badge failure/recovery. All **56 Python tests** pass
+(`artifacts/logs/combined-folder-python.log`), including 44 harness tests.
+These are selected scenarios, not a full native-suite result.
+
+Native test executable SHA-256:
+`ede4d68a35d6fbfe4f2c09123ab9cf6eb606f3e2133d46299539c283efdcd771`.
+This lane checkpoint awaits primary-agent integration and push. Combined-folder
+delete projection, broader page/scope reconciliation, aggregate account choice,
+uncertainty/history lifecycle and live-provider/platform verification remain
+open. No latency or performance measurements were run; quality/release workflows
+remain disabled.
+
+Root integration preserves main’s already-tested short private socket alias and
+its actual bus/cleanup regression; the lane’s alternative socket directory is
+not needed. Main’s owned GTK Cairo fixture setting is retained. Integrated
+verification passes: all **19 selected native scenarios** in 104.376 seconds,
+all **81 Python tests** (including actual PowerShell), full Windows GNU checking
+and strict Zensical. Root reviewed dark filtered rollback (`2203398171a1`) and
+committed combined-folder selection (`cf775ebcb960`). Final native SHA-256:
+`e0462c9fbec8bec58798cf2122a3fa1c6a5c222df3a3bc931c5673b0fc2295a0`.
+Root logs use `artifacts/logs/folder-counts-main-*`. Source **`97c9a9a`** is
+pushed to main with exact remote equality verified; **818 normal hook executions**
+pass (three personal diagnostics ignored). The broader TODO items remain open.
+
+## SFTP and connection-intent integration — shipped checkpoint
+
+Root integrates SFTP checkpoint `f60dac0` and account connection-reversion
+checkpoint `85b2fd0`. SFTP uses verified SHA-256 host keys before password
+authentication, bounded packet framing, exact staged upload recovery and owned
+retention/restore. Its dependency requires Rust 1.89; the manifest and installation
+docs record that minimum. Password authentication is supported; private-key/agent
+authentication, live providers and actual Windows/macOS execution remain open.
+
+Review found an unbounded authenticated session-channel confirmation wait in the
+SSH library. The new real loopback test reaches that held stage, advances virtual
+time and fails on the original implementation. Bounded channel/subsystem setup
+now releases it with an actionable error; retry succeeds without any backup
+file write. All 16 SFTP tests pass, with the original failure retained in
+`artifacts/logs/sftp-channel-before-fix.log` and corrected provider tests in
+`sftp-channel-and-provider-tests.log`. No production timeout or performance
+budget was shortened for this test.
+
+Source **`ff03b02`** is pushed to main with exact remote equality verified.
+All **816 normal hook test executions** pass (three personal diagnostics ignored),
+all **81 Python tests** pass with actual PowerShell execution, full Windows GNU
+all-target/all-feature checking and strict Zensical pass. All **18 integrated
+native scenarios** pass in 80.717 seconds, covering SFTP host verification/retry,
+setup/restart, backup controls, account links, palette preservation and compact
+layouts. Root reviewed the changed-host and compact-dark credentials WebPs in
+`artifacts/e2e/06f30faf0d64`. Native executable SHA-256:
+`17eaed92862af43fcc45ff4fd9a93ac487dfa06e801a92603f8e1a8f97c978f9`.
+Logs use `artifacts/logs/sftp-reversions-main-*`. This is a source checkpoint;
+production installation and genuine provider/platform verification remain open.
+
+## Palette, S3 and matching-account links — shipped integration
+
+Source **`4e75005`** is pushed to main with exact remote equality verified.
+It integrates palette commits `af76f15`/`4727fb7`/`a6dc0c7`, S3 commits
+`6d1857c`/`878e9f9` and matching-account import `59c6cf0`. All **88 combined
+native scenarios** pass in 320.232 seconds, including palette invalid-input and
+contrast recovery, held-provider saves, shared-profile creation/import/conflict
+reviews, 12-account paging, backup setup, database transfer, preferences search
+and compact layouts. The S3 setup scenario also saves a custom palette through
+the global header, then verifies it survives backup settings, connection failure
+and restart. No live cloud credentials are used.
+
+Normal hooks pass **798 test executions** (three personal diagnostics ignored),
+all **81 Python tests** pass, full Windows GNU all-target/all-feature checking
+passes, and strict Zensical passes. Final native SHA-256:
+`d0199f2ccbdad14ed0c559b2815b1bcb7384ba0a887e8929f8afdc06cf4d708c`.
+Root reviewed compact palette (`516fc5061095`), contrast reset (`0795c44983c5`),
+invalid header save (`620e629566fe`), compact account links (`76c52f0613d2`),
+account paging (`94ef7df4e703`) and S3 setup/recovery/compact credentials
+(`64a7956f0d2a`). Logs use `artifacts/logs/palette-s3-links-main-*`.
+R25 is removed after this publication. Palette Drive interoperability remains
+R49; further backup providers/options remain R32; endpoint/removal reviews,
+post-enrollment linking and credential transfer remain R02/R49. Production
+installation, live Google/S3 and actual Windows/macOS execution remain unverified.
+
+The preceding compact/icon source `15a4a3c` also has green documentation CI
+**34355986987**. Quality and release CI remain disabled.
+
+
+## 9 September: compact inbox rows and unread hierarchy
+
+R88 replaces the 104-pixel avatar rows with 60-pixel conversation rows. Wide lists
+show sender, subject, snippet and time in one horizontal line; narrower lists use
+two bounded lines. Unread messages have a subtle surface tint, a dot and bold
+subject. Selected and hovered surfaces remain distinct in both themes. Existing
+measured Ellipsis widgets keep long labels inside their actual space. Flag and
+checkbox controls retain 40×44-pixel targets, with a scrollbar gutter protecting
+the flag outline. Navigation, deletion reveal and virtualization share ROW_HEIGHT.
+
+All-target/all-feature checking and Clippy pass. The unread-surface regression
+passes. Eight selected native scenarios pass: light/dark/wide/900×640 layouts,
+flag/read/additive checkbox and row selection, double-click reading, all five
+adjacent-deletion scenarios, and filtering/sorting/paging. Twenty further saved
+selection/context/move/drag scenarios pass after migrating their intended row
+coordinates to `mail_row_y`, which accepts observed scroll and interface scale.
+No existing assertion or timeout was weakened. Earlier runs found seven stale
+coordinate failures; one rerun still had the old script loaded before the actual
+migration. The final corrected group passes all 20 in 54.803 seconds.
+
+Logs: `artifacts/logs/compact-mail-refined-native.log` and
+`artifacts/logs/compact-mail-migrated-controls.log`. Reviewed WebPs in
+`623901bc29bf` show clean ellipsis, the inset flag border, compact unread styling
+and wide horizontal rows; `2f8cd446e903` records actual row controls.
+Native binary SHA-256:
+`03417e33e3cade88ad6108144f74946ca9dfee051a20816cc3759c046f3be854`.
+These are selected Linux fixture checks, not full-suite, live-provider or latency
+claims. Primary-agent integration and publication are recorded below.
+
+### Integrated compact inbox, icons and conversation refresh
+
+Main integrates the compact rows and transparent icons with the selected-account
+Move changes and current profile/backup controls. Keyboard reveal now uses the
+actual native viewport, rejects superseded scope/selection results, and keeps
+whole rows visible at 120% and 900×640. The controller and layout-operation tests
+cover delayed results, visible rows, clamping and previous-page selection.
+
+Refreshing a thread after moving an expanded older reply now retains its surviving
+selected Inbox anchor. Explicit conversation paging still opens the new page's
+first row; newer expanded focus and body revisions remain protected. Five
+controller tests and the saved slow-success/failure/newer-focus native matrix
+cover this correction (agent checkpoint `279a72a`). Mail control coordinates in
+34 existing scenarios and all three HTML timing scripts now share compact row
+geometry. Deliberately rapid keyboard sequences remain rapid.
+
+The complete **248 functional native scenarios** ran on SHA-256
+`e038afe69e484f0354b0d5086a118fd973ac12c4f48357391be9560b89f1d49c`:
+246 passed and two test setup failures remained. The cross-page deletion test had
+captured an earlier key's scroll offset before the last-row layout operation; it
+now awaits actual last-row visibility before keeping the unchanged post-delete
+scroll assertion. Its corrected native run passes. The other failure was the
+known unpainted GTK file picker. The isolated Xvfb harness now selects GTK's
+[Cairo renderer](https://docs.gtk.org/gtk4/running.html), keeping production
+rendering, path confinement, clipboard ownership proof and deadlines unchanged.
+All **19 affected picker, database, attachment, print and clipboard scenarios**
+pass in 94.308 seconds. This removes a GPU startup dependency in the fixture; it
+does not prove the cause of every earlier GTK startup failure. All 248 paths have
+passing coverage across the full run and these corrected reruns; this is not
+reported as a clean single full-suite run.
+
+All **81 Python tests**, including actual isolated PowerShell execution, pass.
+Full Windows GNU all-target/all-feature checking passes. Reviewed WebPs include
+compact scaled reveal (`3fb5b229091e`), deletion across a page boundary
+(`570985938292`), and the rendered native picker plus import/restart
+(`a6de9837219d`). Logs: `artifacts/logs/compact-icons-final-native.log`,
+`compact-final-boundary-reveal.log`, `compact-cairo-picker-native.log`,
+`compact-final-python.log`, `compact-icons-final-windows.log` and the targeted
+navigation/reveal logs. Normal hooks pass **769 executions** (three personal diagnostics ignored),
+strict Zensical passes, and source is pushed as **`15a4a3c`** with exact remote
+equality verified. R88 is removed from TODO after this source publication. Production installation and actual desktop
+shell/platform review remain R64/R08 work; no personal data was changed.
+Performance measurements remain deferred while parallel builds run.
+
+## Account connection reversions — review groundwork
+
+Native incoming/SMTP connection changes now have independent durable intent
+generations, alongside account-name generations. Reverting an endpoint,
+authentication or sent-copy choice before the next pull remains a local edit
+after restart; a rename or unchanged save cannot invent a connection change.
+This uses the existing Store owner and profile checkpoint, with no added lock.
+Two new SQLite/history regressions cover four connection-field reversions and
+rename/no-op isolation; all 102 matching profile tests pass (one personal
+diagnostic ignored). Log: `artifacts/logs/profile-account-reversions-all-tests.log`.
+Mandatory hooks and root integration remain pending. Shared endpoint/removal
+review controls and credential retargeting protection are separate unfinished
+R02/R49 work; this checkpoint never applies a remote endpoint.
+
+
+## Explicit account links during profile import — integration pending
+
+A reviewed shared account can reuse an existing native account only when every
+portable incoming/SMTP connection field matches. The choice preserves native
+identity, cached mail, its credential slot, local display-name intent and any
+existing reconnect requirement. Unlinked imports retain fresh local IDs and
+Reconnect. One local account cannot serve two shared IDs. Reviews render eight
+accounts per page, preserve choices across pages and freeze the exact choices in
+the acceptance receipt. Changed/reverted connections, stale controls and a
+lost-acknowledgment retry with different choices are rejected.
+
+All 100 matching profile tests pass (one personal diagnostic ignored), including
+link/restart, connection changes and reversions, reconnect preservation, bounded
+pages/duplicate choices and native control-generation contracts. Clippy passes.
+Four saved native paths cover reuse/restart, explicit Add new, compact dark
+choices and a twelve-account paged import with the original local account kept.
+Reviewed WebPs include `1d578884f9f6`, `aac242c963f8`, `aa23fde24ad1`.
+Native binary SHA-256:
+`c6f19a26b45797e821203d90885bc3d8b005400990abb7b4af4c55b0f5c02ef6`.
+Logs use `artifacts/logs/profile-links-*` in the isolated profile-cache worktree.
+All 30 profile native paths were exercised: 29 passed together; the existing
+first-device slow-upload completion timed out once and passed unchanged on rerun
+(`75ec92a70a21` / `a3349d5457bf`). No assertion, timeout or artificial server delay
+was weakened. This fixture readiness follow-up remains R63. Mandatory checks and
+root integration/shipping are pending.
+Post-enrollment linking/suppression, endpoint/removal reviews, credential transfer
+and actual cross-client Google verification remain R02/R49/R92 work.
+
+## Conversation scratch ranking — R22 ongoing
+
+Conversation metadata no longer passes through whole-thread ROW_NUMBER windows.
+The owning encrypted scratch database picks one copy per logical message and
+indexes chronological order; Rust receives at most 20 metadata rows. Selected
+mailbox UID, expanded-message focus, timestamp/ID ties and paging are preserved.
+
+Scratch now uses DELETE/OFF with normal transaction rollback and no crash
+survival requirement. Main cache/receipt durability remains FULL. The earlier
+unqualified WAL initializer also changed scratch to WAL; qualifying the main
+pragma makes the intended scratch policy effective. Restart creates new scratch
+and ignores crash leftovers. Orphan cleanup remains unfinished.
+
+All five existing conversation contracts, three ranking tests and three scratch
+tests pass. The encrypted fixture compares 512 logical messages across three
+mailbox copies, focus and timestamp ties against the prior query contract. Query
+plans reject TEMP sorting, materialization and automatic indexes. Normal rollback
+is tested beyond the scratch page-cache target, and restart ignores an encrypted
+orphan while preserving main FULL durability.
+
+Eight of nine native conversation/forward/scroll/selection/bulk-close flows pass.
+The remaining reader scenario exposes the lane's old move-focus fallback, already
+fixed on main in 15a4a3c; its failure receipt remains preserved, and the combined
+main scenario must pass before shipping. Reviewed compact/card/page/review WebPs
+are under `artifacts/e2e/`; binary SHA-256 is
+`5a675577419d4e16442059dba69fb509799c61198bc4ef560834471fbf2ff7c1`.
+Final hooks, combined main native checks and root shipping remain pending. No
+performance result or production encryption activation is claimed.
+
+## R22 foundation temporary-storage correction (awaiting shipping)
+
+The SQLCipher foundation's global TEMP_STORE=3 policy would have moved existing
+plaintext sorts into memory. This correction preserves FILE for every ordinary
+connection and enforces MEMORY for keyed main databases through the existing
+native codec lookup. Encrypted scratch attachments do not change a plaintext
+main's policy. FILE/DEFAULT resets fail after keying, including after authorizer
+replacement/removal. A fixture VFS observes actual temp opens alongside a plain
+positive control. Commit `86d9c6c` passes all three targeted regressions, 811 normal
+hook executions, 81 Python tests and strict docs; root shipping remains pending. The scratch drain fixture now observes removal of the
+entire owned directory, avoiding the interval between file and directory deletion
+without relaxing its required outcome or deadline.
+
+Selection account/folder summaries, workspace DISTINCT/Inbox GROUP BY and
+recovered-view automatic indexes remain explicit encrypted-startup gates. No
+personal cache migration is activated and no timing result is claimed.
+
+## Keyed raw database export — R22 ongoing
+
+An encrypted Store exports through an independent, URI-readonly snapshot and
+SQLCipher logical conversion. The existing output remains ordinary SQLite,
+excluding account passwords and Google credentials. Its private atomic candidate
+is in the explicitly chosen export folder and is part of that intentional raw
+output. Implicit cache/import/migration candidates still require encryption.
+Cancellation and dropped observers share a bounded watch signal with SQL progress
+handlers and prepublication checks; admitted cache saves continue independently.
+
+The conversion audit verified indexed mail rowids and external-content FTS, then
+reproduced renumbering of an unindexed rowid 991 to 1. A minimal export-only SQLite
+flag patch selects its existing rowid-preserving transfer path. It restores the
+caller's flags and does not alter cipher algorithms; source hashes/provenance and
+release licenses accompany the SQLCipher patches. Tests preserve arbitrary
+extension data, drafts/attachments, an unindexed extension rowid 4444, the exact
+snapshot during concurrent saves, and existing destination files after Cancel or
+a dropped observer. Seven export tests, 18 cipher tests and all eight saved native
+import/export/profile/restart/cancellation flows pass. Reviewed light/compact-dark
+WebPs show usable review, error and inline-editor controls; native binary SHA-256
+is `ae760ffcea8a0af6f0dda5c426ee4282d4c034a7742c71a0518f43a1dab2f5b7`.
+These native fixtures still use plain startup; encrypted disk conversion has the
+separate Rust fixtures. Full Windows GNU all-target/all-feature checking and
+strict docs pass; actual Windows/macOS execution is unverified. Normal hooks
+and root shipping remain pending.
+Encrypted import staging, guarded migration/recovery and native key recovery are
+still unfinished; production bootstrap remains unchanged.
+
+## Keyed local profile routing — R22 ongoing
+
+The local profile catalog has an explicit keyed constructor. Catalog reopen,
+active-profile opening, imported-marker validation, registration, activation and
+orphan recovery propagate the same device key. A wrong key or unexpected plain
+profile fails without fallback or replacement; one damaged orphan does not hide
+other recoverable profiles. Separate catalog owners keep revision checks.
+
+All 11 catalog tests pass, including three new encrypted disk/WAL/restart,
+wrong-key/plaintext recovery and competing-owner regressions. These exercise the
+real Store/catalog workers on isolated temporary files. Bootstrap still calls the
+plain constructor; production migration, portable-copy conversion and native key
+recovery remain unfinished. Existing import UI flows therefore remain unchanged;
+this is backend fixture evidence, not an encrypted native startup claim. Final
+hooks and root shipping are recorded with the checkpoint commit.
+
+## Encrypted cache foundation — R22 ongoing
+
+The isolated `codex/encrypted-cache` lane adds SQLCipher 4.19 / SQLite 3.53.4,
+zeroizing raw keys, key creation/read-back through the bounded credential actor,
+keyed Store/backup/profile paths and a read-only encrypted candidate migration.
+Selection snapshots and frozen reviews use worker-owned encrypted scratch;
+ordering builds an on-disk index instead of an unbounded sort/window. Shared
+ancestry uses indexed database scratch and a 128-ID frontier. Normal startup
+still awaits guarded publication, recovery, remaining sorter/temp-data auditing
+and portable transfer routing. The [storage boundary](agents/CACHE_ENCRYPTION.md)
+inventories remaining paths.
+
+Actual temporary SQLite/WAL fixtures verify ciphertext, corruption/wrong-key
+failure, worker reopen, search/settings, upload-session preservation, cancellation
+without changing the source, and scratch cleanup after admitted writes drain.
+All nine selection integration tests preserve page/search/range/frozen-review
+semantics. Shared initializer, ancestry and owned-lock APIs are published and
+pinned as `e3e69a4`, with 63 isolated shared tests/all-target Clippy and 692 normal
+hook executions passing (three personal diagnostics ignored).
+
+Full desktop checks caught SQLCipher automatic process-exit cleanup racing a
+remaining cache worker. A deterministic subprocess reproduced SIGSEGV in
+`sqlite3Codec` after eviction required a disk read. The documented lifecycle
+patch disables automatic global cleanup, while explicit shutdown/reinitialization
+still works. All eight direct cipher tests and 805 complete hook executions pass
+(three personal diagnostics ignored), alongside 81 Python tests and strict docs.
+All 19 selected native selection/bulk/drag/restart flows pass through the saved
+MCP equivalents. Reviewed light, compact-dark, Undo and cross-folder search WebPs
+show readable controls and preserved selection/recovery behavior. Native binary
+SHA-256: `26df656af1ff9222746d3f4823dc137a41ab10f97d7c519995ca6c1868adf52f`.
+Full Windows GNU all-target/all-feature checking passes; actual Windows/macOS
+execution and macOS compilation remain unverified. Logs and source evidence are
+under `artifacts/logs/r22-*`; screenshots include runs `40496105fe02`,
+`04c0fb32b928`, `1062fd6439ae`, `f530cc327265` and `6e0b34ee08dc`.
+
+These native fixtures validate existing UI/storage behavior with the new SQLite
+build; keyed disk/migration behavior has separate Rust fixtures. Normal native
+startup/recovery is still unfinished. The root's newer static-libcurl dependency reproduced an earlier OpenSSL
+initialization in curl's pre-main constructor. A minimal vendored curl cfg patch
+now invokes its existing Rust OpenSSL initializer before libcurl, preserving the
+same process-lifetime policy without constructor-order assumptions or changes to
+certificate/FTP behavior. The exact curl 0.4.50 / curl-sys 0.4.90+curl-8.21.0
+subprocess fails before and passes after this patch. Existing CA-path probing is
+unchanged. Final combined hooks/platform checks, root's FTP protocol regressions
+and root shipping remain the checkpoint boundary.
+No personal cache, live credentials or installed application was changed.
+
+## Portable preference reviews — verified integration
+
+A local history review can compare this device's preference with current shared
+versions. Choosing a value reserves one durable operation and the exact concurrent
+version set before history admission; the existing sync worker publishes it later.
+Opaque shared extensions remain in history and survive the selected resolution.
+The UI receives scalar values and IDs for at most eight supported settings and
+256 versions per field, not complete operation payloads.
+
+Acceptance checks enrollment/Google lifecycle, current field values, native edit
+generations and the reviewed history revision. Changes or reversions while a
+review is open require refreshing; unrelated local preferences remain intact.
+Reset-to-default requests retain their original wire action while using the
+native default for comparison. Admitted receipts are acknowledged through close
+and newer native edits remain pending for subsequent publication.
+
+Six targeted store/history/controller regressions pass, covering deferred
+local/shared choices, concurrent causal records, stale local/remote/consent
+reviews, restart after lost acknowledgment, newer native intent and stale control
+events after a row disappears. All 86 matching profile tests pass (one personal
+diagnostic ignored). The lane also passes 59 Python tests and all-target,
+all-feature Clippy. All 25 selected native profile flows pass, including three
+saved resolution/restart/stale-choice scenarios; reviewed light/compact-dark WebPs
+include visible error feedback when an old choice is rejected. Logs are under
+`artifacts/logs/profile-reviews-*`; error feedback evidence is `8e903b30229c`.
+Root integrated source `713f96e` and repeated all 25 native profile flows on the
+final control-identity guard: all pass in 90.568 seconds. All 81 integrated Python
+tests and Clippy pass. Light/shared-choice, compact-dark and stale-choice error
+WebPs were reviewed in `ae0d1e6a4ee3`, `8df28384ff98` and `d9bce3c1db21`.
+Native SHA-256: `d85786600d99d32e2e18633e48a294350ded4780bae938acea8756172c31850b`.
+Both lane and root normal hooks pass 762 executions (three personal diagnostics
+ignored). Source is pushed as `22a3af5`, with exact remote equality verified.
+Installed production is unchanged. Integrated logs use `artifacts/logs/profile-reviews-main-*`.
+This does not complete account linking, endpoint/removal reviews, credential
+transfer or live Google verification.
+
+
+## Multiple Local/Drive backups — shipped checkpoint
+
+Agent checkpoint `3f00292` adds named Local/Drive destinations, independent
+schedules, retention/passphrases and history, switching and reviewed removal.
+Existing single-target settings migrate when another is added; imported database
+profiles clear device-local schedules. Duplicate targets and local aliases are
+rejected. The remaining S3/FTP/FTPS/SFTP adapters, optional compression/encryption,
+combined manual backup and richer result history remain R32 work.
+
+The lane passes mandatory hooks (706 executions, three personal diagnostics
+ignored), 37 backup tests, nine preferences tests and 55 Python tests. Its final
+three native scenarios pass in 11.220 seconds, covering existing first-copy setup,
+compact layout and the new migration/switch/removal/restart workflow. Root reviewed
+light, red removal and compact dark WebPs under `3ee3c19c5507`; final equivalent
+run is `c023ba64588f`. Root integration preserves main's typed portable preference
+intent and native edit generations; a new regression combines a stale backup form,
+a remote setting change and another destination's completed upload. Merged checks
+pass: ten preferences tests, 756 mandatory hook executions (three personal
+diagnostics ignored), 59 Python tests and strict Zensical. All 21 integrated
+backup/preferences/profile/import native scenarios pass in 95.559 seconds. Root
+reviewed removal and compact dark WebPs in `ffa204429d56`. Native SHA-256:
+`73617db5e8a89119e7f055623e061fb55ee16e7e6b6bf72ad135b36403ac14bb`.
+Source [`2b87db4`](https://github.com/sam-ruff/shep.so/commit/2b87db4) is pushed,
+with exact remote equality verified.
+[Documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34342193801)
+passed. Logs use `artifacts/logs/multiple-backups-*`. No live cloud or installed
+production update is claimed.
+
+## Windows/macOS badges — shipped integration
+
+Root integrated `66222f6` as
+[`1595fb3`](https://github.com/sam-ruff/shep.so/commit/1595fb3) and pushed to main,
+verifying exact remote equality. Mandatory hooks pass 751 executions, three
+personal diagnostics ignored; Python: 59 and strict Zensical pass. Full merged
+Windows GNU all-target/all-feature checking and the exact macOS adapter check
+pass. All 12 integrated Linux badge/tray scenarios pass in 56.460 seconds, including
+ordinary-hide failure recovery. Root reviewed compact preferences (`d197a0b27609`)
+and failed-archive recovery (`96a237e88cf1`) WebPs. Native SHA-256:
+`aa9145b440fa98d69b9d69fa93d95fe92882c7e19374961e8df38d6755ae9b22`.
+Logs: `artifacts/logs/badge-main-*`. Actual Windows/macOS rendering and shell
+execution remain R70 verification work; production installation is unchanged.
+## Configurable color palettes — R25 lane checkpoint
+
+The model now stores independent light/dark RGB palettes for fourteen semantic
+roles. The searchable Colors editor supports hex input, swatches, a sample,
+Apply, Undo changes and per-theme Reset. Invalid values stay out of preferences;
+low-contrast combinations show a warning while the editor retains readable
+controls. Applying is immediate and uses the existing ordered preference save.
+The UI owns a small theme cache and retains untouched colors if preferences
+change during an edit. Existing installations get the original default palettes.
+
+The lane rebased onto main `22a3af5`, preserving its profile reviews, tray safety
+and multiple-backup work. Typed preference saves now carry fixed-size per-theme,
+per-role color intent, preserving unrelated colors through queued writes, old
+acknowledgments, explicit reversions and stale-save retries. All twelve targeted
+palette model/controller/store tests pass, including semantic mapping of every
+role and System appearance. All 81 Python tests pass.
+
+All ten selected native scenarios pass on the final binary in 42.659 seconds:
+the five palette flows plus default appearance/calendar, persisted resizing,
+filtered Preferences clipping, tooltip/search and continuous-profile receipt.
+The compact footer keeps Apply clear of the save toast. Both Apply colors and
+the global Save changes button consume staged colors; invalid input retains the
+previous saved value, explains the Colors error and clears old success feedback.
+Reviewed WebPs are under `artifacts/e2e/1181ed2a3a3f`, `bb598d186559`,
+`3208afaa547a`, `c9978f1dfd9c`, `7fe3cefac699` and `d40509ed976a` in the
+isolated lane. Native binary SHA-256:
+`66f740bde3fc4bc39e1604de7ee833077cc893065f4851fb13fde73877c9122b`.
+Logs use `artifacts/logs/r25-*`. Full Windows GNU all-target/all-feature checking
+and strict pinned Zensical pass. The typed-save commit `4727fb7` passes 774 normal-hook executions (three personal
+diagnostics ignored); the final header-save follow-up is gated by the same hooks.
+Root integration/shipping remains the authorized next step.
+
+Palette values are included in local preferences and database transfer. The
+current cross-client codec has no palette setting key, so custom-color Drive
+replication remains part of R02/R49 and is not claimed by this checkpoint. No
+personal installation, live-provider or Windows/macOS runtime test was performed.
+Root integration/shipping is pending; R25 stays in TODO.
+
+## Transparent native Shepherd icons — R64 checkpoint
+
+The approved source PNGs remain unchanged. Built-in imagegen background extraction
+was applied, and the ragged dark result was rejected. The user-authorized Vectorizer
+service then traced the light extraction and approved dark reference into clean
+editable vectors; its keys stayed only in the original tooling configuration and
+request memory. Light interior opacity was corrected after the regression test
+caught the trace's slight translucency. Prompts, provenance and export instructions
+are in `assets/README.md`. The shipped light/dark WebP now has true exterior alpha,
+fully opaque flat-color interiors, and the approved Shepherd contour/details.
+The compatibility launcher PNG is transparent too.
+
+Linux installs the traced symbolic SVG alongside the full-color PNG, retaining
+`so.shep.Shep.desktop` and StartupWMClass. Its symbolic foreground follows native
+GTK/system styling without an app-owned theme watcher or filesystem writes during
+theme changes. The StatusNotifier adapter supplies the same symbolic name with a
+transparent full-color pixmap fallback. macOS requests native template treatment
+for its symbolic WebP mask; Windows retains a transparent full-color tray icon.
+The development-only export script uses CairoSVG/Pillow and makes no network call.
+
+All three targeted tray Rust tests pass, including real alpha/opaque-interior/clean
+margin checks. All 81 Python tests pass, including actual isolated installer
+update/uninstall and raw Linux/macOS/Windows package paths. Full Windows GNU
+all-target/all-feature checking and exact macOS native tray adapter checking pass.
+Nine saved native MCP scenarios pass on binary SHA-256
+`6ec92da765e6f99f13b9fd3c1794b8151784148df8c79bded5433ea0b3d16a68`:
+hidden-app icon light/dark, tray lifecycle/host loss/background mail, appearance,
+and all four unread badge scenarios. The new flow observes real X11 WM_CLASS and
+actual SNI IconName, then clicks the owned GTK host's theme button while Shep is
+hidden. It never changes the personal desktop theme.
+
+Reviewed WebPs include `artifacts/e2e/c7d083fec4d5/symbolic-tray-light.webp`,
+`symbolic-tray-dark.webp`, `transparent-logo-restored.webp`, the compact dark tray
+preferences in `fee7caa42dcf/`, and dark Calendar in `f2c81dda84df/`. The contour is
+clean and the symbolic foreground changes visibly. These are GTK/native-protocol
+fixtures, not an actual GNOME Shell session or Windows/macOS runtime review.
+Strict docs, mandatory hooks and root source integration are recorded with the
+checkpoint; personal installation and live shell/panel review remain open in R64.
+No installed application, personal icon, desktop favorite or secret was changed.
+
+The first mandatory hook hit an unrelated shared-core history reopen failure:
+`reserved_upload_identity_and_exact_bytes_survive_lost_replies_and_reopening`
+returned `Owned` at history.rs:482 after dropping its Journal. The exact unchanged
+pinned binary test and all 11 history tests passed on rerun. The retained File lock
+and another parallel test's child-process spawn suggest transient fork/exec
+inheritance, but that cause is not proven. No dependency checkout/assertion changed;
+the full mandatory hook is rerun normally. Evidence is retained in
+`r64-commit.log` and `r64-profile-ownership-rerun.log`; follow-up remains in R91.
+
+## Native PowerShell Windows raw installer — R61 checkpoint
+
+README and the install guide now include the GitHub raw PowerShell command.
+The script requires built-in PowerShell 5.1 and Windows 10/11 tar.exe, defaults to
+LocalAppData/Programs/Shep, and stages a native ICO and Start-menu shortcut.
+Archive selection/checksums reject missing or ambiguous platform assets; only
+exact unique regular binary/icon members stream out through binary process stdout.
+An application marker prevents overwriting an unrelated installation. Directory
+replacement and the shortcut commit preserve/restore the previous application
+when a step fails. Updates never kill an open app or change mail/configuration.
+
+Explicit all-user installation uses a data manifest, prepared fixed script and
+quoted encoded invocation for [native RunAs elevation](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/start-process).
+Only that installer process permits script execution; no system execution policy
+changes. Cancellation happens before installed files change. The shortcut follows
+[Microsoft's WScript contract](https://learn.microsoft.com/en-us/powershell/scripting/samples/creating-.net-and-com-objects--new-object-).
+The PNG-backed ICO contains the unchanged approved 128px launcher image.
+
+Seven isolated PowerShell execution tests pass: binary-safe install/update and
+native metadata/icon contract, invalid checksums and links, failed shortcut commit
+rollback, cancelled and successful staged elevation with spaces/apostrophes,
+user/default/custom scope, pre-download cancellation, HTTPS-only transport,
+invalid version, missing platform/release, duplicate members and unrelated apps.
+All 81 Python tests pass. PowerShell 7.6.6 was downloaded from Microsoft's release
+into ignored artifacts and verified against its published checksum; no runtime
+was installed globally. Tests use actual PowerShell, tar, hashing and filesystem
+operations against temporary destinations and an owned loopback release server,
+with explicit environment, COM, transport and UAC boundary fixtures. These do not
+claim actual Windows PowerShell 5.1, COM, UAC or Start-menu rendering verification.
+
+Root integrated and pushed Windows source as `ce4a2a6`, with 81 Python tests,
+756 mandatory hook executions (three personal diagnostics ignored), strict docs
+and [green documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34344920136).
+Exact remote equality was verified. Actual Windows/macOS execution, platform
+distribution and published binary assets remain
+open in R61. No developer installation or public release was changed; quality and
+release CI remain disabled.
+
+## Native-tool macOS raw installer — R61 checkpoint
+
+The raw macOS entry point prepares `~/Applications/Shep.app` with the approved
+launcher icon and native application identity using built-in macOS tools only.
+The [bundle structure and property keys](https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFBundles/BundleTypes.html)
+follow Apple's application-bundle contract. The script selects a matching
+published architecture, verifies SHA-256, streams only exact unique regular install
+members, stages an application bundle and replaces it with rollback. Explicit
+all-user installs elevate only the prepared final copy; cancellation leaves the
+old application intact. Gatekeeper, running processes and user data are preserved.
+
+Six isolated shell contract tests pass, covering install/update/identity/icon,
+checksum and link rejection, failed replacement rollback, missing architecture
+and release, refusal to replace another application, conflicting scope flags,
+terminal cancellation before network work and cancelled administrator elevation.
+They run actual Bash, tar, checksums and temporary filesystem operations with
+loopback release downloads and test doubles for JXA/Foundation, plutil, icon tools
+and sudo. The embedded JSON selector executes in Node; a poisoned `python3` on
+PATH proves that the installer does not invoke a Python runtime. This is Linux
+fixture evidence, not actual macOS execution or icon/Launchpad verification.
+All 74 Python tests pass; Bash syntax, strict documentation and mandatory hooks
+are recorded with this checkpoint. Windows PowerShell implementation, actual
+macOS desktop execution, notarization/distribution and published release assets
+remain open. No installed user application was changed and no release was created.
+
+Root integrated and pushed macOS source as `0f2af1f`, verifying exact remote
+equality. Mandatory hooks pass 756 executions (three personal diagnostics
+ignored), all 74 Python tests and strict Zensical pass.
+[Documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34343891835)
+passed. Linux source `3676dad` also has
+[green documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34342832313).
+
+
+## Raw Linux release installer — R61 checkpoint
+
+README's first install option and the installation guide now show the standalone
+GitHub raw Bash entry point. Its standard-library helper resolves a published
+Linux archive and checksum, stages/validates files before installation and delegates
+to the existing atomic binary/native-menu installer. Per-user installation remains
+the default; interactive scope offers all users or cancel, and only an explicitly
+selected system install invokes sudo. Updates leave already-open executables and
+user data alone. Version selection, prompt-free user installs, custom paths and
+optional GNOME pinning are supported.
+
+Nine isolated tests exercise actual loopback metadata/archive/checksum downloads,
+installation and atomic update in temporary prefixes, native launcher identity,
+checksum/asset/archive rejection, scope/sudo cancellation, interrupted downloads,
+unsafe paths/links, raw-wrapper argument quoting and staging cleanup. All 68 Python
+tests pass; Bash syntax and strict pinned documentation checking pass. No native
+UI changed. Mandatory hook results and source shipping are recorded during root
+integration. Root merged and pushed Linux source as `3676dad`, with exact remote
+equality verified, 756 hook executions (three personal diagnostics ignored),
+68 Python tests, Bash syntax and strict Zensical passing. No release was published and no developer installation was changed.
+
+A read-only public release API check returned no published releases. The README
+and installer explain that state without claiming a working public binary download;
+quality/release CI stays disabled. Windows/macOS scripts, platform execution and
+actual published-archive installation remain in R61 for the next checkpoints.
+
+## Windows/macOS unread badges — integration checkpoint
+
+The existing default-on unread preference and aggregate optimistic Inbox count
+now feed all three native adapters. Windows prepares a transparent red count
+image on its independent watch worker, displays 99+ above 99, and keeps the exact
+count in the accessible description. Its HWND-owned subclass reapplies the current
+image after taskbar recreation and releases its resources with the window;
+tray reopening uses the newest retained frame. macOS uses the system Dock badge
+label on AppKit's main queue, including when the window is hidden. It waits for
+one native acknowledgment before admitting another and retains only the latest
+pending count. Zero or disabling the preference clears the badge.
+
+The platform contracts follow [Microsoft's overlay API](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-itaskbarlist3-setoverlayicon)
+and [Apple's Dock badge property](https://developer.apple.com/documentation/appkit/nsdocktile/badgelabel).
+Windows overlays require large taskbar icons. Five targeted Rust tests pass,
+including held native delivery, an occupied output bridge, zero/large-count
+raster validation and unchanged Linux bus/reconnect regressions. Prepared 32px
+WebPs for 1, 10 and 99+ were reviewed under `artifacts/e2e/taskbar-raster`;
+these images are not screenshots of Windows. Full Windows GNU all-target/all-feature
+checking, Windows Clippy with warnings denied, and exact macOS adapter checking
+pass. The Windows check also caught an existing cfg-dependent unused index in a
+profile path-protection test; separating its Unix alias loop preserves that test
+coverage on both targets. The reproducible adapter check is
+`scripts/check_badge_adapters.py`.
+
+All 11 selected native badge/tray scenarios pass, and all 59 Python tests pass.
+Reviewed current native WebPs include `a21f7f3fe231/badge-preference-compact-dark.webp`
+and `de3ee2be6d28/badge-failed-archive.webp`. The native binary SHA-256 is
+`408b7732dca0ff00e62e4651fcf53045b82332cca978a7fb5071422d35a7fc0e`.
+The first badge run exposed the existing fixture's AF_UNIX path limit in a long
+worktree, before application actions; an owned short alias and actual private-bus
+cleanup regression now cover it. Native Linux badge behavior is unchanged.
+Strict documentation and mandatory hook results are recorded during integration. Actual Windows/macOS rendering, Explorer restart, hidden AppKit delivery,
+full macOS app checking, production installation and root integration/shipping
+remain separate unfinished work. Linux adapter behavior is unchanged. R70 stays
+in TODO for platform/runtime and remaining ambiguous-provider/restart count work.
+
+
+## Native tray and window lifecycle — integration checkpoint
+
+Preferences → System tray controls close-to-tray, off by default, with an
+accessible Quit Shep button. The native tray offers Open Shep and Quit Shep.
+Closing to tray keeps engine subscriptions and background arrivals alive; opening
+recreates the window with its current size, theme, reader and drafts. An iced
+daemon owns the process so a closed native window is separate from actual Quit.
+
+Actual Quit retains the durable-close barriers. With ordinary close-to-tray off,
+required saves temporarily hide the window and request a native saving notice;
+completion exits, while failed saves or Open cancel close and restore the window.
+Missing/lost tray support keeps or restores an accessible window. A native file
+chooser stays visible; once selection finishes its attachment write can hide and
+recover normally. Notification-service failure falls back to visible saving.
+Read-only synchronization is not a shutdown dependency; the idle bulk-stop
+handshake alone does not create a saving notification.
+
+Linux uses StatusNotifierItem/DBusMenu with independent capacity-one coalescing
+action and availability channels. Native callbacks retain the latest Open/Quit
+intent when the UI is busy; a deterministic full-signal test covers this.
+Windows/macOS create native icons/menus on iced's window event thread. The approved logo loads once
+on a background worker. Native fixtures own their D-Bus/GTK tray and notification
+services on Xvfb; they never access the user's session bus, mail, keychain or Drive.
+
+Nine targeted lifecycle/controller regressions and 58 Python tests pass.
+**All 26 selected native correctness scenarios pass**, including seven tray flows
+plus existing draft, bulk/folder receipts, profile, database transfer, held-sync
+and preferences flows. Reviewed WebPs cover compact dark preferences
+(`a605cc916d14`), native menu (`0b42e6ef0f7d`), missing host (`29c90843c818`),
+send failure (`fed756dada64`) and attachment-picker failure (`c92068817f79`).
+These retain clear controls, recoverable errors and draft contents. Native binary
+SHA-256: `4fb723a05a5573147627fb58297b92ec065ea93f3710b0fc4cc379802f2fc087`.
+Mandatory hook results and accepted commit/shipping are recorded during root integration. Full Windows GNU all-target/all-feature checking passes; the exact
+macOS tray adapter compiles for aarch64-apple-darwin using the reproducible
+`scripts/check_tray_adapters.py`. That macOS check does not compile/link the full
+app. Neither cross-check proves actual Windows/macOS execution. Actual desktop
+shell review, personal-server diagnosis, root integration/shipping and a production
+installation remain distinct unfinished work; no performance claim is made.
+
+
+
+Root integrated the native tray checkpoint as
+[`6728931`](https://github.com/sam-ruff/shep.so/commit/6728931) and pushed it to main,
+verifying exact remote equality. Mandatory hooks pass 745 executions with three
+personal diagnostics ignored; Python58 and strict Zensical pass. All 32 selected
+integrated native scenarios pass in170.625 seconds, including the newer adjacent
+selection and profile-cache restart regressions. Binary SHA-256:
+`cfd6e424e619821cde28b4f041c6a06470dab67769474189aa178d804d89c65d`.
+Log: `artifacts/logs/tray-main-native.log`. Root reviewed the integrated compact
+preferences (`62acdb7a7cee`) and failed-send recovery (`e410af37a3bd`) WebPs.
+
+A follow-up saved native scenario reproduced an additional ordinary-close case:
+with close-to-tray enabled, a failed pending send remained hidden. Reproduction
+log: `artifacts/logs/tray-ordinary-hide-reproduction.log`. This is separate from
+temporary-saving mode, whose failure recovery already passes. The root is adding
+fresh-error recovery for pending writes and visible queue-admission failure;
+old errors and routine read-only refreshes must not reopen the window.
+The first full hook run caught two older-operation ownership regressions in the
+initial correction. Explicit hidden-window state and pre-event close ownership
+now distinguish ordinary hide, startup, and a pending Quit; an obsolete attachment
+failure cannot cancel a newer required save. The failing hooks were retained and
+corrected, without bypassing them. Final verification/shipping remains pending.
+
+The corrected ordinary-hide follow-up is pushed as
+[`b8eafde`](https://github.com/sam-ruff/shep.so/commit/b8eafde), with exact remote
+equality verified. All 12 tray/controller tests and 748 hook executions pass
+(three personal diagnostics ignored), as do all16 selected native scenarios in
+78.974 seconds and strict Zensical. The new native scenario covers both ordinary
+hide and subsequent actual tray-menu Quit. Root reviewed the retained reply and
+visible error in `df09111f194d/tray-ordinary-hide-write-failure.webp`.
+Native SHA-256: `811d628d18dc80f74f7e83ac991f7bc92f749e3388a022c8999d914c01f1b5dc`.
+Logs use `artifacts/logs/tray-ordinary-hide-final-*`. Remaining actual platform
+execution and personal-server diagnosis stay active; this is a source update.
+
+## 9 September: adjacent selection after deleting mail
+
+R89 now selects the following displayed message immediately after a move/delete,
+keeps the list scroll position, falls back to the previous row at the end, and
+clears the reader when empty. This also applies to same-account and cross-account
+moves. Cross-folder search retains the current reader when the moved row remains
+in the result. Page-boundary refill uses the foreground query channel; a short
+projected page retains its pending successor until refill arrives or its total
+proves no successor remains. Explicit newer selection cancels that follow-up.
+
+Six controller regressions pass, covering repeated removal, sorted/filtered order,
+empty/previous-page fallback, rollback with newer navigation and short-page then
+full-refill ordering with cancellation. Five saved native scenarios pass against
+the final binary: scrolled mouse/keyboard deletion while saves are pending,
+failure without losing newer navigation, unread/oldest filtering and an empty
+reader, next-page refill, and deleting the final page back to the previous last
+row. Final native log: `artifacts/logs/delete-navigation-final-native.log`;
+25.623 seconds, five passed. Native SHA-256:
+`0f87954d654b735751cb9598b0f7d0f0701ea5ecaa1da003841b35a88679258c`.
+Reviewed WebPs show adjacent selection and retained scroll; final runs include
+`4ccfdb9160d6` (pending repeated deletes) and `8e52d2ba69fc` (previous-page fallback).
+
+The initial native run exposed test setup issues: read-on-leave generated several
+serialized slow writes, a page assertion preceded completion of injected keys,
+and mouse Delete preceded presentation of the selected reader. Focused tests now
+start on already-read rows and await the intended selection/presentation; the
+unread-filter scenario preserves read-on-leave/deletion coverage. Existing rapid
+input scenarios and all timeouts remain unchanged. These isolated fixtures do not
+establish live IMAP behavior or performance percentiles. Primary-agent integration
+and push are pending; TODO remains open until that shipping step.
+
+Root integration `5a85ac3` passes mandatory hooks (735 executions, three personal
+diagnostics ignored), Python57 and strict Zensical. The wider native run passed
+58 of59 scenarios and exposed a real group-Move labeling bug: the new neighboring
+reader could belong to another account, while the group consisted only of the
+original account's messages. Folder labeling used that reader's catalog, hiding
+its Japanese destination from fuzzy search. Root changed labeling to use selected
+account membership, with explicit destination choice taking precedence. A new
+real-selection-snapshot regression passes. The existing native Unicode
+move/Undo/group scenario is retained unchanged; final rerun/shipping is pending.
+Failure evidence `d338c6f4c4ce` is retained under ignored artifacts.
+
+Final corrected source [`91ed9a9`](https://github.com/sam-ruff/shep.so/commit/91ed9a9)
+is pushed to main with exact remote equality verified. Mandatory hooks pass 736
+executions, zero failures and three personal diagnostics ignored. All 59 selected
+native mail scenarios pass in 258.950 seconds; strict Zensical passes. The final
+native binary SHA-256 is
+`9f542c54cde33fe9f7bc92b17092f7a0ed3f160f6f7512ca0b11e4dc5fe33884`.
+Log: `artifacts/logs/delete-navigation-final-main-native.log`. Root reviewed
+`aa1c77b3323d/nested-unicode-bulk-review.webp`,
+`93a9f3fbf44a/delete-scrolled-neighbors-saved.webp` and
+`eed86f7250b8/delete-final-page-previous-last.webp` under `artifacts/e2e/`.
+R89 is complete and removed from the active TODO. Compact row styling remains
+separate R88 work; production installation and final performance gates remain open.
+
+## 9 September: verified shared-profile record reuse
+
+R02/R49 now retains verified immutable Drive records in the separate bounded
+profile journal. Every poll still completes and validates a fresh listing; only
+records with matching identity, namespace, operation, size and digest reuse bytes.
+Corrupt/oversized cache entries are repaired through verified downloads. Missing,
+changed or incomplete listings cannot be hidden by cached history. No wire-format
+or credential-storage changes are involved.
+
+The profile-filtered Rust suite passes 80 tests with one personal diagnostic
+ignored. New protocol checks prove unchanged polls and restarts use one listing
+request with no repeated metadata/body downloads; adding a record downloads only
+that record. Journal tests cover restart, stale scans, replacement identities,
+corruption and bounded allocation. All 55 Python tests and six selected native
+scenarios pass. The new saved native Sync now/restart scenario observes actual
+owned HTTP request counters, with reviewed Preferences evidence in `16ce5ad1b34f`.
+It runs alongside automatic account receipt, local publication, offline retry,
+partial failure and enrollment. These are correctness/request-count checks, not
+latency or live Google claims. Worktree commit `654a90e` passes mandatory hooks
+(717 executions, three personal diagnostics ignored), Clippy and strict Zensical.
+Native binary SHA-256:
+`5873fc7eb7093c8538416941e9243253f3d225a89190f1d508b4fcf109060a66`.
+Root integrated this as [`e77eabc`](https://github.com/sam-ruff/shep.so/commit/e77eabc)
+and pushed to main with exact remote equality verified. All 729 integrated hook
+executions pass (three personal diagnostics ignored), Python passes 57 and strict
+Zensical passes. All nine integrated native cache/profile/close scenarios pass;
+merged binary SHA-256:
+`22285ff1b50ce5f124234f9200ffa15d859419b57600988980481fa1fc6f9933`.
+Change-token incremental polling and account/conflict review controls remain active
+TODOs.
+
+## 9 September: shutdown failure ownership
+
+Attachment storage, draft discard and forward preparation cancel automatic close
+only when their failed result owns the current pending operation. Late results
+for another draft/request keep newer shutdown dependencies intact. Errors stay
+visible; discard retains the review and original draft for retry. Three production
+`App::update` regressions cover current/old IDs and late stop acknowledgments.
+The close-filter Rust run passes 32 tests; all 57 Python tests and nine selected
+native scenarios pass, including the three new close/failure/retry flows. Reviewed
+WebPs: `artifacts/e2e/effa8bf75b5b/close-attachment-failure.webp`,
+`artifacts/e2e/563bb8045bcf/close-discard-failure.webp` and
+`artifacts/e2e/73046dc11efc/close-forward-failure.webp`. They retain the composer,
+red discard control and visible recovery errors. Native binary SHA-256:
+`20d1be5a8a8df061b8ef92afb39cf281d23397be82ba05d4f901ca76f079c0c8`.
+These are fixture correctness checks, not live server or timing measurements.
+Agent commits `9c2e84c` and `e30c174` pass all mandatory hooks (711 and 714
+executions respectively, with three personal diagnostics ignored). The root
+reviewed the failure WebPs and integrated both checkpoints together as
+[`2733cc6`](https://github.com/sam-ruff/shep.so/commit/2733cc6), pushed to main
+with exact remote equality verified. Integrated mandatory hooks pass 725 executions
+(three personal diagnostics ignored), Python passes 57, strict Zensical passes,
+and all 23 selected native scenarios pass. The combined suite includes ongoing
+profile sync, database transfers, group/folder close, composition and failure
+recovery. Root reviewed the merged discard-error screenshot `83ea39e4a99e`.
+Integrated native SHA-256:
+`dbe6de7e2e80a196697559b9accf703c6f131e2386365d59bff4dbb84d419783`.
+All injected delays and failures require the isolated preview feature.
+
+## 9 September: close continuation and interruptible provider waits
+
+The R90/R91 shutdown checkpoint keeps close intent through account/calendar,
+Google, outgoing, attachment and draft saves, then continues automatically once
+all required acknowledgments arrive. Account and calendar writes record their
+busy dependency when admitted, before provider capacity becomes available.
+Errors reach the UI before that dependency is released; current failures cancel
+close while obsolete draft failures preserve newer saves. A failed calendar
+connection remains editable with its inline error.
+
+Bulk execution now waits for provider capacity before claiming a journal item.
+A close interrupts that wait through a capacity-one lifecycle channel, preserving
+unstarted work for the next launch. Already claimed work still records its actual
+receipt. Folder cancellation uses the same signal instead of polling. Production
+shutdown still waits for durable writes; optional read-only sync is not a close
+dependency.
+
+Targeted Rust checks pass 29 tests, and all 57 Python tests pass. **15 selected
+native scenarios pass**, including two new flows: closing with all eight provider
+slots held preserves queued journal steps, and closing during rejected send
+preparation cancels close and retains the reply through restart. Existing group,
+folder, read-on-leave, recovery, inline draft, account/calendar, profile upload
+and database-transfer close scenarios also pass. Reviewed WebPs are in
+`94e04def5ba4` (pending send, visible error and reopened draft) and `35aaa8f6ef81`
+(optimistic group before close). Native binary SHA-256:
+`8eb9fafec14de5bde0338967b6c7cdd42bfc7389feb7e3aecc07e795cd42eafe`.
+These are fictional native/protocol fixtures; no personal account, credentials
+or installed executable changed. Native tray integration and live personal-server
+close diagnosis remain open. The integrated shipping receipt is above; this
+checkpoint does not finish R86 or the full product goal.
+
+## 9 September: ongoing profile updates and parallel feature delivery
+
+R02/R49/R92 now runs ongoing profile checks through the bounded coordinator,
+with immediate manual retry and separate account/settings toggles. It publishes
+local changes and applies received preferences, account names and new account
+definitions without switching tabs. A later upload failure still refreshes
+already committed received changes. New definitions require Reconnect; existing
+endpoint changes, removals and conflicts retain local data for review.
+
+Exact deferred edits retain their operation UUID and causal basis. Native
+preference writes merge only edited shared fields. Durable per-field generations
+also protect a setting or account name that is changed and then reverted during
+a pull or acknowledgment; database imports archive source-device generations.
+The targeted profile suite passes 76 tests with one personal diagnostic ignored.
+Required hook checks pass 711 executions with three personal diagnostics ignored;
+Python passes 55. No performance budgets were measured or changed.
+
+The ongoing-update UI and protocol checkpoint passed 34 native scenarios,
+including four new automatic-receipt, publication/restart, offline-retry and
+partial-upload-failure paths. Reviewed WebPs include `8a68015b56c6` (received
+accounts while Mail remains open) and `184fead95e69` (received accounts alongside
+an explicit upload error). After generation tracking and refresh integration, the combined run passed 40
+of 41 scenarios. The remaining database-export setup failed because the native
+GTK picker's location field did not accept its path (unpainted picker evidence
+`ee7f4ccad7e2`); three unchanged, fresh reruns passed (`5301b548bd0c`,
+`5a38e38e1f9c`, `5bd787f589d4`). This intermittent picker readiness issue remains
+in R63; no timeout or performance gate was weakened. Final reviewed native
+screens include `4feda00dae1e` and compact dark refresh `aeec46d6a1df`.
+Integrated binary SHA-256:
+`92e957553a9bc375dc81651c120d379ece51cdbcbd955a6c1edb431bfb7e5d48`.
+The integrated hooks pass **713 executions**, three personal diagnostics ignored;
+Windows GNU all-target/all-feature checking and strict Zensical also pass.
+Source [`bd50c52`](https://github.com/sam-ruff/shep.so/commit/bd50c52)
+and [`d29ce06`](https://github.com/sam-ruff/shep.so/commit/d29ce06)
+are pushed to main; exact remote equality was verified.
+
+R93 assigns three isolated worktree lanes to compact mail/deletion/refresh,
+multiple backups and shutdown/tray, with the primary agent integrating tested
+commits. Agent refresh checkpoint `f111282` was integrated as `d29ce06`. R87 is
+complete: the icon turns clockwise every 2.4 seconds, matching its arrowheads,
+only during manual refresh. Four animation tests, 14 renderer tests and seven
+native refresh/background scenarios pass, including light, compact dark and
+scaled rendering, F5 remapping/restart, failure/retry and navigation. Root reviewed
+its visual evidence before integration. R87 leaves TODO; remaining requests stay
+tracked. Incremental history pulls, account linking, conflict/removal/endpoint
+reviews, remaining portable settings, credential transfer and real cross-client
+Google access remain unfinished. Personal mail, OS credentials and the installed
+production app were untouched. Quality/release CI stays disabled.
+
+## 9 September: profile discovery and enrollment after Google sign-in
+
+R02/R49/R92 now connects verified Google connection status to background profile
+discovery. No existing profiles produces an optional setup prompt; multiple
+profiles or existing local data/settings use the picker and review. A single
+complete profile imports automatically into an untouched workspace. Imported
+account definitions use fresh local IDs and require Reconnect; the completion
+message includes the profile and applied counts without switching tabs.
+
+Not now persists discovery opt-out before any enrollment, across restart and
+reconnection. Preferences can enable it again. Discovery waits for pending
+preferences, coalesces repeated status events and preserves close cancellation.
+The acceptance transaction rechecks opt-out and newly created local data; stale
+reviews cannot apply. Errors show a recovery prompt, never an empty-cloud success.
+Existing profile publication, initialization barriers and retry receipts remain.
+
+Four new Rust regressions cover persisted opt-out through the actual store
+disconnect/cleanup/grant-activation lifecycle, settings/draft
+eligibility, automatic acceptance with late local changes and idempotent retry,
+and UI status coalescing/save/error/decline/close ordering. The targeted profile
+run passes 69 tests, with one personal diagnostic explicitly ignored. **30 native
+scenarios pass**: six new login flows, 11 existing profile flows, eight database
+transfers, four Google-connection flows and tooltip preferences. Actual buttons
+exercise setup, profile choice, Not now and re-enable. Reviewed final WebPs include
+`147f41edd4cf` (compact dark prompt), `a83dba5f2152` (automatic import/notice),
+and `28d56de408ca` (light setup after re-enable). Native executable SHA-256:
+`1d6cbaec9815937101de0c07489eebc36e2a5a946e2021149b317aa053585611`.
+
+Python passes 55 tests and Windows GNU all-target/all-feature cross-compilation
+passes. Strict Zensical and formatting/Clippy passed. Mandatory hooks passed
+**647 root Rust + two renderer + 53 shared tests (702 executions)**, with three
+personal diagnostics explicitly ignored. Source
+[`acb4969`](https://github.com/sam-ruff/shep.so/commit/acb4969154bb6a882a9688cf6e340d27a977a32a)
+is pushed to main; exact remote equality was verified. [Source documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34323561457)
+passed the strict build and Pages deployment. The first native attempt identified
+a missing preview status-event
+fixture; it was connected to the normal command path. A checkbox-edge coordinate
+was corrected before the complete passing run. No test or budget was weakened.
+
+The owned login fixture supplies a synthetic committed grant and uses real
+catalog/history HTTP and native controls. It does not prove actual browser OAuth,
+Google cross-client visibility or password transfer. Continuous local/remote
+updates, account linking/conflict/removal controls, legacy recovery/migration,
+remaining portable settings and credential protection remain in TODO. No personal
+mail, keychain, cloud data or production installation changed. Performance remains
+deferred; quality/release CI remains disabled and documentation publishing enabled.
+The full goal and OAuth handover priority remain active.
+
+## 9 September: shared setup completion before native import
+
+R02/R49/R92 now uses Flutter publication's `initialization-v1` protocol. The pinned
+[`43cdcf0`](https://github.com/sam-ruff/shep.so/commit/43cdcf0f70f7dbff2f80b7828eb7e570d025b09a)
+distribution copies the shared source/fixtures from client `184b98a` and retains
+the owned loopback harness seam. The active client worktree was preserved. The
+independent shared suite passes 53 tests; its Clippy check also passed.
+
+Desktop creation persists a start operation, metadata chunks and completion
+operation with stable IDs/revisions. An interrupted upload retains its receipt
+while later records stay queued. Native discovery/import and local-edit admission
+require the shared worker's initialized state. Complete listings, a visible name
+and populated settings cannot authorize importing a partial setup. Out-of-order
+complete histories import successfully with an independent device identity.
+
+Unstarted legacy seeds can acquire markers without changing metadata or operation
+IDs. Already-admitted legacy records stay untouched for recovery; their ancestry
+is never rewritten. Desktop now applies the portable Tooltips choice, bringing
+supported settings to eight. Validated touch-only settings remain in history.
+
+The targeted profile suite passes 62 tests, including three new boundary/recovery
+regressions and updated multi-record upload contracts. **17 native scenarios pass**:
+11 profile flows, five database imports and tooltip preferences. Two new native
+flows reject unfinished/legacy Home while allowing complete Work. Reviewed WebPs:
+`1f665e379cfa` (incomplete/light), `f99c7cb81fad` (compact dark review) and
+`ab3e7ba843e3` (import/reconnect). Native executable SHA-256:
+`709eff8bba2e270f5cb51152989e8cc4890f8d887226f2cd9a5ce266f8e1c6c4`.
+Python passes 54 tests; Windows GNU all-target/all-feature cross-compilation
+passes. Mandatory formatting/Clippy hooks passed **643 root Rust + two renderer +
+53 shared tests (698 executions)**; three personal diagnostics remain explicitly
+ignored. Strict Zensical passed. Source
+[`9158b50`](https://github.com/sam-ruff/shep.so/commit/9158b502bddb7ae6cae9937db9d0965ad938cd8f)
+is pushed to main; exact remote equality was verified. [Source documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34320559268)
+passed its strict build and Pages deployment. The initial hook's redundant test
+closure was corrected before this successful commit; no hook or gate was bypassed.
+
+Automatic login discovery/enrollment, continuous local/remote updates,
+conflict/removal controls, admitted legacy migration and protected credentials
+remain open. These are isolated protocol/native tests, not live Google or actual
+Flutter-to-desktop cloud verification. No personal data, credentials, cloud state
+or production installation changed. Performance stays deferred and quality/release
+CI stays disabled; documentation publishing remains enabled. The full goal and
+OAuth handover priority remain active in TODO.
+
+## 9 September: durable common values for later profile synchronization
+
+R02/R49/R92 enrollment now saves its original common field values and shared/local
+account identities. Initial creation establishes this checkpoint before pulling
+later records; import commits it with the accepted accounts/settings. Setup and
+acceptance retries preserve later native edits. Database import archives the
+source checkpoint without replaying its pending profile changes.
+
+The new local capture/admission APIs reserve an exact operation UUID and the last
+common revision of its field. They preserve optional shared fields, paused
+categories and newer local values. History admission verifies the current field
+before issuing a receipt: an idempotent Edit response containing a newer whole
+history revision cannot silently acknowledge an unseen successor or conflict.
+Existing unmapped accounts stay local; local-only removals record suppression.
+
+Nine new backend regressions cover restart/lost acknowledgments, edits before
+initial upload, category pause/re-enable, disconnect, concurrent remote changes,
+stable account mapping, suppression and invalid field bases. Existing join and
+database-import tests now check atomic common values and source fencing.
+**14 native scenarios passed** (nine profile and five database import), including
+read-only SQLite assertions after native enrollment and graceful close. Reviewed
+WebPs: `f5adc93c24d1` first-device/light, `76913bfe3666` import/reconnect/dark and
+`cec12e9c521b` compact dark review. Native executable SHA-256:
+`be29388aaf1579dc24d60d8789c6e5e35e726d05972465b9df8777cddeba8097`.
+The 54 Python tests and Windows GNU all-target/all-feature cross-check passed.
+Mandatory formatting/Clippy hooks and **640 root Rust + two renderer + 50 shared
+tests passed (692 executions)**; three personal diagnostics remain explicitly
+ignored. Strict Zensical also passed. Source
+[`5c0e9f0`](https://github.com/sam-ruff/shep.so/commit/5c0e9f06e935b3e5425ad23155ed17ea5c68e854)
+is pushed to main and exact remote equality was verified; targeted profile tests
+passed 59/59. [Source documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34317935845)
+passed both its strict build and Pages deployment.
+
+The periodic publication/application loop, conflict/removal controls and automatic
+login/enrollment remain unfinished. The newly published Flutter `184b98a` adds an
+initialization barrier that desktop's current `33d222d7` pin must adopt before
+claiming current first-device interoperability. No live Google, personal account,
+keychain or installed production data was changed. Performance remains deferred;
+quality/release CI stays disabled. OAuth with its Flutter handover reference
+remains the first TODO item; no full feature request was removed.
+
+## 9 September: named profile discovery and existing-device import
+
+R02/R49/R92 adds a native profile picker and reviewed import of account definitions
+and seven supported preferences. Discovery uses the shared owning catalog and
+saved Drive change tokens; the dependency is pinned to published `33d222d7`.
+That commit adds the fixed-token loopback harness seam to the client catalog from
+`3c9b98d`, without editing the active sibling client worktree.
+
+Joining reads a complete conflict-free history and commits enrollment, supported
+preferences and fresh local account IDs atomically. Existing accounts/mail remain.
+Imported accounts show Reconnect and are excluded from background sync/provider
+lookup until explicit device credential setup. A saved review UUID prevents
+duplicates after a lost acknowledgment; later local choices survive retries.
+The import fence archives source-device join mappings. Nested observation files,
+directory aliases and hard links are protected from database export.
+
+New backend regressions cover change-token reuse, stale discovery/history/local
+reviews, held-read cancellation and ownership, category selection, restart,
+credential-slot isolation, rollback, unsupported connection fields and tombstones.
+The controller rejects reviews older than acknowledged category choices.
+**22 selected native scenarios pass**: nine profile flows, eight database transfer,
+two Google disconnect and three account setup/removal flows. These include three
+new existing-profile scenarios. Reviewed WebPs are in ignored runs `b5114d0926e2`
+(light/import/reconnect), `e38b0fccef38` (compact dark/settings-only/cancel/disable)
+and `407fa9f5b9c7` (unsupported account/recovery). Native executable SHA-256:
+`e7d39ae27f87967be4612310288b391cc5d80c92a1eb1c287ef75756004a61fb`.
+The pinned shared suite passes 50 tests; Python passes 54 tests. Windows GNU
+all-target/all-feature cross-compilation and strict Zensical pass. Mandatory
+formatting/Clippy/Rust hooks passed **631 Rust + two renderer + 50 shared tests
+(683 executions)**; three personal diagnostics remain explicitly ignored.
+Source [`071c6b0`](https://github.com/sam-ruff/shep.so/commit/071c6b065cd236d1c821aa60734f635fca2541e2)
+was pushed to main and exact remote equality verified. [Source documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34315151637) passed its build and Pages deployment. The final Reconnect navigation also passed through its native
+button and the populated wizard was visually reviewed (`768ac1756273`).
+
+This is an initial metadata/settings import, not continuous sync. Automatic
+post-login enrollment, linking already-populated devices, local/remote changes,
+conflict/removal controls, remaining portable settings and protected credentials
+remain in TODO. Real Google/cross-client/Windows/macOS execution and performance
+were not measured here. No personal installation, keychain or cloud data changed.
+Quality/release CI stays disabled; documentation CI remains enabled. OAuth
+implementation with the Flutter handover reference is still the first TODO item.
+
+## 9 September: profile settings failure and close recovery
+
+The final profile-control review found that an unreadable enrollment could leave
+unsent checkbox intent blocking later close attempts. Controls now wait for their
+local snapshot; failed, unadmitted intent is retained for explicit retry without
+becoming a shutdown dependency. A failed status reload cannot silently retry a
+write against the stale snapshot. Admitted saves/uploads still drain. The error
+screen points to local data recovery instead of another Google login.
+
+A controller regression covers unavailable initial settings, failed writes,
+newer input, a failed reload and successful explicit retry. The owned
+`invalid-local` MCP fixture covers disabled controls, visible errors, normal mail
+navigation and graceful restart without replacing the opaque local record.
+**18 selected native scenarios passed** after the functional correction. All
+**six profile scenarios** passed again after the final recovery-copy change;
+the 12 database/Google flows were unchanged by that text/empty-state adjustment.
+Final invalid/reopened screenshots were reviewed (`159dcacff190`). The final
+native executable SHA-256 is
+`9944235f3c2b45ff2d35573fe5b21feb3c94041b1887ddf0b1b02ef3131dcbd0`.
+Python tests pass 54/54; final Windows GNU cross-compilation is warning-free.
+Source [`6860f50`](https://github.com/sam-ruff/shep.so/commit/6860f50230c6ab90a9cbae3ab9c96bca6fe5e6d2)
+was pushed to main and exact remote equality verified. Mandatory formatting,
+Clippy and full hooks passed **623 Rust + two renderer + 34 shared tests
+(659 executions)**; the three personal diagnostics remain explicitly ignored.
+Strict Zensical and [source documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34311219726)
+passed, including Pages deployment. Quality/release workflows remain deliberately disabled.
+The larger sync scope, personal installation, credential-choice and performance
+limitations from the preceding setup checkpoint remain unchanged.
+
+## 9 September: native initial-profile setup and channel ownership
+
+R02/R49/R92 now expose reviewed first-device creation, persistent category choices,
+Stop/Resume and enable/disable in Preferences. A separate bounded 32-command
+coordinator processes local controls while provider work is held. Touched-field
+changes and one in-flight UI save preserve rapid/newer choices and backend-owned
+enrollment/disconnect changes. Intermediate enrollment progress keeps the job
+owned; it is not upload success or permission to finish shutdown.
+
+Stop and close cancel read-only HTTP/provider-slot waits. Admitted cache/history
+writes and uploads remain owned through durable receipts; reopening resumes the
+same saved profile. `profile-sync/` beside each workspace cache contains its Drive
+and binding-specific history files. Database export protects the directory,
+existing members, sidecars, ownership files and hard-link/symlink aliases.
+
+Targeted Rust tests cover field ordering, stale progress, offline/disconnected
+options, held reads versus admitted uploads and real export alias protection.
+The saturated-provider dispatcher regression also saves actual profile choices
+while every provider slot and its queue remain occupied. Five new saved native
+MCP scenarios pass with an owned loopback Drive fixture: first creation/reopen,
+retry/opt-out, category changes/held-read close, compact dark rapid gestures, and
+close during upload followed by Resume and disabling/re-enabling. Reviewed WebPs:
+`a26c2d013572` compact dark/review, `c883eeb38c8d` initial saved copy,
+`b7c46dd88d3f` failed discovery and `c47727d6fb24` resume after close.
+Source [`488a9ec`](https://github.com/sam-ruff/shep.so/commit/488a9ec4f2e8c197b8bd27299dd10961f750b2a3)
+was pushed to main with exact remote equality verified. Mandatory hooks passed
+**622 Rust + two renderer + 34 shared tests (658 executions)**, formatting and
+all-target/all-feature Clippy. Three personal diagnostics remain explicitly
+ignored. All **54 Python tests** and **17 selected native scenarios** passed
+(the five new flows plus 12 affected database import/export and Google controls).
+Windows GNU all-target/all-feature cross-compilation is warning-free; strict
+Zensical passed. The tested native executable SHA-256 was
+`5b7466cfcd418d56d487069521b67b79d093e5636f01e91d540b781c8efdbf65`.
+The Windows warning correction changed only a `cfg(test)` local name after the
+native run. No root runtime artifacts remain.
+[Source documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34310152847)
+passed build and Pages deployment.
+
+This checkpoint provides initial setup, not continuous sync. Joining existing
+profiles, actual account application/reconnection, conflicts, local edit capture,
+remaining portable preferences and incremental polling stay in TODO. OAuth stays
+first with its Flutter handover link. Desktop creation uses namespace `so.shep`;
+same-project cross-client access remains unverified. Credential-transfer protection
+has no recorded decision. No personal installation, live Google operation or
+performance benchmark was performed. Logs live under ignored
+`artifacts/logs/profile-controls-*`; quality/release workflows remain disabled.
+
+## 9 September: persisted profile enrollment and first-device publication
+
+R02/R49/R92 now have backend enrollment/category revisions and a durable initial
+seed. A complete verified discovery review precedes explicit creation. The seed
+freezes account mappings, values and operation IDs; each exact history request is
+checkpointed before admission. Restart and lost acknowledgments reuse those IDs
+and bytes. Initial publication uses the shared worker and both Drive journals.
+A stop or Google disconnect during upload keeps its receipt, leaves setup pending
+and reports that a copy was saved. Cache reads/edits remain available while the
+fixture holds the provider response indefinitely.
+
+Seven supported portable settings apply atomically against current local
+preferences, account, Google and enrollment revisions. Invalid/conflicting pages
+roll back; newer local edits and device-only fields remain intact. The explicit
+account adapter maps security/authentication/Sent metadata for review only.
+Database import archives source enrollment and seed data, including opaque future
+records, and requires fresh device setup. A corrupt enrollment cannot prevent
+Google disconnection or silently become an empty setup.
+
+Isolated tests cover two-device settings transfer through actual HTTP and SQLite,
+restart/repeated seed preparation, lost upload replies, complete/stale discovery,
+stop/disconnect during a held upload, category changes, 70 legacy account mappings
+across chunks, malformed seeds, atomic settings application and database-import
+fences. Shared test HTTP responses now have a one-shot hold/release for causal
+race checks. No production state locks were added; tests access no real cloud or
+personal data.
+The full Rust suite passed **617 tests** with three explicitly ignored personal
+checks; 53 Python tests, Windows GNU cross-compilation and strict Zensical passed.
+Seven existing native import/Google-disconnect scenarios passed against a freshly
+built test executable. Reviewed WebPs include light import and restart
+(`652e495620ae`), pending-action review (`86763300d459`), compact dark import
+(`56996185079e`) and disconnected cached calendars (`917c9f116652`). These protect
+existing controls; they are not native profile-enrollment or live Google evidence.
+Final hooks and shipping are recorded below when complete.
+
+This remains backend work. Native first/new/existing-device controls, actual
+account application/re-authentication, local change capture, conflict/removal
+reviews, remaining portable settings, production journal guards and incremental
+polling remain in TODO. No engine/native entry point activates this setup yet.
+The OAuth handover stays first in TODO. Password protection has no recorded
+choice, and real cross-client Google access is unverified. No personal installation
+or performance measurement was changed. Logs: ignored `artifacts/logs/profile-enrollment-*`.
+
+Source [`6e2880b`](https://github.com/sam-ruff/shep.so/commit/6e2880bac6bd49777e41f9a8e44ccdbff4e12a1c)
+was pushed to main, with exact remote equality verified. Mandatory hooks passed
+**617 Rust + two renderer + 34 shared tests (653 executions)**, all formatting and
+Clippy checks. Final Windows GNU cross-compilation also passed. The native test
+executable was SHA-256 `9f62842bed91c601f144316736ce628efbebb764146be6625a51cd08506a09f8`;
+the installed production app was not replaced. Compact Google disconnect was
+also visually reviewed (`06a4c2a494e6`). No root runtime artifacts remain.
+[Source documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34306619608)
+passed build and deployment. Quality/release workflows remain deliberately disabled.
+The full application goal and all remaining TODO entries stay open.
+
+## 9 September: shared causal pull/publish bridge
+
+R02/R49/R92 now connect the verified desktop Drive transport to the published
+shared history worker. Complete listings feed bounded, exact-byte imports;
+missing ancestry remains pending and ready work drains before publishing.
+Publishing compares discovered, shared-history and transport-journal identities,
+commits the original reservation, verifies the upload and acknowledges both
+journals in order. A newer edit, foreign device proof or replaced scan requires
+a fresh pull. Empty discovery cannot implicitly recreate an existing profile.
+
+The desktop now uses the client branch's committed Drive file convention: private
+appProperties, stable category and operation UUID filename. It consumes an
+unchanged copy of the shared metadata/operation fixtures; Git attributes preserve
+exact bytes on all platforms. This supersedes the earlier unconnected desktop
+prototype convention. The shared dependency is pinned to published `9289f53`;
+no client working changes or Cargo source cache were edited.
+
+Eight bridge tests exercise two independent stores through production HTTP:
+offline conflicts and explicit resolution, account/profile removal despite stale
+edits, lost commit replies/reopening, gaps between both journals, foreign/stale
+proofs, contradictory file identities, and 105 reverse-ordered ancestors across
+multiple pages. The shared metadata fixture test and existing transport/journal
+regressions also pass. Clippy and 53 Python tests pass. Final hooks, platform check
+and shipping are recorded below when complete.
+
+Cargo cannot directly test an external Git package with dev-dependencies. A new
+runner copies the pinned shared crate/fixtures into an isolated temporary
+workspace and uses a committed test lock. All **34 shared codec/history/Drive
+tests** pass, including worker cancellation, independent-process ownership and
+protocol failures. Hooks and disabled CI use that runner; two Python tests prove
+exact revision selection and source/fixture isolation.
+
+This is backend progress, not completed continuous sync. Persisted first/new/
+existing-device enrollment, native controls/toggles, account/settings application,
+local removal suppression, journal path protection and incremental pulls remain.
+Live same-project Google visibility is still unverified; passwords stay outside
+the metadata format pending the protection choice. No native UI, production
+installation or performance measurement changed. Evidence is under ignored
+`artifacts/logs/profile-replica-*`; see [the updated protocol reference](agents/profile-drive.md).
+OAuth implementation remains first in TODO with the Flutter handover linked.
+
+Source [`ace653b`](https://github.com/sam-ruff/shep.so/commit/ace653b1d466d0126a063bdda2c186644bd3a4d2)
+was pushed to main; exact remote equality was verified. Mandatory hooks passed
+**605 Rust tests, two renderer tests and 34 shared tests**, including the ordinary
+locked isolated-runner path. Three personal-data diagnostics remain ignored.
+Windows GNU cross-compilation, all 53 Python tests and strict Zensical passed.
+[Documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34303450475) also passed.
+This is not Windows/macOS execution, a native UI run or live Google verification.
+Quality/release workflows remain deliberately disabled. No root runtime artifacts
+were present after testing.
+
+## 9 September: Drive profile transport and durable discovery
+
+R02/R49/R92 now have a backend transport for the shared Rust/Flutter operation
+format. Cargo pins the published client codec; exact JSON bytes and optional
+fields survive download/upload. The connection checks the actual Drive identity
+and granted scope. Profile files have a separate stable app-data category and
+bounded metadata/content parsing; backup retention cannot select them.
+
+A separate bounded SQLite worker persists discovery tokens, revisions, record
+identities and exact reserved uploads. Discovery survives restart, rejects loops,
+duplicates and stale/foreign pages atomically, and exposes only completed scans
+in pages of 50. There is no total history page cap. Upload retries verify the same
+reserved ID after lost/conflicting responses, including content verification when
+Google omits its checksum. A previously acknowledged file that disappears is not
+silently recreated. Accepted journal writes survive observer cancellation.
+
+Verification uses the production HTTP implementation against a scripted loopback
+server and isolated SQLite files. The shared fixture round trip, scope/identity
+checks, malformed/oversized replies, interrupted upload/reopen, immutable
+reservations, discovery restart and cancellation regressions pass. Existing Drive
+backup protocol tests also pass after extracting the common bounded HTTP reader.
+Final hooks and shipping are recorded below when complete. Earlier checks passed
+51 Python tests, Windows GNU compilation and strict Zensical. No native UI changed;
+no new native flow, live Google connection, performance measurement or production
+installation is claimed.
+
+**Continuous sync is still open and remains the top TODO priority**, with the
+[Flutter handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md)
+as the implementation reference. The shared causal-history worker, enrollment,
+account/settings application, incremental polling, native controls, production
+journal path protection and actual cross-client Google verification remain.
+Passwords are outside this metadata format; the credential-protection choice is
+still unanswered. See [the transport contract](agents/profile-drive.md). Evidence:
+ignored `artifacts/logs/profile-sync-*`. Quality/release workflows stay disabled.
+
+Source [`bb87ac2`](https://github.com/sam-ruff/shep.so/commit/bb87ac2e215bf0c7e798a76ec0acae1bdc12a9b9)
+was pushed to main. Mandatory formatting/Clippy/test hooks passed **596 Rust tests,
+two drawing-adapter tests and six shared-codec tests**; three personal-data
+diagnostics remain explicitly ignored. The strict docs build passed, followed by
+[successful documentation CI](https://github.com/sam-ruff/shep.so/actions/runs/34301648758).
+The Linux app was not installed or exercised through native controls for this
+backend-only checkpoint. The independently developing client transport must be
+consolidated with this wire contract before any cross-client sync claim; the
+codec alone is already shared, not the live Drive file protocol.
+
+## 9 September: complete database import and local profiles
+
+R83 adds **Backups → Database transfer → Import database** and **Accounts → Profiles**. A private staged copy is checked against supported v2/v3 schema, SQLite integrity/foreign keys and portable connection identities before account/count review. Confirmation consumes that exact copy, archives changed pending-operation metadata and publishes without overwriting the original workspace. Imports retain cached MIME/attachments, drafts, account/calendar definitions, cached events and portable settings. Pending sends, Sent uploads and bulk/folder changes become explicit review work; imported credential cleanup cannot delete local secrets. Notification setup stays quiet, and Google/automatic-backup state requires new-device setup.
+
+The profile catalog owns a bounded 32-command SQLite worker, paged listings and revision-checked rename/selection. The current engine retains its Store/credentials until exit; the chosen profile opens on the next launch after normal saves. Publication is the import commit boundary: later cancellation/registration errors preserve the saved file, and recovery adopts its marker without duplicating it. Invalid unselected profiles report warnings without hiding valid ones. Export now also protects the catalog and every other profile's caches/journals/operation paths.
+
+R91 gains one bounded 32-command credential thread shared by account, SMTP, CalDAV, Google, backup and removal adapters. Accepted OS writes retain ordering after observer cancellation; imported profiles receive a fresh device-owned credential namespace and never fall back to legacy secrets. Reserved keys, SMTP aliases and case-insensitive credential collisions are rejected before import/restore. This also fixes R32's discovered `caldav:<hash>` identifiers being rejected during encrypted backup restore; a complete encrypt/decrypt/engine restore test covers the calendar password.
+
+Rust coverage includes validation/corruption/foreign schema, v2 migration, pinned-copy consistency, cancellation/drop, pending-operation fencing/rollback, publication/recovery boundaries, catalog paging/CAS/isolation, missing-profile behavior and credential worker ordering. The saturated-provider regression performs actual export/import review/cancellation while all provider capacity remains held. UI ordering tests preserve exact preference acknowledgments, review gating and stale-result/close behavior.
+
+Verification: **580 Rust tests** (three explicitly ignored personal-data diagnostics), **51 Python tests** and **16 selected native flows** passed. Five new native imports cover invalid/reserved-ID retry, review cancellation, pending delivery acknowledgment without sending, held-copy navigation/close/draft save, compact dark catalog protection, rename and reopening both preserved workspaces. Three export and eight related backup/Google/preferences/inline draft/notification flows also pass. Light/dark/compact/review/error WebPs were reviewed. Windows GNU compilation and strict documentation pass; final hooks and shipping are recorded below when complete. This is not a full 199-functional-flow run or Windows/macOS execution.
+
+Final native executable SHA-256: `eeb91c17a19e8542c11cb60ffd7bab19a666c6e76e8c84a38903212e8e2d0822`. Final import fixtures: `ca5906c88bf4` (cancel/invalid/retry), `da425891089c` (compact/protected catalog), `fc6f3309aa06` (held copy/close), `d593d7137d75` (pending actions) and `145ab0775c72` (review/rename/reopen both profiles).
+
+Evidence is under ignored `artifacts/logs/database-import-*` and the native run directories. Performance measurements, live provider verification and production installation remain deferred. SQLite transfer is unencrypted, excludes keychain secrets and external backup-upload journals, and requires disk space for its private copy/WAL history. Imported accounts require reconnection. Continuous OAuth/Drive profile synchronization is still the top TODO priority, linked to the [Flutter handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md). Local profiles do not establish that protocol. Quality/release workflows remain disabled.
+
+Source [`93d4289`](https://github.com/sam-ruff/shep.so/commit/93d42895a9cb3820efeabc710e110a5e82522db6) passed mandatory formatting, Clippy with warnings denied, **580 Rust + 2 drawing-adapter tests**, and Conventional Commit hooks. It was pushed to main and exact remote equality was verified; its [documentation build/deployment](https://github.com/sam-ruff/shep.so/actions/runs/34297303930) succeeded. No production installation changed. The database-transfer R83 entry is retired; encrypted local storage, large-mail streaming, protected credential sharing and continuous profiles remain separately tracked. The full product goal remains unfinished.
+
+## 8 September: complete database export in Preferences
+
+R83 now exposes **Backups → Database transfer → Export database**. The UI saves its displayed preferences and current/parked drafts before requesting a copy. A dedicated capacity-one channel owns export/cancellation independently of provider saturation and foreground cache reads/saves. SQLite online backup copies bounded page batches through a separate, pinned read transaction into a private temporary file, then publishes atomically. Existing destinations survive pre-commit failure/cancellation; a committed copy remains success if its final directory flush warns. Active cache/journal/lock paths and aliases are protected. No extra 256 MiB encrypted-backup payload ceiling applies to this complete database copy.
+
+Five real SQLite tests cover exact original MIME, account definitions, drafts/attachments, unknown tables and pending metadata; concurrent writes retain snapshot consistency; cancelled completion observers, cancellation/drop/retry, existing destinations, path aliases and memory/missing-folder failures are covered. Three UI tests cover exact settings acknowledgments, newer draft revisions, attachment preparation, stale results, cancellation backpressure and errors cancelling close. The saturated-provider dispatcher regression now also completes an actual database export while every provider slot and its queue remain occupied.
+
+Verification: **552 Rust + 2 drawing-adapter tests**, **50 Python tests**, and **7 selected native flows** passed. The three new export flows use real native Save/Cancel/Replace controls and inspect only owned exported fixtures. They cover a saved reply, compact dark protected-cache failure/retry, navigation/draft saves during a held real copy, cancellation cleanup and graceful close/restart. The other four preserve backups, inline reply sessions/attachments/restart, preference resizing and settings search. Light/dark/pending/error screenshots were reviewed. Formatting, Clippy with warnings denied, Windows GNU cross-compilation and strict documentation passed. This is not a full 194-flow rerun or Windows/macOS execution. Performance measurements and production installation were deferred.
+
+Evidence: `artifacts/logs/database-export-*`. Final native executable SHA-256: `d2ca7eaeb38f300a85ba7eab0fbe8ab062eb35ae813e86838430e6b56bb4d96a`. Final export fixtures: `bd6146459f48` (saved SQLite), `28de94cea2bf` (compact/retry), `8fad0f1a664d` (held copy/cancel/close).
+
+Source [`3927053`](https://github.com/sam-ruff/shep.so/commit/3927053f4b97f40caba85429fde1ede5fde249f4) passed the mandatory formatting/Clippy/Rust/adapter commit hooks and was pushed to main; exact remote equality was verified. No production installation was changed. A long pinned snapshot retains SQLite WAL history until completion/cancellation, so disk-space errors must remain visible; it does not retain the full database in application memory.
+
+**R83 remains open for safe import and activation.** The SQLite file is unencrypted, excludes OS-keychain credentials and preserves pending-operation records; importing must isolate credential identities and prevent automatic replay on another device. It is not the existing encrypted backup archive. OAuth/profile implementation remains the top TODO priority with the Flutter handover linked; no working cross-client sync protocol or live Google verification is claimed. Quality/release workflows remain disabled.
+
+## 8 September: mail-cache channel ownership
+
+`store/worker.rs` replaces the shared connection/local-lease mutexes with one owning thread and a bounded 32-command FIFO. Accepted operations drain even after cancellation of their observer or the last Store handle; requests cancelled before admission never execute. Local leases release by closing a one-shot channel, including when the queue is full or the grant's recipient disappears. SQLite temporary selection tables and external process leases retain their existing behavior. Five deterministic worker tests cover these boundaries and failures.
+
+The existing notification restart test reproduced a deadlock with bundled SQLite 3.51.1. The retained debugger trace shows WAL close waiting for SQLite's global Unix mutex while open waits for the inode mutex. Updating to rusqlite 0.40.2 / bundled SQLite 3.53.2 fixes the same test. This matches SQLite's documented [Unix deadlock correction](https://www.sqlite.org/releaselog/3_51_2.html); the selected version also includes the later [WAL correction](https://www.sqlite.org/releaselog/3_51_3.html). No application lock or registry-cache patch masks the fault. This is an isolated fixture reproduction, not proof of the cause of the personal account's remaining delays.
+
+Verification: 544 Rust tests plus two drawing-adapter tests passed, with three live tests intentionally ignored; 49 Python tests passed. All 15 selected native scenarios passed, covering pending read/flag work, held sync, bulk/folder close and recovery, Undo, selection/paging, independent reply drafts/restart, preferences/resize, backups and removal. Synthetic restart/Preferences screenshots were reviewed. Windows GNU cross-compilation and strict documentation passed; this is not Windows execution or a full 191-scenario rerun. No performance measurements or production installation were performed. Quality/release workflows remain disabled.
+
+Evidence: `artifacts/logs/store-channel-*`, including the failed-before Rust run and debugger trace, the fixed restart test and native run. Native executable SHA-256: `7900c32a5a44db8401059273bf3aa269e1543fe09ca12f3adf4e6a3cd01f6357`. Source [`db8c82a`](https://github.com/sam-ruff/shep.so/commit/db8c82aeef2c58f46c85b71c0723f072d297e2b3) passed the normal formatting/Clippy/Rust/adapter hooks and was pushed to main; exact remote equality was verified. R91 remains open for Google/lifecycle/backup-journal coordination. R83 full export/import and R02/R49/R92 continuous profile sync remain the next feature work; this worker foundation does not implement them.
+
+## 8 September: cross-device profile handover and priority
+
+The requested Flutter implementation handover is written in the sibling client worktree and shipped as [`02c4b32`](https://github.com/sam-ruff/shep.so/commit/02c4b32a6b380c1d5312c20bf187584c683ff10f) on `feat/mobile-web-clients`. [Read the handover](https://github.com/sam-ruff/shep.so/blob/feat/mobile-web-clients/docs/agents/PROFILE_SYNC_HANDOVER.md) for existing integration points, first/new/existing-device enrollment, configurable categories, the proposed shared format, conflicts/removal, credential protection and the required verification. Both TODO lists and restart notes now prioritize OAuth implementation and reference it. R83/R02/R49/R92 remain open: a document does not implement database transfer or continuous sync.
+
+The client strict docs build, 31-entry scenario validation and mandatory formatting/Clippy/381-Rust-test hooks passed. The push was verified against the remote branch. Source credentials and personal data were not copied; actual cross-platform Google app-data access and the password-protection decision remain unresolved. No production installation was changed.
+
 ## 8 September: OAuth/profile implementation handover
 
 Documentation checkpoint [`02c4b32`](https://github.com/sam-ruff/shep.so/commit/02c4b32a6b380c1d5312c20bf187584c683ff10f) is pushed to `feat/mobile-web-clients` and remote equality was verified. [The handover](agents/PROFILE_SYNC_HANDOVER.md) maps existing desktop/Flutter storage and credential lifecycle code, first/new/existing-device flows, configurable profiles, the proposed versioned format, conflicts/removal, outstanding credential protection and required interoperability tests. OAuth implementation now comes first in TODO and the restart notes, as requested. Continuous profile sync and full database transfer remain unimplemented; no live Google or client UI behavior is claimed by this documentation change.
@@ -28,6 +1756,761 @@ The user requested a complete, polished Rust + iced mail/calendar client. Passin
 ## Active request tracking
 
 [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md) contains every unfinished request, including subsequent corrections. [REQUEST_AUDIT.md](REQUEST_AUDIT.md) maps the full conversation to implemented evidence or active work. Add requests to TODO immediately; remove only after implementation, relevant verification and shipping, and keep the completed evidence here. This replaces the former mixed list of finished and unfinished requests.
+
+## R35/R77 — Inline replies and independent draft sessions (2026-09-08)
+
+New messages, replies and forwards use the preview pane. Reply editors keep the
+original conversation below, with a saved choice to include quoted text in the
+outgoing message. Switching mail parks its editor; returning restores the matching
+reply. Recipients, newer text and imported attachment copies survive navigation,
+Preferences and a graceful restart. Collapse and close retain the draft. Explicit
+Save leaves the editor open; send releases it after the durable outgoing receipt.
+
+Each session owns its editor and one pending save revision. Background results
+cannot replace another draft, cancel a pending close by reopening a reply, or
+clear list selection. Window close drains every owned draft. Removal reviews wait
+for related draft/file persistence, and discard cannot race an attachment import.
+Find and HTML reflow address the inline scroller. Native editing focus preserves
+text selection and protects text fields from destructive mail shortcuts.
+
+Source commit: `e16590c`. Its normal hooks passed **541 Rust/adapter executions**
+(539 Rust tests and two pixbuf adapter tests); **49 Python tests**, formatting,
+Clippy and strict Zensical also passed. The migrated **188/188 native functional**
+run passed, followed by all six inline scenarios on the final executable. The final
+**191/191 native functional** run passed on the committed source, which was pushed
+to `main` as `e16590c`. Logs: `artifacts/logs/inline-composer-commit.log`,
+`inline-composer-python.log`, `inline-composer-native-final-full.log` and
+`inline-composer-docs.log`. The native binary SHA-256 is
+`d866d418c7ddc0d8125de4c6634e667fc3b082b539a85dc8830713def4d504ca`.
+
+Reviewed evidence includes compact light/dark typing, red discard confirmation,
+reply switching/restart, original-message Find, long-thread paging and a delayed
+fixture send refusal that leaves another reply editable. Functional runs omit
+performance gates as requested; no new latency claim or production installation
+is implied.
+The installed production executable remains the previous baseline. Native tests
+use fictional accounts; live SMTP and Windows/macOS execution are separate work.
+Temporary saving-tray behavior and the wider close-dependency audit remain R86/R90;
+provider rekey/recovery integration remains R73. Message-size ceilings remain R23.
+
+## R90/R91 — Channel-owned account scheduling (2026-09-08)
+
+Full account sync previously held the account mutation mutex across the entire
+provider download/cache cycle. A read-on-leave change could wait behind a stalled
+download and keep the window from closing. Commit `34cfc71` replaces account and
+calendar mutex maps with a coordinator that owns its state and receives bounded
+requests. Writes interrupt read-only sync; queued writes retain order, independent
+accounts proceed separately, and abandoned requests release their place.
+
+Sync now drains already-started cache writes before releasing account ownership,
+including after provider error, timeout or cancellation of the refresh owner.
+This also fixes a `try_join!` path that could detach an active SQLite write and
+let stale cache work finish after a newer mail change. An interrupted check is
+not reported as a complete folder listing or Inbox baseline.
+
+Verification: normal hooks passed Clippy, formatting and 528 Rust/adapter test
+executions, including ten new coordinator/download regressions. Python passed
+49/49. The optimized native fixture build and strict Zensical build passed. The
+three new native scenarios cover read-on-leave during graceful close, flagging
+while the provider is held indefinitely, and failure/rollback/retry. The fixture
+rejects every retry in its failure mode; intermediate optimistic state is not a
+successful save. Final WebP captures were reviewed. The complete functional native suite passed
+185/185 on the isolated checkpoint binary (`artifacts/logs/sync-checkpoint-native-full.log`).
+
+This source checkpoint does not install a new production executable or establish
+live-provider/Windows/macOS runtime behavior. No performance measurements were
+run. R86 temporary saving tray, remaining shutdown dependencies, personal-account
+diagnosis and the wider channel-ownership audit remain in TODO. R35 inline
+composer work is preserved separately and is not included in this commit.
+
+## R85 — Credit-saving handover; R35 state foundation (2026-09-07)
+
+The user stopped feature development and requested a handover, TODO cleanup and
+push. [handover.md](https://github.com/sam-ruff/shep.so/blob/main/handover.md)
+records the installed baseline, current code, remaining work and restart order.
+TODO is condensed without removing unfinished requests; R84 cross-folder search
+remains delivered. The complete product goal is still unfinished.
+
+The current source separates composer metadata/editor state from other forms,
+retains autosaves when another form opens, coalesces edits behind one pending save,
+and waits for the newest revision on close. Late attachment and durable-send
+results preserve the appropriate draft/form. Five new controller regressions and
+a saved native Preferences/graceful-restart scenario cover this foundation.
+The composer still uses a modal; inline presentation and multiple active draft
+sessions remain R35. This checkpoint is not installed as a production release.
+
+Verification: targeted composer Rust tests passed 14/14; Python tests passed
+48/48; the strict Zensical build passed. Three existing native scenarios passed
+(save/reopen, recipients/files and cross-folder search), and the new graceful
+restart scenario passed its corrected rerun. Its first version incorrectly tried
+to open Preferences while the existing modal was still open; the saved scenario
+now closes/saves that modal first. Dark attachment/restart captures were reviewed.
+The full native suite and release build/install were not rerun for this handover.
+An accidentally unfiltered functional run was stopped; it is not full-suite evidence.
+
+The checkpoint commit is `fix(drafts): isolate composer state and record handover`
+(the commit introducing the root handover file). Its normal pre-commit hook
+enforces formatting, all-target/all-feature Clippy, the full Rust suite and the
+drawing-adapter tests. Logs stay in ignored `artifacts/logs/handover-*`.
+No performance measurements or live-provider/platform-runtime checks were run.
+Private local tool settings and ignored artifacts are excluded from the push.
+R85 is completed by this handover push; R86 close-to-tray is tracked only, without
+implementation. Quality and release workflows remain disabled.
+
+## R30 — Native folder controls installed and pushed (2026-09-07)
+
+Source [3567de2](https://github.com/sam-ruff/shep.so/commit/3567de29847d81d29c8882269c82a6aa7fa986d4)
+is installed for the Linux user and pushed to `main`. Git hooks pass, including
+formatting, Clippy, the Rust suite and two drawing-adapter tests.
+Native sidebar right-click and Shift+F10 menus now open Move/Delete reviews.
+Parent search ranks readable folder names and highlights the Enter target;
+choosing a parent opens an explicit subtree/count review before changing it.
+Delete has a red confirmation. Accepted input projects the folder tree immediately,
+keeps moved mail readable from its original cache and permits navigation while
+provider work continues. Rejection removes the projection and restores the prior
+view only if later navigation has not superseded it.
+
+The durable folder runner uses local read/staging queues and the existing
+coalesced worker/close barrier. Local POP3 folders initialize without guessing
+hierarchy for literal slash names. History retains decoded source/destination
+labels after moves. Monotonic job revisions reject old history observations;
+separate recovery request state prevents a late history read from unlocking an
+active button. In-process leases now also exclude competing memory-store workers,
+without creating root lock files. A regression reproduced an older workspace
+restoring the previous folder tree after a committed move; the revision guard
+now retains the new tree alongside the new folder names. Close also stops a
+queued folder job while provider capacity remains occupied, preserving queued
+steps without waiting for unrelated network jobs.
+
+Seven saved native scenarios cover slow move/navigation/restart, rejected delete
+and retry, unconfirmed move/explicit acceptance with retained cache, local POP3
+move, compact dark review/keyboard/Inbox protection, graceful partial-delete close
+and resume, and failed-close navigation/retry followed by successful close. Initial
+new tests used lowercase SQLite statuses instead of JSON enum values and clicked
+a resized sidebar before its layout settled; their corrected equivalents pass.
+Neither correction changes application timeouts or performance budgets.
+The broader context-menu scenario now focuses its message row before Shift+F10:
+with the sidebar still focused after browsing, that key correctly belongs to
+folder controls. The actual mail-menu mouse and keyboard assertions remain. Reviewed
+WebPs show the compact red confirmation, pending moved folders, actionable history
+and preserved originals. No live provider, personal cache or OS credential was used.
+
+The full native run passed **180/181** scenarios in 702.7 seconds. Its one failure
+was the focus assumption above. After the late stale-tree/queued-close fixes,
+the final rebuilt binary passes **18/18** targeted native scenarios: the corrected
+mail menu, all seven folder controls, all five folder-tree scenarios and five
+search/ranking/focus scenarios. This is not a single clean full run; the final
+focused rerun follows the earlier full run.
+**511 Rust test executions**, **48 Python tests**, Clippy, Windows GNU compilation,
+strict Zensical and the optimized release archive's checksum/extraction/installer
+checks pass. Production compilation caught a test-only observation call missing
+its feature guard; the release now compiles with fixtures disabled. Performance
+measurements remain deferred. The optimized production binary is installed
+atomically for the Linux user; existing windows were preserved and need reopening
+to use the updated executable.
+
+Evidence is under ignored `artifacts/logs/folder-controls-*`. The full native
+binary was `f2ddff0212b6437231ca51b6eb8ce0a479461e4b739fce3016cb9ba129d430b8`;
+the final native binary is
+`5b7d2d81a11e01081a35c853b13fcae274ae9b726f3b88b30e900c83f480b1e0`.
+Installed production SHA-256:
+`06c0cccb3d3cc6703b143f8e7fa019c1be7032533ae6d4e776a81cc6f91ef34a`.
+Reviewed native evidence includes `b1c2028d31b9/folder-destinations.webp`,
+`c06d677b277f/folder-delete-history.webp`, `8f382ebe5ac2/folder-delete-dark-compact.webp`
+and `b0451d12173f/folder-uncertain-accepted.webp`; the final search runs are
+`a2e17065657d/` and `790d14014d97/`. These are fictional fixtures. No logs or
+SQLite files were left at the repository root. Quality/release CI remain disabled. R30 remains open for combined-folder optimistic
+scope, aggregate common-folder account choice, wider account/history pagination
+coverage and cache/server convergence after an accepted unconfirmed operation.
+Accepting uncertainty is explicitly recorded as stopping work, never as a
+confirmed move/delete.
+
+## R63 — Native keyboard ordering installed and pushed (2026-09-07)
+
+Source **b45177792c84246308da78451684820aa70cef2a** moves key presses from the asynchronous event subscription to
+the root native widget's message stream. Keys retain their order relative to
+later mouse controls. Native widget operations snapshot search/Find focus during
+that event; mail actions cannot use the focus of a later click. The old async
+key focus-check messages are removed. Find Enter retains event modifiers and
+ordinary text selection, pane scope and remapping remain protected.
+
+The new MCP `key_sequence` action batches bounded native key chords. Its saved
+rapid Move/Escape scenario fails on the prior installed binary by leaving Move
+open. With the new input path, it and 11 other targeted native flows pass: repeated
+navigation/flags, Escape then recovery Review without an intermediate wait,
+search/Find Ctrl+D followed by another click, Find, remapping, selection and
+context menus. Three direct native-widget tests cover ordered key/click output,
+focus at each event and Find Enter/Shift. An initial test incorrectly expected
+an Enter without an on-submit callback to be captured by iced; the assertion
+now reflects the actual widget contract and still requires the correct focus.
+Formatting, Clippy, Git hooks, **495 Rust tests plus two drawing-adapter tests**,
+**47 Python tests** and Windows GNU cross-compilation pass. Visual review caught
+a new test accidentally double-clicking into the full reader; alternating inbox
+rows and explicitly checking the reader remains inline preserves the intended
+text-field/later-click regression. The strengthened test passes.
+
+The full native run passed **172/174** scenarios. One failed before keyboard input
+because the long HTML body did not become ready within its existing deadline;
+three unchanged targeted reruns pass. The other ran the earlier repeated-click
+scenario, which inadvertently entered the full reader and no longer clicked inbox
+rows. The corrected scenario alternates rows, checks the inbox stays open, and
+separately tests Find through actual field/body clicks in the full reader. The
+final rerun of all three new input scenarios plus the original Find scenario
+passes **4/4**, with no changed timeouts. All **174** scenarios have passing
+coverage across the full run and targeted reruns on the same native binary;
+this is not a single clean full run. The HTML readiness timeout remains recorded
+as intermittent evidence, without attributing it conclusively to host load.
+
+The optimized production archive passes checksum, extraction and bundled installer
+verification. Source **b45177792c84246308da78451684820aa70cef2a** is installed for
+the Linux user and pushed to `main`, with the strengthened native test and this
+evidence in the following audit commit. Pinned strict documentation building passes.
+The full product goal and R63's final functionality-path audit remain open.
+
+Native test binary SHA-256:
+`4a3d14e0b8e437cf59fbcd4efeb6ccbc76742f6c0810e90b146fe38c5012173c`.
+Installed production binary SHA-256:
+`7b85b2fa131e0064933724b3022d672fd4db11d5034b84411182b58542982e79`.
+Already-open windows need reopening to use the update.
+
+Reviewed WebP evidence is under ignored `artifacts/e2e/b7c44e3152f7`,
+`b144d2370089`, `47e5508a7b49`, `62aaf00e6a37`, `17144fd92471` and
+`35c641d8f01f`. This includes the final inbox/full-reader isolation and light/compact
+dark cross-folder search controls. Evidence under ignored `artifacts/logs/`:
+
+- `native-input-before-fix.log`, `native-input-after-fix.log`, `native-input-full-native.log` and `native-input-final-native-rerun.log`.
+- `native-input-click-isolation-targeted.log`, `native-input-full-reader-isolation.log` and `native-input-find-rerun.log`.
+- `native-input-commit.log`, `native-input-final-python.log` and `native-input-windows-check.log`.
+- `native-input-release.log`, `native-input-install.log`, `native-input-docs-final.log` and `native-input-push.log`.
+
+No performance measurement or personal-provider operation was performed. Quality
+and release CI stays disabled; documentation publishing remains enabled. No root
+log/database artifacts remain, and unrelated untracked work is preserved.
+
+## R74 — Manual refresh installed and pushed (2026-09-07)
+
+Source **80f5867bcde7cb003f0d1e1b9b255974a68baf93** is installed for the Linux
+user and pushed to `main`, alongside **2b4c48023863ee254e9422d9a347e91e6f57f641**
+for native test synchronization. R74 is complete and removed from TODO. The full
+product goal and remaining backlog stay active.
+
+Refresh defaults to Mod+R plus F5. Its v2 migration preserves custom keys,
+explicit clears, disabled actions and conflicts, including after restart. Manual
+mouse/keyboard refresh animates the existing top-right icon immediately; automatic
+checks stay still. Coalesced requests keep their phase until the scheduler finishes
+all manual work, including failure. Hidden mail headers stop the frame timer;
+frame updates bypass mail scheduling/body preparation and handler timing samples.
+
+Native pixel checks exposed the software renderer using rotation matrix diagonals
+as both raster dimensions and screen positions. The fix caches an unrotated SVG
+at physical scale, applies its complete transform, and clips against its viewport,
+layer and damage region. A direct regression fails before the fix. All 12 drawing
+regressions pass, including fractional scaling and partial redraws without trails.
+The first fractional-edge assertion incorrectly rejected a partly covered boundary
+pixel; it now checks pixel/viewport intersection, retaining the pre-fix failure.
+
+**Verification:** formatting, Clippy, both commits' hooks, **492 Rust tests plus
+two drawing-adapter tests**, **46 Python tests**, Windows GNU cross-compilation
+and pinned strict docs build pass. The release passes checksum, extraction and
+bundled installer verification; the installed binary matches the release hash.
+No performance measurements or live-provider/Windows/macOS delivery claims were
+made. Quality/release CI remains disabled; documentation publishing stays enabled.
+
+The full native run passed **170/171** scenarios. Its sole failure was the existing
+recovery scenario's earlier Escape reaching the app after its subsequent Review
+click and dismissing that dialog. The saved trace established the ordering. The
+scenario now waits for native search focus to clear before its independent click,
+and for Refresh to start and finish before restart. That corrected scenario and
+three refresh scenarios pass in the final rerun. All **171** scenarios have passing
+coverage across this full run and corrected rerun on the same binary; this is not
+a claim of a single clean full run. The rapid-input ordering bug remains R63 work.
+
+Native coverage includes F5/default primary/remapping/clearing/restart, actual
+rotating versus background-still icon pixels, queued manual work, failure/retry,
+mail navigation and tab switching while pending, light/compact dark and 120% scale.
+Reviewed WebPs are under ignored `artifacts/e2e/fd965fb20685`, `e6b31317bc06`,
+`b31e96ef7e45` and `c5f3e1d58496`. Logs are under ignored `artifacts/logs/`:
+
+- `refresh-svg-before-fix.log`, `refresh-svg-after-fix.log`, `refresh-animation-native-fixed.log`.
+- `refresh-animation-native-full.log`, `refresh-animation-final-native-rerun.log`.
+- `refresh-animation-commit.log`, `refresh-animation-test-commit.log`, `refresh-animation-python.log`.
+- `refresh-animation-windows-check.log`, `refresh-animation-docs.log`, `refresh-animation-release.log`.
+- `refresh-animation-install.log`, `refresh-animation-push.log`.
+
+Native test binary SHA-256:
+`442566e90c0f4abb131b279fc2769302323f0671513618fed68aa0d5a52e2099`.
+Installed production binary SHA-256:
+`6f907c2897a71a6472694c3523eae34672148284c2172b14d1d6ccb524708f6f`.
+Already-open windows need reopening to use the update. No root log/database
+artifacts remain; unrelated untracked work is preserved.
+
+## R81/R76 — Reading styles installed and pushed (2026-09-07)
+
+Source **1bf6ac9cdd9127c169b74923aab9a63f5f8cf196** is installed for the Linux
+user and pushed to `main`; **cc20ce03799eca61dbbe937e7e8cae28a2c4bd22** updates
+the existing native copy test for the centered text position. R81 and R76 are
+complete and removed from TODO. The full product goal remains active.
+
+Plain text has a padded, centered column that follows the text-size preference.
+Simple HTML gets equivalent low-priority CSS defaults. MIME preparation
+classifies typography/color-only letters off-thread; tables, explicit dimensions
+and layout CSS retain sender geometry. Sender CSS can override defaults.
+Expanded conversation cards take the active email's opaque background and
+matching control colors. A stable themer/container tree preserves the scroller
+and input state as rendered backgrounds arrive or cached messages change.
+
+**Verification:** 486 Rust tests plus two drawing-adapter tests, 46 Python tests,
+formatting, Clippy, Git hooks, Windows GNU cross-compilation and pinned strict
+documentation build pass. The optimized archive passes checksum, extraction and
+bundled installer verification. The installed binary matches its release hash.
+This does not establish Windows/macOS native execution or live-provider testing.
+
+The full native run passed **168/169** scenarios. Its only failure was an older
+text-copy drag aimed at the previous body position. After updating those mouse
+coordinates, that same copy/paste/full-reader/dark scenario and both new reader
+scenarios pass in `reading-column-native-final-rerun.log`. All 169 scenarios have
+passing coverage across the full run and corrected rerun on the same binary;
+no production code changed after the full run began. Selection, copying and
+read-only shortcut assertions remain intact. No timing budget changed.
+
+Rendered Find/selection geometry proves padding and centering at 340/1000/1600 px
+and 14/22 px fonts. Native flows cover plain/HTML selection, Find, actual column
+pixels, full/compact layouts, contrasting conversation backgrounds, repeated
+cached switching and refresh/scroll. Two initial new-scenario setup errors
+(clicking above the plain editor and appending to a retained Find query) were
+corrected before the full run. The existing conversation-action, HTML image,
+scrolling, resize and background regressions remain covered.
+
+Reviewed WebP evidence under ignored `artifacts/e2e/` includes `5702d689ea4e`
+(plain full width), `53782149d020` (HTML full width), `871baa7be21d`
+(compact letters), `4b26fba9eb20` (compact dark conversation), and `c63c760ec908`
+(corrected copy regression). Logs are under ignored `artifacts/logs/`:
+
+- `reading-column-full-rust.log`, `reading-column-clippy.log`, `reading-column-python.log` and `reading-column-geometry.log`.
+- `reading-column-native-full.log`, `reading-column-native-final-rerun.log` and `reading-column-commit.log`.
+- `reading-column-windows-check.log`, `reading-column-docs.log`, `reading-column-release.log`, `reading-column-install.log` and `reading-column-push.log`.
+
+Native test binary SHA-256:
+`77e5f50ce98c63e8c8279acd689a627a7ee01312f09cda1809b47a8faeab799a`.
+Installed production binary SHA-256:
+`4f61267e133680817782cbc011908f378587cfd11ee2dd28b9bd3fc63cd69e39`.
+Already-open windows need reopening to use this executable. Performance
+measurements remain deferred; quality/release CI stays disabled. Documentation
+publishing remains enabled. The reader checkpoint did not include the subsequent R74 refresh update,
+whose shipping evidence is recorded above.
+
+## R84 delivered; R73 recovery checkpoint shipped (2026-09-07)
+
+Source commit **a81d767d0d687338755ec1b76b807cb97e5b6635** is installed for the
+Linux user and pushed to `main`. The full product backlog remains active.
+
+Interactive search now spans cached folders within the selected account scope,
+including combined folder views. Results display their folder. Clearing search
+restores the browsing folder and usual sort. SQLite queries, frozen selections
+and optimistic move membership share the scope rule. Read/flag/attachment
+filters remain explicit. Search retains a moved result that still matches, and
+long preview text clips within its space without overlapping folder labels.
+R84 is complete and removed from TODO.
+
+Recovery is available from the cached reader and Preferences → Accounts. Retry
+checks a confirmed destination; unconfirmed moves require explicit review before
+using an existing, byte-verified copy. Keeping a local original requires
+confirmation and never changes server copies. Its new local identity preserves
+content/flags through restart and sync and retires the old server Undo action.
+Removing a destination account retains another account's original with this
+same identity protection. Closing waits for an active recovery receipt; failure
+cancels that pending close.
+
+**Verification:** all **167 native functional scenarios**, **484 Rust tests**
+plus **two drawing-adapter tests**, **45 Python tests**, formatting, Clippy and
+Git hooks pass. The Windows GNU cross-target check and pinned strict docs build
+pass. The optimized production archive passes checksum, extraction and bundled
+installer verification; the installed executable matches the release hash.
+Already-open windows need reopening to use the new executable.
+
+Final evidence under ignored `artifacts/logs/`:
+
+- `recovery-and-search-final-native-full.log`: 167 scenarios, all passed.
+- `recovery-and-search-commit.log`: formatting, Clippy, Rust/adapter tests and commit hooks.
+- `recovery-and-search-final-python.log`, `recovery-and-search-final-windows-check.log` and `recovery-and-search-final-docs.log`.
+- `recovery-and-search-final-release.log`, `recovery-and-search-install.log` and `recovery-and-search-push.log`.
+
+The first native run passed 163/167: three assertions expected the old
+folder-only search count; one recovery click was followed by delayed Escape.
+Corrected scenarios pass individually and in the clean full rerun. The recovery
+scenario waits for native search focus to clear before its independent click;
+rapid input cancellation remains tracked under R63. No timing budget was changed.
+
+Seven recovery scenarios cover explicit confirmation, delayed success and
+failure/retry with navigation, local flags/copies after restart, Preferences,
+compact dark layout and graceful close with read-only receipt inspection.
+Three new search scenarios cover non-Inbox results, opening/moving, exact bulk
+membership, clearing search and account scope. Reviewed WebP evidence includes
+`66bd98906785`, `b9b00e6f29ae`, `50d3bdc7497e`, `45e02c844b68`, and
+`2b9ce6702a98` under ignored `artifacts/e2e/`. Fixtures never contact personal
+providers or OS credentials. No new performance measurements were run.
+
+Native test binary SHA-256:
+`a9d68d7925147b37d7004a251a852a4c11e6d17ed229c7d031c7a57e2644b5ff`.
+Installed production binary SHA-256:
+`badcb12f3ca055135741aa0675ebe5a7dca2022d0daa8b8d3e76e8e41e9e9fd9`.
+
+R73 remains open for actual adapter wire/journal integration, broader
+Undo/group/folder-history lifecycle checks, repeated-move aliases and the live
+A. Keep report. Cross-compilation is not Windows GUI verification. R83 database
+export/import remains tracked separately and is not implemented by this work.
+Quality/release workflows remain disabled; documentation publishing stays enabled.
+
+## R73 — Durable recovery work in progress (2026-09-07)
+
+These foundation-stage notes preceded the combined a81d767 checkpoint above.
+See that checkpoint for current shipping evidence; R73 and the full product goal
+remain active.
+
+The working tree connects IMAP moves/transfers to a durable journal before the
+first provider write. It protects original MIME through sync/restart, retains
+APPENDUID and incoming connection identities, migrates old transfer tuples
+atomically and resolves confirmed destinations without repeating MOVE/APPEND.
+A known UID completes the cache without another network request; a missing UID
+returns the acknowledgment before background lookup. Copied transfers verify
+exact destination bytes and identity before retrying source cleanup. Timed-out
+or unconfirmed results keep their originals. A tagged MOVE NO can have partial
+effects, whereas unsuccessful APPEND is atomic; the protocol tests preserve this
+distinction ([MOVE semantics](https://www.rfc-editor.org/rfc/rfc6851.html#section-3.3),
+[APPEND semantics](https://www.rfc-editor.org/rfc/rfc9051.html#section-6.3.12)).
+
+Destination search/pages retain protected cached mail after restart; provider
+IDs are withheld until resolved. Both new and older bulk selections exclude
+protected identities. Folder navigation includes the pending destination.
+Cache relocation and journal completion commit atomically, retaining originals
+on conflicts. The reader follows acknowledged aliases when a page or body read
+overtakes its completion event; a native screenshot exposed a late old-ID error
+toast and the corrected detail lookup removes it.
+
+Foundation-stage verification: **474 Rust tests**, **44 Python tests**, Clippy and formatting
+pass. Ten store, eight runner and added protocol/controller tests cover original
+protection, cache collisions, copied/committed restart, stale writes, changed
+connections, bad lookup identity/content, legacy migration, bounded retry/pages
+and provider-safe selection. Logs: `move-recovery-verified-rust.log`,
+`move-recovery-verified-clippy.log`, `move-recovery-final-python.log` under ignored
+`artifacts/logs/`. No performance measurements were run.
+
+Four targeted native scenarios passed in `move-recovery-native-targeted.log`.
+After correcting the toast, the saved cold/restart/refresh scenario passes again
+in `move-recovery-native-verified.log`; its assertion now includes an empty
+notice. Reviewed WebPs are under `artifacts/e2e/daabe132d246/` (restarted/located
+reader), with the initial reproduction under `4e818eb298d6/`. These use owned
+fixtures, not a live account or keychain. The whole 158-flow native suite has not
+been rerun for this working tree. The corrected native test used binary SHA-256
+`255ac6c42f4500aae2fd5d38c5f39aec674a12d44be32e4287600c01b6b7a763`.
+The pinned strict documentation build also passes (`move-recovery-docs.log`).
+
+At that foundation stage, remaining work included visible retry/review controls
+for Copied/Started/failed lookup states and actual adapter wire/journal integration,
+Undo/bulk/folder-history lifecycle review, complete native failure/recovery
+coverage and release/install/push checks. Do not infer these from the fixture
+lookup or the passing prior 157-flow shipped run. The new full-database export
+request remains separately tracked as R83.
+
+## R73 — Pending destination checkpoint — installed and pushed (2026-09-07)
+
+Source [acb33c0](https://github.com/sam-ruff/shep.so/commit/acb33c0d20f547f626c2aa934190858b30cf446e)
+is installed and pushed. The saved slow-provider native reproduction failed before this change: Projects
+only contained the moved message after the provider acknowledgment. Per-read
+SQLite projection now includes pending moves in the destination's full-text
+search, sorting, filtering and paging. It leaves persisted source data intact.
+The reader can reuse a cached body, blocks provider actions on a temporary ID,
+and adopts the acknowledged destination identity without clearing that body.
+Unified Inbox membership remains stable when moving between accounts' Inboxes.
+Failure and Undo remove the projected destination; Undo can also cancel a move
+waiting behind a flag save without cancelling the flag.
+
+Six controller and four storage regressions pass. Three saved native scenarios
+pass for pending reading/return to Inbox, failure/pending Undo and cross-account
+dragging; light destination/failure screenshots were reviewed. Native evidence:
+`e854518c111b`, `1a78176994a9`, `e693b0450662`, `14728d75d5b1`, `1a9059fdd1e2`.
+All 454 Rust tests, two drawing-adapter tests and 44 Python tests, Clippy and
+formatting pass. Optimized production build, archive checksum/extraction and
+bundled installer checks pass. The full native run passes **157/157 functional
+scenarios** in 585.869 seconds (`move-projection-native-full.log`), using binary
+SHA-256 `7446f68841cf674ba44998444521d29f1e03b26d36b21ebc046b90fd4463487b`.
+Windows GNU cross-target compilation passes; this is not Windows runtime evidence.
+Git hooks pass. The installed production binary matches the verified release,
+SHA-256 `c6ff9c86421c5800d1132ff63a708104b86f25b9ea626a5e578470e84df37d66`.
+Installation was atomic; existing personal windows were left running on their
+previous executable and need reopening. Logs use the `move-projection-` prefix
+under ignored `artifacts/logs/`, including `commit`, `push`, `install`,
+`release-verified`, `windows-check`, `all-rust`, `python` and `docs-final`.
+Documentation publishing for the source commit succeeded in run `34125535804`.
+Timing measurements remain deferred. Quality/release workflows remain disabled.
+
+R73 stays open: acknowledged moves without COPYUID and cross-account retry
+journals can still lose the destination identity. Durable preservation and
+resolution of those acknowledged copies need their own protocol/cache/restart
+checks. This checkpoint does not claim those cases or the personal-account
+report are resolved.
+
+## R82 — New-mail notification checkpoint — installed and pushed (2026-09-07)
+
+Source [ded5aca](https://github.com/sam-ruff/shep.so/commit/ded5aca104b5fa129f5b9c8d89199f3a826e9f96)
+is installed and pushed. Native delivery adapters and searchable Preferences
+controls are implemented.
+Popups, sound and sender/subject details default on and can be changed
+independently. Test notification uses the current settings; muted or failed tests
+release their pending state. Delivery runs separately from mail sync and iced,
+coalescing bursts into a counted notification without retaining each body.
+Failures remain visible and navigation stays available.
+
+SQLite records per-account message identity and initial-import readiness.
+First imports and UIDVALIDITY resets remain quiet until their Inbox completes;
+new unread Inbox messages alert at most once. Repeated syncs, restart, read/flag
+changes, restored mail and moved copies do not turn into new arrivals. Claims
+are committed with cached mail: a process crash before OS delivery can lose that
+alert, but does not replay old alerts. Shep must be running.
+
+Linux uses its desktop notification protocol and system sound theme. Windows
+uses a per-user Shep AUMID with WinRT, and macOS uses the Shep bundle identity
+initialized once. Popup and sound-only paths remain independent. No adapter
+borrows another app's identity. Desktop permissions, Do Not Disturb and sound
+settings can prevent presentation despite an acknowledged request.
+
+Protocol failure tests exposed upstream async-imap SEARCH/FETCH helpers accepting
+rejected commands as empty success. The sync path now requires matching tagged
+OK, including after partial data, before returning results or reconciling cache
+membership. Inbox completion is independent of a later logout failure. These
+checks use production sync functions against scripted IMAP/POP3 connections.
+
+Validation includes 444 Rust tests (three explicitly ignored live/profile tests),
+44 Python tests, and fmt/Clippy. Seven new SQLite tests and ten worker/UI/protocol
+tests cover import/restart identity, commit rollback, burst counts, mute/privacy,
+blocked delivery, private-bus sound hints and errors, and sync failure ordering.
+Windows GNU `cargo check` passes with both all features and production defaults;
+it is not Windows execution.
+The MCP fixture never calls the host notification/audio service. Four saved native
+scenarios exercise defaults, independent outputs/privacy, restart, real arrival
+flows, compact dark layout and navigation during delayed failure/retry.
+
+The complete native run exercised 154 functional scenarios: 153 passed and one
+shortcut test observed a stale dialog before its close completed. That scenario
+passed in isolation; it now waits for actual close/open transitions. The rapid
+M/Escape asynchronous-focus ordering edge case remains tracked under R63 rather
+than being claimed fixed by a test wait. This is not a clean 154-case full run.
+All four notification flows passed in the full run on native binary SHA-256
+`0fba6d1bb2a5a9afe5aba851e22db29d0fa55a690cd8bd3a62ff7a851ab37963`.
+Reviewed WebP evidence includes popup-only/privacy (`5404d1b0741a/`), compact dark
+(`7fabfa3c966f/`) and delayed error/recovery (`064b37d21d81/`), under ignored
+`artifacts/e2e/`. Logs in `artifacts/logs/` include `notifications-full-rust.log`,
+`notifications-final-targeted.log`, `notifications-python.log`,
+`notifications-native-full.log` and `notifications-native-recovery-current.log`.
+
+The corrected modal-transition scenario passes in `notifications-shortcut-transitions.log`.
+Final Git hooks pass 444 Rust tests plus two drawing-adapter tests, fmt and Clippy.
+Strict Zensical, optimized release checksum/extraction and bundled-installer
+verification pass. The installed Linux binary matches the release, SHA-256
+`9754ccd700b5dc60cd1ed3eb990955406d231dd591b10915e905e9023fb4cec8`.
+Installation was atomic and existing personal windows were preserved; reopen
+those windows to use this build. Shipping logs: `notifications-commit.log`,
+`notifications-release-verified.log`, `notifications-install.log` and
+`notifications-push.log`. Source and docs publishing succeeded in GitHub runs
+`34121452515` and `34121562739`. A read-only desktop capability query reports
+sound support (`notifications-desktop-capabilities.log`); this is not evidence
+of a displayed popup or audible alert. R82 remains
+open for actual Windows/macOS delivery, Mac app-bundle integration and desktop
+sound/popup review. Other performance measurements remain deferred. Quality and
+release workflows stay disabled; documentation CI remains enabled. The full
+product goal and remaining TODO entries are still active.
+
+## Complex HTML and reader interaction follow-up — installed and pushed
+
+Source [ebddf54](https://github.com/sam-ruff/shep.so/commit/ebddf54c0124c30561db117c2b041ee184aa4c3c)
+is installed and pushed. R72, R78, R79 and R80 are removed from TODO only after
+that verified shipping step.
+
+R72 was reopened after the earlier synthetic result failed to explain the user's
+1–2 second pause. Read-only diagnostics reproduced it in the original cached
+mail: deeply nested tables repeatedly measured identical subtrees. Two messages
+that took 1,538–2,107 ms now render in 47–63 ms. A later paired comparison turns
+only table reuse off/on and proves identical viewport pixels and heights for
+both corrected documents. One message differs from pristine upstream pixels
+because of the tested superscript-offset correction. No personal content,
+addresses or hashes were added to public fixtures, screenshots or documentation;
+temporary diagnostic copies were removed.
+
+The vendored litehtml patch reuses complete containing-block constraints within
+one normal-flow render, without crossing resize/image/media changes or positioned
+layout. Inline fragments apply relative offsets once; caption displacement no
+longer accumulates on row parents. Seven renderer regressions compare pixels,
+selection, spans, captions, floats, positioning and reflow, plus exact 5px/2px
+inline offsets and caption heights (including the border-height edge case).
+The deep fixture verifies a reduction from more than 10,000 table layouts to
+fewer than 200, independent of host timing. Licenses and patch provenance are
+bundled in the release archive.
+
+Visited frames retain their actually decoded image inputs within eight frames /
+32 MiB; the shared WebP cache is bounded independently. Image invalidation is
+URL-specific, and a failed replacement cannot acknowledge undisplayed bytes.
+Actual visits also refresh the body LRU. The native pixel benchmark now has
+eight cases with twenty observations each; all pass unchanged 100 ms cold / 50 ms
+cached gates. The deep template measures 38.2 ms p95 cold and 22.6 ms revisited;
+the image-heavy pair measures 21.0/22.8 ms. See [PERFORMANCE.md](PERFORMANCE.md)
+for all results and measurement boundaries.
+
+R78 preserves the conversation scroll offset during ordinary sync/read/flag
+refreshes. R79 replaces list selection and sender-copy text buttons with native
+icons, retaining generous targets and configurable icon tooltips; clipboard
+regressions paste the copied address/domain into the actual native search field.
+R80 makes selection-mode row clicks toggle one message and Shift ranges additive
+across pages, preserving checkbox/modifier and double-click reading behavior.
+
+R76 now matches the single-message reading surround to the document's opaque
+background with readable controls and an unchanged widget tree; conversation-card
+surround review remains open. R77 fixes editor glyph clipping at a partially
+visible bottom line; its direct renderer test fails before the patch and passes
+afterward. Native long-reply typing is visually clean in light/dark compact views.
+Inline replies and the follow-up integration review remain R35/R77 in TODO.
+
+Final source passes **427 Rust tests**, **2 drawing-adapter tests**, **2 FFI tests**,
+**43 Python tests**, fmt and strict Clippy. An earlier revision passed all **150
+functional native scenarios**; after the final C++/image correction, all **36
+relevant native regressions** pass, including selection, Find, printing, image
+policy/reflow, conversations, resizing and restart. This is not presented as a
+second full 150-scenario run. The eight pixel gates used native binary SHA-256
+`c6ee6d73113f54d36548ec0d50ce8b428ab7c03e8d73d29e08585c7eb188febc`.
+
+Logs remain in ignored `artifacts/logs/`: `html-selection-native-full.log`,
+`html-offset-native-regressions.log`, `html-offset-final-rust.log`,
+`html-offset-final-clippy.log`, `html-verified-python.log`, and
+`html-verified-pixel-latency.log`. Reviewed fictional WebP captures under
+`artifacts/e2e/` include the deep template (`08f6cae1a117/`), image-complete revisits
+(`44931a15d365/`), compact editor edge (`8d8a47ad6be7/`), dark-theme white surround
+(`ee2f53fe4414/`), sender-copy icons (`86f9e366222f/`), cross-page selection review
+(`1d3af182aeae/`) and retained thread scroll (`cf86a567ea05/`).
+
+Strict Zensical and release checksum/extraction/bundled-installer verification
+pass. The optimized Linux binary is installed atomically, SHA-256
+`551f9ef3afae31f29b5b039c0ca7cee89ac4293fd01dd71e727aee35a13615d7`. Personal windows remain running on their earlier
+executable until reopened. Git hooks and the direct main push passed.
+Release/install logs: `html-offset-release.log` and
+`html-offset-install.log`. Documentation CI runs **34115749075** and
+**34115885902** completed build and deployment successfully.
+R81 default reading styles and R82 configurable native notifications are recorded
+in TODO/audit. Other performance measurements stay deferred. Quality/release
+workflows remain disabled; documentation CI remains enabled. These tests do not
+establish live provider mutation, physical monitor scanout or Windows/macOS
+execution. The full product goal remains active.
+
+## HTML opening speed and Mail focus — installed and pushed
+
+Source [3f24823](https://github.com/sam-ruff/shep.so/commit/3f2482394d1d0aa277b500dd1a7be7165d724035)
+ships R72 and R75. R71 already identified the earlier refresh-icon correction;
+the four newest requests were assigned R72–R75 to preserve that audit identity.
+The moved-mail destination issue and F5/manual animation remain R73/R74 in TODO.
+
+Mail navigation now clears the previous folder's focus outline, focuses the
+message list and retargets subsequent sidebar navigation to Inbox. The remappable
+sidebar Inbox action retains sidebar focus. Both unified/light and per-account/
+dark native cases pass; reviewed evidence includes `e4ffb201c285/` and
+`98a6219a9ab8/` under ignored `artifacts/e2e/`.
+
+HTML layout reuses bounded font-specific text widths and glyph bitmaps; visited
+initial frames join the existing adjacent preparation cache. Image policy,
+content, viewport, font and generation remain part of validity. The software
+renderer combines overlapping damage regions and fills only visible solid panel
+interiors. It keeps partial redraws and the general edge/gradient/shadow painter.
+A fractional-edge discrepancy found by the new direct pixel tests was corrected
+before shipping; full/partial and solid/general painter results now match.
+
+The final native build, SHA-256
+`93e7fd8a4aee65fc6477c15d164fcc118fe3e2e31a02dbf6dcaaf9659440d7f2`,
+passes **all 144 functional native scenarios**, **413 Rust tests**, **2 dependency
+cache tests**, **43 Python tests**, fmt, Clippy and Git hooks. The native suite
+includes HTML selection, Find, policy/late images, resize, scrolling, Retry,
+compact/dark views and action/Undo/restart paths. Navigation from Preferences to
+Calendar passes in both themes with its ordinary timer and with the app Tick
+disabled; the saved comparison needs no subsequent input or two-second wait.
+Reviewed Calendar evidence is `f9a4eb3a5418/after-calendar-dark.webp`; HTML review
+includes `e9da58bf7ba1/reference-styled.webp` and
+`a5adb8f70141/html-current-narrower.webp`. This establishes those paint-correctness
+scenarios, not a separate Calendar latency percentile.
+
+Native XTest input through X11 body pixels, 20 samples per case, improved from
+p95 **122.4 to 45.8 ms** for an unprepared 200-paragraph letter; **103.3 to 25.7 ms**
+for returning to styled mail; **140.3 to 26.3 ms** for a prefetched neighbor; and
+**104.8 to 37.0 ms** for reopening the long letter. All new HTML gates pass.
+Reports: `artifacts/performance/html-opening-baseline.json` and `html.json`.
+The final measurement has evidence `10c50ade9651/` and `ee7c4702b917/` onward.
+[PERFORMANCE.md](PERFORMANCE.md) describes the boundary: font discovery is already
+warm, pointer/reference/dwell setup is outside timing, external downloads and
+physical monitor scanout are not measured. No builds ran during measurement;
+the host was not asserted fully idle. Other final performance gates remain
+explicitly deferred. Thresholds were not weakened.
+
+Logs are under ignored `artifacts/logs/html-final-*`, with `html-release.log`,
+`html-install.log`, `html-commit.log` and `html-push.log`. Strict Zensical and
+release checksum/extraction/bundled-installer checks pass. The installed Linux
+production binary matches the verified package, SHA-256
+`43cc66577793d945088f216d3d8bc9fcd85e06a888c56ebd2500dca3c9f71cfb`.
+Personal data/windows were preserved; already-open windows need reopening to use
+the new executable. No root logs remain. Quality/release CI stay disabled;
+the HTML pixel gate and dependency-cache tests are included in their dormant
+quality definition. This is local/native fixture evidence, not new live-provider
+or Windows/macOS verification. Unfinished folder-controller work was preserved
+separately and excluded from this checkpoint. The full product goal remains active.
+
+## Folder mutation backend checkpoint — R30 remains open
+
+Source checkpoint [5eabb52](https://github.com/sam-ruff/shep.so/commit/5eabb521f1f11e4ec180bcdcb73835cb9e52db8c)
+is pushed to main and installed for the Linux user. The installed binary matches
+the release checksum below; existing personal windows were preserved.
+Documentation build and deployment for that exact source head passed in
+[run 34095669134](https://github.com/sam-ruff/shep.so/actions/runs/34095669134).
+
+The provider-independent folder plan and runner now review whole subtrees,
+protect Inbox, reject invalid nesting/collisions and preserve exact names,
+NoInferiors and NonExistent metadata. The IMAP adapter checks the final LIST
+response and distinguishes tagged rejection from a lost write acknowledgment.
+RENAME moves a subtree; deleting one requires individual, deepest-first commands.
+These rules follow [RFC 9051 mailbox operations](https://www.rfc-editor.org/rfc/rfc9051.html#section-6.3.5).
+
+The SQLite journal records each command before execution and its acknowledgment
+before cache migration. Retry skips completed deletes. An interrupted IMAP write
+requires review; an acknowledged rename followed by failed LIST remains cache
+recovery, never another RENAME. An owned filesystem lease excludes another
+executor, including an independent process. Atomic migrations keep MIME inside
+SQLite and preserve flags, conversation identities, restored markers, expansion,
+Sent mappings and relevant group Undo receipts. Folder deletion retires only the
+affected history items. Reviewed account removal includes unfinished folder work.
+
+This is preparatory backend implementation, not availability of folder context
+menus. Native dispatch, destination/deletion review, immediate presentation,
+visible recovery, close integration and POP3 local hierarchy setup remain R30.
+Independent-process coordination of ordinary provider writes remains R01/R06.
+No real account or server folder was changed by these tests.
+
+Verification: 408 Rust tests and 36 Python tests passed with formatting and
+Clippy. The existing 142 native functional scenarios passed in one complete run
+on the initial backend build. After final backend review-count/collision checks,
+the final test executable passed 16 relevant native scenarios, including all
+five folder-tree flows, mail actions/context menus and a new pixel comparison
+for navigation. There are now 143 saved native functional scenarios; this
+checkpoint does not claim a full 143-scenario run. Optimized Linux packaging,
+checksum verification, extraction and the bundled installer passed.
+
+Final native binary SHA-256:
+`3e0884242949b67c12f3f20963309eaf5e46fa6dc3bcf8885d9026c58ad09e15`.
+Release binary SHA-256:
+`5cea9013d05fa718dac877feae3f43f9253e5bd3af03971f198a256848dd8b43`.
+Logs are under ignored `artifacts/logs/folder-actions-*`. Settled light/dark
+calendar captures in `artifacts/e2e/31c88b55c87b/` were reviewed; the refresh
+icons render correctly. Compact folder-tree evidence is in
+`artifacts/e2e/d49bf5893ba4/`.
+
+Visual review also found that Calendar's state can change before its first paint
+after appearance changes. The earlier captures still showed Preferences after
+a 300 ms settling period. A saved native pixel check converges with a two-second
+wait, and the settled calendar captures are correct. Longer test waits do not fix
+that delay: first-paint scheduling and idle-host responsiveness remain explicitly
+tracked as R15/R63. Performance gates remain deferred.
 
 ## Remaining implementation audit
 
@@ -464,7 +2947,7 @@ The Flutter formatted-reader increment shipped for review as [`6e8475f`](https:/
 
 ## Imported desktop main history through 10d8569
 
-The following records describe the independent desktop main worktree at their cited commits. They do not establish verification of this merged client branch. Desktop request IDs R67–R71 here belong to the `desktop-main:` namespace.
+The following records describe the independent desktop main worktree at their cited commits. They do not establish verification of this merged client branch. Desktop request IDs R67–R71 here are main's numbers (written as `desktop-main:RNN` in older client notes); the client branch's own R67 to R80 are different requests, as stated once in [the request audit](REQUEST_AUDIT.md).
 
 ## Frequent background mail and independent refresh
 
@@ -1078,6 +3561,258 @@ membership, group/individual mutation coordination and the remaining native
 History/recovery paths. These are tracked explicitly in TODO; passing the current
 fixture suite does not establish live-provider or cross-platform coverage.
 
+
+## 2026-09-07 — Selection arrivals, pointer redraws and group conflict guards
+
+Shipped and installed source commit `2444049ae843573b952604a2c601c088fd27b61d`.
+Explicit checkbox/Ctrl-click selections can now include arriving mail while
+preserving earlier choices. Shift ranges use the current query order, including
+intermediate arrivals. Passive refresh never selects new mail by itself. Frozen
+reviews keep their original membership, and rejected gestures or transient
+observation failures retain confirmed choices. Query order and membership stay
+in SQLite; the UI continues receiving bounded metadata pages.
+
+Individual move/transfer/Undo/read/flag paths check pending group ownership.
+Group Undo claims a resolved identity without stealing another item's claim;
+completed phases cannot reacquire ownership. Pending row flag buttons absorb
+clicks without opening the message, and conflicting context actions explain how
+to review the group. These guards do not establish serialization across independent
+processes or finish every individual/group staging race; broader ordering and
+provider ambiguity remain in TODO.
+
+The final native run exposed a redraw between motion and press erasing the
+previous queued-click fix's pointer position. The root tracker now survives
+redraws and shares captured dropdown/nested-overlay motion, while retaining
+runtime overlay exclusion and resetting after blur/leave/interface-scale changes.
+The deterministic widget regression fails on the old behavior; an additional
+overlay regression covers captured motion and popup closure. Consecutive native
+checkbox clicks remain consecutive, without sleeps masking input defects.
+
+Validation: **353 Rust tests**, **29 Python tests**, formatting and Clippy pass.
+The same final native binary passes all **119 saved functional scenarios**.
+The first runner was externally terminated after 21 completed cases; a detached
+runner passed all 98 remaining cases, including the interrupted case. Evidence:
+`artifacts/logs/selection-pointer-native-a.log` and
+`selection-pointer-native-remaining.log`. No failed scenario was omitted.
+Rust/Clippy/Python logs share the `selection-pointer-` prefix. Git hooks also pass.
+
+Reviewed WebP captures include arrival checkbox/range selections in
+`artifacts/e2e/5de4c05ddac0/` and `7ab94d4a3392/`, and the pending-group conflict in
+`78e612e842df/`. Native Mail/Calendar refresh arrows remain clean in standard,
+compact dark and 120% layouts (`2177522fb60f/`, `b18dcbe0dfe0/`). This verifies the
+native icons; the original browser-chrome crop was not separately reproduced.
+
+Strict Zensical builds and optimized release checksum/extraction/bundled-installer
+checks pass. The Linux user install matches the release binary, SHA-256
+`c9583cc01bb02b2d8220d7ad6a92d9044e915910556fd978653005156e89d281`.
+Existing personal windows were left running. R42 multi-selection is removed from
+TODO; its remaining bulk History/recovery/pagination paths stay open. The full
+product goal remains active, performance measurements remain deferred, and
+quality/release CI remain disabled.
+
+
+## R42 — History and process recovery (2026-09-07)
+
+Shipped in `b352d125a267e36322803549c52e2d903916876b`.
+
+**Continue** now clears the persisted pause before waking the worker; completed
+receipts are never replayed. History keeps its visible group page separate from
+active progress tracking, preserves newer receipts when an older read arrives,
+and returns to the top after group or message pagination. Unconfirmed-result
+reviews accept mouse input and Y/Enter, cancel with N/Escape, and cannot leak
+into a reopened History dialog. Acceptance replaces the stale recovery error
+with an explicit accepted-state note and keeps Undo available for other
+acknowledged messages.
+
+Real window-close tests exposed renderer workers keeping the process alive
+after the window disappeared. Subscription cancellation now wakes both HTML and
+neighbor-preparation receivers even while UI state retains their senders. Close
+flushes pending pane sizes and quiesces the bulk worker before exiting, including
+when the displayed History page contains no running work. Closing before engine
+readiness does not wait for a missing worker.
+
+The MCP harness now owns optional persistent, explicitly marked fixture caches.
+It refuses unmarked databases before migration. Native close/restart keeps the
+owned display and cache; explicit crash mode kills only that fixture process.
+A close timeout reports the failure without silently killing or replacing the
+app. The graceful-close scenario reads the fixture journal while the app is
+closed, proving one durable receipt and one queued step before restart.
+
+Validation: **362 Rust tests**, **32 Python tests**, formatting, Clippy and Git
+hooks pass. All **127 saved native functional scenarios** pass on the final test
+binary: the complete existing 126-case run plus the newly added empty-Inbox
+restart case. Logs are `artifacts/logs/bulk-history-native-full.log`,
+`bulk-history-native-result.json`, `bulk-history-empty-native.log`,
+`bulk-history-final-rust.log`, `bulk-history-final-python.log` and
+`bulk-history-clippy.log`. No failed scenario was omitted.
+
+Eight added native scenarios cover graceful and crash recovery, uncertainty
+acceptance/cancellation, retained Undo, failed inverse retry after restart,
+Continue, both pagination types, compact dark mouse review, formatted-reader
+shutdown with saved appearance, and reopening an empty Inbox with all 120
+archived messages retained. Reviewed final WebP evidence includes accepted
+results in `artifacts/e2e/ae702538d9b8/`, compact dark review in `ce03b78c5462/`,
+History pages in `f7e68df55523/` and `d9648d6faece/`, and empty Inbox/Archive in
+`74fbf4c5f512/`. These fixtures establish application recovery; they do not prove
+live-provider or independent-process correctness.
+
+Native refresh arrows remain clean in compact dark and 120% Calendar captures
+(`1207d242ae17/`, `734c9cbabbe5/`). The browser-chrome crop from the original
+report was not separately reproduced.
+
+Strict documentation builds and optimized release checksum, extraction and
+bundled-installer checks pass. The installed Linux binary matches the release,
+SHA-256 `6b2fcf3b5824437208ff74ded58a4bfa2cf3d604a2f82478bc800098f8e49cb2`.
+Existing personal windows were preserved. R42's remaining native verification
+is complete and removed from TODO. The full product goal remains active;
+individual/group ordering, provider ambiguity, independent-process coordination
+and the other TODO requests remain open. Performance measurements stay deferred,
+and quality/release CI remain disabled.
+
+## R45 — Drag messages into sidebar folders (2026-09-07)
+
+Shipped in `ca39080b3afe3ac95685d42858cd017f76a956e3`.
+
+Drag one inbox row or the entire selected group to a sidebar folder. Destination
+outlines and a floating label show the target/count/account. Hover opens collapsed
+accounts and unified Inbox; wheel scrolling works while holding. Group drops
+freeze the existing cross-page selection and use the normal review, optimistic
+commit, durable history and Undo. Single drops use the dragged metadata even
+when a different body is open, and show immediate counted feedback and Undo.
+
+Cached rules reject missing accounts/folders, same-folder no-ops and disabled or
+POP3 cross-account transfers; local POP3 folder moves remain available. Inbox,
+Archive and Trash preserve each source account. Combined Sent/Flagged views are
+not drop destinations; actual account folder rows remain available. Real provider
+capabilities are checked by the existing commit path. Escape, right-click,
+focus/cursor loss and outside drops cancel without leaking a row/sidebar click.
+Flag/checkbox presses and ordinary click jitter do not start a drag.
+
+A compact screenshot exposed a software-renderer shadow trail. Damage bounds
+omitted shadows and shadow drawing ignored the damaged layer's mask. The vendor
+patch includes full shadow damage, clips buffers/drawing to visible damage, and
+handles shadow-only intersections. Two renderer regressions fail on the prior
+code and pass after the fix; a third covers offscreen positioning. The native
+Unicode-folder scrolling scenario checks a saved WebP region before any forced
+repaint. Reviewed corrected capture: `artifacts/e2e/10eef656611e/`; the final full-run
+capture in `951f9763ca4d/` also passes the pixel check. Its previous failing
+capture had a 95-level grayscale range in the otherwise empty footer region.
+
+Reviewed final captures also cover hover expansion (`2abba962dd82/`), explicit
+account destinations (`a7b06ef9ec65/`), red Trash review (`50434b0bdf5f/`), all-page
+review (`b652be35da4b/`) and 120% controls (`92074448e407/`). Native refresh arrows
+remain clean in compact dark and scaled Calendar (`bf9c15901e35/`,
+`9c769d176277/`). The original browser-chrome crop was not separately reproduced.
+
+The MCP harness now supports owned left-button mouse_down/mouse_up actions, so
+hover, scroll, waits, assertions and screenshots can be batched during a drag.
+Cleanup releases held input. Optional pop3_account fixture setup tests destination
+rules without a real provider. Every interaction is saved in scripts/e2e.py.
+
+Validation: **374 Rust tests**, **33 Python tests**, formatting, Clippy and Git
+hooks pass. All **137 saved native functional scenarios** pass on the final
+test binary, SHA-256
+`bb7b3c2f1c565be6057a77e15905395cc82a1561769c712702309c7009039ec3`.
+Logs: `artifacts/logs/drag-mail-final-native-full.log`,
+`drag-mail-final-native-result.json`, `drag-mail-final-rust.log`,
+`drag-mail-final-python.log` and `drag-mail-final-clippy.log`. No failed scenario
+was omitted. Ten added native scenarios cover
+source identity/Undo, group reviews and mixed accounts, cancellation/no-op,
+cross-account preference, hover reveal, failed writes/navigation, POP3 local and
+cross-account rules, compact dark/120% layouts, scrolling/Unicode/shadow cleanup,
+and all 120 selected messages across pages. The initial complete 137-case run
+passed before the final renderer change; it is not substituted for the final run.
+
+Strict Zensical builds and optimized release checksum, extraction and bundled
+installer checks pass. The installed Linux binary matches `target/release/shep`,
+SHA-256 `901418794f54e89eea29b9d5de0d96719d0b64e6ba261d790602785746ce0bfe`.
+Personal windows and data were preserved.
+R45 is removed from TODO after this checkpoint was installed and pushed. The full product
+goal remains active; folder trees/context menus, other TODO features, live-provider
+and platform validation remain outstanding. Performance measurements stay deferred.
+Quality/release workflows remain disabled; documentation CI remains enabled.
+
+## R30 — Native mailbox trees (2026-09-07)
+
+Installed and pushed source **6d520e9b26d2c1dc257255ef607761575c992521**,
+with harness corrections **ec080b9** and **f1a6a63**. Folder context-menu
+mutations remain a separate open R30 item; this checkpoint delivers the tree.
+
+IMAP LIST metadata now retains each mailbox's delimiter, exact name,
+selectability and session encoding. Cached trees preserve selectable parents,
+nonselectable/trailing-delimiter containers and missing intermediate ancestors.
+NIL-delimited names remain flat even when they contain slashes or dots. Cached
+messages cannot make an explicitly nonselectable parent a destination again.
+Original cached mail is retained. Legacy names remain flat until real LIST
+metadata arrives. Tree construction and modified-UTF-7 decoding happen on the
+storage worker; Workspace shares cached trees and labels through Arc.
+
+Groups start collapsed and remember expansion per account. Clicking a selectable
+parent opens its mail; its chevron expands without selecting. Containers only
+expand. Closing an ancestor retains its descendants' expansion for later and
+normal process restart. Unified shortcuts do not hide actual Inbox children.
+Left/Right/Enter navigates the hierarchy, while Up/Down passes containers without
+toggling them. Native layout operations reveal keyboard targets below the compact
+viewport, rejecting superseded targets and retrying only missing new-layout rows.
+Hovering during a message drag opens nested groups without changing the reader.
+Nonselectable containers never become drop targets.
+
+Japanese and other modified-UTF-7 names display decoded in the sidebar, title,
+Move search, highlighted Enter choice, drag label, bulk review/history and toasts.
+Queries, provider commands and Undo receipts retain exact wire names. Display
+lookup remains account-specific; an identically spelled UTF-8 name stays literal.
+
+**387 Rust tests**, **36 Python tests**, fmt, Clippy and Git hooks pass. The new
+coverage includes delimiter/encoding domain cases, actual loopback IMAP LIST and
+SELECT, reopened SQLite catalogs/preferences, stale-save ordering, keyboard
+scroll bounds and action/Undo identity. Five saved native scenarios cover
+mouse/restart, keyboard/dot/NIL containers, nested drag/Undo, Unicode Move/review
+and Ctrl-selection, and compact dark/120% navigation with saved dimensions.
+
+Both complete desktop runs executed all **142 functional scenarios** on test
+binary SHA-256
+`a0537d67f9dd8c6884d21bff1c47ddf9dfe10783f62207e40fbbf2582440cc7c`.
+Each reported 141 passes and one different test failure; neither is represented
+as a clean 142-case run. The first Japanese xdotool input intermittently delivered
+no text after native focus acknowledgment. The batchable owned-display clipboard
+paste path fixes that test; the targeted case and all five nested cases in the
+second full run pass. The second run's Undo restored the message correctly, but
+its final assertion used a null subject captured before the initial body load.
+The three affected tests now resolve selected_id against the metadata page, and
+all three pass in `folder-tree-metadata-action-native.log`. No scenario or
+asserted behavior was removed. No additional full run was performed after that
+last test-only correction. All 142 paths have passing coverage across these runs
+and the corrected targeted reruns.
+
+Logs remain under ignored `artifacts/logs/`: `folder-tree-final-rust.log`,
+`folder-tree-final-python.log`, `folder-tree-final-clippy.log`,
+`folder-tree-final-native-full.log`, `folder-tree-verified-native-full.log`,
+`folder-tree-native-unicode-paste.log` and `folder-tree-metadata-action-native.log`.
+Reviewed WebP evidence includes compact keyboard reveal (`69165f22266f/`),
+dot-delimited folders (`915d5accece5/`), restart expansion (`92eda9ec6f96/`),
+Unicode review (`b7cd9dfe3cfd/`) and large-scale dark controls (`319396c41206/`),
+under `artifacts/e2e/`. Native refresh controls remain clean, including the
+compact Calendar capture `631506faedc0/refresh-calendar-dark-compact.webp`.
+The original browser-chrome crop was not separately reproduced.
+
+Strict Zensical, optimized release checksum/extraction and bundled-installer
+checks pass. The installed Linux binary matches the packaged release, SHA-256
+`534ccfdabc4c1ab46615bdda7dee932175021f190f52745123156fbde5529e61`.
+Personal windows and data were preserved. The tree TODO was removed only after
+installation and the main push. Folder mutations and the other product work
+remain in TODO; the full goal is active. These isolated tests do not establish
+live personal-provider or Windows/macOS execution. Performance measurements
+remain deferred, and quality/release workflows remain disabled.
+Documentation CI run **34091152799** completed build and deploy successfully for
+source/testing head **f1a6a63e18992e13f9655a61f47226b8da8944c3**.
+
+SFTP checkpoint `ff03b02` has green documentation CI **34359867454**.
+
+Folder checkpoint `97c9a9a` has green documentation CI **34360832298**.
+
+## Client branch history from the desktop integration onward
+
+The following entries were written on `feat/mobile-web-clients`, in their original order, and end at the merge entry. Their desktop discovery/publication/enrollment/reconciliation sections describe the client branch's own desktop implementation, which main's implementation replaced at the merge.
 
 ## Client worktree integration of committed desktop main
 
@@ -2783,3 +5518,52 @@ completion. The native sync ledger/runner, SDK scheduler, field/conflict control
 all settings/categories, accounts, automatic setup/restoration, authenticated
 interchange, live Google and Apple execution remain open. All 40 active requests
 remain; no performance budget or CI enablement changed.
+## Main merged into the client branch — 2026-09-09
+
+`main` at `c414227` was merged into `feat/mobile-web-clients` at `724f764` with `git merge --no-commit --no-ff`, producing the first tree that contains the desktop, mobile, browser and website sessions together. From this point `main` is the single integration branch for all three sessions; desktop changes are no longer ported into the client branch separately, and the client TODO/AGENTS porting instructions were removed.
+
+Resolution rules applied:
+
+- **Root code: main wins.** Main's desktop profile sync implementation (`src/profile_sync`, `src/engine/profile_sync.rs`, `src/store/profile_sync` and the related desktop UI) replaced this branch's own desktop implementation (`src/profiles/discovery.rs`, `src/profiles/enrollment` and related files). The client branch's desktop discovery/publication/enrollment/reconciliation entries above remain as history of that superseded implementation; the desktop behaviour that ships is main's.
+- **Shared profile core: superset.** The shared profile-core crate became a superset of both sides, and main's git pin (`e3e69a4`) became a path dependency on the crate in this tree.
+- **Provider changes ported.** Main's `a81d767`/`5eabb52` provider changes (destination recovery, folder mutation plans and checked provider commands) were ported into `shared/mail-core` at this branch's paths so the shared clients and the desktop use the same transport behaviour.
+- **Hooks: union.** `.githooks/pre-commit` runs every gate either branch required: formatting, Clippy with `-D warnings`, `cargo test --all-features`, the `shep-html-pixbuf` tests and `scripts/test_profile_core.py` (main's hook was already a superset of the client hook; the client branch's `scripts/check.sh` added nothing main lacked). The commit-msg hook is unchanged. `core.hooksPath` must be the relative `.githooks` at the repository level so each worktree runs its own checkout's hooks rather than the main checkout's.
+- **Tracking files: union.** TODO.md, this log, the request audit, AGENTS.md, README.md, the docs navigation and PERFORMANCE.md keep both histories. Request numbers R67 to R80 exist on both sides and are not renumbered; [the request audit](REQUEST_AUDIT.md) states the collision once and marks the client rows.
+
+No request is closed by the merge. Performance figures from either side were not re-measured on the merged tree; the client branch's failing native navigation gate stands until rechecked on an idle host. Quality and release workflows remain `.yml.disabled`; documentation CI stays enabled.
+
+Kept from the client branch in root code, each with its earlier completion record:
+desktop feature-scoped Google consent (`3e1181b`), the materialised exact-match
+search relation (`e568c84`), the covering unread-account badge index (`da6f2e8`),
+shared MIME parsing in store/print/reader tests (`4226f57`) and one divider
+settle wait in the native harness. Everything else in `src/`, `tests/` and
+`scripts/` follows main; this branch's own desktop profile implementation under
+`src/profiles`, `src/store/profile_*` and `src/ui/profiles` was deleted.
+`Drive::connect_fixture` keeps main's `Option<&str>` signature and fixed token
+with the union of both loopback checks. `scripts/test_profile_core.py` now
+verifies the workspace-member path dependency and tests it in place; the copied
+`tests/support/profile-core.Cargo.lock` is removed. `vendor/shep-html-pixbuf`
+requests litehtml's `vendored` feature so its own test target resolves inside
+the explicit workspace. `flutter/rust` and `backend` carry an empty
+`[workspace]` table so a nested checkout never joins a parent workspace. Main's
+shared `MailSyncItem` folder hierarchy and inbox lifecycle events reach the
+clients, which still cache flat selectable names (recorded under R30).
+
+Gates on the merged tree, logs under `artifacts/logs/merge-*.log`:
+
+| Gate | Result |
+| --- | --- |
+| Desktop fmt, Clippy `-D warnings`, `cargo test --all-features` | 990 passed, 3 ignored |
+| `cargo test -p shep-html-pixbuf`, `scripts/test_profile_core.py` | 2 passed; 47+6+13+3 passed |
+| Python `unittest discover` | 96 ran, 7 skipped (Windows installer) |
+| Selected native flows (`scripts/e2e.py`, 23 flows: Google consent, divider, search, forward, HTML, badges, folders, moves, preferences, read-on-leave, reply, backups, profile sync, print, move recovery) | 23/23 |
+| Shared crates: profile-core all-features/test-support/history/default; mail-core; mail-content | 69, 69, 29, 6; 41; 25 passed |
+| Flutter `analyze`, `flutter test` | clean; 129 passed |
+| Mobile Rust, backend, real browser beta gate | 81; 35 passed, 1 ignored; 1 passed |
+| Browser `npm test`, `npm run build` | 127 passed; built |
+| Parity checker, strict Zensical | 37 contracts; no issues |
+
+Not rerun on the merged tree: the full 282-flow desktop functional set, the
+latency benchmark, the full browser Playwright suite (web/ and the WASM inputs
+are unchanged by the merge) and the Android scenarios (mobile code unchanged
+apart from folder-name caching; the host suite covers it).

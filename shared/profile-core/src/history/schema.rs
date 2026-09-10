@@ -62,6 +62,12 @@ pub(super) fn initialize(db: &mut Connection, binding: &Binding) -> Result<Uuid>
     {
         return Err(Error::Binding);
     }
+    // Connection-owned scratch must live in the keyed database. SQLite TEMP
+    // files do not inherit SQLCipher protection, and a memory TEMP table would
+    // grow with the complete causal history. It is empty at committed boundaries.
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS history_ancestors(id TEXT PRIMARY KEY,expanded INTEGER NOT NULL DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS history_frontier ON history_ancestors(id) WHERE expanded=0;
+        DELETE FROM history_ancestors;")?;
     let device = parse_uuid(&saved.4)?;
     // An additive derived index is compatible with the v1 history format.
     tx.execute_batch("CREATE INDEX IF NOT EXISTS acknowledged_operations ON operations(seq) WHERE local=0 OR uploaded=1;")?;

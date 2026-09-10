@@ -1,9 +1,10 @@
 # OAuth and cross-device profiles: implementation handover
 
-This is the next implementation priority (R75/R02/R49 and
-`desktop-main:R92`). **Full cross-client profile sync is unfinished.** Desktop now has reviewed
+This is the next implementation priority (client R75, R02/R49 and main's
+R92). **Full cross-client profile sync is unfinished.** Desktop now has reviewed
 ongoing sync for eight preferences, alongside Google OAuth, encrypted Drive backups
-and initial enrollment. Complete account/settings sharing remains open. This document records the
+and initial enrollment; since the 2026-09-09 merge the desktop implementation is
+main's `src/profile_sync` (see [profiles](profiles.md) and [profile-drive](profile-drive.md)). Complete account/settings sharing remains open. This document records the
 contract to implement and verify in Rust desktop and Flutter, with browser parity
 tracked separately. Keep the linked entry first in the root TODO until delivery.
 
@@ -220,7 +221,7 @@ slot, activate only after successful validation, and preserve the old active
 pair on failure. The receiving device still performs its own Google OAuth flow;
 Google refresh tokens are never portable profile credentials.
 
-## Complete database transfer (desktop-main:R83)
+## Complete database transfer (main's R83, shipped in `93d4289`)
 
 Settings must offer full export/import with file selection, progress, cancellation
 and errors. Export a consistent online SQLite snapshot including original mail,

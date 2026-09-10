@@ -1,6 +1,13 @@
+pub mod config;
 mod drive;
+pub mod format;
+pub mod ftp;
+pub mod history;
 pub(crate) mod journal;
 pub(crate) mod restore;
+pub mod run;
+pub mod s3;
+pub mod sftp;
 
 use crate::{model::*, providers::google::Google};
 use aes_gcm::{
@@ -42,6 +49,9 @@ pub struct BackupCopy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackupTarget {
     Local(String),
+    S3(s3::Identity),
+    Sftp(sftp::Identity),
+    Ftp(ftp::Identity),
     GoogleDrive {
         client_id: String,
         connection_id: String,
@@ -51,11 +61,17 @@ impl BackupTarget {
     pub fn from_preferences(prefs: &Preferences) -> Self {
         match prefs.backup_destination {
             BackupDestination::Local => Self::Local(prefs.backup_folder.clone()),
+            BackupDestination::S3 => Self::S3(prefs.backup_s3.identity()),
+            BackupDestination::Sftp => Self::Sftp(prefs.backup_sftp.identity()),
+            BackupDestination::Ftp => Self::Ftp(prefs.backup_ftp.identity()),
             BackupDestination::GoogleDrive => Self::GoogleDrive {
                 client_id: prefs.active_google_client().to_string(),
                 connection_id: prefs.google_connection_id.clone(),
             },
         }
+    }
+    pub(crate) fn work_key(&self) -> String {
+        format!("backup:{self:?}")
     }
     fn secret_id(&self) -> String {
         use sha2::{Digest, Sha256};
@@ -72,14 +88,15 @@ pub(crate) trait PassphraseStore: Send + Sync {
     async fn read(&self, target: &BackupTarget) -> anyhow::Result<SecretString>;
     async fn write(&self, target: &BackupTarget, secret: SecretString) -> anyhow::Result<()>;
 }
-pub(crate) struct OsPassphraseStore;
+#[derive(Default)]
+pub(crate) struct OsPassphraseStore(pub crate::credentials::Credentials);
 #[async_trait]
 impl PassphraseStore for OsPassphraseStore {
     async fn read(&self, target: &BackupTarget) -> anyhow::Result<SecretString> {
-        crate::providers::read_secret(&target.secret_id()).await
+        self.0.read(&target.secret_id()).await
     }
     async fn write(&self, target: &BackupTarget, secret: SecretString) -> anyhow::Result<()> {
-        crate::providers::write_secret(&target.secret_id(), secret).await
+        self.0.write(&target.secret_id(), secret).await
     }
 }
 
@@ -230,6 +247,10 @@ pub(crate) fn verify_passphrase(bytes: &[u8], passphrase: &SecretString) -> anyh
 }
 
 pub fn decrypt(bytes: &[u8], passphrase: &SecretString) -> anyhow::Result<Snapshot> {
+    format::decode(bytes, Some(passphrase))
+}
+
+fn decrypt_legacy(bytes: &[u8], passphrase: &SecretString) -> anyhow::Result<Snapshot> {
     let compressed = decrypt_compressed(bytes, passphrase)?;
     let mut decoded = Zeroizing::new(Vec::new());
     zstd::Decoder::new(compressed.as_slice())?

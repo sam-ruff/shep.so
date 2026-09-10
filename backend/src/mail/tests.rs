@@ -43,7 +43,7 @@ impl HostedMail for FakeMail {
         self.calls.fetch_add(1, Ordering::SeqCst);
         out.send(MailSyncItem::Folders(
             c.account.id.clone(),
-            vec![folder.into()],
+            vec![shep_mail_core::folders::Mailbox::flat(folder.into())],
         ))
         .await?;
         let mail = parse_mail(

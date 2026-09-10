@@ -24,7 +24,7 @@ def prepare(version):
     archive = dist / f"shep-{version}-{system}-{platform.machine().lower()}.tar.gz"
     with tarfile.open(archive, "w:gz") as package:
         package.add(binary, arcname=binary.name)
-        for name in ("README.md", "LICENSE", "scripts/install-linux.sh", "scripts/install_linux.py", "assets/launcher.png", "vendor/shep-html-pixbuf/LICENSE", "vendor/shep-html-pixbuf/UPSTREAM.md", "vendor/iced_tiny_skia/LICENSE", "vendor/iced_tiny_skia/README.shep.md"):
+        for name in ("README.md", "LICENSE", "licenses/libcurl.txt", "licenses/curl-rust.txt", "vendor/curl/LICENSE", "vendor/curl/README.shep.md", "vendor/libsqlite3-sys/LICENSE", "vendor/libsqlite3-sys/OpenSSL-LICENSE.txt", "vendor/libsqlite3-sys/sqlcipher/LICENSE", "vendor/libsqlite3-sys/README.shep.md", "vendor/libsqlite3-sys/shep-lifecycle.patch", "vendor/libsqlite3-sys/shep-temp-policy.patch", "vendor/libsqlite3-sys/shep-export.patch", "scripts/install-linux.sh", "scripts/install_linux.py", "assets/launcher.png", "assets/shepherd-symbolic.svg", "vendor/shep-html-pixbuf/LICENSE", "vendor/shep-html-pixbuf/UPSTREAM.md", "vendor/iced_tiny_skia/LICENSE", "vendor/iced_tiny_skia/README.shep.md", "vendor/litehtml-sys/LICENSE", "vendor/litehtml-sys/README.shep.md", "vendor/litehtml-sys/vendor/litehtml/LICENSE", "vendor/litehtml-sys/vendor/litehtml/src/gumbo/LICENSE"):
             package.add(root / name, arcname=name)
     (dist / "SHA256SUMS").write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
     if system == "linux":

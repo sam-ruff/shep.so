@@ -10,6 +10,9 @@ pub struct HtmlBody {
     pub signature: [u8; 32],
     pub source: String,
     pub has_quotes: bool,
+    /// Plain letters get a reading column; authored layouts keep their geometry.
+    /// Determined with the MIME document off the UI thread.
+    pub reading_column: bool,
     pub remote_images: Vec<crate::model::RemoteImage>,
     pub bytes: usize,
     /// Content-ID resources are scoped to this MIME representation. These bytes
@@ -29,6 +32,7 @@ impl HtmlBody {
         }
         let document = scraper::Html::parse_document(&source);
         let remote_images = crate::remote_images::extract_document(&document);
+        let reading_column = !has_authored_layout(&document);
         let has_quotes = document
             .select(
                 &scraper::Selector::parse("blockquote,.gmail_quote,.yahoo_quoted")
@@ -44,6 +48,7 @@ impl HtmlBody {
                     .map(|image| image.url.len() + image.alt.len())
                     .sum::<usize>(),
             has_quotes,
+            reading_column,
             remote_images,
             signature: hash.finalize().into(),
             source,
@@ -52,9 +57,79 @@ impl HtmlBody {
     }
 }
 
+fn has_authored_layout(document: &scraper::Html) -> bool {
+    // Tables and explicit layout declarations are deliberate sender geometry.
+    // Typography, colors and paragraph margins alone still describe a letter.
+    // Be conservative with CSS escapes rather than guessing their meaning.
+    let selector = scraper::Selector::parse("table,[width],[height],[align],[style],style")
+        .expect("static selector");
+    document.select(&selector).any(|element| {
+        let value = element.value();
+        if value.name() == "table"
+            || ["width", "height", "align"]
+                .iter()
+                .any(|attr| value.attr(attr).is_some())
+        {
+            return true;
+        }
+        let css = if value.name() == "style" {
+            element.text().collect::<String>()
+        } else {
+            value.attr("style").unwrap_or_default().to_owned()
+        };
+        let css: String = css
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .flat_map(char::to_lowercase)
+            .collect();
+        css.contains('\\')
+            || [
+                "width:",
+                "height:",
+                "display:",
+                "position:",
+                "float:",
+                "columns:",
+                "column-count:",
+                "grid:",
+                "flex:",
+                "@media",
+                "@import",
+            ]
+            .iter()
+            .any(|property| css.contains(property))
+    })
+}
+
 #[cfg(test)]
 mod resource_tests {
     use super::*;
+    #[test]
+    fn reading_defaults_distinguish_letters_from_authored_layouts() {
+        for source in [
+            "<p>A plain letter.</p><blockquote>Earlier reply</blockquote>",
+            "<body style='background:#fafafa;color:#222;font-family:Arial'><p style='margin:0'>Letter with a signature.</p><b>Alex</b></body>",
+            "<style>p { font-size:14px; margin:0 }</style><p>Typography alone is a letter.</p>",
+        ] {
+            assert!(
+                HtmlBody::new(source.into(), HashMap::new()).reading_column,
+                "{source}"
+            );
+        }
+        for source in [
+            "<table><tr><td>Sender layout</td></tr></table>",
+            "<div style='max-width:800px'>Sized content</div>",
+            "<style>@media screen { .columns { display:flex } }</style><div>Columns</div>",
+            "<div style='position:absolute;left:50px'>Positioned content</div>",
+            "<div width='1000'>Legacy dimensions</div>",
+            "<div style='w\\69dth:1000px'>Escaped layout</div>",
+        ] {
+            assert!(
+                !HtmlBody::new(source.into(), HashMap::new()).reading_column,
+                "{source}"
+            );
+        }
+    }
     #[test]
     fn image_policy_metadata_exists_before_any_render_including_css_and_relative_urls() {
         let body = HtmlBody::new(r#"<base href="https://images.example.test/news/">

@@ -15,6 +15,10 @@ pub struct Reply {
     status: u16,
     body: Vec<u8>,
     headers: Vec<(String, String)>,
+    hold: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
 }
 impl Reply {
     pub fn new(status: u16, body: impl Into<String>) -> Self {
@@ -22,6 +26,7 @@ impl Reply {
             status,
             body: body.into().into_bytes(),
             headers: Vec::new(),
+            hold: None,
         }
     }
     pub fn binary(status: u16, body: Vec<u8>) -> Self {
@@ -29,11 +34,26 @@ impl Reply {
             status,
             body,
             headers: Vec::new(),
+            hold: None,
         }
     }
     pub fn header(mut self, name: &str, value: &str) -> Self {
         self.headers.push((name.into(), value.into()));
         self
+    }
+    /// Observe receipt of the whole request, then hold the response until the
+    /// test releases it. This establishes in-flight work without timing sleeps.
+    pub fn held(
+        mut self,
+    ) -> (
+        Self,
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (received, observed) = tokio::sync::oneshot::channel();
+        let (release, wait) = tokio::sync::oneshot::channel();
+        self.hold = Some((received, wait));
+        (self, observed, release)
     }
     pub fn disconnect() -> Self {
         Self::new(0, "")
@@ -104,6 +124,10 @@ impl Server {
                     body,
                     bytes: raw,
                 });
+                if let Some((received, release)) = reply.hold {
+                    let _ = received.send(());
+                    let _ = release.await;
+                }
                 if reply.status == 0 {
                     continue;
                 }

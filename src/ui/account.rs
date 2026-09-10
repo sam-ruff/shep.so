@@ -97,9 +97,7 @@ impl App {
                     ))
                     .push(self.account_field(
                         "Password / app password",
-                        if self.field("id").is_empty()
-                            || self.workspace.profile_reconnect.contains(self.field("id"))
-                        {
+                        if self.field("id").is_empty() {
                             "App password"
                         } else {
                             "Leave blank to keep the saved password"
@@ -196,11 +194,7 @@ impl App {
                 if self.field("smtp_separate") == "true" {
                     body = body.push(self.account_field(
                         "SMTP password",
-                        if self.workspace.profile_reconnect.contains(self.field("id")) {
-                            "Enter this device's SMTP password"
-                        } else {
-                            "Leave blank to keep a saved SMTP password"
-                        },
+                        "Leave blank to keep a saved SMTP password",
                         "smtp_password",
                         true,
                     ));
@@ -285,11 +279,15 @@ impl App {
                 )
                 .padding([11, 18])
                 .style(primary)
-                .on_press(if step == 2 {
-                    Message::SaveAccount
-                } else {
-                    Message::Field("setup_step", (step + 1).to_string())
-                }),
+                .on_press_maybe(
+                    (!self.busy.contains(&format!("account:{}", self.field("id")))).then(|| {
+                        if step == 2 {
+                            Message::SaveAccount
+                        } else {
+                            Message::Field("setup_step", (step + 1).to_string())
+                        }
+                    })
+                ),
             ]
             .spacing(8),
         )
