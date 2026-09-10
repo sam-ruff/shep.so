@@ -16,7 +16,7 @@ pub fn active() -> bool {
 fn mode() -> Option<String> {
     std::env::args()
         .find_map(|a| a.strip_prefix("--backup-run=").map(str::to_owned))
-        .filter(|value| matches!(value.as_str(), "ready" | "recover" | "warning"))
+        .filter(|value| matches!(value.as_str(), "ready" | "recover" | "warning" | "held"))
 }
 fn root() -> anyhow::Result<PathBuf> {
     Ok(super::workspace::path_from_arguments()?
@@ -111,12 +111,15 @@ pub fn provider(store: &Store, prefs: &Preferences) -> anyhow::Result<Box<dyn Ba
         local: backup::LocalBackup { directory: path },
         store: store.clone(),
         fail_once: mode().as_deref() == Some("recover"),
+        hold: mode().as_deref() == Some("held"),
     }))
 }
 struct FixtureProvider {
     local: backup::LocalBackup,
     store: Store,
     fail_once: bool,
+    /// The second upload stalls inside a blocking task, like a wedged transfer.
+    hold: bool,
 }
 #[async_trait]
 impl BackupProvider for FixtureProvider {
@@ -151,6 +154,16 @@ impl BackupProvider for FixtureProvider {
             .file_name()
             .is_some_and(|name| name == "second")
         {
+            if self.hold {
+                // The reservation is already journaled; only the transfer stalls.
+                // Process exit must not wait for this blocking thread.
+                tokio::task::spawn_blocking(|| {
+                    loop {
+                        std::thread::park();
+                    }
+                })
+                .await?;
+            }
             tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
         }
         self.local.upload_prepared(upload, data, checkpoint).await?;

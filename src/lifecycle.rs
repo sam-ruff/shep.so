@@ -21,6 +21,22 @@ impl Signal {
     }
 }
 
+/// Runs `exit` after `grace` unless the process has already ended. iced drops
+/// its Tokio runtime after the event loop stops, and that drop joins every
+/// running blocking task; a stalled transfer or credential call must not keep
+/// a windowless process alive once every required acknowledgment is in.
+pub fn bound_exit(grace: std::time::Duration, exit: impl FnOnce() + Send + 'static) {
+    let spawned = std::thread::Builder::new()
+        .name("shep-exit-deadline".into())
+        .spawn(move || {
+            std::thread::sleep(grace);
+            exit();
+        });
+    if let Err(error) = spawned {
+        tracing::warn!(%error, "Could not start the exit deadline");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -37,5 +53,22 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn exit_deadline_fires_only_after_its_grace_period() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        bound_exit(std::time::Duration::from_millis(200), move || {
+            let _ = sender.send(());
+        });
+        assert!(
+            receiver
+                .recv_timeout(std::time::Duration::from_millis(50))
+                .is_err(),
+            "normal shutdown must not be cut short"
+        );
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the deadline must end a lingering shutdown");
     }
 }
