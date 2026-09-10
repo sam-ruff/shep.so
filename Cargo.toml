@@ -1,3 +1,9 @@
+[workspace]
+resolver = "3"
+members = ["shared/mail-core", "shared/mail-content", "shared/profile-core"]
+default-members = [".", "shared/mail-core", "shared/mail-content", "shared/profile-core"]
+exclude = ["backend", "flutter/rust"]
+
 [package]
 name = "shep"
 version = "0.1.0"
@@ -8,9 +14,10 @@ license = "MIT"
 
 [features]
 default = []
-test-support = ["shep-profile-core/test-support"]
+test-support = ["shep-mail-core/test-support", "shep-profile-core/test-support"]
 
 [dependencies]
+shep-mail-core = { path = "shared/mail-core" }
 iced = { version = "0.14", default-features = false, features = ["tiny-skia", "tokio", "svg", "image-without-codecs", "advanced", "x11", "wayland", "linux-theme-detection"] }
 image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 rfd = "0.17"
@@ -18,8 +25,8 @@ scraper = "0.27"
 cssparser = "0.37"
 litehtml = "=0.2.6"
 shep-html-pixbuf = { path = "vendor/shep-html-pixbuf" }
-shep-profile-core = { git = "https://github.com/sam-ruff/shep.so", rev = "e3e69a4ea71baa6bcc6f98f2d567f6b542adc77d", features = ["drive"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs"] }
+shep-profile-core = { path = "shared/profile-core", features = ["drive"] }
+tokio ={ version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs"] }
 futures = "0.3"
 async-trait = "0.1"
 anyhow = "1"
@@ -91,7 +98,7 @@ same-file = "1"
 rcgen = "0.14.10"
 rand_sftp = { package = "rand", version = "0.10" }
 ab_glyph = "=0.2.32"
-shep-profile-core = { git = "https://github.com/sam-ruff/shep.so", rev = "e3e69a4ea71baa6bcc6f98f2d567f6b542adc77d", features = ["test-support"] }
+shep-profile-core = { path = "shared/profile-core", features = ["test-support"] }
 litehtml-sys = { version = "=0.2.5", features = ["shep-test-support"] }
 tokio = { version = "1", features = ["test-util"] }
 iced_tiny_skia = "=0.14.0"

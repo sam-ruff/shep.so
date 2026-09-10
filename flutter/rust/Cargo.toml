@@ -1,0 +1,41 @@
+[package]
+name = "shep_mobile_native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+# Standalone package: never join a parent checkout's workspace.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+async-trait = "0.1"
+flutter_rust_bridge = "=2.13.0"
+shep-mail-core = { path = "../../shared/mail-core" }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+secrecy = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+shep-profile-core = { path = "../../shared/profile-core", features = ["drive"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-native-tls"] }
+mailparse = "0.16"
+mime_guess = "2"
+sha2 = "0.10"
+base64 = "0.22"
+
+[target.'cfg(target_os = "android")'.dependencies]
+libc = "0.2"
+native-tls = { version = "0.2", features = ["vendored"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

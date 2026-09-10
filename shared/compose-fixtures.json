@@ -1,0 +1,159 @@
+[
+  {
+    "name": "reply-all excludes both own accounts and deduplicates To and Cc",
+    "raw": "From: Sender <sender@example.test>\r\nReply-To: Support <support@example.test>\r\nTo: owner@example.test, ALIAS@example.test, Peer <peer@example.test>\r\nCc: Peer <peer@example.test>, Copy <copy@example.test>\r\nMessage-ID: <current@example.test>\r\nReferences: <root@example.test>\r\nSubject: Shared reply\r\nDate: Sun, 6 Sep 2026 10:00:00 +0000\r\n\r\nFirst line\r\nSecond line\r\n",
+    "envelope": {
+      "reply_to": [
+        {
+          "email": "support@example.test",
+          "text": "Support <support@example.test>"
+        }
+      ],
+      "to": [
+        {
+          "email": "owner@example.test",
+          "text": "owner@example.test"
+        },
+        {
+          "email": "ALIAS@example.test",
+          "text": "ALIAS@example.test"
+        },
+        {
+          "email": "peer@example.test",
+          "text": "Peer <peer@example.test>"
+        }
+      ],
+      "cc": [
+        {
+          "email": "peer@example.test",
+          "text": "Peer <peer@example.test>"
+        },
+        {
+          "email": "copy@example.test",
+          "text": "Copy <copy@example.test>"
+        }
+      ],
+      "message_id": "<current@example.test>",
+      "references": [
+        "<root@example.test>"
+      ]
+    },
+    "own": [
+      "owner@example.test",
+      "alias@example.test"
+    ],
+    "all": true,
+    "sender": "Sender <sender@example.test>",
+    "subject": "Shared reply",
+    "text": "First line\r\nSecond line\r\n",
+    "expected": {
+      "to": "Support <support@example.test>, Peer <peer@example.test>",
+      "cc": "Copy <copy@example.test>",
+      "subject": "Re: Shared reply",
+      "in_reply_to": "<current@example.test>",
+      "references": [
+        "<root@example.test>",
+        "<current@example.test>"
+      ],
+      "body": "\n\nOn 06 Sep 2026, Sender <sender@example.test> wrote:\n> First line\n> Second line"
+    },
+    "timestamp": 1788688800
+  },
+  {
+    "name": "reply uses Reply-To and leaves Cc empty",
+    "raw": "From: Sender <sender@example.test>\r\nReply-To: Support <support@example.test>\r\nTo: owner@example.test, Peer <peer@example.test>\r\nCc: Copy <copy@example.test>\r\nSubject: rE: Shared reply\r\nIn-Reply-To: <root@example.test>\r\n\r\n",
+    "envelope": {
+      "reply_to": [
+        {
+          "email": "support@example.test",
+          "text": "Support <support@example.test>"
+        }
+      ],
+      "to": [
+        {
+          "email": "owner@example.test",
+          "text": "owner@example.test"
+        },
+        {
+          "email": "peer@example.test",
+          "text": "Peer <peer@example.test>"
+        }
+      ],
+      "cc": [
+        {
+          "email": "copy@example.test",
+          "text": "Copy <copy@example.test>"
+        }
+      ],
+      "message_id": null,
+      "references": [
+        "<root@example.test>"
+      ]
+    },
+    "own": [
+      "owner@example.test",
+      "alias@example.test"
+    ],
+    "all": false,
+    "sender": "Sender <sender@example.test>",
+    "subject": "rE: Shared reply",
+    "text": "",
+    "expected": {
+      "to": "Support <support@example.test>",
+      "cc": "",
+      "subject": "rE: Shared reply",
+      "in_reply_to": null,
+      "references": [
+        "<root@example.test>"
+      ],
+      "body": "\n\nOn 06 Sep 2026, Sender <sender@example.test> wrote:\n> "
+    },
+    "timestamp": 1788688800
+  },
+  {
+    "name": "reply to sent mail addresses external To recipients",
+    "raw": "From: owner@example.test\r\nTo: ALIAS@example.test, Peer <peer@example.test>\r\nSubject: Sent fixture\r\nMessage-ID: <sent@example.test>\r\nReferences: <sent@example.test>\r\n\r\nSent body",
+    "envelope": {
+      "reply_to": [
+        {
+          "email": "owner@example.test",
+          "text": "owner@example.test"
+        }
+      ],
+      "to": [
+        {
+          "email": "ALIAS@example.test",
+          "text": "ALIAS@example.test"
+        },
+        {
+          "email": "peer@example.test",
+          "text": "Peer <peer@example.test>"
+        }
+      ],
+      "cc": [],
+      "message_id": "<sent@example.test>",
+      "references": [
+        "<sent@example.test>"
+      ]
+    },
+    "own": [
+      "owner@example.test",
+      "alias@example.test"
+    ],
+    "all": false,
+    "sender": "owner@example.test",
+    "subject": "Sent fixture",
+    "text": "Sent body",
+    "expected": {
+      "to": "Peer <peer@example.test>",
+      "cc": "",
+      "subject": "Re: Sent fixture",
+      "in_reply_to": "<sent@example.test>",
+      "references": [
+        "<sent@example.test>"
+      ],
+      "body": "\n\nOn 06 Sep 2026, owner@example.test wrote:\n> Sent body"
+    },
+    "timestamp": 1788688800
+  }
+]

@@ -34,7 +34,8 @@ pub fn allowed(preferences: &Preferences, mail: &Mail) -> bool {
 }
 pub fn extract(parsed: &mailparse::ParsedMail<'_>) -> Vec<RemoteImage> {
     crate::email_content::extract(parsed)
-        .html
+        .ok()
+        .and_then(|content| content.html)
         .map(|h| h.remote_images)
         .unwrap_or_default()
 }

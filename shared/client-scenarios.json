@@ -1,0 +1,232 @@
+{
+  "schema": 1,
+  "reference": "Rust iced desktop committed 10d8569; merged-worktree verification and gaps in docs/CLIENT_PARITY.md",
+  "scenarios": [
+    {
+      "id": "google-cross-device-profiles",
+      "contract": "Google OAuth and appDataFolder profiles: first setup from either desktop or Flutter; new/existing-device discovery and enrollment; stable account IDs; category/profile toggles; offline conflicts, removal tombstones, lost-upload recovery and secure local credential activation. Follow docs/agents/PROFILE_SYNC_HANDOVER.md; profile sync must not replay mail provider actions. Desktop consent choices must bind the exact requested scopes through token fallback/refresh, candidate retry and late activation, while preserving the active grant during edits/failure; port equivalent platform consent before claiming parity.",
+      "mobile": "Shared profile codec/account mappings with actual Dart FFI fixtures. Native Google SDK consent now has separate requested/saved permissions, application/subject binding, scope checks, coalesced saved choices and durable local-only disconnect/cleanup; SDK-adapter, lifecycle, secure-store and real host/Android/Appium/offline-preview controls pass. Native shared history adds immutable bytes, missing ancestry, concurrent field versions/reviews, tombstones, cancelled-observer recovery and durable reserved upload IDs. Core history/worker tests, native provider-saturation/binding tests and the same actual FFI scenario on host/Android cover isolated stores and restart; metadata copying is not cloud access or Settings controls. Reviewed Flutter enrollment/application now has its own contract below. OPEN: safe account switching, automatic session restore, continuous reconciliation, all categories/settings, authenticated FFI/Google interchange, protected credentials and live registered-client/Apple interoperability. Flutter publication and tracked own-upload integration are now covered separately by mobile-profile-publication-controls.",
+      "browser": "Shared Rust WASM metadata contract via scripts/clients/test_profile_codec.mjs (Node ABI, not browser controls). OPEN: integrate browser provider consent/profile state/Settings with the same codec; beta identity does not grant Drive access. Full lifecycle and live cross-client verification remain open."
+    },
+    {
+      "id": "profile-drive-immutable-files",
+      "contract": "Verify Drive permissionId against the saved principal and keep application namespace separate from OAuth client IDs. Read at most 50 owned appData operation files per page; incomplete, repeated, foreign or invalid results must not become empty profiles. Persist one reserved file ID and exact operation bytes before upload; only verified matching remote media acknowledges the queue. Reconcile uncertain replies with the same ID, and never overwrite/delete conflicting records or reuse backup retention. Durable discovery preserves cross-page token/file tracking and replays arrivals before declaring the observed stream caught up; this is not enrollment.",
+      "mobile": "Optional shared native drive feature: scripted HTTP tests with real owning history workers cover identity, access errors/redirect refusal through the shared production client builder, ownership, common profile-drive-file.json bytes, bounds, malformed/partial pages, two isolated journals, missing ancestry, reservation-before-POST, response loss/restart, cancellation, same-ID retries and corrupt media. Existing Flutter bridge keeps its immutable worker binding. Flutter authorization, discovery, publication and reviewed enrollment/application have separate native/Android/control contracts. OPEN: full authenticated FFI interchange, ongoing reconciliation and Apple/live same-project execution. These transport tests alone do not establish continuous sync. Flutter publication and tracked own-upload integration are now covered separately by mobile-profile-publication-controls.",
+      "browser": "OPEN: implement provider consent, bounded browser Drive transport and durable history/catalog using the same operation/file contract. The shared default WASM codec remains compatible; beta login and Node codec tests do not verify browser Drive access or enrollment."
+    },
+    {
+      "id": "profile-discovery-recovery",
+      "contract": "Capture a change token before a full scan, stage bounded pages, persist verified file identities before independent history import and replay arrivals. Retain known identities through restart; missing/reclassified files, duplicates and pagination cycles must not become empty setup. Keep remote observations separate from enrolled offline edits; fence late data/errors after rescan. Complete observation is not account application or enrollment.",
+      "mobile": "Optional shared native catalog: scripted HTTP and real SQLite test durable page/retry progress, prepared receipts surviving a post-history failure, full/incremental scans, repeated arrivals, missing files/parents, conflicts/tombstones and 52 profiles across bounded pages. A 32-command owning thread, cancelled observer, held HTTP data/error, canonical alias and independent child-process lock regressions pass. Flutter now enables this catalog through an owned native session and Profiles and sync controls bound to the saved Google identity; see the mobile-profile-discovery-controls contract. Reviewed Flutter enrollment/application is covered separately below. OPEN: complete authenticated FFI/Google interchange, continuous reconciliation, all categories, credential policy, Apple/live access and performance. Flutter publication and tracked own-upload integration are now covered separately by mobile-profile-publication-controls.",
+      "browser": "OPEN: provider consent and an equivalent durable discovery/enrollment path in the separate browser client. Shared WASM codec compatibility alone does not exercise browser discovery or Settings.",
+      "desktop": "src/profiles/discovery.rs uses the same real Drive/catalog with 51-profile paging, failed scan/retry/reopen and foreign-principal tests. The active saved grant, lifecycle/client/principal and panel/request generations fence background work. Three saved test_desktop_profile_discovery_* iced flows cover actual pause/browse/retry/reopen/rescan, compact dark search/recovery and missing Drive permission. Execution and shipping belong in COMPLETION. OPEN: native large-page controls, desktop enrollment, complete settings, continuous sync and live registered-client verification. A changed active OAuth client requires a full rescan retaining known records before publication."
+    },
+    {
+      "id": "mobile-profile-discovery-controls",
+      "contract": "Bind the verified Drive principal to the exact saved Google account/service grant before displaying or advancing profile contents. Keep one owned session, bounded summary pages and independent mail navigation. Failed/unconfirmed identity saves, changed consent/disconnect, stale data/errors, lost observers and close/reopen must not expose another identity or leave a replacement owner closed. Retry/rescan and pause retain saved progress; discovery is not enrollment or actual account/settings application.",
+      "mobile": "GoogleConnection secure metadata retains the provider principal through re-consent and rejects mismatches/stale generations. Native fixed-Google sessions and real catalog ownership have held data/error/close/reopen and occupied-provider bridge tests; Dart tests cover binding failure, retained grant after denied consent, paging, stale refresh/disconnect, pause/retry, disposal and failed close. The shared host/Android widget scenario exercises 52 profiles, retry, pagination, appearance and mail navigation while paused; profile_discovery.mjs supplies Chromium and UiAutomator controls. Executed runs/captures/limitations belong in the completion log. Reviewed Flutter enrollment/application is connected separately. OPEN: complete category/lifecycle reconciliation, live registered Google, automatic device restart/session restore, Apple and performance. Flutter publication and tracked own-upload integration are now covered separately by mobile-profile-publication-controls.",
+      "browser": "The Flutter browser preview runs this mobile discovery UI with isolated fixtures for automation. OPEN: separate browser provider consent, durable history/discovery/enrollment and real settings/account application; beta login does not grant Drive access.",
+      "desktop": "Saved native discovery controls cover 51 synthetic profiles in 50/1-row pages, First/Next, light and compact dark, and independent mail navigation. Protocol tests retain source/error/cursor and active grant fences. Execution and shipping are recorded in COMPLETION. OPEN: automatic setup, continuous reconciliation, live registered Google and Apple."
+    },
+    {
+      "id": "mobile-profile-publication-controls",
+      "contract": "Freeze named accounts/settings before approval; page 50 review rows, preserve explicit shared/local identities and reject changed reviews. Publish immutable operations with a causal initialization barrier, persist exact staging requests before independent history writes, retain owned upload receipts before queue confirmation, and resume the same reserved files after failure/close. Pause and disconnected sessions cannot start another step; independent mail remains usable. Publication is not enrollment, credential import or continuous sync.",
+      "mobile": "profile_creation_test.dart and shared host/Android profile_creation_controls cover frozen settings, 52-account paging/details, lost approval, upload failure/retry, pause/browse/resume, appearance and disconnect. Native creation tests cover 75 accounts/78 records, legacy IDs, stale review, receipt loss, migration and owned close under provider pressure. Shared initialization and scripted Drive tests cover causal setup and failed own-upload receipts. profile_creation.mjs provides real Playwright/Appium controls. Executed results and captures are recorded in completion. Reviewed Flutter enrollment/application is covered separately. OPEN: full categories, continuous reconciliation, first-setup onboarding, browser publication, protected credentials, Apple/live Google and performance.",
+      "browser": "Flutter web is an isolated mobile control surface only. Shared WASM accepts the same initialization and mobile preference operations. OPEN: separate browser consent, history/Drive publication, reviewed enrollment and account/preferences application.",
+      "desktop": "Frozen mail-owner reviews, 50-account preparation/pages, selected preference save ordering, independent exact history staging and tracked Drive uploads now connect to actual iced controls. Store/HTTP regressions cover changed reviews, 75 accounts, lost staging receipts, mail database reopen after a lost Drive confirmation, no duplicate POST and independent catalog discovery. Saved test_desktop_profile_publication_* controls and executed results are recorded in completion. Reviewed desktop enrollment is covered separately. Native First/More controls also review 75 accounts in 50/25 rows with details and cancellation. OPEN: full settings/categories, continuous reconciliation, live registered-client interchange and credential protection."
+    },
+    {
+      "id": "mail-list",
+      "contract": "sender, subject, preview, account, unread and attachment indicators",
+      "mobile": "preview inbox",
+      "browser": "workspace.spec.ts"
+    },
+    {
+      "id": "optimistic-archive",
+      "contract": "remove immediately; navigation remains possible; rollback restores failed change",
+      "mobile": "workspace_test.dart / ui_test.dart / mail_test.dart / native.mjs",
+      "browser": "model.test.ts / workspace.spec.ts"
+    },
+    {
+      "id": "read-on-leave",
+      "contract": "Only deliberate visits arm read; leave queues a quiet ordered read; explicit unread wins; cached paging/counts and a new reader remain available through failure.",
+      "mobile": "workspace_test.dart / native_mail_test.dart / incoming_android_test.dart; native paging snapshot tests",
+      "browser": "model.test.ts / read-tracking.spec.ts / provider-flows.mjs"
+    },
+    {
+      "id": "counted-move-feedback",
+      "contract": "Six-second counted Archive/Delete/Move/Restored notifications, destination/account grouping, Dismiss and snapshot-scoped grouped Undo. Cancel unsent work; wait for acknowledged identities before reversal; retain partial failures and never repeat acknowledged Undo.",
+      "mobile": "move_feedback_test.dart / move_feedback_scenario.dart shared by ui_test.dart and native_mail_test.dart; real native reader/Inbox controls and projected page restoration; Apple and durable move-history review OPEN",
+      "browser": "move-feedback.test.ts / model.test.ts / move-feedback.spec.ts / provider-flows.mjs real Rust HTTPS; durable move-history review OPEN Committed Archive/Restored counts survive post-commit display warnings; Undo remains usable when the cache and receipt are confirmed, while incomplete cache/identity recovery remains guarded."
+    },
+    {
+      "id": "rapid-intent",
+      "contract": "older failure cannot overwrite newer flags/read or undo",
+      "mobile": "workspace_test.dart",
+      "browser": "model.test.ts"
+    },
+    {
+      "id": "swipes",
+      "contract": "left/right configurable; disabled is inert; icons match action; visible menu equivalent",
+      "mobile": "ui_test.dart / web.mjs / native.mjs",
+      "browser": "desktop controls; touch adaptation not required"
+    },
+    {
+      "id": "preferences",
+      "contract": "theme, preview and actions persist; failures preserve local edits",
+      "mobile": "workspace_test.dart / ui_test.dart / web.mjs / native.mjs",
+      "browser": "model.test.ts / workspace.spec.ts"
+    },
+    {
+      "id": "compose-failure",
+      "contract": "send refusal retains editor and text",
+      "mobile": "workspace_test.dart / ui_test.dart",
+      "browser": "workspace.spec.ts"
+    },
+    {
+      "id": "calendar-identity",
+      "contract": "edit selected calendar event; preserve source/end; read-only cannot save",
+      "mobile": "ui_test.dart",
+      "browser": "workspace.spec.ts"
+    },
+    {
+      "id": "production-isolation",
+      "contract": "no sample messages, credentials or mock success in production",
+      "mobile": "native_mail_test.dart production entry / verify_android.py APK fixture exclusion; preview remains separate",
+      "browser": "workspace.spec.ts; production build audit"
+    },
+    {
+      "id": "live-providers",
+      "contract": "same protocol/failure/recovery behavior as root Rust",
+      "mobile": "OPEN",
+      "browser": "OPEN"
+    },
+    {
+      "id": "apple-simulator",
+      "contract": "execute mobile scenarios on iOS Simulator",
+      "mobile": "mail_test.dart; NOT RUN on Linux",
+      "browser": "not an iOS native claim"
+    },
+    {
+      "id": "private-beta-gate",
+      "contract": "server gates app assets/API; verified exact allowlist, one-time callback, expiry, CSRF and logout",
+      "mobile": "not the mobile sign-in provider; OPEN mobile Google lifecycle",
+      "browser": "backend/src/tests.rs + real_browser_beta_gate / beta-gateway.mjs; live Google/VPS OPEN"
+    },
+    {
+      "id": "browser-provider-cache",
+      "contract": "verified account, scoped local cache/drafts, streamed sync failures, local POP3 flags, no password persistence",
+      "mobile": "NativeRepository / Rust SQLite tests / native_mail_test.dart; live verification OPEN",
+      "browser": "provider.test.ts / provider-flows.mjs / backend mail tests / shared-core TLS tests; live verification OPEN"
+    },
+    {
+      "id": "smtp-ambiguous-recovery",
+      "contract": "commit exact prepared MIME/envelope and outgoing ID before SMTP; lost/restarted/uncertain delivery never starts a fresh automatic send; terminal acknowledgments remain authoritative after server receipt expiry",
+      "mobile": "Rust outgoing_tests.rs + sent_tests.rs / outbox_test.dart / outbox_android_test.dart; shared handles/process locks, SMTP and Sent-ack storage failures, separate reviewed retries; full platform/live verification OPEN",
+      "browser": "provider.test.ts / provider-flows.mjs / backend prepare/digest/cancel/disconnect tests; Sent reservations/repair now covered; provider identity handover/grouping now covered; bounded history and full parity OPEN"
+    },
+    {
+      "id": "reply-envelope",
+      "contract": "Reply-To, own-address exclusion, To/Cc deduplication, references and quoted text agree across clients; cached replies need no server connection",
+      "mobile": "shared/compose-fixtures.json + shared Rust reply contract / Rust native reply test / attachments_android_test.dart",
+      "browser": "reply.test.ts / provider.test.ts / provider-flows.mjs"
+    },
+    {
+      "id": "draft-attachments",
+      "contract": "real file picker, multi-file import/cancel, durable binary blobs independent of text saves, removal/reopen and immutable submitted MIME",
+      "mobile": "Rust draft-file tests / attachments_android_test.dart + android_compose_fixture.py; Apple picker OPEN",
+      "browser": "provider.test.ts / real IndexedDB and picker provider-flows.mjs / cfg(test) Rust MIME assertions"
+    },
+    {
+      "id": "move-identity-undo",
+      "contract": "acknowledged receipts preserve stable client identity across sync/restart; queued Undo uses the acknowledged destination; unresolved sends cannot repeat automatically",
+      "mobile": "shared mail-core receipt/recovery tests / native Rust cache tests / native_mail_test.dart",
+      "browser": "provider.test.ts / provider-flows.mjs / authenticated gateway tests; complete ambiguous-move review OPEN"
+    },
+    {
+      "id": "outbox-review",
+      "contract": "active SMTP cannot be released; cancel an unused reservation atomically; reviewed return clones draft/file ownership, prevents stale resurrection, and needs a separate Send; manual mark preserves acknowledgement uncertainty; local Sent keeps exact bytes and newer local edits; local IMAP Sent actions do not access credentials, while server actions require credentials for the current stored identity",
+      "mobile": "outgoing_tests.rs / sent_tests.rs / outbox_test.dart / outbox_android_test.dart + android_outbox_fixture.py; paged review, separate APPEND decisions, known-ack repair, settings and local Sent/reopen; Sent-folder grouping covered; copy labels/history cleanup OPEN; offline local flag/read/move + locked/missing-credential refusal and visible reader recovery in native_repository_test.dart, ui_test.dart and outbox_android_test.dart",
+      "browser": "provider.test.ts / model.test.ts / real Rust HTTPS provider-flows.mjs; light/dark compact controls and axe; provider Sent lookup/reservations/review/repair in sent.test.ts and provider-flows.mjs; identity handover/grouping covered; labels/history/bounded paging OPEN"
+    },
+    {
+      "id": "provider-sent-copy",
+      "contract": "discover the configured/special-use Sent folder; verify complete tagged lookup success and exact Message-ID; journal destination before APPEND; never repeat an uncertain copy automatically; preserve acknowledgments, local edits and policy changes; adopt a cached provider identity atomically, retain old IDs for queued actions/replies, keep logical Sent membership and physical Undo destinations, and preserve an open reader/late body through handover",
+      "mobile": "shared sent/gateway TLS tests / native sent_tests.rs (rollback, migration, queued action, occupied capacity) / native_repository_test.dart / sent_handover_scenario.dart shared by ui_test.dart and native_mail_test.dart / actual bridge repair in outbox_android_test.dart; no live IMAP claim",
+      "browser": "backend mail/sent_tests.rs + sent.test.ts + handover.test.ts + storage.spec.ts + real Rust HTTPS provider-flows.mjs: reservations, exact MIME, lost response/reopen, explicit review, policy, atomic adoption/migration/rollback, aliases/replies/queued actions, cross-tab reader/Undo and physical Sent destinations; labels/history/bounded reads OPEN"
+    },
+    {
+      "id": "cached-incoming-attachments",
+      "contract": "cached MIME yields identical safe filenames, stable per-part content identities and exact decoded bytes across native Rust and browser WASM; save/cancel/error remains visible, stale files cannot save under old IDs, and an open reader survives exclusion from its refreshed list",
+      "mobile": "shared/attachment-fixtures.json + mail-content/mail-core tests / native Rust alias/reopen/occupied-capacity/corrupt-file tests / native_repository_test.dart / incoming_test.dart / incoming_android_test.dart + android_incoming_fixture.py real DocumentsUI cancel and exact-byte save; Apple export execution OPEN",
+      "browser": "attachment_content.test.ts shared WASM byte goldens / real Rust HTTPS provider-flows.mjs: blocked WASM retry, offline binary/Unicode/duplicate downloads, light/dark compact axe and screenshots; full lifecycle/large MIME OPEN"
+    },
+    {
+      "id": "reviewed-account-removal",
+      "contract": "review current local message/draft/file/delivery counts before local account removal; stale reviews abort atomically, occupied provider work remains protected, unfinished recovery requires explicit acknowledgement, server mail is untouched, and late saves cannot resurrect the removed identity; retain only tombstones and retryable native credential cleanup jobs",
+      "mobile": "accounts_tests.rs transaction/FTS rollback, stale draft/file review, occupied capacity, restart/tombstones; native_repository_test.dart locked cleanup/reconnect; incoming_android_test.dart real Preferences cancel/light/dark/remove/cleanup-retry; incoming_test.dart late mutation; Apple execution OPEN",
+      "browser": "account_removal.test.ts review/ownership/tombstone contracts; real IndexedDB storage.spec.ts atomic stale review, rollback, held Web Lock and late writes; model.test.ts late mutation; Rust HTTPS provider-flows.mjs cancellation, stale review/reload, compact light/dark axe, stale-tab reconnect/refresh and reopen; wider lifecycle/large-cache performance OPEN"
+    },
+    {
+      "id": "credential-activation",
+      "contract": "Save a candidate credential pair independently, activate its account configuration atomically, retain the committed connection through failed or lost acknowledgments, clean only unused keys, and reject obsolete credentials before provider work. Preserve effective TLS defaults when migrating legacy accounts.",
+      "mobile": "connections_tests.rs activation rollback/restart/migration/current and stale provider bindings; native_repository_test.dart lost OS/bridge acknowledgments and FIFO cleanup; native_mail_test.dart actual reconnect fields, failure/retry and cleanup, plus device secure-storage roundtrip; full connection editing and Apple execution OPEN",
+      "browser": "Tab passwords are replaced after the IndexedDB account commit; durable remembered credentials and reviewed connection editing remain OPEN. Native device-key slots are platform-specific."
+    },
+    {
+      "id": "find-visible-message",
+      "contract": "Literal Unicode case folding and Rust whitespace normalization preserve original UTF-16 match offsets. Search only displayed quote blocks; coalesce pending work, reject stale results/errors, wrap next/previous, reveal the active hit, preserve selection/copy and keep shortcuts out of text edits.",
+      "mobile": "shared/find-cases.json + native Rust occupied-capacity test; message_find_test.dart and actual FFI native_repository_test.dart; message_find_scenario.dart shared by ui_test.dart and incoming_android_test.dart; formatted_android_test.dart and formatted.mjs cover HTML spans, quote scope and plain choice; large-text bounds, remappable hardware keys and Apple execution OPEN",
+      "browser": "shared WASM goldens + message_find.test.ts coalescing/stale errors/shortcut migration; message-find.spec.ts real controls, remap/disable, quote scope, focus, compact light/dark axe; preferences-controls.spec.ts retains capture/modifiers/held native presses through provider completion, persists bindings, rejects conflicts and cancels on Escape/clear/focus/navigation without overwriting other settings; message-find-flow.mjs also runs offline against the real Rust HTTPS cached-mail path; formatted-reader.spec.ts adds cross-span HTML, quote indexing, resize, native Copy, CSS Highlight and fallback marks; large-text bounds and full lifecycle audit OPEN"
+    },
+    {
+      "id": "mime-representations",
+      "contract": "select alternatives once; scoped/ambiguous CIDs; named inline files; iterative nesting preflight; readable cache independent of damaged attachments",
+      "mobile": "shared/reader-fixtures.json / shared Rust reader and MIME tests / native cached-detail tests / incoming_android_test.dart; formatted_android_test.dart shared confined HTML representation; Apple and full image-policy parity OPEN",
+      "browser": "reader_content.test.ts uses the same WASM fixtures; provider-flows.mjs checks actual HTTPS text/files; formatted-reader.spec.ts exercises the confined HTML representation."
+    },
+    {
+      "id": "confined-formatted-message",
+      "contract": "Prepare HTML/CSS and bounded inline WebP from selected cached MIME off-thread; retain authored layout, ordinary text selection and shared Find; remove sender active content and automatic remote resources; isolate the display frame, reject stale events, retain scroll/selection through app updates and expose plain text/retry when preparation or display fails.",
+      "mobile": "Shared Rust/native bounded preparation and occupied-capacity test; formatted_message_test.dart generation/layout lifecycle; formatted_android_test.dart actual FFI/SQLite, CSS/inline image, Find/quotes/plain choice, scroll retention and damaged-message Retry. formatted_native.mjs uses Appium for real selection/Copy/paste, links and dark mode. formatted.mjs drives equivalent Flutter browser controls. See COMPLETION for execution; Apple, remote-image policy and large-document/performance parity OPEN.",
+      "browser": "formatted_content.test.ts native/WASM contract; formatted-reader.spec.ts actual controls, sandbox/CSP/network isolation, Copy, quotes, Find and fallback, cancellation/retry, compact light/dark evidence; provider-flows.mjs actual Rust HTTPS inherited CSP/runtime and plain choice. Remote-image policy and large-document/performance parity OPEN."
+    },
+    {
+      "id": "desktop-forward-print",
+      "contract": "Forward complete MIME in a new thread with retained files and optional formatting; print the complete selected source with confined resources",
+      "mobile": "Shared preparation/core fixtures plus native forward_tests.rs: atomic rollback, schema-8 migration, idempotent response-loss recovery, removed accounts, protected metadata and Outbox ownership. native_repository_test.dart and forward_android_test.dart use actual Rust/SQLite and controls for files, restart, refusal and independent edits. OPEN: Apple execution, full composition/multiple editors. Print: independent cached-alias native contract, host failure/lifecycle tests, printing_android_test.dart plus android_print_fixture.py drive actual cancellation/retry and formatted/long Save as PDF. OPEN: Apple, native keymap, remote-image/lifecycle/large-mail parity.",
+      "browser": "Shared WASM fixtures, forward_provider.test.ts and gateway forward_tests.rs preserve files/HTML/CIDs and reject invalid headers. forward.spec.ts drives actual workers, autosave, file removal/restart, failures/retry, remapping/input isolation and independent editor controls; provider-flows.mjs covers production worker/CSP and reopen through real Rust HTTPS. OPEN: full composition/multiple editors. Print: printing.spec.ts covers complete source, preparation retry, navigation/editor independence, remapping/input safety and actual window.print PDFs; HTTPS beta gate/CSP/worker covered. OPEN: other browser engines, remote-image/lifecycle/large-mail parity."
+    },
+    {
+      "id": "desktop-bulk-selection",
+      "contract": "Explicit focused-list selection across pages, frozen reviewed bulk jobs, per-message results and durable grouped Undo",
+      "mobile": "OPEN: K9 selection gestures, selection review, durable bulk controls and native recovery tests",
+      "browser": "bulk-journal.spec.ts / bulk-executor.spec.ts / bulk-removal.spec.ts: exact frozen export, 100,000-item staging with independent drafts, owned provider receipts, per-field intent, conservative restart, cache repair and account cleanup. bulk-controls.spec.ts / bulk-projection.spec.ts: actual mixed-account review/cancel/apply over all 125 rows, 20-job/50-item History, Pause/Resume, pending/acknowledged Undo, native held presses, explicit retry/uncertainty and restart. Worker queries/captures preserve newer fields and replay changed journal metadata. Lineage continuation: successive Archive/Flag controls retain all 125 captured rows; History clears old details/actions through held reads. Executor/storage regressions cover acknowledged individual moves, resolved UIDs, exact dispatch/Undo receipts, alias proof/flattening/rollback, lost cache checkpoints and refusal/projection retirement for unproven UID replacement. Undo continuation: bulk-controls.spec.ts holds both decision storage and later queries, verifies immediate 50-row/125-message restoration, and retains a newer reader flag and visible rejection after History closes. bulk-executor.spec.ts compares non-mutating counterfactuals with eventual execution and verifies successive in-flight dispatch folders. mail_paging.test.ts checks synchronous rollback, restored-row follow-up actions and stale query/cache refusal. OPEN: broader Undo lifecycle, startup notifications, abandoned-review cleanup, remaining staging/alias/overlapping-group lifecycle, cross-account transport, native equivalents, Apple and performance."
+    },
+    {
+      "id": "desktop-reading-defaults",
+      "contract": "Deliberate read-on-leave, refreshed counted action feedback, remote-image exceptions and stable reading anchors",
+      "mobile": "read-on-leave and counted-move-feedback contracts above; OPEN: image-policy controls/loading/anchors and OS badges/lifecycle",
+      "browser": "read-on-leave and counted-move-feedback contracts above; OPEN: image-policy controls/loading/anchors and background lifecycle"
+    },
+    {
+      "id": "captured-mail-selection",
+      "contract": "Capture the full ordered query independently of display pages; retain IDs/ranks in background storage, bound observations to 50 and queued gestures to 32, reject stale revisions, preserve passive membership, explicitly include arrivals, freeze exact review membership, and keep selection separate from reading. Scope changes release prior ownership; cache reads/saves remain independent.",
+      "mobile": "Native selection_tests.rs: 100,000 rows, aliases, explicit arrivals, ranges/freeze, failed recapture rollback, missing membership, held providers/selection with real cache reads/saves, bounded FIFO and cancellation. mail_selection_test.dart: ordered intent, optimistic failure/retry, lost acknowledgments, scrolling, stale observations and release. native_repository_test.dart: actual Dart/FFI capture/freeze/Clear with locked credentials and unread preservation. OPEN: controls, selection E2E, range/arrival UX, durable bulk execution, Apple and performance.",
+      "browser": "mail_selection.test.ts: bounded FIFO gestures/observations, optimistic offscreen/range choices, lost acknowledgments, stale refreshes, aliases, release/retry and disposal. selection-controls.spec.ts: actual Gateway/SQLite worker controls over 125 rows, cross-page checkbox/range/all/Clear/Done, scoped/remappable/disabled Ctrl/Meta+A, text/reader isolation, immediate scope/typing reset, passive arrivals, worker startup retry and pending capture with paging/preferences. selection-storage.spec.ts retains 100,000-row capture with independent committed draft saving, journal/migration/metadata and exact freeze contracts. Production HTTPS runs the built worker and actual selection controls. Bulk review/History/Undo and full-group projections have bulk-controls.spec.ts / bulk-projection.spec.ts evidence. Held History observation/provider/Undo-preview results must not stall progress; rejected previews retain usable controls and Refresh recovery. bulk-recovery.spec.ts covers startup notices for older failed/unconfirmed/interrupted/cache work, status-check retry, live-owner observation and tab-loss recovery; bulk_recovery.test.ts covers coalesced reads, retained failures, execution-boundary rejection and close. Native group recovery remains OPEN. OPEN: native control parity, Apple/other browser engines and performance. Mailbox query prerequisite: mailbox-storage.spec.ts covers persistent per-profile OPFS/SQLite pages, separate bodies, exact current predicates, projected flags/folders, aliases, source-incarnation/schema recovery, queue/tab/worker loss and 100,000-message rebuild with independent draft writes. Application integration: mailbox-controls.spec.ts drives actual paging, body/page Retry, stale data/errors and held row input; selection and existing provider/Undo controls use the active query worker. mail_paging.test.ts covers retained reader, metadata/body budgets, immediate projection/rollback, stale requests, account removal and evicted-metadata counted Undo. Indexed scans and body reads finish while the query lock is held; shutdown cannot recreate workers. OPEN: group lifecycle/performance and physical account-index cleanup lifecycle, whole-client cache/Outbox/removal bounds, fuzzy ranking, other browsers and performance."
+    },
+    {
+      "id": "ranked-mail-search",
+      "contract": "An exact short-body match ranks before weaker/newer typo alternatives; retain Unicode, literal query safety, folder/flag scopes and stable 50-row paging. Captured selection uses the same order. Compute exact FTS ranking once per query, with SQLite owning intermediate rows instead of UI arrays. Global unread-account counts should use a covering index without loading mail rows or sorting account groups.",
+      "mobile": "OPEN: full desktop fuzzy/relevance behavior and bounded cache/performance parity. Current native prefix FTS/paging remains covered by Rust cache tests; desktop query-plan guard, tests/search.rs, tests/selections.rs and native search/sort controls cover the reference.",
+      "browser": "OPEN: full fuzzy/relevance parity. Keep current worker query/paging and captured-selection controls; the native SQLite materialization change does not implement browser ranking."
+    },
+    {
+      "id": "reviewed-profile-enrollment",
+      "contract": "Copy original authenticated profile records into independent device history; freeze bounded account/settings reviews; keep local mail, drafts, newer edits and removed-account intent; changed endpoints require a separate connection. Imported accounts require device credential activation. Persist account receipts and per-field preference revisions so pause, disconnect, restart and lost replies cannot repeat imports or overwrite newer intent. Row choices and recoverable failures retain the displayed page of the same review. Desktop later-edit reconciliation retains immutable requests and atomic preference receipts, preserves concurrent versions and scopes remote cursors to the observation history identity; automatic scheduling and sync/conflict controls remain OPEN.",
+      "mobile": "Native schema11 enrollment/source/account/reconnect tests; profile_settings_test.dart and profile_application_test.dart persistence/ABA/lost receipt; profile_enrollment_test.dart controller generations/category choices; profile_enrollment_controls_test.dart and profile_enrollment_android_test.dart real review/paging/retry/pause/reconnect controls; profile_enrollment.mjs Playwright/Appium. Execution and shipping are recorded separately in COMPLETION. OPEN: complete authenticated FFI/Google interchange, automatic enrollment, continuous reconciliation, conflicts/shared removal, all portable categories, protected credentials and Apple/live verification. OPEN: ongoing reconciliation, restart/remote-application receipts and background sync controls equivalent to the desktop runner.",
+      "browser": "OPEN: browser enrollment/application. Preserve shared original-record export, codec/history and existing protected browser beta; preview controls do not establish hosted-client parity. OPEN: ongoing profile reconciliation and its authenticated ownership/controls.",
+      "desktop": "Actual iced review/details/category controls now apply account metadata and eight preferences. Original records enter independent owned history; mail-owner transactions retain receipts, mappings, reconnect guards and newer account/preference intent. Tests cover lost cursors/application receipts and file reopen, matching mail/drafts, explicit differing connections, removal, 78-row paging, unsupported fields, queued offline history, exact preference-save ordering, partial keychain failure and guarded backup/restore. Saved test_desktop_profile_enrollment_* flows cover application/reconnect entry, independent browsing/reopen, compact cancel and a newer theme kept. Native large-page controls additionally cover 50/26 rows, retained second-page choices, details, page revisits and selected account application with reconnect guards. Execution/shipping is in COMPLETION. OPEN: automatic setup, ongoing reconciliation, complete settings/categories, protected credentials, browser application and Apple/live Google interchange."
+    }
+  ]
+}

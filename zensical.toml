@@ -27,6 +27,8 @@ nav = [
     { "Profile Drive records" = "agents/profile-drive.md" },
     { "Detailed limits" = "agents/limits.md" },
     { "Performance evidence" = "PERFORMANCE.md" },
+    { "Mobile and browser parity" = "CLIENT_PARITY.md" },
+    { "Client testing" = "CLIENT_TESTING.md" },
     { "Completion audit" = "COMPLETION.md" },
   ] },
 ]

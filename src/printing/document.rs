@@ -4,8 +4,8 @@ use base64::Engine;
 use mailparse::MailHeaderMap;
 
 pub(super) fn prepare(raw: &[u8], options: Options, nonce: &str) -> anyhow::Result<String> {
-    let parsed = mailparse::parse_mail(raw)?;
-    let content = crate::email_content::extract(&parsed);
+    let parsed = shep_mail_core::mime::parse(raw)?;
+    let content = crate::email_content::extract(&parsed)?;
     let headers: Vec<_> = ["Subject", "From", "To", "Cc", "Date"]
         .into_iter()
         .filter_map(|name| {

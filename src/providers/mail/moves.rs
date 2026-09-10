@@ -6,6 +6,11 @@ use crate::mail_actions::{
     journal::MoveRecord,
     runner::{Connection, SubmissionError},
 };
+use crate::model::{Account, Protocol, StoredMail};
+use anyhow::Context;
+use async_trait::async_trait;
+use secrecy::SecretString;
+use std::time::Duration;
 
 pub struct ImapMoveConnection {
     source: Account,

@@ -937,21 +937,23 @@ impl DocumentContainer for PixbufContainer {
         }
         // The pattern transform maps natural image pixels into the CSS-computed
         // destination. Repetition is clipped separately on each allowed axis.
-        let mut paint = Paint::default();
-        paint.shader = tiny_skia::Pattern::new(
-            img.as_ref(),
-            SpreadMode::Repeat,
-            tiny_skia::FilterQuality::Bilinear,
-            1.,
-            Transform::from_row(
-                origin.width / img.width() as f32,
-                0.,
-                0.,
-                origin.height / img.height() as f32,
-                origin.x,
-                origin.y,
+        let paint = Paint {
+            shader: tiny_skia::Pattern::new(
+                img.as_ref(),
+                SpreadMode::Repeat,
+                tiny_skia::FilterQuality::Bilinear,
+                1.,
+                Transform::from_row(
+                    origin.width / img.width() as f32,
+                    0.,
+                    0.,
+                    origin.height / img.height() as f32,
+                    origin.x,
+                    origin.y,
+                ),
             ),
-        );
+            ..Default::default()
+        };
         self.pixmap
             .fill_rect(rect, &paint, Transform::from_scale(s, s), Some(&mask));
     }

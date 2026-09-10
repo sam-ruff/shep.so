@@ -119,6 +119,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ammonia"
+version = "4.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc6d763210e2eb7670d1a5183a08bebefa3f97db2a738a684f2ce00bd49f681d"
+dependencies = [
+ "cssparser",
+ "html5ever",
+ "maplit",
+ "url",
+]
+
+[[package]]
 name = "android-activity"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1264,7 +1276,7 @@ dependencies = [
  "openssl-sys",
  "schannel",
  "socket2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3615,6 +3627,12 @@ dependencies = [
  "data-encoding",
  "quoted_printable",
 ]
+
+[[package]]
+name = "maplit"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e2e65a1a2e43cfcb47a895c4c8b10d1f4a61097f9f254f183aee60cad9c651d"
 
 [[package]]
 name = "markup5ever"
@@ -6259,6 +6277,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "shep-html-pixbuf",
+ "shep-mail-core",
  "shep-profile-core",
  "tempfile",
  "tiny-skia",
@@ -6290,9 +6309,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "shep-mail-content"
+version = "0.1.0"
+dependencies = [
+ "ammonia",
+ "anyhow",
+ "base64 0.22.1",
+ "cssparser",
+ "image",
+ "mailparse",
+ "percent-encoding",
+ "regex",
+ "scraper",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "url",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "shep-mail-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-imap",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "futures",
+ "lettre",
+ "mailparse",
+ "native-tls",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "shep-mail-content",
+ "shep-profile-core",
+ "tokio",
+ "tokio-native-tls",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "shep-profile-core"
 version = "0.1.0"
-source = "git+https://github.com/sam-ruff/shep.so?rev=e3e69a4ea71baa6bcc6f98f2d567f6b542adc77d#e3e69a4ea71baa6bcc6f98f2d567f6b542adc77d"
 dependencies = [
  "fs2",
  "reqwest",
@@ -6301,6 +6364,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "uuid",

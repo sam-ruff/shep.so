@@ -678,8 +678,8 @@ fn profile_cached_html_read_only() {
     );
     for (index, bytes) in raw.into_iter().enumerate() {
         let started = std::time::Instant::now();
-        let parsed = mailparse::parse_mail(&bytes).unwrap();
-        let content = crate::email_content::extract(&parsed);
+        let parsed = shep_mail_core::mime::parse(&bytes).unwrap();
+        let content = crate::email_content::extract(&parsed).unwrap();
         let mime_ms = started.elapsed().as_secs_f64() * 1000.;
         let Some(body) = content.html.map(Arc::new) else {
             continue;

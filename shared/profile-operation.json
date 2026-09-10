@@ -1,0 +1,68 @@
+{
+  "format": "so.shep.profile-operation",
+  "major": 1,
+  "minor": 0,
+  "requires": ["causal-v1", "accounts-v1", "settings-v1"],
+  "namespace": "so.shep.fixture",
+  "profile": "10000000-0000-4000-8000-000000000001",
+  "generation": "20000000-0000-4000-8000-000000000001",
+  "device": "30000000-0000-4000-8000-000000000001",
+  "operation": "40000000-0000-4000-8000-000000000001",
+  "parents": ["40000000-0000-4000-8000-000000000000"],
+  "changes": [
+    {
+      "kind": "account_connection",
+      "account": {
+        "id": "50000000-0000-4000-8000-000000000001",
+        "email": "alex@example.test",
+        "protocol": "Imap",
+        "host": "imap.example.test",
+        "port": 993,
+        "username": "alex@example.test",
+        "incoming_security": "Tls",
+        "incoming_auth": "Password",
+        "smtp_host": "smtp.example.test",
+        "smtp_port": 587,
+        "smtp_username": "outgoing@example.test",
+        "smtp_security": "StartTls",
+        "smtp_auth": "Login",
+        "smtp_separate_password": true,
+        "sent_copy": "Automatic",
+        "sent_folder": "Sent/Équipe"
+      }
+    },
+    {
+      "kind": "account_name",
+      "id": "50000000-0000-4000-8000-000000000001",
+      "name": "Équipe"
+    },
+    {
+      "kind": "setting",
+      "key": "appearance",
+      "value": "Dark",
+      "future_hint": {
+        "label": "night 🌙",
+        "enabled": false
+      }
+    },
+    {
+      "kind": "setting",
+      "key": "preview_lines",
+      "value": 2
+    },
+    {
+      "kind": "profile_name",
+      "name": "Personal devices"
+    }
+  ],
+  "future_optional": {
+    "nested": [
+      null,
+      false,
+      3,
+      {
+        "label": "Résumé"
+      }
+    ]
+  }
+}

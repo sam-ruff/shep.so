@@ -218,6 +218,8 @@ pub enum Message {
     BackupAll,
     RetryBackup(String),
     GoogleLogin(bool),
+    GoogleDriveAccess(bool),
+    GoogleCalendarAccess(GoogleCalendarRequest),
     ReviewGoogleDisconnect,
     ConfirmGoogleDisconnect,
     CleanupGoogle,
@@ -1268,10 +1270,13 @@ impl App {
                     {
                         if prefs.google_client_id == self.preferences.google_client_id
                             && prefs.google_client_secret == self.preferences.google_client_secret
+                            && prefs.google_services == self.preferences.google_services
+                            && prefs.google_lifecycle.revision
+                                == self.preferences.google_lifecycle.revision
                         {
                             self.send(Command::GoogleLogin(prefs, retry));
                         } else {
-                            self.notice("Google client details changed. Connect Google again with the updated details.", true);
+                            self.notice("Google setup changed. Sign in again with the current permissions and client details.", true);
                         }
                     }
                 }
@@ -2727,13 +2732,32 @@ impl App {
             Message::GoogleLogin(retry) => {
                 if let Err(e) = self.read_preferences() {
                     self.notice(e.to_string(), true);
+                } else if !self.preferences.requested_google_services().any() {
+                    self.notice(
+                        "Choose Drive backup or Calendar access before signing in.",
+                        true,
+                    );
                 } else {
+                    self.preferences.google_services =
+                        Some(self.preferences.requested_google_services());
                     let request = self.preference_sync.changed();
                     self.pending_google_login = Some((request, self.preferences.clone(), retry));
                     if !self.queue_preference_write(request, self.preferences.clone()) {
                         self.pending_google_login = None;
                     }
                 }
+            }
+            Message::GoogleDriveAccess(enabled) => {
+                let mut services = self.preferences.requested_google_services();
+                services.drive = enabled;
+                self.preferences.google_services = Some(services);
+                self.save_preferences();
+            }
+            Message::GoogleCalendarAccess(calendar) => {
+                let mut services = self.preferences.requested_google_services();
+                services.calendar = calendar;
+                self.preferences.google_services = Some(services);
+                self.save_preferences();
             }
             Message::ReviewGoogleDisconnect => self.open(Dialog::GoogleDisconnect),
             Message::ConfirmGoogleDisconnect => {
@@ -4081,6 +4105,9 @@ impl App {
         data["calendar_error"] = serde_json::json!(self.calendar_setup.error);
         data["calendar_sources"] = serde_json::json!(self.workspace.calendars);
         data["google_grant"] = serde_json::json!(self.preferences.google_grant);
+        data["google_services"] = serde_json::json!(self.preferences.requested_google_services());
+        data["saved_google_services"] =
+            serde_json::json!(self.preference_sync.saved.value.requested_google_services());
         data["google_lifecycle"] = serde_json::json!(self.preferences.google_lifecycle);
         data["google_archived"] = serde_json::json!(self.workspace.google_archived);
         data["google_connected"] = serde_json::json!(self.google_connected);

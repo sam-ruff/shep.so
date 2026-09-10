@@ -6,7 +6,9 @@ license = "MIT"
 publish = false
 
 [dependencies]
-litehtml = { version = "=0.2.6", default-features = false }
+# The explicit client workspace resolves a `-p shep-html-pixbuf` test on its own,
+# so the pinned engine must request the vendored litehtml headers itself.
+litehtml = { version = "=0.2.6", default-features = false, features = ["vendored"] }
 cosmic-text = "0.14"
 tiny-skia = "0.11"
 image = { version = "0.25", default-features = false, features = ["webp"] }

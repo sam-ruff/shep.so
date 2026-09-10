@@ -1,0 +1,42 @@
+[
+  {
+    "name": "encoded-and-duplicate-files",
+    "raw": "From: Files <files@example.test>\r\nTo: owner@example.test\r\nSubject: Incoming files fixture\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=files\r\n\r\n--files\r\nContent-Type: multipart/alternative; boundary=representations\r\n\r\n--representations\r\nContent-Type: text/plain\r\n\r\nOBSOLETE-MIME-ALTERNATIVE\r\n--representations\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nCached incoming files.\r\n--representations\r\nContent-Type: multipart/related; boundary=inlineparts\r\n\r\n--inlineparts\r\nContent-Type: text/html\r\n\r\n<p>Formatted cached files.</p><img src=\"cid:logo\">\r\n--inlineparts\r\nContent-Type: image/webp; name=\"inline-logo.webp\"\r\nContent-Disposition: inline; filename=\"inline-logo.webp\"\r\nContent-ID: <logo>\r\nContent-Transfer-Encoding: base64\r\n\r\nUklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA\r\n--inlineparts--\r\n--representations--\r\n--files\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"../../binary.bin\"\r\nContent-Transfer-Encoding: base64\r\n\r\nAP8BDQo=\r\n--files\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Disposition: attachment; filename*=utf-8''r%C3%A9sum%C3%A9.txt\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nCaf=C3=A9\r\n--files\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"binary.bin\"\r\nContent-Transfer-Encoding: base64\r\n\r\nAAEC\r\n--files--\r\n",
+    "files": [
+      {
+        "id": "0.78b616c5b9b6b3c72b82dfeb33a404b9705c640c2277e8ca150b6d70bd9449d4",
+        "name": "binary.bin",
+        "media_type": "application/octet-stream",
+        "size": 5,
+        "bytes": "AP8BDQo="
+      },
+      {
+        "id": "1.73473dcc12b763085904a5279d048c4d5b3b008c46f1f32443b99de04aa83a14",
+        "name": "résumé.txt",
+        "media_type": "text/plain",
+        "size": 5,
+        "bytes": "Q2Fmw6k="
+      },
+      {
+        "id": "2.ae4b3280e56e2faf83f414a6e3dabe9d5fbe18976544c05fed121accb85b53fc",
+        "name": "binary.bin",
+        "media_type": "application/octet-stream",
+        "size": 3,
+        "bytes": "AAEC"
+      }
+    ]
+  },
+  {
+    "name": "content-type-filename",
+    "raw": "From: files@example.test\r\nSubject: Content type filename fixture\r\nContent-Type: application/octet-stream; name=\"fallback.bin\"\r\nContent-Transfer-Encoding: base64\r\n\r\nVFlQRSBGSUxF\r\n",
+    "files": [
+      {
+        "id": "0.30647e0511cfefc4a84d5f20c464bdd43cad0b27062fdd2ab9eb23cd8d13f11d",
+        "name": "fallback.bin",
+        "media_type": "application/octet-stream",
+        "size": 9,
+        "bytes": "VFlQRSBGSUxF"
+      }
+    ]
+  }
+]
