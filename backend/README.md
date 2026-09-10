@@ -15,7 +15,7 @@ cargo test --manifest-path backend/Cargo.toml real_browser_beta_gate -- --ignore
 cargo build --release --manifest-path backend/Cargo.toml
 ```
 
-`deploy/beta.env.example` documents server configuration. Set up a Google **Web application** OAuth client with `https://shep.so/auth/callback`, then supply the owner's exact Google email in `SHEP_BETA_EMAILS`. `SHEP_BETA_SUBJECTS` can additionally pin Google's stable subject ID. Do not infer either identity from Git metadata or use a Flutter/native OAuth client here.
+`deploy/beta.env.example` documents server configuration. Set up a Google **Web application** OAuth client with `https://shep.so/auth/callback`, then supply the owner's exact Google email in `SHEP_BETA_EMAILS`. `SHEP_BETA_SUBJECTS` can additionally pin Google's stable subject ID. Do not infer either identity from Git metadata or use a Flutter/native OAuth client here. Profiles and sync need the same client registered with the second redirect `https://shep.so/auth/google/callback` and `SHEP_PROFILE_NAMESPACE`; the resulting Drive/Calendar grant is a separate consent bound to the session, kept only in memory and never sent to the browser (see `docs/agents/PROFILE_BROWSER.md`).
 
 The gateway binds only to loopback behind HTTPS. Review `deploy/shep-beta.service` and `deploy/Caddyfile.example` alongside the existing mail VPS configuration. Public promo assets and protected web assets use separate directories. OAuth credentials belong in a root-readable environment file outside the repository. Never enable request-body/header/callback-URL logging, proxy disk buffering, mail caches or crash dumps for future credential-bearing transport.
 
