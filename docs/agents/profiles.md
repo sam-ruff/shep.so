@@ -36,7 +36,32 @@ Connection reviews read at most eight mapped native accounts per page. Each free
 
 **Keep this device's connection** publishes the reviewed local endpoints, preserving other field intent. **Add shared connection** assigns a fresh native account UUID and requires reconnection. The old account keeps its endpoints, credentials, mail and server identities, is named “(previous setup)” and remains local-only. It can later be removed through the normal account-removal review. No existing message UID or password is redirected to a different server. The shared operation retains its original optional fields and exact conflict resolutions.
 
-Native account changes and a durable pending operation are committed before shared-history admission. Restart retries that saved operation; it does not add another native account. Remote removals require a separate decision and cannot be revived by accepting an old connection review. Account password transfer, post-enrollment linking/suppression, removal choices and actual cross-client Google verification remain open. Local imports use reconnection while credential protection awaits the recorded user choice.
+Native account changes and a durable pending operation are committed before shared-history admission. Restart retries that saved operation; it does not add another native account. Remote removals require a separate decision and cannot be revived by accepting an old connection review. Account password transfer, global removal choices and actual cross-client Google verification remain open. Local imports use reconnection while credential protection awaits the recorded user choice.
+
+## Post-enrollment account linking
+
+A new shared account definition that arrives through the continuous loop is
+held for review whenever an unmapped native account has the same connection
+fields or the same address; the cycle reports it instead of silently creating
+another reconnecting account. The link review shares the eight-per-page
+account review controls and freezes the same profile, Google, consent,
+connection and native generations, the exact history revision and the exact
+shared operation. Conflicting definitions stay in the ordinary cycle report.
+
+**Link to existing account** is offered only when every portable connection
+field matches exactly, using the import-time comparison. It maps the native
+account to the shared UUID, keeps its mail, credentials, reconnect state and
+identity, and records the shared definition with its original optional fields
+as the common basis, so no connection is republished. As at import, this
+device's account name is then shared. **Add as a new account** creates a fresh
+reconnecting native identity, as the loop would have done. **Keep this
+device's account local** records durable suppression of the shared UUID
+without mapping or changing the native account; later local edits stay local.
+An address-only match, or a match on a different protocol or server, never
+offers Link, so no message UID or password can be redirected. Every choice is
+one cache transaction with no shared-history admission; restart reads the saved
+result and never duplicates accounts. Stale native, Google, option, history or
+already-decided identities reject the choice with a refresh message.
 
 
 Shared account removal is reviewed separately from endpoint choices. Keep on
@@ -49,7 +74,6 @@ controls and does not delete server mail or publish a shared removal.
 Keep decisions validate the selected profile, sync consent, Google lifecycle,
 native connection revision and exact reviewed remote history before committing.
 No cloud tombstone is inferred from removing an account only on this device.
-Global account removal, post-enrollment linking/suppression controls and password
-transfer remain separate follow-ups. The saved native `profile_account_removal`
+Global account removal and password transfer remain separate follow-ups. The saved native `profile_account_removal`
 scenarios cover Keep, Cancel, confirmed removal and restart; Rust fixtures retain
 actual cached mail through remote removal and reject stale choices.

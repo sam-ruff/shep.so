@@ -203,8 +203,9 @@ impl Engine {
                 control.check()?;
                 let after = match action {
                     Request::ResolveAccount { review, choice, .. } => {
+                        let affected = review.affected_account(&choice).to_owned();
                         let _account = control
-                            .read(async { Ok(self.account_access(&review.local().id).await) })
+                            .read(async { Ok(self.account_access(&affected).await) })
                             .await?;
                         control.check()?;
                         sync::account_reviews::accept(

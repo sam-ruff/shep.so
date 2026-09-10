@@ -1,10 +1,86 @@
 use super::*;
 use crate::profile_sync::{
+    account_reviews::Match,
     continuous::{Observed, Report},
+    join::{Reconnect, links},
     metadata,
-    state::Field,
+    state::{Field, State as Replication},
 };
 use shep_profile_core::{Action, Change, history};
+use std::collections::BTreeMap;
+
+/// Unmapped native accounts resembling a new shared definition. Exact matches
+/// may reuse their credentials; same-address matches may only be added or kept.
+pub(super) fn link_matches(
+    state: &Replication,
+    accounts: &[Account],
+    shared: &Account,
+) -> Vec<Match> {
+    link_matches_with(state, accounts, shared, &BTreeMap::new())
+}
+pub(super) fn link_matches_with(
+    state: &Replication,
+    accounts: &[Account],
+    shared: &Account,
+    native: &BTreeMap<String, u64>,
+) -> Vec<Match> {
+    accounts
+        .iter()
+        .filter(|local| !state.accounts.contains_key(&local.id))
+        .filter_map(|local| {
+            let exact = links::compatible(local, shared).unwrap_or(false);
+            (exact || links::same_address(local, shared)).then(|| Match {
+                account: local.clone(),
+                exact,
+                native_revision: native
+                    .get(&format!("local-account-connection:{}", local.id))
+                    .copied()
+                    .unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+/// Create a fresh reconnecting native identity for a shared definition. The
+/// initial name is a real basis so a later shared name applies cleanly.
+pub(super) fn add_shared_account(
+    tx: &Connection,
+    state: &mut Replication,
+    accounts: &mut Vec<Account>,
+    reconnect: &mut Reconnect,
+    mut imported: Account,
+    shared: uuid::Uuid,
+) -> anyhow::Result<Change> {
+    let id = uuid::Uuid::new_v4().to_string();
+    connections::allow(tx, ConnectionKind::Account, &id)?;
+    imported.id = id.clone();
+    state.accounts.insert(id.clone(), shared);
+    reconnect.insert(id.clone());
+    if !imported.sent_folder.is_empty() {
+        tx.execute(
+            "INSERT INTO sent_folders(account,folder) VALUES(?,?)",
+            params![id, imported.sent_folder],
+        )?;
+    }
+    let name = Change {
+        action: Action::AccountName {
+            id: shared,
+            name: imported.name.clone(),
+        },
+        extra: Default::default(),
+    };
+    state
+        .fields
+        .entry(history::target(&name.action))
+        .or_insert(Field {
+            local: Some(name.clone()),
+            remote: None,
+            revision: 0,
+            native_revision: 0,
+        });
+    accounts.push(imported);
+    Ok(name)
+}
 
 impl Store {
     pub(crate) async fn apply_profile_observation(
@@ -112,41 +188,26 @@ impl Store {
                             }
                             false
                         } else {
-                            let Ok(mut imported) =
-                                metadata::review_account(account, &account.email)
+                            let Ok(imported) = metadata::review_account(account, &account.email)
                             else {
                                 report.review += 1;
                                 continue;
                             };
-                            let id = uuid::Uuid::new_v4().to_string();
-                            connections::allow(&tx, ConnectionKind::Account, &id)?;
-                            imported.id = id.clone();
-                            state.accounts.insert(id.clone(), account.id);
-                            reconnect.insert(id.clone());
-                            if !imported.sent_folder.is_empty() {
-                                tx.execute(
-                                    "INSERT INTO sent_folders(account,folder) VALUES(?,?)",
-                                    params![id, imported.sent_folder],
-                                )?;
+                            // A native account with the same connection or
+                            // address needs an explicit link/add/keep choice.
+                            if !link_matches(&state, &accounts, &imported).is_empty() {
+                                report.review += 1;
+                                continue;
                             }
-                            // A following name may arrive on another page. Its
-                            // initial native value is a real basis for late edits.
-                            let name = Change {
-                                action: Action::AccountName {
-                                    id: account.id,
-                                    name: imported.name.clone(),
-                                },
-                                extra: Default::default(),
-                            };
-                            let name_target = history::target(&name.action);
-                            values.insert(name_target.clone(), name.clone());
-                            state.fields.entry(name_target).or_insert(Field {
-                                local: Some(name),
-                                remote: None,
-                                revision: 0,
-                                native_revision: 0,
-                            });
-                            accounts.push(imported);
+                            let name = add_shared_account(
+                                &tx,
+                                &mut state,
+                                &mut accounts,
+                                &mut reconnect,
+                                imported,
+                                account.id,
+                            )?;
+                            values.insert(history::target(&name.action), name);
                             account_changed = true;
                             true
                         }

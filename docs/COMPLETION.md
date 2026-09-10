@@ -127,6 +127,47 @@ These are fictional native fixtures on Linux/Xvfb: which save blocked Sam's
 personal close remains inferred rather than observed, and Windows/macOS
 execution of the Quit path is unverified.
 
+## Post-enrollment account linking and suppression (R02/R49) — lane verification
+
+Lane `worktree-agent-adfeba145fe019aee`, branched from `64437ee` and merged
+with `ee1305c`, adds the third account review kind. When the continuous loop
+observes a new shared account definition and this device has an unmapped
+native account with exactly the same portable connection fields or the same
+address, `apply_profile_observation` holds the definition and reports a
+review instead of creating a fresh reconnecting account. `account_reviews::
+prepare` appends link candidates after the mapped-account reviews on the same
+eight-per-page cursor (`link:<uuid>` continuation), freezing the profile,
+Google, consent and connection generations, each candidate's native
+connection revision, the exact history revision and the exact shared
+operation. `Store::resolve_profile_account_link` commits one of three choices
+in a single cache transaction: Link to existing account (exact matches only;
+maps the native id to the shared UUID, records the original change with its
+optional fields as the common basis, changes no native row, credential or
+mail; the device name is then shared as at import), Add as a new account
+(fresh reconnecting identity through the shared `add_shared_account` helper)
+or Keep this device's account local (durable suppression of an unmapped UUID;
+`State::validate` now allows suppressed UUIDs without a mapping). Stale
+native, Google, option, history or already-decided identities are rejected
+without partial application; suppressed UUIDs stop being reported. The engine
+locks the chosen native account for the request; the UI adds an exact-match
+picker when several native accounts match and clears link choices with the
+review page.
+
+Verification on the lane: seven targeted tests (`profile_account_link_*` in
+`src/store/profile_sync/state/account_link_tests.rs` plus the UI identity test)
+and 115 matching `cargo test --all-features profile_` executions pass, clippy
+is clean, and `existing-link` native scenarios pass with reviewed captures:
+`test_profile_account_link_native_links_existing_account_and_keeps_mail`
+(`b31793960fb7`, light: Link then Keep local on the address-only card, restart
+publishes only the device name), `..._adds_new_account_once_across_restart`
+(`acf0c037c2e1`, light: fourth account named Studio (shared) beside Design
+studio) and `..._keep_local_in_compact_dark_window` (`87339075b31c`, 900x640
+dark). The twelve selected `profile_account`/`profile_join_link` scenarios pass
+together (`artifacts/logs/e2e-linking.log`). Limitations: the fixture is an
+owned loopback Drive, not live Google; incremental change-token pulls,
+password transfer and cross-client verification remain open; conflicting new
+definitions still stay in the cycle report without a link review.
+
 ## Journal ownership, removal reviews and duplicate labels — integrated verification
 
 Three lanes were merged into `main` with `--no-ff` after each was rebased onto
