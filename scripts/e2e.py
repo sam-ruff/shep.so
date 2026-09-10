@@ -2600,6 +2600,94 @@ class NativeFlows(unittest.TestCase):
         self.assertEqual(connection["remote"]["account"]["host"], "imap.example.test")
         self.assertIsNone(checkpoint["pending"])
 
+    LINK_STUDIO = "80000000-0000-4000-8000-000000000002"
+    LINK_PERSONAL = "80000000-0000-4000-8000-000000000003"
+
+    def open_link_reviews(self, dark=False):
+        """Populated device imports Home, then two later definitions arrive: one
+        exactly matching Design studio and one sharing Personal's address only."""
+        started = self.mcp.call("desktop.start", profile_sync="existing-link")
+        print(f"Post-enrollment account link evidence: {started['artifacts']}", flush=True)
+        self.open_shared_profiles()
+        self.mcp.batch(click(370, 442), check("profile_sync.profiles.0.name", "Home"),
+                       click(1130, 494), check("profile_sync.join_review.name", "Home"),
+                       check("profile_sync.join_review.page.0.matches", []), click(340, 603),
+                       check("profile_sync.enrollment.selection.ready", True), check("account_count", 3),
+                       check("account_reconnect_count", 1), check("profile_sync.working", False), check("dark", False))
+        if dark:
+            # A local appearance edit after import; the next check publishes it.
+            self.mcp.batch(click(292, 156), check("settings_tab", "General"), click(725, 360), check("dark", True),
+                           check("preferences_saved", True))
+            self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 2), check("profile_sync.working", False),
+                       check("account_count", 3), click(375, 665),
+                       check("profile_sync.account_reviews.0.link.linkable", True),
+                       check("profile_sync.account_reviews.0.link.matches.0.id", "preview-work"),
+                       check("profile_sync.account_reviews.1.link.linkable", False),
+                       check("profile_sync.account_reviews.1.link.matches.0.id", "preview-personal"),
+                       check("profile_sync.working", False), {"type":"hover", "x":1000, "y":780},
+                       {"type":"scroll", "amount":6}, wait(100))
+        return started
+
+    def test_profile_account_link_native_links_existing_account_and_keeps_mail(self):
+        started = self.open_link_reviews()
+        total = self.mcp.call("desktop.state")["total"]
+        self.mcp.batch(shot("profile-account-link-choices"), click(365, 456),
+                       check("profile_sync.account_reviews.0.link.matches.0.id", "preview-personal"),
+                       check("profile_sync.working", False), check("account_count", 3), check("account_reconnect_count", 1),
+                       shot("profile-account-link-linked"), {"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":12},
+                       wait(100), shot("profile-account-link-address-only"), click(389, 697),
+                       check("profile_sync.account_reviews", []), check("profile_sync.working", False),
+                       check("account_count", 3), shot("profile-account-link-kept-local"), {"type":"restart"},
+                       check("account_count", 3), key("ctrl+1"), check("tab", "Mail"), check("total", total))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_sync.cycle.review", 0), check("profile_sync.cycle.published", 1),
+                       check("account_count", 3), check("account_reconnect_count", 1), shot("profile-account-link-restarted"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        checkpoint = self.profile_checkpoint(started)
+        self.assertEqual(checkpoint["accounts"]["preview-work"], self.LINK_STUDIO)
+        self.assertEqual(checkpoint["suppressed"], [self.LINK_PERSONAL])
+        self.assertEqual(checkpoint["local_only"], ["preview-personal"])
+        self.assertIsNone(checkpoint["pending"])
+        self.assertEqual(checkpoint["fields"][f"account:{self.LINK_STUDIO}:name"]["remote"]["name"], "Design studio")
+
+    def test_profile_account_link_native_adds_new_account_once_across_restart(self):
+        started = self.open_link_reviews()
+        self.mcp.batch(click(360, 501), check("profile_sync.account_reviews.0.link.matches.0.id", "preview-personal"),
+                       check("profile_sync.working", False), check("account_count", 4), check("account_reconnect_count", 2),
+                       shot("profile-account-link-added"), {"type":"restart"}, check("account_count", 4),
+                       check("account_reconnect_count", 2))
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_sync.cycle.review", 1), check("account_count", 4), shot("profile-account-link-added-restarted"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        checkpoint = self.profile_checkpoint(started)
+        with sqlite3.connect((Path(started["artifacts"])/"fixture.sqlite").as_uri()+"?mode=ro", uri=True) as cache:
+            accounts = json.loads(cache.execute("SELECT value FROM kv WHERE key='accounts'").fetchone()[0])
+        added = next(a for a in accounts if a["name"] == "Studio (shared)")
+        self.assertEqual(added["host"], "imap.example")
+        self.assertEqual(checkpoint["accounts"][added["id"]], self.LINK_STUDIO)
+        self.assertEqual(sorted(checkpoint["local_only"]), ["preview-personal", "preview-work"])
+        self.assertEqual(checkpoint["suppressed"], [])
+
+    def test_profile_account_link_native_keep_local_in_compact_dark_window(self):
+        started = self.open_link_reviews(dark=True)
+        self.mcp.batch(check("profile_sync.cycle.published", 1), {"type":"resize", "width":900, "height":640}, wait(100), {"type":"hover", "x":780, "y":500},
+                       {"type":"scroll", "amount":-20}, wait(100), {"type":"scroll", "amount":7}, wait(100),
+                       shot("profile-account-link-compact-dark"), {"type":"scroll", "amount":1}, wait(100),
+                       click(367, 306), check("profile_sync.working", False),
+                       check("profile_sync.account_reviews.0.link.matches.0.id", "preview-personal"), check("account_count", 3),
+                       shot("profile-account-link-compact-kept"), {"type":"restart"}, check("account_count", 3))
+        self.open_shared_profiles(search_x=650)
+        self.mcp.batch(click(340, 548), check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_sync.cycle.review", 1), check("account_count", 3), check("account_reconnect_count", 1))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        checkpoint = self.profile_checkpoint(started)
+        self.assertEqual(checkpoint["suppressed"], [self.LINK_STUDIO])
+        self.assertEqual(list(checkpoint["accounts"].values()), ["50000000-0000-4000-8000-000000000001"])
+        self.assertEqual(sorted(checkpoint["local_only"]), ["preview-personal", "preview-work"])
+
 
     def test_profile_setting_review_native_chooses_shared_conflict_and_keeps_choice_after_restart(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-conflict", profile_login=True, empty_profile=True)

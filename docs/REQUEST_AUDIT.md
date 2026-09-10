@@ -27,6 +27,8 @@ crash recovery from every step and guarded orphan cleanup are implemented with
 ten publication tests; startup stays plaintext and the remaining activation
 blockers are listed in completion and the encryption boundary document.
 
+10 September (R02/R49, desktop lane `worktree-agent-adfeba145fe019aee`): post-enrollment account linking and suppression on populated devices is implemented and lane-verified (seven targeted tests, 115 profile tests, three native `existing-link` scenarios with light and compact-dark captures); a new shared definition matching an unmapped native account is held for Link/Add new/Keep local instead of silently creating a reconnecting account. Integration and push remain with the primary agent; incremental pulls, credential protection and live Google verification stay open in TODO.
+
 9 September consolidation (R91, R02/R49/R92, R15, R22, R32): the restarted
 desktop session resolved the interrupted backup-history cherry-pick as
 `c35e2b5`, then merged bounded backup journal ownership (`42c69b4`), remote

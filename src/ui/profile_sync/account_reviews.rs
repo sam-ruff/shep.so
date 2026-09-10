@@ -13,6 +13,22 @@ impl std::fmt::Display for Candidate {
         f.write_str(&self.label)
     }
 }
+/// A native account offered for linking to a new shared definition.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalCandidate {
+    id: String,
+    label: String,
+}
+impl LocalCandidate {
+    pub(super) fn id(&self) -> &str {
+        &self.id
+    }
+}
+impl std::fmt::Display for LocalCandidate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label)
+    }
+}
 fn connection(account: &Account) -> Element<'_, Message> {
     column![
         text(format!("{} · {}", account.email, account.protocol)).size(13),
@@ -70,6 +86,10 @@ impl App {
                 body = body.push(text("No connections on this page need a choice.").size(13));
             }
             for review in reviews {
+                if let Some(link) = review.link() {
+                    body = body.push(self.shared_account_link(review, link, idle));
+                    continue;
+                }
                 if review.removed() {
                     body = body.push(column![
                         text(&review.local().name).font(BOLD).size(14),
@@ -159,12 +179,116 @@ impl App {
     }
 }
 
+impl App {
+    fn shared_account_link<'a>(
+        &'a self,
+        review: &'a Arc<crate::profile_sync::account_reviews::Review>,
+        link: &'a crate::profile_sync::account_reviews::Link,
+        idle: bool,
+    ) -> Element<'a, Message> {
+        let state = &self.profile_sync;
+        let exact: Vec<_> = link.matches.iter().filter(|m| m.exact).collect();
+        let chosen = state
+            .account_links
+            .get(&review.shared())
+            .map(|c| c.id.clone())
+            .filter(|id| exact.iter().any(|m| m.account.id == *id))
+            .or_else(|| exact.first().map(|m| m.account.id.clone()));
+        let local = link
+            .matches
+            .iter()
+            .find(|m| Some(&m.account.id) == chosen.as_ref())
+            .or_else(|| link.matches.first());
+        let mut card = column![
+            text(&link.account.name).font(BOLD).size(14),
+            text(&link.account.email).size(13),
+            muted(if link.linkable() {
+                "New in the shared profile. This device already has an account with the same connection."
+            } else {
+                "New in the shared profile. This device has an account with the same address but different server settings, so it cannot be linked."
+            })
+            .size(12),
+            text("Shared").font(BOLD).size(12),
+            connection(&link.account),
+            text("This device").font(BOLD).size(12),
+        ]
+        .spacing(8);
+        if exact.len() > 1 {
+            let choices: Vec<_> = exact
+                .iter()
+                .map(|m| LocalCandidate {
+                    id: m.account.id.clone(),
+                    label: m.account.name.clone(),
+                })
+                .collect();
+            let selected = choices
+                .iter()
+                .find(|c| Some(&c.id) == chosen.as_ref())
+                .cloned();
+            let candidate_review = review.clone();
+            card = card.push(
+                pick_list(choices, selected, move |c| {
+                    Message::ProfileSync(Action::LinkCandidate(candidate_review.clone(), c))
+                })
+                .width(Length::Fill)
+                .text_size(13)
+                .padding(10),
+            );
+        }
+        if let Some(local) = local {
+            if exact.len() <= 1 {
+                card = card.push(text(&local.account.name).size(13));
+            }
+            card = card.push(connection(&local.account));
+        }
+        if let Some(id) = chosen {
+            card = card.push(
+                button(text("Link to existing account").size(13))
+                    .padding([10, 14])
+                    .style(outline)
+                    .on_press_maybe(idle.then(|| {
+                        Message::ProfileSync(Action::ResolveAccount(
+                            review.clone(),
+                            Choice::LinkExisting(id.clone()),
+                        ))
+                    })),
+            );
+        }
+        card.push(
+            button(text("Add as a new account").size(13))
+                .padding([10, 14])
+                .style(outline)
+                .on_press_maybe(idle.then(|| {
+                    Message::ProfileSync(Action::ResolveAccount(review.clone(), Choice::AddNew))
+                })),
+        )
+        .push(
+            button(text("Keep this device's account local").size(13))
+                .padding([10, 14])
+                .style(outline)
+                .on_press_maybe(idle.then(|| {
+                    Message::ProfileSync(Action::ResolveAccount(review.clone(), Choice::KeepLocal))
+                })),
+        )
+        .into()
+    }
+}
+
 #[cfg(test)]
 impl Candidate {
     pub(super) fn fixture(operation: Uuid) -> Self {
         Self {
             operation,
             label: "Fixture connection".into(),
+        }
+    }
+}
+#[cfg(test)]
+impl LocalCandidate {
+    pub(super) fn fixture(id: &str) -> Self {
+        Self {
+            id: id.into(),
+            label: "Fixture account".into(),
         }
     }
 }
