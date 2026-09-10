@@ -1619,3 +1619,56 @@ dialog > .field,
 .group-detail button {
   min-height: 44px;
 }
+/* Profiles and sync reuse the account/dialog layouts and existing tokens. */
+.profile-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 96px);
+}
+.profile-dialog .account-body {
+  flex: 1;
+}
+.profile-dialog .dialog-actions,
+.profile-dialog .dialog-heading {
+  flex-shrink: 0;
+}
+.profile-list {
+  display: flex;
+  flex-direction: column;
+}
+.profile-list .account-connection .checkbox-field {
+  flex: 1;
+  min-width: 0;
+}
+.profile-list .account-connection .muted {
+  flex-basis: 100%;
+}
+.profile-details {
+  flex-basis: 100%;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--soft);
+  border-radius: var(--radius-control);
+  font-size: 13px;
+}
+.profile-details dt {
+  color: var(--muted);
+}
+.profile-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.onboarding-card {
+  margin: 0 20px 12px;
+}
+.google-connection span {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .profile-details {
+    grid-template-columns: 1fr;
+  }
+}

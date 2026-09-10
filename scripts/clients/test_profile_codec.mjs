@@ -53,9 +53,9 @@ execFileSync(
   ],
   { stdio: "inherit" },
 );
-const { validate_profile_operation } = createRequire(import.meta.url)(
-  path.join(output, "shep_profile_core.js"),
-);
+const { validate_profile_operation, ProfileHistory } = createRequire(
+  import.meta.url,
+)(path.join(output, "shep_profile_core.js"));
 const golden = JSON.parse(
   readFileSync(path.join(root, "shared/profile-operation.json"), "utf8"),
 );
@@ -104,6 +104,95 @@ assert.throws(() => check(" ".repeat(1024 * 1024 + 1)), /record size/);
 assert.throws(() => check("[".repeat(150) + "0" + "]".repeat(150)), {
   message: messages.Invalid,
 });
+// The browser history worker runs the same in-memory journal contract: import
+// the golden record, wait for its missing parent, edit locally, persist the
+// stored records and restore them into an identical journal.
+const binding = JSON.stringify({
+  namespace: golden.namespace,
+  principal: "drive:fixture-owner",
+  profile: golden.profile,
+  generation: golden.generation,
+});
+const device = "60000000-0000-4000-8000-000000000001";
+const run = (history, command) => {
+  const reply = JSON.parse(history.execute(JSON.stringify(command)));
+  if (reply.status === "error")
+    throw Object.assign(new Error(reply.message), reply);
+  return reply.value;
+};
+const history = new ProfileHistory(binding, device, "[]");
+assert.equal(history.device(), device);
+let state = run(history, {
+  kind: "import",
+  record: JSON.stringify(golden),
+}).value;
+assert.equal(state.waiting, 1);
+assert.throws(
+  () =>
+    run(history, {
+      kind: "edit",
+      edit: {
+        operation: "70000000-0000-4000-8000-000000000001",
+        expected_revision: state.revision,
+        changes: [{ kind: "profile_name", name: "Browser" }],
+      },
+    }),
+  { kind: "incomplete" },
+);
+const setupRoot = {
+  ...golden,
+  operation: golden.parents[0],
+  parents: [],
+  changes: [{ kind: "profile_name", name: "Fixture" }],
+};
+state = run(history, {
+  kind: "import",
+  record: JSON.stringify(setupRoot),
+}).value;
+assert.equal(state.waiting, 0);
+// The golden record descends from the root, so its profile name replaces it.
+assert.equal(state.fields, golden.changes.length);
+assert.equal(state.conflicts, 0);
+state = run(history, {
+  kind: "edit",
+  edit: {
+    operation: "70000000-0000-4000-8000-000000000001",
+    expected_revision: state.revision,
+    changes: [{ kind: "profile_name", name: "Browser" }],
+  },
+}).value;
+assert.equal(state.queued, 1);
+const overview = JSON.parse(history.overview());
+assert.equal(overview.name, "Browser");
+assert.equal(overview.accounts, 1);
+const records = [
+  history.record(golden.operation),
+  history.record(setupRoot.operation),
+  history.record("70000000-0000-4000-8000-000000000001"),
+].map((r) => JSON.parse(r));
+assert.equal(records[2].request !== undefined, true);
+assert.equal(records[0].seq < records[1].seq, true);
+const restored = new ProfileHistory(binding, device, JSON.stringify(records));
+assert.deepEqual(JSON.parse(restored.overview()), {
+  ...overview,
+  state: {
+    ...overview.state,
+    revision: JSON.parse(restored.overview()).state.revision,
+  },
+});
+assert.equal(
+  run(restored, { kind: "next_upload" }).value.operation,
+  "70000000-0000-4000-8000-000000000001",
+);
+assert.throws(
+  () =>
+    new ProfileHistory(
+      binding,
+      "60000000-0000-4000-8000-000000000002",
+      JSON.stringify(records),
+    ),
+  /binding:/,
+);
 console.log(
-  `${cases.length} shared profile fixtures and duplicate/size/depth rejection pass in Rust WASM.`,
+  `${cases.length} shared profile fixtures and duplicate/size/depth rejection pass in Rust WASM; the in-memory history contract imports, edits, persists and restores.`,
 );

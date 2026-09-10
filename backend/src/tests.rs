@@ -42,18 +42,27 @@ pub(crate) fn config() -> Config {
         web_dir: "../web/dist".into(),
         bind: "127.0.0.1:3080".parse().unwrap(),
         mail_endpoints: Vec::new(),
+        profile_namespace: None,
     }
 }
+impl FakeGoogle {
+    pub(crate) fn identity(identity: Identity) -> Self {
+        Self {
+            identity: Some(identity),
+            calls: AtomicUsize::new(0),
+        }
+    }
+}
+pub(crate) fn provider() -> Arc<dyn crate::profiles::ProfileProvider> {
+    Arc::new(crate::profiles::tests::FixtureProvider::default())
+}
 pub(crate) fn state(email: &str) -> (AppState, Arc<FakeGoogle>) {
-    let verifier = Arc::new(FakeGoogle {
-        identity: Some(Identity {
-            subject: "owner-subject".into(),
-            email: email.into(),
-        }),
-        calls: AtomicUsize::new(0),
-    });
+    let verifier = Arc::new(FakeGoogle::identity(Identity {
+        subject: "owner-subject".into(),
+        email: email.into(),
+    }));
     (
-        AppState::new(Arc::new(config()), verifier.clone()),
+        AppState::new(Arc::new(config()), verifier.clone(), provider()),
         verifier,
     )
 }
@@ -174,7 +183,7 @@ async fn anonymous_app_assets_and_apis_are_gated() {
 async fn unconfigured_allowlist_rejects_everyone() {
     let (mut c, verifier) = (config(), state("owner@example.test").1);
     c.allowed_emails.clear();
-    let state = AppState::new(Arc::new(c), verifier);
+    let state = AppState::new(Arc::new(c), verifier, provider());
     let r = app(state)
         .oneshot(
             HttpRequest::builder()
@@ -426,7 +435,7 @@ async fn permitted_session_can_read_web_assets_and_mail_reports_unavailable() {
     let (_, verifier) = state("owner@example.test");
     let mut config = config();
     config.web_dir = directory.path().to_owned();
-    let state = AppState::new(Arc::new(config), verifier);
+    let state = AppState::new(Arc::new(config), verifier, provider());
     let (cookie, csrf) = login(&state).await;
     for (path, expected) in [
         ("/app/", "protected fixture app"),
