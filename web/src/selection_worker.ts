@@ -57,6 +57,7 @@ self.onmessage = ({ data }) => {
               data.prepareBulk.job,
               data.prepareBulk.action,
               () => self.postMessage({ id, phase: "snapshot" }),
+              data.prepareBulk.owner,
             )
           : await store!.run(
               data.command as SelectionCommand,
