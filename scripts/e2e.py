@@ -1897,6 +1897,33 @@ class NativeFlows(unittest.TestCase):
                        click(400,mail_row_y(3)), key("Up"), check("selected", "Escaped HTML request"),
                        check("html_ready", True), wait(100), shot("html-inbox-arrows-after-reader-focus"))
 
+    def test_search_comparison_exact_phrase_typo_numbers_and_folder_abbreviation(self):
+        started = self.mcp.call("desktop.start", search_mail=True)
+        print(f"Search comparison evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"),
+                       type_text("project review"), check("sort", "Relevance"),
+                       check("selected", "Roadmap agenda"),
+                       shot("comparison-exact-body-light"),
+                       key("ctrl+a"), type_text("release planning"),
+                       check("total", 2, "gte"), shot("comparison-phrase-light"),
+                       key("ctrl+a"), type_text("confernece"),
+                       check("selected", "Conference booking"),
+                       shot("comparison-transposition-light"),
+                       key("ctrl+a"), type_text("invoice 2026"),
+                       check("total", 1), check("selected", "Invoice 2026"),
+                       key("Escape"), key("m"), check("dialog", "Move"),
+                       check("focused_input", "folder-search"), type_text("pjarch"),
+                       check("move_enter_destination", "Projects/Archive"),
+                       shot("comparison-folder-abbreviation"), key("Escape"),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(690, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"),
+                       {"type": "resize", "width": 900, "height": 640},
+                       key("ctrl+k"), check("focused_input", "search"),
+                       key("ctrl+a"), type_text("invoice 2027"), check("total", 1),
+                       check("selected", "Invoice 2027"),
+                       shot("comparison-exact-number-compact-dark"))
+
     def test_search_best_match_beats_newer_mail_and_sort_can_be_overridden(self):
         self.mcp.call("desktop.start", search_mail=True)
         self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("test"),
