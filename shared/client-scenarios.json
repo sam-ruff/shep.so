@@ -3,6 +3,13 @@
   "reference": "Rust iced desktop committed 10d8569; merged-worktree verification and gaps in docs/CLIENT_PARITY.md",
   "scenarios": [
     {
+      "id": "history-header-control",
+      "contract": "When mail action history exists, expose a clearly identifiable header icon with a descriptive tooltip that respects the tooltip preference. Mouse activation opens the existing History review and Escape closes it. Keep normal and compact light/dark layouts readable.",
+      "desktop": "scripts/e2e.py::test_bulk_history_header_icon_mouse_escape_and_compact_dark, plus the existing History paging/retry/Undo scenarios. Execution evidence belongs in docs/COMPLETION.md.",
+      "mobile": "OPEN: review the existing History controls against the desktop header icon in R80 visual parity.",
+      "browser": "OPEN: review the existing History controls against the desktop header icon in R80 visual parity."
+    },
+    {
       "id": "google-cross-device-profiles",
       "contract": "Google OAuth and appDataFolder profiles: first setup from either desktop or Flutter; new/existing-device discovery and enrollment; stable account IDs; category/profile toggles; offline conflicts, removal tombstones, lost-upload recovery and secure local credential activation. Follow docs/agents/PROFILE_SYNC_HANDOVER.md; profile sync must not replay mail provider actions. Desktop consent choices must bind the exact requested scopes through token fallback/refresh, candidate retry and late activation, while preserving the active grant during edits/failure; port equivalent platform consent before claiming parity.",
       "mobile": "Shared profile codec/account mappings with actual Dart FFI fixtures. Native Google SDK consent now has separate requested/saved permissions, application/subject binding, scope checks, coalesced saved choices and durable local-only disconnect/cleanup; SDK-adapter, lifecycle, secure-store and real host/Android/Appium/offline-preview controls pass. Native shared history adds immutable bytes, missing ancestry, concurrent field versions/reviews, tombstones, cancelled-observer recovery and durable reserved upload IDs. Core history/worker tests, native provider-saturation/binding tests and the same actual FFI scenario on host/Android cover isolated stores and restart; metadata copying is not cloud access or Settings controls. Reviewed Flutter enrollment/application now has its own contract below. OPEN: safe account switching, automatic session restore, continuous reconciliation, all categories/settings, authenticated FFI/Google interchange, protected credentials and live registered-client/Apple interoperability. Flutter publication and tracked own-upload integration are now covered separately by mobile-profile-publication-controls.",
@@ -194,7 +201,7 @@
     },
     {
       "id": "confined-formatted-message",
-      "contract": "Prepare HTML/CSS and bounded inline WebP from selected cached MIME off-thread; retain authored layout, ordinary text selection and shared Find; remove sender active content and automatic remote resources; isolate the display frame, reject stale events, retain scroll/selection through app updates and expose plain text/retry when preparation or display fails.",
+      "contract": "Prepare HTML/CSS and bounded inline WebP from selected cached MIME off-thread; retain authored layout, ordinary text selection and shared Find; dragging must visibly highlight text above the rendered document and copy the exact selection in light, dark and compact readers. Preserve links, quote controls and reader scrolling. Remove sender active content and automatic remote resources; isolate the display frame, reject stale events, retain scroll/selection through app updates and expose plain text/retry when preparation or display fails.",
       "mobile": "Shared Rust/native bounded preparation and occupied-capacity test; formatted_message_test.dart generation/layout lifecycle; formatted_android_test.dart actual FFI/SQLite, CSS/inline image, Find/quotes/plain choice, scroll retention and damaged-message Retry. formatted_native.mjs uses Appium for real selection/Copy/paste, links and dark mode. formatted.mjs drives equivalent Flutter browser controls. See COMPLETION for execution; Apple, remote-image policy and large-document/performance parity OPEN.",
       "browser": "formatted_content.test.ts native/WASM contract; formatted-reader.spec.ts actual controls, sandbox/CSP/network isolation, Copy, quotes, Find and fallback, cancellation/retry, compact light/dark evidence; provider-flows.mjs actual Rust HTTPS inherited CSP/runtime and plain choice. Remote-image policy and large-document/performance parity OPEN."
     },
@@ -231,7 +238,7 @@
     },
     {
       "id": "ranked-mail-search",
-      "contract": "An exact short-body match ranks before weaker/newer typo alternatives; retain Unicode, literal query safety, folder/flag scopes and stable 50-row paging. Captured selection uses the same order. Compute exact FTS ranking once per query, with SQLite owning intermediate rows instead of UI arrays. Global unread-account counts should use a covering index without loading mail rows or sorting account groups.",
+      "contract": "An exact short-body match ranks before weaker/newer typo alternatives; retain Unicode, literal query safety, folder/flag scopes and stable 50-row paging. Captured selection uses the same order. Compute exact FTS ranking once per query, with SQLite owning intermediate rows instead of UI arrays. Global unread-account counts should use a covering index without loading mail rows or sorting account groups. Experimental abbreviation demo: required literal Nucleo terms with OSA fallback and exact numbers for labels; exact-body, phrase, literal-term and expanded-term tiers for mail, with stable page/capture ties after reopen. No experimental default is selected.",
       "mobile": "OPEN: full desktop fuzzy/relevance behavior and bounded cache/performance parity. Current native prefix FTS/paging remains covered by Rust cache tests; desktop query-plan guard, tests/search.rs, tests/selections.rs and native search/sort controls cover the reference.",
       "browser": "OPEN: full fuzzy/relevance parity. Keep current worker query/paging and captured-selection controls; the native SQLite materialization change does not implement browser ranking."
     },

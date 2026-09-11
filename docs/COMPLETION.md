@@ -2,6 +2,24 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## 11 September: abbreviation-search algorithm checkpoint (R18/R44/R99)
+
+The experimental `demo/search-abbreviations` branch adds a reusable Nucleo label
+matcher with literal punctuation, required terms, exact numeric tokens and OSA
+typo fallback. Mail retains bounded indexed vocabulary expansion and now ranks
+exact phrases ahead of scattered literal terms and expanded terms, after the
+existing exact-short-body priority. List and captured-selection ordering share
+the same tier expressions and indexed phrase/literal relations.
+
+The six existing search tests, five new abbreviation/phrase regressions, nine
+captured-selection tests and query-plan guard pass. The new corpus checks
+50-row paging, equal timestamp ties and selection after reopening the cache.
+All-target/all-feature Clippy passes. Shared native fixture `c00c80b` is merged;
+catalogue integration, native review, quiet performance measurement and the
+authorised demo push remain pending. [Algorithm notes](agents/search-abbreviations.md)
+describe the matching bounds and isolated demo command. Browser/mobile search
+parity remains explicitly open; this checkpoint chooses no production default.
+
 ## 11 September: pinned desktop conversation actions (R96)
 
 Threaded readers carried Reply, Reply all, Forward, Print and source attachments
@@ -43,6 +61,54 @@ Main integration and push belong to the primary agent. This does not establish
 Windows/macOS execution, performance, full native input-lifecycle coverage or
 client conversation parity, and it does not change the personal installation.
 
+## 11 September: mail action History header icon (R15)
+
+The inbox History text button now uses a clock-arrow SVG, the same 40 px target
+and ghost styling as its neighbouring header controls, and the optional
+"Mail action history" tooltip. It opens the same History dialog and preserves
+Escape dismissal, paging, retry and Undo.
+
+Three saved native scenarios pass: the new mouse/tooltip/Escape and compact-dark
+flow, existing group pagination, and failed Undo/retry across restart. Reviewed
+light and compact-dark WebPs are in `artifacts/e2e/dc38a10d91fd`; the final run is
+`artifacts/logs/history-icon-native-final.log`. The initial test authoring run
+used a nonexistent appearance observation; it is retained in
+`history-icon-native.log`, and the saved test uses the established `dark` field.
+Formatting, strict pinned Zensical and the parity contract check pass. All
+1,179 mandatory-hook test executions passed; this feature was pushed to main
+as `f6b5d85` with owner identity and normal hooks.
+The browser/Flutter header comparison remains an explicit R80 parity gap.
+
+## 11 September: visible formatted HTML text selection (R95)
+
+The desktop already selected and copied formatted text, but its software renderer
+batched selection rectangles beneath the opaque HTML image. Selection now paints
+in a separate clipped layer above that image. The existing selectable-text
+description in the limits document now matches the visible behaviour.
+
+The saved `test_html_drag_selection_has_visible_pixels_and_copies` native scenario
+failed on the baseline with zero changed selection pixels in light, dark and
+900×640 layouts. It now passes with real pointer drags, visible highlight pixels
+and exact clipboard paste into Search. Reviewed WebPs are under the lane's
+`artifacts/e2e/724452d55681`, `9bd70ccf5745` and `65f360661938`. Eight relevant
+native scenarios cover drag/copy, horizontal tables, outer scrolling, pending
+mail actions, links, full reader, Find, quotes, keyboard scope and reading-column
+resize. The reading-column process was interrupted in the combined invocation
+and passed when rerun alone (`bd0142ae07db`).
+
+The new software-renderer unit regression checks highlight pixels and clipping
+in both themes. The pinned strict Zensical build passes, as does the Python
+suite (103 tests, seven platform skips). Lane commit `d498cc3` passed both Clippy
+configurations and all mandatory hooks, including 1,098 all-feature Rust tests.
+The integrated tree passes four native scenarios, including the new drag/pixel/
+copy flow, horizontal-table selection, keyboard scope and the History icon
+regression (`artifacts/logs/r95-integrated-native.log`). Strict docs pass again.
+The fix is pushed on main as `d3e37a5`; all 1,180 normal-hook test executions
+passed. The installed application remains unchanged.
+Browser and Flutter retain their existing browser/WebView selection paths and
+saved Copy scenarios; the shared scenario now explicitly requires visible drag
+highlighting. No Apple/Windows execution or new latency measurement is claimed.
+
 ## 11 September: newest-first desktop conversations (R35)
 
 Reader conversation cards and the history below inline replies now show the
@@ -64,8 +130,11 @@ Five conversation store tests pass, including full 55-message paging and
 physical-copy flags. The encrypted 512-message ranking oracle retains tied-date,
 focus, duplicate-copy, query-plan and restart coverage. Python reports 103
 executions with seven intentional skips; the parity registry and pinned strict
-Zensical build pass. Mandatory-hook results and the shipping commit are recorded
-by the integrating agent.
+Zensical build pass. Lane commit `8201e93` passed all 1,179 mandatory-hook test
+executions. The integrated tree passes five native scenarios: newest-first
+parking/refresh, long-thread paging, separate-message reading, changing HTML
+surfaces and the R95 drag/copy regression (`r35-integrated-native.log`). Strict
+docs pass again; the integration uses the normal commit hooks.
 
 Reviewed WebPs under this lane's `artifacts/e2e/`: `77ee9e05b620` shows the
 newest-first reader, retained reply text and refreshed thread;
