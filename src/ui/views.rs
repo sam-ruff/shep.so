@@ -565,7 +565,7 @@ impl App {
             .center_y(Length::Fill)
             .into();
         };
-        let mut footer = column![self.reader_actions(detail)].spacing(4);
+        let mut footer = column![self.reader_actions(Some(detail))].spacing(4);
         if !self.compact_reader() {
             footer = footer.push(self.reader_navigation());
         }
@@ -873,7 +873,11 @@ impl App {
         }
         reading.push(self.text_column(message.into()))
     }
-    pub(super) fn reader_actions<'a>(&'a self, detail: &'a MailDetail) -> Element<'a, Message> {
+    pub(super) fn reader_actions<'a>(
+        &'a self,
+        detail: Option<&'a MailDetail>,
+    ) -> Element<'a, Message> {
+        let ready = detail.is_some();
         let mut footer = row![
             button(
                 row![
@@ -885,15 +889,17 @@ impl App {
             )
             .padding([10, 14])
             .style(primary)
-            .on_press(Message::Reply),
+            .on_press_maybe(ready.then_some(Message::Reply)),
             if self.compact_reader() {
-                self.icon_action(
+                self.icon_action_maybe(
                     "reply-all",
                     self.shortcut_hint("Reply all", Action::ReplyAll),
-                    Message::ReplyAll,
+                    ready.then_some(Message::ReplyAll),
                 )
             } else {
-                action("Reply all", Message::ReplyAll).into()
+                action("Reply all", Message::ReplyAll)
+                    .on_press_maybe(ready.then_some(Message::ReplyAll))
+                    .into()
             },
             if self.composer.forward_pending.is_some() {
                 button(text("Preparing…").size(12))
@@ -901,10 +907,10 @@ impl App {
                     .style(ghost)
                     .into()
             } else {
-                self.icon_action(
+                self.icon_action_maybe(
                     "forward",
                     self.shortcut_hint("Forward", Action::Forward),
-                    Message::Forward,
+                    ready.then_some(Message::Forward),
                 )
             },
             if self.printing.pending {
@@ -913,10 +919,10 @@ impl App {
                     .padding([8, 10])
                     .into()
             } else {
-                self.icon_action(
+                self.icon_action_maybe(
                     "print",
                     self.shortcut_hint("Print", Action::Print),
-                    Message::Print(super::printing::Message::Open),
+                    ready.then_some(Message::Print(super::printing::Message::Open)),
                 )
             }
         ]
@@ -935,7 +941,11 @@ impl App {
                     Message::PreviousMessage(false),
                 ));
         }
-        for (index, attachment) in detail.attachments.iter().enumerate() {
+        for (index, attachment) in detail
+            .into_iter()
+            .flat_map(|detail| detail.attachments.iter())
+            .enumerate()
+        {
             let compact = self.compact_reader();
             let label: Element<'_, Message> = if compact {
                 super::ellipsis::Ellipsis::new(attachment.name.clone(), 12.).into()

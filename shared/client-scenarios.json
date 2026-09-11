@@ -206,6 +206,13 @@
       "browser": "formatted_content.test.ts native/WASM contract; formatted-reader.spec.ts actual controls, sandbox/CSP/network isolation, Copy, quotes, Find and fallback, cancellation/retry, compact light/dark evidence; provider-flows.mjs actual Rust HTTPS inherited CSP/runtime and plain choice. Remote-image policy and large-document/performance parity OPEN."
     },
     {
+      "id": "reader-action-footer",
+      "contract": "Reply, Reply all, Forward and Print remain outside reader scrolling, with space reserved so the last body line remains readable; disabled controls retain their space while current detail loads, and enabled actions target the expanded physical message even when collapsed or HTML is preparing.",
+      "desktop": "scripts/e2e.py conversation_footer scenarios cover real bottom clicks after scrolling in light/dark, preview/compact/full layouts, older collapsed Reply all/Forward/Print, renderer preparation and the last HTML line.",
+      "mobile": "Existing Scaffold safe-area footer in ui/reader.dart, with shared host/Android held-touch and delayed-loading coverage; separate conversation cards remain OPEN.",
+      "browser": "Existing reader_actions.ts stable footer outside reader-content with real held-pointer and keyboard activation coverage; separate conversation cards remain OPEN."
+    },
+    {
       "id": "desktop-forward-print",
       "contract": "Forward complete MIME in a new thread with retained files and optional formatting; print the complete selected source with confined resources",
       "mobile": "Shared preparation/core fixtures plus native forward_tests.rs: atomic rollback, schema-8 migration, idempotent response-loss recovery, removed accounts, protected metadata and Outbox ownership. native_repository_test.dart and forward_android_test.dart use actual Rust/SQLite and controls for files, restart, refusal and independent edits. OPEN: Apple execution, full composition/multiple editors. Print: independent cached-alias native contract, host failure/lifecycle tests, printing_android_test.dart plus android_print_fixture.py drive actual cancellation/retry and formatted/long Save as PDF. OPEN: Apple, native keymap, remote-image/lifecycle/large-mail parity.",

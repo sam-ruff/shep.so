@@ -11,6 +11,29 @@ async fn mail(store: &crate::store::Store, id: &str) -> Arc<MailDetail> {
 }
 
 #[tokio::test]
+async fn conversation_actions_wait_for_current_detail_and_keep_a_collapsed_target() {
+    let store = crate::store::Store::memory().unwrap();
+    let anchor = mail(&store, "anchor").await;
+    let older = mail(&store, "older").await;
+    let (mut app, _) = App::new();
+    app.selected = Some(anchor.summary.id.clone());
+    app.conversation.focus = Some(older.summary.id.clone());
+    app.detail = Some(anchor);
+    assert!(app.conversation_action_detail().is_none());
+    app.detail = None;
+    assert!(app.conversation_action_detail().is_none());
+    app.detail = Some(older.clone());
+    app.conversation.collapsed = true;
+    assert_eq!(
+        app.conversation_action_detail()
+            .map(|detail| &detail.summary.id),
+        Some(&older.summary.id)
+    );
+    app.selected = None;
+    assert!(app.conversation_action_detail().is_none());
+}
+
+#[tokio::test]
 async fn opening_a_related_message_keeps_the_inbox_anchor_and_rejects_late_bodies() {
     let store = crate::store::Store::memory().unwrap();
     let anchor = mail(&store, "anchor").await;
