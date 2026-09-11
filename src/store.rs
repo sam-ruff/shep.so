@@ -33,9 +33,15 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::{path::Path, sync::Arc};
 
 #[derive(Clone)]
-pub struct Store(Arc<worker::Worker>, Option<Arc<crate::cache_cipher::Key>>);
+pub struct Store(
+    Arc<worker::Worker>,
+    Option<Arc<crate::cache_cipher::Key>>,
+    Option<Arc<crate::cache_cipher::ownership::Guard>>,
+);
 
 pub(crate) const DATABASE_VERSION: u32 = 4;
+/// Plain-text characters the reader loads per page of a long message.
+pub const READER_BODY_PAGE: usize = 32_000;
 
 #[derive(Debug, Clone, Default)]
 pub struct Workspace {
@@ -99,30 +105,45 @@ impl Store {
         key: Arc<crate::cache_cipher::Key>,
     ) -> anyhow::Result<Self> {
         let connection = key.open(path.as_ref(), rusqlite::OpenFlags::default())?;
-        Self::from_connection_key(connection, Some(key))
+        Self::from_connection_key(connection, Some(key), None)
+    }
+    /// Open a database inside a bootstrapped data root. The root decides the
+    /// key, and its shared guard stays held until this worker drains and closes.
+    pub fn open_in(
+        root: &crate::cache_cipher::bootstrap::Root,
+        path: impl AsRef<Path>,
+    ) -> anyhow::Result<Self> {
+        let connection = root.open(path.as_ref(), rusqlite::OpenFlags::default())?;
+        Self::from_connection_key(connection, root.key(), Some(root.guard()))
     }
     /// Independent snapshot/journal owners share immutable key material, never
     /// the cache connection. The key is absent from workspace serialization.
     pub fn connection_key(&self) -> Option<Arc<crate::cache_cipher::Key>> {
         self.1.clone()
     }
+    /// Independent owners of files in the same data root retain the guard too.
+    pub fn root_guard(&self) -> Option<Arc<crate::cache_cipher::ownership::Guard>> {
+        self.2.clone()
+    }
     pub fn memory() -> anyhow::Result<Self> {
         Self::from_connection(Connection::open_in_memory()?)
     }
     fn from_connection(conn: Connection) -> anyhow::Result<Self> {
-        Self::from_connection_key(conn, None)
+        Self::from_connection_key(conn, None, None)
     }
     fn from_connection_key(
         conn: Connection,
         key: Option<Arc<crate::cache_cipher::Key>>,
+        guard: Option<Arc<crate::cache_cipher::ownership::Guard>>,
     ) -> anyhow::Result<Self> {
         let scratch = scratch::attach(&conn, key.as_deref())?;
         // The initializer owns the connection. On failure it closes that handle
         // before this scope removes scratch, including on Windows.
         let conn = Self::initialize_connection(conn)?;
         Ok(Self(
-            Arc::new(worker::Worker::with_scratch(conn, scratch)?),
+            Arc::new(worker::Worker::with_scratch(conn, scratch, guard.clone())?),
             key,
+            guard,
         ))
     }
     fn initialize_connection(mut conn: Connection) -> anyhow::Result<Connection> {
@@ -516,6 +537,16 @@ impl Store {
         }).await
     }
     pub async fn detail(&self, id: String) -> anyhow::Result<MailDetail> {
+        self.detail_limited(id, READER_BODY_PAGE).await
+    }
+    /// Loads a message with at most `body_chars` characters of its plain text,
+    /// never fewer than one reader page.
+    pub async fn detail_limited(
+        &self,
+        id: String,
+        body_chars: usize,
+    ) -> anyhow::Result<MailDetail> {
+        let body_chars = body_chars.max(READER_BODY_PAGE);
         self.run(move |c| {
             let (data, raw, unread, starred, folder): (String, Vec<u8>, bool, bool, String) = c
                 .query_row(
@@ -533,8 +564,8 @@ impl Store {
             let parsed = shep_mail_core::mime::parse(&raw)?;
             let content = crate::email_content::extract(&parsed)?;
             let (body, attachments) = (content.text, content.attachments);
-            let body_truncated = body.chars().count() > 32000;
-            let body: String = body.chars().take(32000).collect();
+            let body_truncated = body.chars().nth(body_chars).is_some();
+            let body: String = body.chars().take(body_chars).collect();
             let (latest_body, replies) = crate::replies::split(&body);
             let remote_images = content
                 .html

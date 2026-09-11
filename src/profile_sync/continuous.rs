@@ -4,7 +4,8 @@ use super::{
     control::Control,
     drive::Session,
     enrollment::Options,
-    replica::{PublishIntent, Replica},
+    incremental,
+    replica::{PublishIntent, Pulled, Replica},
     state,
 };
 use crate::store::Store;
@@ -17,6 +18,8 @@ pub struct Report {
     pub review: usize,
     pub published: usize,
     pub remaining: bool,
+    /// The password vault pass that followed, when password sync is involved.
+    pub passwords: Option<super::vault::Report>,
 }
 pub(crate) struct Observed {
     pub(super) binding: history::Binding,
@@ -34,13 +37,35 @@ impl Observed {
     }
 }
 
-pub async fn run(
+pub(crate) async fn run(
     store: &Store,
     replica: &mut Replica,
     session: &Session,
+    catalog: &incremental::Location,
     control: &Control,
 ) -> anyhow::Result<Report> {
     let mut report = Report::default();
+    let excluded = admit(store, replica, control).await?;
+    if store
+        .capture_profile_change_except(excluded.clone())
+        .await?
+        .is_some()
+    {
+        report.remaining = true;
+        return Ok(report);
+    }
+    let mut pulled = replica.pull_catalog(session, catalog, control).await?;
+    reconcile(store, replica, session, control, &mut pulled, &mut report).await?;
+    report.remaining = replica.state().await?.queued != 0;
+    report.review = report.review.max(excluded.len());
+    Ok(report)
+}
+
+async fn admit(
+    store: &Store,
+    replica: &mut Replica,
+    control: &Control,
+) -> anyhow::Result<BTreeSet<String>> {
     let mut excluded = BTreeSet::new();
     // Yield after bounded admission rather than holding the owner indefinitely
     // when another source is continuously editing. The next pass resumes it.
@@ -72,15 +97,17 @@ pub async fn run(
             Err(error) => return Err(error),
         }
     }
-    if store
-        .capture_profile_change_except(excluded.clone())
-        .await?
-        .is_some()
-    {
-        report.remaining = true;
-        return Ok(report);
-    }
-    let mut pulled = replica.pull_controlled(session, control).await?;
+    Ok(excluded)
+}
+
+async fn reconcile(
+    store: &Store,
+    replica: &mut Replica,
+    session: &Session,
+    control: &Control,
+    pulled: &mut Pulled,
+    report: &mut Report,
+) -> anyhow::Result<()> {
     anyhow::ensure!(
         pulled.remote_records() > 0,
         "The shared profile is missing from Drive. Local accounts and changes have been kept; check the connected Google account."
@@ -109,16 +136,14 @@ pub async fn run(
             break;
         }
         if !replica
-            .publish_next(session, &mut pulled, PublishIntent::ExistingProfile)
+            .publish_next(session, pulled, PublishIntent::ExistingProfile)
             .await?
         {
             break;
         }
         report.published += 1;
     }
-    report.remaining = replica.state().await?.queued != 0;
-    report.review = report.review.max(excluded.len());
-    Ok(report)
+    Ok(())
 }
 
 impl Replica {

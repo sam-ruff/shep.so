@@ -25,7 +25,7 @@ use std::{
 pub(super) const CANDIDATE_PREFIX: &str = ".shep-encrypted-";
 pub(super) const CANDIDATE_SUFFIX: &str = ".partial";
 const SCRATCH_PREFIX: &str = ".shep-cache-scratch-";
-const JOURNAL_SUFFIX: &str = ".encryption-journal";
+pub(super) const JOURNAL_SUFFIX: &str = ".encryption-journal";
 const RECOVERY_SUFFIX: &str = ".plaintext-recovery";
 const PLAINTEXT_HEADER: &[u8] = b"SQLite format 3\0";
 const KEEP: &str = "Nothing was changed. Keep the cache folder contents and retry.";
@@ -206,7 +206,7 @@ fn sync_directory(directory: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn starts_with_plaintext_header(path: &Path) -> anyhow::Result<bool> {
+pub(super) fn starts_with_plaintext_header(path: &Path) -> anyhow::Result<bool> {
     let mut header = [0u8; 16];
     let mut file = fs::File::open(path)?;
     let read = std::io::Read::read(&mut file, &mut header)?;
@@ -319,7 +319,11 @@ impl Publication<'_> {
                 busy == 0,
                 "The cache is still open elsewhere, so its write-ahead log could not be folded in. Close other Shep windows and retry."
             );
-            let mode: String = c.query_row("PRAGMA main.journal_mode=DELETE", [], |r| r.get(0))?;
+            // Leaving WAL needs every connection closed; SQLite reports a
+            // still-open one either as a lock error or by keeping WAL.
+            let mode: String = c
+                .query_row("PRAGMA main.journal_mode=DELETE", [], |r| r.get(0))
+                .context("The cache is still open elsewhere, so its journal mode could not be changed. Close other Shep windows and retry.")?;
             ensure!(
                 mode.eq_ignore_ascii_case("delete"),
                 "The cache is still open elsewhere, so its journal mode could not be changed. Close other Shep windows and retry."

@@ -1,6 +1,9 @@
 use super::*;
-use rusqlite::Transaction;
+use crate::{Action, Operation};
+use rusqlite::{OptionalExtension, Transaction, params};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
+use uuid::Uuid;
 
 impl Journal {
     pub fn import(&mut self, raw: &[u8]) -> Result<State> {
@@ -406,13 +409,6 @@ fn target_count(tx: &Transaction<'_>, key: &str) -> Result<(u64, bool)> {
         |r| Ok((count(r, 0)?, r.get(1)?)),
     )?)
 }
-fn account_id(action: &Action) -> Option<Uuid> {
-    match action {
-        Action::AccountConnection { account } => Some(account.id),
-        Action::AccountName { id, .. } | Action::AccountRemoved { id } => Some(*id),
-        _ => None,
-    }
-}
 fn removed_account(tx: &Transaction<'_>, id: Uuid) -> Result<bool> {
     Ok(tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM removed_accounts WHERE id=?)",
@@ -431,17 +427,6 @@ fn version_ids(tx: &Transaction<'_>, key: &str) -> Result<BTreeSet<Uuid>> {
     }
     Ok(ids)
 }
-fn preserves_extensions(old: &Change, new: &Change) -> bool {
-    old.extra.iter().all(|(k, v)| new.extra.get(k) == Some(v))
-        && match (&old.action, &new.action) {
-            (
-                Action::AccountConnection { account: old },
-                Action::AccountConnection { account: new },
-            ) => old.extra.iter().all(|(k, v)| new.extra.get(k) == Some(v)),
-            _ => true,
-        }
-}
-
 fn setup_state(tx: &Transaction<'_>) -> Result<Option<(bool, Uuid, Uuid)>> {
     tx.query_row("SELECT json_extract(CAST(o.raw AS TEXT),'$.changes[0].complete'),o.device,o.id FROM versions v JOIN operations o ON o.id=v.operation WHERE v.target='profile:setup'", [], |r| Ok((r.get::<_,bool>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?))).optional()?
         .map(|(complete, device, operation)| Ok((complete,parse_uuid(&device)?,parse_uuid(&operation)?))).transpose()
@@ -450,6 +435,7 @@ fn setup_state(tx: &Transaction<'_>) -> Result<Option<(bool, Uuid, Uuid)>> {
 #[cfg(test)]
 mod ancestry_tests {
     use super::*;
+    use rusqlite::Connection;
 
     #[test]
     fn disk_frontier_handles_large_history_duplicates_cycles_and_restarts() {

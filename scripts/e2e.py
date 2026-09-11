@@ -1858,6 +1858,29 @@ class NativeFlows(unittest.TestCase):
                        key("Escape"), key("ctrl+r"), check("refreshing", True),
                        check("refreshing", False), check("selected", "Quick note"), shot("search-relevance-after-sync"))
 
+    def scroll_reader_to_end(self):
+        # Overscrolling clamps at the end, so generous batches are safe.
+        for _ in range(3):
+            self.mcp.batch({"type": "hover", "x": 1000, "y": 500}, *[{"type": "scroll", "amount": 30}] * 95)
+        self.mcp.batch(wait(150))
+
+    def test_long_message_show_more_loads_every_part(self):
+        started = self.mcp.call("desktop.start", long_mail=True)
+        print(f"Long message evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("selected", "Long quarterly report"), check("body_chars", 32000),
+                       check("body_truncated", True))
+        self.scroll_reader_to_end()
+        self.mcp.batch(shot("long-message-first-part"), click(1008, 732),
+                       check("body_chars", 64000), check("body_truncated", True))
+        # A background refresh reloads the reader without collapsing it.
+        self.mcp.batch(key("ctrl+r"), check("refreshing", True), check("refreshing", False),
+                       check("selected", "Long quarterly report"), check("body_chars", 64000))
+        self.scroll_reader_to_end()
+        self.mcp.batch(click(1008, 732), check("body_truncated", False), check("body_chars", 64001, "gte"))
+        # The whole message takes longer to present; scrolling to the end proves the last line is readable.
+        self.scroll_reader_to_end()
+        self.mcp.batch(shot("long-message-complete"))
+
     def test_move_library_matches_accents_and_fast_typo_enter(self):
         self.mcp.call("desktop.start", search_mail=True)
         self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("test"),
@@ -2763,19 +2786,54 @@ class NativeFlows(unittest.TestCase):
         self.open_shared_profiles()
         before = self.mcp.call("desktop.state")["profile_drive_requests"]
         self.assertGreater(before["media"], 0)
-        self.mcp.batch(click(340, 548), check("profile_drive_requests.scoped_lists", before["scoped_lists"] + 1, "gte"),
+        # Enrolled checks poll the saved change token: no listing, no downloads.
+        self.mcp.batch(click(340, 548), check("profile_drive_requests.changes", before["changes"] + 1, "gte"),
                        check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_drive_requests.lists", before["lists"]),
                        check("profile_drive_requests.media", before["media"]),
                        check("profile_drive_requests.metadata", before["metadata"]),
                        shot("profile-cache-manual-check"), {"type": "restart"},
                        check("profile_sync.enrollment.selection.ready", True), check("account_count", 1))
         self.open_shared_profiles()
         reopened = self.mcp.call("desktop.state")["profile_drive_requests"]
-        self.mcp.batch(click(340, 548), check("profile_drive_requests.scoped_lists", reopened["scoped_lists"] + 1, "gte"),
+        self.mcp.batch(click(340, 548), check("profile_drive_requests.changes", reopened["changes"] + 1, "gte"),
                        check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_drive_requests.lists", before["lists"]),
                        check("profile_drive_requests.media", before["media"]),
                        check("profile_drive_requests.metadata", before["metadata"]),
                        check("account_reconnect_count", 1), shot("profile-cache-reopened-check"))
+
+    def test_profile_continuous_native_expired_change_token_falls_back_to_one_full_listing(self):
+        started = self.mcp.call("desktop.start", profile_sync="existing-token-expired", profile_login=True, empty_profile=True)
+        print(f"Incremental fallback evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("account_count", 1),
+                       check("tab", "Mail"), {**check("account_count", 2), "timeout_ms": 5000},
+                       check("account_reconnect_count", 2), check("tooltips", True),
+                       check("profile_sync.working", False), check("profile_sync.error", None))
+        recovered = self.mcp.call("desktop.state")["profile_drive_requests"]
+        # Discovery listed once; the rejected token forced exactly one more.
+        self.assertEqual(recovered["lists"] - recovered["scoped_lists"], 2)
+        self.assertEqual(recovered["scoped_lists"], 1)
+        self.assertGreaterEqual(recovered["changes"], 3)
+        self.open_shared_profiles()
+        self.mcp.batch(click(340, 548), check("profile_drive_requests.changes", recovered["changes"] + 1, "gte"),
+                       check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_drive_requests.lists", recovered["lists"]),
+                       check("profile_drive_requests.media", recovered["media"]),
+                       check("profile_drive_requests.metadata", recovered["metadata"]),
+                       check("account_count", 2), shot("profile-incremental-fallback-check"), {"type": "restart"},
+                       check("profile_sync.enrollment.selection.ready", True), check("account_count", 2))
+        self.open_shared_profiles()
+        reopened = self.mcp.call("desktop.state")["profile_drive_requests"]
+        self.mcp.batch(click(340, 548), check("profile_drive_requests.changes", reopened["changes"] + 1, "gte"),
+                       check("profile_sync.working", False), check("profile_sync.error", None),
+                       check("profile_drive_requests.lists", recovered["lists"]),
+                       check("profile_drive_requests.media", recovered["media"]),
+                       check("tooltips", True), shot("profile-incremental-fallback-reopened"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        checkpoint = self.profile_checkpoint(started)
+        self.assertEqual(len(checkpoint["accounts"]), 2)
+        self.assertEqual(checkpoint["fields"]["setting:tooltips"]["remote"]["value"], True)
 
     def test_profile_continuous_native_receives_new_account_and_preferences_in_background(self):
         started=self.mcp.call("desktop.start",profile_sync="existing-updates",profile_login=True,empty_profile=True)
@@ -2846,6 +2904,120 @@ class NativeFlows(unittest.TestCase):
         self.open_shared_profiles()
         self.mcp.batch(click(340,548),check("profile_sync.error",None),check("account_count",2),
                        check("profile_sync.working",False),shot("profile-continuous-retry"))
+
+    def open_synced_passwords(self, search_x=1150):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(search_x, 88), key("ctrl+a"), type_text("synced password"),
+                       check("settings_matches", ["Profiles and sync"]), click(480, 289),
+                       check("settings_group", "Profiles and sync"),
+                       check("profile_sync.loaded", True), wait(100))
+
+    def assert_no_synced_passwords(self, started, secrets, keychain_holds=True):
+        """Only the fictional keychain may hold a synced password: never the
+        workspace cache, profile journals, logs or harness observations."""
+        root = Path(started["artifacts"])
+        keychain = root / "fixture-keychain.json"
+        held = keychain.read_text(encoding="utf-8")
+        self.assertEqual(all(secret in held for secret in secrets), keychain_holds)
+        scanned = 0
+        for path in root.rglob("*"):
+            if not path.is_file() or path == keychain or path.suffix == ".webp":
+                continue
+            data = path.read_bytes()
+            scanned += 1
+            for secret in secrets:
+                self.assertNotIn(secret.encode(), data, f"{path.relative_to(root)} contains a synced password")
+        self.assertTrue((root / "fixture.sqlite").exists() and any(root.glob("app*.log")))
+        self.assertGreater(scanned, 5)
+
+    def test_profile_passwords_native_first_device_publishes_and_turning_off_removes_them(self):
+        started = self.mcp.call("desktop.start", profile_sync="empty", profile_passwords="ready")
+        print(f"Password publication evidence: {started['artifacts']}", flush=True)
+        self.open_shared_profiles()
+        self.mcp.batch(click(370, 442), check("profile_sync.review", 0), click(540, 482), key("ctrl+a"),
+                       type_text("Personal"), click(360, 570), check("profile_sync.enrollment.selection.ready", True),
+                       check("profile_sync.working", False), check("profile_sync.options.passwords", False),
+                       check("profile_drive_credentials.vaults", 0), wait(150), shot("profile-passwords-off-light"),
+                       click(288, 735), check("profile_sync.options.passwords", True),
+                       # Drive state is durable; a later periodic pass only confirms it.
+                       {**check("profile_drive_credentials.vaults", 1), "timeout_ms": 5000},
+                       check("profile_sync.working", False), check("profile_drive_credentials.keys", 1),
+                       check("profile_drive_credentials.plaintext", False),
+                       check("profile_sync.passwords.failed", 0), wait(150), shot("profile-passwords-published-light"),
+                       click(288, 735), check("profile_sync.options.passwords", False),
+                       {**check("profile_drive_credentials.vaults", 0), "timeout_ms": 5000},
+                       check("profile_sync.working", False), check("profile_drive_credentials.keys", 0),
+                       check("notice", "Passwords from this device were removed from your Google account"),
+                       wait(150), shot("profile-passwords-withdrawn-light"), {"type": "restart"})
+        self.open_synced_passwords()
+        self.mcp.batch(check("profile_sync.options.passwords", False), check("profile_drive_credentials.vaults", 0),
+                       check("account_count", 2), shot("profile-passwords-off-reopened"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.assert_no_synced_passwords(started, ("fixture-studio-password", "fixture-personal-password"))
+
+    def test_profile_passwords_native_second_device_imports_after_a_connection_test(self):
+        started = self.mcp.call("desktop.start", profile_sync="existing-passwords", profile_login=True,
+                                empty_profile=True, profile_passwords="ready")
+        print(f"Password import evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("profile_sync.working", False),
+                       check("account_count", 1), check("account_reconnect_count", 1), check("dark", True),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(1150, 88), key("ctrl+a"),
+                       type_text("appearance"), check("settings_matches", ["Appearance"]), click(480, 289),
+                       check("settings_group", "Appearance"), wait(100), click(423, 410), check("dark", False),
+                       check("preferences_saved", True))
+        self.open_synced_passwords()
+        self.mcp.batch(check("profile_sync.options.passwords", False), wait(100), shot("profile-passwords-import-before-light"),
+                       click(288, 788), check("profile_sync.options.passwords", True),
+                       {**check("account_reconnect_count", 0), "timeout_ms": 5000},
+                       check("profile_sync.working", False),
+                       check("profile_drive_credentials.keys", 1), check("profile_drive_credentials.vaults", 1),
+                       check("profile_drive_credentials.plaintext", False),
+                       check("notice", "Synced passwords saved for 1 account"),
+                       wait(150), shot("profile-passwords-imported-light"),
+                       {"type": "resize", "width": 900, "height": 640}, check("window_size", [900.0, 640.0]),
+                       click(650, 88), key("ctrl+a"), type_text("appearance"), check("settings_matches", ["Appearance"]),
+                       click(480, 289), check("settings_group", "Appearance"), wait(100), click(555, 410),
+                       check("dark", True), check("preferences_saved", True))
+        self.open_synced_passwords(650)
+        self.mcp.batch({"type": "hover", "x": 600, "y": 400}, {"type": "scroll", "amount": 12}, wait(150),
+                       shot("profile-passwords-imported-compact-dark"), {"type": "restart"},
+                       check("profile_sync.enrollment.selection.ready", True), check("account_reconnect_count", 0))
+        self.open_synced_passwords(650)
+        self.mcp.batch(check("profile_sync.options.passwords", True), check("account_reconnect_count", 0),
+                       {"type": "hover", "x": 600, "y": 400}, {"type": "scroll", "amount": 12}, wait(150),
+                       shot("profile-passwords-imported-reopened"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.assert_no_synced_passwords(started, ("fixture-cloud-incoming", "fixture-cloud-smtp"))
+
+    def test_profile_passwords_native_rejected_import_keeps_reconnect_and_offers_retry(self):
+        started = self.mcp.call("desktop.start", profile_sync="existing-passwords", profile_login=True,
+                                empty_profile=True, profile_passwords="reject")
+        print(f"Rejected password import evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("profile_sync.working", False),
+                       check("account_reconnect_count", 1))
+        self.open_synced_passwords()
+        failed = "A synced password did not connect, so nothing was changed on this device."
+        self.mcp.batch(click(288, 788), check("profile_sync.options.passwords", True),
+                       {**check("notice", failed), "timeout_ms": 5000},
+                       check("profile_sync.working", False), check("account_reconnect_count", 1),
+                       # Sync now holds the failed revision instead of testing it again.
+                       click(340, 548), {**check("profile_sync.passwords.held", 2), "timeout_ms": 5000},
+                       check("profile_sync.working", False), check("account_reconnect_count", 1),
+                       {"type": "hover", "x": 700, "y": 600}, {"type": "scroll", "amount": 12}, wait(150),
+                       shot("profile-passwords-rejected"))
+        # Only the explicit retry tests the pair again.
+        self.mcp.batch(click(380, 799), check("profile_sync.working", True),
+                       {**check("profile_sync.working", False), "timeout_ms": 5000},
+                       check("profile_sync.passwords.failed", 1), check("account_reconnect_count", 1),
+                       check("notice", failed), {"type": "restart"},
+                       check("profile_sync.enrollment.selection.ready", True))
+        self.open_synced_passwords()
+        self.mcp.batch(click(340, 548), {**check("profile_sync.passwords.held", 2), "timeout_ms": 5000},
+                       check("profile_sync.working", False), check("account_reconnect_count", 1),
+                       {"type": "hover", "x": 700, "y": 600}, {"type": "scroll", "amount": 12}, wait(150),
+                       shot("profile-passwords-rejected-reopened"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.assert_no_synced_passwords(started, ("fixture-cloud-incoming", "fixture-cloud-smtp"), keychain_holds=False)
 
     def test_profile_login_native_new_device_automatically_imports_one_complete_profile(self):
         started=self.mcp.call("desktop.start",profile_sync="existing-single",profile_login=True,empty_profile=True)
@@ -4473,13 +4645,13 @@ class NativeFlows(unittest.TestCase):
                        wait(150), {"type": "scroll", "amount": -2}, wait(150),
                        check("google_services.drive", False),
                        check("google_services.calendar", "Off"), shot("google-consent-initial-light"),
-                       click(350, 489), check("busy", []), check("notice", None),
-                       click(288, 374), check("google_services.drive", True), check("saved_google_services.drive", True),
-                       click(365, 411), shot("google-consent-calendar-menu-light"),
-                       click(355, 482), check("google_services.calendar", "ReadOnly"),
+                       click(350, 504), check("busy", []), check("notice", None),
+                       click(288, 389), check("google_services.drive", True), check("saved_google_services.drive", True),
+                       click(365, 426), shot("google-consent-calendar-menu-light"),
+                       click(355, 497), check("google_services.calendar", "ReadOnly"),
                        check("saved_google_services.calendar", "ReadOnly"),
-                       click(288, 374), check("google_services.drive", False), check("saved_google_services.drive", False),
-                       wait(80), shot("google-consent-readonly-light"), click(350, 489),
+                       click(288, 389), check("google_services.drive", False), check("saved_google_services.drive", False),
+                       wait(80), shot("google-consent-readonly-light"), click(350, 504),
                        check("notice", "Google sign-in is disabled in preview.", "contains"), check("busy", []),
                        key("ctrl+1"), check("tab", "Mail"), key("Down"), check("selected", "Your weekly workspace digest"),
                        key("ctrl+comma"), check("tab", "Preferences"), check("google_services.calendar", "ReadOnly"),
@@ -4496,8 +4668,8 @@ class NativeFlows(unittest.TestCase):
                        {"type": "scroll", "amount": -4}, wait(150),
                        check("google_services.calendar", "ReadOnly"), check("google_services.drive", False),
                        check("google_grant.access.calendar_write", False), shot("google-consent-initial-dark"),
-                       click(266, 287), check("google_services.drive", True),
-                       click(340, 324), click(340, 288), check("google_services.calendar", "ReadWrite"),
+                       click(266, 302), check("google_services.drive", True),
+                       click(340, 339), click(340, 303), check("google_services.calendar", "ReadWrite"),
                        check("saved_google_services.drive", True), check("saved_google_services.calendar", "ReadWrite"),
                        check("google_grant.access.calendar_write", False), check("google_grant.access.drive", False),
                        wait(80), shot("google-consent-requested-both-dark"), key("ctrl+2"), check("tab", "Calendar"),
@@ -4567,6 +4739,71 @@ class NativeFlows(unittest.TestCase):
                        check("google_lifecycle.cleanup_pending", False), check("events", 5),
                        shot("google-disconnected-compact"), key("ctrl+1"), check("tab", "Mail"),
                        key("Down"), check("selected", "Your weekly workspace digest"), shot("mail-after-google-disconnect"))
+
+    def test_google_sign_in_button_replaces_client_fields(self):
+        # The harness gives this build a fictional client; nothing is pasted or shown.
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(470, 156), check("settings_tab", "Calendars"),
+                       check("google_sign_in.available", True), check("google_sign_in.label", "Sign in with Google"),
+                       check("google_sign_in.enabled", False), check("google_sign_in.legacy_client", False),
+                       {"type": "hover", "x": 1220, "y": 790}, {"type": "scroll", "amount": 12}, wait(150),
+                       shot("google-sign-in-button-light"),
+                       click(288, 660), check("google_services.drive", True), check("saved_google_services.drive", True),
+                       check("google_sign_in.enabled", True), wait(80), shot("google-sign-in-ready-light"),
+                       click(352, 775), check("notice", "Google sign-in is disabled in preview.", "contains"),
+                       check("busy", []), check("google_sign_in.waiting", False),
+                       key("ctrl+1"), check("tab", "Mail"), key("Down"), check("selected", "Your weekly workspace digest"))
+
+    def test_google_sign_in_button_compact_dark(self):
+        self.mcp.call("desktop.start", width=900, height=640)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       click(470, 156), check("settings_tab", "Calendars"), click(764, 549),
+                       {"type": "scroll", "amount": 9}, wait(150), check("google_sign_in.available", True),
+                       check("google_sign_in.label", "Sign in with Google"), shot("google-sign-in-button-compact-dark"),
+                       click(266, 380), check("google_services.drive", True), check("google_sign_in.enabled", True),
+                       wait(80), shot("google-sign-in-ready-compact-dark"),
+                       key("ctrl+1"), check("tab", "Mail"), key("Down"), check("selected", "Your weekly workspace digest"))
+
+    def test_google_sign_in_unconfigured_build_explains_the_disabled_button(self):
+        result = self.mcp.call("desktop.start", google_client="none")
+        print(f"Unconfigured sign-in evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(470, 156), check("settings_tab", "Calendars"),
+                       check("google_sign_in.available", False), check("google_sign_in.enabled", False),
+                       {"type": "hover", "x": 1220, "y": 790}, {"type": "scroll", "amount": 12}, wait(150),
+                       click(288, 670), check("google_services.drive", True), check("saved_google_services.drive", True),
+                       check("google_sign_in.enabled", False), wait(80),
+                       # The disabled button ignores a real click: no save, sign-in or notice.
+                       click(352, 785), wait(150), check("notice", None), check("busy", []),
+                       check("google_sign_in.waiting", False), shot("google-sign-in-unconfigured-light"),
+                       key("ctrl+1"), check("tab", "Mail"), key("Down"), check("selected", "Your weekly workspace digest"))
+        result = self.mcp.call("desktop.start", width=900, height=640, google_client="none")
+        print(f"Unconfigured compact evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       click(470, 156), check("settings_tab", "Calendars"), click(764, 549),
+                       {"type": "scroll", "amount": 9}, wait(150), check("google_sign_in.available", False),
+                       check("google_sign_in.enabled", False), shot("google-sign-in-unconfigured-compact-dark"))
+
+    def test_google_sign_in_legacy_client_keeps_working_with_a_switch_note(self):
+        result = self.mcp.call("desktop.start", google_permissions="calendar", google_legacy_client=True)
+        print(f"Legacy client evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("google_connected", True), check("google_sign_in.legacy_client", True),
+                       check("google_sign_in.label", "Reconnect Google"), check("google_sign_in.enabled", True),
+                       check("google_grant.client_id", "fixture-own-client.apps.googleusercontent.com"),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       click(470, 156), check("settings_tab", "Calendars"),
+                       {"type": "hover", "x": 1220, "y": 790}, {"type": "scroll", "amount": 12}, wait(150),
+                       shot("google-sign-in-legacy-client-light"),
+                       key("ctrl+2"), check("tab", "Calendar"), click(1260, 348), check("dialog", "Event"),
+                       check("event_access.update", True), key("Escape"), check("dialog", None),
+                       key("ctrl+1"), check("tab", "Mail"), key("Down"), check("selected", "Your weekly workspace digest"))
+        result = self.mcp.call("desktop.start", width=900, height=640, google_permissions="calendar",
+                               google_legacy_client=True)
+        print(f"Legacy client compact evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       click(470, 156), check("settings_tab", "Calendars"), click(764, 549),
+                       {"type": "scroll", "amount": 12}, wait(150), check("google_sign_in.legacy_client", True),
+                       shot("google-sign-in-legacy-client-compact-dark"))
 
     def test_connection_removal_review_and_cancel(self):
         self.mcp.batch(key("c"), check("composer.visible", True),

@@ -25,6 +25,7 @@ import "./style.css";
 import { clockTime, readerDate, rowDate } from "./format";
 import { GatewayRepository } from "./provider";
 import { accountPanel } from "./accounts";
+import type { ProfilesUI } from "./profiles_ui";
 
 // The desktop client's icon markup (src/ui/components.rs), so both clients
 // draw the same stroked shapes. Static strings only; never user content.
@@ -183,6 +184,7 @@ export function modal(title: string) {
 export function mount(
   w: Workspace,
   login?: { email: string; signOut: () => void },
+  profiles?: ProfilesUI,
 ) {
   const root = document.querySelector<HTMLDivElement>("#app")!;
   let tab = "Mail",
@@ -2182,6 +2184,7 @@ export function mount(
           w.changed();
         }),
       );
+    if (profiles) panel.append(...profiles.section());
     card(
       "Calendars and backups",
       el(
@@ -2192,7 +2195,9 @@ export function mount(
       el(
         "p",
         "muted",
-        "Google beta sign-in grants access to Shep. Calendar and Drive authorization will be connected separately.",
+        profiles
+          ? "Google beta sign-in grants access to Shep. Calendar and Drive permissions are requested separately under Profiles and sync."
+          : "Google beta sign-in grants access to Shep. Calendar and Drive authorization will be connected separately.",
       ),
     );
     return panel;
@@ -2351,6 +2356,8 @@ export function mount(
       );
       main.append(error);
     }
+    const offer = tab === "Mail" ? profiles?.banner() : null;
+    if (offer) main.append(offer);
     main.append(
       tab === "Mail"
         ? inbox()
@@ -2530,4 +2537,10 @@ export function mount(
     return true;
   }
   render();
+  return {
+    openPreferences() {
+      tab = "Preferences";
+      w.changed();
+    },
+  };
 }

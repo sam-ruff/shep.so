@@ -56,6 +56,76 @@ fn recovered_mail_sync_clears_its_error_but_preserves_other_action_errors() {
 }
 
 #[tokio::test]
+async fn show_more_loads_the_next_page_and_refreshes_keep_the_expanded_length() {
+    let store = crate::store::Store::memory().unwrap();
+    let body: String = (0..5000)
+        .map(|line| format!("Line {line:05} of the long report.\r\n"))
+        .collect();
+    let mail = crate::model::parse_mail(
+        "test",
+        "long",
+        "INBOX",
+        format!(
+            "From: Test <test@example.com>\r\nTo: reader@example.com\r\nSubject: Long\r\n\r\n{body}"
+        )
+        .into_bytes(),
+        false,
+        false,
+    )
+    .unwrap();
+    let id = mail.summary.id.clone();
+    store.upsert(vec![mail]).await.unwrap();
+    let page = crate::store::READER_BODY_PAGE;
+    let (mut app, _) = App::new();
+    let (sender, mut reads) = engine::CommandSender::foreground_test_channel();
+    app.tx = Some(sender);
+    app.selected = Some(id.clone());
+    app.detail = Some(Arc::new(store.detail(id.clone()).await.unwrap()));
+
+    let _ = app.handle(Message::MoreBody);
+    let mut requested = None;
+    while let Ok(command) = reads.try_recv() {
+        if let Command::Detail {
+            id: target,
+            prefetch: false,
+            body_chars,
+            ..
+        } = command
+            && target == id
+        {
+            requested = Some(body_chars);
+        }
+    }
+    assert_eq!(requested, Some(2 * page));
+
+    let expanded = Arc::new(store.detail_limited(id.clone(), 2 * page).await.unwrap());
+    let _ = app.handle(Message::Backend(Event::Detail {
+        revision: app.detail_revision,
+        id: id.clone(),
+        result: Ok(expanded),
+        prefetch: false,
+    }));
+    assert_eq!(app.detail.as_ref().unwrap().body.chars().count(), 2 * page);
+
+    // A background change reloads the reader without collapsing it again.
+    let _ = app.handle(Message::Backend(Event::Changed));
+    let mut refreshed = None;
+    while let Ok(command) = reads.try_recv() {
+        if let Command::Detail {
+            id: target,
+            prefetch: false,
+            body_chars,
+            ..
+        } = command
+            && target == id
+        {
+            refreshed = Some(body_chars);
+        }
+    }
+    assert_eq!(refreshed, Some(2 * page));
+}
+
+#[tokio::test]
 async fn stale_prefetch_cannot_restore_flags_or_errors_after_a_mail_change() {
     let store = crate::store::Store::memory().unwrap();
     let mail = crate::model::parse_mail("test", "1", "INBOX",

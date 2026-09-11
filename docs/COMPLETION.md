@@ -2,6 +2,322 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## 11 September: Google-only password vault on desktop (R49, lane `worktree-agent-af3023305aa75f5b0`)
+
+Sam chose Google-only protection for synced account passwords. The credential
+section of [the handover](agents/PROFILE_SYNC_HANDOVER.md) now fixes the contract
+Flutter will implement: replaceable `credential-key` and `credential-vault`
+app-data files outside the causal history, a versioned AES-256-GCM envelope
+(version byte, random 12-byte nonce, authenticated data binding profile,
+generation, key, shared account, field, revision and a server/login endpoint
+digest), a key created once with canonical selection (highest sequence, then
+smallest UUID) and rotated whenever a password is removed, lossless concurrent
+writers (merge every vault file per slot, write one successor, delete only the
+merged files) and a plain statement that anyone with the Drive app data can read
+the passwords.
+
+`shared/profile-core` gains an additive, optional `vault` feature (no I/O, no
+`getrandom`, compiles for WASM; the Flutter and backend lockfiles are unchanged).
+`shared/credential-vault-fixtures.json` holds exact key/vault bytes, envelopes,
+authenticated data, merge, canonical-key and rejection cases; seven Rust codec
+tests and `tests/test_credential_vault_fixtures.py` (an independent Python
+AES-GCM) check it. Desktop adds `profile_sync/vault` (reconcile pass, staged
+import), the Drive transport for credential files, `profile_credentials_v1`
+state (revisions and flags only), the enrollment `passwords` option and the
+**Sync account passwords through your Google account** toggle with its Drive
+app-data warning, status line and **Try synced passwords again**. Each Sync runs
+the pass after the continuous cycle, and a toggle change runs its own pass even
+while sync is paused. Received pairs are staged in new keychain slots, read back,
+tested against the account's own servers and activated under the lifecycle and
+account locks, clearing Reconnect; failures keep the previous pair and hold that
+revision until an explicit retry. Database import archives the new state.
+
+Verification: 21 new Rust tests (codec, decisions, publish and tested import,
+failed import, rotation on local and shared-history removal, toggle-off while
+paused, restart, concurrent first-key creation stressed 60 times, wrong key,
+other endpoint, newer minor version, real history tombstones, loopback Drive
+transport and a SQLite/WAL/trace-log/Drive scan for both test passwords, UI
+toggle ordering) plus the extended import-fence and settings-search tests;
+`cargo test --all-features profile_` passes 138; lane commit `73d74b6` passed
+1163 hook test executions; 103 Python tests pass after merging `main` (six new);
+Flutter (89) and backend (40) Rust tests pass unchanged against the shared crate;
+fmt, both Clippy runs and the Windows GNU check pass.
+Native: the Drive fixture gains credential files, a plaintext oracle and
+`existing-passwords`; the harness gains `profile_passwords`; three new
+`test_profile_passwords_*` flows (enable and turn off, second-device import in
+light and compact dark, rejected import with held retry across restart) scan the
+closed workspace and logs for the fictional passwords. All 42 `-k profile_`
+native scenarios pass on the merged binary (`artifacts/logs/e2e-credential-vault.log`;
+evidence `bd297fda6a97`, `ab52a5cb988d`, `eec335557bb2`), with reviewed light and
+compact dark captures; password scenarios run with debug app logs for the scan. An earlier run found nine review flows broken by the new block at
+the end of the card; it now steps aside while a shared review is open.
+
+Limitations: fixture evidence only, no live Google app-data verification; Flutter
+and browser are unimplemented (mobile session); the two desktop keychain writes
+are not atomic (a failure between them retries from staging); each enabled pass
+downloads the credential files; the fixture connection tester is not a mail
+server. Unchecked checkboxes are faint in the light theme app-wide.
+
+## 11 September: Sign in with Google on the desktop (R75 client)
+
+Sam asked for "a login with Google button, not pasting in OAuth creds". On lane
+branch `worktree-agent-af66d90e46f2fe728` (feature commit `ff04df5`, not yet on
+`main`), the Google card in Preferences → Accounts and Calendars now has one **Sign in with
+Google** (or **Reconnect Google**) button and no client ID or secret fields.
+`src/providers/google/client.rs` compiles Shep's own Desktop OAuth client in from
+`SHEP_GOOGLE_CLIENT_ID`/`SHEP_GOOGLE_CLIENT_SECRET`; debug and `test-support`
+builds also accept them at runtime, never shown in the UI. A build without both
+shows the button disabled with "Google sign-in is not configured in this build."
+[Google sign-in client](agents/google-sign-in.md) documents the build variables,
+where `scripts/install-linux.sh`, `scripts/release.py` and the Windows/release
+workflows pick them up, and Sam's Google Cloud setup. No real client exists yet.
+
+Sign-in keeps the system browser, random `127.0.0.1` loopback port, scoped
+consent and the staged-grant, activation, disconnect and token-owner contracts.
+Each attempt now uses a fresh PKCE S256 verifier and an exact 256-bit state, the
+browser wait is bounded to three minutes, and **Cancel sign-in** (or quitting)
+stops the wait and closes the listener. Denied, refused, cancelled, timed-out and
+expired-code outcomes are typed errors that say nothing changed. Grants record
+their issuing client: a connection from a self-configured client keeps
+refreshing with its stored ID and secret, a note explains that signing in again
+switches to Shep's client, and a staged candidate from another client is never
+resumed.
+
+Verification: new provider tests drive a fake browser against the real loopback
+listener and a fake token endpoint (PKCE and the RFC 7636 vector, exact-state
+rejection, denied/refused/cancelled/timed-out outcomes with the port closed,
+expired codes, an unconfigured build, the self-configured-to-built-in migration
+and candidate client binding), plus client-selection and UI tests (disabled
+button, cancel on click and quit, stale permissions, switch note). `cargo test
+--all-features google` passes 73 and the hooked suites pass 1151 test executions
+(1076 workspace, 2 pixbuf, 73 profile-core); fmt, both Clippy runs, the Windows
+GNU check, 97 Python tests and the strict docs build pass. Native: four new scenarios
+(button, unconfigured build and self-configured connection, each light and
+900×640 dark) and the recalibrated consent flows; all 11 selected Google,
+disconnect, permission and backup scenarios pass after merging `main`, and the
+captures were reviewed (`5d0a5736fd6b` and `6af877adae9c` for the button,
+`91e04781bea0` and `6ee4aac28f61` for the unconfigured build, `ea6b89a2a641` and
+`42f03da3b5bd` for the self-configured connection).
+
+Limitations: live sign-in is unverified until Sam creates the client. The G mark
+is not shown because no approved asset is in the repository. Drive backups and
+profile files written through a self-configured project are not visible after
+switching, and the profile-sync code (another lane) does not yet explain that
+mismatch. Flutter and browser sign-in remain with the mobile session.
+
+## 11 September: long messages load in parts (R23 reader)
+
+The plain-text reader no longer stops at 32,000 characters. `Store::detail_limited`
+loads a message with a character budget, never below one 32,000-character page,
+and `Command::Detail` carries that budget. The reader opens at the first page;
+**Show more** re-requests the open message with its shown length plus one page
+through the ordinary detail path, so the reply split, text selection and Find keep
+working unchanged. Every other request for the open message (conversation focus,
+prefetch and the reload after a background change) reuses the loaded length, so a
+refresh never collapses it. The old dead-end notice is replaced by "Showing the
+beginning of this long message." beside the button. The original MIME is still
+parsed whole as before; the change bounds what is rendered, and the detail cache
+stays capped by total bytes.
+
+Verification: two new store tests (paging to the end, clamping to one page, short
+messages) and a UI test (Show more requests the next page; a background change
+keeps the expanded length); 16 targeted UI tests, fmt, both Clippy runs (all
+features and no features) and 96 Python tests pass. Native: a new `long_mail`
+fixture flag and `test_long_message_show_more_loads_every_part`; all 49 selected
+reader scenarios pass (long message, conversations, HTML, search, Find,
+read-on-leave, replies) in 528 s, and the final long-message rerun passes with
+evidence in `f1fd9d430153`. Reviewed captures show the first part with the notice
+and button, the second part, and the complete message ending at `Line 1200.`.
+
+Limitations: the first run's final capture, taken 150 ms after the state reported
+the whole message loaded, still showed the previous frame. Presenting about 88,000
+characters takes noticeably longer than that settle, so the scenario now scrolls to
+the end before capturing; that presentation latency is not measured here and
+belongs to the idle-host performance pass. Parts are cut by character count, so a
+part can end mid-line. Still open under R23: the 25 MiB incoming skip, the 256 MiB
+restore limit and the outgoing limit audit (see TODO).
+
+## 11 September: website image, registry workflow and copy audit (client R70, R94)
+
+After the restart the website worktree held nothing unique: its untracked `website/` matched the mobile branch except the older delegated README, saved under ignored `artifacts/website/old-readme.diff`, and its tracking-doc edits were already there. `feat/promo-website` now follows `main`, which carries the mobile merge.
+
+`website/Dockerfile` builds the static site in a node stage and serves it from the estate's digest-pinned Chainguard nginx on port 8080. The nginx config is a plain static site rather than an SPA fallback, so `/beta` and other unknown paths return 404 and the gated beta can later be routed to its own container. The new `Website` workflow runs on the sophie runner pool: site build, Chromium Playwright, image build, then a push to `registry.tail2d6fbe.ts.net/shep/website` tagged `latest` and `sha-<short sha>`, only from main and only once the `ZOT_USERNAME`/`ZOT_PASSWORD` secrets exist; until then it reports a skipped push. The copy audit aligned three claims with main: backups name local folders, Google Drive, S3-compatible storage, SFTP and FTP/FTPS; reading is static HTML layout with selectable text and a plain-text option; the Linux panel mentions the release installer but says no binary releases are published, so the source build stays the offered path. The unencrypted-cache statement and the store and beta states are unchanged because main still supports them.
+
+Validation: `npm run test:all-browsers` passes 61 checks across Chromium, Firefox and WebKit, with the two Chromium-only clipboard cases skipped (`artifacts/logs/website-copy-all-browsers.log`); new assertions cover the source-only Linux state, the no-releases note, the absence of release download links and the reading and cache statements. The image built from the repository root serves the index, scripts, styles, logos and screenshots with 200, returns 404 for `/beta`, `/beta/` and unknown paths, sends `no-store` for the index and long-lived caching for assets, and contains the new copy (`artifacts/logs/website-docker-build-final.log`). The workflow YAML parses and `git diff --check` is clean. The first pool run (34578545995) checked out, installed and built the site on the Debian 13 runner, then failed at the test-tooling step because that image has neither Pillow nor pip; the workflow now installs `python3-pil` when the import fails. The second run (34578982510) passed the Chromium Playwright suite on the pool and failed at the image build: Docker fetches cgr.dev through the pool's `cache.local` proxy and Go's resolver cannot look up mDNS names. The workflow now pins the address glibc resolves into the job VM's `/etc/hosts`; the proper fix belongs in the runner template (R94). The zot account and secrets, the infrastructure migration, staging containers, DNS and the first deployment remain in R94; nothing is deployed.
+
+## Encrypted cache bootstrap, guard retention and keyed import: lane checkpoint
+
+R22 gains the startup routing that the publication checkpoint left open.
+`cache_cipher::bootstrap` owns one `shep-cache-root` thread behind a bounded
+channel of a single request. The engine's `open_workspace` hands it the data
+folder, legacy cache name and a policy, and awaits the reply; dropping that
+future cancels staging and keeps the plaintext. The thread takes the exclusive
+root guard, reads the device-local `.cache-root` marker, loads the key through
+the bounded credential actor (`Existing` never creates one; `Migrate` creates
+the key first and writes the marker second), walks a deterministic inventory
+of every database in the root and its profile folders, runs `recover` for each
+main before anything opens, authenticates the key against already keyed files,
+stages and publishes any plaintext file under the same guard, then re-takes
+the guard shared and hands `Root { key, guard }` out. `Catalog::open_in`,
+`Store::open_in` and `Journal::open_beside` route every connection through
+that root and give the shared guard to their `Worker`, whose owner drops it
+after the connection, so ownership ends only when the last admitted write has
+drained. A second cooperating Shep joins a plaintext root as a reader.
+Production uses `Policy::Existing`, so every current install still starts
+plaintext; there is no staging flag, and `Migrate` is reachable only from
+tests. Import staging in a keyed workspace now converts logically into a keyed
+private copy (schema re-validated inside the copying transaction, then the
+same full integrity/schema/foreign-key/review checks on the reopened keyed
+copy), with keyed fences and installation. Older guard-less Shep processes are
+excluded by the checkpoint step: SQLite refuses to leave WAL mode while any
+other connection has the file open, including an idle one in another process.
+
+Review fixes before integration: the bootstrap fixture helper no longer
+unwraps a journal-mode change that returns SQLITE_BUSY while a worker is still
+closing (it failed the first hook run); two Shep processes starting together
+wait up to two seconds for each other's exclusive opening phase
+(`Guard::join`, and a bounded wait inside `Guard::share`) instead of failing,
+and the marker is re-read after sharing so a key created in between is
+refused; the keyed import copy now keeps the source application ID, which
+logical export drops, and re-checks the preview fixture marker inside its
+copying transaction; the keyed install test's progress channel is bounded.
+
+Verification after merging `main` at `ca28e69`: ten bootstrap tests
+(plaintext fallback with no key request, full migration of
+catalog/legacy/profile/profile-sync databases and key reuse with straggler
+conversion, interrupted publication recovered before the catalog opens,
+cancellation during key admission, a locked key store, missing and wrong keys
+leaving every byte unchanged, a second process excluded from migration while
+admitted as a reader, a concurrent start waiting for another Shep's opening
+phase, and a subprocess modelling an idle legacy Shep that blocks publication
+until it exits), an ownership join/timeout test, a worker test proving the
+guard outlives admitted writes and the last handle, a catalog/store retention
+test, and keyed import staging/installation and cancellation tests.
+`cargo test --all-features` passes 40 tests for `cache_cipher`, 10 for
+`bootstrap`, 15 for `profiles` (13 desktop plus two shared drive tests) and 32
+for `import`, summed across binaries. fmt, both Clippy runs with
+`-D warnings`, 96 Python tests (seven skipped) and
+`cargo check --target x86_64-pc-windows-gnu --all-targets --all-features`
+pass. The lane commit `400b836` hook passed 1117 tests across 51 binaries
+(three ignored), and the merge commit hook passed 1132 tests across 53
+binaries (three ignored). On the merged test-ui binary the `database_import`,
+`database_export`, `profile_catalog` and `local_profile` selectors ran eight
+native scenarios, all `database_*` (no scenario is named for the other two),
+and all pass in 44.6 s (`artifacts/logs/e2e-cache-bootstrap.log`; the profile
+rename/restart path's evidence is under `artifacts/e2e/7af082792006` and
+`artifacts/e2e/bbcac60fcc72`). These scenarios use the plaintext fixture
+workspace, so they prove the bootstrap-routed plaintext path and unchanged
+import routing, not keyed import. Not verified: actual Windows/macOS
+execution, any personal database, and a native scenario on a migrated root
+(the demo fixture opener is plaintext-only).
+
+Still blocking activation: a user-facing or setting-driven way to select
+`Policy::Migrate`; reader-guard retention in the profile transport/history
+workers; bounded selection-summary/catalog/recovered-view sorting and the
+index builds inside `sqlcipher_export` during migration staging and keyed
+import, which sort under memory temporary storage; native key recovery; a
+native migrated-root scenario; and actual Windows/macOS startup checks.
+
+## 10 September: incremental enrolled profile pulls (R02/R49 lane)
+
+Enrolled devices now poll the shared discovery catalog's persisted Drive change
+token instead of re-listing the whole profile on every cycle. The new
+`profile_sync::incremental` module completes the catalog (resume a saved page or
+pending download, `refresh(false)` from `completed_token`, or one `refresh(true)`
+full listing per pass when Google rejects the token with 400/404/410 on the
+change poll, a page repeats or a known file is reported removed), freezes this
+profile's verified observation, and copies records into the enrolled history
+one at a time through a `catalog_copies` cursor in `drive.sqlite`. The cursor is
+bound to the observation's and the history's device UUIDs and is saved only
+after each import commits, so a rebuilt owner or a lost checkpoint replays
+exact immutable bytes and can never skip a record. Publication with a
+catalog-sourced proof verifies queued bytes against the verified inventory and
+refuses to reserve another ID for an operation already on Drive. Setup and join
+keep the complete scoped listing. No shared-crate, wire-format or credential
+change is involved.
+
+Lane evidence: eight `profile_incremental_*` tests (unchanged and single-record
+polls with exact request counts, publish through the catalog proof, rejected
+token fallback plus a reported second rejection, 503 mid-page resuming after
+restart without re-listing, rewound cursor replay, out-of-order arrivals,
+rebuilt history/observation owners, removed known file, unlisted profile);
+after merging `main` at `9ea8ad1` (browser profile work and the no-feature
+build fix) and declaring the `incremental` module the lane commit omitted,
+`cargo test --all-features profile_` passes 120 library tests plus four
+integration tests (one personal diagnostic ignored);
+`scripts/test_profile_core.py` passes 73 shared-crate tests; `cargo fmt`, both
+Clippy runs with `-D warnings` and `python3 -m unittest discover` (96, seven
+skipped) pass.
+The loopback fixture's continuous modes now trigger on the second change poll,
+and the new `existing-token-expired` mode rejects the saved token once. On the
+merged test-ui binary all 18 selected `profile_continuous`/`profile_account`/
+`profile_join` native scenarios pass (70.2 s,
+`artifacts/logs/e2e-incremental-final.log`), including
+the new `test_profile_continuous_native_expired_change_token_falls_back_to_one_full_listing`
+(exactly one listing beyond discovery, no repeated metadata/media, second account
+and Tooltips received, durable across restart) with reviewed captures under
+`artifacts/e2e/51f1d36d3d0c`; the three `profile_setting_review` scenarios passed
+on the lane before the merge. The merge commit's hook passes 1116 tests across
+53 binaries (three ignored). Google's exact expired-token status is taken from the fixture and
+documentation, not a live account; integration and push remain with the root.
+
+## 10 September: Google lifecycle channel ownership (R91)
+
+The audit covered every shared lock-managed state on the Google lifecycle
+path. Each confirmed case now has a bounded owning worker; nothing else on the
+path held a mutex.
+
+| State | Before | After |
+| --- | --- | --- |
+| Google connection (status, calendar sync, event edits, Drive backups, restore, profile sync sessions; login, disconnect, cleanup) | `Arc<RwLock<()>>` on the engine | `engine/lifecycle_work.rs` lane: 32-request FIFO coordinator, shared/exclusive grants by one-shot, abandoned requests skipped, drop releases, close drains |
+| Connection lifecycle (account/calendar saves, removal, cleanup retry, restore, Google activation) | `Arc<Mutex<()>>` | exclusive lane on the same coordinator type |
+| Calendar setup namespace | `Arc<Mutex<()>>` | exclusive lane |
+| Token vault (grants, candidate, pending login, refresh, activation pruning, clear) | `Arc<Mutex<State>>` held across HTTP and keychain calls | `providers/google/owner.rs`: one thread owns `State`, 32-job FIFO; admitted jobs drain even when the caller is cancelled or the last handle drops; a stopped owner reports an error |
+| OS credential entry | already a bounded 32-request thread (`credentials.rs`) | unchanged |
+| `google_lifecycle`, `google_archived`, cleanup jobs, revisions | SQLite through the cache worker | unchanged |
+
+Contracts are preserved: disconnect keeps cached calendars and events
+read-only, cleanup pending survives restart, stale reviews and snapshots are
+rejected, and the Google-exclusive-before-lifecycle order and reconnect
+ordering are unchanged. The Google lane is strict FIFO, so provider work queued
+behind a disconnect waits for it rather than starving it. The engine field name
+`google_connection_lock` is retained because the profile sync lane reads it.
+The behavioural improvement is in the token owner: a sync cycle cancelled
+mid-refresh no longer drops the HTTP/keychain future, so a rotated refresh
+token is always persisted.
+
+The R64 `Owned` follow-up: a new Linux regression in the shared crate opens a
+Journal, reads `/proc/self/fdinfo` to assert the lock descriptor carries
+`O_CLOEXEC`, execs a child while the lock is held, and the child asserts no
+descriptor names the lock file, that `Journal::open` returns `Owned`, and that
+it can claim the journal after the parent drops it while the child lives. The
+only shared-crate change is that test plus a test-only descriptor accessor.
+Descriptor inheritance across exec is therefore not the mechanism; the
+fork-to-exec window was already neutralised by the explicit unlock on drop
+(`e3e69a4`). Fifteen full reruns of the shared crate (70 tests each) show no
+`Owned` (`artifacts/logs/journal-owned-stress.log`); the original transient
+remains unreproduced and undiagnosed.
+
+Tests: five lane coordinator tests (FIFO with shared behind exclusive,
+abandoned requests, failing holder release, 32-bound with drained overflow,
+close waits for the holder) and three token owner tests (cancelled refresh
+observer still persists in order, last handle drains the running save before
+exit then restarts from the vault, locked keychain fails every queued caller
+without stopping the owner); the removals test now probes lane occupancy. On
+the lane, `cargo test --all-features google` passes 57, `lifecycle` 14 and
+`journal` 33 executions; `cargo test -p shep-profile-core --all-features` 70.
+The commit `f4575b2` passed the full pre-commit hook with **1101** test
+executions (three personal diagnostics ignored, `artifacts/logs/hooks-google-owner.log`). Formatting, `cargo clippy --all-targets --all-features -- -D warnings` and 96
+Python tests (seven skipped) pass. Native: the six Google disconnect,
+permissions and consent scenarios pass in 21 s
+(`artifacts/logs/e2e-google-owner.log`); reviewed captures in `92ffc34b5a29`
+(disconnect review, disconnected state, cached read-only event),
+`f64efd4453a0` (compact dark disconnect and mail navigation), `41a08b14baeb`
+and `5555027e3c8a` (consent light/dark). These are fixture grants, not live
+Google. Limitations: independent-process Google/lifecycle coordination and
+live Google verification remain open; the profile sync lane should add `?`
+handling if the lane API ever becomes fallible.
+
 ## Mobile and web clients merged into main — shipped
 
 The desktop session merged `feat/mobile-web-clients` (`d8d5c1e`, itself a
@@ -5956,3 +6272,64 @@ subscribed yet; scheduling is the foreground tick and Sync now with no OS
 background scheduling; fixtures only, with no live Google, cross-client delivery
 or Apple execution claims; sync starts paused after seeding; an unproven field
 with equal values stays silently pending until either side changes.
+
+## Browser profile consent, discovery, publication, enrollment and onboarding — 2026-09-10
+
+R92 / R75 (client) / R02 / R49, lane commits `5e337e5` (shared crate),
+`f16016b` (backend) and `5e013d1` (browser). The shared profile-core crate moves
+its history protocol types out of the SQLite-gated module and adds an in-memory
+journal with the same command contract and derived state as the native journal,
+tested side by side, plus a WASM `ProfileHistory` entry; `test_profile_codec.mjs`
+now exercises the history entry and the browser build compiles the profile-core
+glue. Native paths are unchanged, so the desktop and Flutter keep compiling.
+
+The backend gains a session-bound second OAuth consent behind a provider trait:
+PKCE, state and nonce, the exact desktop scope list, the subject must equal the
+beta identity, the Drive principal is verified, granted scopes are intersected
+with the request, refresh happens server-side, and tokens live only in the
+in-memory session store (pruned with sessions, logout and replacing login),
+never in logs or the browser. Denied, failed or mismatched consent keeps the
+existing grant and choices. A fixture provider and two HTTPS gate stages cover
+denied-then-connected consent and discovery/publication through the proxy; the
+production Google provider is implemented but unexercised.
+
+Browser Preferences gains "Profiles and sync": a Google connection card with
+requested versus saved permissions, Drive app data and Calendar choices,
+Connect, Reconnect and Disconnect with retryable local cleanup, and an explicit
+note when live provider access is not connected. A browser history worker and a
+per-identity IndexedDB store hold the discovery catalog and receipts. Find
+profiles verifies pages and saves an incomplete listing as a failure that retries
+from the same step. Reviewed first-profile publication freezes a fingerprinted
+review, stages exact edits behind the initialisation barrier, uploads one owned
+file per step, retries a lost reply without duplicating files and supports pause,
+browse and resume. Reviewed enrollment copies originals into an independently
+owned journal with a fresh device identity, pages account rows with connection
+details, imports accounts without passwords and marks them Reconnect required
+until a reviewed reconnect, keeps mail, drafts and Sent preferences for mapped
+accounts, offers changed connections as separate accounts and applies the four
+browser portable preferences through frozen-revision receipts. First-setup
+onboarding offers the opt-in, automatic enrollment for a single profile and a
+picker for several; a durable Not now is reversible from Preferences.
+
+Lane evidence (`artifacts/logs/browser-profiles-*.log`): 40 backend tests plus
+the ignored HTTPS gate, backend Clippy and formatting clean, 72 shared crate
+tests with native and wasm32 Clippy clean, 28 codec fixtures plus the history
+entry in Node, 154 browser units, build, `tsc` and prettier clean, 26 Chromium
+scenarios (seven profile scenarios with axe checks and eleven light/dark
+captures under `artifacts/web/profiles/`), 37 parity contracts, strict docs and
+1097 hook tests per commit. Integrator gates after merging onto `main`
+`1d86831` (`artifacts/logs/bp-int-*.log`): 73 shared crate tests and Clippy,
+40 backend tests, 89 mobile Rust tests, 154 browser units, build, the profile
+and workspace specs (21 passed after one capture race), Flutter analysis clean
+and 143 Flutter host tests. The capture helper in `profiles.spec.ts` re-resolves
+the region when a preference save redraws Preferences mid-scroll; three repeated
+runs then pass 21/21. Reviewed captures: discovery dark and the enrollment
+review dialog.
+
+Limitations: no live Google or same-project cross-client verification; ongoing
+browser reconciliation, conflict decisions, shared removal reviews, credential
+protection and the remaining portable categories stay open (appearance, preview
+lines, sender pictures and quoted history are the browser's portable set).
+Browser storage is keyed by the beta identity hash with the Drive principal
+bound in every journal binding; a name row counts inside its account
+application.

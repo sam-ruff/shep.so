@@ -457,9 +457,11 @@ async fn real_browser_beta_gate() {
                 address: "127.0.0.1:1465".parse().unwrap(),
             },
         ],
+        profile_namespace: Some("so.shep.browser-fixture".into()),
     });
     config.validate().unwrap();
-    let mut state = AppState::new(config.clone(), Arc::new(BrowserGoogle));
+    let profiles = crate::profiles::tests::FixtureProvider::browser_gate();
+    let mut state = AppState::new(config.clone(), Arc::new(BrowserGoogle), profiles.clone());
     let transport = Arc::new(BrowserMail {
         unread: AtomicBool::new(true),
         ..Default::default()
@@ -527,5 +529,14 @@ async fn real_browser_beta_gate() {
         transport.sends.load(Ordering::SeqCst),
         4,
         "One delivered, two explicitly submitted uncertain copies and one rejection; review, preparation and status checks never send"
+    );
+    assert_eq!(
+        profiles.exchanges.load(Ordering::SeqCst),
+        2,
+        "One denied consent never exchanges; one accepted consent and one reconnect exchange exactly once each"
+    );
+    assert!(
+        profiles.drive_calls.load(Ordering::SeqCst) >= 3,
+        "The consent stage verifies the Drive principal and lists app data through the proxy"
     );
 }

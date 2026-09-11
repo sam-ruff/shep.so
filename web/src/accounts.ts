@@ -445,7 +445,9 @@ export function accountPanel(
           "span",
           repo.connected(account.id)
             ? "Connected in this tab"
-            : "Reconnect to refresh or send",
+            : repo.reconnectRequired.has(account.id)
+              ? "Reconnect required: imported from a synced profile without a password"
+              : "Reconnect to refresh or send",
         ),
         button(`Reconnect ${account.email}`, () =>
           connect(repo, endpoints, changed, account),

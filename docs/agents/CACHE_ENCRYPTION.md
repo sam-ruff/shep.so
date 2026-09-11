@@ -1,10 +1,12 @@
 # Local cache encryption work
 
-R22 is in progress. Normal startup still opens the existing cache; the staged
-encryption APIs, including guarded publication and crash recovery, are not
-activated until the blockers listed at the end of the publication section are
-resolved.
-No personal database has been changed by the development fixtures.
+R22 is in progress. Normal startup now runs through the root bootstrap worker
+(`cache_cipher::bootstrap`) with the production policy `Existing`: a root that
+already owns a device key takes the encrypted path, and every other root stays
+plaintext exactly as before. No production root owns a key yet, because key
+creation and plaintext conversion (`Policy::Migrate`) are reachable only from
+tests until the blockers listed at the end of the bootstrap section are
+resolved. No personal database has been changed by the development fixtures.
 
 The desktop pins SQLCipher 4.19.0 (SQLite 3.53.4) in the vendored
 `libsqlite3-sys` build, retaining the newer WAL/FTS fixes. Random device keys are
@@ -110,28 +112,88 @@ no journal is reported and kept, and blocks a new publication until reviewed.
 Orphan cleanup then removes `.shep-encrypted-*.partial` candidates (and their
 SQLite sidecars) not named by a journal and `.shep-cache-scratch-*` session
 folders; import staging files are not touched. Cleanup is only safe because the
-exclusive guard proves no cooperating owner, which is why legacy process
-exclusion remains an activation blocker. Ten tests cover full publication with
+exclusive guard proves no cooperating owner; the bootstrap section below
+describes how older, guard-less processes are excluded. Ten tests cover full publication with
 uncheckpointed WAL rows, stale candidates with retry, a held plaintext
 connection with retry, foreign guards, interruption before each of the seven
 steps with resume, wrong-key rollback and refusal, lost candidates, ambiguous
 layouts and orphan cleanup.
 
-Activation is still blocked on: bootstrap routing of `recover` before any
-catalog/profile open and of `stage`/`publish` on a worker with the exclusive
-guard held from key creation through publication; the store and profile workers
-holding the reader guard for every admitted write; excluding legacy Shep
-processes that do not take the guard, since checkpoint refusal detects an open
-connection only when it holds a lock; keyed import staging and catalog routing;
-bounded selection-summary, catalog and recovered-view sorting; native key
+Bootstrap (`cache_cipher::bootstrap`) is the only production entry to a data
+root. `Bootstrap::start` owns one thread, `shep-cache-root`, behind a bounded
+channel of one request; the engine's `open_workspace` sends the data folder,
+the legacy cache filename and a policy, and awaits the reply. Dropping that
+future cancels staging through a watch token; the plaintext is kept. On the
+thread, `open_root` takes the exclusive guard (or, under `Existing` only, joins
+as a reader when a cooperating Shep already owns the root and has therefore
+run recovery), reads the device-local `.cache-root` marker naming the key
+namespace, loads the key through the bounded credential actor (`Existing`
+never creates one; `Migrate` creates the key first and writes the marker with
+no-clobber persist plus directory fsync second, so a crash between the two
+leaves a plaintext root that admits a fresh key later), then walks a
+deterministic inventory of every database in the root: the root folder,
+`profile-sync/`, and each `profiles/<uuid>/` folder with its own
+`profile-sync/`, taking `*.sqlite` files, the legacy name and journalled mains
+whose file is absent, never dot-prefixed candidates or import staging. For each
+main it runs `recover` before anything opens, authenticates the key with a
+read-only keyed open of an already keyed file (a wrong key fails here with the
+file untouched), and stages plus publishes a plaintext file under the same
+exclusive guard. A plaintext straggler in a keyed root (installed by an older
+Shep) is therefore converted at the next start under either policy; a reader
+that meets one reports that the root is being encrypted and retries later. The
+guard is then re-taken shared (`Guard::share`, unlock then try-shared so a
+competing exclusive owner is reported rather than outranked) and handed out as
+`Root { key, guard }`. Two Shep processes starting together do not fail each
+other: joining as a reader and re-taking the shared lock both wait up to two
+seconds for the other's short exclusive phase, and the marker is re-read after
+sharing so a key created in between is refused rather than ignored. `Catalog::open_in`, `Store::open_in` and
+`backup::journal::Journal::open_beside` route every connection through the
+root's key decision and give the shared guard to their `store::worker::Worker`,
+whose owner drops it after the connection: the reader guard is released only
+when the last owner has drained its admitted writes. The profile transport and
+history workers (`src/profile_sync/`) still open through the key handle alone
+and do not yet hold the guard.
+
+Import staging in a keyed workspace converts logically: a keyed private copy
+attaches the selected file read-only and unkeyed, re-validates its schema inside
+the copying transaction (that connection does not share the earlier read
+snapshot) and the preview fixture marker, exports with `sqlcipher_export`,
+copies the user version and application ID that logical export drops, then the
+copy is reopened keyed for
+the same full integrity, schema, foreign-key and review checks the plaintext
+path performs; fences and installation use the same key, so no plaintext
+staging copy or profile ever exists beside an encrypted cache. The plaintext
+path keeps the page-copy backup API and its per-page progress. Page progress
+for the keyed path is reported at start and end only.
+
+Legacy process exclusion: every Shep from this change on holds the reader
+guard for its whole session, on the plaintext path too, so the population of
+guard-less processes is limited to older binaries. For those, publication's
+checkpoint step is the detector: SQLite refuses to leave WAL mode while any
+other connection, in this or another process, has the file open, because each
+open WAL connection holds the shared DMS lock on the `-shm` index for its
+lifetime, including while idle. A subprocess fixture proves that an idle older
+Shep holding the legacy cache blocks publication with a "still open" error and
+that the plaintext stays intact; after it exits, the next start completes the
+conversion, and a plaintext open of the published file fails without modifying
+it. The remaining gap is a legacy process that starts between our exclusive
+acquisition and its first read, or one that opens a root database publication
+never touches; both are documented limits, not detected states.
+
+Activation is still blocked on: a user-facing or setting-driven way to select
+`Policy::Migrate` (there is no staging flag today; migration runs only from
+tests); the profile transport/history workers retaining the reader guard;
+bounded selection-summary, catalog and recovered-view sorting, and the index
+builds inside `sqlcipher_export` during migration staging and keyed import,
+which sort under the keyed main's memory temporary storage; native key
 recovery and platform startup checks, including Windows rename semantics under
-antivirus or indexer handles, which are only compiled, not executed.
+antivirus or indexer handles, which are only compiled, not executed; and a
+native scenario exercising a migrated root, since the demo fixture opener is
+plaintext-only.
 
 The root ownership guard allows current readers and excludes migration/key
 creation while another cooperating process owns the cache. It explicitly
-unlocks on drop so an unrelated transient fork cannot extend its flock. Legacy
-process exclusion and retained ownership through every admitted worker write
-remain required before activation.
+unlocks on drop so an unrelated transient fork cannot extend its flock.
 
 The SQLite backup API supports copies between databases with compatible
 encryption settings. It rejects plaintext/ciphertext conversion. Keyed raw export
@@ -140,8 +202,9 @@ candidate lives in the chosen export folder. This remains intentional unencrypte
 user output, with the existing credentials-excluded contract. Import/migration
 scratch is implicit application data and must stay keyed. The export-only
 `DBFLAG_VacuumInto` patch preserves unindexed rowids as well as indexed mail/FTS;
-without it SQLCipher renumbers rows in unindexed extension tables. Keep bounded
-cancellation and exact reviewed-copy publication when completing keyed import.
+without it SQLCipher renumbers rows in unindexed extension tables. Keyed import
+keeps bounded cancellation through the progress handler and the exact
+reviewed-copy publication by rename.
 [SQLCipher backup API support](https://discuss.zetetic.net/t/using-the-sqlite-online-backup-api/2631/4)
 
 Data inventory:
@@ -149,11 +212,11 @@ Data inventory:
 | Data | Current encryption integration |
 | --- | --- |
 | Mail/MIME, draft attachments, outgoing, bulk/move/folder receipts, settings/calendar | Keyed Store entry point |
-| Backup upload archive, destination and session | Keyed journal constructor and Engine routing |
-| Profile upload cache, history, discovery and nested observations | Keyed constructors/shared initializer |
-| Local profile catalog, active profiles and imported-marker recovery | Explicit keyed constructor and propagation; bootstrap activation still pending |
+| Backup upload archive, destination and session | Opened beside the cache with its key decision and shared root guard |
+| Profile upload cache, history, discovery and nested observations | Keyed constructors/shared initializer; reader guard not yet retained |
+| Local profile catalog, active profiles and imported-marker recovery | Routed through the bootstrap `Root`; production policy keys only roots that already own a key |
 | Raw portable export | Keyed readonly source converted to intentional user-selected SQLite output |
-| Import staging | Encrypted conversion/routing still required |
+| Import staging | Keyed logical conversion, fences and installation when the workspace is keyed |
 | Selection/frozen reviews | Attached encrypted scratch, indexed incremental ordering, worker-owned cleanup |
 | Profile ancestry | Indexed main-database scratch with bounded frontier, included in shared pin |
 | Remote images and print previews | Already memory-only within Shep |

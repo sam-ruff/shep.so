@@ -495,8 +495,8 @@ mod tests {
             demo: true,
             account_work: Default::default(),
             calendar_work: Default::default(),
-            calendar_setup_lock: Default::default(),
-            connection_lifecycle_lock: Default::default(),
+            calendar_setup: Default::default(),
+            connection_lifecycle: Default::default(),
             secret_remover: Arc::new(removals::OsSecretRemover::default()),
             outbound: Arc::new(providers::outgoing::Servers::default()),
             google_connection_lock: Default::default(),
@@ -555,6 +555,7 @@ mod tests {
                 revision: 0,
                 id: id.clone(),
                 prefetch: false,
+                body_chars: crate::store::READER_BODY_PAGE,
             })
             .unwrap();
         sender

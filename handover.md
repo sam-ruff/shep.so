@@ -116,8 +116,9 @@ No new performance measurement is claimed on this shared, busy host.
    drafts, uses explicit mappings and requires reviewed credential activation when
    endpoints change. Keep offline conflicts/removal, setting-reset intent and local
    edit generations. An incomplete listing or different Google project's empty
-   app-data space must not imply empty setup. The password-protection choice is
-   unanswered; legacy backups and full database migration remain separate work.
+   app-data space must not imply empty setup. Account passwords use Google-only
+   protection (Sam, 11 September 2026); legacy backups and full database
+   migration remain separate work.
 2. Preserve shipped browser group Undo/recovery, alias/receipt and worker ownership
    regressions. Current browser recovery checkpoint `df4f29c` passes 137 Chromium,
    127 unit and 56 production HTTPS fixture stages. Continue abandoned review and
@@ -318,9 +319,10 @@ on next launch; they do not hot-swap an engine or replay another device's sends.
    Older profiles without a provable basis need recovery review. Remote endpoint
    changes need explicit fresh credentials; do not let blank Reconnect fields reuse
    an old password against a new server. Conflict/removal controls remain unfinished.
-5. The password-transfer protection question remains **unanswered**. Do not assume
-   Google-only unlocking or put account passwords in metadata/SQLite. The current
-   shared format contains account definitions and selected settings, without secrets.
+5. Sam chose **Google-only** password protection on 11 September 2026; follow the
+   shared handover's credential section. Never put account passwords in
+   metadata/SQLite. The current shared format contains account definitions and
+   selected settings, without secrets.
 6. Verify real same-project Google appDataFolder visibility and OAuth across the
    participating clients/platforms. Fixture success is not live interoperability.
 

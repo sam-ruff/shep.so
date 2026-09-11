@@ -78,6 +78,7 @@ impl App {
                 revision: self.detail_revision,
                 id: id.clone(),
                 prefetch: false,
+                body_chars: self.detail_body_chars(&id),
             });
         }
         if let Some(i) = self

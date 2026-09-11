@@ -57,8 +57,8 @@ impl Engine {
         }
         // A separate lock namespace avoids conflicts with externally supplied
         // legacy source identifiers. Network discovery happens before this lock.
-        let _lifecycle = self.connection_lifecycle_lock.lock().await;
-        let _setup = self.calendar_setup_lock.lock().await;
+        let _lifecycle = self.connection_lifecycle.write().await;
+        let _setup = self.calendar_setup.write().await;
         let mut guards = Vec::new();
         let existing: Vec<CalendarSource> = self.store.get("calendars").await?;
         for source in &mut sources {

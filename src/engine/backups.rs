@@ -125,13 +125,13 @@ impl Engine {
                             }))
                     })
                     .await?;
-                let key = self.store.connection_key();
-                tokio::task::spawn_blocking(move || match (path.as_deref(), key) {
-                    (Some(path), Some(key)) => backup::journal::Journal::open_encrypted(path, &key),
-                    (path, None) => backup::journal::Journal::open(path),
-                    (None, Some(_)) => {
+                let store = self.store.clone();
+                tokio::task::spawn_blocking(move || match path.as_deref() {
+                    Some(path) => backup::journal::Journal::open_beside(path, &store),
+                    None if store.connection_key().is_some() => {
                         anyhow::bail!("The encrypted backup journal needs a saved workspace.")
                     }
+                    None => backup::journal::Journal::open(None),
                 })
                 .await?
             })
@@ -142,11 +142,9 @@ impl Engine {
     pub(super) async fn backup_connection_guard(
         &self,
         target: &BackupTarget,
-    ) -> Option<tokio::sync::OwnedRwLockReadGuard<()>> {
+    ) -> Option<lifecycle_work::Access> {
         match target {
-            BackupTarget::GoogleDrive { .. } => {
-                Some(self.google_connection_lock.clone().read_owned().await)
-            }
+            BackupTarget::GoogleDrive { .. } => Some(self.google_connection_lock.read().await),
             BackupTarget::Local(_)
             | BackupTarget::S3(_)
             | BackupTarget::Sftp(_)
