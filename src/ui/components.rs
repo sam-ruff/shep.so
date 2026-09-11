@@ -314,7 +314,15 @@ impl super::App {
         label: impl Into<std::borrow::Cow<'a, str>>,
         message: Message,
     ) -> Element<'a, Message> {
-        self.toggle_icon_action(name, label, false, message)
+        self.icon_action_maybe(name, label, Some(message))
+    }
+    pub(super) fn icon_action_maybe<'a>(
+        &self,
+        name: &str,
+        label: impl Into<std::borrow::Cow<'a, str>>,
+        message: Option<Message>,
+    ) -> Element<'a, Message> {
+        self.toggle_icon_action_maybe(name, label, false, message)
     }
     pub(super) fn toggle_icon_action<'a>(
         &self,
@@ -323,9 +331,18 @@ impl super::App {
         active: bool,
         message: Message,
     ) -> Element<'a, Message> {
+        self.toggle_icon_action_maybe(name, label, active, Some(message))
+    }
+    fn toggle_icon_action_maybe<'a>(
+        &self,
+        name: &str,
+        label: impl Into<std::borrow::Cow<'a, str>>,
+        active: bool,
+        message: Option<Message>,
+    ) -> Element<'a, Message> {
         let control = button(if name == "flag" {
             flag_icon(active, 20.)
-        } else if name == "sync" && matches!(message, Message::Sync) {
+        } else if name == "sync" && matches!(message, Some(Message::Sync)) {
             icon_color(name, 20., false, false, self.refresh.angle())
         } else {
             icon(name, 20.)
@@ -338,7 +355,7 @@ impl super::App {
         } else {
             ghost
         })
-        .on_press(message);
+        .on_press_maybe(message);
         if !self.preferences.tooltips {
             return control.into();
         }

@@ -48,6 +48,12 @@ impl App {
             .as_deref()
             .or(self.selected.as_deref())
     }
+    fn conversation_action_detail(&self) -> Option<&MailDetail> {
+        let id = self.reader_id()?;
+        self.detail
+            .as_deref()
+            .filter(|detail| detail.summary.id == id)
+    }
     pub(super) fn request_conversation(&mut self, offset: Option<usize>) {
         self.conversation.generation += 1;
         if !self.preferences.group_conversations
@@ -255,9 +261,10 @@ impl App {
                     .as_ref()
                     .filter(|detail| detail.summary.id == mail.id)
                 {
-                    content = content
-                        .push(self.reader_body(detail, false))
-                        .push(self.reader_actions(detail));
+                    content = content.push(self.reader_body(detail, false));
+                    if self.compose_visible() {
+                        content = content.push(self.reader_actions(Some(detail)));
+                    }
                 } else {
                     content = content.push(muted("Opening message…"));
                 }
@@ -387,6 +394,11 @@ impl App {
                 Message::RetryConversation,
             ));
         }
+        let footer = column![
+            self.reader_actions(self.conversation_action_detail()),
+            self.reader_navigation()
+        ]
+        .spacing(4);
         column![
             container(toolbar).padding([10, 18]),
             line(),
@@ -396,7 +408,7 @@ impl App {
                 .id("conversation-reader")
                 .on_scroll(|viewport| Message::ConversationViewport(viewport.absolute_offset().y))
                 .height(Length::Fill),
-            container(self.reader_navigation()).padding([8, 20])
+            container(footer).padding([8, 20])
         ]
         .height(Length::Fill)
         .width(Length::Fill)

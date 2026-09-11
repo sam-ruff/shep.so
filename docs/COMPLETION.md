@@ -50,6 +50,52 @@ Browser and Flutter retain their existing browser/WebView selection paths and
 saved Copy scenarios; the shared scenario now explicitly requires visible drag
 highlighting. No Apple/Windows execution or new latency measurement is claimed.
 
+## 11 September: pinned desktop conversation actions (R96)
+
+Threaded readers carried Reply, Reply all, Forward, Print and source attachments
+inside the expanded message card. After scrolling a long conversation, the
+saved native bottom-Reply click failed to open a composer. The failure log is
+`artifacts/logs/footer-baseline.log`; the reviewed absent-footer capture is
+`artifacts/e2e/bd4c8e336f0c/conversation-footer-scrolled-preview-False.webp`.
+
+Conversation readers now reserve a footer below the cards. Its actions use only
+the focused message's current detail, including a collapsed older card; missing
+or stale detail leaves the same disabled action controls in place. Inline
+composers keep their source-card attachment actions. The ordinary reader's
+existing fixed footer is preserved. Browser and Flutter already reserve their
+action footers separately; their conversation-card parity remains open.
+
+Four new native scenarios cover six light/dark preview/compact/full layouts,
+Reply all/Forward/Print on a collapsed older message, a cold older HTML message
+while rendering, and the final HTML line above the compact footer. The existing
+conversation fixture's oldest, nonadjacent message now has a simple HTML body
+with the same text, preventing neighbour prefetch from turning the loading
+scenario into a warm-cache test. Early test setup failures remain in
+`footer-native.log` and `footer-test-setup.log`: the harness accepts at most
+30 scroll steps, has no `gt` comparison, and HTML bounds need the observed
+conversation scroll subtracted before comparing screen coordinates.
+
+Nine conversation unit/index checks pass, including a new missing/stale/
+collapsed-detail action-target regression. All 30 selected native conversation,
+inline-composer, Forward, Print, reading-column and reply-all paths pass on the
+final binary (`footer-native-final.log`). Python reports 103 executions with
+seven intentional skips; all 40 parity contracts and pinned strict Zensical pass.
+Mandatory-hook results are recorded with the shipping receipt.
+Reviewed final captures include `082fd0e4c5a1` for compact dark actions after
+scrolling, `c8353562a301` for the full light reader, `72b9faabc26d` for the last
+dark HTML line and `ff86b37348fc` for the older message's visible rendering
+placeholder and pinned Reply control. All are under this lane's ignored
+`artifacts/e2e/` directory.
+
+Lane commit `ca43b8f` passes all 1,180 normal-hook test executions. The integrated
+tree passes six native scenarios: all four new footer flows, the History header
+control and R95 drag/highlight/Copy (`r96-integrated-native.log`). Strict pinned
+Zensical passes. The compact dark final-line capture was reviewed again during
+integration; the final text remains above the footer. Shipping uses normal hooks.
+This does not establish
+Windows/macOS execution, performance, full native input-lifecycle coverage or
+client conversation parity, and it does not change the personal installation.
+
 ## 11 September: newest-first desktop conversations (R35)
 
 Reader conversation cards and the history below inline replies now show the
@@ -75,7 +121,8 @@ Zensical build pass. Lane commit `8201e93` passed all 1,179 mandatory-hook test
 executions. The integrated tree passes five native scenarios: newest-first
 parking/refresh, long-thread paging, separate-message reading, changing HTML
 surfaces and the R95 drag/copy regression (`r35-integrated-native.log`). Strict
-docs pass again; the integration uses the normal commit hooks.
+docs pass again. Main commit `8d2a63d` is pushed, with all 1,180 normal-hook
+test executions passing.
 
 Reviewed WebPs under this lane's `artifacts/e2e/`: `77ee9e05b620` shows the
 newest-first reader, retained reply text and refreshed thread;
