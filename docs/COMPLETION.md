@@ -2,6 +2,31 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## 11 September: common Preferences catalogue for the search demos (R99)
+
+The demo foundation expands Preferences search to control captions, descriptions,
+section/tab names and common synonyms across account, Google, profile, calendar
+and backup forms. Exact titles and captions rank before prefixes and weighted
+word matches. The baseline uses bounded RapidFuzz OSA correction, requires every
+distinct query word and preserves numeric words. Static text is normalised once;
+the UI reuses results until the query changes. Empty results have visible guidance.
+
+Five Rust tests pass, including an exhaustive Preferences destructuring guard,
+serialised-field coverage/exclusions and nested network/account/calendar/profile
+schema audits. Three native scenarios pass: the new ranked cross-tab flow in
+light/dark/900×640 layouts, existing tooltip controls and mail-check validation.
+The reviewed ranked-result WebPs are in lane artifact directories `f751ddc87649`
+and `90ea815dcc46`; compact-dark no-results evidence is in `59981bb48626`.
+The first independent run also passed before root repeated the gates.
+
+The ignored complete-catalogue timing test is saved for the quiet measurement
+window. This does not establish native input latency or choose a production
+algorithm. R99 remains open for deep-control reveal, complete dynamic-caption
+coverage and Flutter/browser parity. Provider-specific controls retain their
+existing Edit/destination navigation; search never changes a preference to reveal
+them. See [Preferences search](agents/SETTINGS_SEARCH.md). The normal hooks gate
+the common commit; the integrator owns the demo-foundation merges and shipping.
+
 ## 11 September: mail action History header icon (R15)
 
 The inbox History text button now uses a clock-arrow SVG, the same 40 px target

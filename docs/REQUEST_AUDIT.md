@@ -255,7 +255,7 @@ hook test executions passing; see the newest completion entry. OAuth and the sha
 | R96 | Reply buttons float at the bottom of the preview panel so replying needs no scrolling (11 September 2026) | Open in TODO: find the layout where the bar scrolls away; the standard fixture layout already pins it |
 | R97 | Configurable option to include the previous email thread in replies (11 September 2026) | Open in TODO |
 | R98 | Small ? help icons with tooltips beside easily misunderstood settings only, not every option (11 September 2026) | Open in TODO |
-| R99 | Settings search should search all settings (11 September 2026) | Open in TODO |
+| R99 | Settings search should search all settings (11 September 2026) | Search-demo catalogue adds control captions, weighted typo matching, cached results and persisted-field coverage review. Exact deep-control reveal, exhaustive dynamic captions and client parity remain open in TODO; see [Preferences search](agents/SETTINGS_SEARCH.md) |
 
 ## Client history (feat/mobile-web-clients)
 

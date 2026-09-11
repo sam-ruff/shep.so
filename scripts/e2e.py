@@ -2111,7 +2111,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_mail_check_interval_uses_seconds_and_validates_before_saving(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
-                       click(1150, 88), type_text("interval"), check("settings_matches", ["Mail & performance"]),
+                       click(1150, 88), type_text("mail check interval"), check("settings_matches.0", "Mail & performance"),
                        click(500, 289), check("settings_group", "Mail & performance"), shot("mail-check-seconds-setting"),
                        click(1110, 364), key("ctrl+a"), type_text("0"), click(1350, 88),
                        check("notice", "5–3600 seconds", "contains"), check("mail_check_seconds", 15),
@@ -2780,7 +2780,7 @@ class NativeFlows(unittest.TestCase):
         self.open_shared_profiles()
         self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
                        click(370, 607), check("profile_sync.setting_reviews.0.label", "Appearance"), check("profile_sync.working", False),
-                       click(1150, 88), type_text("appearance"), check("settings_matches", ["Appearance"]),
+                       click(1150, 88), type_text("appearance"), check("settings_matches.0", "Appearance"),
                        click(480, 289), check("settings_group", "Appearance"), wait(100),
                        click(410, 410), check("dark", False), check("preferences_saved", True))
         self.open_shared_profiles()
@@ -2979,7 +2979,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("profile_sync.working", False),
                        check("account_count", 1), check("account_reconnect_count", 1), check("dark", True),
                        key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(1150, 88), key("ctrl+a"),
-                       type_text("appearance"), check("settings_matches", ["Appearance"]), click(480, 289),
+                       type_text("appearance"), check("settings_matches.0", "Appearance"), click(480, 289),
                        check("settings_group", "Appearance"), wait(100), click(423, 410), check("dark", False),
                        check("preferences_saved", True))
         self.open_synced_passwords()
@@ -2992,7 +2992,7 @@ class NativeFlows(unittest.TestCase):
                        check("notice", "Synced passwords saved for 1 account"),
                        wait(150), shot("profile-passwords-imported-light"),
                        {"type": "resize", "width": 900, "height": 640}, check("window_size", [900.0, 640.0]),
-                       click(650, 88), key("ctrl+a"), type_text("appearance"), check("settings_matches", ["Appearance"]),
+                       click(650, 88), key("ctrl+a"), type_text("appearance"), check("settings_matches.0", "Appearance"),
                        click(480, 289), check("settings_group", "Appearance"), wait(100), click(555, 410),
                        check("dark", True), check("preferences_saved", True))
         self.open_synced_passwords(650)
@@ -3619,6 +3619,30 @@ class NativeFlows(unittest.TestCase):
                        check("total", 120), shot("database-export-close-restarted"))
         self.assertFalse(destination.exists())
         self.assertEqual(list(directory.glob(".shep-export-*")), [])
+
+    def test_preferences_catalogue_ranking_and_cross_tab_navigation(self):
+        for dark, compact in [(False, False), (True, False), (True, True)]:
+            started = self.mcp.call("desktop.start")
+            print(f"Preferences catalogue evidence: {started['artifacts']}", flush=True)
+            self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"))
+            if dark:
+                self.mcp.batch(click(690,366), check("dark", True))
+            if compact:
+                self.mcp.batch({"type":"resize", "width":900, "height":640}, check("window_size", [900,640]))
+            search_x = 650 if compact else 1150
+            for query, section in [("apperance", "Appearance"), ("dark mode", "Appearance"),
+                                   ("mail check interval", "Mail & performance"), ("reply history", "Reading and layout"),
+                                   ("synced passwords", "Profiles and sync"), ("retention", "Backups"),
+                                   ("sftp fingerprint", "Backups"), ("S3 region", "Backups"),
+                                   ("FTP security", "Backups"), ("SMTP username", "Your accounts")]:
+                self.mcp.batch(click(search_x,88), key("ctrl+a"), type_text(query),
+                               check("settings_matches.0", section), check("dark", dark))
+            self.mcp.batch(click(search_x,88), key("ctrl+a"), type_text("appearance"),
+                           check("settings_matches.0", "Appearance"),
+                           check("settings_matches", "Profiles and sync", "contains"),
+                           shot("settings-ranked-cross-tab"), click(450,289), check("settings_group", "Appearance"),
+                           check("settings_search", ""), check("dark", dark), shot("settings-ranked-destination"),
+                           click(search_x,88), type_text("qzxvjkwp"), check("settings_matches", []), shot("settings-no-results"))
 
     def test_preferences_search_and_tooltip_options(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(1150, 88), type_text("tooltip"),

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use rapidfuzz::distance::{lcs_seq, osa};
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 
-fn normalized(value: &str) -> String {
+pub(crate) fn normalized(value: &str) -> String {
     // Strip Latin accents like SQLite's unicode61 tokenizer. Preserve marks
     // in other scripts and recompose Hangul/Japanese after normalization.
     let mut latin = false;
