@@ -108,6 +108,7 @@ impl WordMatcher {
 pub struct Matcher {
     query: String,
     terms: Vec<Term>,
+    numeric_tokens: Vec<String>,
     matcher: nucleo_matcher::Matcher,
     candidate_chars: Vec<char>,
 }
@@ -115,6 +116,11 @@ pub struct Matcher {
 impl Matcher {
     pub fn new(query: &str) -> Self {
         let query = normalized(query.trim());
+        let numeric_tokens = query
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|token| token.chars().any(char::is_numeric))
+            .map(str::to_owned)
+            .collect();
         let terms = query
             .split_whitespace()
             .map(|text| Term {
@@ -126,6 +132,7 @@ impl Matcher {
         Self {
             query,
             terms,
+            numeric_tokens,
             matcher: literal_matcher(),
             candidate_chars: Vec::new(),
         }
@@ -148,9 +155,9 @@ impl Matcher {
             .filter(|word| !word.is_empty())
             .collect();
         if self
-            .terms
+            .numeric_tokens
             .iter()
-            .any(|term| term.numeric && !words.contains(&term.text.as_str()))
+            .any(|token| !words.contains(&token.as_str()))
         {
             return None;
         }
@@ -175,7 +182,7 @@ impl Matcher {
         let mut tier = 0;
         let mut penalty = 0;
         for term in &self.terms {
-            if term.numeric || words.contains(&term.text.as_str()) {
+            if words.contains(&term.text.as_str()) {
                 continue;
             }
             if words.iter().any(|word| word.starts_with(&term.text)) {
