@@ -308,6 +308,7 @@ pub enum Message {
     ClosePreview,
     CopyAddress(String),
     ToggleReply(usize),
+    MoreBody,
     PrefReplies(ReplyDisplay),
     PrefConversations(bool),
     ConversationMessage(String),
@@ -824,10 +825,12 @@ impl App {
             return;
         }
         self.pending_details.insert(id.clone());
+        let body_chars = self.detail_body_chars(&id);
         self.send(Command::Detail {
             revision: self.detail_revision,
             id,
             prefetch: true,
+            body_chars,
         });
     }
     fn select(&mut self, id: String) {
@@ -1458,10 +1461,12 @@ impl App {
                         })
                         .map(str::to_owned)
                     {
+                        let body_chars = self.detail_body_chars(&id);
                         self.send(Command::Detail {
                             revision: self.detail_revision,
                             id,
                             prefetch: false,
+                            body_chars,
                         });
                     }
                 }
@@ -3137,6 +3142,26 @@ impl App {
                     self.expanded_replies.insert(index);
                 }
             }
+            Message::MoreBody => {
+                let next = self
+                    .detail
+                    .as_ref()
+                    .filter(|detail| detail.body_truncated)
+                    .map(|detail| {
+                        (
+                            detail.summary.id.clone(),
+                            detail.body.chars().count() + crate::store::READER_BODY_PAGE,
+                        )
+                    });
+                if let Some((id, body_chars)) = next {
+                    self.send(Command::Detail {
+                        revision: self.detail_revision,
+                        id,
+                        prefetch: false,
+                        body_chars,
+                    });
+                }
+            }
             Message::PrefConversations(value) => {
                 self.preferences.group_conversations = value;
                 self.conversation.page = Default::default();
@@ -3995,6 +4020,9 @@ impl App {
             data["profile_sync"] = self.profile_sync.observation();
         }
         data["mail_drag"] = self.mail_drag.observation();
+        data["body_chars"] =
+            serde_json::json!(self.detail.as_ref().map(|d| d.body.chars().count()));
+        data["body_truncated"] = serde_json::json!(self.detail.as_ref().map(|d| d.body_truncated));
         #[cfg(feature = "test-support")]
         {
             data["page_loaded"] = serde_json::json!(self.initial_page_loaded);

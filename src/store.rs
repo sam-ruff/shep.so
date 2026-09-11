@@ -40,6 +40,8 @@ pub struct Store(
 );
 
 pub(crate) const DATABASE_VERSION: u32 = 4;
+/// Plain-text characters the reader loads per page of a long message.
+pub const READER_BODY_PAGE: usize = 32_000;
 
 #[derive(Debug, Clone, Default)]
 pub struct Workspace {
@@ -535,6 +537,16 @@ impl Store {
         }).await
     }
     pub async fn detail(&self, id: String) -> anyhow::Result<MailDetail> {
+        self.detail_limited(id, READER_BODY_PAGE).await
+    }
+    /// Loads a message with at most `body_chars` characters of its plain text,
+    /// never fewer than one reader page.
+    pub async fn detail_limited(
+        &self,
+        id: String,
+        body_chars: usize,
+    ) -> anyhow::Result<MailDetail> {
+        let body_chars = body_chars.max(READER_BODY_PAGE);
         self.run(move |c| {
             let (data, raw, unread, starred, folder): (String, Vec<u8>, bool, bool, String) = c
                 .query_row(
@@ -552,8 +564,8 @@ impl Store {
             let parsed = shep_mail_core::mime::parse(&raw)?;
             let content = crate::email_content::extract(&parsed)?;
             let (body, attachments) = (content.text, content.attachments);
-            let body_truncated = body.chars().count() > 32000;
-            let body: String = body.chars().take(32000).collect();
+            let body_truncated = body.chars().nth(body_chars).is_some();
+            let body: String = body.chars().take(body_chars).collect();
             let (latest_body, replies) = crate::replies::split(&body);
             let remote_images = content
                 .html
