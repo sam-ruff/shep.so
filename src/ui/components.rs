@@ -491,6 +491,7 @@ fn icon_color<'a>(
         ("download",r#"<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>"#),
         ("up",r#"<path d="m6 15 6-6 6 6"/>"#),
         ("clock",r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>"#),
+        ("history",r#"<path d="M3 10a9 9 0 1 1 2 8M3 4v6h6M12 7v5l3 2"/>"#),
     ].into_iter().map(|(name,path)|(name,svg::Handle::from_memory(format!(r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#777580" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{path}</svg>"##).into_bytes()))).collect());
     svg(icons.get(name).unwrap_or(&icons["mail"]).clone())
         .width(size)

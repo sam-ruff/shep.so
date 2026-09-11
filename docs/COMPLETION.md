@@ -2,6 +2,23 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## 11 September: mail action History header icon (R15)
+
+The inbox History text button now uses a clock-arrow SVG, the same 40 px target
+and ghost styling as its neighbouring header controls, and the optional
+"Mail action history" tooltip. It opens the same History dialog and preserves
+Escape dismissal, paging, retry and Undo.
+
+Three saved native scenarios pass: the new mouse/tooltip/Escape and compact-dark
+flow, existing group pagination, and failed Undo/retry across restart. Reviewed
+light and compact-dark WebPs are in `artifacts/e2e/dc38a10d91fd`; the final run is
+`artifacts/logs/history-icon-native-final.log`. The initial test authoring run
+used a nonexistent appearance observation; it is retained in
+`history-icon-native.log`, and the saved test uses the established `dark` field.
+Formatting, strict pinned Zensical and the parity contract check pass. Normal
+commit hooks and shipping are recorded by the subsequent integration entry.
+The browser/Flutter header comparison remains an explicit R80 parity gap.
+
 ## 11 September: Flutter selection and durable group actions, mobile Flutter bulk lane (R42, lane `worktree-agent-ae7cbc9c5369daf18`)
 
 The mobile session's lane, verified by an integration agent while that session

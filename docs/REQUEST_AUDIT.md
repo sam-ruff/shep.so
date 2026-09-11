@@ -1,5 +1,14 @@
 # Conversation request audit
 
+11 September search-demo continuation: deliver R95 visible formatted selection,
+R35 newest-first reply conversations, R96 pinned reader actions and R64 launcher/
+tray fixes first, including the R15 History header icon. Then push three separate
+algorithm-combination demo branches for ranked Preferences/options and general
+mail/Move search (R99/R18/R44). Keep alternatives separate pending the user's
+choice and push each verified prerequisite feature as it finishes. This work's
+priority supersedes the earlier OAuth-first restart order; other requests remain
+active in TODO.
+
 **2026-09-09 merge of `main` into `feat/mobile-web-clients`:** this audit is now the union of the desktop session's audit (`main`) and the mobile/web client session's audit. The two sessions numbered requests independently after R66: **R67 to R80 exist twice**. Main's R67 to R80 are desktop requests (read-on-leave, counted Undo toasts, HTML readiness, dock badges, refresh icon, HTML latency, moved-mail recovery, F5 refresh, Inbox highlight, preview background, reply-editor clipping, scroll snapping, selection icons and selection-mode clicks). The client branch's R67 to R80 are mobile, browser and website requests (Flutter parity, mobile mail interactions, Flutter quality/release, promo website, browser hosting, Linux app stores, continuous parity, restricted browser beta, Sign in with Google, out-of-office replies, checkpoint push, handover, Android installation and visual parity). Neither side is renumbered: desktop rows keep main's numbers and client rows are marked `(client)` in the table below. Older client paragraphs that write `desktop-main:RNN` mean main's RNN (for example `desktop-main:R92` is main's R92, `desktop-main:R83` is main's R83 and `desktop-main:R67`/`R68`/`R70` are main's read-on-leave, counted Undo and dock-badge requests). R81 to R93 exist only on main. After this merge `main` is the single integration branch for the desktop, mobile and website sessions, so desktop changes are no longer ported into the client branch separately.
 
 **2026-09-10 merge of `feat/mobile-web-clients` into `main`:** the desktop session merged `d8d5c1e` into `main` as `ee1305c` and pushed it, with 1066 hook test executions, 96 Python tests, strict docs and 45 native desktop scenarios passing. `main` is now the single integration branch for all three sessions; the aggregate folder chooser (R30) shipped in the same push. See completion.
