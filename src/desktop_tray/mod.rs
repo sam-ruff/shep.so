@@ -24,20 +24,49 @@ pub enum Event {
 }
 #[derive(Debug)]
 pub struct Icon {
+    #[cfg(not(target_os = "linux"))]
     rgba: Vec<u8>,
+    #[cfg(not(target_os = "linux"))]
     size: u32,
+    #[cfg(target_os = "linux")]
+    sizes: Vec<(u32, Vec<u8>)>,
 }
 impl Icon {
+    #[cfg(not(target_os = "linux"))]
     fn load() -> anyhow::Result<Self> {
         #[cfg(target_os = "macos")]
         let bytes = include_bytes!("../../assets/logo-symbolic.webp").as_slice();
         #[cfg(not(target_os = "macos"))]
-        let bytes = include_bytes!("../../assets/logo-light.webp").as_slice();
-        let source = image::load_from_memory(bytes)?;
-        let resized = source.resize_exact(32, 32, image::imageops::FilterType::Lanczos3);
+        let bytes = include_bytes!("../../assets/tray-32.webp").as_slice();
+        let image = image::load_from_memory(bytes)?.into_rgba8();
         Ok(Self {
-            rgba: resized.into_rgba8().into_raw(),
-            size: 32,
+            size: image.width(),
+            rgba: image.into_raw(),
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn load() -> anyhow::Result<Self> {
+        Ok(Self {
+            sizes: [
+                include_bytes!("../../assets/tray-16.webp").as_slice(),
+                include_bytes!("../../assets/tray-18.webp").as_slice(),
+                include_bytes!("../../assets/tray-20.webp").as_slice(),
+                include_bytes!("../../assets/tray-22.webp").as_slice(),
+                include_bytes!("../../assets/tray-24.webp").as_slice(),
+                include_bytes!("../../assets/tray-32.webp").as_slice(),
+                include_bytes!("../../assets/tray-36.webp").as_slice(),
+                include_bytes!("../../assets/tray-40.webp").as_slice(),
+                include_bytes!("../../assets/tray-44.webp").as_slice(),
+                include_bytes!("../../assets/tray-48.webp").as_slice(),
+                include_bytes!("../../assets/tray-64.webp").as_slice(),
+            ]
+            .into_iter()
+            .map(|bytes| {
+                let image = image::load_from_memory(bytes)?.into_rgba8();
+                Ok((image.width(), image.into_raw()))
+            })
+            .collect::<anyhow::Result<_>>()?,
         })
     }
 }
@@ -187,10 +216,51 @@ mod tests {
             assert!((4500..6000).contains(&visible));
             assert!(opaque > 3500, "The dog's interior must remain opaque");
         }
-        let icon = Icon::load().unwrap();
-        assert_eq!(icon.rgba.len(), 32 * 32 * 4);
-        assert_eq!(icon.rgba[3], 0);
-        assert_eq!(icon.rgba[31 * 4 + 3], 0);
+        for bytes in [
+            include_bytes!("../../assets/tray-32.webp").as_slice(),
+            include_bytes!("../../assets/logo-symbolic.webp").as_slice(),
+        ] {
+            let image = image::load_from_memory(bytes).unwrap().into_rgba8();
+            assert_eq!(image.get_pixel(0, 0)[3], 0);
+            assert_eq!(image.get_pixel(image.width() - 1, 0)[3], 0);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn tray_sizes_fill_the_slot_with_an_opaque_light_face() -> anyhow::Result<()> {
+        let icon = Icon::load()?;
+        assert_eq!(
+            icon.sizes.iter().map(|(size, _)| *size).collect::<Vec<_>>(),
+            [16, 18, 20, 22, 24, 32, 36, 40, 44, 48, 64]
+        );
+        for (size, rgba) in icon.sizes {
+            assert_eq!(rgba.len(), (size * size * 4) as usize);
+            let image = image::RgbaImage::from_raw(size, size, rgba)
+                .ok_or_else(|| anyhow::anyhow!("Invalid icon dimensions"))?;
+            let rows: Vec<_> = image
+                .enumerate_pixels()
+                .filter(|(_, _, pixel)| pixel[3] >= 128)
+                .map(|(_, y, _)| y)
+                .collect();
+            let top = rows
+                .iter()
+                .min()
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("Empty icon"))?;
+            let bottom = rows
+                .iter()
+                .max()
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("Empty icon"))?;
+            assert!(bottom - top + 1 >= size * 9 / 10, "Padded {size}px icon");
+            let face = image.get_pixel(size / 2, size / 2);
+            assert!(
+                face[0] > 220 && face[1] > 220 && face[2] > 210 && face[3] == 255,
+                "Dark or translucent {size}px face: {face:?}"
+            );
+        }
+        Ok(())
     }
 
     #[tokio::test]

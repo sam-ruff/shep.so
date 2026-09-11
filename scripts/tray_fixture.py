@@ -17,8 +17,8 @@ class TrayFixture:
         self.log = (directory / "tray-host.log").open("w")
         icon_directory = directory / "icon-theme" / "hicolor" / "scalable" / "apps"
         icon_directory.mkdir(parents=True)
-        shutil.copyfile(Path(__file__).resolve().parents[1] / "assets/shepherd-symbolic.svg",
-                        icon_directory / "so.shep.Shep-symbolic.svg")
+        shutil.copyfile(Path(__file__).resolve().parents[1] / "assets/shepherd-tray.svg",
+                        icon_directory / "so.shep.Shep-tray.svg")
         # AF_UNIX names have a small platform limit; worktree artifact paths can
         # exceed it. This owned alias still points to the exact fixture directory.
         self.alias = tempfile.TemporaryDirectory(prefix="shep-tray-")
