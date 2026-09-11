@@ -343,7 +343,7 @@ impl App {
         row![
             text(format!("{} messages", page.total)).size(12),
             space().width(Length::Fill),
-            button(text("Earlier").size(11))
+            button(text("Newer").size(11))
                 .padding([8, 10])
                 .style(ghost)
                 .on_press_maybe((page.offset > 0).then_some(Message::ConversationPage(false))),
@@ -353,7 +353,7 @@ impl App {
                 page.offset + page.rows.len()
             ))
             .size(10),
-            button(text("Later").size(11))
+            button(text("Older").size(11))
                 .padding([8, 10])
                 .style(ghost)
                 .on_press_maybe(

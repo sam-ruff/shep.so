@@ -44,11 +44,52 @@ configurations and all mandatory hooks, including 1,098 all-feature Rust tests.
 The integrated tree passes four native scenarios, including the new drag/pixel/
 copy flow, horizontal-table selection, keyboard scope and the History icon
 regression (`artifacts/logs/r95-integrated-native.log`). Strict docs pass again.
-The main integration commit is the commit containing this record; shipping uses
-the normal hooks and is verified in the following feature checkpoint.
+The fix is pushed on main as `d3e37a5`; all 1,180 normal-hook test executions
+passed. The installed application remains unchanged.
 Browser and Flutter retain their existing browser/WebView selection paths and
 saved Copy scenarios; the shared scenario now explicitly requires visible drag
 highlighting. No Apple/Windows execution or new latency measurement is claimed.
+
+## 11 September: newest-first desktop conversations (R35)
+
+Reader conversation cards and the history below inline replies now show the
+latest message first, followed by earlier messages. Newer/Older controls page
+the same descending timestamp/ID order through the existing indexed scratch
+query. Copy precedence, selected physical messages, bounded 20-message pages,
+parked drafts and same-page refresh scroll remain intact.
+
+The saved newest-first native test fails on the original executable with
+`launch-0` where `launch-2` is expected (`artifacts/logs/ordering-baseline.log`).
+All 14 relevant conversation/inline native paths have passing coverage in
+`ordering-native-final.log` plus `ordering-parking-final.log`: the first run's
+new parking test incorrectly used Reply to reopen a draft, which creates a new
+draft; its corrected run uses actual inbox navigation. Earlier test setup fixes
+await native editor focus before typing and use the newest message's actual
+Inbox identity in page assertions. No production input workaround was added.
+
+Five conversation store tests pass, including full 55-message paging and
+physical-copy flags. The encrypted 512-message ranking oracle retains tied-date,
+focus, duplicate-copy, query-plan and restart coverage. Python reports 103
+executions with seven intentional skips; the parity registry and pinned strict
+Zensical build pass. Lane commit `8201e93` passed all 1,179 mandatory-hook test
+executions. The integrated tree passes five native scenarios: newest-first
+parking/refresh, long-thread paging, separate-message reading, changing HTML
+surfaces and the R95 drag/copy regression (`r35-integrated-native.log`). Strict
+docs pass again; the integration uses the normal commit hooks.
+
+Reviewed WebPs under this lane's `artifacts/e2e/`: `77ee9e05b620` shows the
+newest-first reader, retained reply text and refreshed thread;
+`3a40f0959a9c/conversation-compact.webp`,
+`a34b6d20c148/conversation-dark.webp` and
+`50276a03d6a4/conversation-full-reader.webp` show readable compact, dark and
+full-window cards. Separate HTML surface scenarios also preserve white/navy
+message backgrounds and refresh scroll in both themes.
+
+This is the desktop ordering correction. Flutter/browser separate conversation
+cards and newest-first reply history remain active parity gaps. Footer pinning
+is R96, quote defaults are R97, and performance plus Windows/macOS runtime
+verification are separate work. The personal installation is unchanged;
+main integration and push belong to the primary agent.
 
 ## 11 September: Flutter selection and durable group actions, mobile Flutter bulk lane (R42, lane `worktree-agent-ae7cbc9c5369daf18`)
 
