@@ -47,7 +47,8 @@ jobs:
 
       - name: Install test tooling
         run: |
-          python3 -c 'import PIL' || python3 -m pip install --user --break-system-packages pillow
+          # The tests save review screenshots as WebP through Pillow; the pool image has no pip.
+          python3 -c 'import PIL' || { sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends python3-pil; }
           npx playwright install --with-deps chromium
 
       - name: Playwright (Chromium)
