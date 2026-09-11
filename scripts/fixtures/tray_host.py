@@ -31,7 +31,8 @@ class Host(dbus.service.Object):
         self.menu_path = ""
         self.menu_entries = []
         self.icon_name = ""
-        self.icon_symbolic = False
+        self.icon_themed = False
+        self.icon_sizes = []
         self.notifications = []
         self.notification_service = Notifications(bus, self)
         self.name = dbus.service.BusName(WATCHER, bus=bus, do_not_queue=True)
@@ -58,7 +59,8 @@ class Host(dbus.service.Object):
     def record(self, **extra):
         value = {"service": self.service, "menu_path": self.menu_path,
                  "entries": self.menu_entries, "notifications": self.notifications,
-                 "icon_name": self.icon_name, "icon_symbolic": self.icon_symbolic,
+                 "icon_name": self.icon_name, "icon_themed": self.icon_themed,
+                 "icon_sizes": self.icon_sizes,
                  "dark": bool(Gtk.Settings.get_default().get_property("gtk-application-prefer-dark-theme")), **extra}
         pending = self.output.with_suffix(".tmp")
         pending.write_text(json.dumps(value))
@@ -92,10 +94,13 @@ class Host(dbus.service.Object):
             props = dbus.Interface(self.item, PROPERTIES)
             self.menu_path = str(props.Get(SNI, "Menu"))
             self.icon_name = str(props.Get(SNI,"IconName"))
-            self.icon_symbolic = Gtk.IconTheme.get_default().has_icon(self.icon_name)
+            self.icon_themed = Gtk.IconTheme.get_default().has_icon(self.icon_name)
             pixmaps = props.Get(SNI, "IconPixmap")
-            if self.icon_symbolic:
-                self.button.set_image(Gtk.Image.new_from_icon_name(self.icon_name, Gtk.IconSize.DIALOG))
+            self.icon_sizes = [int(width) for width, height, _raw in pixmaps if width == height]
+            if self.icon_themed:
+                icon = Gtk.Image.new_from_icon_name(self.icon_name, Gtk.IconSize.MENU)
+                icon.set_pixel_size(22)
+                self.button.set_image(icon)
                 self.button.set_always_show_image(True)
             elif pixmaps:
                 width, height, raw = pixmaps[0]

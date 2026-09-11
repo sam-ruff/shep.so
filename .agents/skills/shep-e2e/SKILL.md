@@ -771,14 +771,18 @@ SQLite assertions inspect the closed fixture's durable checkpoint; they never
 actuate the UI. These are fixture/history contracts, not live Google evidence.
 
 
-For transparent/theme-aware launcher and tray assets, keep
-`test_tray_native_symbolic_icon_follows_host_theme_while_app_is_hidden`.
-The owned host loads the actual installed-name symbolic SVG from a private icon
-theme directory. `tray_theme` clicks its native theme button; it changes only
-that GTK fixture process. Assert the actual StatusNotifier IconName and successful
-native icon lookup, then inspect the light/dark WebPs and reopen Shep normally.
-This demonstrates GTK symbolic recoloring and the real SNI/menu path, not a real
-GNOME Shell session or Windows/macOS rendering.
+For launcher and tray assets, keep
+`test_tray_native_light_icon_matches_launcher_in_both_host_themes`.
+The owned host loads the installed-name full-colour tray SVG from a private icon
+theme directory at 22 pixels. `tray_theme` changes only that GTK process. Assert
+StatusNotifier IconName, native lookup and the offered 1x/2x pixmap sizes, inspect
+light/dark WebPs and reopen Shep normally. This is SNI/menu evidence only.
+`python3 scripts/gnome_icons.py --scale 1` (then `--scale 2`) separately starts
+actual GNOME Shell on the fixture's private display/bus/settings, enables only
+the Ubuntu tray/dock extensions and captures panel, dash, grid and Alt+Tab in
+both application styles. It never replaces the personal shell. `--before`
+uses the explicit baseline revision's symbolic SVG and needs its fixture binary for a true
+baseline. Review the saved captures; neither flow proves Windows/macOS execution.
 
 Compact list navigation observes `inbox_reveal_height`, the actual native viewport.
 After rapid navigation, wait for the target row to be fully revealed before
