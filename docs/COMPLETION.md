@@ -2,6 +2,66 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## 11 September: Flutter selection and durable group actions, mobile Flutter bulk lane (R42, lane `worktree-agent-ae7cbc9c5369daf18`)
+
+The mobile session's lane, verified by an integration agent while that session
+was not running. `5f7a64f` connects Flutter to the native SQLite capture: the
+Select button beside Search, desktop-style row checkboxes, long-press and
+`Select up to here` ranges from the anchor, captured Select all/Clear/Done and
+scope reset. It adds a durable group journal to the mobile Rust crate (profile
+schema 13: frozen 50-row staging, immediate projection, one owned step at a time
+through the shared per-message mutation path, receipts, Undo, Pause/Resume,
+explicit retry, unconfirmed-result acceptance, 20-group History with 50-item
+pages, conservative restart and the account-removal fence) with Flutter review,
+progress, completion and History controls. `630a5b7` adds the saved end-to-end
+flows (`flutter_web_e2e.py --bulk`, `android_e2e.py --bulk-only` with
+`bulk_android_test.dart`, `android_bulk_fixture.py` and `bulk_native.mjs`); both
+wrappers delete an earlier result and require the exact scenario list. Selection
+and unread counts now clamp with a literal 2^53 - 1 bound, because dart2js
+shifts are 32-bit and `1 << 53` was 0 on the web. `8e691d4` matches the History
+card header inside the single node Android merges it into. Design and evidence
+are in [Mobile group actions](agents/MOBILE_BULK.md).
+
+Main (`f6ec923`) was merged as `1f5c3cb` without conflicts. The branch could not
+pass main's hook before that merge: it lacked main's `372fe9b` fix for the
+featureless build, so the merge came first and the two uncommitted doc edits
+that overlapped main were re-applied unchanged.
+
+Gates on the merged tree (`artifacts/logs/bulk-lane-*.log`, `bulk-native-*.log`):
+`flutter analyze` clean; `flutter test` **153 passed** (both `bulk_controls_test`
+schemes, `mail_groups_test` and the FFI journal case included); `cargo test
+--manifest-path flutter/rust/Cargo.toml` **97 passed** (eight `groups_tests`);
+Flutter-web Playwright **4 of 4 scenarios** (selection/range/Select all/Clear,
+review counts and decline, approve/Pause/Resume/Undo, dark Mark read with
+History item paging) with no page errors or outside requests; Android on the
+isolated `shep-e2e` emulator (API 36, preview package only) **3 named
+integration scenarios** (`bulk-controls-light`, `bulk-controls-dark`,
+`bulk-native-journal-restart`: a handed-over 130-message POP3 profile archives,
+undoes and reopens the real SQLite journal with the credential store locked and
+never read) and **4 of 4 Appium steps** with real touch, long press and the
+slowed synthetic step. The first Appium attempt failed at the History expand
+control on the merged header; the whole `--bulk-only` run passed after the
+selector fix. Root hooks on `630a5b7` and `8e691d4`: formatting, both Clippy
+runs and **1179 test executions** each (three personal diagnostics ignored);
+103 Python tests (seven skipped), the parity checker and the strict
+documentation build also pass.
+
+Reviewed captures (`artifacts/flutter/web/bulk/`, `artifacts/flutter/native/`
+and `artifacts/flutter/native/bulk/`): light selection and frozen review with
+per-account counts, the paused notice over the immediately emptied Inbox, dark
+History with done and skipped items, the reopened native journal's Undone
+History, and Android progress and dark review. On the 411 dp Android preview
+the Inbox header truncates "65 unread" once the PREVIEW badge and the new Select
+button share the bar; production builds have no badge.
+
+Limitations: synthetic and POP3 fixtures only, no live IMAP group execution;
+each IMAP step opens its own provider session, so large IMAP groups are slow;
+cross-account moves, large-group performance and Apple execution remain open.
+Flutter paints group intent after the durable decision (the browser paints
+first), a declined review returns without a selection, a cache failure after a
+provider acknowledgement is kept as a receipt warning rather than a repair queue,
+and review keys stay browser and desktop only.
+
 ## 11 September: Google-only password vault on desktop (R49, lane `worktree-agent-af3023305aa75f5b0`)
 
 Sam chose Google-only protection for synced account passwords. The credential
