@@ -364,11 +364,12 @@ impl App {
     }
     fn filter_folder_destinations(&mut self) {
         let state = &mut self.folder_controls;
+        let mut matcher = crate::fuzzy::Matcher::new(&state.query);
         let mut scores: Vec<_> = state
             .options
             .iter()
             .enumerate()
-            .filter_map(|(i, d)| crate::fuzzy::score(&state.query, &d.label).map(|s| (s, i)))
+            .filter_map(|(i, d)| matcher.score(&d.label).map(|s| (s, i)))
             .collect();
         scores.sort_by(|a, b| {
             a.0.cmp(&b.0)
