@@ -1305,7 +1305,8 @@ class NativeFlows(unittest.TestCase):
             x,y,_,height=state["html_body_visible"]
             capture=Image.open(Path(started["artifacts"])/f"conversation-white-{dark}.webp").convert("RGB")
             self.assertTrue(all(v>=247 for v in capture.getpixel((int(x-8),int(y+min(25,height/2))))))
-            self.mcp.batch(click(800,258),check("loaded_message_id","preview-work:Archive:reading-2"),
+            self.mcp.batch(click(1322,258),check("conversation_collapsed",True),
+                           click(800,344),check("loaded_message_id","preview-work:Archive:reading-2"),
                            check("html_background",[23,42,58,255]),check("html_view_current",True),wait(120),shot(f"conversation-navy-{dark}"))
             state=self.mcp.call("desktop.state")
             x,y,_,height=state["html_body_visible"]
@@ -1313,9 +1314,10 @@ class NativeFlows(unittest.TestCase):
             pixel=capture.getpixel((int(x-8),int(y+min(25,height/2))))
             self.assertTrue(all(abs(a-b)<=6 for a,b in zip(pixel,(23,42,58))),pixel)
             for _ in range(2):
-                self.mcp.batch(click(800,785),check("loaded_message_id","preview-work:INBOX:reading-3"),
+                self.mcp.batch(click(800,258),check("loaded_message_id","preview-work:INBOX:reading-3"),
                                check("html_background",[255,255,255,255]),check("html_view_current",True),
-                               click(800,258),check("loaded_message_id","preview-work:Archive:reading-2"),
+                               click(1322,258),check("conversation_collapsed",True),
+                               click(800,344),check("loaded_message_id","preview-work:Archive:reading-2"),
                                check("html_background",[23,42,58,255]),check("html_view_current",True))
             before=self.mcp.call("desktop.state")["conversation_scroll"]
             self.mcp.batch(key("ctrl+r"),check("refreshing",True),check("refreshing",False),
@@ -1342,7 +1344,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.call("desktop.start",conversation_mail=True)
         self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("Long project review"),
                        check("total",25),key("Escape"),check("conversation_total",25),wait(100),
-                       click(1288,194),check("conversation_offset",0),wait(100),
+                       check("conversation_offset",0),wait(100),
                        {"type":"hover","x":1050,"y":600},{"type":"scroll","amount":12},
                        check("conversation_scroll",400,"gte"),shot("thread-before-refresh"))
         before = self.mcp.call("desktop.state")["conversation_scroll"]
@@ -1693,7 +1695,8 @@ class NativeFlows(unittest.TestCase):
     def test_forward_targets_the_expanded_message_in_a_conversation(self):
         self.mcp.call("desktop.start", conversation_mail=True)
         self.mcp.batch(check("conversation_total",3), check("loaded_message_id","preview-work:INBOX:launch-2"),
-                       wait(100), click(800,344), check("loaded_message_id","preview-work:Sent:launch-1"),
+                       wait(100), click(1322,258), check("conversation_collapsed",True),
+                       click(800,344), check("loaded_message_id","preview-work:Sent:launch-1"),
                        check("selected_id","preview-work:INBOX:launch-2"), check("attachment_count",1),
                        key("f"), check("composer.visible", True), check("compose_fields.subject","Launch schedule","contains"),
                        check("draft_attachments.0.size",1,"gte"), check("compose_fields.to",""), check("draft_in_reply_to",None),
@@ -4313,13 +4316,13 @@ class NativeFlows(unittest.TestCase):
         started = self.mcp.call("desktop.start",conversation_mail=True)
         print(f"Inline conversation paging: {started['artifacts']}", flush=True)
         self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("Long project review"),
-                       check("total",25),key("Escape"),check("conversation_total",25),check("conversation_offset",20),
+                       check("total",25),key("Escape"),check("conversation_total",25),check("conversation_offset",0),
                        key("r"),check("composer.visible",True),check("focused_input","compose-body"),
                        type_text("Reply while reviewing earlier messages."),shot("inline-thread-paging-controls"),
-                       click(1290,630),check("conversation_offset",0),check("loaded_message_id","preview-work:Projects:long-0"),
+                       click(1380,630),check("conversation_offset",20),check("loaded_message_id","preview-work:Projects:long-4"),
                        check("editor","Reply while reviewing earlier messages.","contains"),
-                       click(1380,630),check("conversation_offset",20),check("loaded_message_id","preview-work:Projects:long-20"),
-                       check("editor","Reply while reviewing earlier messages.","contains"),shot("inline-thread-later-page"))
+                       click(1290,630),check("conversation_offset",0),check("loaded_message_id","preview-work:INBOX:long-24"),
+                       check("editor","Reply while reviewing earlier messages.","contains"),shot("inline-thread-newer-page"))
 
     def test_inline_reply_find_scroll_and_switch_preserve_draft_focus(self):
         started = self.mcp.call("desktop.start",html_mail=True)
@@ -4580,10 +4583,33 @@ class NativeFlows(unittest.TestCase):
                        shot("compose-compact-recipients"), {"type":"hover","x":855,"y":510}, {"type":"scroll","amount":5}, wait(100),
                        shot("compose-compact-actions"), key("Escape"), check("composer.visible",False), check("draft_count",1))
 
+    def test_conversation_newest_first_survives_reply_parking_and_refresh(self):
+        self.mcp.call("desktop.start", conversation_mail=True)
+        self.mcp.batch(check("conversation_total", 3),
+                       check("conversation_rows.0.remote_id", "launch-2"),
+                       check("conversation_rows.1.remote_id", "launch-1"),
+                       check("conversation_rows.2.remote_id", "launch-0"),
+                       check("loaded_message_id", "preview-work:INBOX:launch-2"),
+                       shot("conversation-newest-first-reader"),
+                       key("r"), check("composer.visible", True), check("focused_input", "compose-body"), wait(80),
+                       type_text("Keep this newest-first reply."),
+                       check("editor", "Keep this newest-first reply.", "contains"),
+                       check("conversation_rows.0.remote_id", "launch-2"),
+                       shot("conversation-newest-first-composer"),
+                       click(400, mail_row_y(1)), check("composer.visible", False),
+                       click(400, mail_row_y(0)), check("composer.visible", True),
+                       check("editor", "Keep this newest-first reply.", "contains"),
+                       key("Escape"), check("composer.visible", False),
+                       key("ctrl+r"), check("refreshing", True), check("refreshing", False),
+                       check("conversation_rows.0.remote_id", "launch-2"),
+                       check("loaded_message_id", "preview-work:INBOX:launch-2"),
+                       shot("conversation-newest-first-refreshed"))
+
     def test_conversation_reader_keeps_messages_separate(self):
         self.mcp.call("desktop.start", conversation_mail=True)
         self.mcp.batch(check("selected", "Re: Launch schedule"), check("conversation_total", 3),
                        check("loaded_message_id", "preview-work:INBOX:launch-2"), wait(150), shot("conversation-overview"),
+                       click(1322, 258), check("conversation_collapsed", True),
                        click(800, 344), check("loaded_message_id", "preview-work:Sent:launch-1"),
                        check("selected_id", "preview-work:INBOX:launch-2"), check("attachment_count", 1), shot("conversation-sent-message"),
                        key("r"), check("composer.visible", True), check("compose_fields.to", "maya@example.com"),
@@ -4594,8 +4620,8 @@ class NativeFlows(unittest.TestCase):
                        key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
                        type_text("Projects"), key("Return"), check("dialog", None),
                        check("conversation_rows.1.folder", "Projects"), check("loaded_message_id", "preview-work:INBOX:launch-2"),
-                       click(1322, 429), check("conversation_collapsed", True), shot("conversation-collapsed"),
-                       click(800, 430), check("conversation_collapsed", False),
+                       click(1322, 258), check("conversation_collapsed", True), shot("conversation-collapsed"),
+                       click(800, 258), check("conversation_collapsed", False),
                        key("ctrl+comma"), check("tab", "Preferences"), click(286, 809), check("group_conversations", False),
                        key("ctrl+1"), check("tab", "Mail"), check("loaded_message_id", "preview-work:INBOX:launch-2"), shot("individual-message-reading"),
                        key("ctrl+comma"), check("tab", "Preferences"), click(286, 809), check("group_conversations", True),
@@ -4612,14 +4638,16 @@ class NativeFlows(unittest.TestCase):
                 older = "preview-work:Sent:launch-1"
                 first = "preview-work:Archive:launch-0"
                 self.mcp.batch(check("loaded_message_id", anchor), check("conversation_total", 3),
-                               wait(150), click(800, 344), check("loaded_message_id", older),
+                               wait(150), click(1322, 258), check("conversation_collapsed", True),
+                               click(800, 344), check("loaded_message_id", older),
                                key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
                                type_text("Projects"), key("Return"), check("dialog", None),
                                {"type":"assert", "path":"mail_pending", "value":1},
                                {"type":"assert", "path":"reader_message_id", "value":older},
                                check("selected_id", anchor))
                 if newer_focus:
-                    self.mcp.batch(click(800, 258), check("loaded_message_id", first),
+                    self.mcp.batch(click(1322, 344), check("conversation_collapsed", True),
+                                   click(800, 430), check("loaded_message_id", first),
                                    {"type":"assert", "path":"mail_pending", "value":1})
                 expected = first if newer_focus else (anchor if mode == "slow" else older)
                 self.mcp.batch(check("mail_pending", 0), check("loaded_message_id", expected),
@@ -4634,13 +4662,14 @@ class NativeFlows(unittest.TestCase):
         self.mcp.call("desktop.start", conversation_mail=True)
         self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("Long project review"),
                        check("total", 25), key("Escape"), check("conversation_total", 25),
-                       check("conversation_offset", 20), wait(150), shot("conversation-latest-page"),
-                       click(1288, 194), check("conversation_offset", 0), check("loaded_message_id", "preview-work:Projects:long-0"),
-                       check("conversation_rows.19.remote_id", "long-19"), shot("conversation-first-page"),
-                       click(1377, 194), check("conversation_offset", 20), check("loaded_message_id", "preview-work:Projects:long-20"),
-                       check("conversation_rows.4.remote_id", "long-24"), shot("conversation-later-page"),
+                       check("conversation_offset", 0), check("conversation_rows.0.remote_id", "long-24"),
+                       wait(150), shot("conversation-latest-page"),
+                       click(1377, 194), check("conversation_offset", 20), check("loaded_message_id", "preview-work:Projects:long-4"),
+                       check("conversation_rows.4.remote_id", "long-0"), shot("conversation-older-page"),
+                       click(1288, 194), check("conversation_offset", 0), check("loaded_message_id", "preview-work:INBOX:long-24"),
+                       check("conversation_rows.19.remote_id", "long-5"), shot("conversation-newer-page"),
                        click(1400, 36), check("busy", "sync", "contains"),
-                       check("loaded_message_id", "preview-work:Projects:long-20"), shot("conversation-during-sync"))
+                       check("loaded_message_id", "preview-work:INBOX:long-24"), shot("conversation-during-sync"))
 
     def test_conversation_compact_layout(self):
         self.mcp.call("desktop.start", width=900, height=640, conversation_mail=True)

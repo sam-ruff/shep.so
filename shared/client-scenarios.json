@@ -43,6 +43,13 @@
       "desktop": "Frozen mail-owner reviews, 50-account preparation/pages, selected preference save ordering, independent exact history staging and tracked Drive uploads now connect to actual iced controls. Store/HTTP regressions cover changed reviews, 75 accounts, lost staging receipts, mail database reopen after a lost Drive confirmation, no duplicate POST and independent catalog discovery. Saved test_desktop_profile_publication_* controls and executed results are recorded in completion. Reviewed desktop enrollment is covered separately. Native First/More controls also review 75 accounts in 50/25 rows with details and cancellation. OPEN: full settings/categories, continuous reconciliation, live registered-client interchange and credential protection."
     },
     {
+      "id": "conversation-newest-first",
+      "contract": "Reader and inline-reply conversation cards show newest messages first. Newer/Older paging retains complete bounded membership, selected physical message, drafts and scroll during background refresh; equal dates have stable ordering.",
+      "desktop": "tests/conversations.rs and encrypted ranking cover reverse timestamp/ID rank, copy identity, focus and complete pages. scripts/e2e.py conversation scenarios cover native reader/composer order, parking, paging and refresh.",
+      "mobile": "OPEN: separate conversation cards and newest-first inline reply history.",
+      "browser": "OPEN: separate conversation cards and newest-first inline reply history."
+    },
+    {
       "id": "mail-list",
       "contract": "sender, subject, preview, account, unread and attachment indicators",
       "mobile": "preview inbox",

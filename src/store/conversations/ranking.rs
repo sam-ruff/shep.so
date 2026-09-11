@@ -12,12 +12,12 @@ const CHOOSE: &str = "INSERT INTO scratch.conversation_choices(logical_id,id,pri
     WHERE (excluded.priority,excluded.id)<(conversation_choices.priority,conversation_choices.id)";
 
 const POSITION: &str = "SELECT COUNT(*) FROM scratch.conversation_choices
-    WHERE (timestamp,id)<(?1,?2)";
+    WHERE (timestamp,id)>(?1,?2)";
 
 pub(super) const PAGE: &str = "SELECT m.data,m.unread,m.starred,m.folder
     FROM scratch.conversation_choices c INDEXED BY conversation_choices_order
     CROSS JOIN messages m ON m.id=c.id
-    ORDER BY c.timestamp,c.id LIMIT ?1 OFFSET ?2";
+    ORDER BY c.timestamp DESC,c.id DESC LIMIT ?1 OFFSET ?2";
 
 pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
     c.execute_batch(
@@ -188,7 +188,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn encrypted_ranking_matches_duplicate_focus_and_chronological_page_contract() {
+    async fn encrypted_ranking_matches_duplicate_focus_and_newest_first_page_contract() {
         let dir = tempfile::tempdir().unwrap();
         let key = std::sync::Arc::new(crate::cache_cipher::Key::generate().unwrap());
         let path = dir.path().join("keyed.sqlite");
@@ -213,14 +213,13 @@ mod tests {
         ] {
             let a = anchor.to_string();
             let f = focus.map(str::to_string);
-            // An independent legacy-window oracle on this bounded fixture
-            // preserves duplicate and focus semantics during the storage change.
+            // An independent window query checks duplicate choice and page rank.
             let expected = store.run(move |c| {
                 let query = "WITH copies AS (
                     SELECT m.id,m.timestamp,ROW_NUMBER() OVER (PARTITION BY t.logical_id ORDER BY
                     CASE WHEN m.id=?1 OR m.id=?2 THEN 0 WHEN m.folder='INBOX' THEN 1 WHEN m.folder='Sent' THEN 2 ELSE 3 END,m.id) AS copy
                     FROM conversation_members t JOIN messages m ON m.id=t.id WHERE t.account='fixture'
-                ), ordered AS (SELECT id,ROW_NUMBER() OVER (ORDER BY timestamp,id)-1 AS position FROM copies WHERE copy=1) ";
+                ), ordered AS (SELECT id,ROW_NUMBER() OVER (ORDER BY timestamp DESC,id DESC)-1 AS position FROM copies WHERE copy=1) ";
                 let (total, position): (usize,usize) = c.query_row(&format!("{query}SELECT COUNT(*),COALESCE(MAX(CASE WHEN id=?2 THEN position END),MAX(CASE WHEN id=?1 THEN position END),0) FROM ordered"),params![a,f],|r|Ok((r.get::<_,i64>(0)? as usize,r.get::<_,i64>(1)? as usize)))?;
                 let last = total.saturating_sub(1) / CONVERSATION_PAGE_SIZE * CONVERSATION_PAGE_SIZE;
                 let offset = requested.unwrap_or(position / CONVERSATION_PAGE_SIZE * CONVERSATION_PAGE_SIZE).min(last);

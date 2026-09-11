@@ -1073,6 +1073,10 @@ independent scenarios may still await focus/layout to isolate their own behavior
 
 ## Inline composer ownership
 
+Conversation cards in the reader and below replies run newest first, with stable
+descending timestamp/ID ties and Newer/Older pages. Keep the indexed page rank,
+expanded physical message, parked drafts and same-page refresh scroll intact.
+
 `ui/composing::Session` owns recipient/account/subject metadata, the native editor,
 its pending save revision and UI key. `ui/composing/sessions.rs` parks sessions by
 draft ID when navigating. Generic dialog fields must never hold composer text.
