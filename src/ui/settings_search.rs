@@ -1,134 +1,173 @@
-//! Small, local settings index. Search navigates to the actual editable section.
+//! Local, immutable control captions with navigation to their editable section.
 use super::*;
 use iced::{
     Alignment, Length,
     widget::{button, column, row, space, text},
 };
+use std::sync::OnceLock;
+
+mod catalogue;
+#[cfg(test)]
+mod performance;
+#[cfg(test)]
+mod tests;
+use catalogue::SETTINGS;
 
 pub(super) struct Setting {
     pub title: &'static str,
     pub tab: SettingsTab,
-    keywords: &'static str,
+    labels: &'static str,
+    description: &'static str,
+    synonyms: &'static str,
 }
-const SETTINGS: &[Setting] = &[
-    Setting {
-        title: "Colors",
-        tab: SettingsTab::General,
-        keywords: "color colour palette primary secondary accent surface background border light dark theme contrast",
-    },
-    Setting {
-        title: "System tray",
-        tab: SettingsTab::General,
-        keywords: "tray close minimize minimise quit exit menu bar background saving",
-    },
-    Setting {
-        title: "Appearance",
-        tab: SettingsTab::General,
-        keywords: "theme light dark system",
-    },
-    Setting {
-        title: "Reading and layout",
-        tab: SettingsTab::General,
-        keywords: "font text size scale zoom unified inbox cross account move conversations replies quotes collapse",
-    },
-    Setting {
-        title: "Mail & performance",
-        tab: SettingsTab::General,
-        keywords: if crate::desktop_badge::SUPPORTED {
-            "sync interval seconds minutes refresh preload background speed unread badge dock taskbar launcher"
-        } else {
-            "sync interval seconds minutes refresh preload background speed"
-        },
-    },
-    Setting {
-        title: "Notifications",
-        tab: SettingsTab::General,
-        keywords: "notification popup banner sound audio alert new mail sender subject privacy",
-    },
-    Setting {
-        title: "Tooltips",
-        tab: SettingsTab::General,
-        keywords: "tooltip hints primary keyboard shortcut disable icons",
-    },
-    Setting {
-        title: "Your accounts",
-        tab: SettingsTab::Accounts,
-        keywords: "add account email imap pop3 smtp password server tls ssl authentication connection remove unfinished moves recovery local copy",
-    },
-    Setting {
-        title: "Google connection",
-        tab: SettingsTab::Accounts,
-        keywords: "google sign in login oauth reconnect disconnect permissions consent drive calendar read only",
-    },
-    Setting {
-        title: "Profiles",
-        tab: SettingsTab::Accounts,
-        keywords: "profile workspace database import device computer switch rename launch",
-    },
-    Setting {
-        title: "Profiles and sync",
-        tab: SettingsTab::Accounts,
-        keywords: "cloud shared profile google drive device settings accounts sync enrollment synced passwords credentials",
-    },
-    Setting {
-        title: "Connected calendars",
-        tab: SettingsTab::Calendars,
-        keywords: "calendar caldav homeserver ical dav add connect remove",
-    },
-    Setting {
-        title: "Backups",
-        tab: SettingsTab::Backups,
-        keywords: "backup compress compression encrypted unencrypted format all include multiple retry progress drive s3 sftp ssh host fingerprint username ftp ftps tls bucket endpoint region access key destination folder rolling copies retention schedule passphrase password encryption",
-    },
-    Setting {
-        title: "Restore a copy",
-        tab: SettingsTab::Backups,
-        keywords: "restore backup recovery import",
-    },
-    Setting {
-        title: "Database transfer",
-        tab: SettingsTab::Backups,
-        keywords: "database sqlite import export migrate computer transfer all emails drafts accounts settings",
-    },
-    Setting {
-        title: "Keyboard shortcuts",
-        tab: SettingsTab::Shortcuts,
-        keywords: "key keys keybind remap primary secondary hotkey archive delete backspace inbox select all selection",
-    },
-    Setting {
-        title: "Privacy",
-        tab: SettingsTab::Privacy,
-        keywords: "images remote block allow contacts sender domain",
-    },
-    Setting {
-        title: "Contacts",
-        tab: SettingsTab::Contacts,
-        keywords: "contact email address sender addressbook",
-    },
-];
-fn matches(query: &str) -> Vec<&'static Setting> {
-    let terms: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
-    let mut entries: Vec<_> = SETTINGS
+
+struct IndexedSetting {
+    setting: &'static Setting,
+    title: String,
+    labels: Vec<String>,
+    words: Vec<(String, usize)>,
+}
+
+fn index() -> &'static [IndexedSetting] {
+    static INDEX: OnceLock<Vec<IndexedSetting>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        SETTINGS
+            .iter()
+            .map(|setting| {
+                let title = crate::fuzzy::normalized(setting.title);
+                let labels: Vec<_> = setting
+                    .labels
+                    .split('|')
+                    .map(crate::fuzzy::normalized)
+                    .collect();
+                let mut words = Vec::new();
+                for (value, weight) in [
+                    (title.clone(), 0),
+                    (labels.join(" "), 20),
+                    (format!("{:?}", setting.tab), 40),
+                    (format!("{} {}", setting.description, setting.synonyms), 60),
+                ] {
+                    words.extend(
+                        crate::fuzzy::normalized(&value)
+                            .split(|c: char| !c.is_alphanumeric())
+                            .filter(|word| !word.is_empty())
+                            .map(|word| (word.to_owned(), weight)),
+                    );
+                }
+                words.sort();
+                words.dedup_by(|a, b| a.0 == b.0);
+                IndexedSetting {
+                    setting,
+                    title,
+                    labels,
+                    words,
+                }
+            })
+            .collect()
+    })
+}
+
+/// Pure matching boundary shared by section titles, captions and supporting text.
+fn word_score(query: &str, candidate: &str) -> Option<usize> {
+    if query.len() > candidate.len().saturating_mul(4).saturating_add(8) {
+        return None;
+    }
+    if query == candidate {
+        return Some(0);
+    }
+    if query.chars().any(char::is_numeric) {
+        return None;
+    }
+    if candidate.starts_with(query) {
+        return Some(2);
+    }
+    let count = query.chars().count();
+    let cutoff = match count {
+        0..=3 => 0,
+        4..=5 => 1,
+        _ => 2,
+    };
+    if count.abs_diff(candidate.chars().count()) > cutoff {
+        return None;
+    }
+    rapidfuzz::distance::osa::distance_with_args(
+        query.chars(),
+        candidate.chars(),
+        &rapidfuzz::distance::osa::Args::default().score_cutoff(cutoff),
+    )
+    .map(|distance| 10 + distance * 10)
+}
+
+pub(super) fn matches(query: &str) -> Vec<&'static Setting> {
+    matches_with(query, &mut word_score)
+}
+
+fn matches_with(
+    query: &str,
+    scorer: &mut impl FnMut(&str, &str) -> Option<usize>,
+) -> Vec<&'static Setting> {
+    let query = crate::fuzzy::normalized(query.trim());
+    let mut terms: Vec<_> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|term| !term.is_empty())
+        .collect();
+    terms.sort_unstable();
+    terms.dedup();
+    if terms.is_empty() {
+        return Vec::new();
+    }
+    let mut entries: Vec<_> = index()
         .iter()
-        .filter(|setting| {
-            let text = format!("{} {}", setting.title, setting.keywords).to_lowercase();
-            terms.iter().all(|term| text.contains(term))
+        .filter_map(|entry| {
+            let score: usize = terms
+                .iter()
+                .map(|term| {
+                    entry
+                        .words
+                        .iter()
+                        .filter_map(|(word, weight)| scorer(term, word).map(|score| score + weight))
+                        .min()
+                })
+                .sum::<Option<usize>>()?;
+            let tier = if query == entry.title {
+                0
+            } else if entry.labels.contains(&query) {
+                1
+            } else if entry.title.starts_with(&query)
+                || entry.labels.iter().any(|label| label.starts_with(&query))
+            {
+                2
+            } else {
+                3
+            };
+            Some((tier, score, entry))
         })
         .collect();
-    entries.sort_by_key(|setting| {
-        !setting
-            .title
-            .to_lowercase()
-            .contains(&query.trim().to_lowercase())
+    entries.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(a.1.cmp(&b.1))
+            .then(a.2.title.cmp(&b.2.title))
     });
     entries
+        .into_iter()
+        .map(|(_, _, entry)| entry.setting)
+        .collect()
 }
+
 impl App {
-    pub(super) fn settings_matches(&self) -> Vec<&'static Setting> {
-        matches(&self.settings_search)
+    pub(super) fn settings_matches(&self) -> &[&'static Setting] {
+        &self.settings_search_results
     }
     pub(super) fn settings_results(&self) -> Element<'_, Message> {
         let results = self.settings_matches();
+        if results.is_empty() {
+            return column![
+                text("No matching settings").size(16).font(BOLD),
+                muted("Try a control name, its purpose or a different spelling.").size(13)
+            ]
+            .spacing(10)
+            .into();
+        }
         let mut content =
             column![text(format!("{} matching sections", results.len())).size(13)].spacing(10);
         for result in results {
@@ -152,26 +191,5 @@ impl App {
             );
         }
         content.into()
-    }
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn finds_settings_by_title_and_common_control_names() {
-        assert_eq!(matches("font")[0].title, "Reading and layout");
-        assert_eq!(matches("TLS")[0].title, "Your accounts");
-        assert_eq!(matches("tooltip")[0].title, "Tooltips");
-        assert!(
-            matches("secondary")
-                .iter()
-                .any(|setting| setting.title == "Keyboard shortcuts")
-        );
-        assert_eq!(matches("palette")[0].title, "Colors");
-        assert_eq!(matches("select all")[0].title, "Keyboard shortcuts");
-        let passwords = matches("synced password");
-        assert_eq!(passwords.len(), 1);
-        assert_eq!(passwords[0].title, "Profiles and sync");
-        assert!(matches("no-such-setting").is_empty());
     }
 }
