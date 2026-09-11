@@ -490,6 +490,8 @@ async fn seed_conversations(store: &Store) -> anyhow::Result<()> {
             format!(
                 "Content-Type: multipart/mixed; boundary=launch\r\n\r\n--launch\r\nContent-Type: text/plain\r\n\r\n{body}\r\n--launch\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=\"schedule.txt\"\r\n\r\nMonday at nine.\r\n--launch--\r\n"
             )
+        } else if i == 0 {
+            format!("Content-Type: text/html\r\n\r\n<html><body><p>{body}</p></body></html>")
         } else {
             format!("Content-Type: text/plain\r\n\r\n{body}")
         };
