@@ -69,6 +69,16 @@ async function tap(text) {
   }
   throw new Error(`Native control not found: ${text}`);
 }
+// Android merges a History card header (title, status and expand label) into
+// one clickable node, so the expand label is matched inside that node.
+async function tapMerged(label) {
+  const node = await driver.$(
+    `android=new UiSelector().descriptionContains("${label}").clickable(true)`,
+  );
+  if (!(await node.isExisting()))
+    throw new Error(`Native control not found: ${label}`);
+  await node.click();
+}
 async function openDropdown(label) {
   const node = await driver.$(
     `android=new UiSelector().descriptionContains("${label}")`,
@@ -210,7 +220,7 @@ try {
     await tap("Group History");
     await waitText("Mark read 130 messages");
     await waitText("Archive 130 messages");
-    await tap("Show messages of Mark read 130 messages");
+    await tapMerged("Show messages of Mark read 130 messages");
     await waitText("Skipped · Already up to date");
     await driver.saveScreenshot(path.join(out, "bulk-history-dark.png"));
     await driver.back();
