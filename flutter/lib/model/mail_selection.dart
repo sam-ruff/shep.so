@@ -73,7 +73,8 @@ class MailSelection {
         }
       }
     }
-    return result.clamp(0, 1 << 53);
+    // A literal bound: dart2js shifts are 32-bit, so `1 << 53` would be 0.
+    return result.clamp(0, 9007199254740991);
   }
 
   bool selected(String id) {

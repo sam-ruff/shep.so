@@ -530,7 +530,7 @@ class Workspace extends ChangeNotifier {
       final changed = current.patch(fields);
       final before = current.folder == 'Inbox' && current.unread ? 1 : 0;
       final after = changed.folder == 'Inbox' && changed.unread ? 1 : 0;
-      _unread = (_unread + after - before).clamp(0, 1 << 53);
+      _unread = (_unread + after - before).clamp(0, 9007199254740991);
     }
     if (_reader?.id == id) _reader = _reader!.patch(fields);
     if (_mail.any((m) => m.id == id)) {
@@ -559,7 +559,10 @@ class Workspace extends ChangeNotifier {
             : a.date.compareTo(b.date);
         return order == 0 ? a.id.compareTo(b.id) : order;
       });
-      total = (total + matching.length - beforeCount).clamp(0, 1 << 53);
+      total = (total + matching.length - beforeCount).clamp(
+        0,
+        9007199254740991,
+      );
     }
   }
 

@@ -1,0 +1,48 @@
+# Mobile group actions: captured selection and the durable journal
+
+This page records how the Flutter client mirrors the browser's captured selection and durable group execution ([Browser group actions](BROWSER_BULK.md)). The operational rules stay in [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/AGENTS.md); this page explains where the native code meets them and where the evidence lives.
+
+## Selection controls
+
+`flutter/lib/model/mail_selection.dart` remains the bounded controller: one request in flight, at most 32 queued gestures, 50 observed rows, explicit arrival recapture, aliases, stale and lost observations, and release. The membership itself lives in the native SQLite capture (`flutter/rust/src/selection.rs`); nothing in Dart holds a whole inbox.
+
+`Workspace` now owns the controller (`selection`) and feeds it the current scope (folder, account, query, filter, order and the pending individual edits). Every rendered `MailTile` registers itself as an observation while it is mounted and withdraws when it leaves the list, so observations follow the visible page only. Changing folder, account, filter, order or query ends selection mode; a refresh re-observes the rendered rows and arrivals stay unselected until they are chosen explicitly. Choosing an arrival that lies outside a prior capture extends that capture without discarding the existing selection.
+
+Controls, all visible and labelled: the Select button beside Search enters and leaves selection mode; the toolbar shows the count (`All 130 selected`, `3 selected`, `No messages selected`), Select all, Clear and Done plus the seven group actions. Rows show a desktop-style 16 px checkbox (4 px radius, subtle border, accent fill) labelled `Select <subject>`/`Deselect <subject>`, and their semantics label ends with `selected`/`not selected`. A tap in selection mode toggles the row without opening the reader; a long press enters selection mode or, once an anchor exists, extends the range from the anchor like Shift+click. The row's Actions menu carries `Select up to here` as the visible equivalent of that gesture, and swipes are disabled while selecting. Selection never reads a message body and there are no keyboard shortcuts on mobile to consume.
+
+Select all is a captured `all` gesture on the SQLite capture; it never loops over loaded rows. On the web preview the count clamp had to become a literal bound because dart2js shifts are 32-bit.
+
+## Durable journal
+
+`flutter/rust/src/groups.rs` stores group work in the profile database (schema version 13) in dedicated tables: `group_jobs` (action, approved fields, state, scope, approval and Undo revisions, revision counter), `group_items` (frozen position, cache id, account, physical folder and UID, baseline flags, state, claim attempt, receipt, reason), `mail_intents` (per-message per-field revisions reserved by individual actions) and `group_clock`. The tables hold metadata and physical identities only, never MIME or secrets. Keeping them beside the mail cache lets each receipt and its cache write commit in one transaction under the writer FIFO; the ephemeral TEMP capture stays separate.
+
+Commands travel through the existing `request` bridge as `{"op":"groups","command":{...}}`:
+
+- `prepare` freezes the live capture at its expected revision (`selection::Freeze`), copies it in pages of 50 into `group_items` with each message's current physical identity, records rows that are no longer cached as skipped so the review count is exact, releases both selection sessions and leaves the job in `review`. A failed page marks the job `interrupted`; interrupted preparation cannot execute.
+- `approve` verifies every account still exists, bumps the group clock and makes the job `running`. From that moment the paging plan projects the job's fields over its pending items (newest job first per field, individual edits above both), so the list and its counts paint before any step runs. `decline` retires the review in 50-row transactions.
+- `step` executes at most one owned step under `Operations.groups`. The decision is read-only first: account removed, message no longer cached, physical identity changed since the review, a newer individual intent on every target field, or values already applied become distinct skipped outcomes without a provider call. Otherwise the item is claimed (`sending`/`reversing` with an attempt token) and dispatched through the shared per-message `operations::mutate`, which keeps the account lock, `pending_moves`, `MoveReceipt` and destination recovery behaviour of individual actions. IMAP steps need the account credential; without it the reply names the account and Dart supplies it for that one step. The receipt records the dispatch identity, the applied fields and the identity afterwards. A provider reply that cannot be classified for a move becomes `uncertain` and pauses the group; flag failures are `failed` and retryable; a warning that the cache could not save is kept on the receipt.
+- `undo` bumps the clock, cancels unsent items before any provider call, queues acknowledged items as inverse steps and lets a step acknowledged after the decision join the inverse queue. Inverse steps compare the current identity with the receipt's `after` identity (or only the folder when an acknowledged move still awaits UID recovery), restore only the fields the receipt applied and respect newer individual intent.
+- `pause`, `resume`, `retry` (failed steps only), `accept` (unconfirmed steps only; retires the local intent without classifying the provider result), `history` (newest 20 jobs with per-state counts), `items` (50 per page) and `remove` (finished, cancelled or interrupted jobs, retired in 50-row transactions).
+
+Restart: opening the profile marks claimed `sending`/`reversing` items `uncertain`/`undo_uncertain`, pauses their group, marks `staging` jobs interrupted, cancels abandoned reviews and sweeps retired jobs in bounded transactions. Nothing is repeated automatically. Preparing a new review retires the oldest finished group once History holds 20 and refuses a twenty-first active group.
+
+Account removal takes `Operations.groups` before the account lock so no owned step can dispatch or write a receipt meanwhile; the removal review counts the account's queued, in-flight, failed, uncertain and inverse work as `groups`, requires the explicit discard confirmation for them, cancels those items, abandons reviews that froze the account and leaves completed receipts alone.
+
+## Flutter controller and controls
+
+`flutter/lib/model/mail_groups.dart` drives the journal: it prepares the review from the controller's snapshot, approves or declines, pumps steps until the journal is idle or paused (coalescing repaints to one per 250 ms and refreshing History every ten steps), announces completion for six seconds, and exposes Undo, Pause, Resume, Retry, Accept, Remove, History and item pages. `NativeRepository.groupStep` resolves `requires_credentials` with the device credential store for one step. Saved groups recover at startup: runnable groups continue, paused groups wait in History.
+
+`flutter/lib/ui/mail_groups.dart` holds the selection toolbar, the frozen review dialog (counts per account and folder, Cancel and the action verb), the progress notice with Pause, Undo and a History shortcut, the paused/attention notices, the completion toast with Undo, and the Group History screen (20 cards with status, Pause/Resume/Undo/Remove, expandable 50-item pages with Retry and Accept current state). Everything uses the theme tokens and `ShepIcon`s; there are no Material switches or elevation.
+
+## Evidence
+
+- `flutter/rust/src/groups_tests.rs`: exact 125-row staging and painting, newer-intent and already-applied skips, Undo with cancelled and reversed items, credential requests, unconfirmed pauses that never repeat, explicit retry of definite flag failures with inverse receipts, restart classification and abandoned-review retirement, the removal fence with a held provider step, the 20-job and 50-item bounds.
+- `flutter/test/mail_groups_test.dart` (controller over the synthetic journal), `flutter/test/bulk_controls_test.dart` with `test/support/bulk_controls_scenario.dart` (real controls in light and dark: checkbox, long-press range, Select all, review counts, decline, immediate paint, Pause/Resume, Undo, injected failed and unconfirmed steps, History retry and acceptance) and the FFI journal case in `native_repository_test.dart`.
+- `flutter/integration_test/bulk_android_test.dart` through `scripts/clients/android_e2e.py --bulk-only` (`android_bulk_fixture.py` hands over a 130-message POP3 profile; the native SQLite journal executes, undoes and survives reopening) and the Appium flow `flutter/e2e/bulk_native.mjs`.
+- `flutter/e2e/bulk.mjs` through `scripts/clients/flutter_web_e2e.py --bulk` against `test/bulk_main.dart`.
+
+`test/support/group_repository.dart` is the synthetic journal used by previews and host tests; it mirrors the Rust contract but is not the production path.
+
+## Limitations
+
+Review keys are a browser and desktop matter. Each IMAP step opens its own provider session through the shared mutation path, so large IMAP groups are slow; cross-account moves, large-group performance and Apple execution remain open. The live capture is released when a review is prepared, so declining a review returns to the list without a selection. Group intent paints after the durable decision is saved, not before it as the browser does. A cache save failure after a provider acknowledgment is kept on the receipt as a warning rather than a separate repair queue.
