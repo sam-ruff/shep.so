@@ -134,7 +134,7 @@ and unread badges. Device fields and backend metadata stay unchanged. Shared
 preview-line values/extensions remain in history; other portable settings still
 need shared-contract support and native implementation.
 
-Global account removal choices remain open. Initial enrollment is separate from a verified later publication. Password transfer still requires the outstanding protection choice.
+Global account removal choices remain open. Initial enrollment is separate from a verified later publication. Password transfer uses Google-only protection (decided 11 September 2026) and is not implemented yet; see the credential section of the shared handover.
 
 ## Verification boundary
 
