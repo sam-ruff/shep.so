@@ -6,6 +6,7 @@ mod html_mail;
 mod move_recovery;
 pub mod passwords;
 mod reading_mail;
+mod search_comparison;
 pub use move_recovery::recover_move;
 pub mod workspace;
 
@@ -205,6 +206,9 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
                 )),
             )
             .await?;
+    }
+    if std::env::args().any(|arg| arg == "--search-mail") {
+        search_comparison::populate(&mut mails)?;
     }
     store.upsert(mails).await?;
     if std::env::args().any(|arg| arg == "--html-mail") {
