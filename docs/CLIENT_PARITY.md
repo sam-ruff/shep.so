@@ -1,5 +1,11 @@
 # Client parity
 
+Desktop History header follow-up: the mail-action History control uses a clock
+arrow icon with the existing optional tooltip and unchanged dialog action.
+Browser and Flutter header equivalence remains an active visual-parity item;
+their existing History controls remain available. See the shared
+`history-header-control` scenario for the expected interaction.
+
 The root Rust + iced app remains the reference. Android/iOS live in `flutter/`; the desktop-style browser client lives separately in `web/`. `website/` promotes all clients. Development stays in review worktrees; the combined checkpoint is pushed to [`feat/mobile-web-clients`](https://github.com/sam-ruff/shep.so/tree/feat/mobile-web-clients). On 2026-09-09 `main` was merged into that branch, so `main` is now the single integration branch and desktop changes arrive through merges rather than ports; see [the merge review](#main-merge-parity-review-2026-09-09) below. The requested VPS installation awaits the supplied server and OAuth configuration.
 
 **The new clients are not feature-complete.** Flutter production has a Rust bridge, SQLite cache/drafts, device credentials, mail setup and reviewed Outbox recovery. The Android integration suite and preview Appium scenarios cover the implemented paths; full protocol-success/recovery coverage remains open. The separate browser connects to the Rust gateway, with account verification, an IndexedDB mail/draft cache and reserved SMTP sends; complete provider/recovery parity remains open. Preview builds acknowledge fictional state only. No personal account or credential is used by these tests.

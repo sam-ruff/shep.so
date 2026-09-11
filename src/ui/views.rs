@@ -280,10 +280,11 @@ impl App {
             if self.bulk.jobs.is_empty() {
                 Element::from(space().width(0))
             } else {
-                Element::from(action(
-                    "History",
+                self.icon_action(
+                    "history",
+                    "Mail action history",
                     Message::Bulk(super::bulk::Message::History),
-                ))
+                )
             },
             self.toggle_icon_action(
                 "sync",

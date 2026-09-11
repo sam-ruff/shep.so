@@ -1120,6 +1120,23 @@ class NativeFlows(unittest.TestCase):
                        {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},check("bulk.jobs.0.restored",1),
                        check("bulk.jobs.0.cancelled",1),check("total",120),shot("bulk-review-retains-other-undo"))
 
+    def test_bulk_history_header_icon_mouse_escape_and_compact_dark(self):
+        started = self.mcp.call("desktop.start", bulk_history=True)
+        print(f"History icon evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("bulk.jobs.0.id", "paused-fixture"),
+                       {"type": "hover", "x": 1348, "y": 36}, wait(500),
+                       shot("history-header-icon-light-tooltip"),
+                       click(1348, 36), check("dialog", "BulkHistory"),
+                       key("Escape"), check("dialog", None),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       wait(80), click(690, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"),
+                       {"type": "resize", "width": 900, "height": 640}, wait(150),
+                       {"type": "hover", "x": 808, "y": 36}, wait(500),
+                       shot("history-header-icon-compact-dark-tooltip"),
+                       click(808, 36), check("dialog", "BulkHistory"),
+                       shot("history-header-icon-compact-dark-open"))
+
     def test_bulk_history_retry_undo_after_restart(self):
         started=self.mcp.call("desktop.start",persistent=True,mail_actions="slow",undo_failure_once=True)
         print(f"History Undo restart evidence: {started['artifacts']}",flush=True)
