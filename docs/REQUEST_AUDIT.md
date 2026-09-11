@@ -11,8 +11,10 @@ active in TODO.
 
 The `demo/search-abbreviations` algorithm checkpoint implements Nucleo/OSA label
 matching and phrase-aware indexed mail ranking, with search/selection regressions.
-The shared catalogue, native review, benchmarks and branch push remain pending;
-see the [algorithm notes](agents/search-abbreviations.md) and completion log.
+Its shared catalogue and twelve native search/Move/control scenarios now pass,
+including real abbreviation result clicks and phrase priority in both themes.
+Quiet benchmarks, final hooks and branch push remain pending; see the
+[algorithm notes](agents/search-abbreviations.md) and completion log.
 
 **11 September R64 GNOME correction:** Sam's faint dark dog and undersized tray
 are reproduced with actual GNOME Shell 46 and its Ubuntu dock/tray extensions
@@ -269,7 +271,7 @@ hook test executions passing; see the newest completion entry. OAuth and the sha
 | R96 | Reply buttons float at the bottom of the preview panel so replying needs no scrolling (11 September 2026) | Reproduced in native conversations: the expanded card carried Reply/Reply all/Forward/Print inside its scroller. The reader now reserves a footer outside those cards and binds it to the focused physical message, including collapsed cards and HTML preparation. Evidence and remaining integration/shipping are recorded in completion; individual reader and client footers were already outside the body. |
 | R97 | Configurable option to include the previous email thread in replies (11 September 2026) | Open in TODO |
 | R98 | Small ? help icons with tooltips beside easily misunderstood settings only, not every option (11 September 2026) | Open in TODO |
-| R99 | Settings search should search all settings (11 September 2026) | Open in TODO |
+| R99 | Settings search should search all settings (11 September 2026) | Search-demo catalogue adds control captions, weighted typo matching, cached results and persisted-field coverage review. Exact deep-control reveal, exhaustive dynamic captions and client parity remain open in TODO; see [Preferences search](agents/SETTINGS_SEARCH.md) |
 
 ## Client history (feat/mobile-web-clients)
 

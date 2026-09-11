@@ -35,6 +35,12 @@ In Preferences, compare `dark mode`, `apperance`, `retention`, `sftp fingerprint
 and `synced passwords`. Results open their actual settings sections. Deep links
 to individual controls inside long, state-dependent cards remain R99 work.
 
+Mail retains the existing parser in all three demos: it uses the first twelve
+tokens, with AND between those tokens. Further tokens are currently ignored.
+Wholly numeric tokens such as `2026` match exactly, while mixed terms such as
+`S3` retain prefix matching and can match `S30`. These limits remain tracked;
+option/folder labels use stricter digit-bearing token matching.
+
 The saved native scenario is
 `test_search_comparison_exact_phrase_typo_numbers_and_folder_abbreviation` in
 `scripts/e2e.py`. Each algorithm must also pass the common search and captured

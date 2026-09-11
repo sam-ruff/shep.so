@@ -10,7 +10,7 @@ Use a separate checkout and a disposable profile to compare the demos:
 git worktree add ../shep-search-abbreviations origin/demo/search-abbreviations
 cd ../shep-search-abbreviations
 demo_home=$(mktemp -d)
-XDG_DATA_HOME="$demo_home/data" XDG_CONFIG_HOME="$demo_home/config" XDG_CACHE_HOME="$demo_home/cache" CARGO_BUILD_JOBS=4 cargo run --profile test-ui --features test-support -- --demo --search-mail --nested-folders
+XDG_DATA_HOME="$demo_home/data" XDG_CONFIG_HOME="$demo_home/config" XDG_CACHE_HOME="$demo_home/cache" CARGO_BUILD_JOBS=4 cargo run --profile test-ui --features test-support -- --demo --persist-demo --search-mail
 ```
 
 In Preferences, try `prf`, `ntfctns`, `dark mode` and `appearnce`. In Move,
@@ -33,6 +33,8 @@ and mail split text into words. Neither enables `!`, `^`, `$` or `|` as query
 operators. One matcher and its scratch buffer are reused through each result
 batch. Preferences caches each query word's characters alongside the immutable
 catalogue words and their field weights.
+Preferences abbreviations match individual indexed words; folder abbreviations
+can span path segments, as in `pjarch` for `Projects/Archive`.
 
 Mail uses SQLite FTS5 and field-weighted BM25 within each tier. Subject, body and
 sender weights are 2.0, 1.0 and 0.3. Phrase and literal relations are computed
@@ -41,9 +43,9 @@ selection use identical tier, score, timestamp and identity ordering; pages
 remain limited to 50 metadata rows.
 
 Mail abbreviations do not scan every message or vocabulary term. Mail keeps the
-bounded existing expansion: up to 12 query tokens, 32 one-edit vocabulary
+bounded existing expansion: the first 12 query tokens, 32 one-edit vocabulary
 candidates, 256 prefix-neighbour candidates for longer words and 12 corrections
-per token. Only ASCII alphabetic words receive typo expansion; Unicode literal
+per token. Further query tokens are ignored. Only ASCII alphabetic words receive typo expansion; Unicode literal
 matching remains available. Wholly numeric mail tokens are exact; mixed letters
 and digits retain prefix matching, so mail `S3` can still match `S30`. Latin accents are normalised without stripping
 Japanese marks or decomposing Hangul. BM25 statistics use the cached collection,

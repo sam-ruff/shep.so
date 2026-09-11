@@ -1,5 +1,38 @@
 # Completion audit
 
+## 11 September: abbreviation demo catalogue and native review (R18/R44/R99)
+
+`demo/search-abbreviations` now includes the shared catalogue (`1f6c93c`), shared
+mail examples (`c00c80b`) and main's completed reader/icon prerequisites through
+`b5546c7`. Its Preferences scorer reuses one Nucleo scratch allocation and cached
+query characters across the weighted catalogue; Move and folder destinations
+also reuse their batch matcher. Numeric label tokens stay exact across literal
+separators, with regressions for `Project-17`, `2026/Q1` and `S3-backups`.
+
+Six catalogue tests and seven C-specific ranking/Unicode/numeric/page/capture
+regressions pass. The earlier algorithm checkpoints passed normal hooks as
+`434df74`, `8b82ead` and `1554984`. All twelve native search, catalogue, Move,
+cross-folder selection and keyboard-scope scenarios pass on the final reviewed
+binary (`artifacts/logs/search-c-native-reviewed.log`). The C-specific scenario
+checks exact typed abbreviations, then clicks through to Notifications and
+Profiles in light and compact-dark layouts. It also verifies that `release
+planning` puts **Release planning notes** above **Planning the release**.
+
+Reviewed final evidence is under `artifacts/e2e/9abce5eae800` and `14be58f39c38`;
+shared catalogue/no-results captures are in `d50d90a240ec` and `93a1a3b6f541`, and
+the common mail/Move comparison is in `73b8bf724c1d`. Visual review corrected the
+singular result count. The initial in-memory demo showed the existing saved-
+workspace requirement when opening Profiles; the final scenario uses the
+existing persistent fictional fixture and verifies loaded profile metadata.
+The final native SHA-256 is
+`e1a12cbc6020546c858fa3aa67ea26e7cc9e95f592aa29ea33ed000b8f3543b4`.
+
+The shared parity registry validates all 43 contracts. Quiet benchmark results,
+final mandatory hooks and authorised branch shipping remain pending. No default
+algorithm, full R99 completion, client parity, native input latency or personal
+installation is claimed. [Demo notes](agents/search-abbreviations.md) record the
+mail token limit, mixed identifier prefix behaviour and bounded corrections.
+
 ## R64 GNOME launcher and tray correction, 11 September 2026
 
 The Linux desktop entry now uses the approved opaque light Shepherd, with a
@@ -110,6 +143,31 @@ placeholder and pinned Reply control. All are under this lane's ignored
 Main integration and push belong to the primary agent. This does not establish
 Windows/macOS execution, performance, full native input-lifecycle coverage or
 client conversation parity, and it does not change the personal installation.
+
+## 11 September: common Preferences catalogue for the search demos (R99)
+
+The demo foundation expands Preferences search to control captions, descriptions,
+section/tab names and common synonyms across account, Google, profile, calendar
+and backup forms. Exact titles and captions rank before prefixes and weighted
+word matches. The baseline uses bounded RapidFuzz OSA correction, requires every
+distinct query word and preserves numeric words. Static text is normalised once;
+the UI reuses results until the query changes. Empty results have visible guidance.
+
+Five Rust tests pass, including an exhaustive Preferences destructuring guard,
+serialised-field coverage/exclusions and nested network/account/calendar/profile
+schema audits. Three native scenarios pass: the new ranked cross-tab flow in
+light/dark/900×640 layouts, existing tooltip controls and mail-check validation.
+The reviewed ranked-result WebPs are in lane artifact directories `f751ddc87649`
+and `90ea815dcc46`; compact-dark no-results evidence is in `59981bb48626`.
+The first independent run also passed before root repeated the gates.
+
+The ignored complete-catalogue timing test is saved for the quiet measurement
+window. This does not establish native input latency or choose a production
+algorithm. R99 remains open for deep-control reveal, complete dynamic-caption
+coverage and Flutter/browser parity. Provider-specific controls retain their
+existing Edit/destination navigation; search never changes a preference to reveal
+them. See [Preferences search](agents/SETTINGS_SEARCH.md). The normal hooks gate
+the common commit; the integrator owns the demo-foundation merges and shipping.
 
 ## 11 September: mail action History header icon (R15)
 
