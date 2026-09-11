@@ -1528,23 +1528,24 @@ impl App {
         let lifecycle = self.preferences.google_lifecycle;
         let services = self.preferences.requested_google_services();
         let mut controls = row![
-            button(
-                text(if self.google_connected {
-                    "Reconnect Google"
-                } else {
-                    "Sign in with Google"
-                })
-                .size(12)
-            )
-            .padding([12, 18])
-            .style(outline)
-            .on_press_maybe(
-                (!busy && !lifecycle.cleanup_pending && services.any())
-                    .then_some(Message::GoogleLogin(true))
-            )
+            button(text(self.google_sign_in_label()).size(12))
+                .padding([12, 18])
+                .style(outline)
+                .on_press_maybe(
+                    self.google_sign_in_enabled()
+                        .then_some(Message::GoogleLogin(true))
+                )
         ]
         .spacing(10)
         .align_y(Alignment::Center);
+        if self.google_waiting() {
+            controls = controls.push(
+                button(text("Cancel sign-in").size(12))
+                    .padding([12, 18])
+                    .style(outline)
+                    .on_press(Message::CancelGoogleSignIn),
+            );
+        }
         if self.google_connected {
             controls = controls.push(badge("CONNECTED"));
         }
@@ -1568,20 +1569,6 @@ impl App {
             );
         }
         let mut body = column![
-            form_field(
-                "Desktop OAuth client ID",
-                "your-client-id.apps.googleusercontent.com",
-                self.field("google_id"),
-                "google_id",
-                false
-            ),
-            form_field(
-                "Desktop OAuth client secret",
-                "From your Google desktop application credentials",
-                self.field("google_secret"),
-                "google_secret",
-                true
-            ),
             column![
                 text("Permissions for the next sign-in").size(12).font(BOLD),
                 checkbox(services.drive)
@@ -1601,6 +1588,20 @@ impl App {
             controls.wrap(),
         ]
         .spacing(16);
+        if self.google_client.is_none() {
+            body = body.push(
+                muted(if self.google_connected {
+                    "Google sign-in is not configured in this build. Your current connection keeps working."
+                } else {
+                    "Google sign-in is not configured in this build."
+                })
+                .size(12),
+            );
+        } else if self.google_waiting() {
+            body = body.push(muted("Finish signing in with Google in your browser.").size(12));
+        } else if self.google_legacy_client() {
+            body = body.push(muted("Connected with your own Google Cloud client, which keeps working. Signing in again switches to Shep's client; Drive backups made with your own client will no longer be listed.").size(12));
+        }
         if lifecycle.cleanup_pending {
             body = body.push(text("Google is disconnected. Unlock your credential store to finish removing its saved login.").size(12))
                 .push(button(text("Retry Google cleanup").size(12)).padding(12).style(outline).on_press_maybe((!busy).then_some(Message::CleanupGoogle)));
@@ -1631,14 +1632,17 @@ impl App {
                 .wrap(),
             );
         }
-        if !busy && !lifecycle.cleanup_pending {
+        if !busy && !lifecycle.cleanup_pending && self.google_client.is_some() {
             body = body.push(
                 button(text("Start a new sign-in").size(12))
                     .style(button::text)
                     .on_press_maybe(services.any().then_some(Message::GoogleLogin(false))),
             );
         }
-        body = body.push(muted("Enable the selected APIs in your Google Cloud project. Client ID and secret identify your desktop application; no access or refresh token is entered here. Sign-in opens your browser.").size(11));
+        body = body.push(
+            muted("Sign-in opens Google in your browser and asks only for the permissions chosen above.")
+                .size(11),
+        );
         self.settings_card(
             "Google connection",
             "Choose Calendar access, encrypted Drive backups, or both.",

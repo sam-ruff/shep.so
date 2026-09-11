@@ -396,7 +396,23 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
     let mode =
         std::env::args().find_map(|a| a.strip_prefix("--google-permissions=").map(str::to_owned));
     if let Some(mode) = mode {
+        // A grant from a self-configured client, as saved before Shep had its own.
+        let legacy = std::env::args().any(|a| a == "--google-legacy-client");
+        if legacy {
+            store
+                .update_preferences(|p| {
+                    p.google_client_id = "fixture-own-client.apps.googleusercontent.com".into();
+                    p.google_client_secret = "fixture-own-secret".into();
+                })
+                .await?;
+        }
         let prefs: Preferences = store.get("preferences").await?;
+        let client_id = if legacy {
+            prefs.google_client_id.clone()
+        } else {
+            crate::providers::google::client::sign_in()
+                .map_or_else(|| "fixture-client".into(), |client| client.id.clone())
+        };
         let access = GoogleAccess {
             known: true,
             drive: mode == "drive",
@@ -413,7 +429,7 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
                 prefs.clone(),
                 GoogleGrant {
                     id: "fixture-grant".into(),
-                    client_id: prefs.google_client_id.clone(),
+                    client_id,
                     access,
                 },
                 access.drive.then(|| "drive:fixture".into()),
