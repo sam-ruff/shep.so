@@ -128,24 +128,21 @@ extension ProfileSyncActions on ProfileDiscovery {
     (generation, session) => _subscribe(generation, session, device),
   );
 
-  Future<void> configureSync({
-    bool? enabled,
-    String? field,
-    bool? selected,
-  }) => _syncTask((generation, session) async {
-    final current = sync;
-    if (current == null) return;
-    final value = await _sync(session, {
-      'kind': 'configure',
-      'expected_revision': current.revision,
-      'enabled': enabled,
-      'field': field,
-      'selected': selected,
-    });
-    if (!_current(generation, session)) return;
-    sync = ProfileSyncStatus.fromJson(value as Map<String, dynamic>);
-    _changed();
-  });
+  Future<void> configureSync({bool? enabled, String? field, bool? selected}) =>
+      _syncTask((generation, session) async {
+        final current = sync;
+        if (current == null) return;
+        final value = await _sync(session, {
+          'kind': 'configure',
+          'expected_revision': current.revision,
+          'enabled': enabled,
+          'field': field,
+          'selected': selected,
+        });
+        if (!_current(generation, session)) return;
+        sync = ProfileSyncStatus.fromJson(value as Map<String, dynamic>);
+        _changed();
+      });
 
   Future<void> _applyPending(
     int generation,
@@ -210,14 +207,12 @@ extension ProfileSyncActions on ProfileDiscovery {
     }
   }
 
-  Future<void> syncNow(ProfileEnrollmentDevice device) => _syncTask((
-    generation,
-    session,
-  ) async {
-    if (!syncChecked) await _readSync(generation, session);
-    if (!_current(generation, session) || sync == null) return;
-    await _cycle(generation, session, device);
-  });
+  Future<void> syncNow(ProfileEnrollmentDevice device) =>
+      _syncTask((generation, session) async {
+        if (!syncChecked) await _readSync(generation, session);
+        if (!_current(generation, session) || sync == null) return;
+        await _cycle(generation, session, device);
+      });
 
   /// Foreground check: silent, bounded, and skipped while any profile work,
   /// unsaved preferences or a missing grant would make it unsafe.
