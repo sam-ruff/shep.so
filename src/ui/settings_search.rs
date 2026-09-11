@@ -68,7 +68,7 @@ const SETTINGS: &[Setting] = &[
     Setting {
         title: "Profiles and sync",
         tab: SettingsTab::Accounts,
-        keywords: "cloud shared profile google drive device settings accounts sync enrollment",
+        keywords: "cloud shared profile google drive device settings accounts sync enrollment synced passwords credentials",
     },
     Setting {
         title: "Connected calendars",
@@ -169,6 +169,9 @@ mod tests {
         );
         assert_eq!(matches("palette")[0].title, "Colors");
         assert_eq!(matches("select all")[0].title, "Keyboard shortcuts");
+        let passwords = matches("synced password");
+        assert_eq!(passwords.len(), 1);
+        assert_eq!(passwords[0].title, "Profiles and sync");
         assert!(matches("no-such-setting").is_empty());
     }
 }

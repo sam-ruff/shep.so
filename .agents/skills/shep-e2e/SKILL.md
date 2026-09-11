@@ -111,6 +111,8 @@ For Google device disconnection, the default isolated preview has two Google cal
 
 For partial Google permissions, launch `desktop.start(google_permissions="calendar")`, `"drive"`, or `"read-only"`. These use fixture grants only. Observe `google_grant.access.known`, `drive`, `calendar_read`, `calendar_write`, `google_archived` and `event_access`; never replace OS credentials or authenticate to a personal Google account. The saved native scenarios review the permission labels, opening cached read-only events, Backups and continued mail navigation in light/dark/900×640 layouts. Scroll to the Google card's bottom before inspecting its permission controls; additional rows can move the Disconnect button. Grant activation/restart/failure contracts live in Rust tests with fake keychains and loopback services.
 
+The Google card has one **Sign in with Google** (or **Reconnect Google**) button and no OAuth client fields. Every `desktop.start` sets the sign-in client itself: `google_client="fixture"` (default) passes a fictional client through the test-build runtime override, and `google_client="none"` passes an empty one, which shows the disabled button with "Google sign-in is not configured in this build." The caller's `SHEP_GOOGLE_CLIENT_*` values never reach the app. `google_legacy_client=True` (with `google_permissions`) seeds a grant issued by a fictional self-configured client, which shows the switch note. Observe `google_sign_in.available`, `enabled`, `label`, `waiting` and `legacy_client`; preview refuses the sign-in itself, so the browser, loopback, PKCE, cancel and timeout paths are covered by `cargo test --all-features google` with a fake browser and token endpoint.
+
 
 For sidebar overflow use `desktop.start(long_folders=true)`. `click`/`double_click` accept `button: 3` for right-click and `modifiers: ["ctrl"]` (also shift/alt/super). Modifiers are released after failures. Use `hover` to position the pointer for tooltips or scrolling, and `resize` with width/height (900–2560 × 640–1600) for native window resizing. Both are batchable. Test Ctrl+click selection/deselection, plain-click reset, empty selection and overlapping account scopes. Observe `selected_folders`, `collapsed_accounts` and `sidebar_labels`; a selected empty set must show zero messages.
 
@@ -135,6 +137,8 @@ For background mail checks, launch `desktop.start(background_sync=true)`; add `s
 
 
 For ranked search use `desktop.start(search_mail=true)`. Search for `test`; the older **Quick note**, with body `test`, must be first and the sort control must read Best match (`sort == "Relevance"`). Select Newest first from the actual menu to put **Testing checklist** first. Clearing search restores the browsing sort; starting another search selects Best match again. Repeat during a fixture refresh. The Move scenario searches `cafe`, checks Café is highlighted, moves with Enter and opens that sidebar folder to verify its contents; it also types `archvie` and Return without a settling wait and checks Archive afterward. Preserve both saved native equivalents and WebP evidence.
+
+For long plain-text mail use `desktop.start(long_mail=true)`. It adds **Long quarterly report**, about 88,000 characters ending in `Line 1200.`, as the newest Inbox message. The reader opens at 32,000 characters with a **Show more** button at the end (near x=1008, y=732 once the standard window's reader is scrolled to the end); each click loads the next 32,000 through the ordinary detail path. Observe `body_chars` and `body_truncated`, and confirm a refresh keeps the loaded length. Preserve the saved `test_long_message_show_more_loads_every_part` equivalent and its WebP evidence.
 
 For draft navigation, use the counted Drafts group in the sidebar; collapsing it persists without hiding account folders. Right-click a draft for Open/Discard, and verify that an in-progress mail refresh does not dismiss the menu. Discard reviews accept Enter/Y, with Escape/N or Keep draft cancelling. The composer bin opens the same review and includes attachment scope. Observe `draft_rows`, `drafts_collapsed`, `saved_drafts_collapsed`, `draft_context`, `discard_pending`, `draft_attachments` and `editor`. `desktop.start(discard_failure_once=true)` fails the first discard and permits retry, only in the isolated preview. Preserve the saved `test_drafts_collapse_context_cancel_and_discard` and `test_draft_bin_cancel_failure_retry_and_compact_dark_review` equivalents. Review their WebP captures; Rust tests establish actual cached-file deletion, restart tombstones and delivery exclusion.
 
@@ -665,26 +669,34 @@ automatic result must not change the active tab. Review prompt and import WebPs.
 These are after-sign-in fixture tests, not live Google or cross-client evidence.
 
 
-Continuous profile scenarios use `existing-updates`, `existing-update-failure`
-and `existing-upload-failure`.
-Both seed one complete profile, then publish a fictional second-device operation
-on the next enrolled-history check: a new account and Tooltips preference. The
-failure mode rejects the first ongoing list; native Sync now retries it. This is
-an owned HTTP fixture, never a direct application-state mutation or real Google
-request. Preserve all `test_profile_continuous_native_*` equivalents: background
-application while Mail remains open, local publication/restart, offline recovery,
-and received changes remaining visible when a later upload fails. The upload
-failure retains its exact queued operation across restart. Read owned checkpoints only after graceful
-close. Review the actual Preferences/reconnect/error screenshots.
+Continuous profile scenarios use `existing-updates`, `existing-update-failure`,
+`existing-upload-failure` and `existing-token-expired`.
+Each seeds one complete profile, then publishes a fictional second-device
+operation on the enrolled device's first ongoing change poll (the second
+`/drive/v3/changes` request; discovery makes the first): a new account and
+Tooltips preference. The update-failure mode rejects that first ongoing poll
+with 503; native Sync now retries it. The token-expired mode rejects the saved
+change token once with 400 after seeding, so the desktop must fall back to one
+full listing and still receive the record. This is an owned HTTP fixture, never
+a direct application-state mutation or real Google request. Preserve all
+`test_profile_continuous_native_*` equivalents: background application while
+Mail remains open, local publication/restart, offline recovery, received changes
+remaining visible when a later upload fails, and the expired-token fallback.
+The upload failure retains its exact queued operation across restart. Read owned
+checkpoints only after graceful close. Review the actual Preferences/reconnect/
+error screenshots.
 
 
 The saved `test_profile_continuous_native_reuses_verified_downloads_after_restart`
 uses `existing-single` and ordinary Sync now/restart controls. Read-only
-`profile_drive_requests` reports counters from the owned loopback HTTP server;
-wait for a new scoped listing and completed UI work, then verify unchanged
-records were not downloaded again. This is request-count correctness evidence,
-not a latency benchmark or live Google verification. Review the saved native
-Preferences screenshots alongside the restart/corruption protocol tests.
+`profile_drive_requests` reports counters from the owned loopback HTTP server:
+`lists`, `scoped_lists`, `changes`, `metadata` and `media`. Enrolled checks poll
+the persisted change token, so wait for a new `changes` count and completed UI
+work, then verify that `lists`, `metadata` and `media` did not move. The
+fallback scenario expects exactly one unscoped listing beyond discovery. This is
+request-count correctness evidence, not a latency benchmark or live Google
+verification. Review the saved native Preferences screenshots alongside the
+restart/corruption protocol tests.
 For native tray lifecycle use `desktop.start(tray="available" | "missing")`.
 The owned GTK host renders Shep's actual StatusNotifierItem and DBusMenu on the
 isolated X display; its separate D-Bus service records saving notifications.
@@ -881,6 +893,24 @@ Keep on this device and the actual local-data removal dialog. Preserve Cancel,
 confirmation, restart/no-reimport and stale-card disappearance assertions.
 `profile_account_review` Rust tests retain real cached fixture mail and reject
 changed history/account/Google/consent. UI observations never trigger actions.
+
+Synced passwords use `desktop.start(profile_passwords="ready" | "reject")` with an
+owned `profile_sync` fixture. It adds a fictional keychain file beside the owned
+workspace (`fixture-keychain.json`, seeded with the preview accounts' fictional
+passwords) and a fixture connection tester that accepts only the shared golden
+passwords in `ready` mode; nothing touches the real keychain or a mail server.
+`profile_sync="existing-passwords"` is the one-profile Home fixture plus another
+device's key and vault files from `shared/credential-vault-fixtures.json`.
+Observe `profile_sync.options.passwords`, `profile_sync.passwords` (published,
+imported, failed, withdrawn and so on), `account_reconnect_count` and
+`profile_drive_credentials` (`keys`, `vaults` and a `plaintext` oracle that is
+true if any fictional password appears in stored credential bytes). Search
+Preferences for "synced password" to reach the toggle, which sits at the end of
+the ready Profiles and sync card. Keep the saved `test_profile_passwords_*`
+flows: enabling and turning off on a first device, importing on a second device
+(light and compact dark), and a rejected import that keeps Reconnect with an
+explicit retry. They scan the closed workspace files and app logs for the
+fictional passwords; only the fixture keychain may contain them.
 
 `profile_sync="existing-link"` seeds one light Home profile for a populated
 device (no `profile_login`/`empty_profile`), imports it through the ordinary

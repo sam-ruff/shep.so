@@ -48,6 +48,18 @@ class HarnessTests(unittest.TestCase):
                     desktop.start(**{name:True})
             launch.assert_not_called()
 
+    def test_profile_password_fixture_requires_an_owned_drive_and_known_mode(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in ("real", True, "keychain"):
+                with self.assertRaisesRegex(ValueError, "Unknown profile password fixture"):
+                    desktop.start(profile_passwords=value)
+            with self.assertRaisesRegex(ValueError, "owned Drive server"):
+                desktop.start(profile_passwords="ready")
+            launch.assert_not_called()
+        tool = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["profile_passwords"]["enum"], ["ready", "reject"])
+
     def test_nonblocking_close_uses_only_owned_native_window(self):
         desktop = harness.Desktop()
         desktop.app = Mock()
@@ -485,6 +497,28 @@ class HarnessTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Held database export"):
                 desktop.start(held_database_export="yes")
             launch.assert_not_called()
+
+    def test_google_sign_in_client_fixtures_are_fictional_and_validated_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in ("real", None, True):
+                with self.assertRaisesRegex(ValueError, "Unknown Google sign-in client"):
+                    desktop.start(google_client=value)
+            with self.assertRaisesRegex(ValueError, "must be a boolean"):
+                desktop.start(google_permissions="calendar", google_legacy_client="yes")
+            with self.assertRaisesRegex(ValueError, "needs google_permissions"):
+                desktop.start(google_legacy_client=True)
+            launch.assert_not_called()
+        with patch.dict(os.environ, {"SHEP_GOOGLE_CLIENT_ID": "real.apps.googleusercontent.com",
+                                     "SHEP_GOOGLE_CLIENT_SECRET": "real-secret"}):
+            desktop = harness.Desktop()
+            for client, expected in (("fixture", "fixture-desktop-client.apps.googleusercontent.com"), ("none", "")):
+                desktop.env.update(harness.google_sign_in_env(client))
+                self.assertEqual(desktop.env["SHEP_GOOGLE_CLIENT_ID"], expected)
+                self.assertNotEqual(desktop.env["SHEP_GOOGLE_CLIENT_SECRET"], "real-secret")
+        schema = next(t for t in harness.TOOLS if t["name"] == "desktop.start")["inputSchema"]["properties"]
+        self.assertEqual(schema["google_client"], {"type": "string", "enum": ["fixture", "none"], "default": "fixture"})
+        self.assertEqual(schema["google_legacy_client"], {"type": "boolean", "default": False})
 
     def test_native_file_picker_uses_real_input_and_restricts_files_to_the_run(self):
         with tempfile.TemporaryDirectory() as directory:

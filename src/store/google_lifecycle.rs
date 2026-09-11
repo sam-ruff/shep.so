@@ -13,7 +13,7 @@ impl Store {
     ) -> anyhow::Result<PreferenceSnapshot> {
         anyhow::ensure!(
             !grant.id.is_empty()
-                && grant.client_id == expected.google_client_id
+                && !grant.client_id.is_empty()
                 && grant.access.known
                 && (grant.access.drive || grant.access.calendar_read),
             "Invalid Google grant."

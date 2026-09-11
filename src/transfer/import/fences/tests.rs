@@ -31,6 +31,10 @@ async fn profile_enrollment_is_archived_on_database_import_without_replaying_dev
         .put(crate::profile_sync::join::STORAGE_KEY, value.clone())
         .await
         .unwrap();
+    source
+        .put(crate::profile_sync::vault::STORAGE_KEY, value.clone())
+        .await
+        .unwrap();
     let destination = Store::open(local.path().join("shep.sqlite")).unwrap();
     let catalog = crate::profiles::Catalog::open(local.path(), "shep.sqlite").unwrap();
     let prepared = stage(destination, path)
@@ -66,6 +70,7 @@ async fn profile_enrollment_is_archived_on_database_import_without_replaying_dev
         crate::profile_sync::join::STORAGE_KEY,
         crate::profile_sync::state::STORAGE_KEY,
         crate::profile_sync::state::NATIVE_EDITS_KEY,
+        crate::profile_sync::vault::STORAGE_KEY,
     ] {
         let archived: String = imported
             .run(move |c| {
@@ -477,6 +482,7 @@ async fn failure_halfway_through_preparation_rolls_back_operation_changes_and_no
     assert!(
         apply(
             prepared.path(),
+            None,
             prepared.id,
             "Broken outgoing record",
             &Preferences::default(),
@@ -577,6 +583,7 @@ async fn backup_history_old_import_marker_recovery_migrates_without_repeating_pr
     let (_alive, cancel) = watch::channel(false);
     apply(
         prepared.path(),
+        None,
         prepared.id,
         "Imported once",
         &Preferences::default(),
@@ -597,6 +604,7 @@ async fn backup_history_old_import_marker_recovery_migrates_without_repeating_pr
     // publication. Recovery must migrate it without archiving/fencing it again.
     apply(
         prepared.path(),
+        None,
         prepared.id,
         "Do not replace prior preparation",
         &Preferences::default(),

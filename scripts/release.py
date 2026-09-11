@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prepare a versioned native archive for semantic-release; never publish by itself."""
 import hashlib
+import os
 from pathlib import Path
 import platform
 import re
@@ -16,6 +17,10 @@ def prepare(version):
     manifest = root / "Cargo.toml"
     original = manifest.read_text()
     manifest.write_text(re.sub(r'(?m)^version = "[^"]+"$', f'version = "{version}"', original, count=1))
+    # The build compiles in Shep's Google client from the environment.
+    if not (os.environ.get("SHEP_GOOGLE_CLIENT_ID") and os.environ.get("SHEP_GOOGLE_CLIENT_SECRET")):
+        print("Warning: SHEP_GOOGLE_CLIENT_ID and SHEP_GOOGLE_CLIENT_SECRET are not both set, so this "
+              "archive's Sign in with Google will be unavailable.", file=sys.stderr)
     subprocess.run(["cargo", "build", "--release", "--no-default-features"], cwd=root, check=True)
     dist = root / "dist"
     dist.mkdir(exist_ok=True)

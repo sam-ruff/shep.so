@@ -10,7 +10,20 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
-MODES = ("empty", "fail-once", "hold-list", "slow-upload", "held-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-connections", "existing-removal", "existing-link", "existing-updates", "existing-update-failure", "existing-upload-failure")
+MODES = ("empty", "fail-once", "hold-list", "slow-upload", "held-upload", "invalid-local", "existing", "existing-unsupported", "existing-incomplete", "existing-legacy", "existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-connections", "existing-removal", "existing-link", "existing-updates", "existing-update-failure", "existing-upload-failure", "existing-token-expired", "existing-passwords")
+# One complete Home profile, then a fictional second-device operation on the
+# enrolled device's first ongoing change poll (or a single failure first).
+CONTINUOUS_MODES = ("existing-conflict", "existing-connections", "existing-removal", "existing-link", "existing-updates", "existing-update-failure", "existing-upload-failure", "existing-token-expired")
+CREDENTIAL_FIXTURES = Path(__file__).resolve().parents[1] / "shared/credential-vault-fixtures.json"
+# Fictional passwords that must never appear in credential file bytes.
+FIXTURE_PASSWORDS = ("fixture-cloud-incoming", "fixture-cloud-smtp", "fixture-studio-password", "fixture-personal-password")
+
+
+def credential_metadata(identity, name, properties, raw):
+    digest = hashlib.sha256(raw).hexdigest()
+    return {"id": identity, "name": name, "ownedByMe": True, "trashed": False, "spaces": ["appDataFolder"],
+            "mimeType": "application/json", "size": str(len(raw)), "sha256Checksum": digest,
+            "appProperties": dict(properties, shepSha256=digest)}
 
 
 class ProfileDriveFixture:
@@ -19,16 +32,21 @@ class ProfileDriveFixture:
             raise ValueError("Unknown profile Drive fixture.")
         self.mode = mode
         self.files = {}
+        # Replaceable password key/vault files live apart from profile records.
+        self.credentials = {}
         self.next_id = 0
         self.changes = []
         self.failed = False
-        self.scoped_lists = 0
-        self.requests = {"lists": 0, "scoped_lists": 0, "metadata": 0, "media": 0}
+        self.change_polls = 0
+        self.requests = {"lists": 0, "scoped_lists": 0, "changes": 0, "metadata": 0, "media": 0,
+                         "credential_lists": 0, "credential_uploads": 0, "credential_deletes": 0}
         self.updated = False
         self.release = threading.Event()
         self.upload_held = threading.Event()
         if mode.startswith("existing"):
             self.seed_existing()
+        if mode == "existing-passwords":
+            self.seed_credentials()
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -61,9 +79,24 @@ class ProfileDriveFixture:
                 if url.path == "/drive/v3/changes/startPageToken":
                     return self.reply(200, {"startPageToken": f"fixture-change-{len(owner.changes)}"})
                 if url.path == "/drive/v3/changes":
+                    owner.requests["changes"] += 1
                     token = query.get("pageToken", [""])[0]
                     if not re.fullmatch(r"fixture-change-\d+", token):
                         return self.reply(400, {})
+                    # The first poll belongs to discovery; an enrolled device's
+                    # first ongoing check is the second. Continuous modes then
+                    # publish their fictional second-device operation or fail once.
+                    if owner.mode in CONTINUOUS_MODES:
+                        owner.change_polls += 1
+                        if owner.change_polls >= 2 and not owner.updated:
+                            if owner.mode == "existing-update-failure" and not owner.failed:
+                                owner.failed = True
+                                return self.reply(503, {"error":"Fixture is offline during a continuous check."})
+                            owner.seed_for_mode()
+                            if owner.mode == "existing-token-expired":
+                                # The saved token is rejected once; the full
+                                # listing that follows must find the new record.
+                                return self.reply(400, {"error":"Page token expired."})
                     start = int(token.rsplit("-", 1)[1])
                     entries = owner.changes[start:start + 50]
                     end = start + len(entries)
@@ -73,6 +106,14 @@ class ProfileDriveFixture:
                 if url.path == "/drive/v3/files/generateIds":
                     owner.next_id += 1
                     return self.reply(200, {"ids": [f"fixture-profile-{owner.next_id}"], "space": "appDataFolder"})
+                if url.path == "/drive/v3/files" and "value='credential-" in query.get("q", [""])[0]:
+                    owner.requests["credential_lists"] += 1
+                    q = query["q"][0]
+                    rows = [entry[0] for entry in owner.credentials.values()]
+                    for key in ("shepProfile", "shepGeneration"):
+                        match = re.search("key='" + key + r"' and value='([^']+)'", q)
+                        rows = [r for r in rows if match and r["appProperties"].get(key) == match[1]]
+                    return self.reply(200, {"files": rows, "incompleteSearch": False})
                 if url.path == "/drive/v3/files":
                     if owner.mode == "hold-list":
                         owner.release.wait()
@@ -83,22 +124,6 @@ class ProfileDriveFixture:
                     owner.requests["lists"] += 1
                     if "shepProfile" in q:
                         owner.requests["scoped_lists"] += 1
-                    if "shepProfile" in q and owner.mode in ("existing-conflict", "existing-connections", "existing-removal", "existing-link", "existing-updates", "existing-update-failure", "existing-upload-failure"):
-                        owner.scoped_lists += 1
-                        if owner.scoped_lists >= 2 and not owner.updated:
-                            if owner.mode == "existing-update-failure" and not owner.failed:
-                                owner.failed = True
-                                return self.reply(503, {"error":"Fixture is offline during a continuous check."})
-                            if owner.mode == "existing-connections":
-                                owner.seed_connections()
-                            elif owner.mode == "existing-removal":
-                                owner.seed_removal()
-                            elif owner.mode == "existing-link":
-                                owner.seed_link()
-                            elif owner.mode == "existing-conflict":
-                                owner.seed_conflict()
-                            else:
-                                owner.seed_update()
                     rows = [entry[0] for entry in owner.files.values()]
                     for key in ("shepProfile", "shepGeneration"):
                         match = re.search("key='" + key + r"' and value='([^']+)'", q)
@@ -111,11 +136,26 @@ class ProfileDriveFixture:
                         reply["nextPageToken"] = str(start + count)
                     return self.reply(200, reply)
                 identity = url.path.removeprefix("/drive/v3/files/")
+                if identity in owner.credentials:
+                    metadata, raw = owner.credentials[identity]
+                    return self.reply(200, raw if query.get("alt") == ["media"] else metadata)
                 if identity not in owner.files:
                     return self.reply(404, {})
                 owner.requests["media" if query.get("alt") == ["media"] else "metadata"] += 1
                 metadata, raw = owner.files[identity]
                 return self.reply(200, raw if query.get("alt") == ["media"] else metadata)
+
+            def do_DELETE(self):
+                if not self.authorized():
+                    return
+                identity = urlparse(self.path).path.removeprefix("/drive/v3/files/")
+                # Profile records are immutable; only credential files are removable.
+                if owner.credentials.pop(identity, None) is None:
+                    return self.reply(404, {})
+                owner.requests["credential_deletes"] += 1
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
 
             def do_POST(self):
                 if not self.authorized():
@@ -136,6 +176,13 @@ class ProfileDriveFixture:
                 record = parts[1].get_payload(decode=True)
                 json.loads(record)
                 identity = metadata["id"]
+                properties = metadata.get("appProperties", {})
+                if properties.get("shepType", "").startswith("credential-"):
+                    if identity in owner.credentials or identity in owner.files:
+                        return self.reply(409, {})
+                    owner.requests["credential_uploads"] += 1
+                    owner.credentials[identity] = (credential_metadata(identity, metadata["name"], properties, record), record)
+                    return self.reply(200, owner.credentials[identity][0])
                 if owner.mode == "existing-upload-failure":
                     return self.reply(503, {"error":"Fixture upload is unavailable."})
                 if identity in owner.files:
@@ -168,7 +215,7 @@ class ProfileDriveFixture:
                 smtp_auth="Automatic", smtp_separate_password=False, sent_folder="")
         if self.mode == "existing-unsupported":
             account["future_tls_requirement"] = True
-        names = ("Home",) if self.mode in ("existing-single", "existing-matching", "existing-many", "existing-conflict", "existing-connections", "existing-removal", "existing-link", "existing-updates", "existing-update-failure", "existing-upload-failure") else ("Home", "Work")
+        names = ("Home",) if self.mode in ("existing-single", "existing-matching", "existing-many", "existing-passwords", *CONTINUOUS_MODES) else ("Home", "Work")
         for number, name in enumerate(names, start=1):
             operation = dict(original)
             for field, prefix in (("profile","1"),("generation","2"),("device","3"),("operation","4")):
@@ -323,6 +370,31 @@ class ProfileDriveFixture:
         self.files[identity] = (metadata,raw)
         self.changes.append(identity)
         self.updated = True
+
+    def seed_credentials(self):
+        """Another device's key and vault for Home's account, from the shared
+        golden fixtures, so a new device can import its passwords."""
+        native = json.loads(CREDENTIAL_FIXTURES.read_text(encoding="utf-8"))["native_fixture"]
+        key, vault = json.loads(native["key"]), json.loads(native["vault"])
+        scope = {"shepNamespace": hashlib.sha256(b"so.shep").hexdigest(), "shepProfile": key["profile"],
+                 "shepGeneration": key["generation"], "shepKey": key["key"]}
+        self.credentials["existing-credential-key"] = (credential_metadata("existing-credential-key",
+            f"shep-credential-key-{key['key']}.json", dict(scope, shepType="credential-key", shepFormat="credential-key-v1",
+            shepSequence=str(key["sequence"])), native["key"].encode()), native["key"].encode())
+        self.credentials["existing-credential-vault"] = (credential_metadata("existing-credential-vault",
+            "shep-credential-vault-a1000000-0000-4000-8000-000000000001.json", dict(scope, shepType="credential-vault",
+            shepFormat="credential-vault-v1", shepRevision=str(vault["revision"])), native["vault"].encode()), native["vault"].encode())
+
+    def credential_state(self):
+        stored = [raw for _, raw in self.credentials.values()]
+        kinds = [metadata["appProperties"]["shepType"] for metadata, _ in self.credentials.values()]
+        return {"keys": kinds.count("credential-key"), "vaults": kinds.count("credential-vault"),
+                "plaintext": any(secret.encode() in raw for raw in stored for secret in FIXTURE_PASSWORDS)}
+
+    def seed_for_mode(self):
+        seeds = {"existing-connections": self.seed_connections, "existing-removal": self.seed_removal,
+                 "existing-link": self.seed_link, "existing-conflict": self.seed_conflict}
+        seeds.get(self.mode, self.seed_update)()
 
     def close(self):
         self.release.set()

@@ -5,9 +5,12 @@ use fs2::FileExt;
 use std::{
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 const FILE: &str = ".cache-encryption.lock";
+/// A cooperating Shep holds a plaintext root exclusively only while opening it.
+const OPENING_WAIT: Duration = Duration::from_secs(2);
 
 pub struct Guard {
     root: PathBuf,
@@ -73,8 +76,38 @@ impl Guard {
         Ok(Self { root, _lock: lock })
     }
 
+    /// Join a root as a reader, waiting briefly while another Shep opens it.
+    /// Blocks, so call it only on the owning worker thread.
+    pub fn join(root: &Path) -> anyhow::Result<Self> {
+        wait_while_opening(|| Self::reader(root))
+    }
+
+    /// Keep ownership as a reader once publication is complete. The lock is
+    /// re-taken rather than converted: a Shep that opens the root in between
+    /// is waited for briefly, and a longer exclusive owner is reported instead
+    /// of silently outranked. Blocks like `join`.
+    pub fn share(self) -> anyhow::Result<Self> {
+        FileExt::unlock(&self._lock)?;
+        wait_while_opening(|| FileExt::try_lock_shared(&self._lock)).context(
+            "Another Shep process took over this cache while it was being opened. Close it and retry.",
+        )?;
+        Ok(self)
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
+    }
+}
+
+fn wait_while_opening<T, E>(mut attempt: impl FnMut() -> Result<T, E>) -> Result<T, E> {
+    let started = Instant::now();
+    loop {
+        match attempt() {
+            Err(_) if started.elapsed() < OPENING_WAIT => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            result => return result,
+        }
     }
 }
 
@@ -97,6 +130,37 @@ mod tests {
         assert_eq!(migration.root(), dir.path().canonicalize().unwrap());
         drop(migration);
         assert!(Guard::reader(dir.path()).is_ok());
+    }
+
+    #[test]
+    fn cache_ownership_join_waits_for_an_opening_owner_then_reports_a_long_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let opening = Guard::migration(dir.path()).unwrap();
+        let root = dir.path().to_owned();
+        let joining = std::thread::spawn(move || Guard::join(&root).map(|_| ()));
+        std::thread::sleep(Duration::from_millis(100));
+        drop(opening);
+        assert!(joining.join().unwrap().is_ok());
+        let held = Guard::migration(dir.path()).unwrap();
+        let started = Instant::now();
+        assert!(Guard::join(dir.path()).is_err());
+        assert!(started.elapsed() >= OPENING_WAIT);
+        drop(held);
+    }
+
+    #[test]
+    fn cache_ownership_shares_after_publication_and_reports_a_takeover() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = Guard::migration(dir.path()).unwrap().share().unwrap();
+        let reader = Guard::reader(dir.path()).unwrap();
+        assert!(Guard::migration(dir.path()).is_err());
+        drop(reader);
+        drop(shared);
+        let taken = Guard::migration(dir.path()).unwrap();
+        // A reader converted while an exclusive owner exists cannot proceed.
+        assert!(Guard::reader(dir.path()).is_err());
+        drop(taken);
+        assert!(Guard::migration(dir.path()).unwrap().share().is_ok());
     }
 
     #[test]

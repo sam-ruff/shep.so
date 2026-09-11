@@ -78,8 +78,9 @@ establish live Google or Apple execution.
 initialized history and owned upload receipts. [Reviewed enrollment](PROFILE_ENROLLMENT.md)
 applies accounts and the eight preferences. Ongoing preference reconciliation
 is described below. Keep local mail/drafts and device identity; changed endpoints
-require reviewed credential activation. The credential-protection choice, legacy
-migration, browser integration, Apple and live cross-client verification remain open.
+require reviewed credential activation. Google-only credential sync (decided on
+11 September 2026), legacy migration, browser integration, Apple and live
+cross-client verification remain open.
 
 ## Ongoing preference sync
 

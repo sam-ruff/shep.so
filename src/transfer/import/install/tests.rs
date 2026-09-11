@@ -164,3 +164,121 @@ async fn destination_collisions_and_missing_registered_files_never_replace_anoth
     assert_eq!(catalog.active().await.unwrap().1.id, Id::Legacy);
     assert!(!saved.path.exists());
 }
+
+/// A keyed workspace never leaves a plaintext staging copy or profile beside
+/// its encrypted cache; the original export stays a plain user file.
+#[tokio::test]
+async fn keyed_workspace_stages_installs_and_opens_imports_encrypted() {
+    let original = tempfile::tempdir().unwrap();
+    let local = tempfile::tempdir().unwrap();
+    let path = original.path().join("source.sqlite");
+    let source = super::super::tests::workspace(&path).await;
+    let key = std::sync::Arc::new(crate::cache_cipher::Key::generate().unwrap());
+    let catalog = Catalog::open_encrypted(local.path(), "shep.sqlite", key.clone()).unwrap();
+    let (store, _) = catalog.clone().open_active(false).await.unwrap();
+    assert!(store.connection_key().is_some());
+    let plaintext = |path: &Path| {
+        std::fs::read(path)
+            .unwrap()
+            .starts_with(b"SQLite format 3\0")
+    };
+    source
+        .run(|c| {
+            c.pragma_update(None, "application_id", 0x5348_5054)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (seen, mut observed) = tokio::sync::mpsc::channel(64);
+    let mut import = stage_observed(store.clone(), path.clone(), move |progress, _| {
+        let _ = seen.try_send(progress);
+    })
+    .await
+    .unwrap();
+    let prepared = import.finish().await.unwrap().unwrap();
+    assert!(prepared.encrypted());
+    assert!(!plaintext(prepared.path()), "staging copy must be keyed");
+    let application: i32 = key
+        .open(prepared.path(), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .unwrap()
+        .query_row("PRAGMA application_id", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(application, 0x5348_5054, "header identity is preserved");
+    assert!(plaintext(&path), "the selected export is untouched");
+    assert_eq!(prepared.review.messages, 1);
+    assert_eq!(prepared.review.accounts.len(), 1);
+    let mut phases = Vec::new();
+    while let Ok(progress) = observed.try_recv() {
+        phases.push(progress.phase);
+    }
+    assert!(phases.contains(&Phase::Copying) && phases.contains(&Phase::Reviewing));
+    let saved = prepared
+        .install(
+            catalog.clone(),
+            "Encrypted import".into(),
+            Preferences::default(),
+        )
+        .unwrap()
+        .finish()
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(saved.registered);
+    assert!(!plaintext(&saved.path));
+    assert!(Store::open(&saved.path).is_err());
+    let page = catalog.page(0).await.unwrap();
+    catalog.activate(saved.id, page.revision).await.unwrap();
+    let (imported, session) = catalog.clone().open_active(false).await.unwrap();
+    assert_eq!(session.current, saved.id);
+    assert!(imported.connection_key().is_some());
+    assert_eq!(imported.query(Default::default()).await.unwrap().total, 1);
+    assert_eq!(imported.get::<Vec<Draft>>("drafts").await.unwrap().len(), 1);
+    assert!(source.get::<bool>("never-imported").await.is_ok());
+    let leftovers: Vec<String> = std::fs::read_dir(local.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".shep-import-"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+/// Cancelling during the keyed conversion removes the private copy and leaves
+/// the selected file and the encrypted workspace unchanged.
+#[tokio::test]
+async fn keyed_import_cancellation_removes_the_private_copy() {
+    let original = tempfile::tempdir().unwrap();
+    let local = tempfile::tempdir().unwrap();
+    let path = original.path().join("source.sqlite");
+    let source = super::super::tests::workspace(&path).await;
+    let key = std::sync::Arc::new(crate::cache_cipher::Key::generate().unwrap());
+    let catalog = Catalog::open_encrypted(local.path(), "shep.sqlite", key).unwrap();
+    let (store, _) = catalog.clone().open_active(false).await.unwrap();
+    let (entered, waiting) = tokio::sync::oneshot::channel();
+    let mut entered = Some(entered);
+    let mut import = stage_observed(store.clone(), path.clone(), move |progress, mut cancel| {
+        if progress.phase == Phase::Copying
+            && let Some(entered) = entered.take()
+        {
+            entered.send(()).unwrap();
+            let _ = futures::executor::block_on(cancel.changed());
+        }
+    })
+    .await
+    .unwrap();
+    waiting.await.unwrap();
+    let mut progress = import.progress.clone();
+    import.cancel();
+    assert!(import.finish().await.unwrap().is_none());
+    while progress.changed().await.is_ok() {}
+    assert!(!local.path().read_dir().unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".shep-import-")
+    }));
+    assert_eq!(source.query(Default::default()).await.unwrap().total, 1);
+    assert_eq!(store.query(Default::default()).await.unwrap().total, 0);
+    let mut retry = stage(store, path).await.unwrap();
+    assert!(retry.finish().await.unwrap().unwrap().encrypted());
+}

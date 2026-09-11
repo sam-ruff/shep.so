@@ -10,6 +10,7 @@ mod database_transfers;
 mod dispatch;
 pub mod folders;
 mod google_lifecycle;
+mod lifecycle_work;
 mod mail_actions;
 mod mail_sync;
 mod move_recovery;
@@ -71,6 +72,8 @@ pub enum Command {
         revision: u64,
         id: String,
         prefetch: bool,
+        /// Plain-text characters to load; the reader asks for more on demand.
+        body_chars: usize,
     },
     SaveAccount(Account, SecretString, SecretString),
     TestConnection(Account, SecretString, SecretString, ConnectionTarget),
@@ -91,7 +94,8 @@ pub enum Command {
     OutgoingPage(u64, usize),
     ResolveOutgoing(String, crate::outgoing::RecoveryAction, bool),
     RepairOutgoing,
-    GoogleLogin(Preferences, bool),
+    /// Preferences as saved, whether to resume a staged grant, and the UI's cancel control.
+    GoogleLogin(Preferences, bool, providers::google::CancellationToken),
     DisconnectGoogle(u64),
     CleanupGoogle,
     CheckGoogleConnection,
@@ -281,11 +285,13 @@ struct Engine {
     demo: bool,
     account_work: account_work::Accounts,
     calendar_work: account_work::Accounts,
-    calendar_setup_lock: Arc<tokio::sync::Mutex<()>>,
-    connection_lifecycle_lock: Arc<tokio::sync::Mutex<()>>,
+    calendar_setup: lifecycle_work::Lane,
+    connection_lifecycle: lifecycle_work::Lane,
     secret_remover: Arc<dyn removals::SecretRemover>,
     outbound: Arc<dyn providers::outgoing::Outbound>,
-    google_connection_lock: Arc<tokio::sync::RwLock<()>>,
+    // Shared for Google provider work, exclusive for login/disconnect/cleanup.
+    // The field name is shared with the profile sync lane.
+    google_connection_lock: lifecycle_work::Lane,
     passphrases: Arc<dyn backup::PassphraseStore>,
     restore_credentials: Arc<dyn backup::restore::CredentialRestorer>,
     backup_uploads: Arc<tokio::sync::OnceCell<backup::journal::Journal>>,
@@ -335,6 +341,18 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
         } else {
             credentials
         };
+        #[cfg(feature = "test-support")]
+        let credentials = if demo && crate::test_support::passwords::active() {
+            match crate::test_support::passwords::credentials() {
+                Ok(credentials) => credentials,
+                Err(error) => {
+                    let _ = output.send(Event::Error(error.to_string())).await;
+                    return;
+                }
+            }
+        } else {
+            credentials
+        };
         let engine = Engine {
             profiles,
             credentials: credentials.clone(),
@@ -343,8 +361,8 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             demo,
             account_work: Default::default(),
             calendar_work: Default::default(),
-            calendar_setup_lock: Default::default(),
-            connection_lifecycle_lock: Default::default(),
+            calendar_setup: Default::default(),
+            connection_lifecycle: Default::default(),
             secret_remover: Arc::new(removals::OsSecretRemover(credentials.clone())),
             outbound: Arc::new(providers::outgoing::Servers {
                 credentials: credentials.clone(),
@@ -727,10 +745,11 @@ impl Engine {
                 revision,
                 id,
                 prefetch,
+                body_chars,
             } => {
                 let result = self
                     .store
-                    .detail(id.clone())
+                    .detail_limited(id.clone(), body_chars)
                     .await
                     .map(Arc::new)
                     .map_err(|e| format!("{e:#}"));
@@ -764,7 +783,7 @@ impl Engine {
                     "Account changes are disabled in preview. Relaunch without --demo to add an account."
                 );
                 account.validate()?;
-                let _lifecycle = self.connection_lifecycle_lock.lock().await;
+                let _lifecycle = self.connection_lifecycle.write().await;
                 let _guard = self.account_access(&account.id).await;
                 self.store.ensure_folder_idle(account.id.clone()).await?;
                 self.store
@@ -1112,7 +1131,7 @@ impl Engine {
                 result?;
             }
             Command::RepairOutgoing => self.repair_outgoing(&mut output).await?,
-            Command::GoogleLogin(prefs, retry) => {
+            Command::GoogleLogin(prefs, retry, cancel) => {
                 anyhow::ensure!(!self.demo, "Google sign-in is disabled in preview.");
                 prefs.validate()?;
                 // The UI starts OAuth only after the corresponding preferences save
@@ -1121,15 +1140,13 @@ impl Engine {
                 let current: Preferences = self.store.get("preferences").await?;
                 anyhow::ensure!(
                     prefs.google_lifecycle.revision == current.google_lifecycle.revision
-                        && prefs.google_client_id == current.google_client_id
-                        && prefs.google_client_secret == current.google_client_secret
                         && prefs.google_services == current.google_services,
-                    "Google changed before sign-in started. Choose Connect Google again."
+                    "Google changed before sign-in started. Choose Sign in with Google again."
                 );
                 self.cleanup_google_locked().await?;
-                let grant = self.google.login_with_retry(&prefs, retry).await?;
+                let grant = self.google.login_with_retry(&prefs, retry, &cancel).await?;
                 let (grant, identity, sources) = self.google.prepare_grant(&prefs, grant).await?;
-                let _lifecycle = self.connection_lifecycle_lock.lock().await;
+                let _lifecycle = self.connection_lifecycle.write().await;
                 let saved = self
                     .store
                     .activate_google(prefs, grant, identity, sources)
@@ -1485,8 +1502,8 @@ mod calendar_tests {
             demo: true,
             account_work: Default::default(),
             calendar_work: Default::default(),
-            calendar_setup_lock: Default::default(),
-            connection_lifecycle_lock: Default::default(),
+            calendar_setup: Default::default(),
+            connection_lifecycle: Default::default(),
             secret_remover: Arc::new(removals::OsSecretRemover::default()),
             outbound: Arc::new(providers::outgoing::Servers::default()),
             google_connection_lock: Default::default(),

@@ -34,6 +34,8 @@ pub enum Request {
     Discover(u64),
     AfterLogin(u64),
     Sync(u64),
+    /// Run only the password vault pass, retrying failed imports when true.
+    Passwords(u64, bool),
     SettingReviews(u64),
     AccountReviews {
         request: u64,
@@ -71,6 +73,7 @@ impl Request {
             | Self::Sync(id)
             | Self::SettingReviews(id)
             | Self::Resume(id)
+            | Self::Passwords(id, _)
             | Self::Stop(id) => *id,
             Self::AccountReviews { request, .. }
             | Self::ResolveAccount { request, .. }
@@ -114,6 +117,10 @@ pub enum Update {
     Synced {
         snapshot: Arc<Snapshot>,
         report: super::continuous::Report,
+    },
+    Passwords {
+        snapshot: Arc<Snapshot>,
+        report: super::vault::Report,
     },
     Failed(String),
     Stopped,

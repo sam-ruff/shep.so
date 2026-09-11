@@ -308,6 +308,7 @@ async fn missing_uid_ack_keeps_destination_reader_and_cold_recovery_body_loads_w
             revision,
             id,
             prefetch: false,
+            ..
         } = command
         {
             load = Some((revision, id));

@@ -1,0 +1,45 @@
+# Native Windows build on the lab's runner pool (a Windows 11 clone made by
+# ci-hatchery for each job). Build only: the quality and release workflows
+# stay disabled until every runner in their matrix exists (see AGENTS.md), and
+# this job needs only the Windows one.
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Each clone costs 16 GiB for the length of a release build, so a newer push
+# on main replaces a build still in progress rather than queueing behind it.
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        shell: bash
+        run: cargo build --release --locked
+        # Shep's Desktop OAuth client; empty until configured (docs/agents/google-sign-in.md).
+        env:
+          SHEP_GOOGLE_CLIENT_ID: ${{ vars.SHEP_GOOGLE_CLIENT_ID }}
+          SHEP_GOOGLE_CLIENT_SECRET: ${{ secrets.SHEP_GOOGLE_CLIENT_SECRET }}
+
+      - name: Upload the executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: shep-windows
+          path: target/release/shep.exe
+          if-no-files-found: error
+          retention-days: 7

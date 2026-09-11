@@ -31,3 +31,6 @@ jobs:
         run: npm run release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # scripts/release.py compiles Shep's Desktop OAuth client in from these.
+          SHEP_GOOGLE_CLIENT_ID: ${{ vars.SHEP_GOOGLE_CLIENT_ID }}
+          SHEP_GOOGLE_CLIENT_SECRET: ${{ secrets.SHEP_GOOGLE_CLIENT_SECRET }}

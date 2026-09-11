@@ -29,7 +29,8 @@ fn build_vendored(manifest_dir: &Path, out_dir: &Path, csrc_dir: &Path) {
     let litehtml_include = vendor_dir.join("include");
 
     // Gumbo (C99)
-    cc::Build::new()
+    let mut gumbo = cc::Build::new();
+    gumbo
         .cargo_metadata(false)
         .files(
             [
@@ -51,11 +52,16 @@ fn build_vendored(manifest_dir: &Path, out_dir: &Path, csrc_dir: &Path) {
         .include(&gumbo_include)
         .include(&gumbo_private_include)
         .std("c99")
-        .warnings(false)
-        .compile("gumbo");
+        .warnings(false);
+    if target_is_msvc() {
+        // MSVC has no <strings.h>; Gumbo ships a shim for it.
+        gumbo.include(gumbo_src.join("visualc/include"));
+    }
+    gumbo.compile("gumbo");
 
     // litehtml (C++17)
-    cc::Build::new()
+    let mut litehtml = cc::Build::new();
+    litehtml
         .define("SHEP_TABLE_LAYOUT_TESTS", if env::var("CARGO_FEATURE_SHEP_TEST_SUPPORT").is_ok() { "1" } else { "0" })
         .cargo_metadata(false)
         .cpp(true)
@@ -130,31 +136,29 @@ fn build_vendored(manifest_dir: &Path, out_dir: &Path, csrc_dir: &Path) {
         .include(&litehtml_src)
         .include(&gumbo_include)
         .std("c++17")
-        .warnings(false)
-        .compile("litehtml");
+        .warnings(false);
+    apply_msvc_cpp_flags(&mut litehtml);
+    litehtml.compile("litehtml");
 
     // C wrapper (C++17)
-    cc::Build::new()
+    let mut wrapper = cc::Build::new();
+    wrapper
         .cargo_metadata(false)
         .cpp(true)
         .file(csrc_dir.join("litehtml_c.cpp"))
         .include(&litehtml_include)
         .include(&gumbo_include)
         .std("c++17")
-        .warnings(false)
-        .compile("litehtml_c");
+        .warnings(false);
+    apply_msvc_cpp_flags(&mut wrapper);
+    wrapper.compile("litehtml_c");
 
     // Link order: dependents first
     println!("cargo:rustc-link-search=native={}", out_dir.display());
     println!("cargo:rustc-link-lib=static=litehtml_c");
     println!("cargo:rustc-link-lib=static=litehtml");
     println!("cargo:rustc-link-lib=static=gumbo");
-    // Link C++ standard library
-    if cfg!(target_os = "macos") {
-        println!("cargo:rustc-link-lib=c++");
-    } else {
-        println!("cargo:rustc-link-lib=stdc++");
-    }
+    link_cpp_runtime();
 
     println!("cargo:rerun-if-changed={}", vendor_dir.display());
 }
@@ -186,25 +190,47 @@ fn build_system(out_dir: &Path, csrc_dir: &Path) {
         &include_dir
     };
 
-    cc::Build::new()
+    let mut wrapper = cc::Build::new();
+    wrapper
         .cargo_metadata(false)
         .cpp(true)
         .file(csrc_dir.join("litehtml_c.cpp"))
         .include(effective_include)
         .std("c++17")
-        .warnings(false)
-        .compile("litehtml_c");
+        .warnings(false);
+    apply_msvc_cpp_flags(&mut wrapper);
+    wrapper.compile("litehtml_c");
 
     println!("cargo:rustc-link-search=native={}", out_dir.display());
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=static=litehtml_c");
     println!("cargo:rustc-link-lib=static=litehtml");
-    // Link C++ standard library
-    if cfg!(target_os = "macos") {
-        println!("cargo:rustc-link-lib=c++");
-    } else {
-        println!("cargo:rustc-link-lib=stdc++");
+    link_cpp_runtime();
+}
+
+fn target_is_msvc() -> bool {
+    env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|target_env| target_env == "msvc")
+}
+
+/// Upstream's MSVC flags for litehtml: UTF-8 sources and standards conformance.
+fn apply_msvc_cpp_flags(build: &mut cc::Build) {
+    if target_is_msvc() {
+        build.flag("/utf-8").flag("/permissive-");
     }
+}
+
+/// Links the target's C++ runtime. MSVC objects already name theirs.
+fn link_cpp_runtime() {
+    if target_is_msvc() {
+        return;
+    }
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let runtime = if matches!(target_os.as_str(), "macos" | "ios") {
+        "c++"
+    } else {
+        "stdc++"
+    };
+    println!("cargo:rustc-link-lib={runtime}");
 }
 
 /// Search include paths for a header file, return the directory containing it

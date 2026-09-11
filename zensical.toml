@@ -23,6 +23,7 @@ nav = [
     { "Mail contracts" = "agents/mail.md" },
     { "Calendar contracts" = "agents/calendar.md" },
     { "Google and backup contracts" = "agents/backups.md" },
+    { "Google sign-in client" = "agents/google-sign-in.md" },
     { "Database transfer and profiles" = "agents/profiles.md" },
     { "Profile Drive records" = "agents/profile-drive.md" },
     { "Detailed limits" = "agents/limits.md" },

@@ -173,17 +173,28 @@ impl LoginVerifier for Google {
             .await
             .map_err(|_| VerificationFailed)?;
         let token: Tokens = bounded_json(response).await?;
-        if token.id_token.len() > 32 * 1024 {
+        self.verify_id_token(&token.id_token, nonce).await
+    }
+}
+impl Google {
+    /// Verify a Google ID token against the cached signing keys, the configured
+    /// client audience and the pending nonce.
+    pub async fn verify_id_token(
+        &self,
+        id_token: &str,
+        nonce: &str,
+    ) -> Result<Identity, VerificationFailed> {
+        if id_token.len() > 32 * 1024 {
             return Err(VerificationFailed);
         }
-        let header = decode_header(&token.id_token).map_err(|_| VerificationFailed)?;
+        let header = decode_header(id_token).map_err(|_| VerificationFailed)?;
         if header.alg != Algorithm::RS256 {
             return Err(VerificationFailed);
         }
         let key = self
             .key(header.kid.as_deref().ok_or(VerificationFailed)?)
             .await?;
-        verify_token(&token.id_token, &key, &self.config.google_client_id, nonce)
+        verify_token(id_token, &key, &self.config.google_client_id, nonce)
     }
 }
 async fn bounded_json<T: serde::de::DeserializeOwned>(

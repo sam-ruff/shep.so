@@ -4,6 +4,7 @@ mod bulk_history;
 #[path = "html_mail.rs"]
 mod html_mail;
 mod move_recovery;
+pub mod passwords;
 mod reading_mail;
 pub use move_recovery::recover_move;
 pub mod workspace;
@@ -227,6 +228,25 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
         }
         store.upsert(messages).await?;
     }
+    if std::env::args().any(|arg| arg == "--long-mail") {
+        // About 88,000 characters: three reader pages with a distinct last line.
+        let body: String = (1..=1200)
+            .map(|line| {
+                format!("Line {line:04}. This long report keeps going so the reader loads it in parts.\r\n")
+            })
+            .collect();
+        let mut mail = parse_mail(
+            "preview-work",
+            "long-report",
+            "INBOX",
+            format!("From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: Long quarterly report\r\n\r\n{body}")
+                .into_bytes(),
+            true,
+            false,
+        )?;
+        mail.summary.timestamp = chrono::Utc::now().timestamp() + 120;
+        store.upsert(vec![mail]).await?;
+    }
     if std::env::args().any(|a| a == "--outgoing-mail") {
         seed_outgoing(store).await?;
     }
@@ -377,7 +397,23 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
     let mode =
         std::env::args().find_map(|a| a.strip_prefix("--google-permissions=").map(str::to_owned));
     if let Some(mode) = mode {
+        // A grant from a self-configured client, as saved before Shep had its own.
+        let legacy = std::env::args().any(|a| a == "--google-legacy-client");
+        if legacy {
+            store
+                .update_preferences(|p| {
+                    p.google_client_id = "fixture-own-client.apps.googleusercontent.com".into();
+                    p.google_client_secret = "fixture-own-secret".into();
+                })
+                .await?;
+        }
         let prefs: Preferences = store.get("preferences").await?;
+        let client_id = if legacy {
+            prefs.google_client_id.clone()
+        } else {
+            crate::providers::google::client::sign_in()
+                .map_or_else(|| "fixture-client".into(), |client| client.id.clone())
+        };
         let access = GoogleAccess {
             known: true,
             drive: mode == "drive",
@@ -394,7 +430,7 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
                 prefs.clone(),
                 GoogleGrant {
                     id: "fixture-grant".into(),
-                    client_id: prefs.google_client_id.clone(),
+                    client_id,
                     access,
                 },
                 access.drive.then(|| "drive:fixture".into()),

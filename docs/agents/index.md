@@ -17,6 +17,7 @@ Read the repository's [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/
 - [Mail](mail.md): navigation, drafts, delivery recovery, Sent copies and reading behavior.
 - [Calendar](calendar.md): discovery, access, write acknowledgments, conflicts and connection removal.
 - [Google and backups](backups.md): authorization, destination identity, scheduling, resumable uploads and additive restore.
+- [Google sign-in client](google-sign-in.md): Shep's compiled-in Desktop OAuth client, build variables, self-configured grants and the Google Cloud setup.
 - [Multiple backup destinations](MULTIPLE_BACKUPS.md): several local, S3/SFTP/FTP and Google Drive destinations with independent schedules, retention and passphrases.
 - [Local cache encryption](CACHE_ENCRYPTION.md): SQLCipher device keys, staged migration and recovery boundaries (in progress).
 - [Database transfer and profiles](profiles.md): staged import, local profile selection, credential isolation and the desktop profile sync implementation.
@@ -31,6 +32,7 @@ Read the repository's [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/
 - [Flutter profile discovery](PROFILE_MOBILE.md): saved Google binding, native session ownership and real discovery controls; reviewed Flutter enrollment is connected.
 - [Flutter profile publication](PROFILE_PUBLICATION.md): frozen reviews, initialized setup, immutable upload receipts and pause/retry controls.
 - [Flutter profile enrollment](PROFILE_ENROLLMENT.md): independent device history, reviewed account/preferences application and credential reconnect boundaries.
+- [Browser profiles and sync](PROFILE_BROWSER.md): server-mediated Google consent, worker-owned WASM history, per-identity storage, discovery, reviewed publication/enrollment and onboarding.
 - [Profile sync handover](PROFILE_SYNC_HANDOVER.md): next-priority OAuth, Rust/Flutter enrollment, portable records, conflicts and verification requirements; implementation remains open.
 - [Browser group actions](BROWSER_BULK.md): abandoned-review cleanup, the wider Undo lifecycle and the desktop-matching review keys.
 - [Limits](limits.md): protocol requirements, storage ceilings and unverified behavior.
