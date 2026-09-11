@@ -833,18 +833,19 @@ class NativeFlows(unittest.TestCase):
                        click(650 if compact else 1150,88), type_text("system tray"), check("settings_matches", ["System tray"]),
                        click(450,289), check("settings_group", "System tray"))
 
-    def test_tray_native_symbolic_icon_follows_host_theme_while_app_is_hidden(self):
+    def test_tray_native_light_icon_matches_launcher_in_both_host_themes(self):
         started = self.mcp.call("desktop.start", tray="available")
-        print(f"Symbolic icon evidence: {started['artifacts']}", flush=True)
+        print(f"Tray icon evidence: {started['artifacts']}", flush=True)
         self.assertIn("so.shep.Shep", started["window_class"])
-        self.mcp.batch(check("tray.available", True), check("tray_host.icon_name", "so.shep.Shep-symbolic"),
-                       check("tray_host.icon_symbolic", True), check("tray_host.dark", False))
+        self.mcp.batch(check("tray.available", True), check("tray_host.icon_name", "so.shep.Shep-tray"),
+                       check("tray_host.icon_themed", True), check("tray_host.dark", False),
+                       check("tray_host.icon_sizes", [16,18,20,22,24,32,36,40,44,48,64]))
         self.open_tray_preferences()
         self.mcp.batch(click(288,342), check("tray.saved_enabled", True), {"type":"close_request"},
                        check("tray.visible", False), {"type":"tray_menu"}, key("Escape"),
-                       {"type":"wait","ms":150}, shot("symbolic-tray-light"),
+                       {"type":"wait","ms":150}, shot("light-dog-tray-light"),
                        {"type":"tray_theme"}, check("tray_host.dark",True),
-                       {"type":"wait","ms":150}, shot("symbolic-tray-dark"),
+                       {"type":"wait","ms":150}, shot("light-dog-tray-dark"),
                        {"type":"tray_menu"}, key("Down"), key("Return"),
                        check("tray.visible",True), {"type":"focus_app"}, shot("transparent-logo-restored"))
 

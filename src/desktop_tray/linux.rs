@@ -14,18 +14,24 @@ impl ksni::Tray for Tray {
         "Shep".into()
     }
     fn icon_name(&self) -> String {
-        "so.shep.Shep-symbolic".into()
+        "so.shep.Shep-tray".into()
     }
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-        let mut argb = self.icon.rgba.clone();
-        for pixel in argb.chunks_exact_mut(4) {
-            pixel.rotate_right(1);
-        }
-        vec![ksni::Icon {
-            width: self.icon.size as i32,
-            height: self.icon.size as i32,
-            data: argb,
-        }]
+        self.icon
+            .sizes
+            .iter()
+            .map(|(size, rgba)| {
+                let mut argb = rgba.clone();
+                for pixel in argb.chunks_exact_mut(4) {
+                    pixel.rotate_right(1);
+                }
+                ksni::Icon {
+                    width: *size as i32,
+                    height: *size as i32,
+                    data: argb,
+                }
+            })
+            .collect()
     }
     fn activate(&mut self, _x: i32, _y: i32) {
         self.actions.send_replace(Some(Action::Open));

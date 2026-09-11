@@ -68,6 +68,23 @@ fn each_term_is_required_and_numbers_cannot_be_approximate() {
 }
 
 #[test]
+fn numeric_labels_retain_literal_separators_and_require_all_components() {
+    for label in ["Project-17", "2026/Q1", "S3-backups", "S3/archive"] {
+        assert_eq!(score(label, label), Some(0), "{label}");
+    }
+    for (query, candidate) in [
+        ("Project-17", "Project-170"),
+        ("2026/Q1", "20260/Q1"),
+        ("2026/Q1", "2026/Q10"),
+        ("S3-backups", "S30-backups"),
+        ("S3-backups", "S3-archive"),
+        ("S3-backups", "S3 backups"),
+    ] {
+        assert_eq!(score(query, candidate), None, "{query}: {candidate}");
+    }
+}
+
+#[test]
 fn punctuation_is_literal_and_never_nucleo_pattern_syntax() {
     for query in [
         "!archive",

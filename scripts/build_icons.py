@@ -24,7 +24,9 @@ def main():
         icon = render(name, 128)
         icon.save(assets / f'logo-{name}.webp', format='WEBP', lossless=True, method=6)
         icon.save(assets / ('launcher.png' if name == 'light' else 'launcher-dark.png'))
-    render('symbolic', 32).save(assets / 'logo-symbolic.webp', format='WEBP', lossless=True, method=6)
+    render('symbolic', 36).save(assets / 'logo-symbolic.webp', format='WEBP', lossless=True, method=6)
+    for size in (16, 18, 20, 22, 24, 32, 36, 40, 44, 48, 64):
+        render('tray', size).save(assets / f'tray-{size}.webp', format='WEBP', lossless=True, method=6)
 
 
 if __name__ == '__main__':
