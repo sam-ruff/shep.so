@@ -1,0 +1,71 @@
+# Builds the promotional site image and pushes it to the house registry.
+# There is no semantic-release here: every push to main is tagged as
+# latest and sha-<7 char sha>.
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/website.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: registry.tail2d6fbe.ts.net/shep/website
+
+jobs:
+  build:
+    runs-on: [self-hosted, sophie-small]
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build site
+        run: npm run build
+
+      - name: Install test tooling
+        run: |
+          python3 -c 'import PIL' || python3 -m pip install --user --break-system-packages pillow
+          npx playwright install chromium
+
+      - name: Playwright (Chromium)
+        run: npm test
+
+      - name: Set image tag
+        id: tag
+        run: echo "sha=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        working-directory: .
+        run: |
+          docker build -f website/Dockerfile \
+            -t "$IMAGE:${{ steps.tag.outputs.sha }}" \
+            -t "$IMAGE:latest" .
+
+      - name: Log in to the registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: registry.tail2d6fbe.ts.net
+          username: ${{ secrets.ZOT_USERNAME }}
+          password: ${{ secrets.ZOT_PASSWORD }}
+
+      - name: Push image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker push "$IMAGE:${{ steps.tag.outputs.sha }}"
+          docker push "$IMAGE:latest"
