@@ -123,9 +123,11 @@ No new performance measurement is claimed on this shared, busy host.
    regressions. Current browser recovery checkpoint `df4f29c` passes 137 Chromium,
    127 unit and 56 production HTTPS fixture stages. Continue abandoned review and
    staging cleanup; exact evidence/failed baselines remain in the completion log.
-3. Connect Flutter's SQLite selection capture to durable group execution, then
-   Select/Done/Clear/all, review, Undo, History and recovery controls. Loaded-row
-   actions are not full-mailbox parity.
+3. Flutter selection now drives durable group execution with Select/Done/Clear/
+   Select all, review, Undo, Pause/Resume, History and recovery controls
+   (integrated 11 September as `01569b5`). Remaining work is in TODO R42: live
+   IMAP, cross-account moves, large-group performance, painting before the
+   durable decision, keeping the selection after a declined review and Apple.
 4. Continue account/calendar/backup, composition, cache/large-message, remote-image,
    keymap, lifecycle, performance and platform gaps in TODO. Desktop changes now
    arrive through merges from `main`; review each merge for new parity gaps.
