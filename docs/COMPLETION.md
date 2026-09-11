@@ -40,14 +40,15 @@ arrival, the History header and the conversation's final HTML line. See
 `artifacts/logs/r64-integrated-native.log`. Three installer tests, 42 shared
 parity contracts and strict pinned Zensical pass on the integrated tree.
 The coordinator also reviewed the final real GNOME app-grid capture alongside
-the earlier panel/dash comparisons. Shipping uses the normal commit hooks.
+the earlier panel/dash comparisons. Main commit `b5546c7` is pushed with all
+1,182 normal-hook test executions passing, and documentation CI is green.
 
 This completes the requested Linux rendering correction.
 Actual Windows/macOS shell execution and personal installation remain open;
 template/asset checks do not establish those platforms. No personal inbox,
 credentials, installed binary or shell settings were changed. The browser and
 Android/iOS have no desktop tray surface; their launcher/in-app visual parity
-remains tracked under R80. Shipping revision is recorded by the integrator.
+remains tracked under R80.
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
@@ -141,7 +142,7 @@ tree passes six native scenarios: all four new footer flows, the History header
 control and R95 drag/highlight/Copy (`r96-integrated-native.log`). Strict pinned
 Zensical passes. The compact dark final-line capture was reviewed again during
 integration; the final text remains above the footer. Main commit `623e850` is
-pushed with all 1,180 normal-hook test executions passing; documentation CI also
+pushed with all 1,181 normal-hook test executions passing; documentation CI also
 passes for that revision.
 This does not establish
 Windows/macOS execution, performance, full native input-lifecycle coverage or
