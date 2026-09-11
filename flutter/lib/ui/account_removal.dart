@@ -90,10 +90,10 @@ class _AccountRemovalState extends State<AccountRemovalScreen> {
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,
               title: Text(
-                'Discard ${current.count('unresolved')} unfinished delivery records and ${current.count('moves')} unfinished moves',
+                'Discard ${current.count('unresolved')} unfinished delivery records, ${current.count('moves')} unfinished moves and ${current.count('groups')} unfinished group action steps',
               ),
               subtitle: const Text(
-                'Removal cannot cancel or undo an operation that reached the mail server. Check Sent and the source/destination folders before removing these recovery records.',
+                'Removal cannot cancel or undo an operation that reached the mail server. Check Sent, the source/destination folders and group History before removing these recovery records.',
               ),
               value: discard,
               onChanged: busy

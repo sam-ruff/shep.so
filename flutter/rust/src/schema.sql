@@ -64,5 +64,15 @@ CREATE INDEX IF NOT EXISTS profile_sync_edit_state ON profile_sync_edits(subscri
 CREATE TABLE IF NOT EXISTS profile_sync_applications(seq INTEGER PRIMARY KEY AUTOINCREMENT,subscription TEXT NOT NULL REFERENCES profile_subscriptions(id),id TEXT NOT NULL UNIQUE,field TEXT NOT NULL,operation TEXT NOT NULL,request TEXT NOT NULL,receipt TEXT);
 CREATE INDEX IF NOT EXISTS profile_sync_application_pending ON profile_sync_applications(subscription,seq) WHERE receipt IS NULL;
 CREATE TABLE IF NOT EXISTS profile_sync_reviews(seq INTEGER PRIMARY KEY AUTOINCREMENT,subscription TEXT NOT NULL REFERENCES profile_subscriptions(id),id TEXT NOT NULL UNIQUE,field TEXT NOT NULL,review TEXT NOT NULL,UNIQUE(subscription,field));
-PRAGMA user_version=12;
+CREATE TABLE IF NOT EXISTS group_clock(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
+INSERT OR IGNORE INTO group_clock VALUES(1,0);
+CREATE TABLE IF NOT EXISTS mail_intents(mail TEXT NOT NULL REFERENCES mail(id) ON DELETE CASCADE,field TEXT NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(mail,field));
+CREATE TABLE IF NOT EXISTS group_jobs(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,action TEXT NOT NULL,fields TEXT NOT NULL,state TEXT NOT NULL,scope TEXT NOT NULL,created INTEGER NOT NULL,approved INTEGER,undone INTEGER,total INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 0,error TEXT);
+CREATE INDEX IF NOT EXISTS group_job_state ON group_jobs(state,seq);
+CREATE TABLE IF NOT EXISTS group_items(job TEXT NOT NULL REFERENCES group_jobs(id) ON DELETE CASCADE,position INTEGER NOT NULL,mail TEXT NOT NULL,account TEXT NOT NULL,folder TEXT NOT NULL,remote_id TEXT NOT NULL,unread INTEGER NOT NULL,starred INTEGER NOT NULL,state TEXT NOT NULL,fields TEXT,attempt TEXT,receipt TEXT,reason TEXT,PRIMARY KEY(job,position));
+CREATE INDEX IF NOT EXISTS group_item_state ON group_items(job,state,position);
+CREATE INDEX IF NOT EXISTS group_item_mail ON group_items(mail,state);
+CREATE INDEX IF NOT EXISTS group_item_account ON group_items(account,state);
+CREATE INDEX IF NOT EXISTS group_item_active ON group_items(state,job) WHERE state IN ('pending','sending','undoing','reversing');
+PRAGMA user_version=13;
 COMMIT;

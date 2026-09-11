@@ -35,6 +35,7 @@ Read the repository's [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/
 - [Browser profiles and sync](PROFILE_BROWSER.md): server-mediated Google consent, worker-owned WASM history, per-identity storage, discovery, reviewed publication/enrollment and onboarding.
 - [Profile sync handover](PROFILE_SYNC_HANDOVER.md): next-priority OAuth, Rust/Flutter enrollment, portable records, conflicts and verification requirements; implementation remains open.
 - [Browser group actions](BROWSER_BULK.md): abandoned-review cleanup, the wider Undo lifecycle and the desktop-matching review keys.
+- [Mobile group actions](MOBILE_BULK.md): native selection controls over the SQLite capture and the durable Flutter group journal with receipts, Undo, History and recovery.
 - [Limits](limits.md): protocol requirements, storage ceilings and unverified behavior.
 
 ## Documentation maintenance

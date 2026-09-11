@@ -6,7 +6,7 @@ import 'preview_repository.dart';
 // Test-only paged provider. Mutation barriers are transport fixtures; every
 // integration action still enters through the actual Flutter controls.
 class PagedRepository extends PreviewRepository implements AccountRepository {
-  PagedRepository() : super(delay: Duration.zero);
+  PagedRepository({super.extra}) : super(delay: Duration.zero);
   final jobs = <Completer<void>>[];
   @override
   Future<void> mutate(String id, Map<String, Object> fields) async {

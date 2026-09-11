@@ -34,5 +34,9 @@ mod selection;
 #[cfg(test)]
 mod selection_tests;
 
+mod groups;
+#[cfg(test)]
+mod groups_tests;
+
 #[cfg(test)]
 mod profile_tests;

@@ -7,8 +7,12 @@ import '../data/drafts.dart';
 import '../data/outgoing.dart';
 import '../data/printing.dart';
 import 'mail.dart';
+import 'mail_groups.dart';
+import 'mail_selection.dart';
 import 'move_feedback.dart';
 import 'preferences.dart';
+import '../data/groups.dart';
+import '../data/selection.dart';
 import 'google_connection.dart';
 import 'profile_discovery.dart';
 import '../data/profile_settings.dart';
@@ -165,7 +169,49 @@ class Workspace extends ChangeNotifier {
 
   AccountRepository? get accountRepository =>
       repository is AccountRepository ? repository as AccountRepository : null;
-  final Set<String> selected = {};
+
+  /// Captured selection and durable group actions live in the repository;
+  /// these controllers hold bounded observations and counts only.
+  late final MailSelection? selection = repository is SelectionRepository
+      ? MailSelection(
+          repository: repository as SelectionRepository,
+          scope: _selectionScope,
+          currentCount: () => resultCount,
+          changed: _changed,
+        )
+      : null;
+  late final MailGroups? groups = repository is GroupRepository
+      ? MailGroups(
+          repository: repository as GroupRepository,
+          changed: _changed,
+          refreshMail: _repaint,
+        )
+      : null;
+  Map<String, Object?> _selectionScope() => {
+    'folder': folder,
+    'account': account,
+    'query': query,
+    'filter': filter,
+    'oldest': !newestFirst,
+    'projection': {
+      for (final entry in _projection.entries) entry.key: Map.of(entry.value),
+    },
+  };
+  Future<void> _repaint() async {
+    if (accountRepository != null) {
+      await loadPage();
+      return;
+    }
+    if (pending == 0 && !_disposed) {
+      final rows = repository.cached;
+      _mail = List.of(rows);
+      _confirmed
+        ..clear()
+        ..addEntries(rows.map((m) => MapEntry(m.id, m)));
+      _changed();
+    }
+  }
+
   int get pending => _queues.length;
   List<String> get accounts => {
     ..._mail.map((m) => m.account),
@@ -297,7 +343,6 @@ class Workspace extends ChangeNotifier {
           () => confirmed.patch({'id': entry.value}),
         );
       }
-      if (selected.remove(entry.key)) selected.add(entry.value);
       if (_undoId == entry.key) _undoId = entry.value;
       for (final field in ['folder', 'unread', 'starred']) {
         final revision = _versions.remove('${entry.key}:$field');
@@ -349,6 +394,9 @@ class Workspace extends ChangeNotifier {
         }
       });
     }
+    // Saved groups recover at startup: runnable ones continue, paused ones
+    // wait for an explicit decision in History.
+    unawaited(groups?.refreshHistory());
     _changed();
   }
 
@@ -418,6 +466,8 @@ class Workspace extends ChangeNotifier {
         _confirmed[m.id] = page.confirmed[m.id] ?? m;
       }
       _confirmed.addAll(page.confirmed);
+      // Arrivals are observed, never selected: the capture decides.
+      selection?.refresh();
       _changed();
     } catch (e) {
       if (pageRevision == _pageRevision) {
@@ -480,7 +530,7 @@ class Workspace extends ChangeNotifier {
       final changed = current.patch(fields);
       final before = current.folder == 'Inbox' && current.unread ? 1 : 0;
       final after = changed.folder == 'Inbox' && changed.unread ? 1 : 0;
-      _unread = (_unread + after - before).clamp(0, 1 << 53);
+      _unread = (_unread + after - before).clamp(0, 9007199254740991);
     }
     if (_reader?.id == id) _reader = _reader!.patch(fields);
     if (_mail.any((m) => m.id == id)) {
@@ -509,7 +559,10 @@ class Workspace extends ChangeNotifier {
             : a.date.compareTo(b.date);
         return order == 0 ? a.id.compareTo(b.id) : order;
       });
-      total = (total + matching.length - beforeCount).clamp(0, 1 << 53);
+      total = (total + matching.length - beforeCount).clamp(
+        0,
+        9007199254740991,
+      );
     }
   }
 
@@ -530,11 +583,12 @@ class Workspace extends ChangeNotifier {
     if (_reader?.accountId == id) _reader = null;
     account = null;
     folder = 'Inbox';
-    selected.clear();
+    selection?.done();
     notice = 'Account removed from this device.';
     error = null;
     _changed();
     await loadPage();
+    await groups?.refreshHistory();
   }
 
   Future<void> savePreferences(Preferences value) async {
@@ -590,9 +644,9 @@ class Workspace extends ChangeNotifier {
     unawaited(finishReading());
     _searchTimer?.cancel();
     _searchTimer = Timer(const Duration(milliseconds: 100), () {
+      if (query != value) selection?.done();
       query = value;
       limit = 50;
-      selected.clear();
       unawaited(loadPage());
       _changed();
     });
@@ -603,7 +657,7 @@ class Workspace extends ChangeNotifier {
     folder = value;
     account = inAccount;
     limit = 50;
-    selected.clear();
+    selection?.done();
     unawaited(loadPage());
     _changed();
   }
@@ -612,7 +666,7 @@ class Workspace extends ChangeNotifier {
     unawaited(finishReading());
     filter = value;
     limit = 50;
-    selected.clear();
+    selection?.done();
     unawaited(loadPage());
     _changed();
   }
@@ -621,6 +675,7 @@ class Workspace extends ChangeNotifier {
     unawaited(finishReading());
     newestFirst = !newestFirst;
     limit = 50;
+    selection?.done();
     unawaited(loadPage());
     _changed();
   }
@@ -629,17 +684,6 @@ class Workspace extends ChangeNotifier {
     unawaited(finishReading());
     limit += 50;
     unawaited(loadPage(append: true));
-    _changed();
-  }
-
-  void toggleSelection(String id) {
-    id = _canonical(id);
-    if (!selected.remove(id)) selected.add(id);
-    _changed();
-  }
-
-  void selectAll() {
-    selected.addAll(visible.map((m) => m.id));
     _changed();
   }
 
@@ -697,7 +741,7 @@ class Workspace extends ChangeNotifier {
     final current = mail(id);
     if (current == null) return;
     if (action == MailAction.select) {
-      toggleSelection(id);
+      selection?.toggle(id);
       return;
     }
     final fields = switch (action) {
@@ -758,7 +802,6 @@ class Workspace extends ChangeNotifier {
     }
     _patchMail(id, fields);
     _projection.putIfAbsent(id, () => {}).addAll(fields);
-    selected.remove(id);
     if (move != null) {
       _flagUndo = null;
       _undoId = null;
@@ -1101,6 +1144,8 @@ class Workspace extends ChangeNotifier {
     profileDiscovery?.dispose();
     google?.dispose();
     moves.dispose();
+    selection?.dispose();
+    groups?.dispose();
     _searchTimer?.cancel();
     _syncTimer?.cancel();
     super.dispose();
