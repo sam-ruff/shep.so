@@ -1120,6 +1120,23 @@ class NativeFlows(unittest.TestCase):
                        {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},check("bulk.jobs.0.restored",1),
                        check("bulk.jobs.0.cancelled",1),check("total",120),shot("bulk-review-retains-other-undo"))
 
+    def test_bulk_history_header_icon_mouse_escape_and_compact_dark(self):
+        started = self.mcp.call("desktop.start", bulk_history=True)
+        print(f"History icon evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("bulk.jobs.0.id", "paused-fixture"),
+                       {"type": "hover", "x": 1348, "y": 36}, wait(500),
+                       shot("history-header-icon-light-tooltip"),
+                       click(1348, 36), check("dialog", "BulkHistory"),
+                       key("Escape"), check("dialog", None),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       wait(80), click(690, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"),
+                       {"type": "resize", "width": 900, "height": 640}, wait(150),
+                       {"type": "hover", "x": 808, "y": 36}, wait(500),
+                       shot("history-header-icon-compact-dark-tooltip"),
+                       click(808, 36), check("dialog", "BulkHistory"),
+                       shot("history-header-icon-compact-dark-open"))
+
     def test_bulk_history_retry_undo_after_restart(self):
         started=self.mcp.call("desktop.start",persistent=True,mail_actions="slow",undo_failure_once=True)
         print(f"History Undo restart evidence: {started['artifacts']}",flush=True)
@@ -1797,6 +1814,38 @@ class NativeFlows(unittest.TestCase):
                        check("selected", "Escaped HTML request"), check("html_ready", True), wait(100),
                        shot("html-escaped-tags"))
 
+    def test_html_drag_selection_has_visible_pixels_and_copies(self):
+        from PIL import Image, ImageChops
+
+        for dark, compact in [(False, False), (True, False), (True, True)]:
+            with self.subTest(dark=dark, compact=compact):
+                started = self.mcp.call("desktop.start", reading_mail=True)
+                directory = Path(started["artifacts"])
+                print(f"HTML drag selection evidence: {directory}", flush=True)
+                if dark:
+                    self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                                   click(690,366), check("dark", True), key("ctrl+1"), check("tab", "Mail"))
+                self.mcp.batch(click(400,mail_row_y(1)), check("selected", "Reading style HTML letter"),
+                               check("html_view_current", True))
+                if compact:
+                    self.mcp.batch({"type":"resize", "width":900, "height":640},
+                                   check("window_size", [900,640]), check("html_view_current", True))
+                self.mcp.batch(wait(150), shot("html-drag-before"))
+                state = self.mcp.call("desktop.state")
+                x, y, width, _ = state["html_body_bounds"]
+                left = round(x + max(0, (width - 48 * state["reader_size"]) / 2) + 20)
+                top = round(y + 20)
+                self.mcp.batch(drag(left,top+8,left+150,top+8),
+                               check("html_selected_text", "Column marker"),
+                               {"type":"hover", "x":230, "y":40}, wait(100), shot("html-drag-selected"))
+                region = (left, top, left+150, top+22)
+                before = Image.open(directory/"html-drag-before.webp").convert("RGB").crop(region)
+                after = Image.open(directory/"html-drag-selected.webp").convert("RGB").crop(region)
+                changed = sum(max(pixel) > 20 for pixel in ImageChops.difference(before, after).getdata())
+                self.assertGreater(changed, 500, "Selected text must visibly highlight above the HTML image")
+                self.mcp.batch(key("ctrl+c"), key("ctrl+k"), check("focused_input", "search"),
+                               key("ctrl+v"), check("query", "Column marker"))
+
     def test_html_selection_scrolling_and_pending_mail_actions(self):
         self.mcp.call("desktop.start", html_mail=True, mail_actions="slow")
         self.mcp.batch(check("html_ready", True), click(400,mail_row_y(3)), check("selected", "Long formatted letter"),
@@ -1847,6 +1896,33 @@ class NativeFlows(unittest.TestCase):
                        key("Home"), check("html_scroll", 0), check("selected", "Long formatted letter"),
                        click(400,mail_row_y(3)), key("Up"), check("selected", "Escaped HTML request"),
                        check("html_ready", True), wait(100), shot("html-inbox-arrows-after-reader-focus"))
+
+    def test_search_comparison_exact_phrase_typo_numbers_and_folder_abbreviation(self):
+        started = self.mcp.call("desktop.start", search_mail=True)
+        print(f"Search comparison evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"),
+                       type_text("project review"), check("sort", "Relevance"),
+                       check("selected", "Roadmap agenda"),
+                       shot("comparison-exact-body-light"),
+                       key("ctrl+a"), type_text("release planning"),
+                       check("total", 2, "gte"), shot("comparison-phrase-light"),
+                       key("ctrl+a"), type_text("confernece"),
+                       check("selected", "Conference booking"),
+                       shot("comparison-transposition-light"),
+                       key("ctrl+a"), type_text("invoice 2026"),
+                       check("total", 1), check("selected", "Invoice 2026"),
+                       key("Escape"), key("m"), check("dialog", "Move"),
+                       check("focused_input", "folder-search"), type_text("pjarch"),
+                       check("move_enter_destination", "Projects/Archive"),
+                       shot("comparison-folder-abbreviation"), key("Escape"),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(690, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"),
+                       {"type": "resize", "width": 900, "height": 640},
+                       key("ctrl+k"), check("focused_input", "search"),
+                       key("ctrl+a"), type_text("invoice 2027"), check("total", 1),
+                       check("selected", "Invoice 2027"),
+                       shot("comparison-exact-number-compact-dark"))
 
     def test_search_best_match_beats_newer_mail_and_sort_can_be_overridden(self):
         self.mcp.call("desktop.start", search_mail=True)

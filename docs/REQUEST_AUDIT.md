@@ -1,5 +1,19 @@
 # Conversation request audit
 
+11 September search-demo continuation: deliver R95 visible formatted selection,
+R35 newest-first reply conversations, R96 pinned reader actions and R64 launcher/
+tray fixes first, including the R15 History header icon. Then push three separate
+algorithm-combination demo branches for ranked Preferences/options and general
+mail/Move search (R99/R18/R44). Keep alternatives separate pending the user's
+choice and push each verified prerequisite feature as it finishes. This work's
+priority supersedes the earlier OAuth-first restart order; other requests remain
+active in TODO.
+
+The `demo/search-abbreviations` algorithm checkpoint implements Nucleo/OSA label
+matching and phrase-aware indexed mail ranking, with search/selection regressions.
+The shared catalogue, native review, benchmarks and branch push remain pending;
+see the [algorithm notes](agents/search-abbreviations.md) and completion log.
+
 **2026-09-09 merge of `main` into `feat/mobile-web-clients`:** this audit is now the union of the desktop session's audit (`main`) and the mobile/web client session's audit. The two sessions numbered requests independently after R66: **R67 to R80 exist twice**. Main's R67 to R80 are desktop requests (read-on-leave, counted Undo toasts, HTML readiness, dock badges, refresh icon, HTML latency, moved-mail recovery, F5 refresh, Inbox highlight, preview background, reply-editor clipping, scroll snapping, selection icons and selection-mode clicks). The client branch's R67 to R80 are mobile, browser and website requests (Flutter parity, mobile mail interactions, Flutter quality/release, promo website, browser hosting, Linux app stores, continuous parity, restricted browser beta, Sign in with Google, out-of-office replies, checkpoint push, handover, Android installation and visual parity). Neither side is renumbered: desktop rows keep main's numbers and client rows are marked `(client)` in the table below. Older client paragraphs that write `desktop-main:RNN` mean main's RNN (for example `desktop-main:R92` is main's R92, `desktop-main:R83` is main's R83 and `desktop-main:R67`/`R68`/`R70` are main's read-on-leave, counted Undo and dock-badge requests). R81 to R93 exist only on main. After this merge `main` is the single integration branch for the desktop, mobile and website sessions, so desktop changes are no longer ported into the client branch separately.
 
 **2026-09-10 merge of `feat/mobile-web-clients` into `main`:** the desktop session merged `d8d5c1e` into `main` as `ee1305c` and pushed it, with 1066 hook test executions, 96 Python tests, strict docs and 45 native desktop scenarios passing. `main` is now the single integration branch for all three sessions; the aggregate folder chooser (R30) shipped in the same push. See completion.
@@ -242,7 +256,7 @@ hook test executions passing; see the newest completion entry. OAuth and the sha
 | R79 (client) | Install the current app on the owner’s Android phone using authorized wireless ADB | Production-flavor 0.1.0 ARM64 release built, development-signed and installed without clearing data; Android launch/package/process verified. Final screen check found the phone locked; evidence shipped in [`1ea12a6`](https://github.com/sam-ruff/shep.so/commit/1ea12a677829dcd71c4246b87cae46327f9c749f). |
 | R80 (client) | Make sure visually that the app looks like the desktop app (9 September 2026) | Delivered 10 September in the visual parity lane: desktop palette, type scale, icon set, radii, controls and states applied to Flutter and the browser with reviewed seventeen-screen montages and saved light/dark captures; touch adaptations, the browser's contrast-gated muted shade, tabbed Preferences and real-device/Apple review stay open in TODO |
 | R94 | Host shep.so via the infrastructure repository on the dungeonwalk box, with agent-managed Cloudflare, per-site staging LXC containers on sophie fed from zot, and VPS deploys pulling from zot (10 September 2026) | In progress: site image and `Website` workflow on main, verified locally; infrastructure migration, zot account, staging containers, DNS and first deployment open |
-| R95 | Text and other content in the formatted HTML reader must be highlightable (select and copy), like the plain-text reader (11 September 2026) | Open in TODO: reproduce first, because AGENTS and the limits doc already describe formatted-view selection |
+| R95 | Text and other content in the formatted HTML reader must be highlightable (select and copy), like the plain-text reader (11 September 2026) | Selection existed but the renderer painted its highlight beneath the HTML image. Separate clipped paint layers restore visibility; native drag/pixel/Copy checks pass in light, dark and compact readers. Shipping tracked in TODO and completion log |
 | R96 | Reply buttons float at the bottom of the preview panel so replying needs no scrolling (11 September 2026) | Reproduced in native conversations: the expanded card carried Reply/Reply all/Forward/Print inside its scroller. The reader now reserves a footer outside those cards and binds it to the focused physical message, including collapsed cards and HTML preparation. Evidence and remaining integration/shipping are recorded in completion; individual reader and client footers were already outside the body. |
 | R97 | Configurable option to include the previous email thread in replies (11 September 2026) | Open in TODO |
 | R98 | Small ? help icons with tooltips beside easily misunderstood settings only, not every option (11 September 2026) | Open in TODO |

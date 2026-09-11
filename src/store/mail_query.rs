@@ -3,6 +3,10 @@ use super::*;
 use rusqlite::types::Value;
 
 const EXACT_BODY_PRIORITY: &str = "CASE WHEN octet_length(messages.body)<=? THEN CASE WHEN trim(messages.body,char(9)||char(10)||char(13)||' ')=? COLLATE NOCASE THEN 0 ELSE 1 END ELSE 1 END";
+const MATCH_TIER: &str = "CASE WHEN phrase_matches.rowid IS NOT NULL THEN 0 WHEN exact_matches.rowid IS NOT NULL THEN 1 ELSE 2 END";
+const MATCH_SCORE: &str =
+    "COALESCE(phrase_matches.rank,exact_matches.rank,bm25(mail_search.mail_search,0.3,2.0,1.0))";
+const MATCH_JOINS: &str = " LEFT JOIN exact_matches ON exact_matches.rowid=messages.rowid LEFT JOIN phrase_matches ON phrase_matches.rowid=messages.rowid";
 
 pub(super) struct Plan {
     prefix: &'static str,
@@ -152,27 +156,23 @@ impl Plan {
     pub fn selection_order(&self) -> (String, Vec<Value>) {
         let mut values = self.values.clone();
         let mut from = self.from.clone();
-        let (priority, missing, score) = if self.query.sort == MailSort::Relevance
-            && !self.search.is_empty()
-        {
-            from.push_str(" LEFT JOIN mail_search(?, 'bm25(0.3, 2.0, 1.0)') AS exact_matches ON exact_matches.rowid=messages.rowid");
-            let index = usize::from(!self.prefix.is_empty());
-            values.splice(
-                index..index,
-                [
-                    (self.query.search.trim().len().saturating_add(8) as i64).into(),
-                    self.query.search.trim().to_owned().into(),
-                    crate::fuzzy::literal_query(&self.query.search).into(),
-                ],
-            );
-            (
-                EXACT_BODY_PRIORITY,
-                "exact_matches.rowid IS NULL",
-                "COALESCE(exact_matches.rank,bm25(mail_search.mail_search,0.3,2.0,1.0))",
-            )
-        } else {
-            ("0", "0", "0")
-        };
+        let mut prefix = self.prefix.to_owned();
+        let (priority, missing, score) =
+            if self.query.sort == MailSort::Relevance && !self.search.is_empty() {
+                let (rank_prefix, index) = self.relevance_relations(&mut values);
+                prefix = rank_prefix;
+                from.push_str(MATCH_JOINS);
+                values.splice(
+                    index..index,
+                    [
+                        (self.query.search.trim().len().saturating_add(8) as i64).into(),
+                        self.query.search.trim().to_owned().into(),
+                    ],
+                );
+                (EXACT_BODY_PRIORITY, MATCH_TIER, MATCH_SCORE)
+            } else {
+                ("0", "0", "0")
+            };
         let label = match self.query.sort {
             MailSort::Sender => "messages.sender",
             MailSort::Subject => "messages.subject",
@@ -182,10 +182,36 @@ impl Plan {
             format!(
                 "{}INSERT INTO scratch.mail_selection_order(id,priority,missing,score,label,time)
             SELECT messages.id,{priority},{missing},{score},{label},timestamp FROM {from} WHERE {}",
-                self.prefix, self.condition
+                prefix, self.condition
             ),
             values,
         )
+    }
+
+    fn relevance_relations(&self, values: &mut Vec<Value>) -> (String, usize) {
+        let literal = crate::fuzzy::literal_query(&self.query.search);
+        let phrase = crate::fuzzy::phrase_query(&self.query.search);
+        let mut bindings = vec![literal.clone().into()];
+        // Materialise each FTS relation once, avoiding a full ranked scan per
+        // candidate. A single term shares its literal relation with the phrase.
+        let phrase_relation = if literal == phrase {
+            "phrase_matches AS (SELECT rowid,rank FROM exact_matches)"
+        } else {
+            bindings.push(phrase.into());
+            "phrase_matches AS MATERIALIZED (SELECT rowid,rank FROM mail_search(?, 'bm25(0.3, 2.0, 1.0)'))"
+        };
+        let relations = format!(
+            "exact_matches AS MATERIALIZED (SELECT rowid,rank FROM mail_search(?, 'bm25(0.3, 2.0, 1.0)')), {phrase_relation} "
+        );
+        let prefix = if self.prefix.is_empty() {
+            format!("WITH {relations}")
+        } else {
+            format!("{}, {relations}", self.prefix.trim_end())
+        };
+        let index = usize::from(!self.prefix.is_empty());
+        let select_index = index + bindings.len();
+        values.splice(index..index, bindings);
+        (prefix, select_index)
     }
 
     /// `columns` is a static projection supplied by our store methods, not input.
@@ -195,32 +221,18 @@ impl Plan {
         let mut prefix = self.prefix.to_owned();
         let order = match self.query.sort {
             MailSort::Relevance if !self.search.is_empty() => {
-                // Score the literal match separately so rare typo alternatives
-                // cannot outrank an otherwise stronger exact match.
-                // Materialize once: a correlated FTS LEFT JOIN can repeat its
-                // full literal/rank scan for every candidate after an SQLite
-                // planner change. SQLite indexes this temporary relation by rowid.
-                let exact = "exact_matches AS MATERIALIZED (SELECT rowid,rank FROM mail_search(?, 'bm25(0.3, 2.0, 1.0)')) ";
-                prefix = if prefix.is_empty() {
-                    format!("WITH {exact}")
-                } else {
-                    format!("{}, {exact}", prefix.trim_end())
-                };
-                from.push_str(" LEFT JOIN exact_matches ON exact_matches.rowid=messages.rowid");
-                values.insert(
-                    usize::from(!self.prefix.is_empty()),
-                    crate::fuzzy::literal_query(&self.query.search).into(),
-                );
+                prefix = self.relevance_relations(&mut values).0;
+                from.push_str(MATCH_JOINS);
                 // octet_length checks stored size without loading long bodies.
                 // Whole-body equality makes a short exact reply rank first.
                 values.push((self.query.search.trim().len().saturating_add(8) as i64).into());
                 values.push(self.query.search.trim().to_owned().into());
-                "CASE WHEN octet_length(messages.body)<=? THEN CASE WHEN trim(messages.body,char(9)||char(10)||char(13)||' ')=? COLLATE NOCASE THEN 0 ELSE 1 END ELSE 1 END,exact_matches.rowid IS NULL,COALESCE(exact_matches.rank,bm25(mail_search.mail_search,0.3,2.0,1.0)),timestamp DESC,id"
+                format!("{EXACT_BODY_PRIORITY},{MATCH_TIER},{MATCH_SCORE},timestamp DESC,id")
             }
-            MailSort::Relevance | MailSort::Newest => "timestamp DESC,id",
-            MailSort::Oldest => "timestamp ASC,id",
-            MailSort::Sender => "messages.sender COLLATE NOCASE,timestamp DESC,id",
-            MailSort::Subject => "messages.subject COLLATE NOCASE,timestamp DESC,id",
+            MailSort::Relevance | MailSort::Newest => "timestamp DESC,id".into(),
+            MailSort::Oldest => "timestamp ASC,id".into(),
+            MailSort::Sender => "messages.sender COLLATE NOCASE,timestamp DESC,id".into(),
+            MailSort::Subject => "messages.subject COLLATE NOCASE,timestamp DESC,id".into(),
         };
         (
             format!(
@@ -272,12 +284,14 @@ mod tests {
                             .any(|s| s.contains("VIRTUAL TABLE") && s.contains("LEFT-JOIN")),
                         "{steps:?}"
                     );
-                    assert!(
-                        steps
-                            .iter()
-                            .any(|s| s.contains("exact_matches") && s.contains("INDEX")),
-                        "{steps:?}"
-                    );
+                    for relation in ["exact_matches", "phrase_matches"] {
+                        assert!(
+                            steps
+                                .iter()
+                                .any(|s| s.contains(relation) && s.contains("INDEX")),
+                            "{relation}: {steps:?}"
+                        );
+                    }
                 }
                 Ok(())
             })

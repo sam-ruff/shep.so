@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
-use rapidfuzz::distance::{lcs_seq, osa};
+use nucleo_matcher::{Config, Utf32Str};
+use rapidfuzz::distance::osa;
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 
 fn normalized(value: &str) -> String {
@@ -26,78 +27,126 @@ pub fn distance(a: &str, b: &str) -> usize {
 }
 
 pub fn score(query: &str, candidate: &str) -> Option<usize> {
-    score_normalized(
-        normalized(query.trim()).as_str(),
-        normalized(candidate).as_str(),
-    )
+    Matcher::new(query).score(candidate)
 }
 
-fn score_normalized(query: &str, candidate: &str) -> Option<usize> {
-    if query.is_empty() {
-        return Some(0);
+struct Term {
+    text: String,
+    chars: Vec<char>,
+    numeric: bool,
+}
+
+/// Reuse Nucleo's scratch allocation across a complete result batch.
+pub struct Matcher {
+    query: String,
+    terms: Vec<Term>,
+    matcher: nucleo_matcher::Matcher,
+    candidate_chars: Vec<char>,
+}
+
+impl Matcher {
+    pub fn new(query: &str) -> Self {
+        let query = normalized(query.trim());
+        let terms = query
+            .split_whitespace()
+            .map(|text| Term {
+                text: text.to_owned(),
+                chars: text.chars().collect(),
+                numeric: text.chars().all(char::is_numeric),
+            })
+            .collect();
+        let mut config = Config::DEFAULT;
+        config.normalize = false;
+        config.ignore_case = false;
+        Self {
+            query,
+            terms,
+            matcher: nucleo_matcher::Matcher::new(config),
+            candidate_chars: Vec::new(),
+        }
     }
-    if query == candidate {
-        return Some(0);
+
+    pub fn score(&mut self, candidate: &str) -> Option<usize> {
+        self.score_normalized(&normalized(candidate))
     }
-    let leaf = candidate.rsplit(['/', '\\']).next().unwrap_or(candidate);
-    if query == leaf {
-        return Some(10);
-    }
-    if candidate.starts_with(query) {
-        return Some(20 + candidate.len().saturating_sub(query.len()).min(20));
-    }
-    if leaf.starts_with(query) {
-        return Some(45 + leaf.len().saturating_sub(query.len()).min(10));
-    }
-    if let Some(index) = candidate.find(query) {
-        return Some(60 + index.min(30));
-    }
-    let words: Vec<_> = candidate
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .collect();
-    let query_words: Vec<_> = query
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .collect();
-    if query_words.is_empty() {
-        return None;
-    }
-    let word_score: Option<usize> = query_words
-        .iter()
-        .map(|needle| {
-            let count = needle.chars().count();
-            let maximum = if count >= 6 {
-                2
-            } else if count >= 3 {
-                1
-            } else {
-                0
-            };
-            words
+
+    fn score_normalized(&mut self, candidate: &str) -> Option<usize> {
+        let query = self.query.as_str();
+        if query.is_empty() {
+            return Some(0);
+        }
+        if !query.chars().any(char::is_alphanumeric) {
+            return None;
+        }
+        let words: Vec<_> = candidate
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .collect();
+        if self
+            .terms
+            .iter()
+            .any(|term| term.numeric && !words.contains(&term.text.as_str()))
+        {
+            return None;
+        }
+        if query == candidate {
+            return Some(0);
+        }
+        let leaf = candidate.rsplit(['/', '\\']).next().unwrap_or(candidate);
+        if query == leaf {
+            return Some(10);
+        }
+        if candidate.starts_with(query) {
+            return Some(20 + candidate.len().saturating_sub(query.len()).min(20));
+        }
+        if leaf.starts_with(query) {
+            return Some(45 + leaf.len().saturating_sub(query.len()).min(10));
+        }
+        if let Some(index) = candidate.find(query) {
+            return Some(60 + index.min(30));
+        }
+        self.candidate_chars.clear();
+        self.candidate_chars.extend(candidate.chars());
+        let mut tier = 0;
+        let mut penalty = 0;
+        for term in &self.terms {
+            if term.numeric || words.contains(&term.text.as_str()) {
+                continue;
+            }
+            if words.iter().any(|word| word.starts_with(&term.text)) {
+                penalty += 5;
+                continue;
+            }
+            // Low-level matching keeps punctuation literal instead of parsing
+            // Nucleo's optional negation, anchoring or alternation syntax.
+            if let Some(score) = self.matcher.fuzzy_match(
+                Utf32Str::Unicode(&self.candidate_chars),
+                Utf32Str::Unicode(&term.chars),
+            ) {
+                tier = tier.max(1);
+                penalty += 100usize.saturating_sub(usize::from(score) / term.chars.len());
+                continue;
+            }
+            if !term.text.chars().all(char::is_alphabetic) || term.chars.len() < 3 {
+                return None;
+            }
+            let maximum = if term.chars.len() >= 6 { 2 } else { 1 };
+            let edits = words
                 .iter()
                 .filter_map(|word| {
-                    if word.starts_with(needle) {
-                        return Some(5);
-                    }
                     osa::distance_with_args(
-                        needle.chars(),
+                        term.chars.iter().copied(),
                         word.chars(),
                         &osa::Args::default().score_cutoff(maximum),
                     )
-                    .map(|edits| 20 + edits * 10)
+                    .map(|edits| edits * 20 + word.chars().count().abs_diff(term.chars.len()))
                 })
-                .min()
-        })
-        .sum();
-    if let Some(value) = word_score {
-        return Some(100 + value);
+                .min()?;
+            tier = tier.max(2);
+            penalty += edits;
+        }
+        Some(100 + tier * 100 + (penalty / self.terms.len()).min(99))
     }
-    if lcs_seq::similarity(query.chars(), candidate.chars()) == query.chars().count() {
-        let ratio = rapidfuzz::fuzz::ratio(query.chars(), candidate.chars());
-        return Some(250 + ((1. - ratio) * 100.).round() as usize);
-    }
-    None
 }
 
 pub fn ranked(query: &str, choices: impl IntoIterator<Item = String>) -> Vec<String> {
@@ -112,12 +161,14 @@ pub fn ranked_labels(
     query: &str,
     choices: impl IntoIterator<Item = (String, String)>,
 ) -> Vec<String> {
-    let query = normalized(query.trim());
+    let mut matcher = Matcher::new(query);
     let mut matches: Vec<_> = choices
         .into_iter()
         .filter_map(|(value, label)| {
             let key = normalized(&label);
-            score_normalized(&query, &key).map(|score| (score, key, value))
+            matcher
+                .score_normalized(&key)
+                .map(|score| (score, key, value))
         })
         .collect();
     matches.sort_by(|a, b| {
@@ -134,6 +185,10 @@ pub fn literal_query(input: &str) -> String {
         .map(|token| format!("\"{token}\""))
         .collect::<Vec<_>>()
         .join(" AND ")
+}
+
+pub fn phrase_query(input: &str) -> String {
+    format!("\"{}\"", search_tokens(input).join(" "))
 }
 
 fn search_tokens(input: &str) -> Vec<String> {
