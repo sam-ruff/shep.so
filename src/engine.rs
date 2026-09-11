@@ -94,7 +94,8 @@ pub enum Command {
     OutgoingPage(u64, usize),
     ResolveOutgoing(String, crate::outgoing::RecoveryAction, bool),
     RepairOutgoing,
-    GoogleLogin(Preferences, bool),
+    /// Preferences as saved, whether to resume a staged grant, and the UI's cancel control.
+    GoogleLogin(Preferences, bool, providers::google::CancellationToken),
     DisconnectGoogle(u64),
     CleanupGoogle,
     CheckGoogleConnection,
@@ -1130,7 +1131,7 @@ impl Engine {
                 result?;
             }
             Command::RepairOutgoing => self.repair_outgoing(&mut output).await?,
-            Command::GoogleLogin(prefs, retry) => {
+            Command::GoogleLogin(prefs, retry, cancel) => {
                 anyhow::ensure!(!self.demo, "Google sign-in is disabled in preview.");
                 prefs.validate()?;
                 // The UI starts OAuth only after the corresponding preferences save
@@ -1139,13 +1140,11 @@ impl Engine {
                 let current: Preferences = self.store.get("preferences").await?;
                 anyhow::ensure!(
                     prefs.google_lifecycle.revision == current.google_lifecycle.revision
-                        && prefs.google_client_id == current.google_client_id
-                        && prefs.google_client_secret == current.google_client_secret
                         && prefs.google_services == current.google_services,
-                    "Google changed before sign-in started. Choose Connect Google again."
+                    "Google changed before sign-in started. Choose Sign in with Google again."
                 );
                 self.cleanup_google_locked().await?;
-                let grant = self.google.login_with_retry(&prefs, retry).await?;
+                let grant = self.google.login_with_retry(&prefs, retry, &cancel).await?;
                 let (grant, identity, sources) = self.google.prepare_grant(&prefs, grant).await?;
                 let _lifecycle = self.connection_lifecycle.write().await;
                 let saved = self

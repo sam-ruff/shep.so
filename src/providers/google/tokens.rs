@@ -74,8 +74,11 @@ fn valid_token(value: &str) -> bool {
     !value.is_empty() && value.len() <= 16 * 1024 && value.bytes().all(|b| b.is_ascii_graphic())
 }
 impl Tokens {
+    /// `secret` is the client secret that authorized this exchange; a new login
+    /// records `client_id`, while a refresh keeps the grant's issuing client.
     pub(super) fn from_reply(
         prefs: &Preferences,
+        (client_id, secret): (&str, &str),
         mut reply: Reply,
         previous: Option<&Self>,
     ) -> anyhow::Result<Self> {
@@ -120,11 +123,8 @@ impl Tokens {
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             client_id: previous
                 .map(|t| t.client_id.clone())
-                .unwrap_or_else(|| prefs.google_client_id.clone()),
-            client_secret: previous
-                .filter(|t| t.client_id != prefs.google_client_id)
-                .map(|t| t.client_secret.clone())
-                .unwrap_or_else(|| prefs.google_client_secret.clone()),
+                .unwrap_or_else(|| client_id.to_owned()),
+            client_secret: secret.to_owned(),
             access_token: access,
             refresh_token: refresh,
             expires_at: chrono::Utc::now().timestamp() + lifetime as i64,
@@ -175,8 +175,8 @@ pub(super) enum ExchangeError {
 impl std::fmt::Display for ExchangeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidGrant => f.write_str("Google access expired or was revoked. Reconnect Google in Preferences."),
-            Self::InvalidClient => f.write_str("Google rejected the OAuth application. Check its desktop client ID and client secret in Preferences, then reconnect."),
+            Self::InvalidGrant => f.write_str("Google access expired or was revoked. Choose Sign in with Google in Preferences to reconnect."),
+            Self::InvalidClient => f.write_str("Google rejected the sign-in client for this connection. Sign in with Google again; if it keeps failing, update Shep."),
             Self::Rejected(status) => write!(f, "Google could not authorize access (HTTP {status}). Try again; if it persists, reconnect Google in Preferences."),
         }
     }
@@ -370,14 +370,17 @@ impl Backend {
                 ("refresh_token", refresh),
                 ("grant_type", "refresh_token"),
             ];
-            let client_secret = if prefs.google_client_id == cached.value.client_id {
-                &prefs.google_client_secret
-            } else {
-                &cached.value.client_secret
-            };
+            // Keep refreshing with the client that issued this grant.
+            let client_secret = super::client::refresh_secret(
+                self.client.as_ref(),
+                prefs,
+                &cached.value.client_id,
+                &cached.value.client_secret,
+            );
             if !client_secret.is_empty() {
-                form.push(("client_secret", client_secret.as_str()));
+                form.push(("client_secret", client_secret));
             }
+            let client_secret = client_secret.to_owned();
             let reply = match self.exchange(&form).await {
                 Ok(reply) => reply,
                 Err(error) => {
@@ -390,7 +393,12 @@ impl Backend {
                     return Err(error);
                 }
             };
-            cached.value = Tokens::from_reply(prefs, reply, Some(&cached.value))?;
+            cached.value = Tokens::from_reply(
+                prefs,
+                (&cached.value.client_id, &client_secret),
+                reply,
+                Some(&cached.value),
+            )?;
             cached.pending_save = true;
             self.persist_refresh(state, index).await?;
         }
@@ -409,19 +417,28 @@ impl Backend {
         redirect: &str,
         verifier: &str,
     ) -> anyhow::Result<crate::model::GoogleGrant> {
+        let client = self.client.as_ref().ok_or(SignInError::NotConfigured)?;
         self.load_tokens(state).await?;
-        let mut form = vec![
-            ("client_id", prefs.google_client_id.as_str()),
+        let form = [
+            ("client_id", client.id.as_str()),
+            ("client_secret", client.secret.as_str()),
             ("code", code),
             ("code_verifier", verifier),
             ("redirect_uri", redirect),
             ("grant_type", "authorization_code"),
         ];
-        if !prefs.google_client_secret.is_empty() {
-            form.push(("client_secret", prefs.google_client_secret.as_str()));
-        }
-        let reply = self.exchange(&form).await?;
-        let candidate = Tokens::from_reply(prefs, reply, None)?;
+        let reply = self.exchange(&form).await.map_err(|error| {
+            // An authorization code is short-lived and single-use.
+            if error
+                .downcast_ref::<ExchangeError>()
+                .is_some_and(|kind| matches!(kind, ExchangeError::InvalidGrant))
+            {
+                SignInError::CodeExpired.into()
+            } else {
+                error
+            }
+        })?;
+        let candidate = Tokens::from_reply(prefs, (&client.id, &client.secret), reply, None)?;
         let access = candidate.access();
         anyhow::ensure!(
             access.drive || access.calendar_read,
@@ -438,9 +455,12 @@ impl Backend {
         requested: &str,
     ) -> anyhow::Result<Option<crate::model::GoogleGrant>> {
         self.load_tokens(state).await?;
+        // Only this build's client may resume a candidate.
+        let Some(client) = self.client.as_ref().map(|client| client.id.as_str()) else {
+            return Ok(None);
+        };
         if state.pending_login.as_ref().is_some_and(|t| {
-            t.client_id == prefs.google_client_id
-                && t.requested_scopes.as_deref() == Some(requested)
+            t.client_id == client && t.requested_scopes.as_deref() == Some(requested)
         }) {
             return self.stage_login(state, prefs).await.map(Some);
         }
@@ -452,7 +472,7 @@ impl Backend {
             .find(|c| {
                 state.candidate_id.as_deref() == Some(c.value.grant_id.as_str())
                     && c.value.grant_id != prefs.google_grant.id
-                    && c.value.client_id == prefs.google_client_id
+                    && c.value.client_id == client
                     && c.value.requested_scopes.as_deref() == Some(requested)
                     && !c.invalidated
             })

@@ -58,12 +58,15 @@ impl Cloud {
 impl Remote for Cloud {
     async fn list(&self, _: Scope) -> anyhow::Result<Vec<RemoteFile>> {
         tokio::task::yield_now().await;
+        // Snapshot before waiting: neither racing pass can create a file until
+        // both have listed, whichever one the executor resumes first.
+        let files = self.files().into_iter().map(|(f, _)| f).collect();
         if let Some(race) = &self.race
             && self.lists.fetch_add(1, Ordering::SeqCst) < 2
         {
             race.wait().await;
         }
-        Ok(self.files().into_iter().map(|(f, _)| f).collect())
+        Ok(files)
     }
     async fn download(&self, _: Scope, file: &RemoteFile) -> anyhow::Result<Vec<u8>> {
         tokio::task::yield_now().await;

@@ -338,6 +338,8 @@ pub struct Preferences {
     pub google_lifecycle: GoogleLifecycle,
     pub sync_minutes: u64,
     pub mail_check_seconds: u64,
+    /// A self-configured OAuth client from before Shep shipped its own. Kept
+    /// only so older grants keep refreshing; new sign-ins never use it.
     pub google_client_id: String,
     pub google_client_secret: String,
     /// Desired permissions for the next sign-in, distinct from the active grant.
@@ -391,8 +393,8 @@ impl Default for Preferences {
             google_lifecycle: Default::default(),
             sync_minutes: 5,
             mail_check_seconds: 15,
-            google_client_id: std::env::var("SHEP_GOOGLE_CLIENT_ID").unwrap_or_default(),
-            google_client_secret: std::env::var("SHEP_GOOGLE_CLIENT_SECRET").unwrap_or_default(),
+            google_client_id: String::new(),
+            google_client_secret: String::new(),
             google_services: None,
             shortcuts: Default::default(),
         }
@@ -432,6 +434,8 @@ impl Preferences {
             }
         })
     }
+    /// The client that issued the committed grant, falling back to a legacy
+    /// self-configured client for grants saved before grants recorded it.
     pub fn active_google_client(&self) -> &str {
         if self.google_grant.client_id.is_empty() {
             &self.google_client_id
