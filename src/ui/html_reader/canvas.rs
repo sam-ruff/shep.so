@@ -301,6 +301,9 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
                     },
                     clip,
                 );
+            });
+            // Renderers batch quads before images within a layer.
+            renderer.with_layer(body_clip, |renderer| {
                 for &[x, y, width, height] in &self.state.rectangles {
                     if let Some(bounds) = (Rectangle {
                         x: bounds.x + x - frame.pan,
@@ -416,5 +419,83 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
 impl<'a> From<Canvas<'a>> for Element<'a, Message> {
     fn from(canvas: Canvas<'a>) -> Self {
         Self::new(canvas)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn selection_pixels_paint_above_the_image_and_stay_inside_the_viewport() {
+        let frame = Arc::new(crate::html_render::Frame {
+            generation: 1,
+            layout_revision: 1,
+            viewport: Viewport {
+                width: 40,
+                height: 40,
+                scale: 1.,
+            },
+            pixels: Arc::from(vec![255; 40 * 40 * 4]),
+            width: 40,
+            height: 40,
+            content_height: 40.,
+            content_width: 40.,
+            pan: 0.,
+            scroll: 0.,
+            images: vec![],
+            loaded_images: vec![],
+            background: None,
+            reflow: None,
+        });
+        let state = State {
+            handle: Some(super::super::cache::handle(&frame)),
+            frame: Some(frame),
+            rectangles: vec![[0., 0., 30., 30.]],
+            ..Default::default()
+        };
+        let canvas = Canvas::new(&state, true, 1.);
+        let tree = Tree::new(&canvas as &dyn Widget<Message, Theme, Renderer>);
+        let node = layout::Node::new(Size::new(40., 40.));
+        let clip = Rectangle {
+            x: 10.,
+            y: 10.,
+            width: 30.,
+            height: 30.,
+        };
+        for theme in [Theme::Light, Theme::Dark] {
+            let mut renderer = Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.));
+            canvas.draw(
+                &tree,
+                &mut renderer,
+                &theme,
+                &renderer::Style::default(),
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &clip,
+            );
+            let mut pixels = tiny_skia::Pixmap::new(40, 40).expect("fixture pixmap");
+            let mut mask = tiny_skia::Mask::new(40, 40).expect("fixture clip mask");
+            renderer.draw(
+                &mut pixels.as_mut(),
+                &mut mask,
+                &iced_tiny_skia::graphics::Viewport::with_physical_size(Size::new(40, 40), 1.),
+                &[Rectangle::with_size(Size::new(40., 40.))],
+                iced::Color::WHITE,
+            );
+            let selected = pixels.pixel(15, 15).expect("selected pixel");
+            assert!(
+                selected.green() < 245 && selected.alpha() == 255,
+                "{theme:?}: {selected:?}"
+            );
+            for (x, y) in [(5, 15), (15, 5), (35, 15), (15, 35)] {
+                let outside = pixels.pixel(x, y).expect("unselected pixel");
+                assert_eq!(
+                    (outside.red(), outside.green(), outside.blue()),
+                    (255, 255, 255)
+                );
+            }
+        }
     }
 }
