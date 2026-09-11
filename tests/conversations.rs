@@ -82,7 +82,7 @@ async fn late_parents_merge_branches_without_subject_or_account_collisions() {
             .iter()
             .map(|mail| mail.remote_id.as_str())
             .collect::<Vec<_>>(),
-        ["3", "1", "2"]
+        ["2", "1", "3"]
     );
     let root = mail("work", "root", "Archive", "<root@example.com>", "", -1);
     store.upsert(vec![root]).await.unwrap();
@@ -155,17 +155,17 @@ async fn duplicate_folder_copies_keep_the_selected_uid_and_current_flags() {
         .await
         .unwrap();
     assert_eq!(page.total, 2);
-    assert_eq!(page.rows[0].id, archive.summary.id);
-    assert!(page.rows[0].starred && page.rows[0].unread);
+    assert_eq!(page.rows[1].id, archive.summary.id);
+    assert!(page.rows[1].starred && page.rows[1].unread);
     let page = store.conversation(reply.summary.id, None).await.unwrap();
-    assert_eq!(page.rows[0].id, inbox.summary.id);
-    assert!(!page.rows[0].starred);
+    assert_eq!(page.rows[1].id, inbox.summary.id);
+    assert!(!page.rows[1].starred);
     store
         .move_local(archive.summary.id.clone(), "Projects".into())
         .await
         .unwrap();
     let page = store.conversation(archive.summary.id, None).await.unwrap();
-    assert_eq!(page.rows[0].folder, "Projects");
+    assert_eq!(page.rows[1].folder, "Projects");
 }
 
 #[tokio::test]
@@ -186,13 +186,13 @@ async fn long_conversations_page_without_omitting_the_anchor_or_older_messages()
     let anchor = messages.last().unwrap().summary.id.clone();
     store.upsert(messages).await.unwrap();
     let last = store.conversation(anchor.clone(), None).await.unwrap();
-    assert_eq!((last.total, last.offset, last.rows.len()), (55, 40, 15));
-    assert_eq!(last.rows.last().unwrap().id, anchor);
+    assert_eq!((last.total, last.offset, last.rows.len()), (55, 0, 20));
+    assert_eq!(last.rows.first().unwrap().id, anchor);
     let focused = store
         .conversation_around(anchor.clone(), Some("work:Archive:17".into()), None)
         .await
         .unwrap();
-    assert_eq!(focused.offset, 0);
+    assert_eq!(focused.offset, 20);
     assert!(focused.rows.iter().any(|mail| mail.remote_id == "17"));
     let mut seen = Vec::new();
     for offset in [0, 20, 40] {
@@ -201,6 +201,11 @@ async fn long_conversations_page_without_omitting_the_anchor_or_older_messages()
             .await
             .unwrap();
         assert!(page.rows.len() <= CONVERSATION_PAGE_SIZE);
+        assert!(
+            page.rows
+                .windows(2)
+                .all(|rows| rows[0].timestamp > rows[1].timestamp)
+        );
         seen.extend(page.rows.into_iter().map(|mail| mail.id));
     }
     seen.sort();
