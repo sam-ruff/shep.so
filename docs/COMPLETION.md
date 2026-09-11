@@ -15,9 +15,40 @@ light and compact-dark WebPs are in `artifacts/e2e/dc38a10d91fd`; the final run 
 `artifacts/logs/history-icon-native-final.log`. The initial test authoring run
 used a nonexistent appearance observation; it is retained in
 `history-icon-native.log`, and the saved test uses the established `dark` field.
-Formatting, strict pinned Zensical and the parity contract check pass. Normal
-commit hooks and shipping are recorded by the subsequent integration entry.
+Formatting, strict pinned Zensical and the parity contract check pass. All
+1,179 mandatory-hook test executions passed; this feature was pushed to main
+as `f6b5d85` with owner identity and normal hooks.
 The browser/Flutter header comparison remains an explicit R80 parity gap.
+
+## 11 September: visible formatted HTML text selection (R95)
+
+The desktop already selected and copied formatted text, but its software renderer
+batched selection rectangles beneath the opaque HTML image. Selection now paints
+in a separate clipped layer above that image. The existing selectable-text
+description in the limits document now matches the visible behaviour.
+
+The saved `test_html_drag_selection_has_visible_pixels_and_copies` native scenario
+failed on the baseline with zero changed selection pixels in light, dark and
+900×640 layouts. It now passes with real pointer drags, visible highlight pixels
+and exact clipboard paste into Search. Reviewed WebPs are under the lane's
+`artifacts/e2e/724452d55681`, `9bd70ccf5745` and `65f360661938`. Eight relevant
+native scenarios cover drag/copy, horizontal tables, outer scrolling, pending
+mail actions, links, full reader, Find, quotes, keyboard scope and reading-column
+resize. The reading-column process was interrupted in the combined invocation
+and passed when rerun alone (`bd0142ae07db`).
+
+The new software-renderer unit regression checks highlight pixels and clipping
+in both themes. The pinned strict Zensical build passes, as does the Python
+suite (103 tests, seven platform skips). Lane commit `d498cc3` passed both Clippy
+configurations and all mandatory hooks, including 1,098 all-feature Rust tests.
+The integrated tree passes four native scenarios, including the new drag/pixel/
+copy flow, horizontal-table selection, keyboard scope and the History icon
+regression (`artifacts/logs/r95-integrated-native.log`). Strict docs pass again.
+The main integration commit is the commit containing this record; shipping uses
+the normal hooks and is verified in the following feature checkpoint.
+Browser and Flutter retain their existing browser/WebView selection paths and
+saved Copy scenarios; the shared scenario now explicitly requires visible drag
+highlighting. No Apple/Windows execution or new latency measurement is claimed.
 
 ## 11 September: Flutter selection and durable group actions, mobile Flutter bulk lane (R42, lane `worktree-agent-ae7cbc9c5369daf18`)
 

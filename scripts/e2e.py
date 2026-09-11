@@ -1811,6 +1811,38 @@ class NativeFlows(unittest.TestCase):
                        check("selected", "Escaped HTML request"), check("html_ready", True), wait(100),
                        shot("html-escaped-tags"))
 
+    def test_html_drag_selection_has_visible_pixels_and_copies(self):
+        from PIL import Image, ImageChops
+
+        for dark, compact in [(False, False), (True, False), (True, True)]:
+            with self.subTest(dark=dark, compact=compact):
+                started = self.mcp.call("desktop.start", reading_mail=True)
+                directory = Path(started["artifacts"])
+                print(f"HTML drag selection evidence: {directory}", flush=True)
+                if dark:
+                    self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                                   click(690,366), check("dark", True), key("ctrl+1"), check("tab", "Mail"))
+                self.mcp.batch(click(400,mail_row_y(1)), check("selected", "Reading style HTML letter"),
+                               check("html_view_current", True))
+                if compact:
+                    self.mcp.batch({"type":"resize", "width":900, "height":640},
+                                   check("window_size", [900,640]), check("html_view_current", True))
+                self.mcp.batch(wait(150), shot("html-drag-before"))
+                state = self.mcp.call("desktop.state")
+                x, y, width, _ = state["html_body_bounds"]
+                left = round(x + max(0, (width - 48 * state["reader_size"]) / 2) + 20)
+                top = round(y + 20)
+                self.mcp.batch(drag(left,top+8,left+150,top+8),
+                               check("html_selected_text", "Column marker"),
+                               {"type":"hover", "x":230, "y":40}, wait(100), shot("html-drag-selected"))
+                region = (left, top, left+150, top+22)
+                before = Image.open(directory/"html-drag-before.webp").convert("RGB").crop(region)
+                after = Image.open(directory/"html-drag-selected.webp").convert("RGB").crop(region)
+                changed = sum(max(pixel) > 20 for pixel in ImageChops.difference(before, after).getdata())
+                self.assertGreater(changed, 500, "Selected text must visibly highlight above the HTML image")
+                self.mcp.batch(key("ctrl+c"), key("ctrl+k"), check("focused_input", "search"),
+                               key("ctrl+v"), check("query", "Column marker"))
+
     def test_html_selection_scrolling_and_pending_mail_actions(self):
         self.mcp.call("desktop.start", html_mail=True, mail_actions="slow")
         self.mcp.batch(check("html_ready", True), click(400,mail_row_y(3)), check("selected", "Long formatted letter"),
