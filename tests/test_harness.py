@@ -48,6 +48,18 @@ class HarnessTests(unittest.TestCase):
                     desktop.start(**{name:True})
             launch.assert_not_called()
 
+    def test_profile_password_fixture_requires_an_owned_drive_and_known_mode(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in ("real", True, "keychain"):
+                with self.assertRaisesRegex(ValueError, "Unknown profile password fixture"):
+                    desktop.start(profile_passwords=value)
+            with self.assertRaisesRegex(ValueError, "owned Drive server"):
+                desktop.start(profile_passwords="ready")
+            launch.assert_not_called()
+        tool = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["profile_passwords"]["enum"], ["ready", "reject"])
+
     def test_nonblocking_close_uses_only_owned_native_window(self):
         desktop = harness.Desktop()
         desktop.app = Mock()

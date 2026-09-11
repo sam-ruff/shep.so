@@ -52,6 +52,7 @@ mod continuous;
 pub(super) mod join;
 mod reviews;
 pub(super) mod state;
+mod vault;
 
 impl Store {
     pub async fn change_profile_sync_options(
@@ -71,6 +72,7 @@ impl Store {
                 enrollment::check_google(&get(&tx, "preferences")?, selected)?;
             }
             if next != value.options {
+                vault::toggled(&tx, value.options, next)?;
                 value.options = next;
                 value.advance()?;
                 put(&tx, STORAGE_KEY, &value)?;
@@ -121,6 +123,7 @@ impl Store {
                 enrollment::check_google(&get(&tx, "preferences")?, selection)?;
             }
             if value.options != options {
+                vault::toggled(&tx, value.options, options)?;
                 value.options = options;
                 value.advance()?;
                 value.validate()?;

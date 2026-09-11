@@ -126,7 +126,8 @@ The engine coordinator retains ownership through these acknowledgments.
 The explicit metadata adapter preserves IMAP/POP3 and independent SMTP security,
 authentication and Sent options, and returns an account review candidate.
 Joining can save that definition, with receiving/sending paused until explicit
-credential reconnection. It never imports a password. Settings application commits
+credential reconnection or a tested password import from the optional vault.
+Metadata application never imports a password. Settings application commits
 a bounded conflict-free page atomically against local preferences/connection/
 Google/enrollment revisions. It currently implements appearance, quoted replies,
 external-image policy, unified inbox, cross-account moves, conversation grouping
@@ -134,7 +135,19 @@ and unread badges. Device fields and backend metadata stay unchanged. Shared
 preview-line values/extensions remain in history; other portable settings still
 need shared-contract support and native implementation.
 
-Global account removal choices remain open. Initial enrollment is separate from a verified later publication. Password transfer uses Google-only protection (decided 11 September 2026) and is not implemented yet; see the credential section of the shared handover.
+Global account removal choices remain open. Initial enrollment is separate from a verified later publication. Password transfer uses Google-only protection (decided 11 September 2026); the desktop implementation is described in [profiles](profiles.md) and the contract in the credential section of the shared handover.
+
+## Password vault files
+
+Synced passwords never enter these immutable records. The optional password
+vault uses separate `credential-key` and `credential-vault` app-data files with
+their own `shepType`, `shepFormat`, `shepKey` and sequence/revision properties.
+Profile discovery and the change-stream catalog ignore them (other app data),
+and backup retention never selects them. Unlike profile records they are created
+once and later deleted: `drive::Session` implements the vault `Remote` trait
+with bounded listing (at most 64 files), checksum-verified downloads, reserved-ID
+uploads that confirm a lost reply by reading the same ID, and deletes that treat
+an already missing file as done.
 
 ## Verification boundary
 
