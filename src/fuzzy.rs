@@ -4,7 +4,7 @@ use nucleo_matcher::{Config, Utf32Str};
 use rapidfuzz::distance::osa;
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 
-fn normalized(value: &str) -> String {
+pub(crate) fn normalized(value: &str) -> String {
     // Strip Latin accents like SQLite's unicode61 tokenizer. Preserve marks
     // in other scripts and recompose Hangul/Japanese after normalization.
     let mut latin = false;
