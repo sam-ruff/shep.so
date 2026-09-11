@@ -196,8 +196,12 @@ class Desktop:
             time.sleep(.02)
         self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v")
 
-    def start(self, width=1440, height=920, move_recovery=False, notification_delivery=None, empty_calendars=False, conversation_mail=False, reading_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, long_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False, idle_navigation=False, folder_actions=None, held_account_sync=False, held_provider_slots=False, held_database_export=False, held_database_import=False, profile_sync=None, profile_login=False, empty_profile=False, tray=None, backup_run=None):
+    def start(self, width=1440, height=920, move_recovery=False, notification_delivery=None, empty_calendars=False, conversation_mail=False, reading_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, long_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False, idle_navigation=False, folder_actions=None, held_account_sync=False, held_provider_slots=False, held_database_export=False, held_database_import=False, profile_sync=None, profile_login=False, empty_profile=False, tray=None, backup_run=None, profile_passwords=None):
         self.stop()
+        if profile_passwords not in (None, "ready", "reject"):
+            raise ValueError("Unknown profile password fixture.")
+        if profile_passwords is not None and profile_sync is None:
+            raise ValueError("Profile password fixtures require an owned Drive server.")
         if backup_run not in (None, "ready", "recover", "warning", "held"):
             raise ValueError("Unknown backup run fixture.")
         if backup_run is not None:
@@ -291,6 +295,10 @@ class Desktop:
         self.env["SHEP_TEST_HTML_DELAY_MS"] = str(html_delay_ms)
         self.env["SHEP_TEST_IMAGE_DELAY_MS"] = str(image_delay_ms)
         self.env["SHEP_TEST_HTML_FAILURE_ONCE"] = "1" if html_failure_once else "0"
+        if "RUST_LOG" in os.environ:
+            self.env["RUST_LOG"] = os.environ["RUST_LOG"]
+        else:
+            self.env.pop("RUST_LOG", None)
         self.env.pop("WAYLAND_DISPLAY", None)
         if desktop_badges:
             self.start_badge_bus()
@@ -310,6 +318,12 @@ class Desktop:
                 self.launch_args.append("--profile-empty-workspace")
             if profile_sync == "invalid-local":
                 self.launch_args.append("--invalid-profile-enrollment")
+            if profile_passwords:
+                # A fictional keychain beside the owned workspace and a fixture
+                # connection tester; no real keychain or mail server is used.
+                # Debug logs give the password scans real log output to check.
+                self.launch_args.append("--profile-passwords=" + profile_passwords)
+                self.env["RUST_LOG"] = "debug"
         return self.launch_app()
 
     def launch_app(self):
@@ -532,6 +546,7 @@ class Desktop:
         state["desktop_badge"] = self.badge_state()
         if self.profile_drive:
             state["profile_drive_requests"] = dict(self.profile_drive.requests)
+            state["profile_drive_credentials"] = self.profile_drive.credential_state()
             state["profile_upload_held"] = self.profile_drive.upload_held.is_set() and not self.profile_drive.release.is_set()
         if self.tray_fixture:
             state["tray_host"] = self.tray_fixture.state()
@@ -870,7 +885,7 @@ class Desktop:
 
 TOOLS = [
     {"name": "desktop.start", "description": "Launch an isolated Shep fixture workspace on Xvfb. Requires cargo build --profile test-ui --features test-support. No real credentials or cloud writes.",
-     "inputSchema": {"type": "object", "properties": {"backup_run":{"type":"string","enum":["ready","recover","warning","held"]}, "tray":{"type":"string","enum":["available","missing"]}, "profile_login":{"type":"boolean","default":False}, "empty_profile":{"type":"boolean","default":False}, "profile_sync":{"type":"string","enum":list(_profile_fixture.MODES)}, "held_database_import":{"type":"boolean","default":False}, "held_database_export":{"type":"boolean","default":False}, "held_provider_slots":{"type":"boolean","default":False}, "held_account_sync":{"type":"boolean","default":False}, "folder_actions":{"type":"string","enum":["slow","fail","uncertain"]}, "move_recovery": {"oneOf":[{"type":"boolean"},{"type":"string","enum":["committed","copied","unconfirmed","fail-once"]}],"default":False}, "notification_delivery": {"type":"string", "enum":["slow","fail-once"]}, "idle_navigation": {"type":"boolean","default":False}, "pop3_account": {"type":"boolean","default":False}, "nested_folders": {"type":"boolean","default":False}, "bulk_history": {"type": "boolean", "default": False}, "persistent": {"type": "boolean", "default": False}, "desktop_badges": {"type": "boolean", "default": False}, "html_failure_once": {"type": "boolean", "default": False}, "image_delay_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0}, "html_delay_ms": {"type": "integer", "minimum": 0, "maximum": 2000, "default": 0}, "print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "reading_mail": {"type":"boolean", "default":False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail"]}, "search_mail": {"type": "boolean", "default": False}, "long_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
+     "inputSchema": {"type": "object", "properties": {"profile_passwords":{"type":"string","enum":["ready","reject"]}, "backup_run":{"type":"string","enum":["ready","recover","warning","held"]}, "tray":{"type":"string","enum":["available","missing"]}, "profile_login":{"type":"boolean","default":False}, "empty_profile":{"type":"boolean","default":False}, "profile_sync":{"type":"string","enum":list(_profile_fixture.MODES)}, "held_database_import":{"type":"boolean","default":False}, "held_database_export":{"type":"boolean","default":False}, "held_provider_slots":{"type":"boolean","default":False}, "held_account_sync":{"type":"boolean","default":False}, "folder_actions":{"type":"string","enum":["slow","fail","uncertain"]}, "move_recovery": {"oneOf":[{"type":"boolean"},{"type":"string","enum":["committed","copied","unconfirmed","fail-once"]}],"default":False}, "notification_delivery": {"type":"string", "enum":["slow","fail-once"]}, "idle_navigation": {"type":"boolean","default":False}, "pop3_account": {"type":"boolean","default":False}, "nested_folders": {"type":"boolean","default":False}, "bulk_history": {"type": "boolean", "default": False}, "persistent": {"type": "boolean", "default": False}, "desktop_badges": {"type": "boolean", "default": False}, "html_failure_once": {"type": "boolean", "default": False}, "image_delay_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0}, "html_delay_ms": {"type": "integer", "minimum": 0, "maximum": 2000, "default": 0}, "print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "reading_mail": {"type":"boolean", "default":False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail"]}, "search_mail": {"type": "boolean", "default": False}, "long_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
     {"name": "desktop.close", "description": "Close only the owned fixture app, keeping its Xvfb display and persistent fixture cache available for restart. Normally sends WM_DELETE_WINDOW; crash=true kills only the owned process for recovery tests.", "inputSchema": {"type": "object", "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.restart", "description": "Restart only the owned persistent fixture app on its existing Xvfb display. Normally sends a native window-close request; crash=true kills that owned process to exercise journal recovery. Retains the fixture SQLite cache and never changes app state directly.", "inputSchema": {"type": "object", "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.batch", "description": "Run 1–100 real mouse/keyboard actions in order, including held left-button mouse_down/mouse_up, short waits, state assertions and WebP screenshots. Stops at first failure and captures evidence. Prefer batches to one call per action.",

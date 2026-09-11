@@ -9,6 +9,8 @@ mod browser;
 pub mod drive;
 pub mod history;
 mod json;
+#[cfg(feature = "vault")]
+pub mod vault;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};

@@ -18,6 +18,8 @@ pub struct Report {
     pub review: usize,
     pub published: usize,
     pub remaining: bool,
+    /// The password vault pass that followed, when password sync is involved.
+    pub passwords: Option<super::vault::Report>,
 }
 pub(crate) struct Observed {
     pub(super) binding: history::Binding,

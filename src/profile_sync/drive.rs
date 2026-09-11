@@ -452,5 +452,7 @@ pub(super) fn check_token(value: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+mod vault;
+
 #[cfg(test)]
 pub(in crate::profile_sync) mod tests;

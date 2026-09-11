@@ -4,3 +4,4 @@ tests/support/profile-drive-file.json -text
 # These fixtures describe exact provider bytes and their SHA-256 on every client.
 shared/profile-operation.json text eol=lf
 shared/profile-drive-file.json text eol=lf
+shared/credential-vault-fixtures.json text eol=lf
