@@ -4534,6 +4534,85 @@ class NativeFlows(unittest.TestCase):
                        shot("compose-compact-recipients"), {"type":"hover","x":855,"y":510}, {"type":"scroll","amount":5}, wait(100),
                        shot("compose-compact-actions"), key("Escape"), check("composer.visible",False), check("draft_count",1))
 
+    def test_conversation_footer_reply_remains_visible_after_scrolling(self):
+        for layout in ("preview", "compact", "full"):
+            for dark in (False, True):
+                started = self.mcp.call("desktop.start", conversation_mail=True)
+                print(f"Conversation footer {layout}/{dark}: {started['artifacts']}", flush=True)
+                if dark:
+                    self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(100),
+                                   click(690,366), check("dark", True), key("ctrl+1"))
+                self.mcp.batch(key("ctrl+k"), check("focused_input", "search"),
+                               type_text("Long project review"), check("total",25), key("Escape"),
+                               check("conversation_total",25), check("loaded_message_id","preview-work:INBOX:long-24"))
+                if layout == "compact":
+                    self.mcp.batch({"type":"resize","width":900,"height":640}, wait(150))
+                elif layout == "full":
+                    self.mcp.batch(double_click(400,mail_row_y(0)), check("full_reader",True), wait(150))
+                x, y = (590,554) if layout == "compact" else ((80,834) if layout == "full" else (690,834))
+                self.mcp.batch({"type":"hover","x":x+100,"y":400}, {"type":"scroll","amount":12},
+                               check("conversation_scroll",300,"gte"),
+                               shot(f"conversation-footer-scrolled-{layout}-{dark}"),
+                               click(x,y), check("composer.visible",True),
+                               check("draft_in_reply_to","<long-24@example.com>"),
+                               shot(f"conversation-footer-replied-{layout}-{dark}"))
+
+    def test_conversation_footer_actions_keep_the_collapsed_older_target(self):
+        for action_name, x in (("reply-all",782), ("forward",850), ("print",885)):
+            self.mcp.call("desktop.start", conversation_mail=True, print_browser="fail")
+            self.mcp.batch(check("conversation_total",3), wait(150),
+                           click(1322,258), check("conversation_collapsed",True),
+                           click(800,344), check("loaded_message_id","preview-work:Sent:launch-1"),
+                           check("attachment_count",1), click(1322,344), check("conversation_collapsed",True),
+                           check("selected_id","preview-work:INBOX:launch-2"),
+                           shot(f"conversation-footer-collapsed-{action_name}"), click(x,834))
+            if action_name == "forward":
+                self.mcp.batch(check("composer.visible",True), check("draft_in_reply_to",None), check("draft_attachments.0.size",1,"gte"),
+                               check("compose_fields.to",""), shot("conversation-footer-forward-target"))
+            elif action_name == "print":
+                self.mcp.batch(check("print_source","preview-work:Sent:launch-1"),
+                               check("print_pending",False), check("composer.visible",False),
+                               shot("conversation-footer-print-target"))
+            else:
+                self.mcp.batch(check("composer.visible",True), check("draft_in_reply_to","<launch-1@example.com>"),
+                               check("compose_fields.to","maya@example.com"), shot("conversation-footer-reply-all-target"))
+
+    def test_conversation_footer_uses_older_target_during_html_preparation(self):
+        self.mcp.call("desktop.start", conversation_mail=True, html_delay_ms=1200)
+        self.mcp.batch(check("conversation_total",3),
+                       check("loaded_message_id","preview-work:INBOX:launch-2"), wait(100),
+                       click(1322,258), check("conversation_collapsed",True),
+                       click(800,430), check("loaded_message_id","preview-work:Archive:launch-0"),
+                       check("selected_id","preview-work:INBOX:launch-2"),
+                       {"type":"assert","path":"html_ready","value":False},
+                       shot("conversation-footer-html-preparing"),
+                       click(690,834), check("composer.visible",True),
+                       check("composer.reply.mail_id","preview-work:Archive:launch-0"),
+                       shot("conversation-footer-html-reply-target"))
+
+    def test_conversation_footer_leaves_the_last_html_line_accessible(self):
+        for dark in (False, True):
+            self.mcp.call("desktop.start", reading_mail=True)
+            if dark:
+                self.mcp.batch(key("ctrl+comma"), check("tab","Preferences"), wait(100),
+                               click(690,366), check("dark",True), key("ctrl+1"))
+            self.mcp.batch(click(400,mail_row_y(2)), check("conversation_total",2),
+                           check("html_view_current",True), wait(100),
+                           click(1322,258), check("conversation_collapsed",True),
+                           click(800,344), check("loaded_message_id","preview-work:Archive:reading-2"),
+                           check("html_view_current",True),
+                           {"type":"resize","width":900,"height":640}, check("html_view_current",True), wait(150),
+                           {"type":"hover","x":750,"y":400}, {"type":"scroll","amount":30},
+                           check("conversation_scroll",1,"gte"), wait(100),
+                           shot(f"conversation-footer-last-html-line-{dark}"))
+            state = self.mcp.call("desktop.state")
+            _, y, _, height = state["html_body_visible"]
+            self.assertGreater(height, 0)
+            self.assertLessEqual(y + height - state["conversation_scroll"], 534,
+                                 "HTML must end above the reserved footer")
+            self.mcp.batch(click(590,554), check("composer.visible",True),
+                           check("composer.reply.mail_id","preview-work:Archive:reading-2"))
+
     def test_conversation_newest_first_survives_reply_parking_and_refresh(self):
         self.mcp.call("desktop.start", conversation_mail=True)
         self.mcp.batch(check("conversation_total", 3),
