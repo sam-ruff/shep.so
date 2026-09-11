@@ -2,6 +2,62 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## 11 September: Google-only password vault on desktop (R49, lane `worktree-agent-af3023305aa75f5b0`)
+
+Sam chose Google-only protection for synced account passwords. The credential
+section of [the handover](agents/PROFILE_SYNC_HANDOVER.md) now fixes the contract
+Flutter will implement: replaceable `credential-key` and `credential-vault`
+app-data files outside the causal history, a versioned AES-256-GCM envelope
+(version byte, random 12-byte nonce, authenticated data binding profile,
+generation, key, shared account, field, revision and a server/login endpoint
+digest), a key created once with canonical selection (highest sequence, then
+smallest UUID) and rotated whenever a password is removed, lossless concurrent
+writers (merge every vault file per slot, write one successor, delete only the
+merged files) and a plain statement that anyone with the Drive app data can read
+the passwords.
+
+`shared/profile-core` gains an additive, optional `vault` feature (no I/O, no
+`getrandom`, compiles for WASM; the Flutter and backend lockfiles are unchanged).
+`shared/credential-vault-fixtures.json` holds exact key/vault bytes, envelopes,
+authenticated data, merge, canonical-key and rejection cases; seven Rust codec
+tests and `tests/test_credential_vault_fixtures.py` (an independent Python
+AES-GCM) check it. Desktop adds `profile_sync/vault` (reconcile pass, staged
+import), the Drive transport for credential files, `profile_credentials_v1`
+state (revisions and flags only), the enrollment `passwords` option and the
+**Sync account passwords through your Google account** toggle with its Drive
+app-data warning, status line and **Try synced passwords again**. Each Sync runs
+the pass after the continuous cycle, and a toggle change runs its own pass even
+while sync is paused. Received pairs are staged in new keychain slots, read back,
+tested against the account's own servers and activated under the lifecycle and
+account locks, clearing Reconnect; failures keep the previous pair and hold that
+revision until an explicit retry. Database import archives the new state.
+
+Verification: 21 new Rust tests (codec, decisions, publish and tested import,
+failed import, rotation on local and shared-history removal, toggle-off while
+paused, restart, concurrent first-key creation stressed 60 times, wrong key,
+other endpoint, newer minor version, real history tombstones, loopback Drive
+transport and a SQLite/WAL/trace-log/Drive scan for both test passwords, UI
+toggle ordering) plus the extended import-fence and settings-search tests;
+`cargo test --all-features profile_` passes 138; lane commit `73d74b6` passed
+1163 hook test executions; 103 Python tests pass after merging `main` (six new);
+Flutter (89) and backend (40) Rust tests pass unchanged against the shared crate;
+fmt, both Clippy runs and the Windows GNU check pass.
+Native: the Drive fixture gains credential files, a plaintext oracle and
+`existing-passwords`; the harness gains `profile_passwords`; three new
+`test_profile_passwords_*` flows (enable and turn off, second-device import in
+light and compact dark, rejected import with held retry across restart) scan the
+closed workspace and logs for the fictional passwords. All 42 `-k profile_`
+native scenarios pass on the merged binary (`artifacts/logs/e2e-credential-vault.log`;
+evidence `bd297fda6a97`, `ab52a5cb988d`, `eec335557bb2`), with reviewed light and
+compact dark captures; password scenarios run with debug app logs for the scan. An earlier run found nine review flows broken by the new block at
+the end of the card; it now steps aside while a shared review is open.
+
+Limitations: fixture evidence only, no live Google app-data verification; Flutter
+and browser are unimplemented (mobile session); the two desktop keychain writes
+are not atomic (a failure between them retries from staging); each enabled pass
+downloads the credential files; the fixture connection tester is not a mail
+server. Unchecked checkboxes are faint in the light theme app-wide.
+
 ## 11 September: Sign in with Google on the desktop (R75 client)
 
 Sam asked for "a login with Google button, not pasting in OAuth creds". On lane

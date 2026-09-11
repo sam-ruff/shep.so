@@ -894,6 +894,24 @@ confirmation, restart/no-reimport and stale-card disappearance assertions.
 `profile_account_review` Rust tests retain real cached fixture mail and reject
 changed history/account/Google/consent. UI observations never trigger actions.
 
+Synced passwords use `desktop.start(profile_passwords="ready" | "reject")` with an
+owned `profile_sync` fixture. It adds a fictional keychain file beside the owned
+workspace (`fixture-keychain.json`, seeded with the preview accounts' fictional
+passwords) and a fixture connection tester that accepts only the shared golden
+passwords in `ready` mode; nothing touches the real keychain or a mail server.
+`profile_sync="existing-passwords"` is the one-profile Home fixture plus another
+device's key and vault files from `shared/credential-vault-fixtures.json`.
+Observe `profile_sync.options.passwords`, `profile_sync.passwords` (published,
+imported, failed, withdrawn and so on), `account_reconnect_count` and
+`profile_drive_credentials` (`keys`, `vaults` and a `plaintext` oracle that is
+true if any fictional password appears in stored credential bytes). Search
+Preferences for "synced password" to reach the toggle, which sits at the end of
+the ready Profiles and sync card. Keep the saved `test_profile_passwords_*`
+flows: enabling and turning off on a first device, importing on a second device
+(light and compact dark), and a rejected import that keeps Reconnect with an
+explicit retry. They scan the closed workspace files and app logs for the
+fictional passwords; only the fixture keychain may contain them.
+
 `profile_sync="existing-link"` seeds one light Home profile for a populated
 device (no `profile_login`/`empty_profile`), imports it through the ordinary
 picker (Import profile is near y=603 with one unmatched account), then the

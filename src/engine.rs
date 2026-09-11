@@ -341,6 +341,18 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
         } else {
             credentials
         };
+        #[cfg(feature = "test-support")]
+        let credentials = if demo && crate::test_support::passwords::active() {
+            match crate::test_support::passwords::credentials() {
+                Ok(credentials) => credentials,
+                Err(error) => {
+                    let _ = output.send(Event::Error(error.to_string())).await;
+                    return;
+                }
+            }
+        } else {
+            credentials
+        };
         let engine = Engine {
             profiles,
             credentials: credentials.clone(),

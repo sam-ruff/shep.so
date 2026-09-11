@@ -1546,3 +1546,20 @@ its current draft/receipt guards and clears stale shared review cards after a
 successful local removal. Keep exact history and local lifecycle validation,
 `profile_account_review` Rust tests and the saved `profile_account_removal`
 native flows when changing these paths.
+
+
+Synced account passwords use Google-only protection (Sam, 11 September 2026; no
+sync passphrase). `profile_sync/vault` follows the handover's credential section:
+passwords live only in the OS keychain and the replaceable app-data vault, never
+in causal history, SQLite, logs, exports or UI observations. The toggle is
+device-local, off by default and its UI must keep the sentence saying anyone with
+access to the Google account's Drive app data could read them. Keep the codec in
+`shared/profile-core` (feature `vault`, no I/O) and its golden fixtures in
+`shared/credential-vault-fixtures.json` in agreement with every client; the
+Python test checks them with an independent AES-GCM. Imports stage, read back and
+test the pair before activation; take the connection lifecycle lock before the
+account lock, as SaveAccount does. Never offer a password to an account whose
+portable endpoint differs from the published one. Preserve the `profile_vault_*`
+Rust tests (concurrent key creation, rotation, toggle-off, restart, wrong key and
+the SQLite/log/Drive plaintext scan) and the saved `test_profile_passwords_*`
+native flows.
