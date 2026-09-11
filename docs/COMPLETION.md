@@ -2,6 +2,53 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## 11 September: Sign in with Google on the desktop (R75 client)
+
+Sam asked for "a login with Google button, not pasting in OAuth creds". On lane
+branch `worktree-agent-af66d90e46f2fe728` (feature commit `ff04df5`, not yet on
+`main`), the Google card in Preferences → Accounts and Calendars now has one **Sign in with
+Google** (or **Reconnect Google**) button and no client ID or secret fields.
+`src/providers/google/client.rs` compiles Shep's own Desktop OAuth client in from
+`SHEP_GOOGLE_CLIENT_ID`/`SHEP_GOOGLE_CLIENT_SECRET`; debug and `test-support`
+builds also accept them at runtime, never shown in the UI. A build without both
+shows the button disabled with "Google sign-in is not configured in this build."
+[Google sign-in client](agents/google-sign-in.md) documents the build variables,
+where `scripts/install-linux.sh`, `scripts/release.py` and the Windows/release
+workflows pick them up, and Sam's Google Cloud setup. No real client exists yet.
+
+Sign-in keeps the system browser, random `127.0.0.1` loopback port, scoped
+consent and the staged-grant, activation, disconnect and token-owner contracts.
+Each attempt now uses a fresh PKCE S256 verifier and an exact 256-bit state, the
+browser wait is bounded to three minutes, and **Cancel sign-in** (or quitting)
+stops the wait and closes the listener. Denied, refused, cancelled, timed-out and
+expired-code outcomes are typed errors that say nothing changed. Grants record
+their issuing client: a connection from a self-configured client keeps
+refreshing with its stored ID and secret, a note explains that signing in again
+switches to Shep's client, and a staged candidate from another client is never
+resumed.
+
+Verification: new provider tests drive a fake browser against the real loopback
+listener and a fake token endpoint (PKCE and the RFC 7636 vector, exact-state
+rejection, denied/refused/cancelled/timed-out outcomes with the port closed,
+expired codes, an unconfigured build, the self-configured-to-built-in migration
+and candidate client binding), plus client-selection and UI tests (disabled
+button, cancel on click and quit, stale permissions, switch note). `cargo test
+--all-features google` passes 73 and the hooked suites pass 1151 test executions
+(1076 workspace, 2 pixbuf, 73 profile-core); fmt, both Clippy runs, the Windows
+GNU check, 97 Python tests and the strict docs build pass. Native: four new scenarios
+(button, unconfigured build and self-configured connection, each light and
+900×640 dark) and the recalibrated consent flows; all 11 selected Google,
+disconnect, permission and backup scenarios pass after merging `main`, and the
+captures were reviewed (`5d0a5736fd6b` and `6af877adae9c` for the button,
+`91e04781bea0` and `6ee4aac28f61` for the unconfigured build, `ea6b89a2a641` and
+`42f03da3b5bd` for the self-configured connection).
+
+Limitations: live sign-in is unverified until Sam creates the client. The G mark
+is not shown because no approved asset is in the repository. Drive backups and
+profile files written through a self-configured project are not visible after
+switching, and the profile-sync code (another lane) does not yet explain that
+mismatch. Flutter and browser sign-in remain with the mobile session.
+
 ## 11 September: long messages load in parts (R23 reader)
 
 The plain-text reader no longer stops at 32,000 characters. `Store::detail_limited`
