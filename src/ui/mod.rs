@@ -16,6 +16,7 @@ mod find_message;
 mod folder_controls;
 #[cfg(test)]
 mod google_lifecycle_tests;
+mod google_sign_in;
 mod html_reader;
 mod layout;
 mod mail_actions;
@@ -218,6 +219,7 @@ pub enum Message {
     BackupAll,
     RetryBackup(String),
     GoogleLogin(bool),
+    CancelGoogleSignIn,
     GoogleDriveAccess(bool),
     GoogleCalendarAccess(GoogleCalendarRequest),
     ReviewGoogleDisconnect,
@@ -428,6 +430,10 @@ pub struct App {
     sync_notice: Option<Instant>,
     preference_notice: Option<Instant>,
     google_connected: bool,
+    /// This build's sign-in client ID; `None` when the build has none.
+    google_client: Option<String>,
+    /// Cancels the running sign-in while it waits for the browser.
+    google_sign_in: Option<crate::providers::google::CancellationToken>,
     google_disconnect_pending: Option<u64>,
     system_dark: bool,
     size: Size,
@@ -595,6 +601,9 @@ impl App {
                 sync_notice: None,
                 preference_notice: None,
                 google_connected: false,
+                google_client: crate::providers::google::client::sign_in()
+                    .map(|client| client.id.clone()),
+                google_sign_in: None,
                 google_disconnect_pending: None,
                 system_dark: false,
                 size: Size::new(1440., 920.),
@@ -1271,16 +1280,7 @@ impl App {
                         .is_some_and(|(id, _, _)| *id == request)
                         && let Some((_, prefs, retry)) = self.pending_google_login.take()
                     {
-                        if prefs.google_client_id == self.preferences.google_client_id
-                            && prefs.google_client_secret == self.preferences.google_client_secret
-                            && prefs.google_services == self.preferences.google_services
-                            && prefs.google_lifecycle.revision
-                                == self.preferences.google_lifecycle.revision
-                        {
-                            self.send(Command::GoogleLogin(prefs, retry));
-                        } else {
-                            self.notice("Google setup changed. Sign in again with the current permissions and client details.", true);
-                        }
+                        self.start_google_login(prefs, retry);
                     }
                 }
                 Event::BulkResumed(id) => self.send(Command::BulkRun(id)),
@@ -1483,6 +1483,9 @@ impl App {
                         } else {
                             self.refresh.stop();
                         }
+                    }
+                    if key == "google" && !busy {
+                        self.google_sign_in = None;
                     }
                     if busy {
                         self.busy.insert(key);
@@ -1774,6 +1777,8 @@ impl App {
             },
             Message::WindowClose(window) => {
                 self.pending_close = Some(window);
+                // Nothing is staged until Google redirects back, so stop waiting.
+                self.cancel_google_sign_in();
                 if self.profile_sync.pending() {
                     self.pending_close = Some(window);
                     self.shared_profile_action(profile_sync::Action::Stop);
@@ -2740,24 +2745,8 @@ impl App {
                 self.preferences.auto_backup = enabled;
                 self.preference_sync.changed();
             }
-            Message::GoogleLogin(retry) => {
-                if let Err(e) = self.read_preferences() {
-                    self.notice(e.to_string(), true);
-                } else if !self.preferences.requested_google_services().any() {
-                    self.notice(
-                        "Choose Drive backup or Calendar access before signing in.",
-                        true,
-                    );
-                } else {
-                    self.preferences.google_services =
-                        Some(self.preferences.requested_google_services());
-                    let request = self.preference_sync.changed();
-                    self.pending_google_login = Some((request, self.preferences.clone(), retry));
-                    if !self.queue_preference_write(request, self.preferences.clone()) {
-                        self.pending_google_login = None;
-                    }
-                }
-            }
+            Message::GoogleLogin(retry) => self.request_google_login(retry),
+            Message::CancelGoogleSignIn => self.cancel_google_sign_in(),
             Message::GoogleDriveAccess(enabled) => {
                 let mut services = self.preferences.requested_google_services();
                 services.drive = enabled;
@@ -3490,11 +3479,6 @@ impl App {
                 self.preferences.mail_check_seconds.to_string(),
             ),
             ("contacts", self.preferences.contacts.join(", ")),
-            ("google_id", self.preferences.google_client_id.clone()),
-            (
-                "google_secret",
-                self.preferences.google_client_secret.clone(),
-            ),
         ] {
             self.fields.insert(k, v);
         }
@@ -3512,8 +3496,6 @@ impl App {
             next.backup_copies = self.field("copies").parse()?;
             next.backup_hours = self.field("hours").parse()?;
             next.mail_check_seconds = self.field("mail_check_seconds").parse()?;
-            next.google_client_id = self.field("google_id").trim().into();
-            next.google_client_secret = self.field("google_secret").trim().into();
         }
         if self.fields.contains_key("contacts") {
             next.contacts = self
@@ -4148,6 +4130,7 @@ impl App {
         data["google_lifecycle"] = serde_json::json!(self.preferences.google_lifecycle);
         data["google_archived"] = serde_json::json!(self.workspace.google_archived);
         data["google_connected"] = serde_json::json!(self.google_connected);
+        data["google_sign_in"] = self.google_sign_in_state();
         data["event_access"] = serde_json::json!(self.event_access());
         data["group_conversations"] = serde_json::json!(self.preferences.group_conversations);
         data["draft_attachments"] = serde_json::json!(self.composer.current.draft.attachments);

@@ -5,8 +5,7 @@ use crate::store::Store;
 async fn google_login_waits_for_saved_permissions_and_rejects_changed_choices() {
     for changed in [false, true] {
         let (mut app, _) = App::new();
-        app.preferences.google_client_id = "fixture-client".into();
-        app.preferences.google_client_secret.clear();
+        app.google_client = Some("fixture-client".into());
         app.preferences.google_services = Some(GoogleServices {
             drive: true,
             calendar: GoogleCalendarRequest::Off,
@@ -54,7 +53,7 @@ async fn google_login_waits_for_saved_permissions_and_rejects_changed_choices() 
                 GoogleCalendarRequest::ReadOnly
             );
         } else {
-            let Command::GoogleLogin(actual, true) = commands.try_recv().unwrap() else {
+            let Command::GoogleLogin(actual, true, _) = commands.try_recv().unwrap() else {
                 panic!()
             };
             assert_eq!(actual.google_services, prefs.google_services);
@@ -66,6 +65,7 @@ async fn google_login_waits_for_saved_permissions_and_rejects_changed_choices() 
 #[test]
 fn google_sign_in_with_no_selected_services_never_enters_the_work_queue() {
     let (mut app, _) = App::new();
+    app.google_client = Some("fixture-client".into());
     app.preferences.google_services = Some(GoogleServices::default());
     app.settings_fields();
     let (saves, mut saved) = engine::CommandSender::persistence_test_channel();
@@ -80,6 +80,105 @@ fn google_sign_in_with_no_selected_services_never_enters_the_work_queue() {
             .0
             .contains("Choose Drive backup or Calendar access")
     );
+}
+
+#[test]
+fn a_build_without_a_google_client_disables_sign_in_and_never_saves_or_queues() {
+    let (mut app, _) = App::new();
+    app.google_client = None;
+    app.preferences.google_services = Some(GoogleServices {
+        drive: true,
+        calendar: GoogleCalendarRequest::ReadOnly,
+    });
+    app.settings_fields();
+    assert!(!app.google_sign_in_enabled());
+    assert_eq!(app.google_sign_in_state()["available"], false);
+    assert_eq!(app.google_sign_in_label(), "Sign in with Google");
+    let (saves, mut saved) = engine::CommandSender::persistence_test_channel();
+    app.tx = Some(saves);
+    for retry in [true, false] {
+        let _ = app.handle(Message::GoogleLogin(retry));
+        assert!(saved.try_recv().is_err());
+        assert!(app.pending_google_login.is_none());
+        assert_eq!(
+            app.notice.as_ref().unwrap().0,
+            "Google sign-in is not configured in this build."
+        );
+    }
+    app.google_client = Some("built-in".into());
+    assert!(app.google_sign_in_enabled());
+}
+
+#[test]
+fn cancelling_a_waiting_sign_in_cancels_the_queued_login_and_closing_does_too() {
+    for close in [false, true] {
+        let (mut app, _) = App::new();
+        app.google_client = Some("built-in".into());
+        app.preferences.google_services = Some(GoogleServices {
+            drive: true,
+            calendar: GoogleCalendarRequest::Off,
+        });
+        let (network, mut commands) = engine::CommandSender::network_test_channel();
+        app.tx = Some(network);
+        app.start_google_login(app.preferences.clone(), true);
+        let Command::GoogleLogin(_, true, cancel) = commands.try_recv().unwrap() else {
+            panic!()
+        };
+        assert!(app.google_waiting() && app.busy.contains("google"));
+        assert!(!app.google_sign_in_enabled());
+        assert_eq!(app.google_sign_in_state()["waiting"], true);
+        if close {
+            let _ = app.handle(Message::WindowClose(iced::window::Id::unique()));
+        } else {
+            let _ = app.handle(Message::CancelGoogleSignIn);
+        }
+        assert!(cancel.is_cancelled());
+        assert!(!app.google_waiting());
+        let _ = app.handle(Message::Backend(Event::Busy("google".into(), false)));
+        assert!(app.google_sign_in.is_none());
+        assert!(app.google_sign_in_enabled());
+    }
+}
+
+#[test]
+fn changed_permissions_after_the_save_do_not_start_the_older_sign_in() {
+    let (mut app, _) = App::new();
+    app.google_client = Some("built-in".into());
+    let saved = app.preferences.clone();
+    app.preferences.google_services = Some(GoogleServices {
+        drive: true,
+        calendar: GoogleCalendarRequest::Off,
+    });
+    let (network, mut commands) = engine::CommandSender::network_test_channel();
+    app.tx = Some(network);
+    app.start_google_login(saved, true);
+    assert!(commands.try_recv().is_err());
+    assert!(app.google_sign_in.is_none());
+    assert!(
+        app.notice
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("Google setup changed")
+    );
+}
+
+#[test]
+fn only_a_connection_from_a_self_configured_client_shows_the_switch_note() {
+    let (mut app, _) = App::new();
+    app.google_client = Some("built-in".into());
+    app.google_connected = true;
+    app.preferences.google_grant.client_id = "built-in".into();
+    assert!(!app.google_legacy_client());
+    assert_eq!(app.google_sign_in_label(), "Reconnect Google");
+    app.preferences.google_grant.client_id = "own-client".into();
+    assert!(app.google_legacy_client());
+    // A grant saved before grants recorded their client uses the stored client.
+    app.preferences.google_grant.client_id.clear();
+    app.preferences.google_client_id = "own-client".into();
+    assert!(app.google_legacy_client());
+    app.google_connected = false;
+    assert!(!app.google_legacy_client());
 }
 
 #[tokio::test]
@@ -137,7 +236,7 @@ async fn google_partial_grant_metadata_survives_newer_local_edits_and_old_worksp
     let prefs: Preferences = store.get("preferences").await.unwrap();
     let grant = GoogleGrant {
         id: "fixture".into(),
-        client_id: prefs.google_client_id.clone(),
+        client_id: "fixture-client".into(),
         access: GoogleAccess {
             known: true,
             calendar_read: true,
