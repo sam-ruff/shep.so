@@ -4,6 +4,21 @@ use iced::widget::column;
 impl App {
     pub(in crate::ui) fn advance_profile_cycle(&mut self) {
         let state = &mut self.profile_sync;
+        // A saved password toggle runs its own pass, even with sync paused, so
+        // turning it off can remove this device's entries.
+        if state.passwords_due
+            && self.pending_close.is_none()
+            && !state.pending()
+            && state.loading.is_none()
+            && !self.preference_sync.dirty()
+            && state.snapshot.as_ref().is_some_and(|s| {
+                s.available && s.enrollment.selection.as_ref().is_some_and(|v| v.ready)
+            })
+        {
+            self.shared_profile_action(Action::SyncPasswords);
+            return;
+        }
+        let state = &mut self.profile_sync;
         if self.pending_close.is_some()
             || state.pending()
             || state.loading.is_some()

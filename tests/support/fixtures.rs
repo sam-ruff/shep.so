@@ -4,6 +4,7 @@ mod bulk_history;
 #[path = "html_mail.rs"]
 mod html_mail;
 mod move_recovery;
+pub mod passwords;
 mod reading_mail;
 pub use move_recovery::recover_move;
 pub mod workspace;

@@ -17,6 +17,7 @@ pub mod replica;
 pub mod reviews;
 pub mod setup;
 pub mod state;
+pub mod vault;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};

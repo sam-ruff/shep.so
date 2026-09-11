@@ -285,6 +285,13 @@ impl Engine {
                 let result =
                     sync::continuous::run(&self.store, &mut replica, &session, &catalog, &control)
                         .await;
+                let passwords = match &result {
+                    Ok(_) => Some(
+                        self.password_pass(&replica, &session, &control, false)
+                            .await,
+                    ),
+                    Err(_) => None,
+                };
                 let closed = replica.close().await;
                 // A later upload error must not hide already committed remote
                 // changes from the native view. Do not reload an unchanged cache.
@@ -295,10 +302,41 @@ impl Engine {
                     self.workspace(&mut output).await?;
                 }
                 closed.context("Could not finish saving profile history. Keep the original workspace for recovery.")?;
-                let report = result?;
+                let mut report = result?;
+                report.passwords = passwords
+                    .transpose()
+                    .context("Profile checked, but passwords could not sync")?;
                 Ok(Update::Synced {
                     snapshot: Arc::new(current),
                     report,
+                })
+            }
+            Request::Passwords(_, retry) => {
+                let snapshot = self.store.profile_enrollment().await?;
+                let selection = snapshot
+                    .enrollment
+                    .selection
+                    .as_ref()
+                    .filter(|s| s.ready)
+                    .context("Finish joining a shared profile before syncing passwords.")?;
+                let replica = sync::replica::Replica::open(
+                    paths.history(&selection.binding)?,
+                    selection.binding.clone(),
+                    journal,
+                )
+                .await?;
+                let result = self
+                    .password_pass(&replica, &session, &control, retry)
+                    .await;
+                let closed = replica.close().await;
+                let current = self.store.profile_enrollment().await?;
+                if current.connections_revision != snapshot.connections_revision {
+                    self.workspace(&mut output).await?;
+                }
+                closed.context("Could not finish reading profile history.")?;
+                Ok(Update::Passwords {
+                    snapshot: Arc::new(current),
+                    report: result?,
                 })
             }
             Request::Discover(_) | Request::AfterLogin(_) => {
@@ -373,6 +411,70 @@ impl Engine {
             }
             _ => anyhow::bail!("Local profile controls reached the provider worker."),
         }
+    }
+
+    /// Reconcile the password vault, then test and activate each received pair
+    /// under the same lifecycle and account locks as an explicit account save.
+    async fn password_pass(
+        &self,
+        replica: &sync::replica::Replica,
+        session: &sync::drive::Session,
+        control: &Control,
+        retry_failed: bool,
+    ) -> anyhow::Result<sync::vault::Report> {
+        // Preview never reads the real keychain; only the owned fixture may.
+        #[cfg(feature = "test-support")]
+        if self.demo && !crate::test_support::passwords::active() {
+            return Ok(Default::default());
+        }
+        #[cfg(feature = "test-support")]
+        let fixture = crate::test_support::passwords::Tester;
+        #[cfg(feature = "test-support")]
+        let tester: &dyn sync::vault::Tester = if self.demo {
+            &fixture
+        } else {
+            &sync::vault::MailTester
+        };
+        #[cfg(not(feature = "test-support"))]
+        let tester: &dyn sync::vault::Tester = &sync::vault::MailTester;
+        let ctx = sync::vault::Context {
+            store: &self.store,
+            credentials: &self.credentials,
+            remote: session,
+            tester,
+            history: replica,
+            control,
+            retry_failed,
+        };
+        let outcome = sync::vault::reconcile(&ctx).await?;
+        let mut report = outcome.report;
+        for import in outcome.imports {
+            control.check()?;
+            let tested = async {
+                sync::vault::stage(&ctx, &import).await?;
+                let _account = self.account_access(&import.local).await;
+                control.read(sync::vault::test(&ctx, &import)).await
+            }
+            .await;
+            let result = match tested {
+                Ok(()) => {
+                    let _lifecycle = self.connection_lifecycle.write().await;
+                    let _account = self.account_access(&import.local).await;
+                    let activated = sync::vault::activate(&ctx, &import).await;
+                    report.imported += usize::from(activated.is_ok());
+                    activated
+                }
+                Err(error) if error.is::<sync::control::Stopped>() => Err(error),
+                Err(_) => {
+                    report.failed += 1;
+                    sync::vault::record_failure(&ctx, &import).await
+                }
+            };
+            let unstaged = sync::vault::unstage(&ctx, &import).await;
+            result?;
+            unstaged?;
+        }
+        Ok(report)
     }
 
     async fn publish_profile_seed(

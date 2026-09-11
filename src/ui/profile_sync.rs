@@ -66,6 +66,9 @@ pub enum Action {
     Enabled(bool),
     Accounts(bool),
     Settings(bool),
+    Passwords(bool),
+    SyncPasswords,
+    RetryPasswords,
     Name(String),
     CancelReview,
 }
@@ -99,6 +102,9 @@ pub(super) struct State {
     next_sync: Option<Instant>,
     cycle_paused: bool,
     cycle: Option<crate::profile_sync::continuous::Report>,
+    /// A password toggle change waits for its own vault pass.
+    passwords_due: bool,
+    passwords: Option<crate::profile_sync::vault::Report>,
 }
 impl State {
     pub(super) fn connection_removed(&mut self) {
@@ -165,6 +171,8 @@ impl State {
             "profiles":self.review.as_ref().map(|r|r.profiles()),
             "join_review":self.join_review.as_ref().map(|r|serde_json::json!({"name":r.name(),"accounts":r.accounts,"settings":r.settings,"offset":self.join_offset,"links":self.join_links,"page":r.account_page(self.join_offset).iter().map(|o|serde_json::json!({"shared":o.shared,"name":o.name,"email":o.email,"matches":o.matches.iter().map(|m|serde_json::json!({"id":m.id,"name":m.name})).collect::<Vec<_>>()})).collect::<Vec<_>>()})),"name":self.name,"error":self.error,
             "cycle":self.cycle.as_ref().map(|r|serde_json::json!({"applied":r.applied,"review":r.review,"published":r.published,"remaining":r.remaining})),
+            "passwords_due":self.passwords_due,
+            "passwords":self.passwords.as_ref().map(|r|serde_json::json!({"published":r.published,"removed":r.removed,"imported":r.imported,"failed":r.failed,"held":r.held,"waiting":r.waiting,"unreadable":r.unreadable,"rotated":r.rotated,"withdrawn":r.withdrawn,"read_only":r.read_only})),
             "enrollment":self.snapshot.as_ref().map(|s|&s.enrollment)})
     }
 }
@@ -279,6 +287,7 @@ impl App {
             Action::Enabled(value)
             | Action::Accounts(value)
             | Action::Settings(value)
+            | Action::Passwords(value)
             | Action::Automatic(value) => {
                 if self.profile_sync.snapshot.is_none() {
                     self.profile_sync.error = Some(
@@ -293,6 +302,11 @@ impl App {
                     Action::Enabled(_) => changes.enabled = Some(value),
                     Action::Accounts(_) => changes.accounts = Some(value),
                     Action::Automatic(_) => changes.discover_on_login = Some(value),
+                    Action::Passwords(_) => {
+                        changes.passwords = Some(value);
+                        self.profile_sync.passwords_due = true;
+                        self.profile_sync.passwords = None;
+                    }
                     _ => changes.settings = Some(value),
                 }
                 let options = changes.apply(self.profile_sync.options());
@@ -336,6 +350,8 @@ impl App {
             }
             Action::Discover
             | Action::Sync
+            | Action::SyncPasswords
+            | Action::RetryPasswords
             | Action::AccountReviews(_)
             | Action::ResolveAccount(..)
             | Action::SettingReviews
@@ -382,6 +398,10 @@ impl App {
                         self.profile_sync.next_sync =
                             Some(Instant::now() + Duration::from_secs(30));
                         Request::Sync(id)
+                    }
+                    Action::SyncPasswords | Action::RetryPasswords => {
+                        self.profile_sync.passwords_due = false;
+                        Request::Passwords(id, matches!(action, Action::RetryPasswords))
                     }
                     Action::Discover => {
                         self.profile_sync.login_pending = None;
@@ -575,6 +595,7 @@ impl App {
             state.stopping = None;
         }
         let mut refresh = false;
+        let mut password_notice = None;
         match update {
             Update::AccountReviews {
                 snapshot,
@@ -631,7 +652,18 @@ impl App {
                             30
                         }),
                 );
+                if let Some(passwords) = &report.passwords {
+                    state.passwords = Some(passwords.clone());
+                    password_notice = password_message(passwords);
+                }
                 state.cycle = Some(report);
+            }
+            Update::Passwords { snapshot, report } => {
+                if state.accepts_snapshot(&snapshot) {
+                    state.snapshot = Some(snapshot);
+                }
+                password_notice = password_message(&report);
+                state.passwords = Some(report);
             }
             Update::Status(snapshot)
             | Update::Published(snapshot)
@@ -718,6 +750,9 @@ impl App {
             Update::Stopped => {
                 refresh = true;
             }
+        }
+        if let Some((message, error)) = password_notice {
+            self.notice(message, error);
         }
         if login_review && self.can_auto_enroll() {
             self.profile_sync.offer = false;
@@ -831,6 +866,11 @@ impl App {
                         "Reconnect accounts",
                         Message::FindSetting(SettingsTab::Accounts, "Your accounts"),
                     ));
+                }
+                // An open shared review keeps its choices together at the end
+                // of the card; the password controls return when it closes.
+                if state.account_reviews.is_none() && state.setting_reviews.is_none() {
+                    body = body.push(self.shared_password_controls(options, idle && available));
                 }
             } else {
                 body = body.push(
@@ -1052,8 +1092,101 @@ impl App {
     }
 }
 
+impl App {
+    /// Google-only password sync: an explicit opt-in with a plain warning.
+    fn shared_password_controls(&self, options: Options, can_retry: bool) -> Element<'_, Message> {
+        use components::{muted, outline};
+        let state = &self.profile_sync;
+        let mut controls = column![
+            text("Account passwords").size(14).font(BOLD),
+            checkbox(options.passwords)
+                .label("Sync account passwords through your Google account")
+                .on_toggle_maybe(
+                    (state.snapshot.is_some() && options.accounts)
+                        .then_some(|v| Message::ProfileSync(Action::Passwords(v)))
+                )
+                .text_size(13),
+            muted("Anyone with access to this Google account's Drive app data could read them.")
+                .size(12),
+            muted(password_status(options, state.passwords.as_ref())).size(12),
+        ]
+        .spacing(8);
+        if options.sync_passwords()
+            && state
+                .passwords
+                .as_ref()
+                .is_some_and(|r| r.failed > 0 || r.held > 0)
+        {
+            controls = controls.push(
+                button(text("Try synced passwords again").size(13))
+                    .padding([12, 16])
+                    .style(outline)
+                    .on_press_maybe(
+                        can_retry.then_some(Message::ProfileSync(Action::RetryPasswords)),
+                    ),
+            );
+        }
+        controls.into()
+    }
+}
+
 fn counted(count: u64, noun: &str) -> String {
     format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
+}
+
+const PASSWORD_FAILED: &str =
+    "A synced password did not connect, so nothing was changed on this device.";
+
+fn password_message(report: &crate::profile_sync::vault::Report) -> Option<(String, bool)> {
+    if report.failed > 0 {
+        Some((PASSWORD_FAILED.into(), true))
+    } else if report.imported > 0 {
+        Some((
+            format!(
+                "Synced passwords saved for {}",
+                counted(report.imported as u64, "account")
+            ),
+            false,
+        ))
+    } else if report.withdrawn && report.removed > 0 {
+        Some((
+            "Passwords from this device were removed from your Google account".into(),
+            false,
+        ))
+    } else {
+        None
+    }
+}
+
+/// One status line for the password toggle, from the latest vault pass.
+fn password_status(
+    options: Options,
+    report: Option<&crate::profile_sync::vault::Report>,
+) -> &'static str {
+    let Some(report) = report else {
+        return if options.sync_passwords() {
+            "Passwords sync with the next profile check."
+        } else if options.passwords {
+            "Password sync is paused with account sync."
+        } else {
+            "Off. Imported accounts ask for their password with Reconnect."
+        };
+    };
+    if report.read_only {
+        "A newer Shep saved these passwords. Update Shep to change them here."
+    } else if report.failed > 0 || report.held > 0 {
+        PASSWORD_FAILED
+    } else if report.waiting > 0 {
+        "Some passwords wait for an account review or the other device's SMTP password."
+    } else if report.withdrawn {
+        "Off. Passwords this device added were removed from your Google account."
+    } else if !options.passwords {
+        "Off. Imported accounts ask for their password with Reconnect."
+    } else if !options.sync_passwords() {
+        "Password sync is paused with account sync."
+    } else {
+        "Passwords are synced through your Google account."
+    }
 }
 
 #[cfg(test)]
@@ -1502,5 +1635,67 @@ mod tests {
         );
         assert!(!app.profile_sync.options().accounts);
         assert!(!app.profile_sync.pending());
+    }
+
+    #[tokio::test]
+    async fn profile_password_toggle_saves_a_patch_then_runs_its_own_pass() {
+        let (mut app, mut queue, original) = app().await;
+        let mut ready = (*original).clone();
+        ready.available = true;
+        ready.enrollment.options.enabled = true;
+        ready.enrollment.selection = Some(crate::profile_sync::enrollment::Selection {
+            binding: shep_profile_core::history::Binding {
+                namespace: "so.shep".into(),
+                principal: "drive:fixture".into(),
+                profile: uuid::Uuid::new_v4(),
+                generation: uuid::Uuid::new_v4(),
+            },
+            name: "Home".into(),
+            origin: crate::profile_sync::enrollment::Origin::Join,
+            ready: true,
+        });
+        app.profile_sync.snapshot = Some(Arc::new(ready.clone()));
+        app.shared_profile_action(Action::Passwords(true));
+        let Command::ProfileSync(Request::Change { request, changes }) = queue.try_recv().unwrap()
+        else {
+            panic!("the toggle saves only its own field")
+        };
+        assert_eq!(
+            changes,
+            Changes {
+                passwords: Some(true),
+                ..Default::default()
+            }
+        );
+        // The vault pass waits for the saved choice.
+        app.advance_profile_cycle();
+        assert!(queue.try_recv().is_err());
+        let mut saved = ready.clone();
+        saved.enrollment.options.passwords = true;
+        saved.enrollment.revision += 1;
+        let _ = app.shared_profile_update(request, Update::Status(Arc::new(saved.clone())));
+        app.advance_profile_cycle();
+        let Command::ProfileSync(Request::Passwords(pass, false)) = queue.try_recv().unwrap()
+        else {
+            panic!("a saved toggle runs its own password pass")
+        };
+        let _ = app.shared_profile_update(
+            pass,
+            Update::Passwords {
+                snapshot: Arc::new(saved),
+                report: crate::profile_sync::vault::Report {
+                    failed: 1,
+                    ..Default::default()
+                },
+            },
+        );
+        assert!(app.notice.as_ref().is_some_and(|(_, error, _)| *error));
+        assert!(!app.profile_sync.passwords_due);
+        // Only an explicit retry tests a failed revision again.
+        app.shared_profile_action(Action::RetryPasswords);
+        assert!(matches!(
+            queue.try_recv().unwrap(),
+            Command::ProfileSync(Request::Passwords(_, true))
+        ));
     }
 }

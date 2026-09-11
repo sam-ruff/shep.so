@@ -2905,6 +2905,120 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(click(340,548),check("profile_sync.error",None),check("account_count",2),
                        check("profile_sync.working",False),shot("profile-continuous-retry"))
 
+    def open_synced_passwords(self, search_x=1150):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(search_x, 88), key("ctrl+a"), type_text("synced password"),
+                       check("settings_matches", ["Profiles and sync"]), click(480, 289),
+                       check("settings_group", "Profiles and sync"),
+                       check("profile_sync.loaded", True), wait(100))
+
+    def assert_no_synced_passwords(self, started, secrets, keychain_holds=True):
+        """Only the fictional keychain may hold a synced password: never the
+        workspace cache, profile journals, logs or harness observations."""
+        root = Path(started["artifacts"])
+        keychain = root / "fixture-keychain.json"
+        held = keychain.read_text(encoding="utf-8")
+        self.assertEqual(all(secret in held for secret in secrets), keychain_holds)
+        scanned = 0
+        for path in root.rglob("*"):
+            if not path.is_file() or path == keychain or path.suffix == ".webp":
+                continue
+            data = path.read_bytes()
+            scanned += 1
+            for secret in secrets:
+                self.assertNotIn(secret.encode(), data, f"{path.relative_to(root)} contains a synced password")
+        self.assertTrue((root / "fixture.sqlite").exists() and any(root.glob("app*.log")))
+        self.assertGreater(scanned, 5)
+
+    def test_profile_passwords_native_first_device_publishes_and_turning_off_removes_them(self):
+        started = self.mcp.call("desktop.start", profile_sync="empty", profile_passwords="ready")
+        print(f"Password publication evidence: {started['artifacts']}", flush=True)
+        self.open_shared_profiles()
+        self.mcp.batch(click(370, 442), check("profile_sync.review", 0), click(540, 482), key("ctrl+a"),
+                       type_text("Personal"), click(360, 570), check("profile_sync.enrollment.selection.ready", True),
+                       check("profile_sync.working", False), check("profile_sync.options.passwords", False),
+                       check("profile_drive_credentials.vaults", 0), wait(150), shot("profile-passwords-off-light"),
+                       click(288, 735), check("profile_sync.options.passwords", True),
+                       # Drive state is durable; a later periodic pass only confirms it.
+                       {**check("profile_drive_credentials.vaults", 1), "timeout_ms": 5000},
+                       check("profile_sync.working", False), check("profile_drive_credentials.keys", 1),
+                       check("profile_drive_credentials.plaintext", False),
+                       check("profile_sync.passwords.failed", 0), wait(150), shot("profile-passwords-published-light"),
+                       click(288, 735), check("profile_sync.options.passwords", False),
+                       {**check("profile_drive_credentials.vaults", 0), "timeout_ms": 5000},
+                       check("profile_sync.working", False), check("profile_drive_credentials.keys", 0),
+                       check("notice", "Passwords from this device were removed from your Google account"),
+                       wait(150), shot("profile-passwords-withdrawn-light"), {"type": "restart"})
+        self.open_synced_passwords()
+        self.mcp.batch(check("profile_sync.options.passwords", False), check("profile_drive_credentials.vaults", 0),
+                       check("account_count", 2), shot("profile-passwords-off-reopened"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.assert_no_synced_passwords(started, ("fixture-studio-password", "fixture-personal-password"))
+
+    def test_profile_passwords_native_second_device_imports_after_a_connection_test(self):
+        started = self.mcp.call("desktop.start", profile_sync="existing-passwords", profile_login=True,
+                                empty_profile=True, profile_passwords="ready")
+        print(f"Password import evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("profile_sync.working", False),
+                       check("account_count", 1), check("account_reconnect_count", 1), check("dark", True),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(1150, 88), key("ctrl+a"),
+                       type_text("appearance"), check("settings_matches", ["Appearance"]), click(480, 289),
+                       check("settings_group", "Appearance"), wait(100), click(423, 410), check("dark", False),
+                       check("preferences_saved", True))
+        self.open_synced_passwords()
+        self.mcp.batch(check("profile_sync.options.passwords", False), wait(100), shot("profile-passwords-import-before-light"),
+                       click(288, 788), check("profile_sync.options.passwords", True),
+                       {**check("account_reconnect_count", 0), "timeout_ms": 5000},
+                       check("profile_sync.working", False),
+                       check("profile_drive_credentials.keys", 1), check("profile_drive_credentials.vaults", 1),
+                       check("profile_drive_credentials.plaintext", False),
+                       check("notice", "Synced passwords saved for 1 account"),
+                       wait(150), shot("profile-passwords-imported-light"),
+                       {"type": "resize", "width": 900, "height": 640}, check("window_size", [900.0, 640.0]),
+                       click(650, 88), key("ctrl+a"), type_text("appearance"), check("settings_matches", ["Appearance"]),
+                       click(480, 289), check("settings_group", "Appearance"), wait(100), click(555, 410),
+                       check("dark", True), check("preferences_saved", True))
+        self.open_synced_passwords(650)
+        self.mcp.batch({"type": "hover", "x": 600, "y": 400}, {"type": "scroll", "amount": 12}, wait(150),
+                       shot("profile-passwords-imported-compact-dark"), {"type": "restart"},
+                       check("profile_sync.enrollment.selection.ready", True), check("account_reconnect_count", 0))
+        self.open_synced_passwords(650)
+        self.mcp.batch(check("profile_sync.options.passwords", True), check("account_reconnect_count", 0),
+                       {"type": "hover", "x": 600, "y": 400}, {"type": "scroll", "amount": 12}, wait(150),
+                       shot("profile-passwords-imported-reopened"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.assert_no_synced_passwords(started, ("fixture-cloud-incoming", "fixture-cloud-smtp"))
+
+    def test_profile_passwords_native_rejected_import_keeps_reconnect_and_offers_retry(self):
+        started = self.mcp.call("desktop.start", profile_sync="existing-passwords", profile_login=True,
+                                empty_profile=True, profile_passwords="reject")
+        print(f"Rejected password import evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("profile_sync.working", False),
+                       check("account_reconnect_count", 1))
+        self.open_synced_passwords()
+        failed = "A synced password did not connect, so nothing was changed on this device."
+        self.mcp.batch(click(288, 788), check("profile_sync.options.passwords", True),
+                       {**check("notice", failed), "timeout_ms": 5000},
+                       check("profile_sync.working", False), check("account_reconnect_count", 1),
+                       # Sync now holds the failed revision instead of testing it again.
+                       click(340, 548), {**check("profile_sync.passwords.held", 2), "timeout_ms": 5000},
+                       check("profile_sync.working", False), check("account_reconnect_count", 1),
+                       {"type": "hover", "x": 700, "y": 600}, {"type": "scroll", "amount": 12}, wait(150),
+                       shot("profile-passwords-rejected"))
+        # Only the explicit retry tests the pair again.
+        self.mcp.batch(click(380, 799), check("profile_sync.working", True),
+                       {**check("profile_sync.working", False), "timeout_ms": 5000},
+                       check("profile_sync.passwords.failed", 1), check("account_reconnect_count", 1),
+                       check("notice", failed), {"type": "restart"},
+                       check("profile_sync.enrollment.selection.ready", True))
+        self.open_synced_passwords()
+        self.mcp.batch(click(340, 548), {**check("profile_sync.passwords.held", 2), "timeout_ms": 5000},
+                       check("profile_sync.working", False), check("account_reconnect_count", 1),
+                       {"type": "hover", "x": 700, "y": 600}, {"type": "scroll", "amount": 12}, wait(150),
+                       shot("profile-passwords-rejected-reopened"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.assert_no_synced_passwords(started, ("fixture-cloud-incoming", "fixture-cloud-smtp"), keychain_holds=False)
+
     def test_profile_login_native_new_device_automatically_imports_one_complete_profile(self):
         started=self.mcp.call("desktop.start",profile_sync="existing-single",profile_login=True,empty_profile=True)
         print(f"Automatic profile evidence: {started['artifacts']}",flush=True)

@@ -236,6 +236,9 @@ pub struct Options {
     pub settings: bool,
     #[serde(default = "discover_by_default")]
     pub discover_on_login: bool,
+    /// Google-only password sync; off until the user explicitly enables it.
+    #[serde(default)]
+    pub passwords: bool,
 }
 fn discover_by_default() -> bool {
     true
@@ -247,6 +250,7 @@ impl Default for Options {
             accounts: true,
             settings: true,
             discover_on_login: true,
+            passwords: false,
         }
     }
 }
@@ -258,6 +262,10 @@ impl Options {
         );
         Ok(())
     }
+    /// Passwords follow account definitions; pausing either stops them.
+    pub fn sync_passwords(self) -> bool {
+        self.enabled && self.accounts && self.passwords
+    }
 }
 
 /// Device-local controls change only fields the user actually touched. An older
@@ -268,6 +276,7 @@ pub struct Changes {
     pub accounts: Option<bool>,
     pub settings: Option<bool>,
     pub discover_on_login: Option<bool>,
+    pub passwords: Option<bool>,
 }
 impl Changes {
     pub fn apply(self, mut options: Options) -> Options {
@@ -282,6 +291,9 @@ impl Changes {
         }
         if let Some(v) = self.discover_on_login {
             options.discover_on_login = v;
+        }
+        if let Some(v) = self.passwords {
+            options.passwords = v;
         }
         options
     }

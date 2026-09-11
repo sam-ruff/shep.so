@@ -36,7 +36,45 @@ Connection reviews read at most eight mapped native accounts per page. Each free
 
 **Keep this device's connection** publishes the reviewed local endpoints, preserving other field intent. **Add shared connection** assigns a fresh native account UUID and requires reconnection. The old account keeps its endpoints, credentials, mail and server identities, is named “(previous setup)” and remains local-only. It can later be removed through the normal account-removal review. No existing message UID or password is redirected to a different server. The shared operation retains its original optional fields and exact conflict resolutions.
 
-Native account changes and a durable pending operation are committed before shared-history admission. Restart retries that saved operation; it does not add another native account. Remote removals require a separate decision and cannot be revived by accepting an old connection review. Account password transfer, global removal choices and actual cross-client Google verification remain open. Local imports use reconnection while credential protection awaits the recorded user choice.
+Native account changes and a durable pending operation are committed before shared-history admission. Restart retries that saved operation; it does not add another native account. Remote removals require a separate decision and cannot be revived by accepting an old connection review. Global removal choices and actual cross-client Google verification remain open. Imported accounts still start with Reconnect; synced passwords (below) can complete it after a tested import.
+
+## Synced account passwords
+
+Sam chose Google-only protection (11 September 2026). **Sync account passwords
+through your Google account** sits under Profiles and sync, off until the user
+turns it on, and says plainly that anyone with access to that Google account's
+Drive app data could read them. It only runs while account sync is on. The
+contract, key custody and concurrency rules are in the credential section of the
+[handover](https://github.com/sam-ruff/shep.so/blob/main/docs/agents/PROFILE_SYNC_HANDOVER.md);
+the codec is `shared/profile-core`'s `vault` module.
+
+`profile_sync/vault` runs one pass after each continuous cycle, and on its own
+after the toggle changes. It lists the binding's key and vault files, merges
+every readable vault, publishes each mapped account's incoming (and separate
+SMTP) password from the keychain, confirms equal values and removes the entries
+of accounts removed here or in the shared history, rotating the key. Turning the
+toggle off removes this device's entries on the next online pass, even while
+profile sync is paused; when no password remains every credential file is
+deleted. A newer vault format is read-only here. While the toggle is on, each
+pass lists and downloads the binding's credential files (normally one key and
+one vault) and reads the mapped accounts' keychain entries; nothing is written
+when every slot is already current.
+
+Received passwords are staged in `<account>:vault-incoming`/`<account>:vault-smtp`
+keychain slots, read back and tested against the account's own servers under its
+account lock. Activation then takes the connection lifecycle and account locks,
+rechecks the account and mapping, writes the SMTP then incoming active slots and
+clears `profile_reconnect_v1` in the same transaction that records the revisions.
+A failed test keeps the active pair, deletes the staging and records the failed
+revision; **Try synced passwords again** retries it explicitly. A password is only
+offered to an account whose portable connection gives the published endpoint, so
+changed or downloaded servers keep the reviewed reconnection rules.
+
+`profile_credentials_v1` holds the toggle's pending removal, a vault device UUID,
+per-slot synchronised and failed revisions and staged account IDs; never a
+password, a digest of one or key material. Database import archives it. The two
+active keychain writes are not atomic: a failure between them leaves the
+revisions unrecorded, so the next pass stages, tests and activates the pair again.
 
 ## Post-enrollment account linking
 
@@ -74,6 +112,6 @@ controls and does not delete server mail or publish a shared removal.
 Keep decisions validate the selected profile, sync consent, Google lifecycle,
 native connection revision and exact reviewed remote history before committing.
 No cloud tombstone is inferred from removing an account only on this device.
-Global account removal and password transfer remain separate follow-ups. The saved native `profile_account_removal`
+Global account removal remains a separate follow-up. The saved native `profile_account_removal`
 scenarios cover Keep, Cancel, confirmed removal and restart; Rust fixtures retain
 actual cached mail through remote removal and reject stale choices.
