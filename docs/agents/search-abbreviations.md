@@ -13,7 +13,7 @@ demo_home=$(mktemp -d)
 XDG_DATA_HOME="$demo_home/data" XDG_CONFIG_HOME="$demo_home/config" XDG_CACHE_HOME="$demo_home/cache" CARGO_BUILD_JOBS=4 cargo run --profile test-ui --features test-support -- --demo --search-mail --nested-folders
 ```
 
-In Preferences, try `sys tr`, `sfp fng`, `dark mode` and `appearnce`. In Move,
+In Preferences, try `prf`, `ntfctns`, `dark mode` and `appearnce`. In Move,
 compare `Archive`, `archvie` and `pjarch` against folders named `Archive` and
 `Projects/Archive`. Mail needs cached messages to compare: a short body equal to
 the query comes first; a matching phrase then precedes separated exact words,
@@ -24,11 +24,15 @@ which precede prefix or corrected words. For example, search `architecture plan
 Exact labels, exact folder leaves and prefixes receive the strongest label
 scores. Every remaining query term must match. Nucleo rewards compact
 subsequences and word boundaries; if a term has no subsequence match, OSA allows
-one edit for words of at least three characters and two for at least six.
-Transpositions count as one edit. Numeric terms require a complete token.
-Punctuation is passed literally to the low-level matcher, so `!`, `^`, `$` and
-`|` do not become query operators. One matcher and its scratch buffer are reused
-through each result batch.
+one edit for words of at least four characters in Settings or three in Move,
+and two for at least six.
+Transpositions count as one edit. Label terms containing digits require a
+complete token, so `S3` cannot match `S30`.
+Folder punctuation is passed literally to the low-level matcher; Preferences
+and mail split text into words. Neither enables `!`, `^`, `$` or `|` as query
+operators. One matcher and its scratch buffer are reused through each result
+batch. Preferences caches each query word's characters alongside the immutable
+catalogue words and their field weights.
 
 Mail uses SQLite FTS5 and field-weighted BM25 within each tier. Subject, body and
 sender weights are 2.0, 1.0 and 0.3. Phrase and literal relations are computed
@@ -40,7 +44,8 @@ Mail abbreviations do not scan every message or vocabulary term. Mail keeps the
 bounded existing expansion: up to 12 query tokens, 32 one-edit vocabulary
 candidates, 256 prefix-neighbour candidates for longer words and 12 corrections
 per token. Only ASCII alphabetic words receive typo expansion; Unicode literal
-matching remains available. Latin accents are normalised without stripping
+matching remains available. Wholly numeric mail tokens are exact; mixed letters
+and digits retain prefix matching, so mail `S3` can still match `S30`. Latin accents are normalised without stripping
 Japanese marks or decomposing Hangul. BM25 statistics use the cached collection,
 while account, folder and flag filters still restrict returned results.
 

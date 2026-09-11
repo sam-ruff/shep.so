@@ -1,8 +1,30 @@
 use shep::{
-    fuzzy::{Matcher, ranked, ranked_labels, score},
+    fuzzy::{Matcher, WordMatcher, ranked, ranked_labels, score},
     model::*,
     store::{MailSelectionId, Store},
 };
+
+#[test]
+fn catalogue_word_scoring_reuses_queries_and_keeps_identifier_and_typo_rules() {
+    let mut matcher = WordMatcher::new("prf ntfctns archvie S3 2026");
+    for (query, candidate) in [
+        ("prf", "profiles"),
+        ("ntfctns", "notifications"),
+        ("archvie", "archive"),
+        ("s3", "s3"),
+        ("2026", "2026"),
+    ] {
+        assert!(matcher.score_normalized(query, candidate).is_some());
+    }
+    for (query, candidate) in [
+        ("s3", "s30"),
+        ("2026", "20260"),
+        ("prf", "archive"),
+        ("absent", "absent"),
+    ] {
+        assert_eq!(matcher.score_normalized(query, candidate), None);
+    }
+}
 
 #[test]
 fn labels_and_path_leaves_outrank_abbreviations_and_typo_fallbacks() {
@@ -35,11 +57,14 @@ fn each_term_is_required_and_numbers_cannot_be_approximate() {
         ("17", "Folder 1 7"),
         ("17", "Folder 18"),
         ("archvie 17", "Archive 170"),
+        ("S3", "S30 storage"),
+        ("2026", "Archive 20260"),
     ] {
         assert_eq!(score(query, candidate), None, "{query}: {candidate}");
     }
     assert!(score("archvie 17", "Folder 17/Archive").is_some());
     assert!(score("17", "Folder 17/Archive").is_some());
+    assert!(score("S3", "S3 storage").is_some());
 }
 
 #[test]

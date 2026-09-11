@@ -36,6 +36,74 @@ struct Term {
     numeric: bool,
 }
 
+fn literal_matcher() -> nucleo_matcher::Matcher {
+    let mut config = Config::DEFAULT;
+    config.normalize = false;
+    config.ignore_case = false;
+    nucleo_matcher::Matcher::new(config)
+}
+
+/// Score already-normalised catalogue words using one query's cached needles.
+pub struct WordMatcher {
+    terms: Vec<Term>,
+    matcher: nucleo_matcher::Matcher,
+    candidate_chars: Vec<char>,
+}
+
+impl WordMatcher {
+    pub fn new(query: &str) -> Self {
+        let terms = normalized(query)
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|term| !term.is_empty())
+            .map(|text| Term {
+                text: text.to_owned(),
+                chars: text.chars().collect(),
+                numeric: text.chars().any(char::is_numeric),
+            })
+            .collect();
+        Self {
+            terms,
+            matcher: literal_matcher(),
+            candidate_chars: Vec::new(),
+        }
+    }
+
+    pub fn score_normalized(&mut self, query: &str, candidate: &str) -> Option<usize> {
+        let term = self.terms.iter().find(|term| term.text == query)?;
+        if query == candidate {
+            return Some(0);
+        }
+        if term.numeric {
+            return None;
+        }
+        if candidate.starts_with(query) {
+            return Some(2);
+        }
+        self.candidate_chars.clear();
+        self.candidate_chars.extend(candidate.chars());
+        if let Some(score) = self.matcher.fuzzy_match(
+            Utf32Str::Unicode(&self.candidate_chars),
+            Utf32Str::Unicode(&term.chars),
+        ) {
+            return Some(10 + 64usize.saturating_sub(usize::from(score) / term.chars.len()));
+        }
+        let cutoff = match term.chars.len() {
+            0..=3 => return None,
+            4..=5 => 1,
+            _ => 2,
+        };
+        if term.chars.len().abs_diff(self.candidate_chars.len()) > cutoff {
+            return None;
+        }
+        osa::distance_with_args(
+            term.chars.iter().copied(),
+            self.candidate_chars.iter().copied(),
+            &osa::Args::default().score_cutoff(cutoff),
+        )
+        .map(|edits| 60 + edits * 10)
+    }
+}
+
 /// Reuse Nucleo's scratch allocation across a complete result batch.
 pub struct Matcher {
     query: String,
@@ -52,16 +120,13 @@ impl Matcher {
             .map(|text| Term {
                 text: text.to_owned(),
                 chars: text.chars().collect(),
-                numeric: text.chars().all(char::is_numeric),
+                numeric: text.chars().any(char::is_numeric),
             })
             .collect();
-        let mut config = Config::DEFAULT;
-        config.normalize = false;
-        config.ignore_case = false;
         Self {
             query,
             terms,
-            matcher: nucleo_matcher::Matcher::new(config),
+            matcher: literal_matcher(),
             candidate_chars: Vec::new(),
         }
     }
