@@ -1858,6 +1858,29 @@ class NativeFlows(unittest.TestCase):
                        key("Escape"), key("ctrl+r"), check("refreshing", True),
                        check("refreshing", False), check("selected", "Quick note"), shot("search-relevance-after-sync"))
 
+    def scroll_reader_to_end(self):
+        # Overscrolling clamps at the end, so generous batches are safe.
+        for _ in range(3):
+            self.mcp.batch({"type": "hover", "x": 1000, "y": 500}, *[{"type": "scroll", "amount": 30}] * 95)
+        self.mcp.batch(wait(150))
+
+    def test_long_message_show_more_loads_every_part(self):
+        started = self.mcp.call("desktop.start", long_mail=True)
+        print(f"Long message evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("selected", "Long quarterly report"), check("body_chars", 32000),
+                       check("body_truncated", True))
+        self.scroll_reader_to_end()
+        self.mcp.batch(shot("long-message-first-part"), click(1008, 732),
+                       check("body_chars", 64000), check("body_truncated", True))
+        # A background refresh reloads the reader without collapsing it.
+        self.mcp.batch(key("ctrl+r"), check("refreshing", True), check("refreshing", False),
+                       check("selected", "Long quarterly report"), check("body_chars", 64000))
+        self.scroll_reader_to_end()
+        self.mcp.batch(click(1008, 732), check("body_truncated", False), check("body_chars", 64001, "gte"))
+        # The whole message takes longer to present; scrolling to the end proves the last line is readable.
+        self.scroll_reader_to_end()
+        self.mcp.batch(shot("long-message-complete"))
+
     def test_move_library_matches_accents_and_fast_typo_enter(self):
         self.mcp.call("desktop.start", search_mail=True)
         self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("test"),

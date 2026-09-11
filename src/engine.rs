@@ -72,6 +72,8 @@ pub enum Command {
         revision: u64,
         id: String,
         prefetch: bool,
+        /// Plain-text characters to load; the reader asks for more on demand.
+        body_chars: usize,
     },
     SaveAccount(Account, SecretString, SecretString),
     TestConnection(Account, SecretString, SecretString, ConnectionTarget),
@@ -730,10 +732,11 @@ impl Engine {
                 revision,
                 id,
                 prefetch,
+                body_chars,
             } => {
                 let result = self
                     .store
-                    .detail(id.clone())
+                    .detail_limited(id.clone(), body_chars)
                     .await
                     .map(Arc::new)
                     .map_err(|e| format!("{e:#}"));

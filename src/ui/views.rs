@@ -858,7 +858,17 @@ impl App {
             }
         }
         if detail.body_truncated {
-            message=message.push(muted("Showing the first 32,000 characters. Export the original email to read the full message."));
+            message = message.push(
+                row![
+                    muted("Showing the beginning of this long message.").size(12),
+                    button(text("Show more").size(12))
+                        .padding([8, 12])
+                        .style(outline)
+                        .on_press(Message::MoreBody),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+            );
         }
         reading.push(self.text_column(message.into()))
     }

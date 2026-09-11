@@ -227,6 +227,25 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
         }
         store.upsert(messages).await?;
     }
+    if std::env::args().any(|arg| arg == "--long-mail") {
+        // About 88,000 characters: three reader pages with a distinct last line.
+        let body: String = (1..=1200)
+            .map(|line| {
+                format!("Line {line:04}. This long report keeps going so the reader loads it in parts.\r\n")
+            })
+            .collect();
+        let mut mail = parse_mail(
+            "preview-work",
+            "long-report",
+            "INBOX",
+            format!("From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: Long quarterly report\r\n\r\n{body}")
+                .into_bytes(),
+            true,
+            false,
+        )?;
+        mail.summary.timestamp = chrono::Utc::now().timestamp() + 120;
+        store.upsert(vec![mail]).await?;
+    }
     if std::env::args().any(|a| a == "--outgoing-mail") {
         seed_outgoing(store).await?;
     }

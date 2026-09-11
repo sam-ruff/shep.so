@@ -555,6 +555,7 @@ mod tests {
                 revision: 0,
                 id: id.clone(),
                 prefetch: false,
+                body_chars: crate::store::READER_BODY_PAGE,
             })
             .unwrap();
         sender

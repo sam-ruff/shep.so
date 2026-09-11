@@ -2,6 +2,38 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## 11 September: long messages load in parts (R23 reader)
+
+The plain-text reader no longer stops at 32,000 characters. `Store::detail_limited`
+loads a message with a character budget, never below one 32,000-character page,
+and `Command::Detail` carries that budget. The reader opens at the first page;
+**Show more** re-requests the open message with its shown length plus one page
+through the ordinary detail path, so the reply split, text selection and Find keep
+working unchanged. Every other request for the open message (conversation focus,
+prefetch and the reload after a background change) reuses the loaded length, so a
+refresh never collapses it. The old dead-end notice is replaced by "Showing the
+beginning of this long message." beside the button. The original MIME is still
+parsed whole as before; the change bounds what is rendered, and the detail cache
+stays capped by total bytes.
+
+Verification: two new store tests (paging to the end, clamping to one page, short
+messages) and a UI test (Show more requests the next page; a background change
+keeps the expanded length); 16 targeted UI tests, fmt, both Clippy runs (all
+features and no features) and 96 Python tests pass. Native: a new `long_mail`
+fixture flag and `test_long_message_show_more_loads_every_part`; all 49 selected
+reader scenarios pass (long message, conversations, HTML, search, Find,
+read-on-leave, replies) in 528 s, and the final long-message rerun passes with
+evidence in `f1fd9d430153`. Reviewed captures show the first part with the notice
+and button, the second part, and the complete message ending at `Line 1200.`.
+
+Limitations: the first run's final capture, taken 150 ms after the state reported
+the whole message loaded, still showed the previous frame. Presenting about 88,000
+characters takes noticeably longer than that settle, so the scenario now scrolls to
+the end before capturing; that presentation latency is not measured here and
+belongs to the idle-host performance pass. Parts are cut by character count, so a
+part can end mid-line. Still open under R23: the 25 MiB incoming skip, the 256 MiB
+restore limit and the outgoing limit audit (see TODO).
+
 ## Encrypted cache bootstrap, guard retention and keyed import: lane checkpoint
 
 R22 gains the startup routing that the publication checkpoint left open.

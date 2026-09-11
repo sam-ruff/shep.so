@@ -5,6 +5,14 @@ use iced::{
 };
 
 impl App {
+    /// Keeps a long message at the length the reader has already loaded.
+    pub(super) fn detail_body_chars(&self, id: &str) -> usize {
+        self.detail
+            .as_ref()
+            .filter(|detail| detail.summary.id == id)
+            .map_or(0, |detail| detail.body.chars().count())
+            .max(crate::store::READER_BODY_PAGE)
+    }
     pub(super) fn document_background(&self, detail: &MailDetail) -> Option<iced::Color> {
         self.formatted(detail)
             .then(|| self.html_reader.frame.as_ref().and_then(|f| f.background))
