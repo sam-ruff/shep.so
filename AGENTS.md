@@ -1297,8 +1297,9 @@ marker in newer workspace snapshots; remove it on explicit account removal.
 Keep catalog restart/change-token/ownership, join category/stale/rollback/tombstone,
 unknown-connection and native review/import/restart regressions. Joining is an
 initial import; account linking, conflict/removal/endpoint reviews and credential
-transfer remain TODO work. The protection choice is still
-unanswered. Follow the shared handover before extending the format.
+transfer remain TODO work. Sam chose Google-only credential protection on
+11 September 2026; follow the shared handover's credential section before
+extending the format.
 
 Enrollment saves `profile_replication_v1` on the cache owner. First-device setup
 verifies the seed's current field values and saves their common basis before any

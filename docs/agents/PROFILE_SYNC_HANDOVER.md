@@ -199,26 +199,32 @@ provider receipts and profile callbacks. Keep SMTP, MOVE, APPEND, folder actions
 and their execution receipts out of continuously synchronized profile records;
 sync must never cause a second device to execute an old outgoing action.
 
-## Credential protection: outstanding choice
+## Credential protection: Google-only (decided 11 September 2026)
 
-The user has been asked whether new-device account passwords should require a
-separate sync passphrase or unlock with Google sign-in alone. **No answer is
-recorded.** Do not choose silently or claim passwords already sync. Account
-definitions/settings and database portability can progress independently.
+Sam chose Google-only protection: account passwords on a new device unlock with
+Google sign-in alone, with no separate sync passphrase. A passphrase was
+declined; do not add one without a new decision. Passwords do not sync yet, so
+do not claim they do until a client ships and verifies this design.
 
-With a separate passphrase, use authenticated encryption and an explicitly
-versioned password KDF, with fresh salts/nonces and a bounded parameter validator.
-Keep the unlock key only in memory or device secure storage. Never put an
-unwrapped key beside its ciphertext in Drive. Golden cross-language fixtures
-must cover the exact envelope and authentication data. The existing backup
-Argon2id/AES-GCM format is a reference, not automatically a profile protocol.
+Google-only means anyone who can read the user's Drive app data (the user's
+Google account, or Google itself) can recover the synced passwords. Say so
+plainly in each client's UI and docs, and never label the data as encrypted
+against Drive while Drive also holds everything needed to decrypt it.
 
-Google-only unlocking requires a documented key-custody design and an explicit
-account of what Google/account access protects. Do not label data encrypted
-against Drive if Drive also stores everything needed to decrypt it. In either
-mode, import a complete incoming/SMTP pair into a newly staged local credential
-slot, activate only after successful validation, and preserve the old active
-pair on failure. The receiving device still performs its own Google OAuth flow;
+Before either client ships it, document the key custody: where the vault key
+lives, how it is created exactly once, rotated and removed. Keep passwords out of
+the append-only causal history, so a changed or removed password does not
+persist in immutable records; use a separate, replaceable app-data vault instead.
+Encrypting that vault with a key held in a different app-data file is still
+worthwhile, because it keeps secrets out of history records, caches, logs and
+exports, but it is not protection from Drive. No device writes a synced password
+to SQLite or logs; only the OS keychain or platform secure storage holds it.
+Golden cross-language fixtures must cover the exact envelope and authentication
+data.
+
+Import a complete incoming/SMTP pair into a newly staged local credential slot,
+activate it only after successful validation, and preserve the old active pair
+on failure. The receiving device still performs its own Google OAuth flow;
 Google refresh tokens are never portable profile credentials.
 
 ## Complete database transfer (main's R83, shipped in `93d4289`)
