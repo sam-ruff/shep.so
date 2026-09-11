@@ -71,13 +71,14 @@ Profiles can be renamed or selected for the next launch in Accounts. This is a o
 
 ## Connect Google (optional)
 
-Google setup currently requires your own Google Cloud project:
+1. Open **Preferences → Accounts** or **Calendars** and find **Google connection**.
+2. Choose **Drive backups**, Calendar access, or both.
+3. Choose **Sign in with Google**, approve access in your browser, then return to Shep.
 
-1. Enable the **Drive API** and **Google Calendar API**.
-2. Configure the OAuth consent screen; add yourself as a test user when required.
-3. Create a **Desktop app** OAuth client.
-4. Enter its client ID and secret in Preferences, save, and choose **Connect Google**.
+You do not need a Google Cloud project or any OAuth credentials. **Cancel sign-in** stops waiting for the browser. If the button says Google sign-in is not configured in this build, that copy of Shep was built without its Google client.
 
-Google sign-in connects Calendar and Drive, not Gmail mail access. Drive copies live in private app storage and do not appear in My Drive. Use the same OAuth application when restoring on another machine.
+Google sign-in connects Calendar and Drive, not Gmail mail access. Drive copies live in private app storage and do not appear in My Drive.
+
+If you connected with your own Google Cloud client in an earlier version, that connection keeps working. Signing in again switches to Shep's client, and Drive backups made with your own client are no longer listed.
 
 In **Accounts → Profiles and sync**, review shared connection changes before using them. Keep this device’s connection, or add the shared setup and reconnect it. The previous account and its mail stay available.

@@ -17,6 +17,7 @@ Read the repository's [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/
 - [Mail](mail.md): navigation, drafts, delivery recovery, Sent copies and reading behavior.
 - [Calendar](calendar.md): discovery, access, write acknowledgments, conflicts and connection removal.
 - [Google and backups](backups.md): authorization, destination identity, scheduling, resumable uploads and additive restore.
+- [Google sign-in client](google-sign-in.md): Shep's compiled-in Desktop OAuth client, build variables, self-configured grants and the Google Cloud setup.
 - [Multiple backup destinations](MULTIPLE_BACKUPS.md): several local, S3/SFTP/FTP and Google Drive destinations with independent schedules, retention and passphrases.
 - [Local cache encryption](CACHE_ENCRYPTION.md): SQLCipher device keys, staged migration and recovery boundaries (in progress).
 - [Database transfer and profiles](profiles.md): staged import, local profile selection, credential isolation and the desktop profile sync implementation.
