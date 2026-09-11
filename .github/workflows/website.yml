@@ -8,6 +8,10 @@ on:
     branches: [main]
     paths:
       - "website/**"
+      - "assets/logo-light.webp"
+      - "assets/logo-dark.webp"
+      - "docs/images/mail-light.webp"
+      - "docs/images/calendar-dark.webp"
       - ".github/workflows/website.yml"
   workflow_dispatch:
 
@@ -25,6 +29,10 @@ jobs:
   build:
     runs-on: [self-hosted, sophie-small]
     timeout-minutes: 30
+    env:
+      # Step conditions cannot read secrets, so resolve the push decision here.
+      # Until the zot account's secrets exist the image is built but not pushed.
+      PUBLISH: ${{ github.ref == 'refs/heads/main' && secrets.ZOT_USERNAME != '' }}
     defaults:
       run:
         working-directory: website
@@ -40,7 +48,7 @@ jobs:
       - name: Install test tooling
         run: |
           python3 -c 'import PIL' || python3 -m pip install --user --break-system-packages pillow
-          npx playwright install chromium
+          npx playwright install --with-deps chromium
 
       - name: Playwright (Chromium)
         run: npm test
@@ -57,7 +65,7 @@ jobs:
             -t "$IMAGE:latest" .
 
       - name: Log in to the registry
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: env.PUBLISH == 'true'
         uses: docker/login-action@v3
         with:
           registry: registry.tail2d6fbe.ts.net
@@ -65,7 +73,11 @@ jobs:
           password: ${{ secrets.ZOT_PASSWORD }}
 
       - name: Push image
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: env.PUBLISH == 'true'
         run: |
           docker push "$IMAGE:${{ steps.tag.outputs.sha }}"
           docker push "$IMAGE:latest"
+
+      - name: Report a skipped push
+        if: env.PUBLISH != 'true'
+        run: echo "::notice::Image built but not pushed. Pushes need main and the ZOT_USERNAME/ZOT_PASSWORD secrets."
