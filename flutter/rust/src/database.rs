@@ -84,7 +84,7 @@ impl Database {
                     .map_err(|_| anyhow::anyhow!("Cache connection failed. Reopen Shep."))?
                     .query_row("PRAGMA user_version", [], |r| r.get(0))?;
                 anyhow::ensure!(
-                    version <= 12,
+                    version <= 13,
                     "This cache requires a newer Shep version. Update before reopening it."
                 );
                 return Ok(profile);
@@ -107,7 +107,7 @@ impl Database {
             )?;
             let version: u32 = writer.query_row("PRAGMA user_version", [], |r| r.get(0))?;
             anyhow::ensure!(
-                version <= 12,
+                version <= 13,
                 "This cache requires a newer Shep version. Update before reopening it."
             );
             writer.execute_batch(include_str!("schema.sql"))?;
@@ -121,6 +121,7 @@ impl Database {
                 "UPDATE outgoing_sent SET state='uncertain' WHERE state='appending'",
                 [],
             )?;
+            crate::groups::restart(&writer)?;
             let reader = || -> Result<Arc<Mutex<Connection>>> {
                 let connection =
                     Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;

@@ -1,4 +1,5 @@
 import 'selection.dart';
+import 'groups.dart';
 import 'dart:convert';
 import 'attachments.dart';
 import 'message_search.dart';
@@ -22,6 +23,7 @@ String _encode(Map<String, Object?> data) => jsonEncode(data);
 class NativeRepository
     implements
         SelectionRepository,
+        GroupRepository,
         MailRepository,
         AccountRepository,
         ProfileAccountRepository,
@@ -369,6 +371,51 @@ class NativeRepository
       value['scope'] = scope;
     }
     return call({'op': 'selection', 'command': value, 'observed': observed});
+  }
+
+  Map<String, Object?> _groupScope(Map<String, Object?> command) {
+    final value = Map<String, Object?>.of(command);
+    if (value['scope'] case final Map original) {
+      final scope = Map<String, Object?>.from(original);
+      if (scope['account'] case final Object selected) {
+        scope['account'] = mailAccounts
+            .where((a) => a.id == selected || a.email == selected)
+            .firstOrNull
+            ?.id;
+      }
+      value['scope'] = scope;
+    }
+    return value;
+  }
+
+  @override
+  Future<dynamic> groups(Map<String, Object?> command) =>
+      call({'op': 'groups', 'command': _groupScope(command)});
+
+  @override
+  Future<Map<String, dynamic>> groupStep() async {
+    var result =
+        await call({
+              'op': 'groups',
+              'command': {'kind': 'step'},
+            })
+            as Map<String, dynamic>;
+    if (result['requires_credentials'] case final String accountId) {
+      final account = mailAccounts.where((a) => a.id == accountId).firstOrNull;
+      if (account == null) {
+        throw const MailOperationFailure(
+          'This account changed. Reopen Preferences and refresh its folders.',
+        );
+      }
+      // The credential enters only this one step; Rust never stores it.
+      result =
+          await call({
+                'op': 'groups',
+                'command': {'kind': 'step', ...await _incoming(account)},
+              })
+              as Map<String, dynamic>;
+    }
+    return result;
   }
 
   @override
