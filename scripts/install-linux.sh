@@ -12,6 +12,10 @@ for shep_arg in "$@"; do
 done
 if [[ "$shep_build" == 1 ]]; then
   if [[ -f "$shep_root/Cargo.toml" ]]; then
+    # Shep's Google client is compiled in from these (see docs/agents/google-sign-in.md).
+    if [[ -z "${SHEP_GOOGLE_CLIENT_ID:-}" || -z "${SHEP_GOOGLE_CLIENT_SECRET:-}" ]]; then
+      echo 'Note: SHEP_GOOGLE_CLIENT_ID and SHEP_GOOGLE_CLIENT_SECRET are not both set, so Sign in with Google will be unavailable in this build.' >&2
+    fi
     cargo build --manifest-path "$shep_root/Cargo.toml" --release --locked --no-default-features
     set -- --binary "$shep_root/target/release/shep" "$@"
   elif [[ -x "$shep_root/shep" ]]; then
