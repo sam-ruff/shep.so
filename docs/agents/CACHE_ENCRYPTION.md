@@ -25,9 +25,9 @@ Selection membership and
 frozen reviews now use a private attached encrypted scratch database, with a
 2 MiB page-cache target. Full selection ordering builds an index on disk and
 walks it one row at a time instead of materializing an unbounded sort/window.
-Conversation duplicate choice and chronological ordering also use indexed scratch
+Conversation duplicate choice and newest-first ordering also use indexed scratch
 metadata, loading only the requested 20-message page into Rust. Anchor/focus copy
-precedence and timestamp/ID ordering remain unchanged.
+precedence is preserved; both timestamps and stable ID ties sort descending.
 
 Scratch uses DELETE rollback journals with synchronous OFF. It is disposable
 session state, has no crash-durability guarantee, and is never reused after a

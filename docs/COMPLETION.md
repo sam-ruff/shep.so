@@ -2,6 +2,44 @@
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
 
+## 11 September: newest-first desktop conversations (R35)
+
+Reader conversation cards and the history below inline replies now show the
+latest message first, followed by earlier messages. Newer/Older controls page
+the same descending timestamp/ID order through the existing indexed scratch
+query. Copy precedence, selected physical messages, bounded 20-message pages,
+parked drafts and same-page refresh scroll remain intact.
+
+The saved newest-first native test fails on the original executable with
+`launch-0` where `launch-2` is expected (`artifacts/logs/ordering-baseline.log`).
+All 14 relevant conversation/inline native paths have passing coverage in
+`ordering-native-final.log` plus `ordering-parking-final.log`: the first run's
+new parking test incorrectly used Reply to reopen a draft, which creates a new
+draft; its corrected run uses actual inbox navigation. Earlier test setup fixes
+await native editor focus before typing and use the newest message's actual
+Inbox identity in page assertions. No production input workaround was added.
+
+Five conversation store tests pass, including full 55-message paging and
+physical-copy flags. The encrypted 512-message ranking oracle retains tied-date,
+focus, duplicate-copy, query-plan and restart coverage. Python reports 103
+executions with seven intentional skips; the parity registry and pinned strict
+Zensical build pass. Mandatory-hook results and the shipping commit are recorded
+by the integrating agent.
+
+Reviewed WebPs under this lane's `artifacts/e2e/`: `77ee9e05b620` shows the
+newest-first reader, retained reply text and refreshed thread;
+`3a40f0959a9c/conversation-compact.webp`,
+`a34b6d20c148/conversation-dark.webp` and
+`50276a03d6a4/conversation-full-reader.webp` show readable compact, dark and
+full-window cards. Separate HTML surface scenarios also preserve white/navy
+message backgrounds and refresh scroll in both themes.
+
+This is the desktop ordering correction. Flutter/browser separate conversation
+cards and newest-first reply history remain active parity gaps. Footer pinning
+is R96, quote defaults are R97, and performance plus Windows/macOS runtime
+verification are separate work. The personal installation is unchanged;
+main integration and push belong to the primary agent.
+
 ## 11 September: Flutter selection and durable group actions, mobile Flutter bulk lane (R42, lane `worktree-agent-ae7cbc9c5369daf18`)
 
 The mobile session's lane, verified by an integration agent while that session
