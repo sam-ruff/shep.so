@@ -58,6 +58,15 @@ jobs:
         id: tag
         run: echo "sha=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
+      - name: Let Docker resolve the lab cache
+        # Docker reaches cgr.dev through the pool's cache.local proxy, and its Go
+        # resolver cannot look up mDNS names, so pin the address glibc resolves.
+        run: |
+          addr=$(getent ahostsv4 cache.local | awk 'NR==1 {print $1}')
+          if [ -n "$addr" ] && ! grep -q '[[:space:]]cache\.local$' /etc/hosts; then
+            echo "$addr cache.local" | sudo tee -a /etc/hosts
+          fi
+
       - name: Build image
         working-directory: .
         run: |
