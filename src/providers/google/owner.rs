@@ -14,6 +14,8 @@ pub(super) struct Backend {
     pub(super) http: reqwest::Client,
     pub(super) credentials: Arc<dyn CredentialStore>,
     pub(super) token_endpoint: url::Url,
+    /// This build's client for new sign-ins; `None` when none is configured.
+    pub(super) client: Option<super::client::OAuthClient>,
 }
 
 #[derive(Clone)]

@@ -1,4 +1,7 @@
 use crate::model::{GoogleCalendarRequest, Preferences};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
 pub(super) fn requested_scopes(prefs: &Preferences) -> anyhow::Result<String> {
     let services = prefs.requested_google_services();
@@ -24,7 +27,26 @@ pub(super) fn requested_scopes(prefs: &Preferences) -> anyhow::Result<String> {
     Ok(scopes.join(" "))
 }
 
+/// RFC 7636 proof key: a fresh 256-bit verifier and its S256 challenge.
+pub(super) struct Pkce {
+    pub(super) verifier: Zeroizing<String>,
+    pub(super) challenge: String,
+}
+impl Pkce {
+    pub(super) fn new() -> Self {
+        let verifier = Zeroizing::new(super::random());
+        Self {
+            challenge: challenge(&verifier),
+            verifier,
+        }
+    }
+}
+pub(super) fn challenge(verifier: &str) -> String {
+    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
+}
+
 pub(super) fn authorization_url(
+    client_id: &str,
     prefs: &Preferences,
     redirect: &str,
     state: &str,
@@ -34,7 +56,7 @@ pub(super) fn authorization_url(
     let scopes = requested_scopes(prefs)?;
     let mut url = url::Url::parse("https://accounts.google.com/o/oauth2/v2/auth")?;
     url.query_pairs_mut().extend_pairs([
-        ("client_id", prefs.google_client_id.as_str()),
+        ("client_id", client_id),
         ("redirect_uri", redirect),
         ("response_type", "code"),
         ("scope", scopes.as_str()),

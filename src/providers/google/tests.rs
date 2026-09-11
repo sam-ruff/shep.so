@@ -72,10 +72,15 @@ impl Credentials {
         }
     }
 }
+const CLIENT: &str = "fixture-client";
+const CLIENT_SECRET: &str = "fixture&secret+/";
+
+/// Grants saved before grants recorded their client relied on these stored
+/// values; most tests keep this build's client identical to them.
 fn prefs() -> Preferences {
     Preferences {
-        google_client_id: "fixture-client".into(),
-        google_client_secret: "fixture&secret+/".into(),
+        google_client_id: CLIENT.into(),
+        google_client_secret: CLIENT_SECRET.into(),
         google_services: Some(crate::model::GoogleServices {
             drive: true,
             calendar: crate::model::GoogleCalendarRequest::ReadWrite,
@@ -104,6 +109,7 @@ fn google_authorization_url_requests_only_selected_services_with_pkce_and_accoun
             if !drive && calendar == Off {
                 assert!(
                     consent::authorization_url(
+                        CLIENT,
                         &prefs,
                         "http://127.0.0.1:9876/callback",
                         "state",
@@ -116,6 +122,7 @@ fn google_authorization_url_requests_only_selected_services_with_pkce_and_accoun
             }
             for retry in [false, true] {
                 let url = consent::authorization_url(
+                    "built-in.apps.googleusercontent.com",
                     &prefs,
                     "http://127.0.0.1:9876/callback",
                     "fixture-state&+",
@@ -126,6 +133,8 @@ fn google_authorization_url_requests_only_selected_services_with_pkce_and_accoun
                 assert_eq!(url.host_str(), Some("accounts.google.com"));
                 assert_eq!(url.scheme(), "https");
                 let query: HashMap<_, _> = url.query_pairs().into_owned().collect();
+                // This build's client, never the stored self-configured one.
+                assert_eq!(query["client_id"], "built-in.apps.googleusercontent.com");
                 let actual: std::collections::BTreeSet<_> =
                     query["scope"].split_ascii_whitespace().collect();
                 let mut expected = std::collections::BTreeSet::new();
@@ -313,12 +322,79 @@ fn response(access: &str, refresh: Option<&str>) -> Reply {
     Reply::new(200, value.to_string())
 }
 fn google(server: &Server, credentials: Arc<Credentials>) -> Google {
+    signing_in(
+        server,
+        credentials,
+        client::OAuthClient::new(CLIENT, CLIENT_SECRET),
+        Arc::new(NoBrowser),
+        SIGN_IN_WAIT,
+    )
+}
+fn signing_in(
+    server: &Server,
+    credentials: Arc<Credentials>,
+    client: Option<client::OAuthClient>,
+    browser: Arc<dyn Browser>,
+    wait: Duration,
+) -> Google {
     Google::start(
         crate::providers::test_http::client(),
         credentials,
         server.url.join("/token").unwrap(),
         server.url.join("/").unwrap(),
+        SignIn {
+            client,
+            browser,
+            wait,
+        },
     )
+}
+
+/// Any browser launch in these tests is a failure.
+struct NoBrowser;
+impl Browser for NoBrowser {
+    fn open(&self, _: &str) -> anyhow::Result<()> {
+        anyhow::bail!("Unexpected browser launch")
+    }
+}
+
+/// Hands the consent URL to the test, which then plays the user's browser.
+struct FakeBrowser(tokio::sync::mpsc::UnboundedSender<url::Url>);
+impl Browser for FakeBrowser {
+    fn open(&self, url: &str) -> anyhow::Result<()> {
+        self.0
+            .send(url::Url::parse(url)?)
+            .map_err(|_| anyhow::anyhow!("Fixture browser closed"))
+    }
+}
+fn fake_browser() -> (
+    Arc<dyn Browser>,
+    tokio::sync::mpsc::UnboundedReceiver<url::Url>,
+) {
+    let (opened, consent) = tokio::sync::mpsc::unbounded_channel();
+    (Arc::new(FakeBrowser(opened)), consent)
+}
+fn query(url: &url::Url) -> HashMap<String, String> {
+    url.query_pairs().into_owned().collect()
+}
+/// Sends the browser's redirect back to the loopback listener named in `consent`.
+async fn redirect(consent: &url::Url, callback_query: &str) -> String {
+    let target = url::Url::parse(&query(consent)["redirect_uri"]).unwrap();
+    let authority = format!("127.0.0.1:{}", target.port().unwrap());
+    let mut socket = tokio::net::TcpStream::connect(&authority).await.unwrap();
+    socket
+        .write_all(
+            format!("GET /callback?{callback_query} HTTP/1.1\r\nHost: {authority}\r\n\r\n")
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut response = String::new();
+    socket.read_to_string(&mut response).await.unwrap();
+    response
+}
+fn sign_in_error(error: &anyhow::Error) -> Option<SignInError> {
+    error.downcast_ref::<SignInError>().copied()
 }
 fn form(server: &Server, index: usize) -> HashMap<String, String> {
     let requests = server.requests();
@@ -595,7 +671,7 @@ async fn google_revoked_grants_require_reconnect_while_client_errors_can_be_corr
         }
         let mut server = Server::start(responses).await;
         let google = google(&server, credentials.clone());
-        let mut prefs = prefs();
+        let prefs = prefs();
         let error = format!("{:#}", google.token(&prefs).await.unwrap_err());
         assert!(!error.contains("NEVER-EXPOSE"));
         assert_eq!(credentials.writes.load(Ordering::SeqCst), 0);
@@ -611,10 +687,17 @@ async fn google_revoked_grants_require_reconnect_while_client_errors_can_be_corr
             );
             assert_eq!(server.requests().len(), 1);
         } else {
-            assert!(error.contains("client ID and client secret"));
-            prefs.google_client_secret = "corrected-secret".into();
+            assert!(error.contains("sign-in client"));
+            // A build with the rotated secret refreshes the same grant.
+            let corrected = signing_in(
+                &server,
+                credentials.clone(),
+                client::OAuthClient::new(CLIENT, "corrected-secret"),
+                Arc::new(NoBrowser),
+                SIGN_IN_WAIT,
+            );
             assert_eq!(
-                google.token(&prefs).await.unwrap().expose_secret(),
+                corrected.token(&prefs).await.unwrap().expose_secret(),
                 "recovered"
             );
             assert_eq!(form(&server, 1)["client_secret"], "corrected-secret");
@@ -797,14 +880,9 @@ async fn google_callback_denial_with_matching_state_acknowledges_the_browser() {
     socket.read_to_string(&mut response).await.unwrap();
     assert!(response.starts_with("HTTP/1.1 200"));
     assert!(response.contains("cancelled"));
-    assert!(
-        receiver
-            .await
-            .unwrap()
-            .unwrap_err()
-            .to_string()
-            .contains("cancelled or denied")
-    );
+    let error = receiver.await.unwrap().unwrap_err();
+    assert_eq!(sign_in_error(&error), Some(SignInError::Denied));
+    assert!(error.to_string().contains("denied in the browser"));
 }
 
 #[tokio::test]
@@ -1301,4 +1379,405 @@ async fn a_locked_keychain_fails_every_queued_caller_without_stopping_the_owner(
         "old-access"
     );
     assert!(server.requests().is_empty());
+}
+
+#[test]
+fn pkce_uses_rfc_7636_s256_and_a_fresh_verifier_for_every_sign_in() {
+    // RFC 7636 appendix B.
+    assert_eq!(
+        consent::challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+    );
+    let first = consent::Pkce::new();
+    let second = consent::Pkce::new();
+    assert_ne!(*first.verifier, *second.verifier);
+    for pkce in [first, second] {
+        // 32 random bytes; RFC 7636 allows 43 to 128 unreserved characters.
+        assert_eq!(pkce.verifier.len(), 43);
+        assert!(
+            pkce.verifier
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-._~".contains(&b))
+        );
+        assert_eq!(pkce.challenge, consent::challenge(&pkce.verifier));
+    }
+}
+
+/// A fresh install: no self-configured client was ever stored.
+fn new_user() -> Preferences {
+    Preferences {
+        google_client_id: String::new(),
+        google_client_secret: String::new(),
+        ..consent_preferences(true, crate::model::GoogleCalendarRequest::ReadWrite)
+    }
+}
+
+#[tokio::test]
+async fn sign_in_uses_the_built_in_client_a_loopback_redirect_pkce_and_the_exact_state() {
+    let credentials = Arc::new(Credentials::default());
+    let mut server = Server::start(vec![response("fresh", Some("fresh-refresh"))]).await;
+    let (browser, mut opened) = fake_browser();
+    let google = signing_in(
+        &server,
+        credentials.clone(),
+        client::OAuthClient::new("built-in.apps.googleusercontent.com", "built-in-secret"),
+        browser,
+        SIGN_IN_WAIT,
+    );
+    let login = tokio::spawn({
+        let google = google.clone();
+        async move {
+            google
+                .login_with_retry(&new_user(), false, &CancellationToken::new())
+                .await
+        }
+    });
+    let consent = opened.recv().await.unwrap();
+    let params = query(&consent);
+    assert_eq!(consent.host_str(), Some("accounts.google.com"));
+    assert_eq!(params["client_id"], "built-in.apps.googleusercontent.com");
+    assert!(!params.contains_key("client_secret"));
+    assert_eq!(params["code_challenge_method"], "S256");
+    assert_eq!(params["prompt"], "consent select_account");
+    let callback = url::Url::parse(&params["redirect_uri"]).unwrap();
+    assert_eq!(callback.host_str(), Some("127.0.0.1"));
+    assert_eq!(callback.path(), "/callback");
+    assert!(callback.port().is_some_and(|port| port != 0));
+    let state = &params["state"];
+    assert_eq!(state.len(), 43);
+    let upper = state.to_ascii_uppercase();
+    for wrong in [
+        format!("{state}x"),
+        state[..42].to_owned(),
+        upper,
+        String::new(),
+    ] {
+        let response = redirect(&consent, &format!("state={wrong}&code=stolen")).await;
+        assert!(response.starts_with("HTTP/1.1 400"), "{wrong}");
+    }
+    assert!(!login.is_finished());
+    assert!(server.requests().is_empty());
+    let response = redirect(&consent, &format!("state={state}&code=fixture-code")).await;
+    assert!(response.starts_with("HTTP/1.1 200"));
+    let grant = login.await.unwrap().unwrap();
+    assert_eq!(grant.client_id, "built-in.apps.googleusercontent.com");
+    let form = form(&server, 0);
+    assert_eq!(form["client_id"], "built-in.apps.googleusercontent.com");
+    assert_eq!(form["client_secret"], "built-in-secret");
+    assert_eq!(form["code"], "fixture-code");
+    assert_eq!(form["grant_type"], "authorization_code");
+    assert_eq!(form["redirect_uri"], params["redirect_uri"]);
+    assert_eq!(
+        consent::challenge(&form["code_verifier"]),
+        params["code_challenge"]
+    );
+    let vault: Value = serde_json::from_str(
+        credentials
+            .saved
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .expose_secret(),
+    )
+    .unwrap();
+    assert_eq!(
+        vault["grants"][0]["client_id"],
+        "built-in.apps.googleusercontent.com"
+    );
+    server.finish().await;
+}
+
+#[tokio::test]
+async fn denied_refused_cancelled_and_timed_out_sign_ins_leave_the_connection_unchanged() {
+    for outcome in [
+        SignInError::Denied,
+        SignInError::Refused,
+        SignInError::Cancelled,
+        SignInError::TimedOut,
+    ] {
+        let credentials = Arc::new(Credentials::default());
+        credentials.seed(saved(chrono::Utc::now().timestamp() + 3600));
+        let server = Server::start(vec![]).await;
+        let (browser, mut opened) = fake_browser();
+        let wait = if outcome == SignInError::TimedOut {
+            Duration::from_millis(300)
+        } else {
+            SIGN_IN_WAIT
+        };
+        let google = signing_in(
+            &server,
+            credentials.clone(),
+            client::OAuthClient::new(CLIENT, CLIENT_SECRET),
+            browser,
+            wait,
+        );
+        let cancel = CancellationToken::new();
+        let login = tokio::spawn({
+            let google = google.clone();
+            let cancel = cancel.clone();
+            async move { google.login_with_retry(&prefs(), true, &cancel).await }
+        });
+        let consent = opened.recv().await.unwrap();
+        let state = query(&consent)["state"].clone();
+        match outcome {
+            SignInError::Denied => {
+                let response =
+                    redirect(&consent, &format!("state={state}&error=access_denied")).await;
+                assert!(response.starts_with("HTTP/1.1 200") && response.contains("cancelled"));
+            }
+            SignInError::Refused => {
+                let response =
+                    redirect(&consent, &format!("state={state}&error=invalid_scope")).await;
+                assert!(response.contains("did not complete"));
+            }
+            SignInError::Cancelled => cancel.cancel(),
+            _ => {}
+        }
+        let error = tokio::time::timeout(Duration::from_secs(10), login)
+            .await
+            .expect("sign-in stopped")
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(sign_in_error(&error), Some(outcome), "{error}");
+        assert!(error.to_string().contains("Nothing changed"));
+        // The loopback listener is closed once sign-in stops.
+        let callback = url::Url::parse(&query(&consent)["redirect_uri"]).unwrap();
+        assert!(
+            tokio::net::TcpStream::connect(("127.0.0.1", callback.port().unwrap()))
+                .await
+                .is_err()
+        );
+        assert!(server.requests().is_empty());
+        assert_eq!(credentials.writes.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            google.token(&prefs()).await.unwrap().expose_secret(),
+            "old-access"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_cancel_before_the_browser_opens_never_binds_a_listener_or_opens_the_browser() {
+    let server = Server::start(vec![]).await;
+    let google = google(&server, Arc::new(Credentials::default()));
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let error = google
+        .login_with_retry(&prefs(), true, &cancel)
+        .await
+        .unwrap_err();
+    assert_eq!(sign_in_error(&error), Some(SignInError::Cancelled));
+}
+
+#[tokio::test]
+async fn an_expired_authorization_code_asks_for_a_new_sign_in_and_keeps_the_connection() {
+    let credentials = Arc::new(Credentials::default());
+    credentials.seed(saved(chrono::Utc::now().timestamp() + 3600));
+    let mut server = Server::start(vec![Reply::new(
+        400,
+        json!({"error":"invalid_grant","error_description":"NEVER-EXPOSE"}).to_string(),
+    )])
+    .await;
+    let google = google(&server, credentials.clone());
+    let error = google
+        .exchange_code(
+            &prefs(),
+            "expired-code",
+            "http://127.0.0.1:1/callback",
+            "verifier",
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(sign_in_error(&error), Some(SignInError::CodeExpired));
+    assert!(!format!("{error:#}").contains("NEVER-EXPOSE"));
+    assert_eq!(credentials.writes.load(Ordering::SeqCst), 0);
+    assert!(google.connected(&prefs()).await.unwrap());
+    assert_eq!(
+        google.token(&prefs()).await.unwrap().expose_secret(),
+        "old-access"
+    );
+    server.finish().await;
+}
+
+#[tokio::test]
+async fn an_unconfigured_build_cannot_sign_in_but_keeps_refreshing_a_saved_grant() {
+    let credentials = Arc::new(Credentials::default());
+    credentials.seed(saved(0));
+    let mut server = Server::start(vec![response("renewed", None)]).await;
+    let google = signing_in(
+        &server,
+        credentials.clone(),
+        None,
+        Arc::new(NoBrowser),
+        SIGN_IN_WAIT,
+    );
+    let error = google.login(&prefs()).await.unwrap_err();
+    assert_eq!(sign_in_error(&error), Some(SignInError::NotConfigured));
+    assert_eq!(
+        error.to_string(),
+        "Google sign-in is not configured in this build."
+    );
+    let error = google
+        .exchange_code(&prefs(), "code", "http://127.0.0.1:1/callback", "verifier")
+        .await
+        .unwrap_err();
+    assert_eq!(sign_in_error(&error), Some(SignInError::NotConfigured));
+    assert!(
+        google
+            .finish_pending_login(&prefs())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(server.requests().is_empty());
+    // The stored self-configured client still renews its own grant.
+    assert!(google.connected(&prefs()).await.unwrap());
+    assert_eq!(
+        google.token(&prefs()).await.unwrap().expose_secret(),
+        "renewed"
+    );
+    assert_eq!(form(&server, 0)["client_id"], CLIENT);
+    assert_eq!(form(&server, 0)["client_secret"], CLIENT_SECRET);
+    server.finish().await;
+}
+
+#[tokio::test]
+async fn a_self_configured_grant_keeps_refreshing_until_a_built_in_sign_in_replaces_it() {
+    use crate::model::{GoogleAccess, GoogleGrant};
+    let credentials = Arc::new(Credentials::default());
+    // An upgraded install: the grant predates saved client secrets.
+    credentials.seed(
+        json!({"grants":[{"grant_id":"legacy-grant","client_id":"own-client",
+        "access_token":"old-access","refresh_token":"own-refresh","expires_at":0,
+        "scope":SCOPES,"requested_scopes":SCOPES}],"candidate_id":null}),
+    );
+    let mut legacy = Preferences {
+        google_client_id: "own-client".into(),
+        google_client_secret: "own-secret".into(),
+        google_grant: GoogleGrant {
+            id: "legacy-grant".into(),
+            client_id: "own-client".into(),
+            access: GoogleAccess {
+                known: true,
+                drive: true,
+                calendar_read: true,
+                calendar_write: true,
+            },
+        },
+        ..new_user()
+    };
+    let mut server = Server::start(vec![
+        response("own-renewed", None),
+        response("built-in-access", Some("built-in-refresh")),
+        response("built-in-renewed", None),
+    ])
+    .await;
+    let (browser, mut opened) = fake_browser();
+    let built_in = client::OAuthClient::new("built-in", "built-in-secret");
+    let google = signing_in(
+        &server,
+        credentials.clone(),
+        built_in.clone(),
+        browser.clone(),
+        SIGN_IN_WAIT,
+    );
+    assert!(google.connected(&legacy).await.unwrap());
+    assert_eq!(
+        google
+            .token_for(&legacy, Service::Drive)
+            .await
+            .unwrap()
+            .expose_secret(),
+        "own-renewed"
+    );
+    assert_eq!(form(&server, 0)["client_id"], "own-client");
+    assert_eq!(form(&server, 0)["client_secret"], "own-secret");
+    assert_eq!(form(&server, 0)["refresh_token"], "own-refresh");
+    // The refreshed vault entry now carries the secret that renewed it.
+    assert_eq!(credentials.value()["client_secret"], "own-secret");
+    let login = tokio::spawn({
+        let google = google.clone();
+        let legacy = legacy.clone();
+        async move {
+            google
+                .login_with_retry(&legacy, false, &CancellationToken::new())
+                .await
+        }
+    });
+    let consent = opened.recv().await.unwrap();
+    assert_eq!(query(&consent)["client_id"], "built-in");
+    let state = query(&consent)["state"].clone();
+    redirect(&consent, &format!("state={state}&code=built-in-code")).await;
+    let grant = login.await.unwrap().unwrap();
+    assert_eq!(grant.client_id, "built-in");
+    assert_eq!(form(&server, 1)["client_id"], "built-in");
+    // The self-configured grant stays usable until activation commits.
+    assert_eq!(
+        google.token(&legacy).await.unwrap().expose_secret(),
+        "own-renewed"
+    );
+    legacy.google_grant = grant;
+    let activated = legacy;
+    google.finish_activation(&activated).await.unwrap();
+    assert_eq!(credentials.value()["client_id"], "built-in");
+    let mut value = credentials.value();
+    value["expires_at"] = 0.into();
+    credentials.seed(value);
+    drop(google);
+    let restarted = signing_in(
+        &server,
+        credentials.clone(),
+        built_in,
+        browser,
+        SIGN_IN_WAIT,
+    );
+    assert!(restarted.connected(&activated).await.unwrap());
+    assert_eq!(
+        restarted.token(&activated).await.unwrap().expose_secret(),
+        "built-in-renewed"
+    );
+    assert_eq!(form(&server, 2)["client_id"], "built-in");
+    assert_eq!(form(&server, 2)["client_secret"], "built-in-secret");
+    server.finish().await;
+}
+
+#[tokio::test]
+async fn a_staged_candidate_from_another_client_is_not_resumed_after_the_client_changes() {
+    let credentials = Arc::new(Credentials::default());
+    credentials.seed(saved(chrono::Utc::now().timestamp() + 3600));
+    let mut server = Server::start(vec![response("candidate", Some("candidate-refresh"))]).await;
+    let override_client = signing_in(
+        &server,
+        credentials.clone(),
+        client::OAuthClient::new("dev-override", "dev-secret"),
+        Arc::new(NoBrowser),
+        SIGN_IN_WAIT,
+    );
+    let candidate = override_client
+        .exchange_code(&prefs(), "code", "http://127.0.0.1:1/callback", "verifier")
+        .await
+        .unwrap();
+    assert_eq!(candidate.client_id, "dev-override");
+    assert_eq!(
+        override_client
+            .finish_pending_login(&prefs())
+            .await
+            .unwrap(),
+        Some(candidate)
+    );
+    drop(override_client);
+    let built_in = google(&server, credentials.clone());
+    assert!(
+        built_in
+            .finish_pending_login(&prefs())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        built_in.token(&prefs()).await.unwrap().expose_secret(),
+        "old-access"
+    );
+    server.finish().await;
 }

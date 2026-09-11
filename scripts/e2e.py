@@ -4531,13 +4531,13 @@ class NativeFlows(unittest.TestCase):
                        wait(150), {"type": "scroll", "amount": -2}, wait(150),
                        check("google_services.drive", False),
                        check("google_services.calendar", "Off"), shot("google-consent-initial-light"),
-                       click(350, 489), check("busy", []), check("notice", None),
-                       click(288, 374), check("google_services.drive", True), check("saved_google_services.drive", True),
-                       click(365, 411), shot("google-consent-calendar-menu-light"),
-                       click(355, 482), check("google_services.calendar", "ReadOnly"),
+                       click(350, 504), check("busy", []), check("notice", None),
+                       click(288, 389), check("google_services.drive", True), check("saved_google_services.drive", True),
+                       click(365, 426), shot("google-consent-calendar-menu-light"),
+                       click(355, 497), check("google_services.calendar", "ReadOnly"),
                        check("saved_google_services.calendar", "ReadOnly"),
-                       click(288, 374), check("google_services.drive", False), check("saved_google_services.drive", False),
-                       wait(80), shot("google-consent-readonly-light"), click(350, 489),
+                       click(288, 389), check("google_services.drive", False), check("saved_google_services.drive", False),
+                       wait(80), shot("google-consent-readonly-light"), click(350, 504),
                        check("notice", "Google sign-in is disabled in preview.", "contains"), check("busy", []),
                        key("ctrl+1"), check("tab", "Mail"), key("Down"), check("selected", "Your weekly workspace digest"),
                        key("ctrl+comma"), check("tab", "Preferences"), check("google_services.calendar", "ReadOnly"),
@@ -4554,8 +4554,8 @@ class NativeFlows(unittest.TestCase):
                        {"type": "scroll", "amount": -4}, wait(150),
                        check("google_services.calendar", "ReadOnly"), check("google_services.drive", False),
                        check("google_grant.access.calendar_write", False), shot("google-consent-initial-dark"),
-                       click(266, 287), check("google_services.drive", True),
-                       click(340, 324), click(340, 288), check("google_services.calendar", "ReadWrite"),
+                       click(266, 302), check("google_services.drive", True),
+                       click(340, 339), click(340, 303), check("google_services.calendar", "ReadWrite"),
                        check("saved_google_services.drive", True), check("saved_google_services.calendar", "ReadWrite"),
                        check("google_grant.access.calendar_write", False), check("google_grant.access.drive", False),
                        wait(80), shot("google-consent-requested-both-dark"), key("ctrl+2"), check("tab", "Calendar"),
@@ -4625,6 +4625,71 @@ class NativeFlows(unittest.TestCase):
                        check("google_lifecycle.cleanup_pending", False), check("events", 5),
                        shot("google-disconnected-compact"), key("ctrl+1"), check("tab", "Mail"),
                        key("Down"), check("selected", "Your weekly workspace digest"), shot("mail-after-google-disconnect"))
+
+    def test_google_sign_in_button_replaces_client_fields(self):
+        # The harness gives this build a fictional client; nothing is pasted or shown.
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(470, 156), check("settings_tab", "Calendars"),
+                       check("google_sign_in.available", True), check("google_sign_in.label", "Sign in with Google"),
+                       check("google_sign_in.enabled", False), check("google_sign_in.legacy_client", False),
+                       {"type": "hover", "x": 1220, "y": 790}, {"type": "scroll", "amount": 12}, wait(150),
+                       shot("google-sign-in-button-light"),
+                       click(288, 660), check("google_services.drive", True), check("saved_google_services.drive", True),
+                       check("google_sign_in.enabled", True), wait(80), shot("google-sign-in-ready-light"),
+                       click(352, 775), check("notice", "Google sign-in is disabled in preview.", "contains"),
+                       check("busy", []), check("google_sign_in.waiting", False),
+                       key("ctrl+1"), check("tab", "Mail"), key("Down"), check("selected", "Your weekly workspace digest"))
+
+    def test_google_sign_in_button_compact_dark(self):
+        self.mcp.call("desktop.start", width=900, height=640)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       click(470, 156), check("settings_tab", "Calendars"), click(764, 549),
+                       {"type": "scroll", "amount": 9}, wait(150), check("google_sign_in.available", True),
+                       check("google_sign_in.label", "Sign in with Google"), shot("google-sign-in-button-compact-dark"),
+                       click(266, 380), check("google_services.drive", True), check("google_sign_in.enabled", True),
+                       wait(80), shot("google-sign-in-ready-compact-dark"),
+                       key("ctrl+1"), check("tab", "Mail"), key("Down"), check("selected", "Your weekly workspace digest"))
+
+    def test_google_sign_in_unconfigured_build_explains_the_disabled_button(self):
+        result = self.mcp.call("desktop.start", google_client="none")
+        print(f"Unconfigured sign-in evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(470, 156), check("settings_tab", "Calendars"),
+                       check("google_sign_in.available", False), check("google_sign_in.enabled", False),
+                       {"type": "hover", "x": 1220, "y": 790}, {"type": "scroll", "amount": 12}, wait(150),
+                       click(288, 670), check("google_services.drive", True), check("saved_google_services.drive", True),
+                       check("google_sign_in.enabled", False), wait(80),
+                       # The disabled button ignores a real click: no save, sign-in or notice.
+                       click(352, 785), wait(150), check("notice", None), check("busy", []),
+                       check("google_sign_in.waiting", False), shot("google-sign-in-unconfigured-light"),
+                       key("ctrl+1"), check("tab", "Mail"), key("Down"), check("selected", "Your weekly workspace digest"))
+        result = self.mcp.call("desktop.start", width=900, height=640, google_client="none")
+        print(f"Unconfigured compact evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       click(470, 156), check("settings_tab", "Calendars"), click(764, 549),
+                       {"type": "scroll", "amount": 9}, wait(150), check("google_sign_in.available", False),
+                       check("google_sign_in.enabled", False), shot("google-sign-in-unconfigured-compact-dark"))
+
+    def test_google_sign_in_legacy_client_keeps_working_with_a_switch_note(self):
+        result = self.mcp.call("desktop.start", google_permissions="calendar", google_legacy_client=True)
+        print(f"Legacy client evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("google_connected", True), check("google_sign_in.legacy_client", True),
+                       check("google_sign_in.label", "Reconnect Google"), check("google_sign_in.enabled", True),
+                       check("google_grant.client_id", "fixture-own-client.apps.googleusercontent.com"),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       click(470, 156), check("settings_tab", "Calendars"),
+                       {"type": "hover", "x": 1220, "y": 790}, {"type": "scroll", "amount": 12}, wait(150),
+                       shot("google-sign-in-legacy-client-light"),
+                       key("ctrl+2"), check("tab", "Calendar"), click(1260, 348), check("dialog", "Event"),
+                       check("event_access.update", True), key("Escape"), check("dialog", None),
+                       key("ctrl+1"), check("tab", "Mail"), key("Down"), check("selected", "Your weekly workspace digest"))
+        result = self.mcp.call("desktop.start", width=900, height=640, google_permissions="calendar",
+                               google_legacy_client=True)
+        print(f"Legacy client compact evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       click(470, 156), check("settings_tab", "Calendars"), click(764, 549),
+                       {"type": "scroll", "amount": 12}, wait(150), check("google_sign_in.legacy_client", True),
+                       shot("google-sign-in-legacy-client-compact-dark"))
 
     def test_connection_removal_review_and_cancel(self):
         self.mcp.batch(key("c"), check("composer.visible", True),

@@ -1,4 +1,5 @@
 //! Bounded loopback callback parsing; request contents never reach logs/errors.
+use super::SignInError;
 use anyhow::Context;
 use secrecy::SecretString;
 use std::{collections::HashMap, time::Duration};
@@ -10,6 +11,7 @@ use tokio::{
 enum Callback {
     Code(SecretString),
     Denied,
+    Refused,
 }
 
 pub(super) async fn receive(
@@ -23,7 +25,8 @@ pub(super) async fn receive(
             result = requests.join_next(), if !requests.is_empty() => {
                 match result {
                     Some(Ok(Ok(Ok(Some(Callback::Code(code)))))) => return Ok(code),
-                    Some(Ok(Ok(Ok(Some(Callback::Denied))))) => anyhow::bail!("Google sign-in was cancelled or denied. Try connecting again."),
+                    Some(Ok(Ok(Ok(Some(Callback::Denied))))) => return Err(SignInError::Denied.into()),
+                    Some(Ok(Ok(Ok(Some(Callback::Refused))))) => return Err(SignInError::Refused.into()),
                     _ => {} // Ignore malformed, idle or disconnected local clients.
                 }
             }
@@ -78,6 +81,14 @@ async fn request(
             )
             .await
         }
+        Some(Callback::Refused) => {
+            respond(
+                &mut stream,
+                true,
+                "Sign-in did not complete. You can return to Shep.",
+            )
+            .await
+        }
         None => respond(&mut stream, false, "Invalid sign-in response.").await,
     }
     Ok(callback)
@@ -125,7 +136,9 @@ fn parse(bytes: &[u8], authority: &str, expected_state: &str) -> anyhow::Result<
         {
             Ok(Callback::Code(SecretString::from(code)))
         }
-        (None, Some(error)) if !error.is_empty() => Ok(Callback::Denied),
+        // Google redirects with access_denied when the user cancels or declines.
+        (None, Some(error)) if error == "access_denied" => Ok(Callback::Denied),
+        (None, Some(error)) if !error.is_empty() => Ok(Callback::Refused),
         _ => anyhow::bail!("Invalid callback"),
     }
 }
