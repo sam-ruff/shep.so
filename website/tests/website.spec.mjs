@@ -101,6 +101,11 @@ test('unpublished stores and private beta do not pretend to install or authentic
   await expect(page.locator('#browser')).not.toContainText('Open web app');
   expect(await page.locator('a[href*="play.google.com"], a[href*="apps.apple.com"], a[href="/app/"], a[href="/beta"], a[href="/beta/"]').count()).toBe(0);
   await expect(page.locator('input, form')).toHaveCount(0);
+  await expect(page.locator('#linux')).toContainText('Available from source');
+  await expect(page.locator('.source-install')).toContainText('no binary releases are published yet');
+  expect(await page.locator('a[href*="/releases/download/"], a[href*="install-release"]').count()).toBe(0);
+  await expect(page.locator('.development')).toContainText('static HTML layout');
+  await expect(page.locator('.development')).toContainText('The local mail cache is not encrypted');
   await page.locator('#browser').scrollIntoViewIfNeeded();
   await screenshot(page, testInfo, 'private-beta-status', false);
 });
