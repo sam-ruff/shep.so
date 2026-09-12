@@ -94,21 +94,27 @@ impl App {
             && let Some(block) = content.blocks.get(index)
         {
             let id = source.summary.id.clone();
-            widget::text_editor(block)
-                .on_action(move |action| Message::ReaderSelection(id.clone(), index, action))
-                .key_binding(read_only_binding)
-                .size(u32::from(self.preferences.reader_font_size))
-                .line_height(1.5)
-                .padding(0)
-                .height(Length::Shrink)
-                .style(|theme, _| text_editor::Style {
-                    background: iced::Color::TRANSPARENT.into(),
-                    border: iced::Border::default(),
-                    placeholder: colors(theme).muted,
-                    value: colors(theme).text,
-                    selection: colors(theme).accent.scale_alpha(0.25),
-                })
-                .into()
+            super::text_context::TextContext::editor(
+                widget::text_editor(block)
+                    .on_action(move |action| Message::ReaderSelection(id.clone(), index, action))
+                    .key_binding(read_only_binding)
+                    .size(u32::from(self.preferences.reader_font_size))
+                    .line_height(1.5)
+                    .padding(0)
+                    .height(Length::Shrink)
+                    .style(|theme, _| text_editor::Style {
+                        background: iced::Color::TRANSPARENT.into(),
+                        border: iced::Border::default(),
+                        placeholder: colors(theme).muted,
+                        value: colors(theme).text,
+                        selection: colors(theme).accent.scale_alpha(0.25),
+                    }),
+                block,
+                false,
+                format!("{}:{index}", source.summary.id),
+            )
+            .menu_theme(self.theme())
+            .into()
         } else {
             text(fallback)
                 .size(u32::from(self.preferences.reader_font_size))

@@ -1,6 +1,6 @@
 use super::*;
 use iced::Length;
-use iced::widget::{button, column, pick_list, row, space, text, text_input};
+use iced::widget::{button, column, pick_list, row, space, text};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -297,7 +297,7 @@ impl App {
                 .push(
                     column![
                         text("Folder name").size(12),
-                        text_input("New folder name", &state.name)
+                        super::text_context::Input::new("New folder name", &state.name)
                             .id("new-folder-name")
                             .on_input(|name| wrap(Message::Name(name)))
                             .on_submit(wrap(Message::Submit))

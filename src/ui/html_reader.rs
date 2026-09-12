@@ -567,11 +567,15 @@ impl App {
             .clamp(0.5, 4.)
     }
     pub(super) fn html_canvas(&self) -> Element<'_, super::Message> {
-        canvas::Canvas::new(
+        super::text_context::TextContext::html(
+            canvas::Canvas::new(
+                &self.html_reader,
+                self.dialog.is_none() && self.context_menu.is_none(),
+                self.html_scale(),
+            ),
             &self.html_reader,
-            self.dialog.is_none() && self.context_menu.is_none(),
-            self.html_scale(),
         )
+        .menu_theme(self.theme())
         .into()
     }
 }

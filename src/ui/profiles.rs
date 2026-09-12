@@ -2,7 +2,7 @@ use super::*;
 use crate::profiles::{Id, Request, Snapshot};
 use iced::{
     Alignment, Length,
-    widget::{button, column, row, space, text, text_input},
+    widget::{button, column, row, space, text},
 };
 
 #[derive(Debug, Clone)]
@@ -174,7 +174,7 @@ impl App {
                 {
                     content = content.push(
                         column![
-                            text_input("Profile name", name)
+                            super::text_context::Input::new("Profile name", name)
                                 .style(components::field)
                                 .id("profile-name")
                                 .on_input(move |v| message(Action::Name(v)))

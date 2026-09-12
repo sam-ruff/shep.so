@@ -9,7 +9,14 @@ requires equivalent account/parent controls and failure/restart coverage.
 The shared `folder-creation` contract also preserves a frozen target and its
 encoding through uncertain results, exposes unfinished requests in the normal
 form after restart, and waits for accepted writes when closing. Desktop
-integration is under verification; both client implementations remain open.
+delivery is recorded in `842c570`; both client implementations remain open.
+
+Desktop text context menus cover editable inputs/composition and selectable
+plain/formatted readers, with native clipboard actions and keyboard access.
+Browser controls retain their browser menus and Flutter retains its platform
+selection controls. Equivalent field, password, reader, focus and keyboard
+coverage remains an active parity gap; default platform controls alone do not
+establish it. See the shared `text-context-menu` contract.
 
 Desktop History header follow-up: the mail-action History control uses a clock
 arrow icon with the existing optional tooltip and unchanged dialog action.

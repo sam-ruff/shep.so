@@ -10,7 +10,7 @@ use crate::profile_sync::{
 };
 use iced::{
     Alignment, Length,
-    widget::{button, checkbox, column, row, space, text, text_input},
+    widget::{button, checkbox, column, row, space, text},
 };
 use std::time::Duration;
 
@@ -1003,7 +1003,7 @@ impl App {
                         .size(12),
                     )
                     .push(
-                        text_input("Profile name", &state.name)
+                        super::text_context::Input::new("Profile name", &state.name)
                             .id("shared-profile-name")
                             .style(components::field)
                             .padding(12)

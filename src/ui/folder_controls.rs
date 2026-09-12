@@ -6,9 +6,7 @@ use crate::engine::folders::{Destination, Event as FolderEvent, Preview, Request
 use crate::folder_actions::{Action as Change, Job, Status, Step};
 use iced::{
     Alignment, Length, Point,
-    widget::{
-        button, checkbox, column, container, opaque, row, scrollable, space, text, text_input,
-    },
+    widget::{button, checkbox, column, container, opaque, row, scrollable, space, text},
 };
 
 #[derive(Debug, Clone)]
@@ -786,7 +784,7 @@ impl App {
         }
         if state.action.is_none() {
             body = body.push(
-                text_input("Find a parent folder…", &state.query)
+                super::text_context::Input::new("Find a parent folder…", &state.query)
                     .on_input(|q| wrap(Message::Query(q)))
                     .on_submit(wrap(Message::FirstDestination))
                     .id("folder-parent-search")

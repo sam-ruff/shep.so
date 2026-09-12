@@ -427,24 +427,31 @@ impl App {
         }
         form = form.push(address_row("Subject", "subject", "Add a subject"));
         form = form.push(
-            widget::text_editor(&self.composer.current.editor)
-                .id("compose-body")
-                .on_action(Message::Editor)
-                .placeholder("Write your message…")
-                .style(editor_field)
-                .size(13)
-                .padding(15)
-                .height(
-                    (self.size.height / (self.preferences.interface_scale as f32 / 100.) * 0.32)
-                        .clamp(
-                            120.,
-                            if self.composer.current.draft.reply_context.is_some() {
-                                200.
-                            } else {
-                                300.
-                            },
-                        ),
-                ),
+            super::text_context::TextContext::editor(
+                widget::text_editor(&self.composer.current.editor)
+                    .id("compose-body")
+                    .on_action(Message::Editor)
+                    .placeholder("Write your message…")
+                    .style(editor_field)
+                    .size(13)
+                    .padding(15)
+                    .height(
+                        (self.size.height / (self.preferences.interface_scale as f32 / 100.)
+                            * 0.32)
+                            .clamp(
+                                120.,
+                                if self.composer.current.draft.reply_context.is_some() {
+                                    200.
+                                } else {
+                                    300.
+                                },
+                            ),
+                    ),
+                &self.composer.current.editor,
+                true,
+                self.composer.current.draft.id.clone(),
+            )
+            .menu_theme(self.theme()),
         );
         if let Some(context) = &self.composer.current.draft.reply_context {
             form = form.push(

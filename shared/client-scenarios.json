@@ -187,9 +187,16 @@
       "browser": "provider.test.ts / provider-flows.mjs / authenticated gateway tests; complete ambiguous-move review, missing-destination creation and automatic proof-based recovery OPEN"
     },
     {
+      "id": "text-context-menu",
+      "contract": "Right-click or keyboard context-menu access preserves text selection and targets the focused control. Offer Copy/Select all for selectable readers and Cut/Paste for editable fields, disable unavailable actions and password copying, ignore late clipboard replies after menu close or target changes, and preserve ordinary message/folder menus outside text controls.",
+      "desktop": "Active shared input/editor/formatted-reader menu implementation; integrated clipboard, focus, keyboard and light/dark native verification required.",
+      "mobile": "OPEN equivalent native selection-menu, secure-field, reader and external-keyboard coverage",
+      "browser": "Existing browser text menus; OPEN equivalent field/reader, secure-field and keyboard regressions"
+    },
+    {
       "id": "folder-creation",
       "contract": "Visible sidebar New folder selects an account, parent and one folder name. IMAP preserves the server hierarchy and encoding; POP3 creates local folders only. Freeze the exact target before CREATE, check an uncertain result without duplicating it, retain unfinished requests across restart in the ordinary creation form, refresh confirmed folders and observe accepted writes before closing.",
-      "desktop": "Active integrated sidebar controls, durable target journal, changed-connection/encoding checks and focus/close regression verification; unit, protocol and native shipping evidence required.",
+      "desktop": "842c570: sidebar controls, durable target journal, changed-connection/encoding checks and focus/close regressions; thirteen integrated native scenarios and 1,277 normal-hook executions pass. Live provider verification remains open.",
       "mobile": "OPEN equivalent sidebar creation, durable target/restart controls and native provider evidence",
       "browser": "OPEN equivalent sidebar creation, durable target/restart controls and authenticated provider evidence"
     },

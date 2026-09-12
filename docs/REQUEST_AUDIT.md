@@ -18,7 +18,9 @@ The local diagnostic identified an unresolved same-account move to a missing
 Archive destination. Source `b614b8d` creates missing destinations, completes
 provable requests automatically and offers direct Retry, while retaining
 uncertain copies. Nineteen native scenarios and 1,263 hook executions pass;
-completion records the evidence. Sidebar creation and client parity remain active.
+completion records the evidence. Sidebar creation is pushed as `842c570`, with
+thirteen native scenarios and 1,277 normal-hook executions passing. Client parity
+and live provider verification remain active.
 
 **12 September folder creation follow-up:** Sam requests high priority tracking
 for creating missing folders and creating folders directly from the sidebar.
