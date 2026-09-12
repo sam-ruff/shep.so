@@ -1,5 +1,60 @@
 # Completion audit
 
+## Three search comparison branches shipped, 12 September 2026
+
+The formatted HTML selection (R95), newest-first conversations (R35), pinned
+reader actions (R96), History icon (R15) and launcher/tray correction (R64)
+were pushed to main before these alternatives. All three include main's
+`e14f3d6` checkpoint and the same fictional comparison mail and settings
+catalogue. No alternative has been merged into main or selected as its default.
+
+| Branch | Pushed commit | Normal hook test executions | Final native scenarios |
+| --- | --- | ---: | ---: |
+| `demo/search-precise` | [4b14a39](https://github.com/sam-ruff/shep.so/commit/4b14a399038384e2319b15423a6ecd1a7e7e31fe) | 1,195 | 12 |
+| `demo/search-tolerant` | [1c43ec1](https://github.com/sam-ruff/shep.so/commit/1c43ec12629b157218a7ff706a37337e25e1c7b2) | 1,196 | 12 |
+| `demo/search-abbreviations` | [b00c784](https://github.com/sam-ruff/shep.so/commit/b00c784eff40103f90d380e85fef24fb9782cb13) | 1,202 | 12 |
+
+Precise uses exact/prefix matching, RapidFuzz OSA and BM25. Tolerant combines
+Damerau-Levenshtein and Jaro-Winkler with stronger body weighting. Abbreviations
+uses Nucleo for option/folder labels, OSA fallback and phrase-aware mail ranking.
+All share visible-label priorities, every retained search term, exact short-body
+priority, stable list/captured-selection ordering and bounded candidate lookup.
+Complete vocabulary scans skip only proven-absent generated spellings; scans at
+their cap retain unseen candidates. The branch audits record detailed changes.
+
+The 100,000-message/four-account benchmark uses 60 samples per query and returns
+at most 50 rows. Its expected 4,132 matches are derived from sender, subject and
+body values. Multiword p95 is 33.04 ms, 32.07 ms and 31.25 ms respectively,
+against the unchanged 50 ms budget. Ordinary and typo queries also pass; cached
+body p95 stays below 0.08 ms. Eight settings queries stay below 0.21 ms at p95
+for catalogue ranking alone. Our builds and native tests were stopped during
+timing. This is evidence for these cached workloads, not full input-to-screen
+latency or every mailbox shape. Earlier failed measurements remain in logs.
+
+All final native scenarios pass, with light/dark/compact captures reviewed for
+exact-body results, typos, Preferences navigation, folder/account scope and
+bulk selection. The three test-support executable SHA-256 values are:
+
+- Precise: `3464c078570d6eec5515db7b5e9f1e1312fe5b564357f1169fe8e0ad832ee013`.
+- Tolerant: `67c062e838e797778d96db3e553d3a9899a4486c5e5d4565633a9b8e28d825e4`.
+- Abbreviations: `8e765ea554f7457196ca6cc98069ab41c0734792a7f4e50f486af7c39e388d9f`.
+
+Each branch passes formatting, both Clippy configurations, its normal test hook,
+43 parity contracts and pinned strict Zensical. Native logs are
+`precise-final-native.log`, `search-b-native-final.log` and
+`search-c-final-native.log` under each worktree's ignored `artifacts/logs/`;
+performance reports are in its `artifacts/performance/`. Native captures include
+A's `947704b23bfd`/`caac8f84883c`, B's `b31e6a1729f2`/`4b968127ae25`, and C's
+`e7c793909fad`/`0ba52ad0c352`.
+
+The [comparison guide](agents/search-demos.md) launches independent fictional
+workspaces, including working Profiles pages. Remaining decisions and limits:
+choose a production algorithm; reveal individual settings controls and complete
+dynamic-caption coverage; review mail's twelve-token limit and mixed-identifier
+prefixes; implement Flutter/browser parity; and complete broader platform and
+responsiveness verification. The personal installation was not replaced.
+Quality/release workflows remain disabled until the runners are ready.
+
 ## R64 GNOME launcher and tray correction, 11 September 2026
 
 The Linux desktop entry now uses the approved opaque light Shepherd, with a

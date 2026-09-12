@@ -1,5 +1,15 @@
 # Conversation request audit
 
+**12 September search-demo delivery (R18/R44/R99):** three separately verified
+alternatives are pushed: `demo/search-precise` (`4b14a39`),
+`demo/search-tolerant` (`1c43ec1`) and `demo/search-abbreviations` (`b00c784`).
+All include the previously pushed R95/R35/R96/R15/R64 prerequisites. Each passes
+twelve final native scenarios, normal commit hooks, parity and strict docs;
+all three 100,000-message benchmarks pass the unchanged 50 ms page budget.
+No production default was selected. The [comparison guide](agents/search-demos.md)
+provides isolated launch commands and examples; [completion](COMPLETION.md)
+records exact commits, evidence and remaining parser/control/client limits.
+
 11 September search-demo continuation: deliver R95 visible formatted selection,
 R35 newest-first reply conversations, R96 pinned reader actions and R64 launcher/
 tray fixes first, including the R15 History header icon. Then push three separate

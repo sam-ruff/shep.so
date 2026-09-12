@@ -1,5 +1,30 @@
 # Shep handover
 
+## Search demo delivery, 12 September 2026
+
+The latest requested sequence is delivered: formatted HTML selection,
+newest-first conversations, pinned reader actions and icon fixes are on main;
+three independently verified search alternatives are pushed for comparison:
+
+- `demo/search-precise`: `4b14a39`, worktree `.claude/worktrees/search-precise`.
+- `demo/search-tolerant`: `1c43ec1`, worktree `.claude/worktrees/search-tolerant`.
+- `demo/search-abbreviations`: `b00c784`, worktree `.claude/worktrees/reader-actions`.
+
+Each passes twelve final native scenarios, normal hooks, parity and strict docs.
+The 100,000-message multiword p95 values are 33.04/32.07/31.25 ms against the
+unchanged 50 ms budget. [Completion](docs/COMPLETION.md) records exact commits,
+native executable hashes and evidence. The [guide](docs/agents/search-demos.md)
+opens fresh fictional workspaces without replacing the personal installation.
+
+No search alternative is selected for main. Let Sam compare the branches before
+integrating a default. R18/R44/R99 still track parser/identifier semantics,
+deeper settings controls and Flutter/browser parity; other TODO work remains
+active. Keep each worktree's target separate and use the normal hooks. Quality
+and release workflows remain disabled until the runners are ready.
+
+The older client/profile session notes below are historical. Current AGENTS.md
+and TODO.md take precedence over their restart order and branch instructions.
+
 **The full product goal is unfinished.** `TODO.md` is the authoritative active
 request list; implementation and shipping evidence is in [the completion log](docs/COMPLETION.md)
 and [the request audit](docs/REQUEST_AUDIT.md). On 2026-09-09 `main` (`c414227`)
