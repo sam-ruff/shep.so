@@ -1,5 +1,10 @@
 # Mail
 
+Use **New folder** at the bottom of the sidebar to choose an account, a parent
+and a folder name. IMAP creates it on the server; POP3 creates a local folder.
+An interrupted request reappears in this same form after restarting, with
+Try again and Resume controls. Creating a folder keeps the current mail open.
+
 - Add and edit multiple IMAP or POP3 accounts in Preferences → Accounts. The setup wizard separates identity, incoming IMAP/POP3 and outgoing SMTP settings, with SSL/TLS or STARTTLS, authentication choices, and independent connection tests. Fastmail has a preset; use its app password and full login address. Certificate verification is always enabled.
 - Mail checks start when the cached workspace opens and repeat every 15 seconds by default. Change the interval in Preferences → General → Mail & performance (5–3600 seconds). The refresh icon also works during a background check, queuing one follow-up check. Checks never overlap; a slow check finishes before the next begins. Background activity does not put the manual refresh button into its busy state.
 - Enable the unified inbox in General preferences, expand it to choose an account, or disable it for account-specific navigation. Custom folders appear under collapsible account headings. Ctrl+click folders to combine them in one view; an ordinary click selects just one. Search covers indexed sender, subject and body text across folders in the selected account scope, with prefixes and typo tolerance. Results show their folder; clearing search restores the browsing folder. Explicit combined folder views search the accounts represented by those folders. New searches use **Best match**: exact words rank ahead of typo expansions, with short relevant messages favored over weak matches. Choose another sort for the current search; clearing it restores the usual inbox sort. Filter All, Unread, Read, Flagged or Attachments; sort newest/oldest, sender or subject. Sorting is saved.

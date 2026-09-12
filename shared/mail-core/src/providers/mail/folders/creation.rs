@@ -197,6 +197,25 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
         creation::ensure(&connection(&mut self.session, self.encoding), wire_path).await
     }
 
+    pub async fn ensure_planned_folder(&mut self, target: &Mailbox) -> anyhow::Result<Mailbox> {
+        anyhow::ensure!(
+            self.encoding == target.encoding,
+            "The server's folder encoding changed. The saved folder request has not been retried."
+        );
+        self.ensure_folder_exact(&target.name).await
+    }
+
+    pub async fn find_planned_folder(
+        &mut self,
+        target: &Mailbox,
+    ) -> anyhow::Result<Option<Mailbox>> {
+        anyhow::ensure!(
+            self.encoding == target.encoding,
+            "The server's folder encoding changed. The saved folder request could not be checked."
+        );
+        self.find_folder_exact(&target.name).await
+    }
+
     pub async fn find_folder_exact(&mut self, wire_path: &str) -> anyhow::Result<Option<Mailbox>> {
         creation::valid_path(wire_path)?;
         let result = connection(&mut self.session, self.encoding)
@@ -240,6 +259,39 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+    #[tokio::test]
+    async fn changed_encoding_rejects_saved_target_before_any_wire_command() {
+        for (current, frozen) in [
+            (NameEncoding::Utf8, NameEncoding::ImapUtf7),
+            (NameEncoding::ImapUtf7, NameEncoding::Utf8),
+        ] {
+            script(vec![], async |folders| {
+                folders.encoding = current;
+                let target = Mailbox {
+                    encoding: frozen,
+                    ..Mailbox::flat("&ZeVnLIqe-".into())
+                };
+                assert!(
+                    folders
+                        .ensure_planned_folder(&target)
+                        .await
+                        .expect_err("changed encoding")
+                        .to_string()
+                        .contains("encoding changed")
+                );
+                assert!(
+                    folders
+                        .find_planned_folder(&target)
+                        .await
+                        .expect_err("changed encoding")
+                        .to_string()
+                        .contains("encoding changed")
+                );
+            })
+            .await;
+        }
+    }
+
     async fn script(
         commands: Vec<(&str, &str)>,
         action: impl AsyncFnOnce(&mut ImapFolders<tokio::io::DuplexStream>),
@@ -274,6 +326,12 @@ mod tests {
                     .await
                     .expect("response");
             }
+            line.clear();
+            let bytes = tokio::time::timeout(Duration::from_secs(1), server.read_line(&mut line))
+                .await
+                .expect("client closes after its operation")
+                .expect("read final input");
+            assert_eq!(bytes, 0, "Unexpected command after the script: {line}");
         };
         let client = async {
             let mut client = async_imap::Client::new(client);

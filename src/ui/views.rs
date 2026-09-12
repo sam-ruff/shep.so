@@ -2397,6 +2397,7 @@ impl App {
     }
     fn dialog_view(&self, dialog: Dialog) -> Element<'_, Message> {
         let (title, subtitle) = match dialog {
+            Dialog::FolderCreation => ("New folder", "Choose where to create your folder."),
             Dialog::FolderChange => (self.folder_change_title(), ""),
             Dialog::FolderHistory => ("Folder changes", ""),
             Dialog::MoveRecovery => ("Recover a move", ""),
@@ -2444,6 +2445,7 @@ impl App {
         .align_y(Alignment::Center);
         let mut body = column![header, line()].spacing(20);
         match dialog {
+            Dialog::FolderCreation => body=body.push(self.folder_creation_form()),
             Dialog::FolderChange => body=body.push(self.folder_change_form()),
             Dialog::FolderHistory => body=body.push(self.folder_history_form()),
             Dialog::BulkReview => body=body.push(self.bulk_review_form()),

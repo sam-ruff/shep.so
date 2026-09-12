@@ -20,6 +20,7 @@ impl App {
             || self.database_import.pending()
             || self.database_transfer.pending.is_some()
             || self.folder_staging()
+            || self.folder_creation.busy
             || self.bulk.staging.is_some()
             || self.mail_actions.pending() > 0
             || !self.move_recovery.pending.is_empty()

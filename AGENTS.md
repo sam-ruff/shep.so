@@ -959,6 +959,15 @@ The native MCP fixture bypasses all real popup/audio delivery. `desktop.start` a
 
 ## Mail move recovery
 
+Sidebar folder creation uses `engine/folder_creation.rs` and its content-free
+store journal. Freeze the exact Mailbox and connection before CREATE; changed
+encoding cannot reinterpret that saved wire path. After an uncertain response,
+reconnect for a read-only exact check. Retain unfinished requests through list
+publication failure and restart, with at most 32 per current account connection
+in the ordinary form. POP3 creation stays local. Preserve name-field and sidebar
+focus when the folder tree changes, and guard direct repeated WindowClose as
+well as the central close dependency until the creation receipt is observed.
+
 The a81d767 recovery checkpoint uses `mail_actions/journal.rs`, `runner.rs` and
 `store/move_journal.rs`. IMAP preflight finishes before durable preparation;
 Started/Copied/Committed/Located/Kept records retain the source MIME and actual

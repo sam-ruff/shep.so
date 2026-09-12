@@ -245,6 +245,17 @@ impl App {
                 });
             }
         }
+        if !self.workspace.accounts.is_empty() {
+            items.push(SidebarItem {
+                account_email: None,
+                label: "New folder".into(),
+                icon: "plus",
+                action: Message::FolderCreation(folder_creation::Message::Open),
+                active: self.dialog == Some(Dialog::FolderCreation),
+                depth: 0,
+                section: false,
+            });
+        }
         if let Some(selected) = &self.query.folders {
             for item in &mut items {
                 if let Some(folder) = self.sidebar_folder(&item.action) {
