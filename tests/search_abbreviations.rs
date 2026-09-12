@@ -137,6 +137,61 @@ fn mail(id: usize, body: &str) -> StoredMail {
 }
 
 #[tokio::test]
+async fn numeric_phrase_counts_keep_selected_folder_bindings_and_empty_offsets() {
+    let store = Store::memory().unwrap();
+    let mut rows = (0..60)
+        .map(|id| {
+            let mut value = mail(
+                id,
+                if id == 0 {
+                    "2026 17"
+                } else {
+                    "Context 2026 17"
+                },
+            );
+            value.summary.unread = id % 2 == 0;
+            value
+        })
+        .collect::<Vec<_>>();
+    rows.push(
+        parse_mail(
+            "work",
+            "90",
+            "Archive",
+            b"Subject: Notes\r\n\r\n2026 17".to_vec(),
+            true,
+            false,
+        )
+        .unwrap(),
+    );
+    store.upsert(rows).await.unwrap();
+    let query = MailQuery {
+        search: "2026 17".into(),
+        sort: MailSort::Relevance,
+        folders: Some(vec![FolderSelection {
+            account: Some("work".into()),
+            folder: "INBOX".into(),
+            sent_only: false,
+        }]),
+        ..Default::default()
+    };
+    for (offset, count) in [(0, 50), (50, 10), (60, 0), (100, 0), (usize::MAX, 0)] {
+        let page = store
+            .query(MailQuery {
+                offset,
+                ..query.clone()
+            })
+            .await
+            .unwrap();
+        assert_eq!((page.total, page.unread, page.rows.len()), (60, 30, count));
+        assert!(page.rows.iter().all(|row| row.folder == "INBOX"));
+        if offset == 0 {
+            assert_eq!(page.rows[0].remote_id, "0");
+        }
+    }
+}
+
+#[tokio::test]
 async fn phrase_tiers_preserve_paging_capture_and_equal_timestamp_order_after_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("phrases.sqlite");
@@ -181,6 +236,23 @@ async fn phrase_tiers_preserve_paging_capture_and_equal_timestamp_order_after_re
             actual.extend(page.rows.into_iter().map(|row| row.id));
         }
         assert_eq!(actual, expected);
+        for offset in [1, 17, 49, 67, 68, 1000] {
+            let page = store
+                .query(MailQuery {
+                    offset,
+                    ..query.clone()
+                })
+                .await
+                .unwrap();
+            assert_eq!(page.total, expected.len());
+            let start = offset.min(expected.len());
+            let end = (start + PAGE_SIZE).min(expected.len());
+            assert_eq!(
+                page.rows.into_iter().map(|row| row.id).collect::<Vec<_>>(),
+                expected[start..end],
+                "offset {offset}"
+            );
+        }
         let id = MailSelectionId::default();
         let capture = store
             .capture_selection(id, 0, query.clone(), true, vec![])

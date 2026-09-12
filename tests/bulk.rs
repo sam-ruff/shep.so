@@ -74,6 +74,7 @@ async fn frozen_groups_publish_full_query_effects_without_changing_originals_or_
     let destination = MailQuery {
         folder: "Archive".into(),
         search: "searchable".into(),
+        sort: MailSort::Relevance,
         ..Default::default()
     };
     let page = store.query(destination.clone()).await.unwrap();

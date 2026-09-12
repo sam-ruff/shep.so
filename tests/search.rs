@@ -7,6 +7,102 @@ fn message(id: usize, subject: &str, body: &str) -> StoredMail {
 }
 
 #[tokio::test]
+async fn prefix_membership_tracks_inserts_removal_and_reopen() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("prefix.sqlite");
+    let store = Store::open(&path)?;
+    store.upsert(vec![message(1, "Milestone", "Notes")]).await?;
+    let query = MailQuery {
+        search: "milestone".into(),
+        sort: MailSort::Relevance,
+        ..Default::default()
+    };
+    assert_eq!(store.query(query.clone()).await?.total, 1);
+    let extension = message(2, "Milestone世界", "Notes");
+    let extension_id = extension.summary.id.clone();
+    store.upsert(vec![extension]).await?;
+    assert_eq!(store.query(query.clone()).await?.total, 2);
+    drop(store);
+    let store = Store::open(&path)?;
+    assert_eq!(store.query(query.clone()).await?.total, 2);
+    store.remove(extension_id).await?;
+    assert_eq!(store.query(query.clone()).await?.total, 1);
+    drop(store);
+    let store = Store::open(path)?;
+    assert_eq!(store.query(query).await?.total, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn exact_unicode_body_cannot_be_hidden_by_a_full_literal_page() -> anyhow::Result<()> {
+    let store = Store::memory()?;
+    let mut messages = vec![message(0, "ooe", "oộ")];
+    messages.extend((1..61).map(|index| message(index, "oo", "Details enclosed")));
+    store.upsert(messages).await?;
+    let page = store
+        .query(MailQuery {
+            search: "oộ".into(),
+            sort: MailSort::Relevance,
+            ..Default::default()
+        })
+        .await?;
+    assert_eq!(page.total, 61);
+    assert_eq!(page.rows.len(), PAGE_SIZE);
+    assert_eq!(page.rows[0].remote_id, "0");
+    Ok(())
+}
+
+#[tokio::test]
+async fn literal_pages_fall_back_at_corrected_boundary() -> anyhow::Result<()> {
+    let store = Store::memory()?;
+    store
+        .upsert(
+            (0..125)
+                .map(|index| {
+                    if index == 0 {
+                        return message(index, "Conference schedule", "conference");
+                    }
+                    let subject = if index < 75 {
+                        "Conference schedule"
+                    } else {
+                        "Confernece schedule"
+                    };
+                    message(index, subject, "Details enclosed")
+                })
+                .collect(),
+        )
+        .await?;
+    let mut expected = vec!["0".to_owned()];
+    expected.extend((1..75).rev().map(|index| index.to_string()));
+    expected.extend((75..125).rev().map(|index| index.to_string()));
+    for offset in [0, 50, 74, 75, 100, 124, 125, 150] {
+        let page = store
+            .query(MailQuery {
+                search: "conference".into(),
+                sort: MailSort::Relevance,
+                offset,
+                ..Default::default()
+            })
+            .await?;
+        assert_eq!(page.total, expected.len());
+        assert_eq!(
+            page.rows
+                .into_iter()
+                .map(|row| row.remote_id)
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .skip(offset)
+                .take(PAGE_SIZE)
+                .cloned()
+                .collect::<Vec<_>>(),
+            "literal/corrected page at offset {offset}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn exact_short_body_beats_newer_weak_and_typo_matches_with_stable_pages_after_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("search.sqlite");

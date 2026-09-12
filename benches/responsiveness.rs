@@ -10,7 +10,9 @@ fn main() {
             let messages=(0..1000).map(|i|{let i=batch*1000+i;StoredMail{summary:Mail{id:format!("bench:{i}"),account_id:format!("account-{}",i%4),remote_id:i.to_string(),folder:"INBOX".into(),sender:format!("Person {} <person@example.com>",i%100),recipient:"sam@example.com".into(),subject:format!("Project {} review",i%30),preview:"A considered message".into(),timestamp:i,unread:i%3==0,starred:i%10==0,attachment_count:0},raw:b"From: person@example.com\r\nSubject: Review\r\n\r\nA considered message".to_vec(),text:format!("Architecture plans for milestone {}",i%250)}}).collect();store.upsert(messages).await.unwrap();
         }
         async fn measure(store:&Store,query:MailQuery,name:&str,limit:f64)->f64{
-            let mut times=Vec::new();for _ in 0..60{let start=Instant::now();let page=store.query(query.clone()).await.unwrap();assert!(page.rows.len()<=PAGE_SIZE);if !query.search.is_empty(){assert_eq!(page.total,400,"search benchmark must return its expected matches");}times.push(start.elapsed().as_secs_f64()*1000.);}
+            // The numeric term can occur in the sender, subject or body.
+            let expected_matches=(0..100_000).filter(|i|i%100==17||i%30==17||i%250==17).count();
+            let mut times=Vec::new();for _ in 0..60{let start=Instant::now();let page=store.query(query.clone()).await.unwrap();assert!(page.rows.len()<=PAGE_SIZE);if !query.search.is_empty(){assert_eq!(page.total,expected_matches,"search benchmark must return its expected matches");}times.push(start.elapsed().as_secs_f64()*1000.);}
             times.sort_by(f64::total_cmp);let p95=times[times.len()*95/100];println!("{name}: p50={:.2}ms p95={p95:.2}ms budget={limit}ms",times[times.len()/2]);assert!(p95<limit,"{name} exceeded its performance budget");p95
         }
         println!("Responsiveness budget: {count} cached messages, 4 accounts, page size {PAGE_SIZE}");

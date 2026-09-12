@@ -9,9 +9,12 @@ Use a separate checkout and a disposable profile to compare the demos:
 ```sh
 git worktree add ../shep-search-abbreviations origin/demo/search-abbreviations
 cd ../shep-search-abbreviations
-demo_home=$(mktemp -d)
-XDG_DATA_HOME="$demo_home/data" XDG_CONFIG_HOME="$demo_home/config" XDG_CACHE_HOME="$demo_home/cache" CARGO_BUILD_JOBS=4 cargo run --profile test-ui --features test-support -- --demo --persist-demo --search-mail
+shep_demo_dir=$(mktemp -d "${TMPDIR:-/tmp}/shep-search-demo.XXXXXX")
+CARGO_BUILD_JOBS=4 cargo run --profile test-ui --features test-support -- --demo --search-mail --persist-demo --test-state "$shep_demo_dir/state.json"
 ```
+
+Use a fresh directory for each branch. Reusing the directory retains changes to
+the fictional workspace and allows the Profiles controls to open.
 
 In Preferences, try `prf`, `ntfctns`, `dark mode` and `appearnce`. In Move,
 compare `Archive`, `archvie` and `pjarch` against folders named `Archive` and
@@ -42,10 +45,28 @@ once, with a shared relation for single-term queries. The list and frozen bulk
 selection use identical tier, score, timestamp and identity ordering; pages
 remain limited to 50 metadata rows.
 
+Search totals and unread counts are computed alongside the ranked keys inside
+SQLite, then at most 50 metadata rows are read. An empty page still retrieves
+the complete counts. Queries containing only proven exact terms share their
+literal ranking instead of computing it again; phrase priority remains intact.
+Unicode exact-body matches retain their priority even when SQLite's tokeniser
+and the query normaliser differ for combined accents.
+For ASCII alphabetic words, the current vocabulary is checked inside the query
+transaction. If no longer term exists, an exact FTS lookup avoids unnecessary
+prefix merging. The proof is repeated for each query, so new word extensions
+remain searchable after insertion, removal and reopening the cache.
+When a bounded prefix scan exhausts its range, impossible spelling variants in
+that range are skipped. Other prefixes and scans that reach their cap retain
+their complete candidate checks.
+
 Mail abbreviations do not scan every message or vocabulary term. Mail keeps the
-bounded existing expansion: the first 12 query tokens, 32 one-edit vocabulary
+bounded expansion: the first 12 query tokens, 32 one-edit vocabulary
 candidates, 256 prefix-neighbour candidates for longer words and 12 corrections
-per token. Further query tokens are ignored. Only ASCII alphabetic words receive typo expansion; Unicode literal
+per token. Both candidate budgets count typo neighbours and exclude the exact
+token, which already has its own literal/prefix alternative. This can admit one
+more neighbour at the earlier cap boundary and avoids recounting the exact
+word's postings during vocabulary lookup. Further query tokens are ignored.
+Only ASCII alphabetic words receive typo expansion; Unicode literal
 matching remains available. Wholly numeric mail tokens are exact; mixed letters
 and digits retain prefix matching, so mail `S3` can still match `S30`. Latin accents are normalised without stripping
 Japanese marks or decomposing Hangul. BM25 statistics use the cached collection,
@@ -57,6 +78,10 @@ and [SQLite FTS5](https://www.sqlite.org/fts5.html).
 
 Automated ranking and capture coverage lives in `tests/search_abbreviations.rs`,
 alongside the shared search and selection suites. Native demonstrations and
-performance receipts are recorded in the completion log after review. Browser
+performance receipts are recorded in the completion log after review. On the
+shared 100,000-message fixture, cached search p95 is 19.87 ms for ordinary text,
+22.83 ms for a transposition and 31.25 ms for four terms. Warm complete
+Preferences ranking is 0.023–0.045 ms p95; these measurements exclude native
+input/drawing and live providers. Browser
 and mobile do not acquire this experimental matcher by switching desktop branches;
 their search parity remains tracked separately.
