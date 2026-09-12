@@ -1,5 +1,18 @@
 # Shep handover
 
+## Current decision, 12 September
+
+Sam selected Abbreviations (`b00c784`) after the live profile comparison and
+requested deletion of Precise and Tolerant branches. The selected implementation
+is being integrated into main; preserve its parser/control/client parity gaps.
+The older unselected-demo notes below are comparison history.
+
+Next fix repeated taskbar launches creating duplicate tray processes. Ownership
+must be established before opening mail or creating a tray, with later launches
+restoring the existing window. Tray implementation and native launcher tests
+run in isolated `tray-activation` and `tray-activation-tests` worktrees. Do not
+force-kill personal instances or discard pending saves during the handover.
+
 ## Search demo delivery, 12 September 2026
 
 The latest requested sequence is delivered: formatted HTML selection,

@@ -1,12 +1,36 @@
 # Completion audit
 
+## Abbreviations selected for desktop search, 12 September 2026
+
+Sam selected `b00c784` after trying all three alternatives with his own profiles.
+The selected implementation is integrated into main: abbreviation and typo
+matching for Preferences and Move, with exact-body, phrase and literal mail
+matches ranked before expanded matches. The Precise and Tolerant local and
+remote branch references have been deleted; detached worktrees retain their
+source and ignored verification evidence.
+
+The integrated test-support executable SHA-256 is
+`7c9fea20e117a2edbe23d69e119412eca18b2eb10cd27417af8f3081032407fa`.
+All twelve selected native search/settings/Move scenarios pass. Reviewed
+captures include `77fe13afbe00`, `1539b0af5aa2` and `4c6a346d3741` under
+`artifacts/e2e/`; `artifacts/logs/selected-search-native.log` records the run.
+The 43 parity contracts and pinned strict Zensical build pass. The merge is
+subject to the normal formatting, Clippy and test commit gates.
+
+The branch benchmark above remains the performance evidence; integration did
+not change its matching source. Full input-to-screen latency, queries beyond
+twelve terms, mixed alphanumeric identifier semantics, exhaustive dynamic
+settings coverage and Flutter/browser parity remain open in TODO. The separate
+duplicate-tray launch report remains active until its fix is verified and pushed.
+
 ## Three search comparison branches shipped, 12 September 2026
 
 The formatted HTML selection (R95), newest-first conversations (R35), pinned
 reader actions (R96), History icon (R15) and launcher/tray correction (R64)
 were pushed to main before these alternatives. All three include main's
 `e14f3d6` checkpoint and the same fictional comparison mail and settings
-catalogue. No alternative has been merged into main or selected as its default.
+catalogue. At this checkpoint no alternative had been selected; Sam subsequently
+selected Abbreviations on 12 September.
 
 | Branch | Pushed commit | Normal hook test executions | Final native scenarios |
 | --- | --- | ---: | ---: |
@@ -54,6 +78,101 @@ dynamic-caption coverage; review mail's twelve-token limit and mixed-identifier
 prefixes; implement Flutter/browser parity; and complete broader platform and
 responsiveness verification. The personal installation was not replaced.
 Quality/release workflows remain disabled until the runners are ready.
+## 12 September: abbreviation demo search performance (R18/R44/R99)
+
+The demo's bounded vocabulary lookup now excludes the exact token from both
+candidate pools. SQLite's vocabulary cursor counts postings even when an SQL
+filter later excludes its boundary, so the two inclusive ranges stop before
+and resume after that token. Cached bound JSON statements and an OSA batch
+comparator also avoid repeated query parsing and matcher setup. Candidate
+budgets now count typo neighbours, which can admit one additional valid term at
+the old exact-token boundary; literal, numeric, phrase and body priorities are
+unchanged. No whole-mailbox array, extra returned rows or higher budget is used.
+
+Complete bounded prefix scans now skip impossible variants only within a proved
+exhausted range; other prefixes and full-cap scans retain their checks. A fresh
+query-transaction proof avoids prefix merging when no longer word exists.
+Search totals and unread counts share the full ranked-key query, with metadata
+read only for the final 50 rows. One ranking helper preserves the exact-body,
+phrase, literal and expanded tiers across pages and captured selection, and
+omits redundant literal ranking only when the generated query proves equality.
+
+All 65 focused checks pass: 53 search/selection/bulk/move integration tests,
+seven folder-projection tests, four vocabulary regressions and a query-plan
+guard. These include a 2,000-occurrence exact word, candidates outside a full
+256-term scan, Unicode suffix insertion/removal/reopen, an exact Unicode body
+that is not a normalised literal match, numeric phrases with selected-folder
+bindings, total/unread counts at empty offsets and projected bulk destinations
+sorted by relevance. Logs use the `artifacts/logs/search-c-filter-*` prefix.
+
+The final quiet benchmark passes on 100,000 messages and four accounts, with
+60 samples and 4,132 asserted matches for each search query. P95 is 7.28 ms for
+Inbox, 3.61 ms for one account, 19.87 ms for ordinary search, 22.83 ms for a
+transposition and 31.25 ms for the four-term query, all below 50 ms. Cached-body
+p95 is 0.045 ms below 10 ms. The optimised `test-ui` profile and fixture are the
+same across demos; see `artifacts/performance/backend.json` and
+`artifacts/logs/search-c-backend-filter.log`. Earlier failures remain recorded:
+the initial four-term p95 was 79.26 ms, vocabulary exclusion alone 68.09 ms,
+prefix/literal-page work 53.22 ms and counted keys before absence filtering
+58.89 ms. No timeout or budget was relaxed.
+
+All twelve final native search/Preferences/Move scenarios pass in 46.290 seconds
+(`artifacts/logs/search-c-final-native.log`). Reviewed light `ntfctns` results,
+compact-dark Profiles destination and phrase-first mail are in `e7c793909fad`
+and `0ba52ad0c352`; common catalogue/no-results evidence is in `1f2897b04ae6`,
+`60e75854d755` and `7a7d22d5f90e`. Native SHA-256 is
+`8e765ea554f7457196ca6cc98069ab41c0734792a7f4e50f486af7c39e388d9f`.
+The final source also checks an unrepresentable offset before SQL conversion;
+the focused `usize::MAX` regression preserves full totals and an empty page.
+That guard does not change the measured ordinary offsets or ranking.
+Strict pinned Zensical, formatting and all 43 parity contracts pass. Main's
+`e14f3d6` shipping receipt is included; normal hooks and authorised branch push
+remain pending. These are cached backend and warm catalogue measurements,
+not native input latency or live-provider performance.
+
+## 11 September: abbreviation demo catalogue and native review (R18/R44/R99)
+
+`demo/search-abbreviations` now includes the shared catalogue (`1f6c93c`), shared
+mail examples (`c00c80b`) and main's completed reader/icon prerequisites through
+`b5546c7`. Its Preferences scorer reuses one Nucleo scratch allocation and cached
+query characters across the weighted catalogue; Move and folder destinations
+also reuse their batch matcher. Numeric label tokens stay exact across literal
+separators, with regressions for `Project-17`, `2026/Q1` and `S3-backups`.
+
+Six catalogue tests and seven C-specific ranking/Unicode/numeric/page/capture
+regressions pass. The earlier algorithm checkpoints passed normal hooks as
+`434df74`, `8b82ead` and `1554984`. All twelve native search, catalogue, Move,
+cross-folder selection and keyboard-scope scenarios pass on the final reviewed
+binary (`artifacts/logs/search-c-native-reviewed.log`). The C-specific scenario
+checks exact typed abbreviations, then clicks through to Notifications and
+Profiles in light and compact-dark layouts. It also verifies that `release
+planning` puts **Release planning notes** above **Planning the release**.
+
+Reviewed final evidence is under `artifacts/e2e/9abce5eae800` and `14be58f39c38`;
+shared catalogue/no-results captures are in `d50d90a240ec` and `93a1a3b6f541`, and
+the common mail/Move comparison is in `73b8bf724c1d`. Visual review corrected the
+singular result count. The initial in-memory demo showed the existing saved-
+workspace requirement when opening Profiles; the final scenario uses the
+existing persistent fictional fixture and verifies loaded profile metadata.
+The final native SHA-256 is
+`e1a12cbc6020546c858fa3aa67ea26e7cc9e95f592aa29ea33ed000b8f3543b4`.
+
+The shared parity registry validates all 43 contracts. Checkpoint `ec03a45` passes
+normal hooks. The quiet, optimised catalogue benchmark passes all eight queries
+at 60 samples each: p95 ranges from 0.023 to 0.045 ms against the 8 ms budget.
+This measures warm complete catalogue ranking, excluding native input and drawing;
+the report is `artifacts/performance/settings-search.json`.
+
+The initial mailbox run exposed an incorrect expected count in the new benchmark:
+the numeric token can match sender or subject as well as body, giving 4,132
+matches across the unchanged 100,000-message fixture. After correcting that
+assertion, ordinary and transposed search pass at p95 42.29 and 32.10 ms, but
+the four-term query fails at 79.26 ms against the unchanged 50 ms budget.
+The failed receipt is `artifacts/logs/search-c-backend-timing.log`; the subsequent
+optimisation and passing quiet measurement are recorded above. No default
+algorithm, full R99 completion, client parity, native input latency or personal
+installation is claimed. [Demo notes](agents/search-abbreviations.md) record the
+mail token limit, mixed identifier prefix behaviour and bounded corrections.
 
 ## R64 GNOME launcher and tray correction, 11 September 2026
 
@@ -106,6 +225,90 @@ Android/iOS have no desktop tray surface; their launcher/in-app visual parity
 remains tracked under R80.
 
 This log is the union of the desktop session's log (`main`) and the mobile/web client session's log (`feat/mobile-web-clients`), merged on 2026-09-09; the merge entry is at the end of the file. The entries directly below were written on `main`, newest first, down to the 8 September handover entries. Later sections keep each branch's own order. Request numbers R67 to R80 exist on both sides; [the request audit](REQUEST_AUDIT.md) states the collision once.
+
+## 11 September: abbreviation-search algorithm checkpoint (R18/R44/R99)
+
+The experimental `demo/search-abbreviations` branch adds a reusable Nucleo label
+matcher with literal punctuation, required terms, exact numeric tokens and OSA
+typo fallback. Mail retains bounded indexed vocabulary expansion and now ranks
+exact phrases ahead of scattered literal terms and expanded terms, after the
+existing exact-short-body priority. List and captured-selection ordering share
+the same tier expressions and indexed phrase/literal relations.
+
+The six existing search tests, five new abbreviation/phrase regressions, nine
+captured-selection tests and query-plan guard pass. The new corpus checks
+50-row paging, equal timestamp ties and selection after reopening the cache.
+All-target/all-feature Clippy passes. Shared native fixture `c00c80b` is merged;
+catalogue integration, native review, quiet performance measurement and the
+authorised demo push remain pending. [Algorithm notes](agents/search-abbreviations.md)
+describe the matching bounds and isolated demo command. Browser/mobile search
+parity remains explicitly open; this checkpoint chooses no production default.
+
+## 11 September: pinned desktop conversation actions (R96)
+
+Threaded readers carried Reply, Reply all, Forward, Print and source attachments
+inside the expanded message card. After scrolling a long conversation, the
+saved native bottom-Reply click failed to open a composer. The failure log is
+`artifacts/logs/footer-baseline.log`; the reviewed absent-footer capture is
+`artifacts/e2e/bd4c8e336f0c/conversation-footer-scrolled-preview-False.webp`.
+
+Conversation readers now reserve a footer below the cards. Its actions use only
+the focused message's current detail, including a collapsed older card; missing
+or stale detail leaves the same disabled action controls in place. Inline
+composers keep their source-card attachment actions. The ordinary reader's
+existing fixed footer is preserved. Browser and Flutter already reserve their
+action footers separately; their conversation-card parity remains open.
+
+Four new native scenarios cover six light/dark preview/compact/full layouts,
+Reply all/Forward/Print on a collapsed older message, a cold older HTML message
+while rendering, and the final HTML line above the compact footer. The existing
+conversation fixture's oldest, nonadjacent message now has a simple HTML body
+with the same text, preventing neighbour prefetch from turning the loading
+scenario into a warm-cache test. Early test setup failures remain in
+`footer-native.log` and `footer-test-setup.log`: the harness accepts at most
+30 scroll steps, has no `gt` comparison, and HTML bounds need the observed
+conversation scroll subtracted before comparing screen coordinates.
+
+Nine conversation unit/index checks pass, including a new missing/stale/
+collapsed-detail action-target regression. All 30 selected native conversation,
+inline-composer, Forward, Print, reading-column and reply-all paths pass on the
+final binary (`footer-native-final.log`). Python reports 103 executions with
+seven intentional skips; all 40 parity contracts and pinned strict Zensical pass.
+Mandatory-hook results are recorded with the shipping receipt.
+Reviewed final captures include `082fd0e4c5a1` for compact dark actions after
+scrolling, `c8353562a301` for the full light reader, `72b9faabc26d` for the last
+dark HTML line and `ff86b37348fc` for the older message's visible rendering
+placeholder and pinned Reply control. All are under this lane's ignored
+`artifacts/e2e/` directory.
+
+Main integration and push belong to the primary agent. This does not establish
+Windows/macOS execution, performance, full native input-lifecycle coverage or
+client conversation parity, and it does not change the personal installation.
+
+## 11 September: common Preferences catalogue for the search demos (R99)
+
+The demo foundation expands Preferences search to control captions, descriptions,
+section/tab names and common synonyms across account, Google, profile, calendar
+and backup forms. Exact titles and captions rank before prefixes and weighted
+word matches. The baseline uses bounded RapidFuzz OSA correction, requires every
+distinct query word and preserves numeric words. Static text is normalised once;
+the UI reuses results until the query changes. Empty results have visible guidance.
+
+Five Rust tests pass, including an exhaustive Preferences destructuring guard,
+serialised-field coverage/exclusions and nested network/account/calendar/profile
+schema audits. Three native scenarios pass: the new ranked cross-tab flow in
+light/dark/900×640 layouts, existing tooltip controls and mail-check validation.
+The reviewed ranked-result WebPs are in lane artifact directories `f751ddc87649`
+and `90ea815dcc46`; compact-dark no-results evidence is in `59981bb48626`.
+The first independent run also passed before root repeated the gates.
+
+The ignored complete-catalogue timing test is saved for the quiet measurement
+window. This does not establish native input latency or choose a production
+algorithm. R99 remains open for deep-control reveal, complete dynamic-caption
+coverage and Flutter/browser parity. Provider-specific controls retain their
+existing Edit/destination navigation; search never changes a preference to reveal
+them. See [Preferences search](agents/SETTINGS_SEARCH.md). The normal hooks gate
+the common commit; the integrator owns the demo-foundation merges and shipping.
 
 ## 11 September: mail action History header icon (R15)
 

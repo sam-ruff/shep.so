@@ -464,19 +464,20 @@ impl Store {
             let c = &transaction;
             read_moves::prepare(c, &query.project_moves)?;
             let plan = mail_query::Plan::new(c, &query)?;
-            let (total, unread) = plan.counts(c)?;
+            let columns = if query.project_moves.is_empty() && !move_journal::has_projection(c)? { "data,unread,starred,folder,account,0" } else { "data,unread,starred,folder,account,messages.pending_move" };
+            let (page_rows, total, unread) = if let Some(page) = plan.counted_page(c, columns)? {
+                page
+            } else {
+                let (total, unread) = plan.counts(c)?;
+                (plan.page(c, columns, total)?, total, unread)
+            };
             let folder_count = if let Some((token, revision, review)) = &projection {
                 folder_projection::capture(c, token, review, *revision, &query)?;
                 Some(plan.affected_counts(c, token)?)
             } else { None };
-            let columns = if query.project_moves.is_empty() && !move_journal::has_projection(c)? { "data,unread,starred,folder,account,0" } else { "data,unread,starred,folder,account,messages.pending_move" };
-            let (sql, mut values) = plan.ordered(columns);
-            values.push((PAGE_SIZE as i64).into());
-            values.push((query.offset as i64).into());
-            let mut stmt = c.prepare(&format!("{sql} LIMIT ? OFFSET ?"))?;
             let mut move_placeholders = std::collections::HashSet::new();
-            let mut rows = stmt.query_map(rusqlite::params_from_iter(&values), |r| Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?,r.get::<_,bool>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,bool>(5)?)))?
-                .map(|r| { let (data,unread,starred,folder,account,pending)=r?; let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;m.account_id=account;if pending { move_placeholders.insert(m.id.clone()); m.remote_id.clear(); } Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
+            let mut rows = page_rows.into_iter()
+                .map(|(data,unread,starred,folder,account,pending)| { let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;m.account_id=account;if pending { move_placeholders.insert(m.id.clone()); m.remote_id.clear(); } Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
             let source = read_moves::source(c)?;
             let inbox_unread = c.prepare(&format!("SELECT account,COUNT(*) FROM {source} WHERE folder='INBOX' AND unread=1 GROUP BY account"))?
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))?
@@ -527,7 +528,6 @@ impl Store {
                 if pending { bulk_pending.insert(mail.id.clone()); }
             }
             let page = MailPage { move_pending_total:move_journal::pending(c)?, relocated, move_recovery, move_placeholders, rows, total, unread, folder_count, inbox_unread, observed, bulk_pending, bulk_observed, bulk_placeholders: Default::default(), bulk_revision: get(c,"bulk_revision")? };
-            drop(stmt);
             drop(statement);
             if projection.is_some() {
                 read_moves::prepare(c, &[])?;

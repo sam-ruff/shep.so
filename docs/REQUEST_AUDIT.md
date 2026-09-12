@@ -1,5 +1,12 @@
 # Conversation request audit
 
+**12 September decision and tray report:** after trying all three branches with
+his actual profiles, Sam selected Abbreviations for current use and requested
+deleting Precise and Tolerant. This supersedes the earlier unselected-demo
+status. He also reported duplicate tray instances from taskbar launches; the
+new work must restore the existing application, including hidden/minimised
+windows, while preserving pending saves and profile ownership.
+
 **12 September search-demo delivery (R18/R44/R99):** three separately verified
 alternatives are pushed: `demo/search-precise` (`4b14a39`),
 `demo/search-tolerant` (`1c43ec1`) and `demo/search-abbreviations` (`b00c784`).
@@ -18,6 +25,20 @@ mail/Move search (R99/R18/R44). Keep alternatives separate pending the user's
 choice and push each verified prerequisite feature as it finishes. This work's
 priority supersedes the earlier OAuth-first restart order; other requests remain
 active in TODO.
+
+The `demo/search-abbreviations` algorithm checkpoint implements Nucleo/OSA label
+matching and phrase-aware indexed mail ranking, with search/selection regressions.
+Its shared catalogue and twelve native search/Move/control scenarios now pass,
+including real abbreviation result clicks and phrase priority in both themes.
+The 12 September optimisation excludes exact tokens from bounded typo pools,
+proves absent variants from complete prefix scans and shares counts with ranked
+keys. All 65 focused query/selection/bulk/vocabulary checks pass. Quiet cached
+search p95 is 19.87 ms ordinary, 22.83 ms transposed and 31.25 ms for four terms
+on 100,000 messages, below the unchanged 50 ms limit; the earlier failures are
+retained. Warm catalogue ranking passes at p95 0.023–0.045 ms. All twelve final
+native search/control scenarios and reviewed light/compact-dark captures pass;
+strict docs and parity checks pass. Normal hooks and branch push remain pending; see the
+[algorithm notes](agents/search-abbreviations.md) and completion log.
 
 **11 September R64 GNOME correction:** Sam's faint dark dog and undersized tray
 are reproduced with actual GNOME Shell 46 and its Ubuntu dock/tray extensions
@@ -274,7 +295,7 @@ hook test executions passing; see the newest completion entry. OAuth and the sha
 | R96 | Reply buttons float at the bottom of the preview panel so replying needs no scrolling (11 September 2026) | Reproduced in native conversations: the expanded card carried Reply/Reply all/Forward/Print inside its scroller. The reader now reserves a footer outside those cards and binds it to the focused physical message, including collapsed cards and HTML preparation. Evidence and remaining integration/shipping are recorded in completion; individual reader and client footers were already outside the body. |
 | R97 | Configurable option to include the previous email thread in replies (11 September 2026) | Open in TODO |
 | R98 | Small ? help icons with tooltips beside easily misunderstood settings only, not every option (11 September 2026) | Open in TODO |
-| R99 | Settings search should search all settings (11 September 2026) | Open in TODO |
+| R99 | Settings search should search all settings (11 September 2026) | Search-demo catalogue adds control captions, weighted typo matching, cached results and persisted-field coverage review. Exact deep-control reveal, exhaustive dynamic captions and client parity remain open in TODO; see [Preferences search](agents/SETTINGS_SEARCH.md) |
 
 ## Client history (feat/mobile-web-clients)
 
