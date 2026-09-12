@@ -6,6 +6,24 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
 
 ## Top priority — OAuth and shared profiles
 
+**12 September decision and tray regression:** Sam selects Abbreviations as the
+current search implementation. Integrate it into main and delete the Precise
+and Tolerant demo branches, preserving their comparison evidence. Sam reports
+that taskbar launches create additional tray instances instead of reopening
+the running application. Fix launch ownership and activation so a subsequent
+launch restores the existing window, including after minimising/hiding to tray.
+Preserve pending saves, profile isolation and graceful shutdown.
+
+**12 September live search comparison:** Sam requests launching the three search
+branches in turn against his actual profiles, replacing the earlier fictional
+workspace launch for this review. Start Precise, then Tolerant, then
+Abbreviations, allowing Sam to test each before switching. Use the existing
+profile selection and credentials; do not replace the installed executable.
+Sam's first feedback: Precise (`4b14a39`) was "quite good". Tolerant (`1c43ec1`)
+has been tried; Abbreviations (`b00c784`) is now open and focused against
+the normal profile catalogue and active mail cache. These personal-profile
+trials are not automated fixture evidence or a final algorithm selection.
+
 **11 September search-demo priority:** Sam requests working through this list and pushing each fully verified feature as it finishes. First deliver R95 formatted HTML selection, R35 newest-first reply conversations, R96 pinned reply actions and R64 launcher/tray icon fixes. R35 already records the requested message reordering; do not conflate it with R96. Then prepare three separately pushed demo branches comparing fast, relevance-ranked algorithm combinations for Preferences/options search (R99) and general mail/Move search (R18/R44), with strongest text matches first. Keep the alternatives separate for Sam to demo before choosing a default; this order supersedes the earlier OAuth-first order for this work. Preserve client parity tracking and benchmark each alternative on realistic mailbox sizes.
 
 Flutter and desktop have durable discovery, reviewed publication and account/preferences enrollment with independent histories. The desktop implementation is main's (`src/profile_sync`, `src/store/profile_sync`); the client branch's own desktop sync and checked, paged conflict decisions pushed in [`28c2884`](https://github.com/sam-ruff/shep.so/commit/28c288448842b7d09543fc28ef1f2f14bf36f142) were superseded by main at the merge, and their validation and earlier checkpoints remain in [completion](docs/COMPLETION.md).
