@@ -10,12 +10,9 @@ import time
 from pathlib import Path
 
 from e2e import check, click, key, type_text, wait
-from gnome_activation import cleanup_all, eventually, require_stable, stop_process
+from gnome_activation import OBSERVER, cleanup_all, eventually, install_shell_observer, prepare_window, require_stable, stop_process
 from install_linux import APP_ID, desktop_entry
 from mcp_harness import Desktop, ROOT
-
-OBSERVER = "shep-notification-observer@example.test"
-
 
 def validate_notification(items, mode):
     if mode == "muted":
@@ -59,23 +56,13 @@ def run(binary, mode="details", desktop_type=Desktop):
         icons = data / "icons/hicolor/scalable/apps"
         icons.mkdir(parents=True, exist_ok=True)
         (icons / f"{APP_ID}.svg").write_bytes((ROOT / "assets/shepherd-light.svg").read_bytes())
-        extension = data / "gnome-shell/extensions" / OBSERVER
-        extension.mkdir(parents=True)
-        version = desktop.command("gnome-shell", "--version").split()[-1].split(".")[0]
-        (extension / "metadata.json").write_text(json.dumps({
-            "uuid": OBSERVER, "name": "Owned notification observer", "description": "Read-only fixture observations",
-            "shell-version": [version],
-        }))
-        (extension / "extension.js").write_bytes((ROOT / "scripts/fixtures/gnome_notifications.js").read_bytes())
+        observation = install_shell_observer(desktop)
         desktop.command("gsettings", "set", "org.gnome.shell", "enabled-extensions", f"['{OBSERVER}']")
         desktop.command("gsettings", "set", "org.gnome.shell", "disabled-extensions",
                         "['ding@rastersoft.com', 'tiling-assistant@ubuntu.com']")
         desktop.command("gsettings", "set", "org.gnome.desktop.interface", "enable-animations", "false")
         desktop.command("gsettings", "set", "org.gnome.desktop.interface", "scaling-factor", "1")
         desktop.command("gsettings", "set", "org.gnome.desktop.notifications", "show-banners", "true")
-        def observation():
-            return json.loads((directory / "gnome-notifications.json").read_text())
-
         for name, command in [
             ("gnome-shell", ["gnome-shell", "--x11", "--sm-disable", "--mode=ubuntu"]),
             ("gnome-notification-service", ["/usr/bin/gjs", "-m", "/usr/share/gnome-shell/org.gnome.Shell.Notifications"]),
@@ -83,9 +70,8 @@ def run(binary, mode="details", desktop_type=Desktop):
             with (directory / f"{name}.log").open("w") as output:
                 processes.append(subprocess.Popen(command, env=env, stdout=output, stderr=output))
             if name == "gnome-shell":
-                eventually(observation, "owned GNOME notification observer", 20)
+                eventually(lambda: observation()["shell_ready"], "GNOME startup complete", 20)
 
-        eventually(observation, "owned GNOME notification observer", 20)
         eventually(lambda: desktop.command("gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
                                            "--object-path", "/org/freedesktop/Notifications", "--method",
                                            "org.freedesktop.Notifications.GetServerInformation"),
@@ -105,6 +91,8 @@ def run(binary, mode="details", desktop_type=Desktop):
         assert receipt["notification_service_pid"] == processes[1].pid
         assert desktop.tray_fixture.host is None, "A fake notification host must not be running"
         desktop.command("xdotool", "key", "Escape", "Escape")
+        eventually(lambda: not observation()["overview_visible"], "GNOME overview dismissed")
+        receipt["shell_startup"] = observation()
         baseline = desktop.command(
             "gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications", "--object-path",
             "/org/freedesktop/Notifications", "--method", "org.freedesktop.Notifications.Notify",
@@ -119,6 +107,7 @@ def run(binary, mode="details", desktop_type=Desktop):
         desktop.launch_size = (1440, 920)
         desktop.batch([{"type": "restart"}])
         desktop.command("xdotool", "windowactivate", "--sync", desktop.window)
+        receipt["setup_window"] = prepare_window(desktop)
         desktop.batch([click(100, 878), check("tab", "Preferences"), wait(150)])
         if mode != "details":
             desktop.batch([click(690, 366), check("dark", True)])

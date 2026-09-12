@@ -2,6 +2,11 @@
 
 ## GNOME incoming-mail notification lifetime, 12 September 2026
 
+Source is committed as [`ae85450`](https://github.com/sam-ruff/shep.so/commit/ae854500f94f790164ec666535f5dd3c16930b7c)
+with formatting, both Clippy configurations and 1,226 normal-hook Rust test
+executions passing. The verified production build is installed; final harness
+and evidence changes accompany the source push.
+
 GNOME removes an installed application's notifications when its D-Bus sender
 disconnects. Shep opened and dropped that connection around each Notify call.
 The existing bounded notification worker now retains one connection for mail
@@ -27,6 +32,30 @@ The desktop and service PIDs are proved owned, accepted notifications remain
 after delivery returns, and refresh does not duplicate them. The short-lived
 gdbus sender is a protocol diagnostic, not a reverted old application build.
 The root Python suite passes 113 tests with seven environment/platform skips.
+
+The integrated executable is
+`80805c9d4bbe553fbe659daa52ee8c0b50d35920ecb42a9338a409b8f3ffd2e6`.
+All fourteen tray and four notification Preferences native flows pass; queued
+saving-notice cancellation is captured in `5f944c923ca4`. The initial combined
+run's two GNOME setup failures are retained in `6376fe33b8d6` and `d2224294d03e`.
+The harness now observes completed Shell startup and prepares an unmaximised
+test viewport before input, without extending existing notification deadlines.
+Detailed, private and muted reruns pass in `24b2581b10f4`, `ea444206204c` and
+`8610543d4701`, with the actual banners, Shepherd icon and notification centres
+reviewed. Nine GNOME harness unit tests pass.
+The integrated GNOME launcher rerun also passes, with reviewed receipt
+`446bac2f7099` in the tray-activation-tests worktree: repeated Exec, keyboard
+favourite, real dock click and minimise restore retain one PID-bound tray item
+and the complete draft.
+
+The production no-default-feature release and installed executable share SHA-256
+`89e9fb69b9f2b75d2188502953dbb350d4994ef464a852c4bec4d8afcf7e3988`.
+The installed desktop entry retains `Icon=so.shep.Shep` and
+`StartupNotify=false`; the approved launcher/tray assets are installed.
+The final Windows GNU all-target/all-feature check also passes in the notification
+worktree's `notifications-windows-check-final.log`; this is compile evidence,
+not Windows desktop execution. All 45 parity contracts and pinned strict
+Zensical documentation checks pass.
 
 Mail is fictional and follows the ordinary cache arrival claim; this does not
 establish live-provider delivery. Sound is disabled in the real-shell fixture,
@@ -74,7 +103,7 @@ The production no-feature release build passes, SHA-256
 Linux/X11 execution does not establish Windows/macOS or Wayland shell behaviour.
 Older running binaries cannot join the new ownership protocol and must be quit
 normally; installation does not discard their sessions. Native incoming-mail
-notification delivery is a separate active follow-up.
+notification delivery is covered by the subsequent fix above.
 The production binary is installed at the normal per-user path, with its hash
 verified against the build. The installed desktop entry now uses the current
 full-colour icon and `StartupNotify=false`; both launcher and tray SVGs match
