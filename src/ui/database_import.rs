@@ -5,7 +5,7 @@ use crate::transfer::{
 };
 use iced::{
     Alignment,
-    widget::{checkbox, column, progress_bar, row, text, text_input},
+    widget::{checkbox, column, progress_bar, row, text},
 };
 use std::path::PathBuf;
 
@@ -297,7 +297,7 @@ impl App {
                         review.calendars
                     )))
                     .push(
-                        text_input("Profile name", &p.name)
+                        super::text_context::Input::new("Profile name", &p.name)
                             .style(components::field)
                             .id("import-profile-name")
                             .on_input(move |v| message(Action::Name(v)))

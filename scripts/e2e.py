@@ -86,6 +86,74 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch({"type":"hover","x":source_x,"y":source_y},{"type":"mouse_down"},
                        {"type":"hover","x":target_x,"y":target_y},check("mail_drag.active",True))
 
+    def test_text_context_input_keyboard_cut_paste_and_focus(self):
+        self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("alpha bravo"),
+                       key("ctrl+a"),key("shift+F10"),check("text_menu.clipboard_ready",True),
+                       check("context_menu",None),check("text_menu.cut",True),shot("text-menu-input-selected"),
+                       key("Return"),check("query",""),key("Menu"),check("text_menu.clipboard_ready",True),
+                       shot("text-menu-input-empty"),key("Down"),key("Down"),key("Return"),
+                       check("query","alpha bravo"),key("ctrl+a"),
+                       {"type":"click","x":360,"y":153,"button":3},check("text_menu.clipboard_ready",True),
+                       click(410,213),key("ctrl+a"),key("BackSpace"),key("ctrl+v"),
+                       check("query","alpha bravo"),key("ctrl+a"),key("BackSpace"),
+                       key("Escape"),check("total",120),
+                       {"type":"click","x":400,"y":224,"button":3},
+                       check("context_menu",None,"ne"),shot("message-menu-outside-text"),key("Escape"))
+
+    def test_text_context_plain_reader_and_composer(self):
+        self.mcp.batch(check("reader_text_ready",True),drag(701,333,765,333),
+                       check("reader_selected_text","Hey Alex","contains"),
+                       {"type":"click","x":730,"y":333,"button":3},check("text_menu.clipboard_ready",True),
+                       shot("text-menu-plain-selected"),{"type":"hover","x":770,"y":356},
+                       {"type":"mouse_down"},wait(1200),{"type":"mouse_up"},check("text_menu.open",False),
+                       key("ctrl+k"),check("focused_input","search"),key("ctrl+v"),
+                       check("query","Hey Alex","contains"),key("ctrl+a"),key("BackSpace"),
+                       key("Escape"),check("total",120),check("selected","A little more room to think"),
+                       key("r"),check("focused_input","compose-body"),
+                       type_text("Context menu draft"),key("ctrl+a"),key("shift+F10"),
+                       check("text_menu.clipboard_ready",True),check("text_menu.cut",True),
+                       check("context_menu",None),shot("text-menu-composer"),key("Return"),check("editor",""),
+                       key("Menu"),check("text_menu.clipboard_ready",True),key("Down"),key("Down"),key("Return"),
+                       check("draft_body","Context menu draft"),shot("text-menu-composer-restored"))
+
+    def test_text_context_formatted_reader_light_dark_compact(self):
+        for dark, compact in [(False,False),(True,False),(True,True)]:
+            with self.subTest(dark=dark,compact=compact):
+                result = self.mcp.call("desktop.start",reading_mail=True)
+                print(f"Text menu evidence: {result['artifacts']}",flush=True)
+                if dark:
+                    self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),
+                                   click(690,366),check("dark",True),key("ctrl+1"),check("tab","Mail"))
+                self.mcp.batch(click(400,mail_row_y(1)),check("selected","Reading style HTML letter"),
+                               check("html_view_current",True))
+                if compact:
+                    self.mcp.batch({"type":"resize","width":900,"height":640},check("window_size",[900,640]),
+                                   check("html_view_current",True))
+                state = self.mcp.call("desktop.state")
+                x,y,width,_ = state["html_body_bounds"]
+                left = round(x+max(0,(width-48*state["reader_size"])/2)+20)
+                top = round(y+28)
+                self.mcp.batch(drag(left,top,left+150,top),check("html_selected_text","Column marker"),
+                               {"type":"click","x":left+60,"y":top,"button":3},check("text_menu.clipboard_ready",True),
+                               check("html_selected_text","Column marker"),shot("text-menu-html-selected"),
+                               key("Escape"),check("text_menu.open",False),key("shift+F10"),check("text_menu.clipboard_ready",True),
+                               check("context_menu",None),check("folder_changes.menu",None),shot("text-menu-html-keyboard"),
+                               key("Return"),key("ctrl+k"),check("focused_input","search"),
+                               key("ctrl+v"),check("query","Column marker"))
+
+    def test_text_context_secure_field_disables_cut_and_copy(self):
+        self.mcp.call("desktop.start",empty_calendars=True)
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),click(467,156),
+                       check("settings_tab","Calendars"),click(365,335),check("dialog","Calendar"),
+                       click(690,489),type_text("clipboard sentinel"),key("ctrl+a"),key("ctrl+c"),
+                       click(690,569),type_text("fixture-password"),key("ctrl+a"),
+                       {"type":"click","x":690,"y":569,"button":3},check("text_menu.clipboard_ready",True),
+                       check("text_menu.cut",False),check("text_menu.copy",False),
+                       shot("text-menu-password-disabled"),click(730,592),check("text_menu.open",True),
+                       click(730,628),check("text_menu.open",True),
+                       key("Escape"),key("ctrl+c"),click(690,489),key("ctrl+a"),key("ctrl+v"),
+                       check("fields.username","clipboard sentinel"),shot("text-menu-password-clipboard-preserved"))
+
     def selected_mail_subject(self):
         # Action identity is ready with metadata. The reader's `selected`
         # subject can still be None while its body loads independently.
@@ -112,7 +180,14 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(check("folder_creation.account", "preview-personal"),
                        check("folder_creation.parent", ""), shot("new-folder-root-form"),
                        key("Return"), check("folder_creation.error", "Enter a folder name", "contains"),
-                       type_text("Receipts"), key("Return"), check("dialog", None),
+                       type_text("Receipts"), key("ctrl+a"), key("shift+F10"),
+                       check("text_menu.clipboard_ready", True), check("text_menu.cut", True),
+                       check("context_menu", None), shot("new-folder-text-menu"),
+                       key("Return"), check("folder_creation.name", ""),
+                       key("Menu"), check("text_menu.clipboard_ready", True),
+                       check("text_menu.paste", True), key("Return"),
+                       check("folder_creation.name", "Receipts"),
+                       key("Return"), check("dialog", None),
                        check("folder_creation.busy", False), check("sidebar_labels", "Receipts", "contains"),
                        check("folder_creation.saved", []), shot("new-folder-root-created"),
                        key("Return"), check("dialog", "FolderCreation"),

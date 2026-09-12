@@ -1,8 +1,38 @@
 # Completion audit
 
+## Standard text context menus, 12 September 2026
+
+Native verification passes; final hook and shipping receipts follow here.
+Inputs, composition and plain/formatted readers share Cut, Copy, Paste and
+Select all menus. Right-click preserves selection; Shift+F10 and the Menu key
+target actual native focus before outer message/folder menus. Unavailable
+actions are disabled, including password copying and editing read-only readers.
+Late clipboard replies cannot target closed or replaced menus. The popup keeps
+the application palette over independently styled sender HTML.
+
+The new folder-name field uses the same input wrapper. Its saved native scenario
+cuts and pastes the exact name before creating the folder. Browser and Flutter
+selection controls still need the shared parity regressions; Linux fixture
+evidence does not establish live-provider or other-platform behaviour.
+
+Ten integrated widget tests and 27 distinct native scenarios pass, including a
+six-scenario focus follow-up with composer input driven immediately after actual
+focus acknowledgement. Native binary SHA-256 is
+`eafb1c0a1dd43879e34a809b2c58a567388fc01ee1ecca1808811919b400f17f`.
+Reviewed root evidence: New folder `39f0a0c32fa8`, input `9e1d0095a7b4`,
+compact dark HTML `49777703084e`, composer `b5d995281314` and password
+`dff3367eb6c1`. Logs: `text-menu-native-integrated.log`,
+`text-menu-native-focus-final.log` and `text-menu-unit-integrated.log` under
+`artifacts/logs/`. The 113-test Python suite passes with seven unavailable
+platform/environment skips, alongside strict docs and 47 shared contracts.
+Select all keeps the existing plain-reader text-block scope; clipboard content
+is sampled when opening each menu.
+
 ## Sidebar folder creation, 12 September 2026
 
-Integrated verification is in progress; this entry is not a shipping receipt.
+Source is pushed on main as [`842c570`](https://github.com/sam-ruff/shep.so/commit/842c5707d1a4fdafd0b2289235d209c8de2fb4d2).
+Formatting, both Clippy configurations and 1,277 normal-hook Rust test executions
+pass. Production installation follows the text-menu and README installer work.
 
 New folder is visible in the sidebar and supports keyboard activation, account
 and parent choices, Unicode names and local POP3 folders. IMAP saves the exact
@@ -17,8 +47,19 @@ preserves the New folder sidebar action through changing row indices. Both
 ordinary close handling and repeated direct close requests wait for the receipt.
 The thirteen integrated folder-creation unit tests pass, including late account
 changes, journal publication failure, restart and close success/error outcomes.
-Final native, hook and source receipts follow here. Client equivalents and live
-provider verification remain explicit gaps in the folder-creation contract.
+Thirteen integrated native scenarios pass, covering seven creation flows plus
+existing folder navigation, Archive, Retry and close recovery. The tested binary
+is `461d4b8e839d9b95f57cdf5c39913a2654c558b28385510563268d8316960491`.
+Reviewed evidence includes compact dark `48f4dcc5a356`, nested Unicode
+`e1dffbc265c6`, restored request `488b73dc7ad7` and close receipt `cd4628e0c629`.
+Logs are `artifacts/logs/folder-creation-native-integrated.log` and
+`folder-creation-commit-final.log`; the first hook attempt caught a missing
+production-build guard on a test observation, fixed before shipment.
+The lane's initial focus-readiness failure remains in `1ebb9bd606d5`; the saved
+scenario now waits for actual input focus before typing, without relaxed budgets.
+The pinned strict documentation build and all 46 shared scenario contracts pass.
+Client equivalents, live provider verification and automatic Sent-copy folder
+creation remain explicit gaps.
 
 ## Missing Archive destination and ordinary move retry, 12 September 2026
 

@@ -143,7 +143,7 @@ impl App {
                     true,
                 ),
             ] {
-                let field = iced::widget::text_input(placeholder, self.field(key))
+                let field = super::text_context::Input::new(placeholder, self.field(key))
                     .padding(12)
                     .size(12)
                     .style(components::field)

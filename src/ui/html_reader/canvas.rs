@@ -21,6 +21,17 @@ struct NativeState {
     pan_grab: Option<f32>,
     modifiers: iced::keyboard::Modifiers,
 }
+impl iced::advanced::widget::operation::Focusable for NativeState {
+    fn is_focused(&self) -> bool {
+        self.focused
+    }
+    fn focus(&mut self) {
+        self.focused = true;
+    }
+    fn unfocus(&mut self) {
+        self.focused = false;
+    }
+}
 pub(super) struct Canvas<'a> {
     state: &'a State,
     enabled: bool,
@@ -36,6 +47,19 @@ impl<'a> Canvas<'a> {
     }
 }
 impl Widget<Message, Theme, Renderer> for Canvas<'_> {
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        _renderer: &Renderer,
+        operation: &mut dyn iced::advanced::widget::Operation,
+    ) {
+        operation.focusable(
+            None,
+            layout.bounds(),
+            tree.state.downcast_mut::<NativeState>(),
+        );
+    }
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<NativeState>()
     }

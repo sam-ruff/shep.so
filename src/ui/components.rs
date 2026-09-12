@@ -294,8 +294,8 @@ pub fn input<'a>(
     placeholder: &str,
     value: &str,
     on_input: impl Fn(String) -> Message + 'a,
-) -> widget::TextInput<'a, Message> {
-    text_input(placeholder, value)
+) -> super::text_context::Input<'a> {
+    super::text_context::Input::new(placeholder, value)
         .on_input(on_input)
         .size(13)
         .padding([11, 12])

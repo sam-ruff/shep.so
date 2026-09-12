@@ -42,6 +42,7 @@ mod removals;
 mod selectable;
 mod settings_search;
 mod sidebar;
+mod text_context;
 mod tray;
 mod views;
 
@@ -112,6 +113,7 @@ enum MailPane {
 #[derive(Debug, Clone)]
 pub enum Message {
     FolderCreation(folder_creation::Message),
+    TextContext(text_context::Request),
     Folders(folder_controls::Message),
     MoveRecovery(move_recovery::Message),
     WindowUnfocused,
@@ -371,6 +373,8 @@ pub struct App {
     pending_focus: Option<&'static str>,
     focused_input: Option<&'static str>,
     #[cfg(feature = "test-support")]
+    text_context_observation: text_context::Observation,
+    #[cfg(feature = "test-support")]
     test_keys: VecDeque<String>,
     #[cfg(feature = "test-support")]
     test_sync_round: u64,
@@ -545,6 +549,8 @@ impl App {
                 last_click: None,
                 pending_focus: None,
                 focused_input: None,
+                #[cfg(feature = "test-support")]
+                text_context_observation: Default::default(),
                 #[cfg(feature = "test-support")]
                 test_keys: VecDeque::new(),
                 #[cfg(feature = "test-support")]
@@ -1018,6 +1024,11 @@ impl App {
         }
         match message {
             Message::FolderCreation(message) => return self.handle_folder_creation(message),
+            Message::TextContext(request) => {
+                #[cfg(feature = "test-support")]
+                self.text_context_observation.observe(&request);
+                return text_context::handle(request);
+            }
             Message::Folders(message) => {
                 let focus = matches!(
                     message,
@@ -4211,6 +4222,10 @@ impl App {
         );
         data["draft_in_reply_to"] = serde_json::json!(self.composer.current.draft.in_reply_to);
         data["focused_input"] = serde_json::json!(self.focused_input);
+        #[cfg(feature = "test-support")]
+        {
+            data["text_menu"] = self.text_context_observation.snapshot();
+        }
         data["s3_connection"] = serde_json::json!(self.s3_connection.as_ref().map(|(_, target, result)| serde_json::json!({"current": *target == self.configured_backup_target(), "pending": result.is_none(), "connected": result.as_ref().is_some_and(|r| r.is_ok()), "error": result.as_ref().and_then(|r| r.as_ref().err()) })));
         data["backup_destination"] =
             serde_json::json!(format!("{:?}", self.preferences.backup_destination));

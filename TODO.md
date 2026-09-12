@@ -10,19 +10,22 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
 
 - [ ] **12 September standard text context menu:** add the normal right-click text actions, including Copy and Select all for selectable text and Cut/Paste for editable fields. Cover formatted/plain readers and editors/search fields as applicable, with keyboard context-menu access, disabled unavailable actions, clipboard behaviour and native regression evidence. Preserve existing message/folder action menus outside text controls. Ship after the moving-mail fix and folder creation already in progress; review Flutter/browser equivalents.
 
+- [ ] **12 September text-menu parity:** verify Flutter/browser equivalents for editable fields, selectable readers, password restrictions, clipboard/focus ownership and keyboard context-menu access; retain platform-native controls where they fulfil the shared contract.
+
 **12 September current execution order:** completed search, tray, notification
 and icon work is already on main through `0abec9f`. The moving-mail fix is
 committed as `b614b8d`: missing destinations are created before submission,
 provable recovery completes automatically, and direct Retry avoids a mandatory
 review. Nineteen native scenarios and 1,263 hook test executions pass; completion
-records the source and evidence. Next deliver sidebar New folder below, then
-standard text context menus. Production installation follows these UI features.
+records the source and evidence. Sidebar New folder is pushed as `842c570`, with
+thirteen native scenarios and 1,277 normal-hook executions passing. Next deliver
+standard text context menus, then the README installer fixes and production install.
 Flutter/browser missing-folder creation, sidebar creation controls and automatic
 proof-based move recovery remain explicit active parity gaps.
 Automatic creation for other provider write paths, including Sent-copy
 publication, still needs a separate receipt and recovery review.
 
-- [ ] **12 September high priority: sidebar folder creation:** missing Move/Archive destinations are created by `b614b8d`. Remaining: provide a visible **New folder** action from the sidebar. Respect the selected account and server hierarchy, handle creation failures and uncertain outcomes without losing mail, and refresh the folder tree after confirmed creation. Verify unit/protocol and native sidebar flows; implement Flutter/browser equivalents or retain explicit parity gaps.
+- [ ] **12 September folder creation parity:** desktop missing Move/Archive destinations and sidebar **New folder** are shipped as `b614b8d` and `842c570`. Implement Flutter/browser creation controls and equivalent durable retry, hierarchy/encoding and close behaviour; live provider verification remains open.
 
 **12 September GNOME notifications and icons follow-up:** the sender-lifetime
 fix is committed as `ae85450` and the production build is installed with the

@@ -430,6 +430,14 @@ Native `ContextArea` snapshots modifiers while processing the mouse event. Do no
 
 Read-only editor buffers for mail text are prepared off-thread with one blocking preparation permit; cancelled/stale results never replace another message. Only selection/cursor/copy operations are accepted. The native suite copies text from preview/full reader and checks ordinary shortcuts still work. HTML has its own worker and visible-text selection path, described below; Ctrl+F uses the displayed-text find path described below.
 
+`ui/text_context` wraps native inputs, editors and the HTML canvas. Keep native
+selection intact when opening the menu, unfocus other controls, and reject
+clipboard replies after close or target replacement. Secure fields cannot Cut
+or Copy; read-only readers cannot edit. Keyboard opening requires real widget
+focus and must capture the event before message/folder menus. Popup colours use
+the application theme independently of sender HTML. Use the shared Input wrapper
+for new fields and retain clipboard, held-click, focus and keyboard regressions.
+
 Preferences search indexes actual editable sections in `ui/settings_search.rs`; update that index when adding settings. Search results open the matching controls. Preserve icon-only tooltip behavior and both tooltip preferences. Unread Inbox counts cover the cache independent of the current query. The Move chooser shows the server's INBOX as Inbox and marks its first result with the Enter hint.
 
 `move_imap_session` treats the server MOVE acknowledgment as committed even if logout fails. The local protocol test covers a spaced source folder returning to INBOX; it is not evidence of a live personal-account move. The harness starts Xvfb with `-noreset`, checks display readiness and stores `xvfb.log` inside the run artifacts.

@@ -5,8 +5,9 @@
 Moving-mail source is committed on main as `b614b8d`, with 1,263 hook executions
 and nineteen relevant native scenarios passing. Missing destinations are created
 before mail submission; exact proof enables automatic recovery and direct Retry.
-Next integrate sidebar New folder, then standard text context menus, then install
-the production update. Keep uncertain outcomes protected and preserve the
+Sidebar New folder is pushed as `842c570`, with thirteen native scenarios and
+1,277 normal-hook executions passing. Next deliver standard text context menus,
+fix the README installers, then install the production update. Keep uncertain outcomes protected and preserve the
 retarget identity, Undo and late-page count regressions. Completion records
 the native hash and reviewed evidence; isolated UI lanes started at `0abec9f`.
 
