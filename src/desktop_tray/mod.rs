@@ -18,7 +18,7 @@ pub enum Action {
 pub enum Event {
     Available(bool),
     Action(Action),
-    SavingNotification(Result<(), String>),
+    SavingNotification(u64, Result<(), String>),
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     Initialize(Arc<Icon>, watch::Sender<Option<Action>>),
 }
@@ -153,7 +153,7 @@ pub fn initialize(icon: Arc<Icon>, actions: watch::Sender<Option<Action>>) -> bo
 }
 
 #[cfg(all(feature = "test-support", target_os = "linux"))]
-fn fixture_permitted() -> bool {
+pub(crate) fn fixture_permitted() -> bool {
     let args: Vec<_> = std::env::args().collect();
     if !args.iter().any(|arg| arg == "--tray-fixture") {
         return false;
@@ -178,18 +178,8 @@ fn fixture_permitted() -> bool {
         })
 }
 #[cfg(not(all(feature = "test-support", target_os = "linux")))]
-fn fixture_permitted() -> bool {
+pub(crate) fn fixture_permitted() -> bool {
     false
-}
-
-pub async fn saving_notification(demo: bool) -> Result<(), String> {
-    if !demo || fixture_permitted() {
-        crate::notifications::saving_notification()
-            .await
-            .map_err(|error| error.to_string())
-    } else {
-        Ok(())
-    }
 }
 
 #[cfg(test)]

@@ -1,5 +1,10 @@
 # Conversation request audit
 
+**12 September folder creation follow-up:** Sam requests high priority tracking
+for creating missing folders and creating folders directly from the sidebar.
+Both are active in TODO, including account/hierarchy handling, failure recovery
+and native/client verification; implementation is not yet complete.
+
 **12 September GNOME follow-up:** Sam reports missing native desktop notifications
 for incoming mail and asks for icon fixes. Native notification delivery and its
 arrival/preferences gating require a real GNOME fixture reproduction. The
@@ -15,6 +20,8 @@ references are deleted locally and remotely, with comparison evidence retained.
 He also reported duplicate tray instances from taskbar launches; the
 new work must restore the existing application, including hidden/minimised
 windows, while preserving pending saves and profile ownership.
+That fix is pushed as `7ef9d74` and installed with the current launcher/tray
+icons; completion records its native, protocol, hook and installation evidence.
 
 **12 September search-demo delivery (R18/R44/R99):** three separately verified
 alternatives are pushed: `demo/search-precise` (`4b14a39`),

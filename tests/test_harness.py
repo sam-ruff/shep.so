@@ -16,6 +16,16 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_native_notifications_require_an_owned_bus_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for tray in (None, "available"):
+                with self.assertRaisesRegex(ValueError, "owned bus"):
+                    desktop.start(notification_delivery="native", tray=tray)
+            launch.assert_not_called()
+        tool = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        self.assertIn("native", tool["inputSchema"]["properties"]["notification_delivery"]["enum"])
+
     def test_tray_fixture_validates_mode_and_keeps_its_bus_isolated(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:
@@ -152,12 +162,12 @@ class HarnessTests(unittest.TestCase):
     def test_notification_delivery_fixture_is_explicit_and_validated_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:
-            for value in (True, 42, "native", "host", "unknown"):
+            for value in (True, 42, "personal", "host", "unknown"):
                 with self.assertRaisesRegex(ValueError, "notification delivery fixture"):
                     desktop.start(notification_delivery=value)
             launch.assert_not_called()
         start = next(tool for tool in harness.TOOLS if tool["name"] == "desktop.start")
-        self.assertEqual(start["inputSchema"]["properties"]["notification_delivery"]["enum"], ["slow", "fail-once"])
+        self.assertEqual(start["inputSchema"]["properties"]["notification_delivery"]["enum"], ["slow", "fail-once", "native"])
 
     def test_pixel_measurement_validates_current_resized_window_before_input(self):
         from scripts import native_pixels

@@ -14,6 +14,9 @@ pub(super) struct State {
     pub temporary: bool,
     pub exiting: bool,
     saving_fallback: bool,
+    saving_generation: u64,
+    saving_task: Option<iced::task::Handle>,
+    saving_cancellation: Option<tokio::sync::watch::Sender<()>>,
     /// An explicit repeated Quit leaves journaled work for the next launch.
     pub insisted: bool,
     pub ready: bool,
@@ -39,6 +42,13 @@ pub(super) fn window_settings(size: Size) -> iced::window::Settings {
 }
 
 impl App {
+    fn cancel_saving_notification(&mut self) {
+        self.tray.saving_cancellation = None;
+        if let Some(task) = self.tray.saving_task.take() {
+            task.abort();
+        }
+    }
+
     pub(super) fn boot(activation: Option<crate::activation::Signal>) -> (Self, Task<Message>) {
         let (mut app, initial) = Self::new();
         app.activation = activation;
@@ -155,6 +165,7 @@ impl App {
     /// An explicit Quit leaves journaled work to the next launch. Anything
     /// else must still acknowledge, and the reason stays visible until it does.
     pub(super) fn quit_now(&mut self, window: iced::window::Id) -> Task<Message> {
+        self.cancel_saving_notification();
         self.tray.insisted = true;
         let previous_notice = self.notice.as_ref().map(|(_, _, at)| *at);
         let task = self.handle(Message::WindowClose(window));
@@ -190,16 +201,27 @@ impl App {
             return Task::none();
         }
         self.tray.temporary = true;
-        let notification = Task::perform(
-            crate::desktop_tray::saving_notification(self.demo),
-            |result| Message::Tray(Event::SavingNotification(result)),
-        );
+        self.cancel_saving_notification();
+        self.tray.saving_generation = self.tray.saving_generation.wrapping_add(1);
+        let generation = self.tray.saving_generation;
+        let (cancel, cancellation) = tokio::sync::watch::channel(());
+        self.tray.saving_cancellation = Some(cancel);
+        let (notification, handle) =
+            Task::perform(self.saving_notification(cancellation), move |result| {
+                Message::Tray(Event::SavingNotification(generation, result))
+            })
+            .abortable();
+        self.tray.saving_task = Some(handle);
         Task::batch([self.hide_main_window(), notification])
     }
 
     pub(super) fn tray_event(&mut self, event: Event) -> Task<Message> {
         match event {
-            Event::SavingNotification(result) => {
+            Event::SavingNotification(generation, result) => {
+                if generation != self.tray.saving_generation {
+                    return Task::none();
+                }
+                self.cancel_saving_notification();
                 if result.is_err() && self.tray.temporary && !self.tray.exiting {
                     self.notice("Desktop notifications are unavailable. Shep will close here when your changes are saved; close again to leave now and resume journaled uploads next time.", false);
                     self.tray.temporary = false;
@@ -236,6 +258,7 @@ impl App {
         if self.tray.exiting {
             return Task::none();
         }
+        self.cancel_saving_notification();
         self.pending_close = None;
         self.composer.close = None;
         self.tray.temporary = false;
@@ -285,6 +308,7 @@ impl App {
         {
             return self.restore_main_window();
         }
+        self.cancel_saving_notification();
         self.tray.exiting = true;
         self.tray.temporary = false;
         self.pending_close = None;
@@ -336,6 +360,40 @@ mod tests {
         let _ = app.restore_main_window();
         assert!(app.tray.window.is_none());
         assert!(app.tray.exiting);
+    }
+
+    #[test]
+    fn open_cancels_its_notice_and_old_receipts_cannot_reopen_a_new_close() {
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.tray.available = true;
+        app.bulk.stopped = true;
+        app.busy.insert("backup:held".into());
+        let _ = app.update(Message::WindowCloseRequested(window));
+        let generation = app.tray.saving_generation;
+        let cancellation = app
+            .tray
+            .saving_cancellation
+            .as_ref()
+            .expect("Close owns cancellation")
+            .subscribe();
+        let _ = app.update(Message::Tray(Event::Action(Action::Open)));
+        assert!(
+            cancellation.has_changed().is_err(),
+            "Open cancels queued notification synchronously"
+        );
+        assert!(app.tray.saving_task.is_none());
+        let reopened = app.tray.window.expect("Open restored the native window");
+        let _ = app.update(Message::WindowCloseRequested(reopened));
+        assert!(app.tray.temporary);
+        assert_ne!(app.tray.saving_generation, generation);
+        let _ = app.update(Message::Tray(Event::SavingNotification(
+            generation,
+            Err("Old rejection".into()),
+        )));
+        assert!(app.tray.temporary);
+        assert!(app.tray.window.is_none());
     }
 
     #[test]
@@ -443,9 +501,10 @@ mod tests {
         app.busy.insert("send:one".into());
         let _ = app.update(Message::WindowCloseRequested(window));
         assert!(app.tray.temporary);
-        let _ = app.update(Message::Tray(Event::SavingNotification(Err(
-            "No notification daemon".into(),
-        ))));
+        let _ = app.update(Message::Tray(Event::SavingNotification(
+            app.tray.saving_generation,
+            Err("No notification daemon".into()),
+        )));
         assert!(app.tray.window.is_some());
         assert!(!app.tray.temporary);
         assert_eq!(app.pending_close, Some(window));
@@ -653,9 +712,10 @@ mod tests {
         app.bulk.stopped = true;
         app.busy.insert("backup:one".into());
         let _ = app.update(Message::WindowCloseRequested(window));
-        let _ = app.update(Message::Tray(Event::SavingNotification(Err(
-            "No notification daemon".into(),
-        ))));
+        let _ = app.update(Message::Tray(Event::SavingNotification(
+            app.tray.saving_generation,
+            Err("No notification daemon".into()),
+        )));
         assert!(app.tray.window.is_some());
         assert_eq!(app.pending_close, Some(window));
         let visible = app.tray.window.unwrap();

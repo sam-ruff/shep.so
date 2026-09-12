@@ -1,6 +1,43 @@
 # Completion audit
 
+## GNOME incoming-mail notification lifetime, 12 September 2026
+
+GNOME removes an installed application's notifications when its D-Bus sender
+disconnects. Shep opened and dropped that connection around each Notify call.
+The existing bounded notification worker now retains one connection for mail
+arrivals and temporary-saving notices. A live connection survives rejected RPCs;
+a closed connection is replaced for new work without replaying an uncertain
+delivery. Popup, sound, details, initial-import suppression and burst counts
+remain independent preferences and policies.
+
+Saving notices use one queued request and a bounded receipt. Reopening cancels
+the current close's task and queued delivery synchronously; a later close owns
+a fresh generation, so an old error cannot reopen it or consume its notice.
+The actual iced Open/Close regression verifies exactly one fresh saving popup
+while an ordinary notification holds the worker.
+
+The worker lane passes eighteen notification-filtered tests, sixteen tray
+lifecycle tests, seven arrival/cache integration tests, fourteen tray native
+flows and four notification Preferences flows. The final lane executable is
+`47c76608e68e3c29b22fd01b8a9cf4f21ebff041d0a44cd71ce5d1178fe91ec6`.
+Its real GNOME 46/X11 detailed, compact-dark private and muted arrival scenarios
+pass with reviewed banners/notification centres: `353c9b6aaf12`, `a7845b601730`
+and `852c8ec50f44` in the notification worktree's `artifacts/e2e/`.
+The desktop and service PIDs are proved owned, accepted notifications remain
+after delivery returns, and refresh does not duplicate them. The short-lived
+gdbus sender is a protocol diagnostic, not a reverted old application build.
+The root Python suite passes 113 tests with seven environment/platform skips.
+
+Mail is fictional and follows the ordinary cache arrival claim; this does not
+establish live-provider delivery. Sound is disabled in the real-shell fixture,
+and Windows/macOS delivery remains unverified. Existing old processes require
+a normal restart to use the installed update.
+
 ## Duplicate tray launches and GNOME dock activation, 12 September 2026
+
+Pushed as [`7ef9d74`](https://github.com/sam-ruff/shep.so/commit/7ef9d7484e9006403d009e43b74ea45d382cfe23)
+after normal formatting, both Clippy configurations and 1,216 Rust test
+executions passed. All 44 parity contracts and pinned strict Zensical pass.
 
 Repeated desktop launches now acquire one owner per canonical profile catalogue
 root before mail or tray startup. Later launches send an authenticated local
@@ -38,6 +75,10 @@ Linux/X11 execution does not establish Windows/macOS or Wayland shell behaviour.
 Older running binaries cannot join the new ownership protocol and must be quit
 normally; installation does not discard their sessions. Native incoming-mail
 notification delivery is a separate active follow-up.
+The production binary is installed at the normal per-user path, with its hash
+verified against the build. The installed desktop entry now uses the current
+full-colour icon and `StartupNotify=false`; both launcher and tray SVGs match
+the approved source hashes. No personal processes were force-closed.
 
 ## Abbreviations selected for desktop search, 12 September 2026
 

@@ -840,6 +840,13 @@ class NativeFlows(unittest.TestCase):
         self.mcp.call("desktop.stop")
         run(ROOT / "target/test-ui/shep")
 
+    @unittest.skipUnless(shutil.which("gnome-shell"), "Actual GNOME Shell is required")
+    def test_gnome_background_arrival_details_private_and_muted(self):
+        from gnome_notifications import run
+        self.mcp.call("desktop.stop")
+        for mode in ("details", "private", "muted"):
+            run(ROOT / "target/test-ui/shep", mode=mode)
+
     def test_tray_native_light_icon_matches_launcher_in_both_host_themes(self):
         started = self.mcp.call("desktop.start", tray="available")
         print(f"Tray icon evidence: {started['artifacts']}", flush=True)
@@ -963,6 +970,27 @@ class NativeFlows(unittest.TestCase):
                        {"type":"focus_app"}, check("close_pending", False), check("tray.temporary", False),
                        check("notice", "Sending is disabled in preview", "contains"),
                        check("tray.visible", True), check("editor", "Continue working", "contains"), shot("tray-open-cancels-quit"))
+
+    def test_tray_native_open_cancels_queued_notice_and_next_close_waits_for_delivery(self):
+        started = self.mcp.call("desktop.start", tray="available", backup_run="held", notification_delivery="slow")
+        print(f"Queued notification cancellation: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("tray.available", True))
+        self.start_backup_all()
+        self.open_notification_preferences()
+        self.mcp.batch(click(350,499), check("notifications.testing", True), wait(200),
+                       {"type":"close_request"}, check("tray.temporary", True),
+                       {"type":"tray_menu"}, key("Down"), key("Return"),
+                       check("tray.visible", True), check("close_pending", False),
+                       {"type":"focus_app"}, {"type":"close_request"},
+                       check("tray.temporary", True), check("tray.visible", False),
+                       check("notifications.sent", 1),
+                       check("tray_host.notifications.0.title", "Shep is finishing your changes"),
+                       check("close_pending", True), check("tray.visible", False),
+                       shot("tray-queued-notice-fresh-close"),
+                       {"type":"tray_menu"}, key("Down"), key("Return"),
+                       check("tray.visible", True), check("close_pending", False))
+        state = self.mcp.call("desktop.state")
+        self.assertEqual(len(state["tray_host"]["notifications"]), 1, "Cancelled close must not notify")
 
     def start_backup_all(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),

@@ -6,6 +6,8 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
 
 ## Top priority — OAuth and shared profiles
 
+- [ ] **12 September high priority: missing folders and sidebar creation:** create a required destination folder when it is missing, and provide a visible **New folder** action from the sidebar. Respect the selected account and server hierarchy, handle creation failures and uncertain outcomes without losing mail, and refresh the folder tree after confirmed creation. Verify unit/protocol and native sidebar flows; implement Flutter/browser equivalents or record explicit parity gaps.
+
 **12 September GNOME notifications and icons follow-up:** Sam reports no native
 GNOME desktop notification when new email arrives and requests icon fixes.
 Reproduce new-mail notification delivery through the actual GNOME notification
@@ -17,11 +19,13 @@ Keep notification content preferences and private mail out of fixture evidence.
 **12 September decision and tray regression:** Abbreviations is selected and
 pushed on main as `86d5ca1`, with twelve native scenarios and 1,202 normal-hook
 test executions passing. Precise and Tolerant branch references are deleted
-locally and remotely; their comparison evidence is retained. Sam reports
-that taskbar launches create additional tray instances instead of reopening
-the running application. Fix launch ownership and activation so a subsequent
-launch restores the existing window, including after minimising/hiding to tray.
-Preserve pending saves, profile isolation and graceful shutdown.
+locally and remotely; their comparison evidence is retained. Duplicate-launch
+ownership and GNOME dock/minimise restoration are pushed as `7ef9d74` and
+installed with the current launcher/tray icons. All thirteen existing tray
+native scenarios and the real GNOME launcher fixture pass, alongside 1,216
+normal-hook Rust test executions. Older running copies require a normal Quit
+before using the new launch protocol. The notification follow-up above remains
+active.
 Actual Windows/macOS and Wayland launcher/restore execution must remain an
 explicit platform gap after Linux/X11 verification; browser tabs keep their
 existing independent ownership model.
@@ -123,7 +127,7 @@ Desktop delivery of these requests is recorded in the completion log; the entrie
 - [ ] **R73 — Moved mail missing from destination:** recovery/projection checkpoint a81d767 is shipped. Finish actual adapter wire/journal integration, broader Undo/bulk/folder-history lifecycle and repeated-move aliases, plus independent-process coordination with R01.
 - [ ] **R47 — A. Keep → Inbox:** confirm the personal-account failure's root cause and actual destination refresh. Commit 590ab10 ships Inbox labeling, send-queue feedback and a spaced-folder protocol test preserving acknowledgment after logout failure; live diagnosis remains open.
 - [ ] **R50/R60 — Optimistic interaction everywhere:** archive/move, flags, read/unread and other reversible actions show their expected result immediately, before network/SQLite completion; archiving removes the mail from the current list immediately and restores it with an actionable error on failure. This is the app-wide optimistic interaction principle, recorded in AGENTS.md. Immediate flags/read/move/Undo feedback is shipped (742b21e, d3a530a, 9c907d2). Finish membership/count reconciliation when switching filtered or combined folders, ambiguous cross-account outcomes, other reversible controls and durable restart recovery. Preserve newer intent and visible rollback errors. The filtered unread-header correction is pushed as `97c9a9a`; broader combined-folder deletion and uncertainty/restart work remains. Client checkpoint: the Flutter inbox and open reader share persistent mutation errors with Retry/Dismiss; host and Android controls verify missing/locked-credential rollback. The remaining app-wide audit stays open.
-- [ ] **R82 — Native new-mail notifications:** default-on popup/sound/details, independent preferences and isolated Linux/native fixtures shipped in ded5aca. Finish actual Windows/macOS delivery, macOS bundle integration and real desktop popup/sound review. Initial imports remain quiet; fixture success is not live desktop verification.
+- [ ] **R82 — Native new-mail notifications:** Sam reports missing GNOME email notifications on 12 September. The Linux adapter disconnects immediately after Notify, causing GNOME to remove installed-app notifications. Retain a bounded worker-owned connection for arrivals and temporary-saving notices, with protocol/mock and actual GNOME evidence. Default-on popup/sound/details and independent preferences shipped in ded5aca; preserve quiet initial imports and do not replay uncertain delivery. Actual Windows/macOS delivery, macOS bundle integration, sound review and Flutter/browser equivalents remain open.
 - [ ] **R70 (desktop) — Dock/taskbar new-mail badges:** show an unread Inbox count on the Shep launcher/dock/taskbar, including the GNOME-style badge in the user's screenshot where the desktop supports it. Reconcile new arrivals, read/unread, optimistic moves/deletes/Undo, account scope and restart without stale counts; allow disabling badges in Preferences. Use native platform integration with isolated automated tests and document actual desktop/platform support. Linux Unity/Dash-to-Dock adapter and preference shipped in 90776fa with a coalescing background worker and real private-bus tests. Windows taskbar overlays and native macOS Dock labels are integrated/pushed in 1595fb3, using bounded count delivery and shell/window lifecycle recovery. The integrated source passes 751 hook executions, 59 Python tests, 12 native Linux scenarios, full Windows GNU checking and exact macOS adapter checking. Actual Windows/macOS execution, desktop rendering and ambiguous-provider/restart count reconciliation remain open alongside R50/R60.
 
 ## Accounts, portability and backups

@@ -46,7 +46,7 @@ fn notification_policy_keeps_sound_popup_and_privacy_independent() {
 async fn burst_samples_latest_privacy_and_never_replays_muted_arrivals() {
     let (tx, rx) = watch::channel(State::default());
     let (output, mut events) = futures::channel::mpsc::channel(8);
-    let worker = tokio::spawn(drive(rx, output, |_| async { Ok(()) }));
+    let worker = tokio::spawn(drive(rx, mpsc::channel(1).1, output, |_| async { Ok(()) }));
     tx.send_replace(state(1));
     tokio::task::yield_now().await;
     let mut changed = state(1);
@@ -82,7 +82,7 @@ async fn blocked_desktop_coalesces_all_new_arrivals_then_recovers_after_failure(
     let (tx, rx) = watch::channel(State::default());
     let (output, mut events) = futures::channel::mpsc::channel(8);
     let (calls, mut pending) = mpsc::channel::<(Delivery, oneshot::Sender<anyhow::Result<()>>)>(1);
-    let worker = tokio::spawn(drive(rx, output, move |delivery| {
+    let worker = tokio::spawn(drive(rx, mpsc::channel(1).1, output, move |delivery| {
         let calls = calls.clone();
         async move {
             let (ack, result) = oneshot::channel();
@@ -107,4 +107,88 @@ async fn blocked_desktop_coalesces_all_new_arrivals_then_recovers_after_failure(
     assert!(matches!(events.next().await, Some(Event::Sent(d)) if d.count == 999));
     drop(tx);
     worker.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn saving_receipts_share_the_worker_without_consuming_new_mail_counts() -> anyhow::Result<()>
+{
+    let (tx, rx) = watch::channel(State::default());
+    let (system, requests) = mpsc::channel(1);
+    let (output, mut events) = futures::channel::mpsc::channel(8);
+    let mut calls = 0;
+    let worker = tokio::spawn(drive(rx, requests, output, move |delivery: Delivery| {
+        calls += 1;
+        let call = calls;
+        async move {
+            if call == 1 {
+                assert_eq!(delivery.through, 0);
+                anyhow::bail!("Saving notification rejected");
+            }
+            assert_eq!(delivery.through, 1);
+            Ok(())
+        }
+    }));
+    let (_cancel, cancellation) = watch::channel(());
+    let error = SystemSender(system)
+        .saving_notification(cancellation)
+        .await
+        .expect_err("Expected native rejection");
+    assert!(error.contains("Saving notification rejected"));
+    assert!(events.try_recv().is_err());
+    tx.send_replace(state(1));
+    assert!(matches!(events.next().await, Some(Event::Sent(d)) if d.count == 1 && d.through == 1));
+    drop(tx);
+    worker.await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn saving_request_queue_is_bounded_and_shutdown_reports_failure() -> anyhow::Result<()> {
+    let (system, requests) = mpsc::channel(1);
+    let sender = SystemSender(system);
+    let (_cancel, cancellation) = watch::channel(());
+    let first = tokio::spawn(sender.clone().saving_notification(cancellation.clone()));
+    tokio::task::yield_now().await;
+    let second = tokio::spawn(sender.saving_notification(cancellation));
+    tokio::task::yield_now().await;
+    assert_eq!(requests.len(), 1);
+    assert!(
+        !second.is_finished(),
+        "A newer close waits for cancelled queue membership to drain"
+    );
+    drop(requests);
+    assert!(first.await?.is_err());
+    assert!(second.await?.is_err());
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn abandoned_saving_request_is_not_delivered_after_its_caller_leaves() -> anyhow::Result<()> {
+    let (tx, rx) = watch::channel(State::default());
+    let (system, requests) = mpsc::channel(1);
+    let (output, mut events) = futures::channel::mpsc::channel(8);
+    let (receipt, result) = oneshot::channel();
+    let (_cancel, cancellation) = watch::channel(());
+    system
+        .send(SystemRequest {
+            delivery: saving_delivery(),
+            receipt,
+            cancellation,
+        })
+        .await?;
+    drop(result);
+    let worker = tokio::spawn(drive(
+        rx,
+        requests,
+        output,
+        |delivery: Delivery| async move {
+            assert_ne!(delivery.through, 0, "Abandoned saving notice was delivered");
+            Ok(())
+        },
+    ));
+    tx.send_replace(state(1));
+    assert!(matches!(events.next().await, Some(Event::Sent(_))));
+    drop(tx);
+    worker.await?;
+    Ok(())
 }
