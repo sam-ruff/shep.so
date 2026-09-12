@@ -657,7 +657,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch({"type":"mouse_up"},check("total",119),check("mail_pending",1),
                        check("action_toast.label","Archived 1 message"),
                        key("ctrl+comma"),check("tab","Preferences"),shot("drag-failure-preferences-usable"),
-                       {**check("mail_pending",0),"timeout_ms":5000},check("notice","restored","contains"),
+                       {**check("mail_pending",0),"timeout_ms":5000},check("notice","remains in Inbox","contains"),
                        key("ctrl+1"),check("tab","Mail"),check("total",120),
                        check("mail_rows.1.subject","Your weekly workspace digest"),shot("drag-failure-restored"))
 
@@ -2193,7 +2193,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(check("desktop_badge.visible",True),check("unread",True))
         count = self.mcp.call("desktop.state")["desktop_badge"]["count"]
         self.mcp.batch(click(652,100),check("mail_pending",1),check("desktop_badge.count",count-1),
-                       {**check("mail_pending",0),"timeout_ms":5000},check("notice","restored","contains"),
+                       {**check("mail_pending",0),"timeout_ms":5000},check("notice","remains in Inbox","contains"),
                        check("desktop_badge.count",count),shot("badge-failed-archive"))
 
     def test_background_sync_failure_allows_manual_retry(self):
@@ -2391,7 +2391,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("BackSpace"), check("total", 119), check("mail_pending", 1),
                        shot("archive-optimistic-before-failure"),
                        {**check("mail_pending", 0), "timeout_ms": 5000}, check("total", 120),
-                       check("notice", "restored to Inbox", "contains"), shot("archive-rollback"),
+                       check("notice", "remains in Inbox", "contains"), shot("archive-rollback"),
                        click(420, 246), click(652, 100), check("total", 119),
                        click(84, 398), check("folder", "Archive"),
                        {**check("mail_pending", 0), "timeout_ms": 5000},
@@ -2426,7 +2426,7 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+d"), check("action_toast.label","Deleted 1 message"),
                        check("total",118), check("mail_pending",2), shot("latest-action-before-failure"),
                        {**check("mail_pending",0),"timeout_ms":5000}, check("total",120),
-                       check("action_toast",None), check("notice","restored","contains"), shot("action-toast-failure"))
+                       check("action_toast",None), check("notice","remains in Inbox","contains"), shot("action-toast-failure"))
 
     def test_compact_dark_action_toast_and_cross_account_slow_failure(self):
         self.mcp.call("desktop.start",mail_actions="fail")
@@ -4110,6 +4110,42 @@ class NativeFlows(unittest.TestCase):
                        {"type":"resize","width":900,"height":640},wait(120),shot("search-folders-dark-compact"))
         self.assertTrue(all(row["account_id"]=="preview-work" for row in self.mcp.call("desktop.state")["mail_rows"]))
 
+    def test_move_retry_completes_from_reader_without_opening_review(self):
+        for mode in ("copied", "unconfirmed", "missing-destination"):
+            result = self.mcp.call("desktop.start", move_recovery=mode, persistent=True)
+            print(f"Direct move retry {mode}: {result['artifacts']}", flush=True)
+            self.mcp.batch(key("ctrl+k"), check("focused_input", "search"),
+                           type_text("keepsake"), check("total", 1), key("Escape"),
+                           check("reader_text_ready", True), wait(150))
+            if mode != "copied":
+                self.mcp.batch(key("m"), check("dialog", "Move"), shot("pending-original-move-menu"),
+                               key("Escape"), check("dialog", None))
+            self.mcp.batch(click(1245,192), check("move_recovery.pending", 1),
+                           check("dialog", None), shot("move-retry-without-review"),
+                           key("ctrl+2"), check("tab", "Calendar"),
+                           check("move_recovery.pending", 0),
+                           check("notice", "Move completed.", "contains"),
+                           key("ctrl+1"), check("tab", "Mail"),
+                           check("move_recovery.total", 0), shot("move-retry-completed"),
+                           {"type": "restart"}, check("move_recovery.total", 0))
+            database = Path(result["artifacts"]) / "fixture.sqlite"
+            with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as cache:
+                row = cache.execute("SELECT value FROM kv WHERE key='fixture_move_submission'").fetchone()
+                self.assertEqual(json.loads(row[0]) if row else 0, 1 if mode == "missing-destination" else 0)
+
+    def test_move_retry_compact_dark_reader(self):
+        result = self.mcp.call("desktop.start", move_recovery="missing-destination", persistent=True)
+        print(f"Compact direct retry: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(150),
+                       click(690,366), check("dark", True), key("ctrl+1"),
+                       key("ctrl+k"), check("focused_input", "search"),
+                       type_text("keepsake"), check("total", 1), key("Escape"),
+                       check("reader_text_ready", True), {"type": "resize", "width": 900, "height": 640},
+                       wait(150), shot("move-retry-compact-dark"), click(728,170),
+                       check("move_recovery.pending", 1), check("dialog", None),
+                       check("move_recovery.pending", 0), check("move_recovery.total", 0),
+                       check("notice", "Move completed.", "contains"), shot("move-retry-compact-completed"))
+
     def test_move_recovery_review_preserves_original_and_requires_explicit_choice(self):
         for mode in ("committed", "copied", "unconfirmed"):
             result=self.mcp.call("desktop.start",move_recovery=mode,persistent=True)
@@ -4138,7 +4174,7 @@ class NativeFlows(unittest.TestCase):
                 self.mcp.batch(click(470,571),check("move_recovery.confirmed",True))
             self.mcp.batch(key("y"),check("move_recovery.pending",1),shot("move-recovery-running"),
                            key("Escape"),check("dialog",None),key("ctrl+2"),check("tab","Calendar"),
-                           check("move_recovery.pending",0),check("notice","Move recovered.","contains"),
+                           check("move_recovery.pending",0),check("notice","Move completed.","contains"),
                            key("ctrl+1"),check("tab","Mail"),click(85,636 if mode=="copied" else 536),
                            check("folder","Projects"),check("selected","Recovered keepsake"),check("reader_text_ready",True),
                            check("mail_rows.0.group_pending",False),check("move_recovery.total",0),
@@ -4159,7 +4195,7 @@ class NativeFlows(unittest.TestCase):
                        wait(100),shot("move-recovery-retry-error"),key("Return"),check("move_recovery.pending",1),
                        check("move_recovery.pending",0),check("dialog",None),check("move_recovery.total",0),
                        check("selected","Recovered keepsake"),check("mail_rows.0.group_pending",False),
-                       check("notice","Move recovered.","contains"),shot("move-recovery-retry-complete"))
+                       check("notice","Move completed.","contains"),shot("move-recovery-retry-complete"))
 
     def test_move_recovery_local_copy_has_confirmation_and_survives_sync_restart(self):
         result=self.mcp.call("desktop.start",move_recovery="unconfirmed",persistent=True)
@@ -4266,7 +4302,7 @@ class NativeFlows(unittest.TestCase):
                                {**check("mail_pending", 0), "timeout_ms":5000})
             else:
                 self.mcp.batch(check("mail_pending", 0), check("total", 0),
-                               check("notice", "restored", "contains"), shot("destination-failure"))
+                               check("notice", "remains in Inbox", "contains"), shot("destination-failure"))
             self.mcp.batch(check("total", 0), click(85, 115), check("folder", "INBOX"), check("total", 120))
 
     def test_cross_account_destination_is_visible_during_transfer(self):
@@ -4847,7 +4883,7 @@ class NativeFlows(unittest.TestCase):
                                check("conversation_rows.1.folder", "Projects" if mode == "slow" else "Sent"),
                                shot(f"conversation-move-{mode}-newer-{newer_focus}"))
                 if mode == "fail":
-                    self.mcp.batch(check("notice", "restored", "contains"))
+                    self.mcp.batch(check("notice", "remains in Sent", "contains"))
 
 
     def test_conversation_paging(self):

@@ -142,6 +142,66 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    #[tokio::test]
+    async fn pending_move_recovery_is_requested_without_running_in_sync_cycle() {
+        use crate::mail_actions::{Fingerprint, MoveReceipt, journal::MoveRecord};
+        let mut engine = super::super::calendar_tests::engine();
+        engine.demo = false;
+        let original = parse_mail(
+            "fixture",
+            "42.7",
+            "INBOX",
+            b"Subject: retained\r\n\r\nOriginal".to_vec(),
+            true,
+            false,
+        )
+        .expect("mail");
+        engine
+            .store
+            .upsert(vec![original.clone()])
+            .await
+            .expect("cache");
+        let mut receipt = MoveReceipt::server(
+            &original.summary,
+            "fixture",
+            "Archive",
+            None,
+            Fingerprint::of(&original.raw),
+        );
+        receipt.connections = vec![("fixture".into(), "fixture-connection".into())];
+        let record = MoveRecord::new(original.summary, receipt);
+        engine
+            .store
+            .prepare_mail_move(record.clone())
+            .await
+            .expect("pending journal");
+        let (output, mut events) = futures::channel::mpsc::channel(32);
+        engine
+            .execute(Command::Sync, output)
+            .await
+            .expect("read-only sync");
+        let mut ready = 0;
+        while let Some(event) = events.next().await {
+            if matches!(event, Event::PendingMovesReady) {
+                ready += 1;
+            }
+        }
+        assert_eq!(ready, 1);
+        let saved = engine
+            .store
+            .mail_move(record.token)
+            .await
+            .expect("retained journal");
+        assert_eq!(
+            saved.attempted, 0,
+            "sync must not claim a mutable recovery attempt"
+        );
+        assert_eq!(
+            saved.stage,
+            crate::mail_actions::journal::MoveStage::Started
+        );
+    }
+
     struct Harness {
         requests: mpsc::Sender<Command>,
         events: futures::channel::mpsc::Receiver<Event>,

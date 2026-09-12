@@ -8,6 +8,7 @@ use iced::{
 #[derive(Debug, Clone)]
 pub enum Message {
     Open(Option<Arc<MoveRecord>>),
+    Retry(Arc<MoveRecord>),
     Select(String),
     Choose(RecoveryAction),
     Confirm(bool),
@@ -41,6 +42,28 @@ fn label(stage: MoveStage) -> &'static str {
 impl App {
     pub(super) fn handle_move_recovery(&mut self, message: Message) {
         match message {
+            Message::Retry(record) => {
+                if record.finished()
+                    || self.move_recovery.pending.contains_key(&record.token)
+                    || self.move_recovery.pending.len() >= CHANNEL_CAPACITY
+                    || self.mail_actions.moving(&record.original.id)
+                    || self.bulk_action_owns_mail(&record.original.id)
+                {
+                    return;
+                }
+                self.move_recovery.sequence += 1;
+                let request = self.move_recovery.sequence;
+                if self.try_command(Command::RecoverMailMove(
+                    request,
+                    record.clone(),
+                    RecoveryAction::Retry,
+                    false,
+                )) {
+                    self.move_recovery
+                        .pending
+                        .insert(record.token.clone(), request);
+                }
+            }
             Message::Open(record) => {
                 self.open(Dialog::MoveRecovery);
                 self.move_recovery.error = None;
@@ -185,14 +208,18 @@ impl App {
                     self.dialog = None;
                     self.move_recovery.selected = None;
                 }
-                self.notice(
-                    if record.stage == MoveStage::Kept {
-                        "Local copy kept. Server copies are unchanged."
-                    } else {
-                        "Move recovered."
-                    },
-                    false,
-                );
+                if let Some(error) = &record.error {
+                    self.notice(error.clone(), true);
+                } else {
+                    self.notice(
+                        if record.stage == MoveStage::Kept {
+                            "Local copy kept. Server copies are unchanged."
+                        } else {
+                            "Move completed."
+                        },
+                        false,
+                    );
+                }
             }
             Err(error) => {
                 self.pending_close = None;
@@ -223,12 +250,18 @@ impl App {
         container(
             row![
                 text(if busy {
-                    "Recovering move…"
+                    "Finishing move…"
                 } else {
-                    label(record.stage)
+                    "Move not finished"
                 })
                 .size(12),
                 space().width(Length::Fill),
+                button(text("Retry move").size(12))
+                    .padding([10, 14])
+                    .style(primary)
+                    .on_press_maybe(
+                        (!busy).then(|| wrap(Message::Retry(Arc::new(record.clone()))))
+                    ),
                 button(text("Review").size(12))
                     .padding([10, 14])
                     .style(outline)

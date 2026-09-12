@@ -96,8 +96,11 @@ impl App {
         }
     }
     pub(super) fn bulk_owns_mail(&self, id: &str) -> bool {
+        self.page.is_placeholder(id) || self.bulk_action_owns_mail(id)
+    }
+    pub(super) fn bulk_action_owns_mail(&self, id: &str) -> bool {
         self.page.bulk_pending.contains(id)
-            || self.page.is_placeholder(id)
+            || self.page.bulk_placeholders.contains(id)
             || self
                 .bulk
                 .prediction

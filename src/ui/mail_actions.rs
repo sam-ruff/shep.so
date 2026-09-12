@@ -19,6 +19,7 @@ pub(super) struct Actions {
 
 struct PendingTransfer {
     mail: Mail,
+    recovered: Option<Mail>,
     account: String,
     folder: String,
     request: Option<u64>,
@@ -27,6 +28,7 @@ struct PendingTransfer {
 
 struct PendingMove {
     mail: Mail,
+    recovered: Option<Mail>,
     destination: String,
     request: Option<u64>,
     toast: u64,
@@ -43,7 +45,7 @@ struct PendingFlags {
 
 impl Actions {
     pub fn moving(&self, id: &str) -> bool {
-        self.moves.contains_key(id) || self.transfers.contains_key(id)
+        self.move_target(id).is_some()
     }
     pub fn pending(&self) -> usize {
         self.flags
@@ -71,6 +73,29 @@ impl Actions {
 }
 
 impl App {
+    pub(super) fn move_action_mail(&self) -> Option<&Mail> {
+        if let Some(mail) = self.action_mail() {
+            return Some(mail);
+        }
+        let id = self.reader_id()?;
+        if self.mail_actions.restoring(id) || self.move_is_blocked(id) {
+            return None;
+        }
+        let record = self.page.move_recovery.get(id)?;
+        (record.stage == crate::mail_actions::journal::MoveStage::Started)
+            .then_some(&record.original)
+    }
+
+    fn move_is_blocked(&self, id: &str) -> bool {
+        if self.page.move_recovery.get(id).is_some_and(|record| {
+            record.stage == crate::mail_actions::journal::MoveStage::Started
+                && !self.move_recovery.pending.contains_key(&record.token)
+        }) {
+            return self.bulk_action_owns_mail(id);
+        }
+        self.bulk_owns_mail(id)
+    }
+
     pub(super) fn set_mail_page(&mut self, page: Arc<MailPage>) {
         Arc::make_mut(&mut self.workspace).move_pending_total = page.move_pending_total;
         if let Some(id) = self.selected.clone()
@@ -243,7 +268,7 @@ impl App {
     }
 
     pub(super) fn transfer_mail(&mut self, mail: Mail, account: String, folder: String) {
-        if self.bulk_owns_mail(&mail.id) {
+        if self.move_is_blocked(&mail.id) {
             return;
         }
         let id = mail.id.clone();
@@ -269,6 +294,7 @@ impl App {
             id.clone(),
             PendingTransfer {
                 mail,
+                recovered: None,
                 account,
                 folder,
                 request: None,
@@ -339,6 +365,7 @@ impl App {
             mail.id.clone(),
             PendingMove {
                 mail: entry.mail,
+                recovered: entry.recovered,
                 destination: entry.folder.clone(),
                 request: Some(request),
                 toast: entry.toast,
@@ -349,7 +376,7 @@ impl App {
 
     pub(super) fn move_mail(&mut self, mail: Mail, destination: String) {
         if self.mail_actions.restoring(&mail.id)
-            || self.bulk_owns_mail(&mail.id)
+            || self.move_is_blocked(&mail.id)
             || mail.folder == destination
             || self.mail_actions.moves.contains_key(&mail.id)
             || self.mail_actions.transfers.contains_key(&mail.id)
@@ -376,6 +403,7 @@ impl App {
             PendingMove {
                 toast,
                 mail,
+                recovered: None,
                 destination,
                 request: None,
             },
@@ -442,11 +470,16 @@ impl App {
                     record.original = entry.mail.clone();
                     record.receipt = Some(receipt.clone());
                 }
-                self.confirm_move_display(&entry.mail, &receipt);
+                self.confirm_move_display(
+                    entry.recovered.as_ref().unwrap_or(&entry.mail),
+                    &receipt,
+                );
                 self.mail_actions.flags.remove(&mail.id);
             }
             Err(error) => {
-                self.reconcile_move_row(&entry.mail, None, true);
+                if entry.recovered.is_none() {
+                    self.reconcile_move_row(&entry.mail, None, true);
+                }
                 let undo_requested = self
                     .mail_actions
                     .undo
@@ -456,13 +489,14 @@ impl App {
                     self.action_toasts.failed(entry.toast);
                 }
                 self.pending_close = None;
+                let retained = entry.recovered.as_ref().unwrap_or(&entry.mail);
                 self.notice(
                     format!(
-                        "Could not move this message. It was restored to {}. {error}",
-                        if mail.folder.eq_ignore_ascii_case("INBOX") {
+                        "Could not complete this move. The message remains in {}. {error}",
+                        if retained.folder.eq_ignore_ascii_case("INBOX") {
                             "Inbox"
                         } else {
-                            &mail.folder
+                            &retained.folder
                         }
                     ),
                     true,
@@ -721,7 +755,7 @@ mod tests {
         assert_eq!(app.page.total, 1);
         assert_eq!(app.page.rows[0].id, original.summary.id);
         assert_eq!(app.mail_actions.pending(), 0);
-        assert!(app.notice.as_ref().unwrap().0.contains("restored"));
+        assert!(app.notice.as_ref().unwrap().0.contains("remains in Inbox"));
     }
     #[tokio::test]
     async fn toast_is_immediate_failure_only_changes_its_own_count_and_dismissal_sticks() {

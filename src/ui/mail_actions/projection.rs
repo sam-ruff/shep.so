@@ -6,16 +6,31 @@ mod tests;
 
 impl Actions {
     pub(in crate::ui) fn move_target(&self, id: &str) -> Option<(&Mail, &str, &str)> {
-        if let Some(entry) = self.transfers.get(id) {
-            Some((&entry.mail, &entry.account, &entry.folder))
+        if let Some(entry) = self.transfers.get(id).or_else(|| {
+            self.transfers
+                .values()
+                .find(|entry| entry.recovered.as_ref().is_some_and(|mail| mail.id == id))
+        }) {
+            Some((
+                entry.recovered.as_ref().unwrap_or(&entry.mail),
+                &entry.account,
+                &entry.folder,
+            ))
         } else {
-            self.moves.get(id).map(|entry| {
-                (
-                    &entry.mail,
-                    entry.mail.account_id.as_str(),
-                    entry.destination.as_str(),
-                )
-            })
+            self.moves
+                .get(id)
+                .or_else(|| {
+                    self.moves
+                        .values()
+                        .find(|entry| entry.recovered.as_ref().is_some_and(|mail| mail.id == id))
+                })
+                .map(|entry| {
+                    (
+                        entry.recovered.as_ref().unwrap_or(&entry.mail),
+                        entry.mail.account_id.as_str(),
+                        entry.destination.as_str(),
+                    )
+                })
         }
     }
 
@@ -81,6 +96,16 @@ impl App {
         record: &crate::mail_actions::journal::MoveRecord,
     ) {
         use crate::mail_actions::journal::MoveStage;
+        if record.stage == MoveStage::Located
+            && let Some(current) = record.receipt.current.as_ref()
+        {
+            if let Some(entry) = self.mail_actions.moves.get_mut(&record.original.id) {
+                entry.recovered = Some(current.clone());
+            }
+            if let Some(entry) = self.mail_actions.transfers.get_mut(&record.original.id) {
+                entry.recovered = Some(current.clone());
+            }
+        }
         let matches = |undo: &undo::Record| {
             undo.receipt
                 .as_ref()
@@ -104,7 +129,25 @@ impl App {
             }
         }
         self.detail_revision += 1;
-        if record.stage == MoveStage::Kept {
+        let overtaken = record.receipt.current.as_ref().is_some_and(|current| {
+            self.mail_actions
+                .base_page
+                .relocated
+                .get(&record.original.id)
+                .is_some_and(|latest| {
+                    latest.id != current.id
+                        || latest.account_id != current.account_id
+                        || latest.folder != current.folder
+                        || latest.remote_id != current.remote_id
+                })
+        });
+        if overtaken {
+            if let Some(current) = &record.receipt.current {
+                Arc::make_mut(&mut self.mail_actions.base_page)
+                    .observed
+                    .insert(current.id.clone(), None);
+            }
+        } else if record.stage == MoveStage::Kept {
             // This is a local resolution, not a new server acknowledgment.
             if let Some(mail) = record.retained.as_ref() {
                 let mut display = MoveReceipt::local(&record.original, &mail.folder);

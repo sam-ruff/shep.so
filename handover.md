@@ -2,6 +2,14 @@
 
 ## Current decision, 12 September
 
+Current order: moving-mail failure first, then missing-folder creation and
+sidebar New folder, all based on main `0abec9f`. The local journal has one
+unfinished same-account move to Archive, which is absent from the cached server
+folder list. New moves must ensure their destination before submission; old
+requests need exact-source/destination checks and automatic completion where
+proved. Keep unresolved transport outcomes protected without routine review
+interruptions. Main owns integration; isolated lanes start at this same main.
+
 Sam selected Abbreviations (`b00c784`) after the live profile comparison and
 requested deletion of Precise and Tolerant branches. The selected implementation
 is pushed on main as `86d5ca1`; the other branch references are deleted locally
@@ -18,11 +26,11 @@ The worker retains its D-Bus sender; integrated native notification and launcher
 tests pass. Preserve initial-sync suppression, content preferences, bounded
 delivery and saving-notice cancellation. Completion records exact evidence.
 
-Sam added high priority missing-folder creation and sidebar New folder to TODO.
-There is no CREATE provider operation yet: extend shared folder actions and the
-existing durable desktop executor, then sidebar controls. Review Archive/Trash,
-Sent and Move destination scope, server namespace/delimiter and POP3 behaviour
-before implementation. Client creation controls remain absent.
+The shared CREATE provider now checks exact folder identity before and after
+creation. Moving-mail integration is under final verification; sidebar New
+folder follows as a separate feature shipment. The sidebar lane retains frozen
+account/parent/name requests across failure and restart. Client creation
+controls remain an explicit parity gap; Sent creation is a separate review.
 
 ## Search demo delivery, 12 September 2026
 

@@ -1,5 +1,12 @@
 # Client parity
 
+12 September move/folder follow-up: desktop work adds missing-destination
+creation before mail submission and server-verified automatic recovery, with
+direct Retry instead of a mandatory review for routine cases. Flutter/browser
+equivalents remain active gaps; sharing the protocol helper does not establish
+client UI, durable recovery or live-provider parity. Sidebar New folder also
+requires equivalent account/parent controls and failure/restart coverage.
+
 Desktop History header follow-up: the mail-action History control uses a clock
 arrow icon with the existing optional tooltip and unchanged dialog action.
 Browser and Flutter header equivalence remains an active visual-parity item;

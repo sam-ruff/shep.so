@@ -2,6 +2,40 @@ use super::*;
 use crate::mail_actions::{MoveReceipt, connection_key};
 
 impl Engine {
+    pub(super) async fn finish_retarget_result(
+        result: anyhow::Result<crate::mail_actions::journal::MoveRecord>,
+        previous: Option<crate::mail_actions::journal::MoveRecord>,
+        output: &mut Output,
+    ) -> anyhow::Result<crate::mail_actions::journal::MoveRecord> {
+        if let Some(previous) = previous {
+            let _ = output.send(Event::MoveRecovered(Arc::new(previous))).await;
+        }
+        result
+    }
+    pub(super) async fn refresh_recovered_folders(
+        &self,
+        mut record: crate::mail_actions::journal::MoveRecord,
+    ) -> crate::mail_actions::journal::MoveRecord {
+        if self.demo || !record.finished() {
+            return record;
+        }
+        let refresh = async {
+            use crate::folder_actions::Connection;
+            let account = self.account(&record.receipt.account).await?;
+            let password = self.credentials.read(&account.id).await?;
+            let mut connection =
+                providers::mail::folders::ImapFolders::open(&account, &password).await?;
+            let catalogue = connection.catalog().await?;
+            self.store.save_folder_catalog(account.id, catalogue).await
+        }
+        .await;
+        if let Err(error) = refresh {
+            record.error = Some(format!(
+                "The message was moved, but refreshing folders failed. Refresh the account to update its folders. {error:#}"
+            ));
+        }
+        record
+    }
     async fn authorize_mail_mutation(
         &self,
         id: &str,
@@ -193,13 +227,24 @@ impl Engine {
                 continue;
             };
             if saved.token != record.token
-                || saved.stage != MoveStage::Committed
+                || !matches!(saved.stage, MoveStage::Started | MoveStage::Committed)
                 || saved.attempted != record.attempted
+            {
+                continue;
+            }
+            if self
+                .store
+                .bulk_owner(record.original.id.clone())
+                .await?
+                .is_some()
             {
                 continue;
             }
             let record = self.store.begin_mail_move_lookup(saved, now).await?;
             let result = async {
+                for id in &accounts {
+                    self.store.ensure_folder_idle(id.clone()).await?;
+                }
                 let source = self.account(&record.original.account_id).await?;
                 let secret = self.credentials.read(&source.id).await?;
                 let destination = if source.id != record.receipt.account {
@@ -211,11 +256,20 @@ impl Engine {
                 };
                 let mut connection =
                     providers::mail::moves::ImapMoveConnection::new(source, secret, destination);
-                runner::recover(&self.store, &mut connection, record.clone()).await
+                let recovered =
+                    runner::recover(&self.store, &mut connection, record.clone()).await?;
+                Ok::<_, anyhow::Error>(self.refresh_recovered_folders(recovered).await)
             }
             .await;
             match result {
-                Ok(record) => output.send(Event::MoveRecovered(Arc::new(record))).await?,
+                Ok(record) => {
+                    if let Some(error) = &record.error {
+                        output.send(Event::Error(error.clone())).await?;
+                    }
+                    output.send(Event::MoveRecovered(Arc::new(record))).await?;
+                    self.workspace(&mut output).await?;
+                }
+                Err(_) if record.stage == MoveStage::Started => {}
                 Err(error) => output
                     .send(Event::Error(format!(
                         "The cached message is retained. Move recovery needs attention: {error:#}"
@@ -245,7 +299,30 @@ impl Engine {
         };
         let mut connection =
             ImapMoveConnection::new(source.clone(), source_secret, destination_connection);
-        let existing = self.store.mail_move_for_source(mail.id.clone()).await?;
+        let mut current_mail = mail.clone();
+        let mut previous_recovery = None;
+        let mut existing = self.store.mail_move_for_source(mail.id.clone()).await?;
+        if let Some(record) = &existing
+            && (record.receipt.account != target.id || record.receipt.folder != folder)
+        {
+            anyhow::ensure!(
+                record.receipt.account == source.id,
+                "The earlier cross-account transfer needs its destination checked before moving this message elsewhere."
+            );
+            let mut previous = ImapMoveConnection::new(
+                source.clone(),
+                self.credentials.read(&source.id).await?,
+                None,
+            );
+            current_mail =
+                runner::retarget_source(&self.store, &mut previous, record.clone()).await?;
+            if current_mail.id != record.original.id {
+                previous_recovery = Some(self.store.mail_move(record.token.clone()).await?);
+            }
+            existing = None;
+        }
+        let mail = &current_mail;
+        let result = async {
         let record = if let Some(record) = existing {
             anyhow::ensure!(
                 record.receipt.account == target.id && record.receipt.folder == folder,
@@ -271,6 +348,9 @@ impl Engine {
                 runner::start(&self.store, &mut connection, record).await?
             }
         };
+        Ok(record)
+        }.await;
+        let record = Self::finish_retarget_result(result, previous_recovery, output).await?;
         if let Some(error) = record.error {
             // A closed view cannot negate an already durable acknowledgment.
             let _ = output.send(Event::Error(error)).await;
@@ -341,6 +421,11 @@ impl Engine {
                 );
             }
         }
+        if let Some(token) = &receipt.recovery {
+            self.store
+                .mail_move_for_undo(token.clone(), original.clone(), receipt.clone())
+                .await?;
+        }
         let current = if self.demo {
             let known = receipt
                 .current
@@ -373,12 +458,10 @@ impl Engine {
             resolved.summary.timestamp = original.timestamp;
             let current = resolved.summary.clone();
             if let Some(token) = &receipt.recovery {
-                let record = self.store.mail_move(token.clone()).await?;
-                anyhow::ensure!(
-                    record.original.id == original.id
-                        && record.receipt.connections == receipt.connections,
-                    "This recovery belongs to a different original message."
-                );
+                let record = self
+                    .store
+                    .mail_move_for_undo(token.clone(), original.clone(), receipt.clone())
+                    .await?;
                 if record.stage == crate::mail_actions::journal::MoveStage::Committed {
                     self.store.resolve_mail_move(record, resolved).await?;
                 } else {

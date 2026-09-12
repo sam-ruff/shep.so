@@ -75,6 +75,7 @@ where
     }
     let tag = session.run_command(format!("UID SEARCH {search}")).await?;
     let mut uids = BTreeSet::new();
+    let mut observed_search = false;
     loop {
         let response = session
             .read_response()
@@ -82,12 +83,27 @@ where
             .context("The server disconnected during message lookup. Retry Undo.")?;
         if let Response::MailboxData(MailboxDatum::Search(found)) = response.parsed() {
             anyhow::ensure!(
+                !observed_search,
+                "The server returned repeated search results. Refresh before retrying."
+            );
+            observed_search = true;
+            anyhow::ensure!(
                 !found.contains(&0),
                 "The server returned an invalid message identity."
             );
-            uids.extend(found);
+            for uid in found {
+                uids.insert(*uid);
+                anyhow::ensure!(
+                    uids.len() <= 256,
+                    "Too many candidate copies to verify safely. Review the destination folder."
+                );
+            }
         }
         if completed(response.parsed(), &tag)? {
+            anyhow::ensure!(
+                observed_search,
+                "The server did not return search results. Folder absence could not be verified."
+            );
             return Ok(uids);
         }
     }
@@ -167,6 +183,28 @@ where
         .map(|body| (body, unread, starred)))
 }
 
+pub async fn verify_source_session<T>(
+    session: &mut async_imap::Session<T>,
+    original: &Mail,
+    fingerprint: &Fingerprint,
+) -> anyhow::Result<()>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
+{
+    let validity = session
+        .examine(&original.folder)
+        .await?
+        .uid_validity
+        .filter(|id| *id != 0);
+    let uid = validate_uid(original, validity)?.parse::<u32>()?;
+    anyhow::ensure!(uid != 0, "The original has no stable server identity.");
+    anyhow::ensure!(
+        fetch(session, uid, fingerprint).await?.is_some(),
+        "The original message changed. Review its source before retrying."
+    );
+    Ok(())
+}
+
 pub(super) async fn resolve_session<T>(
     session: &mut async_imap::Session<T>,
     account: &str,
@@ -174,6 +212,22 @@ pub(super) async fn resolve_session<T>(
     fingerprint: &Fingerprint,
     known: Option<&str>,
 ) -> anyhow::Result<StoredMail>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
+{
+    lookup_session(session, account, folder, fingerprint, known).await?
+        .context("The moved message could not be found unchanged in its destination. Refresh before undoing.")
+}
+
+/// None requires a complete successful search and verification of every
+/// candidate. Partial replies, duplicate copies and stale UIDs remain errors.
+pub async fn lookup_session<T>(
+    session: &mut async_imap::Session<T>,
+    account: &str,
+    folder: &str,
+    fingerprint: &Fingerprint,
+    known: Option<&str>,
+) -> anyhow::Result<Option<StoredMail>>
 where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
 {
@@ -202,7 +256,9 @@ where
             found = Some((uid, raw, unread, starred));
         }
     }
-    let (uid, raw, unread, starred) = found.context("The moved message could not be found unchanged in its destination. Refresh before undoing.")?;
+    let Some((uid, raw, unread, starred)) = found else {
+        return Ok(None);
+    };
     let (account, folder) = (account.to_owned(), folder.to_owned());
     tokio::task::spawn_blocking(move || {
         parse_mail(
@@ -215,6 +271,7 @@ where
         )
     })
     .await?
+    .map(Some)
 }
 
 #[cfg(test)]
@@ -227,6 +284,130 @@ mod tests {
         (tag.into(), command.into())
     }
     const RAW: &[u8] = b"Message-ID: <move@example.test>\r\nSubject: Keep this\r\n\r\nExact body";
+    #[tokio::test]
+    async fn empty_destination_requires_one_search_response_and_matching_success() {
+        for (response, valid) in [
+            ("* SEARCH\r\n$TAG OK done\r\n", true),
+            ("$TAG OK done\r\n", false),
+            ("* SEARCH\r\n* SEARCH\r\n$TAG OK done\r\n", false),
+            ("* SEARCH\r\n* SEARCH 7\r\n$TAG OK done\r\n", false),
+            ("* SEARCH\r\n$TAG NO refused\r\n", false),
+            ("* SEARCH\r\nX999 OK wrong tag\r\n", false),
+            ("* SEARCH\r\n", false),
+        ] {
+            let (client, socket) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                let mut socket = BufReader::new(socket);
+                let (tag, _) = line(&mut socket).await;
+                socket
+                    .get_mut()
+                    .write_all(format!("{tag} OK login\r\n").as_bytes())
+                    .await
+                    .expect("login");
+                let (tag, command) = line(&mut socket).await;
+                assert!(command.starts_with("UID SEARCH "));
+                socket
+                    .get_mut()
+                    .write_all(response.replace("$TAG", &tag).as_bytes())
+                    .await
+                    .expect("search reply");
+            });
+            let mut session = async_imap::Client::new(client)
+                .login("fixture", "secret")
+                .await
+                .expect("login");
+            let result = candidates(&mut session, &Fingerprint::of(RAW)).await;
+            assert_eq!(
+                result.as_ref().is_ok_and(BTreeSet::is_empty),
+                valid,
+                "{response:?}: {result:?}"
+            );
+            server.await.expect("server");
+        }
+    }
+    #[tokio::test]
+    async fn source_proof_requires_original_uid_validity_content_and_complete_response() {
+        for case in [
+            "exact",
+            "validity",
+            "body",
+            "deleted",
+            "missing",
+            "rejected",
+            "disconnect",
+        ] {
+            let (client, socket) = tokio::io::duplex(8192);
+            let task = tokio::spawn(async move {
+                let mut socket = BufReader::new(socket);
+                let (tag, _) = line(&mut socket).await;
+                socket
+                    .get_mut()
+                    .write_all(format!("{tag} OK login\r\n").as_bytes())
+                    .await
+                    .unwrap();
+                let (tag, command) = line(&mut socket).await;
+                assert_eq!(command, "EXAMINE \"INBOX\"");
+                let validity = if case == "validity" { 92 } else { 91 };
+                socket
+                    .get_mut()
+                    .write_all(
+                        format!("* OK [UIDVALIDITY {validity}] valid\r\n{tag} OK selected\r\n")
+                            .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                if case == "validity" {
+                    return;
+                }
+                let (tag, command) = line(&mut socket).await;
+                assert_eq!(command, "UID FETCH 7 (UID FLAGS RFC822.SIZE BODY.PEEK[])");
+                if case == "disconnect" {
+                    return;
+                }
+                if case != "missing" {
+                    let body = if case == "body" {
+                        b"Different".as_slice()
+                    } else {
+                        RAW
+                    };
+                    let flags = if case == "deleted" {
+                        "\\Deleted"
+                    } else {
+                        "\\Seen"
+                    };
+                    socket
+                        .get_mut()
+                        .write_all(
+                            format!(
+                                "* 1 FETCH (UID 7 FLAGS ({flags}) RFC822.SIZE {} BODY[] {{{}}}\r\n",
+                                body.len(),
+                                body.len()
+                            )
+                            .as_bytes(),
+                        )
+                        .await
+                        .unwrap();
+                    socket.get_mut().write_all(body).await.unwrap();
+                    socket.get_mut().write_all(b")\r\n").await.unwrap();
+                }
+                let status = if case == "rejected" { "NO" } else { "OK" };
+                socket
+                    .get_mut()
+                    .write_all(format!("{tag} {status} done\r\n").as_bytes())
+                    .await
+                    .unwrap();
+            });
+            let mut session = async_imap::Client::new(client)
+                .login("fixture", "secret")
+                .await
+                .unwrap();
+            let original = parse_mail("work", "91.7", "INBOX", RAW.to_vec(), true, false).unwrap();
+            let result =
+                verify_source_session(&mut session, &original.summary, &Fingerprint::of(RAW)).await;
+            assert_eq!(result.is_ok(), case == "exact", "{case}: {result:?}");
+            task.await.unwrap();
+        }
+    }
     async fn server(
         socket: tokio::io::DuplexStream,
         known: bool,
@@ -294,6 +475,82 @@ mod tests {
                 .unwrap();
         }
     }
+    #[tokio::test]
+    async fn destination_absence_requires_complete_lookup_without_ambiguity() {
+        for (bodies, rejected, expected) in [
+            (vec![], false, Some(false)),
+            (vec![b"Different".as_slice()], false, Some(false)),
+            (vec![RAW], false, Some(true)),
+            (vec![RAW], true, None),
+            (vec![RAW, RAW], false, None),
+        ] {
+            let (client, socket) = tokio::io::duplex(8192);
+            let task = tokio::spawn(server(socket, false, bodies, rejected));
+            let mut session = async_imap::Client::new(client)
+                .login("fixture", "secret")
+                .await
+                .unwrap();
+            let result =
+                lookup_session(&mut session, "work", "Archive", &Fingerprint::of(RAW), None).await;
+            assert_eq!(
+                result.as_ref().ok().map(|value| value.is_some()),
+                expected,
+                "{result:?}"
+            );
+            task.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn incomplete_or_oversized_search_cannot_prove_copy_absence() {
+        for oversized in [false, true] {
+            let (client, socket) = tokio::io::duplex(8192);
+            let task = tokio::spawn(async move {
+                let mut socket = BufReader::new(socket);
+                let (tag, _) = line(&mut socket).await;
+                socket
+                    .get_mut()
+                    .write_all(format!("{tag} OK login\r\n").as_bytes())
+                    .await
+                    .unwrap();
+                let (tag, _) = line(&mut socket).await;
+                socket
+                    .get_mut()
+                    .write_all(
+                        format!("* OK [UIDVALIDITY 91] valid\r\n{tag} OK selected\r\n").as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                let (tag, command) = line(&mut socket).await;
+                assert!(command.starts_with("UID SEARCH "));
+                let ids = if oversized {
+                    (1..=257)
+                        .map(|uid| uid.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                } else {
+                    "1".into()
+                };
+                let status = if oversized { "OK" } else { "NO" };
+                socket
+                    .get_mut()
+                    .write_all(format!("* SEARCH {ids}\r\n{tag} {status} done\r\n").as_bytes())
+                    .await
+                    .unwrap();
+            });
+            let mut session = async_imap::Client::new(client)
+                .login("fixture", "secret")
+                .await
+                .unwrap();
+            assert!(
+                lookup_session(&mut session, "work", "Archive", &Fingerprint::of(RAW), None)
+                    .await
+                    .is_err()
+            );
+            task.await.unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn changed_uidvalidity_uses_exact_lookup_instead_of_the_old_uid() {
         let (client, socket) = tokio::io::duplex(8192);

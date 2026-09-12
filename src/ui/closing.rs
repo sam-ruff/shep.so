@@ -3,6 +3,17 @@
 use super::*;
 
 impl App {
+    pub(super) fn schedule_pending_move_recovery(&mut self) {
+        if self.pending_close.is_some()
+            || self.tray.exiting
+            || self.profiles.changing()
+            || self.database_import.pending()
+        {
+            return;
+        }
+        self.try_command(Command::RecoverPendingMoves);
+    }
+
     pub(super) fn has_required_close_work(&self) -> bool {
         self.profile_sync.pending()
             || self.profiles.changing()
@@ -32,8 +43,10 @@ impl App {
         if Self::journaled_busy(key) {
             return !self.tray.insisted;
         }
-        matches!(key, "google-disconnect" | "google")
-            || key.starts_with("outgoing:")
+        matches!(
+            key,
+            "google-disconnect" | "google" | "pending-move-recovery"
+        ) || key.starts_with("outgoing:")
             || key.starts_with("send:")
             || key.starts_with("event:")
             || key.starts_with("account:")
@@ -56,11 +69,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pending_move_recovery_is_coalesced_and_close_waits_from_admission() {
+        let (mut app, _) = App::new();
+        let (sender, _selection, mut network) = engine::CommandSender::close_test_channels();
+        app.tx = Some(sender);
+        app.bulk.stopped = true;
+        app.schedule_pending_move_recovery();
+        app.schedule_pending_move_recovery();
+        assert!(matches!(
+            network.try_recv().expect("admitted"),
+            Command::RecoverPendingMoves
+        ));
+        assert!(network.try_recv().is_err(), "duplicate is coalesced");
+        let window = iced::window::Id::unique();
+        let _ = app.handle(Message::WindowClose(window));
+        assert_eq!(app.pending_close, Some(window));
+        app.schedule_pending_move_recovery();
+        assert!(
+            network.try_recv().is_err(),
+            "closing cannot admit another write"
+        );
+        let _ = app.update(Message::Backend(Event::Busy(
+            "pending-move-recovery".into(),
+            false,
+        )));
+        assert!(app.pending_close.is_none());
+    }
+
+    #[test]
     fn every_durable_busy_path_keeps_close_intent_and_resumes_after_ack() {
         for key in [
             "credential-cleanup",
             "google-disconnect",
             "google",
+            "pending-move-recovery",
             "outgoing:one",
             "send:one",
             "event:one",

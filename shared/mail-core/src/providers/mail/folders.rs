@@ -6,6 +6,9 @@ use crate::folders::{Mailbox, NameEncoding};
 use async_imap::imap_proto::{MailboxDatum, Response, Status};
 use async_imap::types::{Capabilities, NameAttribute};
 
+mod creation;
+pub use creation::{ensure_exact, exists_exact};
+
 pub(super) fn encoding(capabilities: &Capabilities) -> NameEncoding {
     if capabilities.has_str("IMAP4rev2") && !capabilities.has_str("IMAP4rev1")
         || capabilities.has_str("UTF8=ONLY")

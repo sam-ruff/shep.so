@@ -31,6 +31,234 @@ async fn stored_original() -> crate::store::Store {
 }
 
 #[tokio::test]
+async fn prior_recovery_keeps_retarget_source_body_counts_and_original_undo_destination() {
+    use crate::mail_actions::journal::{MoveRecord, MoveStage};
+    for result in ["failed", "known_uid", "missing_uid"] {
+        let (mut app, mut commands, detail) = super::super::tests::fixture().await;
+        let store = stored_original().await;
+        let original = detail.summary.clone();
+        let fingerprint = store
+            .message_fingerprint(original.id.clone())
+            .await
+            .expect("fingerprint");
+        let pending = MoveRecord::new(
+            original.clone(),
+            MoveReceipt::server(&original, "fixture", "Archive", None, fingerprint.clone()),
+        );
+        store
+            .prepare_mail_move(pending.clone())
+            .await
+            .expect("earlier uncertain move");
+        app.query.folder.clear();
+        app.set_mail_page(Arc::new(
+            store.query(app.query.clone()).await.expect("pending page"),
+        ));
+        app.cache_detail(detail.clone());
+        app.move_mail(original.clone(), "Projects".into());
+        let Command::Move(request, sent, folder) = commands.try_recv().expect("retarget request")
+        else {
+            panic!("Expected retarget move");
+        };
+        assert_eq!(sent.id, original.id);
+        assert_eq!(folder, "Projects");
+        let toast = app.mail_actions.moves[&original.id].toast;
+
+        let mut receipt = pending.receipt.clone();
+        receipt.current = MoveReceipt::server(
+            &original,
+            "fixture",
+            "Archive",
+            Some("91.5".into()),
+            fingerprint.clone(),
+        )
+        .current;
+        let acknowledged = store
+            .checkpoint_mail_move(pending, MoveStage::Committed, receipt)
+            .await
+            .expect("earlier provider receipt");
+        let recovered = store
+            .commit_mail_move_cache(acknowledged)
+            .await
+            .expect("earlier move cache");
+        let physical = recovered
+            .receipt
+            .current
+            .as_ref()
+            .expect("Archive UID")
+            .clone();
+        let _ = app.handle(Message::Backend(Event::MoveRecovered(Arc::new(recovered))));
+        assert_eq!(app.mail_actions.moves[&original.id].request, Some(request));
+        assert_eq!(app.mail_actions.moves[&original.id].mail.id, original.id);
+        assert_eq!(
+            app.mail_actions.moves[&original.id]
+                .recovered
+                .as_ref()
+                .expect("physical source")
+                .id,
+            physical.id
+        );
+        assert_eq!(app.mail_actions.projected_moves()[0].id, physical.id);
+        assert_eq!(
+            app.mail_actions.projected_moves()[0].source_folder,
+            "Archive"
+        );
+        assert_eq!(
+            app.page.inbox_unread["fixture"], 0,
+            "{result}: Inbox counted once"
+        );
+        assert_eq!(
+            (
+                app.page.total,
+                app.page.rows.len(),
+                app.page.rows[0].folder.as_str()
+            ),
+            (1, 1, "Projects")
+        );
+        assert_eq!(
+            app.detail.as_ref().expect("retained reader").body,
+            detail.body
+        );
+
+        let mut latest = None;
+        let response = if result == "failed" {
+            Err("The destination refused the new move".into())
+        } else {
+            let uid = (result == "known_uid").then(|| "92.8".into());
+            let next = MoveRecord::new(
+                physical.clone(),
+                MoveReceipt::server(&physical, "fixture", "Projects", None, fingerprint.clone()),
+            );
+            store
+                .prepare_mail_move(next.clone())
+                .await
+                .expect("new exact source");
+            let mut receipt = next.receipt.clone();
+            receipt.current =
+                MoveReceipt::server(&physical, "fixture", "Projects", uid, fingerprint).current;
+            let next = store
+                .checkpoint_mail_move(next, MoveStage::Committed, receipt)
+                .await
+                .expect("new provider receipt");
+            let next = if result == "known_uid" {
+                store.commit_mail_move_cache(next).await.expect("new cache")
+            } else {
+                next
+            };
+            let response = Ok(Arc::new(next.receipt.clone()));
+            latest = Some(next);
+            response
+        };
+        let _ = app.move_receipt(request, original.clone(), "Projects".into(), response);
+        assert!(!app.mail_actions.moves.contains_key(&original.id));
+        assert_eq!(
+            app.page.inbox_unread["fixture"], 0,
+            "{result}: no stale Inbox restoration"
+        );
+        assert_eq!((app.page.total, app.page.rows.len()), (1, 1), "{result}");
+        assert_eq!(
+            app.detail.as_ref().expect("reader after result").body,
+            detail.body
+        );
+
+        if result == "failed" {
+            assert_eq!(app.page.rows[0].folder, "Archive");
+            assert_eq!(app.page.rows[0].id, physical.id);
+            assert_eq!(
+                app.action_mail().expect("restored actual source").folder,
+                "Archive"
+            );
+            assert!(!app.page.is_placeholder(&physical.id));
+            assert!(!app.mail_actions.undo.contains_key(&toast));
+            assert!(
+                app.notice
+                    .as_ref()
+                    .is_some_and(|(text, error, _)| *error && text.contains("remains in Archive"))
+            );
+            continue;
+        }
+
+        let latest = latest.expect("acknowledged retarget");
+        assert_eq!(app.page.rows[0].folder, "Projects");
+        let undo = &app.mail_actions.undo[&toast];
+        assert_eq!(undo.original.id, original.id);
+        assert_eq!(undo.original.folder, "INBOX");
+        assert_eq!(
+            undo.receipt
+                .as_ref()
+                .expect("Undo receipt")
+                .recovery
+                .as_deref(),
+            Some(latest.token.as_str())
+        );
+        if result == "known_uid" {
+            let current = latest.receipt.current.as_ref().expect("known destination");
+            assert_eq!(app.page.rows[0].id, current.id);
+            assert_eq!(
+                app.action_mail().expect("usable destination").remote_id,
+                "92.8"
+            );
+            assert!(!app.page.is_placeholder(&current.id));
+        } else {
+            assert_eq!(app.page.rows[0].id, physical.id);
+            assert!(app.page.rows[0].remote_id.is_empty());
+            assert!(app.page.is_placeholder(&physical.id));
+            assert!(!app.page.is_transient_placeholder(&physical.id));
+            assert!(app.action_mail().is_none());
+            assert_eq!(
+                app.page.move_recovery[&physical.id].original.folder,
+                "Archive"
+            );
+            app.detail_cache.clear();
+            app.detail = None;
+            app.pending_details.clear();
+            let (sender, mut reads) = engine::CommandSender::foreground_test_channel();
+            app.tx = Some(sender);
+            app.select(physical.id.clone());
+            let mut requested = None;
+            while let Ok(command) = reads.try_recv() {
+                if let Command::Detail {
+                    revision,
+                    id,
+                    prefetch: false,
+                    ..
+                } = command
+                {
+                    requested = Some((revision, id));
+                }
+            }
+            let (revision, id) = requested.expect("cold body lookup");
+            assert_eq!(
+                id, physical.id,
+                "lookup must use retained Archive cache identity"
+            );
+            let loaded = store.detail(id.clone()).await.expect("protected raw body");
+            let _ = app.handle(Message::Backend(Event::Detail {
+                revision,
+                id,
+                result: Ok(Arc::new(loaded)),
+                prefetch: false,
+            }));
+            assert_eq!(app.detail.as_ref().expect("cold reader").body, detail.body);
+            assert!(app.action_mail().is_none());
+        }
+        let (sender, mut undo_commands) = engine::CommandSender::network_test_channel();
+        app.tx = Some(sender);
+        app.undo_actions(vec![toast]);
+        let Command::UndoMove(_, inverse_original, inverse_receipt) =
+            undo_commands.try_recv().expect("Undo")
+        else {
+            panic!("Expected Undo");
+        };
+        assert_eq!(inverse_original.folder, "INBOX");
+        assert_eq!(inverse_original.id, original.id);
+        assert_eq!(
+            inverse_receipt.recovery.as_deref(),
+            Some(latest.token.as_str())
+        );
+    }
+}
+
+#[tokio::test]
 async fn pending_destination_keeps_body_and_rekeys_selected_reader_only_after_ack() {
     for cross in [false, true] {
         let (mut app, mut commands, detail) = super::super::tests::fixture().await;
@@ -106,6 +334,144 @@ async fn pending_destination_keeps_body_and_rekeys_selected_reader_only_after_ac
         destination(&mut app, &store, account, "Keep").await;
         assert_eq!(app.page.total, 1);
     }
+}
+
+#[tokio::test]
+async fn retarget_page_before_prior_recovery_preserves_unrelated_inbox_count() {
+    use crate::mail_actions::journal::{MoveRecord, MoveStage};
+    let (mut app, mut commands, _) = super::super::tests::fixture().await;
+    let store = Store::memory().expect("cache");
+    let source = parse_mail(
+        "fixture",
+        "42.7",
+        "Projects",
+        b"Subject: moving\r\n\r\nOriginal body".to_vec(),
+        true,
+        false,
+    )
+    .expect("source");
+    let other = parse_mail(
+        "fixture",
+        "42.8",
+        "INBOX",
+        b"Subject: unrelated\r\n\r\nUnrelated unread mail".to_vec(),
+        true,
+        false,
+    )
+    .expect("other Inbox mail");
+    store
+        .upsert(vec![source.clone(), other.clone()])
+        .await
+        .expect("seed");
+    let fingerprint = crate::mail_actions::Fingerprint::of(&source.raw);
+    let prior = MoveRecord::new(
+        source.summary.clone(),
+        MoveReceipt::server(
+            &source.summary,
+            "fixture",
+            "INBOX",
+            None,
+            fingerprint.clone(),
+        ),
+    );
+    store
+        .prepare_mail_move(prior.clone())
+        .await
+        .expect("prior attempt");
+    app.query.folder.clear();
+    app.set_mail_page(Arc::new(
+        store.query(app.query.clone()).await.expect("initial page"),
+    ));
+    app.move_mail(source.summary.clone(), "Trash".into());
+    let Command::Move(request, ..) = commands.try_recv().expect("retarget") else {
+        panic!("Expected move");
+    };
+    let mut receipt = prior.receipt.clone();
+    receipt.current = MoveReceipt::server(
+        &source.summary,
+        "fixture",
+        "INBOX",
+        Some("91.5".into()),
+        fingerprint.clone(),
+    )
+    .current;
+    let prior = store
+        .checkpoint_mail_move(prior, MoveStage::Committed, receipt)
+        .await
+        .expect("first ack");
+    let prior = store
+        .commit_mail_move_cache(prior)
+        .await
+        .expect("first cache");
+    let physical = prior
+        .receipt
+        .current
+        .as_ref()
+        .expect("Inbox source")
+        .clone();
+    let latest = MoveRecord::new(
+        physical.clone(),
+        MoveReceipt::server(&physical, "fixture", "Trash", None, fingerprint.clone()),
+    );
+    store
+        .prepare_mail_move(latest.clone())
+        .await
+        .expect("latest journal");
+    let mut receipt = latest.receipt.clone();
+    receipt.current = MoveReceipt::server(
+        &physical,
+        "fixture",
+        "Trash",
+        Some("92.8".into()),
+        fingerprint,
+    )
+    .current;
+    let latest = store
+        .checkpoint_mail_move(latest, MoveStage::Committed, receipt)
+        .await
+        .expect("latest ack");
+    let latest = store
+        .commit_mail_move_cache(latest)
+        .await
+        .expect("latest cache");
+    let mut query = app.query.clone();
+    query.observe = app.mail_actions.observed_ids();
+    query.project_moves = app.mail_actions.projected_moves();
+    let page = Arc::new(store.query(query).await.expect("page after both writes"));
+    let _ = app.handle(Message::Backend(Event::Page(app.generation, page, false)));
+    assert_eq!(app.page.inbox_unread["fixture"], 1);
+    let _ = app.handle(Message::Backend(Event::MoveRecovered(Arc::new(prior))));
+    assert_eq!(
+        app.page.inbox_unread["fixture"], 1,
+        "prior recovery cannot invent an intermediate Inbox membership"
+    );
+    let _ = app.move_receipt(
+        request,
+        source.summary.clone(),
+        "Trash".into(),
+        Ok(Arc::new(latest.receipt)),
+    );
+    assert_eq!(
+        app.page.inbox_unread["fixture"], 1,
+        "retarget receipt must not subtract unrelated Inbox mail"
+    );
+    assert_eq!(
+        app.page
+            .rows
+            .iter()
+            .filter(|mail| mail.folder == "INBOX")
+            .count(),
+        1
+    );
+    assert_eq!(
+        app.page
+            .rows
+            .iter()
+            .filter(|mail| mail.folder == "Trash")
+            .count(),
+        1
+    );
+    assert_eq!(app.page.total, 2);
 }
 
 #[tokio::test]
