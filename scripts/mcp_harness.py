@@ -89,7 +89,8 @@ def request_window_close(display_name, window):
 
 
 class Desktop:
-    def __init__(self):
+    def __init__(self, binary=None):
+        self.binary = Path(binary).resolve() if binary is not None else None
         self.app = None
         self.profile_drive = None
         self.clipboard = None
@@ -283,7 +284,7 @@ class Desktop:
         for tool in ("Xvfb", "xdotool", "import", "zenity", "xclip"):
             if not shutil.which(tool):
                 raise RuntimeError(f"Install {tool}; this native harness currently supports Linux/X11.")
-        binary = ROOT / "target" / "test-ui" / "shep"
+        binary = self.binary or ROOT / "target" / "test-ui" / "shep"
         if not binary.exists():
             raise RuntimeError("Run cargo build --profile test-ui --features test-support before starting the harness.")
         self.directory = ARTIFACTS / uuid.uuid4().hex[:12]

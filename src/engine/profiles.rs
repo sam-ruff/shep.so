@@ -6,7 +6,9 @@ use crate::{
 
 /// The data root and legacy cache filename for this launch, or none for the
 /// memory-only demo workspace.
-fn workspace_location(demo: bool) -> anyhow::Result<Option<(std::path::PathBuf, String)>> {
+pub(crate) fn workspace_location(
+    demo: bool,
+) -> anyhow::Result<Option<(std::path::PathBuf, String)>> {
     if demo {
         #[cfg(feature = "test-support")]
         if let Some(path) = crate::test_support::workspace::path_from_arguments()? {

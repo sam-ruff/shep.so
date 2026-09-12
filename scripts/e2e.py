@@ -10,6 +10,7 @@ import time
 import unittest
 import math
 import sqlite3
+import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -832,6 +833,12 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
                        click(650 if compact else 1150,88), type_text("system tray"), check("settings_matches", ["System tray"]),
                        click(450,289), check("settings_group", "System tray"))
+
+    @unittest.skipUnless(shutil.which("gnome-shell"), "Actual GNOME Shell is required")
+    def test_gnome_launcher_restores_one_owner_and_retains_draft(self):
+        from gnome_activation import run
+        self.mcp.call("desktop.stop")
+        run(ROOT / "target/test-ui/shep")
 
     def test_tray_native_light_icon_matches_launcher_in_both_host_themes(self):
         started = self.mcp.call("desktop.start", tray="available")

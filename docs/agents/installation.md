@@ -20,6 +20,14 @@ bash scripts/install-linux.sh --pin
 
 The installer builds with `--release --locked --no-default-features`, installs `~/.local/bin/shep`, and registers **Shep** in the applications menu. Right-click it and choose **Add to Favorites** or your panel's pin action. `--pin` supports GNOME and preserves existing favorites. KDE and other panels can pin the launcher through their normal menus. The desktop entry and window use `so.shep.Shep`, following the [freedesktop launcher specification](https://specifications.freedesktop.org/desktop-entry/latest-single/) and [iced's application ID guidance](https://docs.rs/iced/0.14.0/iced/window/settings/struct.PlatformSpecific.html).
 
+Shep reuses one running application per profile catalogue directory. Opening
+the launcher again restores its window, including after minimising or closing
+to the tray. Separate data directories remain independent. After upgrading
+from a version without launch ownership, quit the older copies normally before
+starting the new build; updating the executable does not replace running code.
+The launcher declares `StartupNotify=false`: Shep does not complete that
+desktop protocol, and advertising it leaves later GNOME dock activations waiting.
+
 An extracted release archive includes the installer and can be installed without Rust. You can also supply an existing binary:
 
 ```sh

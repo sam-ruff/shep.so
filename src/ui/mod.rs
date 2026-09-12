@@ -293,6 +293,7 @@ pub enum Message {
     PrefUnreadBadge(bool),
     PrefCloseToTray(bool),
     Tray(crate::desktop_tray::Event),
+    Activate(u64),
     MainWindowOpened(iced::window::Id),
     WindowCloseRequested(iced::window::Id),
     DesktopBadge(crate::desktop_badge::Event),
@@ -331,6 +332,7 @@ pub struct App {
     pending_preference_save: Option<(u64, crate::preference_edits::Write)>,
     pending_close: Option<iced::window::Id>,
     tray: tray::State,
+    activation: Option<crate::activation::Signal>,
     database_transfer: database_transfers::State,
     database_import: database_import::State,
     profiles: profiles::State,
@@ -460,16 +462,20 @@ pub struct App {
     test_revision: u64,
 }
 
-pub fn run() -> iced::Result {
-    iced::daemon(App::boot, App::update, App::window_view)
-        .title("Shep — Mail & Calendar")
-        .theme(|app: &App, _| app.theme())
-        .scale_factor(|app: &App, _| app.preferences.interface_scale as f32 / 100.)
-        .subscription(App::subscription)
-        .default_font(iced::Font::with_name("Noto Sans"))
-        .font(include_bytes!("../../assets/NotoSans-Regular.ttf").as_slice())
-        .font(include_bytes!("../../assets/NotoSans-SemiBold.ttf").as_slice())
-        .run()
+pub fn run(activation: Option<crate::activation::Signal>) -> iced::Result {
+    iced::daemon(
+        move || App::boot(activation.clone()),
+        App::update,
+        App::window_view,
+    )
+    .title("Shep — Mail & Calendar")
+    .theme(|app: &App, _| app.theme())
+    .scale_factor(|app: &App, _| app.preferences.interface_scale as f32 / 100.)
+    .subscription(App::subscription)
+    .default_font(iced::Font::with_name("Noto Sans"))
+    .font(include_bytes!("../../assets/NotoSans-Regular.ttf").as_slice())
+    .font(include_bytes!("../../assets/NotoSans-SemiBold.ttf").as_slice())
+    .run()
 }
 impl App {
     fn window_view(&self, _window: iced::window::Id) -> Element<'_, Message> {
@@ -500,6 +506,7 @@ impl App {
                 pending_preference_save: None,
                 pending_close: None,
                 tray: Default::default(),
+                activation: None,
                 database_transfer: Default::default(),
                 database_import: Default::default(),
                 profiles: Default::default(),
@@ -658,6 +665,8 @@ impl App {
             tick
         };
         Subscription::batch([
+            Subscription::run_with(self.activation.clone(), crate::activation::subscription)
+                .map(Message::Activate),
             Subscription::run_with(self.demo, engine::subscription).map(Message::Backend),
             Subscription::run(crate::desktop_badge::subscription).map(Message::DesktopBadge),
             Subscription::run_with(self.demo, crate::desktop_tray::subscription).map(Message::Tray),
@@ -1026,6 +1035,7 @@ impl App {
             #[cfg(all(test, not(target_os = "windows")))]
             Message::DesktopBadge(crate::desktop_badge::Event::Overlay(_)) => {}
             Message::Tray(event) => return self.tray_event(event),
+            Message::Activate(generation) => return self.activate(generation),
             Message::MainWindowOpened(window) => return self.main_window_opened(window),
             Message::WindowCloseRequested(window) => return self.request_main_close(window),
             Message::PrefCloseToTray(value) => {

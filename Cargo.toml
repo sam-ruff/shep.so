@@ -74,6 +74,7 @@ cosmic-text = "0.15"
 unicode-normalization = "0.1"
 fs2 = "0.4.3"
 nucleo-matcher = "0.3.1"
+interprocess = { version = "2.4.4", features = ["tokio"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = "=0.3.6"
@@ -104,6 +105,7 @@ litehtml-sys = { version = "=0.2.5", features = ["shep-test-support"] }
 tokio = { version = "1", features = ["test-util"] }
 iced_tiny_skia = "=0.14.0"
 tiny-skia = "0.11"
+mockall = "0.15.0"
 
 [patch.crates-io]
 curl = { path = "vendor/curl" }

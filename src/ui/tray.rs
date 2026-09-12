@@ -39,8 +39,9 @@ pub(super) fn window_settings(size: Size) -> iced::window::Settings {
 }
 
 impl App {
-    pub(super) fn boot() -> (Self, Task<Message>) {
+    pub(super) fn boot(activation: Option<crate::activation::Signal>) -> (Self, Task<Message>) {
         let (mut app, initial) = Self::new();
+        app.activation = activation;
         let opening = app.open_main_window();
         (app, Task::batch([initial, opening]))
     }
@@ -48,7 +49,7 @@ impl App {
     fn open_main_window(&mut self) -> Task<Message> {
         self.tray.hidden = false;
         if let Some(window) = self.tray.window {
-            return iced::window::gain_focus(window);
+            return iced::window::minimize(window, false).chain(iced::window::gain_focus(window));
         }
         let (window, open) = iced::window::open(window_settings(self.size));
         self.tray.window = Some(window);
@@ -232,12 +233,26 @@ impl App {
     }
 
     fn restore_main_window(&mut self) -> Task<Message> {
+        if self.tray.exiting {
+            return Task::none();
+        }
         self.pending_close = None;
         self.composer.close = None;
         self.tray.temporary = false;
         self.tray.insisted = false;
         self.resume_folder_close_barrier();
         self.open_main_window()
+    }
+
+    pub(super) fn activate(&mut self, generation: u64) -> Task<Message> {
+        if self.tray.exiting {
+            return Task::none();
+        }
+        let task = self.restore_main_window();
+        if let Some(signal) = &self.activation {
+            signal.acknowledge(generation);
+        }
+        task
     }
 
     pub(super) fn new_error_since(&self, previous: Option<Instant>) -> bool {
@@ -263,6 +278,13 @@ impl App {
     }
 
     pub(super) fn finish_exit(&mut self) -> Task<Message> {
+        if self
+            .activation
+            .as_ref()
+            .is_some_and(|signal| !signal.try_close())
+        {
+            return self.restore_main_window();
+        }
         self.tray.exiting = true;
         self.tray.temporary = false;
         self.pending_close = None;
@@ -282,6 +304,39 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launcher_open_wins_before_terminal_exit_and_cancels_pending_close() {
+        let (mut app, _) = App::new();
+        let signal = crate::activation::Signal::default();
+        app.activation = Some(signal.clone());
+        app.pending_close = Some(iced::window::Id::unique());
+        app.tray.hidden = true;
+        app.tray.temporary = true;
+        let generation = signal.request().expect("open accepted");
+        let _ = app.finish_exit();
+        assert!(!app.tray.exiting);
+        assert!(!app.tray.hidden);
+        assert!(!app.tray.temporary);
+        assert!(app.pending_close.is_none());
+        assert!(app.tray.window.is_some());
+        let _ = app.activate(generation);
+        assert!(signal.try_close());
+    }
+
+    #[test]
+    fn terminal_exit_cannot_be_reopened_by_a_late_launcher_or_tray_event() {
+        let (mut app, _) = App::new();
+        let signal = crate::activation::Signal::default();
+        app.activation = Some(signal.clone());
+        let _ = app.finish_exit();
+        assert!(app.tray.exiting);
+        assert_eq!(signal.request(), None);
+        let _ = app.activate(1);
+        let _ = app.restore_main_window();
+        assert!(app.tray.window.is_none());
+        assert!(app.tray.exiting);
+    }
 
     #[test]
     fn ordinary_hidden_write_failure_reopens_but_old_errors_and_refreshes_do_not() {

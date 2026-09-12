@@ -17,6 +17,7 @@ mod move_recovery;
 mod outgoing;
 mod profile_sync;
 mod profiles;
+pub(crate) use profiles::workspace_location;
 mod removals;
 mod restore;
 #[cfg(test)]
