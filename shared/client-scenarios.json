@@ -189,7 +189,7 @@
     {
       "id": "text-context-menu",
       "contract": "Right-click or keyboard context-menu access preserves text selection and targets the focused control. Offer Copy/Select all for selectable readers and Cut/Paste for editable fields, disable unavailable actions and password copying, ignore late clipboard replies after menu close or target changes, and preserve ordinary message/folder menus outside text controls.",
-      "desktop": "Active shared input/editor/formatted-reader menu implementation; integrated clipboard, focus, keyboard and light/dark native verification required.",
+      "desktop": "bc9ca09: shared input/editor/formatted-reader menus, including New folder; ten widget tests, 27 distinct native scenarios and 1,287 hook executions pass. Preserve clipboard epochs, password restrictions, actual focus and application popup theme.",
       "mobile": "OPEN equivalent native selection-menu, secure-field, reader and external-keyboard coverage",
       "browser": "Existing browser text menus; OPEN equivalent field/reader, secure-field and keyboard regressions"
     },

@@ -2,25 +2,30 @@
 
 Linux is the currently verified platform. Windows and macOS still need testing.
 
-## Download a release
+## Install on Linux
+
+Install the [build dependencies](#build-dependencies) first, then run:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/sam-ruff/shep.so/main/scripts/install-release-linux.sh | bash
 ```
 
-The Linux installer requires curl and Python 3. It verifies `SHA256SUMS` before
-installing to `~/.local/bin` and adding the native applications-menu entry.
+The installer requires curl and Python 3. It uses a published release when
+available, verifying `SHA256SUMS` before installing. With no published release,
+it downloads an exact revision of `main` and builds it with current stable Rust.
+The source build uses four jobs and a temporary target directory; it can take
+several minutes. It installs to `~/.local/bin` and adds the applications-menu entry.
 On an interactive terminal, choose your user (default), all users, or cancel.
 All-user installation uses `/usr/local` and asks through sudo when needed.
 The installer never stops an open Shep window; reopen it after an update.
-The transparent Shepherd launcher uses the native symbolic icon style, so GTK/
-GNOME can match its foreground to the system theme without a running Shep process.
-The full-color transparent PNG remains available for desktop compatibility.
+The launcher uses the approved full-colour Shepherd icon, with a scalable SVG
+and a PNG fallback for desktop compatibility.
 
-Release CI is currently paused and no binary releases are published yet. The
-installer reports missing releases or platform assets without changing installed
-files. Use the source instructions below until an archive is available;
-macOS/Windows release packaging remains in development.
+Release CI is paused and no binary releases are published yet, so the Linux
+command currently builds from source. `--source` always chooses source;
+`--release-only` requires a published binary. A requested `--version`, missing
+platform asset or checksum failure never falls back to a different build.
+Downloads and compilation finish before replacing installed files.
 
 For a particular release, a prompt-free user install or optional GNOME pinning:
 
@@ -32,6 +37,12 @@ Replace `1.2.3` with an actually published version. `--system` explicitly select
 all users; `--yes` uses the user default without prompting. Custom user locations
 use `--prefix PATH` and `--data-dir PATH`. No Rust checkout is required for a
 published archive.
+
+## Other platforms
+
+The commands below require published platform assets. No Windows or macOS assets
+are available yet, and these commands currently stop without installing. Their
+isolated script tests do not establish native platform support.
 
 ### macOS
 
@@ -49,7 +60,7 @@ copy to `/Applications` requests administrator access. `--version`, `--user`,
 Checksums and exact regular archive members are validated before an installed app
 changes. Failed replacement restores the previous app. Open Shep from Applications
 and reopen after updates. No running process is stopped, user data is kept, and
-Gatekeeper settings are preserved. This does not create a signed or notarized app.
+Gatekeeper settings are preserved. This does not create a signed or notarised app.
 The shell and isolated native-tool contracts are tested on Linux; actual macOS
 execution and published macOS assets remain pending.
 
@@ -68,7 +79,7 @@ The terminal prompt offers your user, all users, or cancel. Add `-User` or `-Yes
 after the command to use the user default without prompting. Add `-AllUsers` for
 Program Files and the shared Start menu; only the final verified, staged install
 requests administrator approval. `-Version 1.2.3` chooses a published version and
-`-InstallDirectory PATH` customizes a user installation.
+`-InstallDirectory PATH` customises a user installation.
 
 The installer verifies SHA-256, preserves binary data during extraction, and
 restores the previous application if replacement fails. If Windows keeps an open
@@ -79,30 +90,41 @@ PowerShell filesystem/transport tests run in isolated Linux fixtures; actual
 Windows PowerShell 5.1, Start-menu rendering, UAC and published assets still need
 Windows verification. This script does not sign the application.
 
-## Run from source
+## Build dependencies
 
-Install stable Rust (1.89 or newer) and Python 3. On Debian or Ubuntu, add these build dependencies:
+Install [current stable Rust](https://www.rust-lang.org/tools/install). On Debian
+or Ubuntu, add these build dependencies:
 
 ```sh
-sudo apt install build-essential cmake pkg-config libssl-dev libdbus-1-dev \
+sudo apt install curl python3 git build-essential cmake pkg-config libssl-dev libdbus-1-dev \
   libx11-dev libxkbcommon-dev libwayland-dev
 ```
 
-From the repository checkout:
+Linux needs a Secret Service, such as GNOME Keyring, to save passwords. File
+dialogs need your desktop's `xdg-desktop-portal` implementation. Source builds
+without Shep's Google client configuration can use password-based mail accounts;
+Google sign-in is unavailable in those builds.
+
+## Run from a checkout
 
 ```sh
-cargo run --release
+git clone https://github.com/sam-ruff/shep.so.git
+cd shep.so
+cargo run --release --locked --no-default-features --jobs 4
 ```
 
-Linux needs a Secret Service, such as GNOME Keyring, to save passwords. File dialogs need your desktop's `xdg-desktop-portal` implementation.
-
 ## Add it to your applications menu
+
+From the checkout:
 
 ```sh
 bash scripts/install-linux.sh
 ```
 
-This builds Shep and installs it for your user. Do not run the installer with sudo. Add `--pin` to pin it to the GNOME dash.
+This builds Shep and installs it for your user. It honours `CARGO_TARGET_DIR` and
+Cargo's configured target. Add `--binary PATH` to install an existing build,
+or `--pin` to pin it to the GNOME dash. Do not run this checkout installer with
+sudo; use the remote installer's explicit `--system` option for all-user installs.
 
 An extracted release archive uses the same installer and does not need Rust.
 
@@ -111,6 +133,8 @@ An extracted release archive uses the same installer and does not need Rust.
 Open **Preferences → Accounts** to add mail, or **Preferences → Calendars** to connect a calendar. Fastmail users can select the preset and enter an app password.
 
 ## Uninstall
+
+From a checkout or extracted release archive:
 
 ```sh
 bash scripts/install-linux.sh --uninstall

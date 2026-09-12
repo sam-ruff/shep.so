@@ -6,9 +6,7 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
 
 ## Top priority — OAuth and shared profiles
 
-- [ ] **12 September README scripts and installation:** after the current move, folder and text-menu work, audit the commands and scripts advertised in README, fix failures and stale invocation details, verify the applicable scripts and an isolated Linux installation, then build and install the finished production application. Preserve personal profiles and existing launcher/icon ownership; distinguish Windows/macOS checks from actual execution.
-
-- [ ] **12 September standard text context menu:** add the normal right-click text actions, including Copy and Select all for selectable text and Cut/Paste for editable fields. Cover formatted/plain readers and editors/search fields as applicable, with keyboard context-menu access, disabled unavailable actions, clipboard behaviour and native regression evidence. Preserve existing message/folder action menus outside text controls. Ship after the moving-mail fix and folder creation already in progress; review Flutter/browser equivalents.
+- [ ] **12 September README scripts and installation:** installer fixes pass 124 Python tests (seven Windows skips), strict docs and a real production build/isolated installation. The current production binary and approved icons are installed; existing processes need normal Quit/reopen. Finish normal shipping hooks and push the installer source/receipt. Windows/macOS assets and execution remain tracked platform gaps.
 
 - [ ] **12 September text-menu parity:** verify Flutter/browser equivalents for editable fields, selectable readers, password restrictions, clipboard/focus ownership and keyboard context-menu access; retain platform-native controls where they fulfil the shared contract.
 
@@ -18,8 +16,9 @@ committed as `b614b8d`: missing destinations are created before submission,
 provable recovery completes automatically, and direct Retry avoids a mandatory
 review. Nineteen native scenarios and 1,263 hook test executions pass; completion
 records the source and evidence. Sidebar New folder is pushed as `842c570`, with
-thirteen native scenarios and 1,277 normal-hook executions passing. Next deliver
-standard text context menus, then the README installer fixes and production install.
+thirteen native scenarios and 1,277 normal-hook executions passing. Standard text
+menus are pushed as `bc9ca09`, with 27 distinct native scenarios and 1,287 hook
+executions passing. Finish the README installer fixes and production install next.
 Flutter/browser missing-folder creation, sidebar creation controls and automatic
 proof-based move recovery remain explicit active parity gaps.
 Automatic creation for other provider write paths, including Sent-copy

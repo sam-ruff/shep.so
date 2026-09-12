@@ -1,8 +1,44 @@
 # Completion audit
 
+## README installers and production installation, 12 September 2026
+
+Integrated installer verification and production installation pass; the source
+shipping receipt follows here. README leads with the Linux command that builds a pinned
+main revision while binary releases are absent. Explicit release versions,
+missing platform assets and checksum failures do not fall back to another build.
+Both source paths use Cargo's reported executable, including configured target
+triples and directories. Help and invalid arguments are handled before building.
+Downloads and builds finish before the final copy or elevation.
+
+The integrated Python suite passes: 124 tests, including the README pipeline from
+outside a checkout, quickstart commands, real scoped installer/assets, custom
+targets and paths with spaces. Download/build boundaries are mocked in these
+command tests; they are not fresh-machine builds. Seven Windows tests are skipped
+because PowerShell is unavailable. macOS native-tool contracts are mocked on
+Linux. Shell syntax, 47 parity contracts and the pinned strict docs build pass.
+Logs are `artifacts/logs/readme-install-python-integrated.log` and
+`readme-install-docs.log`. Windows/macOS installation still needs published
+assets and actual platform execution. Quality and release workflows stay disabled.
+
+The production no-feature build from desktop source `bc9ca09` passes. The actual
+checkout installer builds with real Cargo and installs into an isolated prefix;
+its output and the final `/home/developer/.local/bin/shep` installation match
+SHA-256 `7bb0d98ca5ef4b039913d1ecfcf2147eb2209211c15b132fac4f26e481db1308`.
+Approved full-colour launcher, tray and compatibility PNG files match their
+sources; the desktop entry retains `Icon=so.shep.Shep`, matching WM class and
+`StartupNotify=false`. No personal application process was stopped or profile
+data changed by installation. Existing processes require normal Quit/reopen.
+This build has no embedded Google client configuration for new Google sign-ins;
+password-based mail and existing grant storage are unchanged.
+Evidence: `current-features-production-build.log`,
+`readme-real-production-install.log` and `current-features-user-install.log` in
+`artifacts/logs/`. Final shipping hooks and commit are recorded below.
+
 ## Standard text context menus, 12 September 2026
 
-Native verification passes; final hook and shipping receipts follow here.
+Source is pushed as [`bc9ca09`](https://github.com/sam-ruff/shep.so/commit/bc9ca097c5925f9008122e126f83cb3763d17319).
+Formatting, both Clippy configurations and 1,287 normal-hook Rust test executions
+pass. Production installation follows the README installer verification.
 Inputs, composition and plain/formatted readers share Cut, Copy, Paste and
 Select all menus. Right-click preserves selection; Shift+F10 and the Menu key
 target actual native focus before outer message/folder menus. Unavailable
