@@ -182,7 +182,7 @@
     {
       "id": "move-identity-undo",
       "contract": "Acknowledged receipts preserve stable client identity across sync/restart; queued Undo uses the acknowledged destination. Ensure a missing destination before submitting mail. Retry an interrupted same-account move only after complete server observations prove its exact original survives and no matching destination copy exists; otherwise finish a verified existing copy without another upload. Partial or failed observations never prove absence. Routine proved recovery completes without a review form; uncertain copies remain protected.",
-      "desktop": "Active missing-destination preflight and proof-based recovery work; reader Retry and normal Move actions must remain available without enabling flags on unresolved identities. Require protocol, runner, restart and native controls evidence before shipping.",
+      "desktop": "b614b8d: missing-destination preflight, proof-based recovery, reader Retry and normal Move without enabling flags on unresolved identities. Protocol, runner, identity/Undo/count and nineteen native controls scenarios pass. Retain bounded two-record lineage and close/restart evidence; live-provider verification remains open.",
       "mobile": "shared mail-core receipt/recovery tests / native Rust cache tests / native_mail_test.dart; OPEN missing-destination creation and automatic proof-based move recovery",
       "browser": "provider.test.ts / provider-flows.mjs / authenticated gateway tests; complete ambiguous-move review, missing-destination creation and automatic proof-based recovery OPEN"
     },

@@ -2,7 +2,10 @@
 
 ## Missing Archive destination and ordinary move retry, 12 September 2026
 
-Integration verification is in progress; this entry is not a shipping receipt.
+Source is committed as [`b614b8d`](https://github.com/sam-ruff/shep.so/commit/b614b8d925c88505a76b1957a9cc895e005b4335)
+with formatting, both Clippy configurations and 1,263 normal-hook Rust test
+executions passing. This main shipment precedes sidebar folder creation.
+The production installation follows the remaining UI features in this session.
 
 A content-free local diagnostic found an unfinished same-account move whose
 Archive destination was missing. IMAP preflight now checks and creates an exact
@@ -22,10 +25,25 @@ holds window closing until accepted work has saved its receipt.
 Shared creation checks cover selectable folders, server hierarchy, modified
 UTF-7, rejected CREATE and lost acknowledgement. Root shared-core execution
 passes 60 tests; the Python suite passes 113 with seven environment/platform
-skips. Final integrated native, hook and shipping receipts follow here.
+skips. All 45 parity contracts and pinned strict documentation checks pass.
+
+The integrated native executable is
+`8f4d12ed5df38b5d21489d98f41cac261f28b8e885d89072998f3f3eabff2bb6`.
+Nineteen relevant native scenarios pass across the combined run and focused
+error-message checks. Direct Retry covers copied, unconfirmed and missing-folder
+outcomes, with persistent restart and zero duplicate submissions. Reviewed
+evidence includes `1558da65a741`, `798016b1c3c4`, `81edbe6f2bcc` and compact-dark
+`cd4004e81ef3` under `artifacts/e2e/`. The ordinary Move menu remains available
+for protected originals. Existing recovery choices, close, readable cached MIME,
+Undo, drag failure, badge counts and conversation navigation also pass.
+The first combined run retained an obsolete error-text assertion; its failure
+is saved in `d0c86d4f1f20`. Updated assertions pass without changing input timing
+or deadlines. The final five-flow follow-up includes `e6c5fd80da20` and
+`70b40cfab619` for destination failure and pending Undo.
 
 This is fixture/protocol evidence, not a live mutation of personal mail.
-Cross-account unknown uploads still cannot be repeated automatically. Sidebar
+Cross-account unknown uploads still cannot be repeated automatically. Verified
+retarget lineage follows at most two completed records. Sidebar
 creation is the next feature; Flutter/browser creation and automatic recovery
 remain active parity gaps. Quality/release workflows remain disabled.
 
