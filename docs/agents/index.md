@@ -8,6 +8,7 @@ Read the repository's [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/
 
 - [Completion audit](../COMPLETION.md): implemented evidence, active work and remaining product gaps.
 - [Performance evidence](../PERFORMANCE.md): budgets, methodology and limits of the measured results.
+- [Search comparison](search-demos.md): three demo branches, matching approaches and common examples.
 - [Native E2E skill](https://github.com/sam-ruff/shep.so/blob/main/.agents/skills/shep-e2e/SKILL.md): isolated MCP scenarios and required automated equivalents.
 
 ## Detailed reference
