@@ -3,6 +3,13 @@
   "reference": "Rust iced desktop committed 10d8569; merged-worktree verification and gaps in docs/CLIENT_PARITY.md",
   "scenarios": [
     {
+      "id": "preferences-search-catalogue",
+      "contract": "Search visible control captions, section/tab names, descriptions and common synonyms across Preferences. Rank exact titles and captions above supporting text, tolerate spelling mistakes, require every distinct query word, preserve exact numeric tokens and expose clear no-results feedback. Selecting a result navigates without changing the setting; newly persisted fields require a coverage or explicit internal-state review.",
+      "desktop": "settings_search::tests covers labels, ranking, Unicode/numbers, exhaustive Preferences fields and nested network/account/calendar/profile schemas; test_preferences_catalogue_ranking_and_cross_tab_navigation covers real light/dark/compact controls. Deep controls in long or state-dependent cards still require scrolling or existing Edit/destination controls. The ignored complete-catalogue timing test is separate from native latency.",
+      "mobile": "OPEN: expanded Preferences catalogue, ranked typo matching, coverage guard and exact-control reveal.",
+      "browser": "OPEN: expanded Preferences catalogue, ranked typo matching, coverage guard and exact-control reveal."
+    },
+    {
       "id": "history-header-control",
       "contract": "When mail action history exists, expose a clearly identifiable header icon with a descriptive tooltip that respects the tooltip preference. Mouse activation opens the existing History review and Escape closes it. Keep normal and compact light/dark layouts readable.",
       "desktop": "scripts/e2e.py::test_bulk_history_header_icon_mouse_escape_and_compact_dark, plus the existing History paging/retry/Undo scenarios. Execution evidence belongs in docs/COMPLETION.md.",
@@ -245,7 +252,7 @@
     },
     {
       "id": "ranked-mail-search",
-      "contract": "An exact short-body match ranks before weaker/newer typo alternatives; retain Unicode, literal query safety, folder/flag scopes and stable 50-row paging. Captured selection uses the same order. Compute exact FTS ranking once per query, with SQLite owning intermediate rows instead of UI arrays. Global unread-account counts should use a covering index without loading mail rows or sorting account groups.",
+      "contract": "An exact short-body match ranks before weaker/newer typo alternatives; retain Unicode, literal query safety, folder/flag scopes and stable 50-row paging. Captured selection uses the same order. Compute exact FTS ranking once per query, with SQLite owning intermediate rows instead of UI arrays. Global unread-account counts should use a covering index without loading mail rows or sorting account groups. Selected abbreviation matching: required literal Nucleo terms with OSA fallback and exact numbers for labels; exact-body, phrase, literal-term and expanded-term tiers for mail, with stable page/capture ties after reopen. Vocabulary candidate budgets count typo neighbours, excluding the exact token without scanning its postings; retain candidates before and after it at the boundary. Skip absent variants only after a complete prefix scan; preserve other prefixes, full-cap candidates and vocabulary changes after reopening. Counts share ranked keys before reading 50 metadata rows; retain numeric selected-folder bindings, projected destinations, Unicode exact-body priority and empty-offset totals. Sam selected this desktop combination on 12 September; Flutter/browser equivalence remains open.",
       "mobile": "OPEN: full desktop fuzzy/relevance behavior and bounded cache/performance parity. Current native prefix FTS/paging remains covered by Rust cache tests; desktop query-plan guard, tests/search.rs, tests/selections.rs and native search/sort controls cover the reference.",
       "browser": "OPEN: full fuzzy/relevance parity. Keep current worker query/paging and captured-selection controls; the native SQLite materialization change does not implement browser ranking."
     },

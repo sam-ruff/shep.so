@@ -400,6 +400,7 @@ pub struct App {
     tab: Tab,
     settings_tab: SettingsTab,
     settings_search: String,
+    settings_search_results: Vec<&'static settings_search::Setting>,
     settings_group: Option<&'static str>,
     dialog: Option<Dialog>,
     fields: HashMap<&'static str, String>,
@@ -566,6 +567,7 @@ impl App {
                 tab: Tab::Mail,
                 settings_tab: SettingsTab::General,
                 settings_search: String::new(),
+                settings_search_results: Vec::new(),
                 settings_group: None,
                 theme_cache: Default::default(),
                 palette_editor: Default::default(),
@@ -1944,6 +1946,7 @@ impl App {
                 }
             }
             Message::SettingsSearch(query) => {
+                self.settings_search_results = settings_search::matches(&query);
                 self.settings_search = query;
                 self.settings_group = None;
             }
@@ -1958,6 +1961,7 @@ impl App {
             Message::ShowAllSettings => {
                 self.settings_group = None;
                 self.settings_search.clear();
+                self.settings_search_results.clear();
             }
             Message::PrefTooltips(value) => {
                 self.preferences.tooltips = value;
@@ -1974,6 +1978,7 @@ impl App {
                 self.defer_draft_exit(composing::Exit::Tab(Tab::Preferences));
                 self.settings_search.clear();
                 self.settings_group = None;
+                self.settings_search_results.clear();
                 self.tab = Tab::Preferences;
                 self.settings_tab = tab;
                 self.fields.clear();
