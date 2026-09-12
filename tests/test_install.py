@@ -26,6 +26,7 @@ class Installation(unittest.TestCase):
                 content = desktop.read_text()
                 self.assertIn(f'Exec="{executable}"', content)
                 self.assertIn("StartupWMClass=so.shep.Shep", content)
+                self.assertIn("StartupNotify=false", content)
                 self.assertIn("Icon=so.shep.Shep", content)
                 self.assertTrue(icon.is_file())
                 symbolic = data / "icons/hicolor/scalable/apps/so.shep.Shep-symbolic.svg"

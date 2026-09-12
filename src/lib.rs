@@ -1,3 +1,4 @@
+pub mod activation;
 pub mod appearance;
 pub mod backup;
 pub mod bulk;

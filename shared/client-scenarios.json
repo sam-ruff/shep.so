@@ -3,6 +3,13 @@
   "reference": "Rust iced desktop committed 10d8569; merged-worktree verification and gaps in docs/CLIENT_PARITY.md",
   "scenarios": [
     {
+      "id": "native-launch-activation",
+      "contract": "Acquire one application owner per canonical profile catalogue root before starting mail or a tray. Subsequent launches restore that owner's visible, minimised or hidden window without replacing its draft or creating another tray. Preserve pending saves; terminal shutdown rejects activation until ownership is released. Independent data roots remain independent.",
+      "desktop": "Activation lock/IPC and UI lifecycle regressions plus an owned actual GNOME launcher, dock mouse/keyboard, minimise and retained-draft scenario. Verification and platform limitations must be recorded in COMPLETION before claiming delivery; Windows/macOS and Wayland shell execution remain open.",
+      "mobile": "No desktop process launcher or tray surface. Android/iOS task restoration and draft lifecycle remain part of R67/R80 platform verification.",
+      "browser": "Multiple browser tabs are intentional; do not replace existing profile Web Locks with native single-process ownership. Existing tab ownership and draft recovery contracts remain applicable."
+    },
+    {
       "id": "preferences-search-catalogue",
       "contract": "Search visible control captions, section/tab names, descriptions and common synonyms across Preferences. Rank exact titles and captions above supporting text, tolerate spelling mistakes, require every distinct query word, preserve exact numeric tokens and expose clear no-results feedback. Selecting a result navigates without changing the setting; newly persisted fields require a coverage or explicit internal-state review.",
       "desktop": "settings_search::tests covers labels, ranking, Unicode/numbers, exhaustive Preferences fields and nested network/account/calendar/profile schemas; test_preferences_catalogue_ranking_and_cross_tab_navigation covers real light/dark/compact controls. Deep controls in long or state-dependent cards still require scrolling or existing Edit/destination controls. The ignored complete-catalogue timing test is separate from native latency.",

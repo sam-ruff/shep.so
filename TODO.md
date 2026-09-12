@@ -6,13 +6,25 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
 
 ## Top priority — OAuth and shared profiles
 
-**12 September decision and tray regression:** Sam selects Abbreviations as the
-current search implementation. Integrate it into main and delete the Precise
-and Tolerant demo branches, preserving their comparison evidence. Sam reports
+**12 September GNOME notifications and icons follow-up:** Sam reports no native
+GNOME desktop notification when new email arrives and requests icon fixes.
+Reproduce new-mail notification delivery through the actual GNOME notification
+service, check preferences/provider arrival gating and fix confirmed failures.
+Review installed launcher/tray/notification icons against the approved Shepherd;
+clarify any additional affected icons while continuing the tray activation fix.
+Keep notification content preferences and private mail out of fixture evidence.
+
+**12 September decision and tray regression:** Abbreviations is selected and
+pushed on main as `86d5ca1`, with twelve native scenarios and 1,202 normal-hook
+test executions passing. Precise and Tolerant branch references are deleted
+locally and remotely; their comparison evidence is retained. Sam reports
 that taskbar launches create additional tray instances instead of reopening
 the running application. Fix launch ownership and activation so a subsequent
 launch restores the existing window, including after minimising/hiding to tray.
 Preserve pending saves, profile isolation and graceful shutdown.
+Actual Windows/macOS and Wayland launcher/restore execution must remain an
+explicit platform gap after Linux/X11 verification; browser tabs keep their
+existing independent ownership model.
 
 **12 September live search comparison:** Sam requests launching the three search
 branches in turn against his actual profiles, replacing the earlier fictional

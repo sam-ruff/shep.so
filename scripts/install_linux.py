@@ -23,6 +23,17 @@ def exec_value(path):
     return '"' + value.replace("\\", "\\\\") + '"'
 
 
+def desktop_entry(arguments):
+    return (
+        "[Desktop Entry]\nVersion=1.0\nType=Application\nName=Shep\n"
+        "GenericName=Email and Calendar\nComment=A calm home for your mail and calendar\n"
+        f"Exec={' '.join(exec_value(argument) for argument in arguments)}\n"
+        f"Icon={APP_ID}\nTerminal=false\n"
+        "Categories=Network;Email;Office;Calendar;\nKeywords=mail;email;calendar;imap;pop3;\n"
+        f"StartupWMClass={APP_ID}\nStartupNotify=false\n"
+    )
+
+
 def atomic_install(source, destination, mode):
     destination.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".shep-install-", dir=destination.parent)
@@ -76,12 +87,7 @@ def install(binary, prefix, data, uninstall=False, pin=False):
     else:
         if not binary or not binary.is_file():
             raise ValueError("Supply --binary PATH or run scripts/install-linux.sh to build the release version")
-        icon_name = APP_ID
-        launcher = ("[Desktop Entry]\nVersion=1.0\nType=Application\nName=Shep\n"
-                    "GenericName=Email and Calendar\nComment=A calm home for your mail and calendar\n"
-                    f"Exec={exec_value(destination)}\nIcon={icon_name}\nTerminal=false\n"
-                    "Categories=Network;Email;Office;Calendar;\nKeywords=mail;email;calendar;imap;pop3;\n"
-                    f"StartupWMClass={APP_ID}\nStartupNotify=true\n")
+        launcher = desktop_entry([destination])
         atomic_install(binary, destination, 0o755)
         atomic_install(ROOT / "assets" / "launcher.png", icon, 0o644)
         for source, target in (("shepherd-light.svg", scalable), ("shepherd-tray.svg", tray)):

@@ -1,9 +1,49 @@
 # Completion audit
 
+## Duplicate tray launches and GNOME dock activation, 12 September 2026
+
+Repeated desktop launches now acquire one owner per canonical profile catalogue
+root before mail or tray startup. Later launches send an authenticated local
+Open request and exit; the owner restores and unminimises its existing window.
+Pending saves remain owned, accepted Open requests cancel a pending close, and
+terminal shutdown rejects new requests until its process releases ownership.
+The permanent lock and separate private endpoint publication retain crash
+recovery and independent-root behaviour, including Windows mandatory locks.
+
+The actual GNOME baseline created two processes, windows and tray registrations.
+With ownership fixed, a second defect remained: `StartupNotify=true` left a
+launcher startup sequence incomplete, so the following mouse dock activation
+was ignored. The installed launcher now accurately declares
+`StartupNotify=false`; the native test uses the same launcher generator.
+
+Twelve activation tests (including a subprocess helper) and seventeen tray
+unit tests pass, covering authenticated IPC, stalled clients, publication
+validation, canonical aliases, crash recovery and terminal-close ordering.
+All thirteen existing native tray/save/quit scenarios pass on executable
+`51730a90554dab617f7c6b09d0ab1082333a38de961de9b6d3d70458d2eded8d`.
+Reviewed lane captures include `23fc8fb1ff66` and `997eac59f1eb`.
+The strengthened GNOME comparison preserves its failed `StartupNotify=true`
+receipt `90e4c97612d4` and successful false receipt `b8a16e6f3410` in the
+tray-activation-tests worktree. The same primary PID and PID-bound tray
+registration survive repeated Exec, keyboard/dock mouse and minimised-window
+restores with the complete draft retained.
+The final shared-installer-generator run also passes, receipt `e86c1c38625e`,
+with reviewed mouse and minimise captures. All 109 Python tests pass (seven
+platform/environment skips), and the Windows GNU no-default-feature check
+passes in `activation-windows-check-resumed.log`.
+
+The production no-feature release build passes, SHA-256
+`891652f6221f563f629648ceb719b5a4c1520903df912405f027c346f027b31b`.
+Linux/X11 execution does not establish Windows/macOS or Wayland shell behaviour.
+Older running binaries cannot join the new ownership protocol and must be quit
+normally; installation does not discard their sessions. Native incoming-mail
+notification delivery is a separate active follow-up.
+
 ## Abbreviations selected for desktop search, 12 September 2026
 
 Sam selected `b00c784` after trying all three alternatives with his own profiles.
-The selected implementation is integrated into main: abbreviation and typo
+The selected implementation is pushed on main as
+[`86d5ca1`](https://github.com/sam-ruff/shep.so/commit/86d5ca1845108c4ceac17857fbf97c1f324e75a0): abbreviation and typo
 matching for Preferences and Move, with exact-body, phrase and literal mail
 matches ranked before expanded matches. The Precise and Tolerant local and
 remote branch references have been deleted; detached worktrees retain their
@@ -14,10 +54,11 @@ The integrated test-support executable SHA-256 is
 All twelve selected native search/settings/Move scenarios pass. Reviewed
 captures include `77fe13afbe00`, `1539b0af5aa2` and `4c6a346d3741` under
 `artifacts/e2e/`; `artifacts/logs/selected-search-native.log` records the run.
-The 43 parity contracts and pinned strict Zensical build pass. The merge is
-subject to the normal formatting, Clippy and test commit gates.
+The 43 parity contracts and pinned strict Zensical build pass. Normal formatting,
+both Clippy configurations and the test commit gates pass with 1,202 Rust test
+executions; `artifacts/logs/selected-search-merge-hooks.log` records them.
 
-The branch benchmark above remains the performance evidence; integration did
+The branch benchmark below remains the performance evidence; integration did
 not change its matching source. Full input-to-screen latency, queries beyond
 twelve terms, mixed alphanumeric identifier semantics, exhaustive dynamic
 settings coverage and Flutter/browser parity remain open in TODO. The separate

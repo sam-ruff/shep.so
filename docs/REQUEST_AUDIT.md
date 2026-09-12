@@ -1,9 +1,18 @@
 # Conversation request audit
 
+**12 September GNOME follow-up:** Sam reports missing native desktop notifications
+for incoming mail and asks for icon fixes. Native notification delivery and its
+arrival/preferences gating require a real GNOME fixture reproduction. The
+installed launcher still references the old symbolic icon and lacks the current
+full-colour launcher/tray SVGs; installation and native review are part of this
+follow-up. Additional icon scope is awaiting clarification.
+
 **12 September decision and tray report:** after trying all three branches with
 his actual profiles, Sam selected Abbreviations for current use and requested
 deleting Precise and Tolerant. This supersedes the earlier unselected-demo
-status. He also reported duplicate tray instances from taskbar launches; the
+status. Abbreviations is pushed on main as `86d5ca1`; the other two branch
+references are deleted locally and remotely, with comparison evidence retained.
+He also reported duplicate tray instances from taskbar launches; the
 new work must restore the existing application, including hidden/minimised
 windows, while preserving pending saves and profile ownership.
 

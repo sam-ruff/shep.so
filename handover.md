@@ -4,7 +4,8 @@
 
 Sam selected Abbreviations (`b00c784`) after the live profile comparison and
 requested deletion of Precise and Tolerant branches. The selected implementation
-is being integrated into main; preserve its parser/control/client parity gaps.
+is pushed on main as `86d5ca1`; the other branch references are deleted locally
+and remotely. Preserve its parser/control/client parity gaps.
 The older unselected-demo notes below are comparison history.
 
 Next fix repeated taskbar launches creating duplicate tray processes. Ownership
@@ -29,8 +30,8 @@ unchanged 50 ms budget. [Completion](docs/COMPLETION.md) records exact commits,
 native executable hashes and evidence. The [guide](docs/agents/search-demos.md)
 opens fresh fictional workspaces without replacing the personal installation.
 
-No search alternative is selected for main. Let Sam compare the branches before
-integrating a default. R18/R44/R99 still track parser/identifier semantics,
+At this earlier checkpoint no search alternative was selected for main.
+R18/R44/R99 still track parser/identifier semantics,
 deeper settings controls and Flutter/browser parity; other TODO work remains
 active. Keep each worktree's target separate and use the normal hooks. Quality
 and release workflows remain disabled until the runners are ready.
