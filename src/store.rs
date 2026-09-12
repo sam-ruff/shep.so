@@ -490,19 +490,9 @@ impl Store {
                 let value = statement.query_row([&id], |row| Ok(MailMembership {
                     account: row.get(0)?, folder: row.get(1)?, unread: row.get(2)?,
                 })).optional()?;
-                if value.is_none() && relocated.len()<PAGE_SIZE {
-                    let data:Option<String>=c.query_row("SELECT data FROM mail_moves WHERE source_id=? AND stage IN ('located','kept')",[&id],|r|r.get(0)).optional()?;
-                    if let Some(data)=data {
-                        let record:crate::mail_actions::journal::MoveRecord=serde_json::from_str(&data)?;
-                        if let Some(mail)=record.resolved_mail() {
-                            let data:Option<(String,bool,bool)>=c.query_row("SELECT data,unread,starred FROM messages WHERE id=?",[&mail.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
-                            if let Some((data,unread,starred))=data {
-                                let mut mail:Mail=serde_json::from_str(&data)?;
-                                mail.unread=unread;mail.starred=starred;
-                                relocated.insert(id.clone(),mail);
-                            }
-                        }
-                    }
+                if value.is_none() && relocated.len()<PAGE_SIZE
+                    && let Some(mail) = move_journal::relocation::observed(c, &id)? {
+                    relocated.insert(id.clone(), mail);
                 }
                 observed.insert(id, value);
             }

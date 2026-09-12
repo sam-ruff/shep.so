@@ -12,12 +12,23 @@ pub enum SubmissionError {
     Unconfirmed(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Inspection {
+    Unresolved,
+    DestinationPresent,
+    SourceIntactNoDestinationCopy,
+}
+
+#[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
 pub trait Connection: Send {
     fn identities(&self) -> Vec<(String, String)>;
-    /// Read-only preflight. Establish the sessions/capabilities/UIDVALIDITY used
-    /// by submit, without copying or deleting anything.
+    /// Establish sessions/capabilities/UIDVALIDITY and a selectable destination,
+    /// without copying or deleting mail.
     async fn prepare(&mut self, record: &MoveRecord) -> anyhow::Result<()>;
+    async fn inspect(&mut self, _record: &MoveRecord) -> anyhow::Result<Inspection> {
+        Ok(Inspection::Unresolved)
+    }
     async fn submit(
         &mut self,
         record: &MoveRecord,
@@ -79,6 +90,16 @@ pub async fn start(
         None
     };
     store.prepare_mail_move(record.clone()).await?;
+    submit_prepared(store, connection, record, raw).await
+}
+
+async fn submit_prepared(
+    store: &Store,
+    connection: &mut dyn Connection,
+    record: MoveRecord,
+    raw: Option<Vec<u8>>,
+) -> anyhow::Result<MoveRecord> {
+    let transfer = record.original.account_id != record.receipt.account;
     let remote = match connection.submit(&record, raw).await {
         Ok(remote) => remote,
         Err(SubmissionError::NotApplied(error)) => {
@@ -86,7 +107,7 @@ pub async fn start(
             anyhow::bail!("{error}");
         }
         Err(SubmissionError::Unconfirmed(error)) => {
-            return failed(store, record, format!("The move result is unconfirmed. The original is retained; review its destination before retrying. {error}")).await;
+            return failed(store, record, format!("This move is unconfirmed. Your cached message is retained; Retry move will check its result. {error}")).await;
         }
     };
     let mut receipt = record.receipt.clone();
@@ -103,7 +124,7 @@ pub async fn start(
     .current;
     let record = store.checkpoint_mail_move(record,
         if transfer { MoveStage::Copied } else { MoveStage::Committed }, receipt).await
-        .context("The server acknowledged the operation, but saving its receipt failed. The original is retained. Review recovery before retrying.")?;
+        .context("The server acknowledged the operation, but saving its receipt failed. Your cached message is retained; Retry move will check its result.")?;
     let record = if transfer {
         finish(store, connection, record).await?
     } else {
@@ -143,15 +164,98 @@ async fn cache(store: &Store, record: MoveRecord) -> anyhow::Result<MoveRecord> 
     }
 }
 
-/// Explicit recovery never repeats MOVE or APPEND. A surviving Started record
-/// needs review; a Copied record verifies the destination before source cleanup.
-/// Committed records can be retried automatically using read-only lookup.
+/// Resume only after proving the original UID survives and no destination copy
+/// exists. Otherwise use an exact existing copy, without repeating an upload.
 pub async fn recover(
     store: &Store,
     connection: &mut dyn Connection,
     record: MoveRecord,
 ) -> anyhow::Result<MoveRecord> {
-    recover_reviewed(store, connection, record, false).await
+    identity(connection, &record)?;
+    current(store, &record).await?;
+    if record.stage != MoveStage::Started {
+        return recover_reviewed(store, connection, record, false).await;
+    }
+    let inspection = match connection.inspect(&record).await {
+        Ok(inspection) => inspection,
+        Err(error) => {
+            return failed(
+                store,
+                record,
+                format!("The move could not be checked. Its original is retained. {error:#}"),
+            )
+            .await;
+        }
+    };
+    match inspection {
+        Inspection::SourceIntactNoDestinationCopy => {
+            anyhow::ensure!(
+                record.original.account_id == record.receipt.account,
+                "An unconfirmed cross-account upload cannot be repeated."
+            );
+            if let Err(error) = connection.prepare(&record).await {
+                return failed(
+                    store,
+                    record,
+                    format!("The move could not be prepared. No new move was submitted. {error:#}"),
+                )
+                .await;
+            }
+            current(store, &record).await?;
+            submit_prepared(store, connection, record, None).await
+        }
+        Inspection::DestinationPresent => recover_reviewed(store, connection, record, true).await,
+        Inspection::Unresolved => anyhow::bail!(
+            "The move could not be verified. Review its source and destination before choosing a recovery option."
+        ),
+    }
+}
+
+async fn current(store: &Store, record: &MoveRecord) -> anyhow::Result<()> {
+    let saved = store.mail_move(record.token.clone()).await?;
+    anyhow::ensure!(
+        serde_json::to_string(&saved)? == serde_json::to_string(record)?,
+        "The move recovery changed. Refresh before trying again."
+    );
+    Ok(())
+}
+
+/// A newer destination can replace a pending move only after proving its old
+/// destination has no copy and its exact original is still present.
+pub async fn release_unapplied(
+    store: &Store,
+    connection: &mut dyn Connection,
+    record: &MoveRecord,
+) -> anyhow::Result<bool> {
+    identity(connection, record)?;
+    current(store, record).await?;
+    if record.stage != MoveStage::Started
+        || record.original.account_id != record.receipt.account
+        || connection.inspect(record).await? != Inspection::SourceIntactNoDestinationCopy
+    {
+        return Ok(false);
+    }
+    store.reject_mail_move(record.clone()).await?;
+    Ok(true)
+}
+
+pub async fn retarget_source(
+    store: &Store,
+    connection: &mut dyn Connection,
+    record: MoveRecord,
+) -> anyhow::Result<crate::model::Mail> {
+    if release_unapplied(store, connection, &record).await? {
+        return Ok(record.original);
+    }
+    let recovered = recover(store, connection, record).await?;
+    anyhow::ensure!(
+        recovered.stage == MoveStage::Located,
+        "The earlier move's destination identity and cache need recovery before moving elsewhere."
+    );
+    recovered
+        .receipt
+        .current
+        .context("The earlier move has no verified destination identity.")
 }
 
 /// Explicit review authorizes using a verified existing destination copy after
@@ -222,5 +326,63 @@ pub async fn recover_reviewed(
             ),
         )
         .await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn mocked_inspection_failure_and_ambiguous_result_never_submit() {
+        for rejected in [false, true] {
+            let store = Store::memory().unwrap();
+            let original = crate::model::parse_mail(
+                "work",
+                "42.7",
+                "INBOX",
+                b"Subject: proof\r\n\r\nOriginal".to_vec(),
+                true,
+                false,
+            )
+            .unwrap();
+            store.upsert(vec![original.clone()]).await.unwrap();
+            let mut receipt = MoveReceipt::server(
+                &original.summary,
+                "work",
+                "Archive",
+                None,
+                crate::mail_actions::Fingerprint::of(&original.raw),
+            );
+            receipt.connections = vec![("work".into(), "mock".into())];
+            let record = MoveRecord::new(original.summary.clone(), receipt);
+            store.prepare_mail_move(record.clone()).await.unwrap();
+            let mut connection = MockConnection::new();
+            connection
+                .expect_identities()
+                .returning(|| vec![("work".into(), "mock".into())]);
+            connection.expect_inspect().times(1).returning(move |_| {
+                if rejected {
+                    anyhow::bail!("LIST rejected");
+                }
+                Ok(Inspection::Unresolved)
+            });
+            connection.expect_prepare().times(0);
+            connection.expect_submit().times(0);
+            connection.expect_finish_source().times(0);
+            assert!(
+                recover(&store, &mut connection, record.clone())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                store.mail_move(record.token).await.unwrap().stage,
+                MoveStage::Started
+            );
+            assert_eq!(
+                store.raw_message(original.summary.id).await.unwrap(),
+                original.raw
+            );
+        }
     }
 }

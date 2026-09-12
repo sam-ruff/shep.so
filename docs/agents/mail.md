@@ -24,6 +24,13 @@
 
 Contacts has a separate Preferences tab. Image policy and per-message/sender/domain exceptions remain under Privacy. Explicit Save buttons show a dismissible **Changes saved** toast after persistence succeeds.
 
+Archive and Move create a missing destination before moving mail. If an earlier
+move was interrupted, Shep checks the original and destination to finish it
+automatically where possible. **Retry move** is available directly in the reader;
+you can keep navigating while it runs. An unresolved result keeps the cached
+message readable, with further options available when the server cannot establish
+which copy to use.
+
 Selecting an unread inbox row (or navigating to it with arrows) and then leaving it marks it read immediately. Startup selection and neighbor preloading do not. Explicit read/unread controls clear that pending reading state, so a later navigation cannot reverse a deliberate mark-unread. Failed writes restore the indicator without selecting the previous message. Archive/move waits for the read write before moving the source UID, while the list removal remains immediate.
 
 Action toasts are generated when the UI accepts the move intent, including when it waits behind a pending read/flag. Tokens correlate failures with counted entries; acknowledgments do not recreate dismissed or expired toasts. Archive/Trash aggregate across unified accounts, while other moves group by exact account/folder. Cross-account transfers now use typed completion IDs and pending overlays, wait for confirmed source flags and retain the existing upload journal. Generic provider timeouts must not discard typed completion or cancel SQLite cleanup. Undo restores rows immediately, waits for acknowledged server identities and retains a retry control on reversal failure. Its provider receipts and exact-copy recovery are documented in the repository AGENTS.md. Broader filtered destination projection and durable recovery for individual actions remain tracked work; selected-group jobs have their own persistent journal.

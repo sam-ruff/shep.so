@@ -7,6 +7,8 @@ use crate::mail_actions::{
 };
 use rusqlite::OptionalExtension;
 
+pub(super) mod relocation;
+
 pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
     c.execute_batch("CREATE TABLE IF NOT EXISTS mail_moves(
         token TEXT PRIMARY KEY, source_id TEXT NOT NULL UNIQUE,
@@ -215,6 +217,59 @@ fn keep_local(c: &Connection, expected: MoveRecord) -> anyhow::Result<MoveRecord
 }
 
 impl Store {
+    pub async fn mail_move_for_undo(
+        &self,
+        token: String,
+        original: Mail,
+        receipt: MoveReceipt,
+    ) -> anyhow::Result<MoveRecord> {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            let record = read(&tx, &token)?;
+            record.validate_receipt(&receipt)?;
+            anyhow::ensure!(
+                matches!(record.stage, MoveStage::Committed | MoveStage::Located),
+                "Finish recovering the original move before Undo."
+            );
+            let same = |a: &Mail, b: &Mail| {
+                a.id == b.id
+                    && a.account_id == b.account_id
+                    && a.folder == b.folder
+                    && a.remote_id == b.remote_id
+            };
+            if !same(&record.original, &original) {
+                let previous: Option<String> = tx
+                    .query_row(
+                        "SELECT data FROM mail_moves WHERE source_id=? AND stage='located'",
+                        [&original.id],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                let previous: MoveRecord = serde_json::from_str(
+                    &previous.context("This recovery belongs to a different original message.")?,
+                )?;
+                anyhow::ensure!(
+                    same(&previous.original, &original)
+                        && previous.receipt.account == original.account_id
+                        && previous
+                            .receipt
+                            .current
+                            .as_ref()
+                            .is_some_and(|current| same(current, &record.original))
+                        && previous.receipt.fingerprint == record.receipt.fingerprint
+                        && previous
+                            .receipt
+                            .connections
+                            .iter()
+                            .all(|connection| record.receipt.connections.contains(connection)),
+                    "The earlier move does not prove this original message's destination."
+                );
+            }
+            tx.commit()?;
+            Ok(record)
+        })
+        .await
+    }
     /// User-reviewed resolution keeps a local original. It never declares what
     /// happened on the server and cannot reuse the old provider identity.
     pub async fn keep_mail_move(
@@ -237,7 +292,7 @@ impl Store {
     }
     pub async fn mail_move_lookups(&self, now: i64) -> anyhow::Result<Vec<MoveRecord>> {
         self.run(move |c| {
-            c.prepare("SELECT data FROM mail_moves WHERE stage='committed' AND COALESCE(json_extract(data,'$.attempted'),0)<=? ORDER BY COALESCE(json_extract(data,'$.attempted'),0),token LIMIT 3")?
+            c.prepare("SELECT data FROM mail_moves WHERE stage IN ('started','committed') AND COALESCE(json_extract(data,'$.attempted'),0)<=? ORDER BY COALESCE(json_extract(data,'$.attempted'),0),token LIMIT 3")?
                 .query_map([now.saturating_sub(60)],|r|r.get::<_,String>(0))?
                 .map(|r|Ok(serde_json::from_str(&r?)?)).collect()
         }).await
@@ -250,8 +305,8 @@ impl Store {
         self.run(move |c| {
             let tx = c.transaction()?;
             anyhow::ensure!(
-                expected.stage == MoveStage::Committed,
-                "Only confirmed moves can be looked up automatically."
+                matches!(expected.stage, MoveStage::Started | MoveStage::Committed),
+                "Only pending or confirmed moves can be checked automatically."
             );
             let mut next = expected.clone();
             next.attempted = now;

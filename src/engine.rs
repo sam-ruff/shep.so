@@ -48,6 +48,7 @@ pub enum Command {
     Database(crate::transfer::Request),
     Folder(folders::Request),
     MoveRecoveries(u64, Option<String>),
+    RecoverPendingMoves,
     RecoverMailMove(
         u64,
         Arc<crate::mail_actions::journal::MoveRecord>,
@@ -131,6 +132,7 @@ pub enum Command {
 impl Command {
     pub(crate) fn key(&self) -> Option<String> {
         match self {
+            Self::RecoverPendingMoves => Some("pending-move-recovery".into()),
             Self::SaveAccount(account, ..) => Some(format!("account:{}", account.id)),
             Self::RecoverMailMove(request, record, ..) => {
                 Some(format!("move-recovery:{}:{request}", record.token))
@@ -181,6 +183,7 @@ pub enum Event {
         Result<Arc<crate::mail_actions::journal::MoveRecord>, String>,
     ),
     MoveRecovered(Arc<crate::mail_actions::journal::MoveRecord>),
+    PendingMovesReady,
     Ready(CommandSender, Arc<Workspace>, bool),
     Selection(
         u64,
@@ -889,10 +892,13 @@ impl Engine {
                     .into_iter()
                     .filter_map(|result| result.err().map(|error| format!("{error:#}")))
                     .collect();
-                self.recover_completed_moves(output.clone()).await?;
+                output.send(Event::PendingMovesReady).await?;
                 self.workspace(&mut output).await?;
                 output.send(Event::Changed).await?;
                 anyhow::ensure!(failures.is_empty(), "{}", failures.join("\n"));
+            }
+            Command::RecoverPendingMoves => {
+                self.recover_completed_moves(output).await?;
             }
             Command::MoveRecoveries(request, after) => {
                 let result = self
@@ -937,7 +943,7 @@ impl Engine {
                     ))
                     .await?;
                 if !self.demo {
-                    self.recover_completed_moves(output.clone()).await?;
+                    output.send(Event::PendingMovesReady).await?;
                 }
                 if !self.demo
                     && let Some(account) = refresh
@@ -965,7 +971,7 @@ impl Engine {
                     ))
                     .await?;
                 if !self.demo {
-                    self.recover_completed_moves(output.clone()).await?;
+                    output.send(Event::PendingMovesReady).await?;
                 }
                 if let Some(account) = refresh
                     && let Err(error) = self.sync_account(account, output.clone()).await
@@ -991,7 +997,7 @@ impl Engine {
                     ))
                     .await?;
                 if !self.demo {
-                    self.recover_completed_moves(output.clone()).await?;
+                    output.send(Event::PendingMovesReady).await?;
                 }
                 if !self.demo
                     && let Some(account) = refresh

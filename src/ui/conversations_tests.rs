@@ -226,7 +226,7 @@ async fn moving_an_expanded_reply_preserves_anchor_and_newer_reader_intent() {
                 assert!(
                     app.notice
                         .as_ref()
-                        .is_some_and(|(text, error, _)| *error && text.contains("restored"))
+                        .is_some_and(|(text, error, _)| *error && text.contains("remains in Inbox"))
                 );
             }
             // An earlier body result cannot displace the resulting reader.

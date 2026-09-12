@@ -30,6 +30,64 @@ fn review(record: Arc<MoveRecord>) -> (App, tokio::sync::mpsc::Receiver<Command>
     app.choose_recovery(Some(record));
     (app, commands)
 }
+
+#[tokio::test]
+async fn retry_move_runs_without_a_review_and_coalesces_repeated_clicks() {
+    let record = record(MoveStage::Started);
+    let (mut app, mut commands) = review(record.clone());
+    app.dialog = None;
+    app.handle_move_recovery(Message::Retry(record.clone()));
+    app.handle_move_recovery(Message::Retry(record.clone()));
+    let Command::RecoverMailMove(_, saved, action, confirmed) = commands.try_recv().unwrap() else {
+        panic!("Expected move retry");
+    };
+    assert_eq!(saved.token, record.token);
+    assert_eq!(action, RecoveryAction::Retry);
+    assert!(!confirmed);
+    assert_eq!(app.dialog, None);
+    assert_eq!(app.move_recovery.pending.len(), 1);
+    assert!(commands.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn pending_move_accepts_a_new_destination_but_not_flags_or_group_owned_mail() {
+    let record = record(MoveStage::Started);
+    let (mut app, mut commands) = review(record.clone());
+    app.dialog = None;
+    app.selected = Some(record.original.id.clone());
+    let mut row = record.original.clone();
+    row.remote_id.clear();
+    let mut page = MailPage::default();
+    page.rows.push(row);
+    page.move_placeholders.insert(record.original.id.clone());
+    page.move_recovery
+        .insert(record.original.id.clone(), (*record).clone());
+    app.page = Arc::new(page);
+    app.mail_actions.base_page = app.page.clone();
+    assert!(app.action_mail().is_none());
+    assert_eq!(
+        app.move_action_mail().map(|m| &m.id),
+        Some(&record.original.id)
+    );
+    Arc::make_mut(&mut app.page)
+        .bulk_pending
+        .insert(record.original.id.clone());
+    assert!(app.move_action_mail().is_none());
+    Arc::make_mut(&mut app.page).bulk_pending.clear();
+    let _ = app.handle(super::super::Message::Move("Elsewhere".into()));
+    let mut submitted = None;
+    while let Ok(command) = commands.try_recv() {
+        if let Command::Move(_, source, destination) = command {
+            submitted = Some((source.remote_id, destination));
+        }
+    }
+    assert_eq!(
+        submitted,
+        Some((record.original.remote_id.clone(), "Elsewhere".into()))
+    );
+    assert_eq!(app.dialog, None);
+}
+
 #[tokio::test]
 async fn recovery_confirmation_prevents_enter_yes_and_duplicate_submission_and_allows_cancel() {
     let record = record(MoveStage::Started);

@@ -722,6 +722,7 @@ impl App {
         // starts it. Close must not race the worker's later Busy notification.
         let close_key = match &command {
             Command::SaveAccount(..)
+            | Command::RecoverPendingMoves
             | Command::SaveEvent(..)
             | Command::DeleteEvent(..)
             | Command::GoogleLogin(..)
@@ -1433,6 +1434,7 @@ impl App {
                 },
                 Event::MailArrived(arrival) => self.notification_arrived(arrival),
                 Event::MoveRecovered(record) => self.move_recovered(&record),
+                Event::PendingMovesReady => self.schedule_pending_move_recovery(),
                 Event::MoveRecoveries(request, result) => {
                     self.move_recoveries_loaded(request, result)
                 }
@@ -1836,7 +1838,9 @@ impl App {
                         false,
                     );
                     }
-                } else if self.mail_actions.pending() > 0 || !self.move_recovery.pending.is_empty()
+                } else if self.mail_actions.pending() > 0
+                    || !self.move_recovery.pending.is_empty()
+                    || self.busy.contains("pending-move-recovery")
                 {
                     self.pending_close = Some(window);
                     self.notice("Finishing your mail changes before closing…", false);
@@ -2262,7 +2266,7 @@ impl App {
                     self.begin_bulk(bulk::Intent::Move { account, folder });
                     return Task::none();
                 }
-                if let Some(mail) = self.action_mail().cloned() {
+                if let Some(mail) = self.move_action_mail().cloned() {
                     let destination = self.field("move_account");
                     let transfer = self.dialog == Some(Dialog::Move)
                         && self.preferences.cross_account_moves
@@ -3348,7 +3352,7 @@ impl App {
             return folders;
         }
         let account = if self.field("move_account").is_empty() {
-            self.action_mail()
+            self.move_action_mail()
                 .map(|mail| mail.account_id.as_str())
                 .unwrap_or("")
         } else {
@@ -3942,7 +3946,7 @@ impl App {
                 }
                 Action::Move => {
                     if (self.mail_selection.mode && self.mail_selection.count > 0)
-                        || self.action_mail().is_some()
+                        || self.move_action_mail().is_some()
                     {
                         self.open(Dialog::Move);
                         return focus_after_layout("folder-search");

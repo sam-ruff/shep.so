@@ -4,7 +4,7 @@ use super::*;
 use crate::mail_actions::{
     MoveReceipt, connection_key,
     journal::MoveRecord,
-    runner::{Connection, SubmissionError},
+    runner::{Connection, Inspection, SubmissionError},
 };
 use crate::model::{Account, Protocol, StoredMail};
 use anyhow::Context;
@@ -81,8 +81,15 @@ impl Connection for ImapMoveConnection {
                 "The source server needs {capability} to move this message safely."
             );
             let destination = match &self.destination {
-                Some((account, secret)) => Some(imap(account, secret).await?),
-                None => None,
+                Some((account, secret)) => {
+                    let mut destination = imap(account, secret).await?;
+                    folders::ensure_exact(&mut destination, &record.receipt.folder).await?;
+                    Some(destination)
+                }
+                None => {
+                    folders::ensure_exact(&mut source, &record.receipt.folder).await?;
+                    None
+                }
             };
             Ok::<_, anyhow::Error>((source, destination))
         })
@@ -91,6 +98,52 @@ impl Connection for ImapMoveConnection {
         self.source_session = Some(source);
         self.destination_session = destination;
         Ok(())
+    }
+    async fn inspect(&mut self, record: &MoveRecord) -> anyhow::Result<Inspection> {
+        tokio::time::timeout(Duration::from_secs(120), async {
+            let (account, secret) = self.destination();
+            let mut destination = imap(account, secret).await?;
+            let fingerprint = record
+                .receipt
+                .fingerprint
+                .as_ref()
+                .context("Missing original identity proof")?;
+            if folders::exists_exact(&mut destination, &record.receipt.folder).await?
+                && recovery::lookup_session(
+                    &mut destination,
+                    &record.receipt.account,
+                    &record.receipt.folder,
+                    fingerprint,
+                    None,
+                )
+                .await?
+                .is_some()
+            {
+                return Ok(Inspection::DestinationPresent);
+            }
+            if self.destination.is_some() {
+                return Ok(Inspection::Unresolved);
+            }
+            recovery::verify_source_session(&mut destination, &record.original, fingerprint)
+                .await?;
+            // Repeat copy absence after the source read before another MOVE.
+            if folders::exists_exact(&mut destination, &record.receipt.folder).await?
+                && recovery::lookup_session(
+                    &mut destination,
+                    &record.receipt.account,
+                    &record.receipt.folder,
+                    fingerprint,
+                    None,
+                )
+                .await?
+                .is_some()
+            {
+                return Ok(Inspection::DestinationPresent);
+            }
+            Ok(Inspection::SourceIntactNoDestinationCopy)
+        })
+        .await
+        .context("Checking the move timed out. Its original is retained.")?
     }
     async fn submit(
         &mut self,

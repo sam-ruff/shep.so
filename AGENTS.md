@@ -962,7 +962,11 @@ The native MCP fixture bypasses all real popup/audio delivery. `desktop.start` a
 The a81d767 recovery checkpoint uses `mail_actions/journal.rs`, `runner.rs` and
 `store/move_journal.rs`. IMAP preflight finishes before durable preparation;
 Started/Copied/Committed/Located/Kept records retain the source MIME and actual
-acknowledgments. Do not repeat an unconfirmed MOVE/APPEND. In particular, tagged
+acknowledgments. Do not blindly repeat an unconfirmed MOVE/APPEND. A same-account
+MOVE may resume after complete server observations prove the original
+UIDVALIDITY/UID and exact bytes survive and no exact destination copy exists.
+Require an actual successful SEARCH response, not a bare tagged OK; failed,
+partial, oversized or ambiguous lookups cannot prove absence. In particular, tagged
 MOVE NO may have partial effects (RFC 6851 §3.3); only atomic APPEND rejection is
 classified as not applied. Keep matching-tag and disconnect protocol tests.
 
@@ -978,11 +982,19 @@ Destination queries carry bounded recovery metadata and clear provider UIDs;
 selection capture and older selections must exclude these protected identities
 from available provider targets. Detail reads can follow a completed cache alias
 when rekeying overtakes a pending read. Keep the late-read error-toast regression.
+Retargeting keeps the initial Undo source separately from the recovered physical
+dispatch source. Emit prior recovery before every retarget result, including
+missing COPYUID and failure. Page relocation follows at most two completed moves
+with physical, fingerprint and connection continuity; an overtaken recovery
+event cannot recreate intermediate Inbox membership or change unrelated counts.
 The runner requires the existing account locks, sorted for two-account work;
 this does not establish independent-process coordination of all mail operations.
 
-Automatic recovery considers at most three committed records per pass and
-rate-limits attempts. Manual recovery/review and confirmed Keep local copy controls
+Automatic recovery considers at most three Started/Committed records per pass and
+rate-limits attempts. Mutating recovery must use the normal required-write
+dispatcher outside the sync cycle timeout. Direct Retry adopts newer progress
+for the same frozen request; reviewed Keep/Use-existing choices retain exact
+snapshot checks. Manual recovery/review and confirmed Keep local copy controls
 now have storage/runner/controller and native tests. Kept copies receive local
 identities, never an obsolete provider UID; retiring their old Undo avoids a
 false server reversal. Active recovery must save its receipt before app close,

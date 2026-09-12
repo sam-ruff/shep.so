@@ -1,5 +1,19 @@
 # Conversation request audit
 
+**12 September standard right-click menu:** Sam requests normal Copy and related
+text actions on right click. Track selectable readers and editable fields, native
+clipboard and keyboard behaviour, while preserving the current move-first and
+folder-second delivery order. The implementation and client review remain active.
+
+**12 September move failure and folder implementation:** Sam requests starting
+from main after the completed work is integrated, fixing Archive/Move repeatedly
+leading to recovery first, then delivering missing-folder creation and sidebar
+New folder. Main already contains the preceding work through `0abec9f`.
+The local diagnostic identifies an unresolved same-account move to a missing
+Archive destination. The active fix must complete provable requests automatically
+and avoid unnecessary review screens, while keeping uncertain copies intact.
+Folder creation and native/client validation remain active until shipped.
+
 **12 September folder creation follow-up:** Sam requests high priority tracking
 for creating missing folders and creating folders directly from the sidebar.
 Both are active in TODO, including account/hierarchy handling, failure recovery

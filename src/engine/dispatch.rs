@@ -204,6 +204,48 @@ impl CommandSender {
     }
 }
 
+async fn network_operation<Fut: std::future::Future<Output = anyhow::Result<()>>>(
+    command: Command,
+    execute: impl FnOnce(Command) -> Fut,
+) -> anyhow::Result<()> {
+    // Each provider step has its own timeout. Accepted writes must still observe
+    // the receipt/cache commit if the overall operation takes longer.
+    if matches!(
+        &command,
+        Command::Move(..)
+            | Command::Transfer(..)
+            | Command::UndoMove(..)
+            | Command::RecoverMailMove(..)
+            | Command::RecoverPendingMoves
+            | Command::Flags(..)
+            | Command::Backup(..)
+            | Command::AutomaticBackup(_)
+            | Command::BackupIncluded(..)
+            | Command::RetryBackupHistory(..)
+            | Command::ConnectS3(..)
+            | Command::ConnectSftp(..)
+            | Command::ConnectFtp(..)
+            | Command::Restore(..)
+            | Command::Send(_)
+            | Command::DisconnectGoogle(_)
+            | Command::CleanupGoogle
+            | Command::GoogleLogin(..)
+            | Command::ResolveOutgoing(..)
+            | Command::RepairOutgoing
+            | Command::IndexConversations
+            | Command::ConnectCalendars(..)
+            | Command::SaveAccount(..)
+            | Command::RemoveConnection(..)
+            | Command::CleanupCredentials
+            | Command::RestoreGoogleCalendars
+    ) {
+        return execute(command).await;
+    }
+    tokio::time::timeout(Duration::from_secs(600), execute(command))
+        .await
+        .context("The operation timed out. Try again.")?
+}
+
 impl Engine {
     pub(super) async fn run(self, input: Inputs, output: Output) {
         let background = !self.demo || {
@@ -305,17 +347,7 @@ impl Engine {
                     let engine=engine.clone();let output=output.clone();
                     jobs.spawn(async move {
                         let _slot = engine.provider_slots.acquire().await;
-                        // Uploads have bounded HTTP requests and progress checks,
-                        // plus a durable journal. Do not cancel a healthy transfer
-                        // merely because the whole archive takes over ten minutes.
-                        // Restore also must observe its blocking SQLite commit;
-                        // dropping its future cannot cancel that transaction.
-                        let result = if matches!(&command, Command::Move(..) | Command::Transfer(..) | Command::UndoMove(..) | Command::RecoverMailMove(..) | Command::Flags(..) | Command::Backup(..) | Command::AutomaticBackup(_) | Command::BackupIncluded(..) | Command::RetryBackupHistory(..) | Command::ConnectS3(..) | Command::ConnectSftp(..) | Command::ConnectFtp(..) | Command::Restore(..) | Command::Send(_) | Command::DisconnectGoogle(_) | Command::CleanupGoogle | Command::GoogleLogin(..) | Command::ResolveOutgoing(..) | Command::RepairOutgoing | Command::IndexConversations | Command::ConnectCalendars(..) | Command::SaveAccount(..) | Command::RemoveConnection(..) | Command::CleanupCredentials | Command::RestoreGoogleCalendars) {
-                            engine.execute(command, output).await
-                        } else {
-                            tokio::time::timeout(Duration::from_secs(600), engine.execute(command, output)).await
-                                .context("The operation timed out. Try again.").and_then(|result| result)
-                        };
+                        let result = network_operation(command, |command| engine.execute(command, output)).await;
                         (key, result)
                     });
                 }
@@ -359,6 +391,27 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn pending_move_recovery_observes_commit_beyond_read_timeout() {
+        let (commit, receipt) = tokio::sync::oneshot::channel();
+        let mut recovery = Box::pin(network_operation(Command::RecoverPendingMoves, |_| async {
+            receipt.await.context("receipt")
+        }));
+        assert!(futures::poll!(&mut recovery).is_pending());
+        tokio::time::advance(Duration::from_secs(601)).await;
+        assert!(futures::poll!(&mut recovery).is_pending());
+        commit.send(()).expect("write still observes its receipt");
+        recovery.await.expect("committed");
+
+        let mut read = Box::pin(network_operation(
+            Command::MoveRecoveries(1, None),
+            |_| async { std::future::pending::<anyhow::Result<()>>().await },
+        ));
+        assert!(futures::poll!(&mut read).is_pending());
+        tokio::time::advance(Duration::from_secs(600)).await;
+        assert!(read.await.is_err(), "the read deadline remains unchanged");
+    }
 
     #[tokio::test]
     async fn backup_all_busy_destination_acknowledges_each_attempt_without_duplicate_work() {

@@ -1,7 +1,7 @@
 use shep::{
     mail_actions::{
         journal::*,
-        runner::{self, Connection, SubmissionError},
+        runner::{self, Connection, Inspection, SubmissionError},
         *,
     },
     model::*,
@@ -22,11 +22,15 @@ struct Server {
     submitted: usize,
     removed: usize,
     looked_up: usize,
+    inspection: Inspection,
 }
 #[async_trait::async_trait]
 impl Connection for Server {
     fn identities(&self) -> Vec<(String, String)> {
         self.identities.clone()
+    }
+    async fn inspect(&mut self, _: &MoveRecord) -> anyhow::Result<Inspection> {
+        Ok(self.inspection)
     }
     async fn prepare(&mut self, _: &MoveRecord) -> anyhow::Result<()> {
         self.prepared += 1;
@@ -132,8 +136,179 @@ async fn setup(store: &Store, transfer: bool) -> (MoveRecord, Server) {
             submitted: 0,
             removed: 0,
             looked_up: 0,
+            inspection: Inspection::Unresolved,
         },
     )
+}
+
+#[tokio::test]
+async fn missing_destination_with_intact_original_resumes_same_journal_after_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("mail.sqlite");
+    let store = Store::open(&path).unwrap();
+    let (record, mut server) = setup(&store, false).await;
+    store.prepare_mail_move(record.clone()).await.unwrap();
+    server.store = Store::open(&path).unwrap();
+    server.inspection = Inspection::SourceIntactNoDestinationCopy;
+    let finished = runner::recover(&server.store.clone(), &mut server, record.clone())
+        .await
+        .unwrap();
+    assert_eq!(finished.token, record.token);
+    assert_eq!(finished.stage, MoveStage::Located);
+    assert_eq!(
+        (server.prepared, server.submitted, server.removed),
+        (1, 1, 0)
+    );
+    assert_eq!(
+        store
+            .raw_message(finished.receipt.current.unwrap().id)
+            .await
+            .unwrap(),
+        server.raw
+    );
+}
+
+#[tokio::test]
+async fn pending_move_uses_verified_existing_copy_without_another_move() {
+    let store = Store::memory().unwrap();
+    let (record, mut server) = setup(&store, false).await;
+    store.prepare_mail_move(record.clone()).await.unwrap();
+    server.inspection = Inspection::DestinationPresent;
+    let finished = runner::recover(&store, &mut server, record).await.unwrap();
+    assert_eq!(finished.stage, MoveStage::Located);
+    assert_eq!(
+        (
+            server.prepared,
+            server.submitted,
+            server.looked_up,
+            server.removed
+        ),
+        (0, 0, 1, 1)
+    );
+}
+
+#[tokio::test]
+async fn recovery_preflight_failure_retains_original_and_does_not_submit() {
+    let store = Store::memory().unwrap();
+    let (record, mut server) = setup(&store, false).await;
+    store.prepare_mail_move(record.clone()).await.unwrap();
+    server.inspection = Inspection::SourceIntactNoDestinationCopy;
+    server.preflight_error = true;
+    assert!(
+        runner::recover(&store, &mut server, record.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        (server.prepared, server.submitted, server.removed),
+        (1, 0, 0)
+    );
+    let pending = store.mail_move(record.token).await.unwrap();
+    assert_eq!(pending.stage, MoveStage::Started);
+    assert!(pending.error.unwrap().contains("No new move was submitted"));
+    assert_eq!(
+        store.raw_message(record.original.id).await.unwrap(),
+        server.raw
+    );
+}
+
+#[tokio::test]
+async fn retargeting_verified_copy_uses_current_uid_and_preserves_original_undo_destination() {
+    let store = Store::memory().unwrap();
+    let (record, mut server) = setup(&store, false).await;
+    let original = record.original.clone();
+    store.prepare_mail_move(record.clone()).await.unwrap();
+    server.inspection = Inspection::DestinationPresent;
+    let current = runner::retarget_source(&store, &mut server, record)
+        .await
+        .unwrap();
+    assert_eq!(current.remote_id, "91.38");
+    assert_eq!(current.folder, "Keep");
+    assert!(!current.unread);
+    assert!(current.starred);
+    assert!(store.mail_metadata(original.id.clone()).await.is_err());
+    server.reply = Some(Ok(Some("93.41".into())));
+    let mut receipt = MoveReceipt::server(
+        &current,
+        "work",
+        "Projects",
+        None,
+        Fingerprint::of(&server.raw),
+    );
+    receipt.connections = server.identities.clone();
+    let next = runner::start(
+        &store,
+        &mut server,
+        MoveRecord::new(current.clone(), receipt),
+    )
+    .await
+    .unwrap();
+    assert_eq!(next.original.id, current.id);
+    let destination = next.receipt.current.unwrap();
+    assert_eq!(destination.remote_id, "93.41");
+    assert!(store.mail_metadata(current.id).await.is_err());
+    assert_eq!(
+        store.raw_message(destination.id.clone()).await.unwrap(),
+        server.raw
+    );
+    assert_eq!((server.submitted, server.removed), (1, 1));
+    assert!(!destination.unread);
+    assert!(destination.starred);
+    // The UI's request still owns the initial source for its one Undo action.
+    server.reply = Some(Ok(Some("42.99".into())));
+    let mut undo = MoveReceipt::server(
+        &destination,
+        "work",
+        &original.folder,
+        None,
+        Fingerprint::of(&server.raw),
+    );
+    undo.connections = server.identities.clone();
+    let restored = runner::start(&store, &mut server, MoveRecord::new(destination, undo))
+        .await
+        .unwrap();
+    let restored = restored.receipt.current.unwrap();
+    assert_eq!(restored.folder, "INBOX");
+    assert_eq!(store.raw_message(restored.id).await.unwrap(), server.raw);
+}
+
+#[tokio::test]
+async fn newer_destination_can_only_release_proven_unapplied_same_account_move() {
+    for transfer in [false, true] {
+        for inspection in [
+            Inspection::Unresolved,
+            Inspection::DestinationPresent,
+            Inspection::SourceIntactNoDestinationCopy,
+        ] {
+            let store = Store::memory().unwrap();
+            let (record, mut server) = setup(&store, transfer).await;
+            store.prepare_mail_move(record.clone()).await.unwrap();
+            server.inspection = inspection;
+            let released = runner::release_unapplied(&store, &mut server, &record)
+                .await
+                .unwrap();
+            assert_eq!(
+                released,
+                !transfer && inspection == Inspection::SourceIntactNoDestinationCopy
+            );
+            assert_eq!(
+                store
+                    .mail_move_for_source(record.original.id.clone())
+                    .await
+                    .unwrap()
+                    .is_none(),
+                released
+            );
+            assert_eq!(
+                store.raw_message(record.original.id).await.unwrap(),
+                server.raw
+            );
+            assert_eq!(
+                (server.prepared, server.submitted, server.removed),
+                (0, 0, 0)
+            );
+        }
+    }
 }
 
 #[tokio::test]

@@ -1,5 +1,34 @@
 # Completion audit
 
+## Missing Archive destination and ordinary move retry, 12 September 2026
+
+Integration verification is in progress; this entry is not a shipping receipt.
+
+A content-free local diagnostic found an unfinished same-account move whose
+Archive destination was missing. IMAP preflight now checks and creates an exact
+missing destination before submitting mail. Interrupted same-account moves can
+resume automatically after complete observations prove the original UID and
+bytes remain and no matching destination copy exists. An existing exact copy
+finishes recovery without another submission. Failed, partial or ambiguous
+observations never authorise repeating a move.
+
+The reader offers Retry move without opening a review form. Ordinary Move can
+replace a provably unapplied destination; when the earlier move already finished,
+the new request uses its verified physical source. Failure retains that actual
+folder, missing-UID receipts retain readable cached MIME, and Undo retains the
+initial requested source folder. Recovery runs outside the sync timeout and
+holds window closing until accepted work has saved its receipt.
+
+Shared creation checks cover selectable folders, server hierarchy, modified
+UTF-7, rejected CREATE and lost acknowledgement. Root shared-core execution
+passes 60 tests; the Python suite passes 113 with seven environment/platform
+skips. Final integrated native, hook and shipping receipts follow here.
+
+This is fixture/protocol evidence, not a live mutation of personal mail.
+Cross-account unknown uploads still cannot be repeated automatically. Sidebar
+creation is the next feature; Flutter/browser creation and automatic recovery
+remain active parity gaps. Quality/release workflows remain disabled.
+
 ## GNOME incoming-mail notification lifetime, 12 September 2026
 
 Source is committed as [`ae85450`](https://github.com/sam-ruff/shep.so/commit/ae854500f94f790164ec666535f5dd3c16930b7c)

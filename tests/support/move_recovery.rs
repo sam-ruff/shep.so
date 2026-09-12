@@ -41,7 +41,7 @@ pub async fn seed(store: &Store) -> anyhow::Result<()> {
         .collect();
     let record = MoveRecord::new(original.summary, receipt);
     store.prepare_mail_move(record.clone()).await?;
-    if mode != "unconfirmed" {
+    if !matches!(mode.as_str(), "unconfirmed" | "missing-destination") {
         let mut receipt = record.receipt.clone();
         if mode == "copied" {
             receipt.current = Some(
@@ -114,6 +114,9 @@ pub async fn recover_move(
         store: store.clone(),
         identities,
     };
+    if action == RecoveryAction::Retry {
+        return runner::recover(store, &mut connection, record).await;
+    }
     runner::recover_reviewed(
         store,
         &mut connection,
@@ -131,17 +134,45 @@ impl runner::Connection for FixtureConnection {
     fn identities(&self) -> Vec<(String, String)> {
         self.identities.clone()
     }
+    async fn inspect(&mut self, _: &MoveRecord) -> anyhow::Result<runner::Inspection> {
+        Ok(if mode().as_deref() == Some("missing-destination") {
+            runner::Inspection::SourceIntactNoDestinationCopy
+        } else {
+            runner::Inspection::DestinationPresent
+        })
+    }
     async fn prepare(&mut self, _: &MoveRecord) -> anyhow::Result<()> {
-        anyhow::bail!("Recovery must not submit a new move")
+        anyhow::ensure!(
+            mode().as_deref() == Some("missing-destination"),
+            "Recovery must not submit a new move"
+        );
+        Ok(())
     }
     async fn submit(
         &mut self,
-        _: &MoveRecord,
+        record: &MoveRecord,
         _: Option<Vec<u8>>,
     ) -> Result<Option<String>, runner::SubmissionError> {
-        Err(runner::SubmissionError::NotApplied(
-            "Recovery must not submit a new move".into(),
-        ))
+        if mode().as_deref() != Some("missing-destination") {
+            return Err(runner::SubmissionError::NotApplied(
+                "Recovery must not submit a new move".into(),
+            ));
+        }
+        let operation = async {
+            let saved = self.store.mail_move(record.token.clone()).await?;
+            anyhow::ensure!(
+                saved.stage == MoveStage::Started,
+                "Save the move before submitting it"
+            );
+            let count: u64 = self.store.get("fixture_move_submission").await?;
+            anyhow::ensure!(count == 0, "The move must not be submitted twice");
+            self.store.put("fixture_move_submission", count + 1).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+            Ok(Some("91.701".into()))
+        };
+        operation
+            .await
+            .map_err(|error: anyhow::Error| runner::SubmissionError::Unconfirmed(error.to_string()))
     }
     async fn finish_source(&mut self, record: &MoveRecord) -> anyhow::Result<()> {
         let saved = self.store.mail_move(record.token.clone()).await?;

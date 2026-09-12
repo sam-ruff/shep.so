@@ -623,7 +623,7 @@ async fn legacy_copy_migration_is_atomic_and_never_forgets_unconfirmed_uploads()
 }
 
 #[tokio::test]
-async fn automatic_lookup_is_bounded_fair_and_excludes_unconfirmed_operations() {
+async fn automatic_lookup_is_bounded_fair_and_includes_unconfirmed_inspection() {
     let store = Store::memory().unwrap();
     for i in 60..=66 {
         let (_, record) = prepare(&store, &format!("42.{i}"), "work").await;
@@ -661,7 +661,13 @@ async fn automatic_lookup_is_bounded_fair_and_excludes_unconfirmed_operations() 
     for record in next {
         store.begin_mail_move_lookup(record, 1001).await.unwrap();
     }
-    assert!(store.mail_move_lookups(1002).await.unwrap().is_empty());
+    let last = store.mail_move_lookups(1002).await.unwrap();
+    assert_eq!(last.len(), 1);
+    store
+        .begin_mail_move_lookup(last[0].clone(), 1002)
+        .await
+        .unwrap();
+    assert!(store.mail_move_lookups(1003).await.unwrap().is_empty());
     assert_eq!(store.mail_move_lookups(1060).await.unwrap().len(), 3);
 }
 

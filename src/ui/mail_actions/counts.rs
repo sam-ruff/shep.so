@@ -101,6 +101,16 @@ impl Actions {
                 ids.insert(current.id.clone());
             }
         }
+        ids.extend(
+            self.moves
+                .values()
+                .filter_map(|entry| entry.recovered.as_ref().map(|mail| mail.id.clone())),
+        );
+        ids.extend(
+            self.transfers
+                .values()
+                .filter_map(|entry| entry.recovered.as_ref().map(|mail| mail.id.clone())),
+        );
         let mut ids: Vec<_> = ids.into_iter().collect();
         ids.sort();
         ids
@@ -135,16 +145,25 @@ impl App {
         }
         // The source identity can disappear before its receipt reaches iced.
         // In that snapshot the destination is already counted by SQLite.
-        for (mail, account, folder) in actions
+        for (original, mail, account, folder) in actions
             .moves
             .values()
-            .map(|e| (&e.mail, &e.mail.account_id, &e.destination))
-            .chain(
-                actions
-                    .transfers
-                    .values()
-                    .map(|e| (&e.mail, &e.account, &e.folder)),
-            )
+            .map(|e| {
+                (
+                    &e.mail,
+                    e.recovered.as_ref().unwrap_or(&e.mail),
+                    &e.mail.account_id,
+                    &e.destination,
+                )
+            })
+            .chain(actions.transfers.values().map(|e| {
+                (
+                    &e.mail,
+                    e.recovered.as_ref().unwrap_or(&e.mail),
+                    &e.account,
+                    &e.folder,
+                )
+            }))
         {
             let destination = MailMembership {
                 account: account.clone(),
@@ -152,8 +171,8 @@ impl App {
                 unread: mail.unread,
             };
             let before = member(base, mail).unwrap_or_else(|| destination.clone());
-            let after = if actions.restoring(&mail.id) {
-                MailMembership::from(actions.effective(mail))
+            let after = if actions.restoring(&original.id) {
+                MailMembership::from(actions.effective(original))
             } else {
                 MailMembership {
                     unread: actions.effective(mail).unread,

@@ -2469,7 +2469,7 @@ impl App {
                     && (!self.mail_selection.mode || self.mail_selection.snapshot.as_ref().is_some_and(|s|s.accounts.keys().all(|id|self.workspace.accounts.iter().any(|a|&a.id==id && a.protocol==Protocol::Imap)))) {
                     let mut choices: Vec<_> = self.workspace.accounts.iter().filter(|a| a.protocol == Protocol::Imap).map(|a| Choice(a.id.clone(), a.name.clone())).collect();
                     if self.mail_selection.mode { choices.insert(0,Choice(String::new(), "Each message’s account".into())); }
-                    let source = self.action_mail().map(|mail| mail.account_id.as_str()).unwrap_or("");
+                    let source = self.move_action_mail().map(|mail| mail.account_id.as_str()).unwrap_or("");
                     let id = if self.field("move_account").is_empty() && !self.mail_selection.mode { source } else { self.field("move_account") };
                     let chosen = choices.iter().find(|c| c.0 == id).cloned();
                     body = body.push(column![text("Destination account").size(12), pick_list(choices, chosen, |c:Choice| Message::Field("move_account", c.0)).text_size(12).padding(11).style(select_input).menu_style(select_menu).width(Length::Fill)].spacing(8));

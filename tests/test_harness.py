@@ -158,6 +158,9 @@ class HarnessTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "move recovery"):
                     desktop.start(move_recovery=value)
             launch.assert_not_called()
+        tool = next(tool for tool in harness.TOOLS if tool["name"] == "desktop.start")
+        modes = tool["inputSchema"]["properties"]["move_recovery"]["oneOf"][1]["enum"]
+        self.assertIn("missing-destination", modes)
 
     def test_notification_delivery_fixture_is_explicit_and_validated_before_launch(self):
         desktop = harness.Desktop()

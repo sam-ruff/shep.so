@@ -6453,6 +6453,7 @@ dependencies = [
  "futures",
  "lettre",
  "mailparse",
+ "mockall",
  "native-tls",
  "secrecy",
  "serde",
