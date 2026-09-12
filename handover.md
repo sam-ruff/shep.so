@@ -13,10 +13,16 @@ pushed as `7ef9d74`, with the verified production build and current launcher/tra
 icons installed. Existing old copies require a normal Quit; do not force-kill
 personal instances or discard pending saves.
 
-Sam's next follow-up is missing GNOME incoming-mail notifications. The active
-`gnome-notifications` worktree fixes the short-lived D-Bus sender, which causes
-GNOME to remove the notification immediately. Preserve initial-sync suppression,
-content preferences, bounded delivery and the temporary-saving notice path.
+The GNOME incoming-mail notification fix is committed as `ae85450` and installed.
+The worker retains its D-Bus sender; integrated native notification and launcher
+tests pass. Preserve initial-sync suppression, content preferences, bounded
+delivery and saving-notice cancellation. Completion records exact evidence.
+
+Sam added high priority missing-folder creation and sidebar New folder to TODO.
+There is no CREATE provider operation yet: extend shared folder actions and the
+existing durable desktop executor, then sidebar controls. Review Archive/Trash,
+Sent and Move destination scope, server namespace/delimiter and POP3 behaviour
+before implementation. Client creation controls remain absent.
 
 ## Search demo delivery, 12 September 2026
 

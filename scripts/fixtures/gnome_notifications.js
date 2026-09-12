@@ -12,6 +12,8 @@ export default class NotificationObserver {
                     body: notification.body,
                 })));
             const state = {
+                shell_ready: !Main.layoutManager._startingUp && global.stage.mapped,
+                overview_visible: Main.overview.visible,
                 notifications,
                 banner: Main.messageTray._bannerBin.visible && Main.messageTray._banner !== null,
                 centre_open: Main.panel.statusArea.dateMenu.menu.isOpen,

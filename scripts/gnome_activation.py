@@ -15,6 +15,34 @@ from install_linux import APP_ID, desktop_entry
 from mcp_harness import Desktop, ROOT
 
 DRAFT = "Keep this fictional draft through launcher activation."
+OBSERVER = "shep-notification-observer@example.test"
+
+
+def install_shell_observer(desktop):
+    path = desktop.directory / "gnome-notifications.json"
+    desktop.env["SHEP_NOTIFICATION_OBSERVATION"] = str(path)
+    extension = Path(desktop.env["XDG_DATA_HOME"]) / "gnome-shell/extensions" / OBSERVER
+    extension.mkdir(parents=True)
+    version = desktop.command("gnome-shell", "--version").split()[-1].split(".")[0]
+    (extension / "metadata.json").write_text(json.dumps({
+        "uuid": OBSERVER, "name": "Owned desktop observer", "description": "Read-only fixture observations",
+        "shell-version": [version],
+    }))
+    (extension / "extension.js").write_bytes((ROOT / "scripts/fixtures/gnome_notifications.js").read_bytes())
+    return lambda: json.loads(path.read_text())
+
+
+def prepare_window(desktop, width=1440, height=920):
+    def maximised():
+        state = desktop.command("xprop", "-id", desktop.window, "_NET_WM_STATE")
+        return "_NET_WM_STATE_MAXIMIZED_" in state
+
+    if maximised():
+        desktop.command("xdotool", "key", "--clearmodifiers", "alt+F10")
+        eventually(lambda: not maximised(), "owned window unmaximised")
+    desktop.command("xdotool", "windowsize", "--sync", desktop.window, str(width), str(height))
+    desktop.batch([check("window_size", [width, height])])
+    return {"size": desktop.state()["window_size"], "maximised": maximised()}
 
 
 def notifier_items(payload):
@@ -126,8 +154,9 @@ def run(binary):
         def setting(schema, name, value):
             desktop.command("gsettings", "set", schema, name, value)
 
+        shell_observation = install_shell_observer(desktop)
         setting("org.gnome.shell", "enabled-extensions",
-                "['ubuntu-appindicators@ubuntu.com', 'ubuntu-dock@ubuntu.com']")
+                f"['ubuntu-appindicators@ubuntu.com', 'ubuntu-dock@ubuntu.com', '{OBSERVER}']")
         setting("org.gnome.shell", "disabled-extensions",
                 "['ding@rastersoft.com', 'tiling-assistant@ubuntu.com']")
         setting("org.gnome.shell", "favorite-apps", f"['{APP_ID}.desktop']")
@@ -160,8 +189,9 @@ def run(binary):
                 owners[item] = value["data"][0]
             return owners
 
-        eventually(lambda: desktop.state()["tray"]["available"] and registrations(),
-                   "GNOME StatusNotifier registration", 20)
+        eventually(lambda: shell_observation()["shell_ready"] and
+                   desktop.state()["tray"]["available"] and registrations(),
+                   "GNOME startup complete and StatusNotifier registration", 20)
         primary = desktop.app.pid
 
         def visible_window():
@@ -226,8 +256,10 @@ def run(binary):
             assert child.wait(timeout=10) == 0, "Desktop entry launch failed"
 
         desktop.command("xdotool", "key", "Escape", "Escape")
+        eventually(lambda: not shell_observation()["overview_visible"], "GNOME overview dismissed")
+        receipt["shell_startup"] = shell_observation()
         desktop.command("xdotool", "windowactivate", "--sync", desktop.window)
-        desktop.command("xdotool", "windowsize", desktop.window, "1440", "920")
+        receipt["setup_window"] = prepare_window(desktop)
         desktop.batch([wait(150), key("ctrl+comma"), check("tab", "Preferences"),
                        click(1150, 88), type_text("system tray"),
                        check("settings_matches", ["System tray"]), click(450, 289),

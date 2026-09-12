@@ -6,11 +6,11 @@ Both are active in TODO, including account/hierarchy handling, failure recovery
 and native/client verification; implementation is not yet complete.
 
 **12 September GNOME follow-up:** Sam reports missing native desktop notifications
-for incoming mail and asks for icon fixes. Native notification delivery and its
-arrival/preferences gating require a real GNOME fixture reproduction. The
-installed launcher still references the old symbolic icon and lacks the current
-full-colour launcher/tray SVGs; installation and native review are part of this
-follow-up. Additional icon scope is awaiting clarification.
+for incoming mail and asks for icon fixes. The sender-lifetime fix is committed
+as `ae85450` and installed, with integrated real GNOME detailed/private/muted
+arrival and taskbar tests passing. The launcher and tray now use the approved
+current assets; the native notification icon is visually verified. Completion
+records exact evidence and remaining live-provider/platform/sound limits.
 
 **12 September decision and tray report:** after trying all three branches with
 his actual profiles, Sam selected Abbreviations for current use and requested
