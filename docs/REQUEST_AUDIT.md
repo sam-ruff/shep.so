@@ -9,10 +9,11 @@ folder-second delivery order. The implementation and client review remain active
 from main after the completed work is integrated, fixing Archive/Move repeatedly
 leading to recovery first, then delivering missing-folder creation and sidebar
 New folder. Main already contains the preceding work through `0abec9f`.
-The local diagnostic identifies an unresolved same-account move to a missing
-Archive destination. The active fix must complete provable requests automatically
-and avoid unnecessary review screens, while keeping uncertain copies intact.
-Folder creation and native/client validation remain active until shipped.
+The local diagnostic identified an unresolved same-account move to a missing
+Archive destination. Source `b614b8d` creates missing destinations, completes
+provable requests automatically and offers direct Retry, while retaining
+uncertain copies. Nineteen native scenarios and 1,263 hook executions pass;
+completion records the evidence. Sidebar creation and client parity remain active.
 
 **12 September folder creation follow-up:** Sam requests high priority tracking
 for creating missing folders and creating folders directly from the sidebar.
