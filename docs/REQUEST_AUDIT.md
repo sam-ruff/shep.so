@@ -4,6 +4,10 @@
 scripts so they work and installing the application after the current features.
 Track the advertised commands, applicable regression/installer checks, an isolated
 Linux install and the final production installation without replacing personal data.
+Delivered as `c3296ce`: 124 Python tests (seven unavailable Windows skips), strict
+docs, 1,287 hook executions, real Cargo/isolated installation and the final user
+installation pass. Completion records the production hash and remaining platform
+and Google-client configuration limits; running copies need normal Quit/reopen.
 
 **12 September standard right-click menu:** Sam requests normal Copy and related
 text actions on right click. Track selectable readers and editable fields, native

@@ -2,8 +2,10 @@
 
 ## README installers and production installation, 12 September 2026
 
-Integrated installer verification and production installation pass; the source
-shipping receipt follows here. README leads with the Linux command that builds a pinned
+Installer source is pushed as [`c3296ce`](https://github.com/sam-ruff/shep.so/commit/c3296ceeb6b3ab970a5699d6d1d991e0e6e87c64),
+with formatting, both Clippy configurations and 1,287 normal-hook Rust test
+executions passing. Production installation is verified below.
+README leads with the Linux command that builds a pinned
 main revision while binary releases are absent. Explicit release versions,
 missing platform assets and checksum failures do not fall back to another build.
 Both source paths use Cargo's reported executable, including configured target
@@ -32,7 +34,10 @@ This build has no embedded Google client configuration for new Google sign-ins;
 password-based mail and existing grant storage are unchanged.
 Evidence: `current-features-production-build.log`,
 `readme-real-production-install.log` and `current-features-user-install.log` in
-`artifacts/logs/`. Final shipping hooks and commit are recorded below.
+`artifacts/logs/`. Shipping logs are `readme-install-commit.log` and
+`readme-install-push.log`. The requested move, sidebar folder, text-menu and
+README installer sequence is delivered; the wider TODO and client parity work
+remain active.
 
 ## Standard text context menus, 12 September 2026
 
