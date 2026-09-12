@@ -1,6 +1,8 @@
 pub(crate) mod backup_history;
 mod bulk;
 mod folder_actions;
+mod folder_creation;
+pub use folder_creation::PendingCreation;
 mod folder_projection;
 mod mail_actions;
 mod mail_query;
@@ -45,6 +47,7 @@ pub const READER_BODY_PAGE: usize = 32_000;
 
 #[derive(Debug, Clone, Default)]
 pub struct Workspace {
+    pub folder_creations: Vec<PendingCreation>,
     pub move_pending_total: usize,
     pub accounts: Vec<Account>,
     pub account_reconnect: crate::profile_sync::join::Reconnect,
@@ -201,6 +204,7 @@ impl Store {
         move_journal::schema(&conn)?;
         read_moves::schema(&conn)?;
         folder_actions::schema(&conn)?;
+        folder_creation::schema(&conn)?;
         if version < 2 {
             let tx = conn.transaction()?;
             let events = tx
@@ -410,6 +414,7 @@ impl Store {
             let folder_trees = catalogs.into_iter().map(|(account, catalog)| (account, Arc::new(crate::folders::Tree::new(&catalog)))).collect();
             let drafts = drafts::snapshot(c)?;
             Ok(Workspace {
+                folder_creations: folder_creation::pending(c)?,
                 accounts: get(c, "accounts")?,
                 account_reconnect: get(c,crate::profile_sync::join::RECONNECT_KEY)?,
                 calendars: get(c, "calendars")?,

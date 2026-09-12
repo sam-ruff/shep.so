@@ -1,5 +1,10 @@
 # Conversation request audit
 
+**12 September README scripts and installation:** Sam requests fixing the README
+scripts so they work and installing the application after the current features.
+Track the advertised commands, applicable regression/installer checks, an isolated
+Linux install and the final production installation without replacing personal data.
+
 **12 September standard right-click menu:** Sam requests normal Copy and related
 text actions on right click. Track selectable readers and editable fields, native
 clipboard and keyboard behaviour, while preserving the current move-first and

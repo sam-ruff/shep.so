@@ -6,6 +6,8 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
 
 ## Top priority — OAuth and shared profiles
 
+- [ ] **12 September README scripts and installation:** after the current move, folder and text-menu work, audit the commands and scripts advertised in README, fix failures and stale invocation details, verify the applicable scripts and an isolated Linux installation, then build and install the finished production application. Preserve personal profiles and existing launcher/icon ownership; distinguish Windows/macOS checks from actual execution.
+
 - [ ] **12 September standard text context menu:** add the normal right-click text actions, including Copy and Select all for selectable text and Cut/Paste for editable fields. Cover formatted/plain readers and editors/search fields as applicable, with keyboard context-menu access, disabled unavailable actions, clipboard behaviour and native regression evidence. Preserve existing message/folder action menus outside text controls. Ship after the moving-mail fix and folder creation already in progress; review Flutter/browser equivalents.
 
 **12 September current execution order:** completed search, tray, notification
@@ -17,6 +19,8 @@ records the source and evidence. Next deliver sidebar New folder below, then
 standard text context menus. Production installation follows these UI features.
 Flutter/browser missing-folder creation, sidebar creation controls and automatic
 proof-based move recovery remain explicit active parity gaps.
+Automatic creation for other provider write paths, including Sent-copy
+publication, still needs a separate receipt and recovery review.
 
 - [ ] **12 September high priority: sidebar folder creation:** missing Move/Archive destinations are created by `b614b8d`. Remaining: provide a visible **New folder** action from the sidebar. Respect the selected account and server hierarchy, handle creation failures and uncertain outcomes without losing mail, and refresh the folder tree after confirmed creation. Verify unit/protocol and native sidebar flows; implement Flutter/browser equivalents or retain explicit parity gaps.
 

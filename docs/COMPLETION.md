@@ -1,5 +1,25 @@
 # Completion audit
 
+## Sidebar folder creation, 12 September 2026
+
+Integrated verification is in progress; this entry is not a shipping receipt.
+
+New folder is visible in the sidebar and supports keyboard activation, account
+and parent choices, Unicode names and local POP3 folders. IMAP saves the exact
+wire target and its encoding before CREATE. A lost acknowledgement triggers
+a read-only check on a fresh connection; retries cannot reinterpret the saved
+target after a connection or encoding change. Unfinished requests reappear in
+the ordinary form after restart, with Resume and Try again controls.
+
+Confirmed creation refreshes and expands the folder tree without replacing the
+current mail. Input focus survives failure and editing another name; success
+preserves the New folder sidebar action through changing row indices. Both
+ordinary close handling and repeated direct close requests wait for the receipt.
+The thirteen integrated folder-creation unit tests pass, including late account
+changes, journal publication failure, restart and close success/error outcomes.
+Final native, hook and source receipts follow here. Client equivalents and live
+provider verification remain explicit gaps in the folder-creation contract.
+
 ## Missing Archive destination and ordinary move retry, 12 September 2026
 
 Source is committed as [`b614b8d`](https://github.com/sam-ruff/shep.so/commit/b614b8d925c88505a76b1957a9cc895e005b4335)

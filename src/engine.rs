@@ -8,6 +8,7 @@ mod bulk;
 mod calendar_connections;
 mod database_transfers;
 mod dispatch;
+pub mod folder_creation;
 pub mod folders;
 mod google_lifecycle;
 mod lifecycle_work;
@@ -43,6 +44,7 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    CreateFolder(folder_creation::Request),
     ProfileSync(crate::profile_sync::commands::Request),
     Profiles(u64, crate::profiles::Request),
     Database(crate::transfer::Request),
@@ -169,6 +171,7 @@ impl Command {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
+    FolderCreated(u64, Result<crate::folders::Mailbox, String>),
     ProfileSync(u64, crate::profile_sync::commands::Update),
     Profiles(u64, Result<Arc<crate::profiles::Snapshot>, String>),
     Database(u64, crate::transfer::Update),
@@ -596,6 +599,7 @@ impl Engine {
             }
             Command::ReleaseSelection(id) => self.store.release_selection(id).await?,
             Command::Folder(request) => self.folder_command(request, output).await?,
+            Command::CreateFolder(request) => self.create_folder(request, output).await?,
             Command::BulkStart(id, selection, action) => {
                 let result = self
                     .store

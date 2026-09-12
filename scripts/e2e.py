@@ -94,6 +94,118 @@ class NativeFlows(unittest.TestCase):
         self.assertIsNotNone(mail, "The selected action target must exist in the metadata page")
         return mail["subject"]
 
+    def open_new_folder_with_keyboard(self):
+        self.mcp.batch({"type": "hover", "x": 100, "y": 400},
+                       {"type": "scroll", "amount": -30}, wait(120),
+                       click(85, 278), check("sidebar_focus", True))
+        state = self.mcp.call("desktop.state")
+        destination = state["sidebar_labels"].index("New folder")
+        self.mcp.batch(keys(*(["Down"] * (destination - state["sidebar_index"]))),
+                       check("sidebar_index", destination), check("dialog", None),
+                       shot("new-folder-sidebar-keyboard"), key("Return"),
+                       check("dialog", "FolderCreation"), check("focused_input", "new-folder-name"))
+
+    def test_new_folder_keyboard_root_validation_and_restart(self):
+        result = self.mcp.call("desktop.start", nested_folders=True, persistent=True)
+        print(f"New folder evidence: {result['artifacts']}", flush=True)
+        self.open_new_folder_with_keyboard()
+        self.mcp.batch(check("folder_creation.account", "preview-personal"),
+                       check("folder_creation.parent", ""), shot("new-folder-root-form"),
+                       key("Return"), check("folder_creation.error", "Enter a folder name", "contains"),
+                       type_text("Receipts"), key("Return"), check("dialog", None),
+                       check("folder_creation.busy", False), check("sidebar_labels", "Receipts", "contains"),
+                       check("folder_creation.saved", []), shot("new-folder-root-created"),
+                       key("Return"), check("dialog", "FolderCreation"),
+                       check("folder_creation.name", ""), key("Escape"),
+                       {"type": "restart"}, check("sidebar_labels", "Receipts", "contains"),
+                       check("folder_creation.saved", []), shot("new-folder-root-restarted"))
+
+    def test_new_folder_mouse_nested_unicode(self):
+        result = self.mcp.call("desktop.start", nested_folders=True, persistent=True)
+        print(f"New nested folder evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(85, 808), check("dialog", "FolderCreation"),
+                       check("folder_creation.account", "preview-work"),
+                       click(720, 492), shot("new-folder-parent-choices"), click(650, 307),
+                       check("folder_creation.parent", "Projects/Design/&ZeVnLIqe-"),
+                       click(650, 568), paste_text("Résumé"), shot("new-folder-unicode-request"),
+                       click(920, 620), check("dialog", None), check("folder_creation.busy", False),
+                       check("sidebar_labels", "Résumé", "contains"),
+                       check("expanded_folders.preview-work", "Projects/Design/&ZeVnLIqe-", "contains"),
+                       shot("new-folder-unicode-created"), {"type": "restart"},
+                       check("sidebar_labels", "Résumé", "contains"), shot("new-folder-unicode-restarted"))
+
+    def test_new_folder_nonselectable_parent_retains_exact_wire_path(self):
+        result = self.mcp.call("desktop.start", nested_folders=True, persistent=True)
+        print(f"New container child evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(85, 808), check("dialog", "FolderCreation"), click(720, 492),
+                       click(650, 389), check("folder_creation.parent", "Teams/"),
+                       click(650, 568), type_text("Planning"), shot("new-folder-container-request"),
+                       key("Return"), check("dialog", None), check("sidebar_labels", "Planning", "contains"),
+                       check("expanded_folders.preview-work", "Teams", "contains"),
+                       shot("new-folder-container-created"))
+
+    def test_new_folder_pop3_local_mouse_compact_dark(self):
+        result = self.mcp.call("desktop.start", nested_folders=True, pop3_account=True, persistent=True)
+        print(f"New local folder evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(100),
+                       click(690, 366), check("dark", True), key("ctrl+1"),
+                       {"type": "resize", "width": 900, "height": 640}, check("window_size", [900, 640]),
+                       {"type": "hover", "x": 100, "y": 400}, {"type": "scroll", "amount": 30},
+                       wait(120), click(85, 534), check("dialog", "FolderCreation"),
+                       click(450, 276), click(450, 357), check("folder_creation.account", "preview-personal"),
+                       check("folder_creation.parent", ""), click(450, 429), type_text("Local receipts"),
+                       shot("new-folder-local-compact-dark"), click(650, 480), check("dialog", None),
+                       check("sidebar_labels", "Local receipts", "contains"),
+                       shot("new-folder-local-created"), {"type": "restart"},
+                       check("sidebar_labels", "Local receipts", "contains"),
+                       check("folder_creation.saved", []), shot("new-folder-local-restarted"))
+
+    def test_new_folder_failed_request_resumes_after_restart(self):
+        result = self.mcp.call("desktop.start", nested_folders=True, persistent=True, folder_actions="fail")
+        print(f"New folder retry evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(85, 808), check("dialog", "FolderCreation"),
+                       check("focused_input", "new-folder-name"),
+                       type_text("Reports"), key("Return"), check("folder_creation.busy", True),
+                       check("folder_creation.busy", False), check("folder_creation.error", "refused", "contains"),
+                       check("folder_creation.saved.0.name", "Reports"), check("focused_input", "new-folder-name"), shot("new-folder-rejected"),
+                       key("Escape"), {"type": "restart"},
+                       click(85, 808), check("dialog", "FolderCreation"),
+                       check("focused_input", "new-folder-name"),
+                       check("folder_creation.name", "Reports"), check("folder_creation.account", "preview-work"),
+                       check("folder_creation.error", "unfinished", "contains"),
+                       key("ctrl+a"), type_text("Another folder"), check("folder_creation.name", "Another folder"),
+                       shot("new-folder-previous-request-visible"),
+                       click(945, 596), check("folder_creation.name", "Reports"),
+                       check("focused_input", "new-folder-name"), shot("new-folder-resume-control"),
+                       key("Escape"), {"type": "restart"}, click(85, 808),
+                       check("focused_input", "new-folder-name"),
+                       check("folder_creation.name", "Reports"), shot("new-folder-restored-request"),
+                       key("Return"), check("folder_creation.busy", True), check("dialog", None),
+                       check("sidebar_labels", "Reports", "contains"), check("folder_creation.saved", []),
+                       shot("new-folder-retry-complete"))
+        self.assertEqual(self.mcp.call("desktop.state")["sidebar_labels"].count("Reports"), 1)
+
+    def test_new_folder_lost_reply_completes_while_mail_navigation_remains_available(self):
+        result = self.mcp.call("desktop.start", nested_folders=True, persistent=True, folder_actions="uncertain")
+        print(f"New folder acknowledgement evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(85, 808), check("dialog", "FolderCreation"), check("focused_input", "new-folder-name"), type_text("Receipts"),
+                       key("Return"), check("folder_creation.busy", True), shot("new-folder-pending"),
+                       key("Escape"), key("ctrl+2"), check("tab", "Calendar"),
+                       check("folder_creation.busy", False), check("folder_creation.error", None),
+                       check("folder_creation.saved", []), check("tab", "Calendar"),
+                       key("ctrl+1"), check("sidebar_labels", "Receipts", "contains"),
+                       shot("new-folder-lost-reply-confirmed"), {"type": "restart"},
+                       check("sidebar_labels", "Receipts", "contains"), check("folder_creation.saved", []))
+        self.assertEqual(self.mcp.call("desktop.state")["sidebar_labels"].count("Receipts"), 1)
+
+    def test_new_folder_graceful_close_waits_for_accepted_creation(self):
+        result = self.mcp.call("desktop.start", nested_folders=True, persistent=True, folder_actions="slow")
+        print(f"New folder close evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(click(85, 808), check("dialog", "FolderCreation"), check("focused_input", "new-folder-name"), type_text("Before closing"),
+                       key("Return"), check("folder_creation.busy", True),
+                       {"type": "restart"}, check("sidebar_labels", "Before closing", "contains"),
+                       check("folder_creation.saved", []), wait(150), shot("new-folder-close-confirmed"))
+
     def test_folder_controls_move_review(self):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True,folder_actions="slow")
         print(f"Folder controls evidence: {result['artifacts']}",flush=True)

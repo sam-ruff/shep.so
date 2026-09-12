@@ -212,7 +212,8 @@ async fn network_operation<Fut: std::future::Future<Output = anyhow::Result<()>>
     // the receipt/cache commit if the overall operation takes longer.
     if matches!(
         &command,
-        Command::Move(..)
+        Command::CreateFolder(..)
+            | Command::Move(..)
             | Command::Transfer(..)
             | Command::UndoMove(..)
             | Command::RecoverMailMove(..)

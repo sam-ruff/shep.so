@@ -187,6 +187,13 @@
       "browser": "provider.test.ts / provider-flows.mjs / authenticated gateway tests; complete ambiguous-move review, missing-destination creation and automatic proof-based recovery OPEN"
     },
     {
+      "id": "folder-creation",
+      "contract": "Visible sidebar New folder selects an account, parent and one folder name. IMAP preserves the server hierarchy and encoding; POP3 creates local folders only. Freeze the exact target before CREATE, check an uncertain result without duplicating it, retain unfinished requests across restart in the ordinary creation form, refresh confirmed folders and observe accepted writes before closing.",
+      "desktop": "Active integrated sidebar controls, durable target journal, changed-connection/encoding checks and focus/close regression verification; unit, protocol and native shipping evidence required.",
+      "mobile": "OPEN equivalent sidebar creation, durable target/restart controls and native provider evidence",
+      "browser": "OPEN equivalent sidebar creation, durable target/restart controls and authenticated provider evidence"
+    },
+    {
       "id": "outbox-review",
       "contract": "active SMTP cannot be released; cancel an unused reservation atomically; reviewed return clones draft/file ownership, prevents stale resurrection, and needs a separate Send; manual mark preserves acknowledgement uncertainty; local Sent keeps exact bytes and newer local edits; local IMAP Sent actions do not access credentials, while server actions require credentials for the current stored identity",
       "mobile": "outgoing_tests.rs / sent_tests.rs / outbox_test.dart / outbox_android_test.dart + android_outbox_fixture.py; paged review, separate APPEND decisions, known-ack repair, settings and local Sent/reopen; Sent-folder grouping covered; copy labels/history cleanup OPEN; offline local flag/read/move + locked/missing-credential refusal and visible reader recovery in native_repository_test.dart, ui_test.dart and outbox_android_test.dart",

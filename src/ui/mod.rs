@@ -14,6 +14,7 @@ mod drag_mail;
 mod ellipsis;
 mod find_message;
 mod folder_controls;
+mod folder_creation;
 #[cfg(test)]
 mod google_lifecycle_tests;
 mod google_sign_in;
@@ -82,6 +83,7 @@ pub enum SettingsTab {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
+    FolderCreation,
     FolderChange,
     FolderHistory,
     MoveRecovery,
@@ -109,6 +111,7 @@ enum MailPane {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    FolderCreation(folder_creation::Message),
     Folders(folder_controls::Message),
     MoveRecovery(move_recovery::Message),
     WindowUnfocused,
@@ -353,6 +356,7 @@ pub struct App {
     list_focus: bool,
     reader_selection: Option<Box<selectable::Content>>,
     folder_controls: folder_controls::State,
+    folder_creation: folder_creation::State,
     html_reader: html_reader::State,
     find_message: find_message::State,
     remote_bytes: VecDeque<(String, Arc<[u8]>)>,
@@ -527,6 +531,7 @@ impl App {
                 list_focus: true,
                 reader_selection: None,
                 folder_controls: Default::default(),
+                folder_creation: Default::default(),
                 html_reader: Default::default(),
                 find_message: Default::default(),
                 remote_bytes: VecDeque::new(),
@@ -1012,6 +1017,7 @@ impl App {
             return Task::none();
         }
         match message {
+            Message::FolderCreation(message) => return self.handle_folder_creation(message),
             Message::Folders(message) => {
                 let focus = matches!(
                     message,
@@ -1131,6 +1137,23 @@ impl App {
             Message::MailContextAction(action) => return self.choose_mail_context(action),
             Message::Backend(event) => match event {
                 Event::Folder(event) => self.folder_event(event),
+                Event::FolderCreated(serial, result) => {
+                    let completed = serial == self.folder_creation.serial
+                        && self.folder_creation.busy
+                        && self.dialog == Some(Dialog::FolderCreation);
+                    let failed = result.is_err();
+                    self.folder_created(serial, result);
+                    if completed {
+                        return if failed {
+                            focus_after_layout("new-folder-name")
+                        } else {
+                            Task::batch([
+                                widget::operation::focus("unfocused"),
+                                self.reveal_sidebar_focus(),
+                            ])
+                        };
+                    }
+                }
                 Event::Ready(tx, workspace, google) => {
                     self.tx = Some(tx);
                     self.send(Command::BulkJobs(0, 0));
@@ -1838,7 +1861,8 @@ impl App {
                         false,
                     );
                     }
-                } else if self.mail_actions.pending() > 0
+                } else if self.folder_creation.busy
+                    || self.mail_actions.pending() > 0
                     || !self.move_recovery.pending.is_empty()
                     || self.busy.contains("pending-move-recovery")
                 {
@@ -2197,6 +2221,9 @@ impl App {
                     }
                     "folder-search" => self.dialog == Some(Dialog::Move),
                     "folder-parent-search" => self.folder_parent_visible(),
+                    "new-folder-name" => {
+                        self.dialog == Some(Dialog::FolderCreation) && !self.folder_creation.busy
+                    }
                     "event-title" => self.dialog == Some(Dialog::Event),
                     "to" | "compose-body" => {
                         self.compose_visible()
@@ -3921,7 +3948,11 @@ impl App {
                     .sidebar_items()
                     .get(self.sidebar_index)
                     .is_some_and(|s| {
-                        s.section || matches!(s.action, Message::ToggleFolderGroup(..))
+                        s.section
+                            || matches!(
+                                s.action,
+                                Message::ToggleFolderGroup(..) | Message::FolderCreation(_)
+                            )
                     })
                 {
                     return self.reveal_sidebar_focus();
@@ -4220,6 +4251,10 @@ impl App {
             serde_json::json!(self.detail.as_ref().map(|d| d.attachments.len()));
         data["selected_folders"] = serde_json::json!(self.query.folders);
         data["collapsed_accounts"] = serde_json::json!(self.preferences.collapsed_accounts);
+        #[cfg(feature = "test-support")]
+        {
+            data["folder_creation"] = self.folder_creation_test_state();
+        }
         data["expanded_folders"] = serde_json::json!(self.preferences.expanded_folders);
         data["saved_expanded_folders"] =
             serde_json::json!(self.workspace.preferences.expanded_folders);
