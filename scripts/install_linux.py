@@ -2,6 +2,7 @@
 """Install Shep and its freedesktop launcher without root privileges."""
 import argparse
 import ast
+import json
 import os
 from pathlib import Path
 import shutil
@@ -87,6 +88,8 @@ def install(binary, prefix, data, uninstall=False, pin=False):
     else:
         if not binary or not binary.is_file():
             raise ValueError("Supply --binary PATH or run scripts/install-linux.sh to build the release version")
+        if not (ROOT / "assets" / "launcher.png").is_file():
+            raise ValueError("The launcher icon is missing; nothing was installed")
         launcher = desktop_entry([destination])
         atomic_install(binary, destination, 0o755)
         atomic_install(ROOT / "assets" / "launcher.png", icon, 0o644)
@@ -106,9 +109,35 @@ def install(binary, prefix, data, uninstall=False, pin=False):
     return destination, desktop, icon
 
 
+def build_binary(run=subprocess.run):
+    if not (ROOT / "Cargo.toml").is_file():
+        if (ROOT / "shep").is_file():
+            return ROOT / "shep"
+        raise ValueError("Run this installer from a checkout or an extracted release archive")
+    if not shutil.which("cargo"):
+        raise ValueError("Building Shep needs current stable Rust (cargo). See https://sam-ruff.github.io/shep.so/installation/.")
+    if not os.environ.get("SHEP_GOOGLE_CLIENT_ID") or not os.environ.get("SHEP_GOOGLE_CLIENT_SECRET"):
+        print("Google sign-in is unavailable without the build-time Google client configuration.", file=sys.stderr)
+    # Cargo reports the actual executable, including configured targets/directories.
+    result = run(["cargo", "build", "--manifest-path", str(ROOT / "Cargo.toml"),
+                  "--release", "--locked", "--no-default-features", "--jobs", "4",
+                  "--message-format=json-render-diagnostics"], cwd=ROOT,
+                 stdout=subprocess.PIPE, text=True, check=True)
+    binaries = set()
+    for line in result.stdout.splitlines():
+        message = json.loads(line)
+        if (message.get("reason") == "compiler-artifact" and message.get("target", {}).get("name") == "shep"
+                and "bin" in message.get("target", {}).get("kind", []) and message.get("executable")):
+            binaries.add(Path(message["executable"]))
+    if len(binaries) != 1:
+        raise ValueError("Cargo did not report exactly one Shep executable; nothing was installed")
+    return binaries.pop()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, help="Install an already built production release binary")
+    parser.add_argument("--build", action="store_true", help="Build first if no --binary is supplied")
     parser.add_argument("--prefix", type=Path, default=Path.home() / ".local", help="Binary prefix (default ~/.local)")
     parser.add_argument("--data-dir", type=Path, default=Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")),
                         help="Desktop launcher/icon data directory (default XDG_DATA_HOME)")
@@ -118,6 +147,8 @@ def main():
     if sys.platform != "linux":
         parser.error("This installer supports Linux only")
     try:
+        if args.build and not args.binary and not args.uninstall:
+            args.binary = build_binary()
         install(args.binary, args.prefix, args.data_dir, args.uninstall, args.pin)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         sys.exit(f"Install failed: {error}")

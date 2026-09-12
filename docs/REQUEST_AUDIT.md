@@ -8,7 +8,9 @@ Linux install and the final production installation without replacing personal d
 **12 September standard right-click menu:** Sam requests normal Copy and related
 text actions on right click. Track selectable readers and editable fields, native
 clipboard and keyboard behaviour, while preserving the current move-first and
-folder-second delivery order. The implementation and client review remain active.
+folder-second delivery order. Desktop menus are pushed as `bc9ca09`, with 27
+distinct native scenarios and 1,287 hook executions passing. Client equivalence
+remains an explicit active gap.
 
 **12 September move failure and folder implementation:** Sam requests starting
 from main after the completed work is integrated, fixing Archive/Move repeatedly

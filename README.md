@@ -6,29 +6,15 @@ A calm, native email and calendar app built with Rust and iced. Comfortable with
 
 ## Install
 
+On Linux, install [the build dependencies and current stable Rust](docs/installation.md#build-dependencies), then run:
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/sam-ruff/shep.so/main/scripts/install-release-linux.sh | bash
 ```
 
-The Linux installer downloads a published release, verifies its checksum, and adds Shep to your applications menu. It defaults to your home directory; an interactive prompt also offers all-user installation or cancellation. Requires curl and Python 3.
+This adds Shep to your applications menu. It installs a checksum-verified release when available; until releases are published, it downloads a pinned revision of `main` and builds it first. Source builds take time and require the dependencies above. Installation defaults to your home directory, with all-user and cancel choices in an interactive terminal.
 
-**No binary releases are published yet while release CI is paused.** The installer reports this clearly; use [the source instructions](#get-started) until a release is available.
-
-For macOS (built-in system tools, no Python):
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/sam-ruff/shep.so/main/scripts/install-release-macos.sh | bash
-```
-
-This prepares `~/Applications/Shep.app` with its native icon; `--system` installs for all users. macOS release assets and actual desktop verification remain pending.
-
-For Windows, run in PowerShell:
-
-```powershell
-& ([scriptblock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/sam-ruff/shep.so/main/scripts/install-release-windows.ps1)))
-```
-
-Uses built-in PowerShell and Windows `tar.exe`. Installs under your user profile with a Start-menu shortcut; the prompt offers all-user installation. Windows release assets and actual desktop verification remain pending.
+Release CI remains paused. [Windows and macOS installers](docs/installation.md#other-platforms) require published platform assets and are not available for installation yet.
 
 ![Shep in light mode, with a unified inbox and an open email](docs/images/mail-light.webp)
 
@@ -44,10 +30,12 @@ Uses built-in PowerShell and Windows `tar.exe`. Installs under your user profile
 
 ## Get started
 
-With stable Rust (1.89 or newer) and the [Linux dependencies](docs/installation.md) installed, run from the checkout:
+With current stable Rust and the [Linux dependencies](docs/installation.md#build-dependencies) installed:
 
 ```sh
-cargo run --release
+git clone https://github.com/sam-ruff/shep.so.git
+cd shep.so
+cargo run --release --locked --no-default-features --jobs 4
 ```
 
 Or install for your Linux user:

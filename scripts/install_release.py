@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Download a published Shep release, verify it, and install it for this user.
+"""Install a verified Linux release, or build source when no release exists.
 
-The raw OS entry points fetch this standard-library-only helper. No Rust or
-checkout is required. Release files are staged before any installed file changes.
+Source builds require current stable Rust and the Linux build dependencies.
+Downloads and builds finish before any installed file changes.
 """
 import argparse
 import hashlib
@@ -27,6 +27,10 @@ VERSION = re.compile(r"v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\Z")
 
 
 class InstallError(RuntimeError):
+    pass
+
+
+class NoPublishedRelease(InstallError):
     pass
 
 
@@ -58,7 +62,7 @@ def release_asset(version, system, machine, fetch=open_url):
         release = json.loads(payload)
     except urllib.error.HTTPError as error:
         if error.code == 404:
-            raise InstallError("No published Shep release was found for this request. Check https://github.com/sam-ruff/shep.so/releases or use the source-install instructions at https://sam-ruff.github.io/shep.so/installation/.") from error
+            raise NoPublishedRelease("No published Shep release was found for this request. Use --source with current stable Rust and the Linux build dependencies: https://sam-ruff.github.io/shep.so/installation/.") from error
         raise InstallError(f"GitHub could not provide the release (HTTP {error.code}); try again later") from error
     if not isinstance(release, dict):
         raise InstallError("GitHub returned an invalid release description")
@@ -127,6 +131,7 @@ def extract_archive(archive, destination):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with package.extractfile(member) as source, path.open("xb") as output:
                     shutil.copyfileobj(source, output, 1024 * 1024)
+                path.chmod(0o755 if member.mode & 0o111 else 0o644)
 
 
 def installation_scope(args, choose=None):
@@ -153,13 +158,16 @@ def installation_scope(args, choose=None):
     return answer in ("a", "all")
 
 
-def install_linux(root, args, system, run=subprocess.run):
-    for required in ("shep", "scripts/install_linux.py", "assets/launcher.png"):
+def install_linux(root, args, system, run=subprocess.run, binary=None):
+    for required in ("scripts/install_linux.py", "assets/launcher.png"):
         if not (root / required).is_file():
             raise InstallError(f"This archive is missing {required}; nothing was installed")
+    binary = binary or root / "shep"
+    if not binary.is_file():
+        raise InstallError("The Shep binary is missing; nothing was installed")
     if system and (args.prefix or args.data_dir or args.pin):
         raise InstallError("All-user installation cannot combine --prefix, --data-dir or --pin")
-    command = [sys.executable, str(root / "scripts/install_linux.py"), "--binary", str(root / "shep")]
+    command = [sys.executable, str(root / "scripts/install_linux.py"), "--binary", str(binary)]
     if system:
         command += ["--prefix", "/usr/local", "--data-dir", "/usr/local/share"]
         if os.geteuid() != 0:
@@ -177,10 +185,53 @@ def install_linux(root, args, system, run=subprocess.run):
     run(command, check=True)
 
 
+def install_source(args, system, fetch=open_url, run=subprocess.run):
+    if not shutil.which("cargo"):
+        raise InstallError("Building Shep needs current stable Rust (cargo). Install Rust and the Linux build dependencies first: https://sam-ruff.github.io/shep.so/installation/.")
+    with fetch(f"https://api.github.com/repos/{REPOSITORY}/commits/main") as response:
+        payload = response.read(2 * 1024 * 1024 + 1)
+    if len(payload) > 2 * 1024 * 1024:
+        raise InstallError("GitHub returned an unexpectedly large source description")
+    metadata = json.loads(payload)
+    commit = metadata.get("sha", "") if isinstance(metadata, dict) else ""
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise InstallError("GitHub did not return an exact source revision")
+    print(f"Building Shep from main at {commit}. This needs current stable Rust and the Linux build dependencies.", flush=True)
+    with tempfile.TemporaryDirectory(prefix="shep-source-") as directory:
+        stage = Path(directory)
+        archive = stage / "source.tar.gz"
+        download(f"https://codeload.github.com/{REPOSITORY}/tar.gz/{commit}", archive, fetch)
+        unpacked = stage / "unpacked"
+        unpacked.mkdir()
+        extract_archive(archive, unpacked)
+        root = unpacked / f"shep.so-{commit}"
+        for required in ("Cargo.toml", "Cargo.lock", "scripts/install_linux.py", "assets/launcher.png"):
+            if not (root / required).is_file():
+                raise InstallError(f"The source archive is missing {required}; nothing was installed")
+        if not os.environ.get("SHEP_GOOGLE_CLIENT_ID") or not os.environ.get("SHEP_GOOGLE_CLIENT_SECRET"):
+            print("Google sign-in is unavailable without the build-time Google client configuration.", flush=True)
+        target = stage / "target"
+        result = run(["cargo", "build", "--manifest-path", str(root / "Cargo.toml"), "--release", "--locked",
+                      "--no-default-features", "--jobs", "4", "--target-dir", str(target),
+                      "--message-format=json-render-diagnostics"], cwd=root, stdout=subprocess.PIPE, text=True, check=True)
+        binaries = set()
+        for line in result.stdout.splitlines():
+            message = json.loads(line)
+            if (message.get("reason") == "compiler-artifact" and message.get("target", {}).get("name") == "shep"
+                    and "bin" in message.get("target", {}).get("kind", []) and message.get("executable")):
+                binaries.add(Path(message["executable"]))
+        if len(binaries) != 1:
+            raise InstallError("Cargo did not report exactly one Shep executable; nothing was installed")
+        install_linux(root, args, system, run, binary=binaries.pop())
+
+
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--platform", choices=["linux"], default="linux", help=argparse.SUPPRESS)
-    result.add_argument("--version", help="Published version (default latest stable release)")
+    source = result.add_mutually_exclusive_group()
+    source.add_argument("--version", help="Require this published version; never fall back to source")
+    source.add_argument("--source", action="store_true", help="Build the current main revision with stable Rust")
+    source.add_argument("--release-only", action="store_true", help="Require a published release; never build source")
     scope = result.add_mutually_exclusive_group()
     scope.add_argument("--user", action="store_true", help="Install for this user without a scope prompt")
     scope.add_argument("--system", action="store_true", help="Install for all users; sudo may ask for permission")
@@ -195,7 +246,21 @@ def install(args, fetch=open_url, run=subprocess.run, choose=None, machine=None)
     if platform.system().lower() != args.platform:
         raise InstallError("Use the installer for this operating system")
     system = installation_scope(args, choose)
-    version, name, assets = release_asset(args.version, args.platform, machine or platform.machine(), fetch)
+    if system and (args.prefix or args.data_dir or args.pin):
+        raise InstallError("All-user installation cannot combine --prefix, --data-dir or --pin")
+    if args.source:
+        install_source(args, system, fetch, run)
+        print("Installation complete. Reopen Shep to use this version.")
+        return
+    try:
+        version, name, assets = release_asset(args.version, args.platform, machine or platform.machine(), fetch)
+    except NoPublishedRelease:
+        if args.version or args.release_only:
+            raise
+        print("No published release is available; building from source instead.", flush=True)
+        install_source(args, system, fetch, run)
+        print("Installation complete. Reopen Shep to use this version.")
+        return
     print(f"Downloading Shep {version} ({args.platform})…", flush=True)
     with tempfile.TemporaryDirectory(prefix="shep-release-") as directory:
         stage = Path(directory)

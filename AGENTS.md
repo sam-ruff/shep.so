@@ -283,6 +283,15 @@ The release workflow waits for a successful full quality workflow and checks tha
 
 `scripts/install-linux.sh` builds the optimized production release and delegates installation to `scripts/install_linux.py`; extracted archives include both scripts and a launcher icon. Install per user without sudo. Match the application ID, desktop filename and StartupWMClass (`so.shep.Shep`) so GNOME/KDE can group and pin the window. `--pin` is an explicit optional GNOME action and must preserve existing favorites. `--uninstall` removes the binary, launcher and icon only, never user data. The installer has automated tests for install/update/uninstall, path quoting and pin idempotence. App raster assets remain WebP; the PNG launcher icon exists for desktop icon-theme compatibility.
 
+The Linux remote installer falls back to an exact main source revision only when
+the latest release is absent. Explicit versions, missing assets and checksum
+failures must not trigger a different build. Both source paths use Cargo's
+reported executable, respecting configured targets; keep four build jobs and
+locked production features. Parse help/errors before compiling, stage source
+builds before the final installation/elevation, and retain the isolated README
+pipeline and checkout command tests. Windows/macOS commands remain conditional
+on published platform assets and native verification.
+
 ## Reading, input and sync regressions
 
 Keep the inbox header compact: title, count and one sync control in one row; avoid duplicate busy badges or privacy slogans in navigation. Up/Down moves within the focused inbox/sidebar, Tab switches those panes, and keyboard navigation scrolls the selection into view. Double-click opens the full-window reader or an all-day calendar event. Open/close reader actions are remappable. Child buttons capture iced mouse-area events: double-click behavior must be tested through real input.

@@ -1,5 +1,9 @@
 import importlib.util
+import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 import sys
@@ -13,6 +17,53 @@ spec.loader.exec_module(installer)
 
 @unittest.skipUnless(sys.platform == "linux", "Linux desktop installer")
 class Installation(unittest.TestCase):
+    def test_checkout_wrapper_from_another_directory_honours_cargo_artifact(self):
+        with tempfile.TemporaryDirectory(prefix="shep source install ") as temporary:
+            root = Path(temporary)
+            checkout = root / "checkout"
+            shutil.copytree(ROOT / "scripts", checkout / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copytree(ROOT / "assets", checkout / "assets")
+            (checkout / "Cargo.toml").write_text('[package]\nname="shep"\nversion="0.0.0"\n')
+            tools = root / "tools"
+            tools.mkdir()
+            capture = root / "cargo-args.json"
+            cargo = tools / "cargo"
+            cargo.write_text(f"#!{sys.executable}\n" + '''import json,os,pathlib,sys
+pathlib.Path(os.environ["FIXTURE_CAPTURE"]).write_text(json.dumps({"args":sys.argv[1:],"cwd":os.getcwd()}))
+target=pathlib.Path(os.environ["CARGO_TARGET_DIR"])/"x86_64-unknown-linux-gnu/release/shep"
+target.parent.mkdir(parents=True,exist_ok=True)
+target.write_bytes(b"fictional configured-target build")
+print(json.dumps({"reason":"compiler-artifact","target":{"name":"shep","kind":["bin"]},"executable":str(target)}))
+''')
+            cargo.chmod(0o755)
+            env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
+                       CARGO_TARGET_DIR=str(root / "custom target"), FIXTURE_CAPTURE=str(capture))
+            wrapper = ["bash", str(checkout / "scripts/install-linux.sh")]
+            for arguments, success in ((["--help"], True), (["--not-an-option"], False), (["--prefix"], False)):
+                result = subprocess.run(wrapper + arguments, cwd=root, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, success, result.stderr)
+                self.assertFalse(capture.exists(), "help and invalid arguments must not build")
+            options = ["--prefix", str(root / "installed"), "--data-dir", str(root / "data")]
+            subprocess.run(wrapper + options, cwd=root, env=env, check=True, capture_output=True)
+            invocation = json.loads(capture.read_text())
+            self.assertEqual(invocation["cwd"], str(checkout))
+            self.assertIn("--locked", invocation["args"])
+            self.assertIn("--no-default-features", invocation["args"])
+            self.assertEqual(invocation["args"][invocation["args"].index("--jobs") + 1], "4")
+            self.assertEqual((root / "installed/bin/shep").read_bytes(), b"fictional configured-target build")
+            capture.unlink()
+            replacement = root / "explicit binary"
+            replacement.write_bytes(b"explicit binary")
+            subprocess.run(wrapper + [f"--binary={replacement}"] + options, cwd=root, env=env, check=True, capture_output=True)
+            self.assertFalse(capture.exists())
+            self.assertEqual((root / "installed/bin/shep").read_bytes(), b"explicit binary")
+            mail = root / "data/mail.sqlite"
+            mail.write_bytes(b"owned fixture mail")
+            subprocess.run(wrapper + ["--uninstall"] + options, cwd=root, env=env, check=True, capture_output=True)
+            self.assertFalse(capture.exists())
+            self.assertFalse((root / "installed/bin/shep").exists())
+            self.assertEqual(mail.read_bytes(), b"owned fixture mail")
+
     def test_install_update_uninstall_preserves_data(self):
         with tempfile.TemporaryDirectory(prefix="shep install ") as temporary:
             root = Path(temporary)

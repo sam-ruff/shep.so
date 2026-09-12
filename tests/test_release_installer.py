@@ -79,6 +79,22 @@ class ReleaseFixture:
         path = urllib.parse.urlsplit(url).path
         return urllib.request.urlopen(f"http://127.0.0.1:{self.server.server_port}{path}", timeout=3)
 
+    def seed_source(self, entries=None):
+        commit = "abc12345" * 5
+        self.files["/repos/sam-ruff/shep.so/commits/main"] = json.dumps({"sha": commit}).encode()
+        files = entries if entries is not None else [
+            (name, (ROOT / name).read_bytes()) for name in (
+                "Cargo.toml", "Cargo.lock", "scripts/install_linux.py", "assets/launcher.png",
+                "assets/shepherd-light.svg", "assets/shepherd-tray.svg", "assets/shepherd-symbolic.svg")]
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+            for name, contents in files:
+                entry = tarfile.TarInfo(f"shep.so-{commit}/{name}")
+                entry.size = len(contents)
+                archive.addfile(entry, io.BytesIO(contents))
+        self.files[f"/sam-ruff/shep.so/tar.gz/{commit}"] = buffer.getvalue()
+        return commit
+
     def close(self):
         self.server.shutdown()
         self.server.server_close()
@@ -166,11 +182,155 @@ class ReleaseInstallerTests(unittest.TestCase):
 
     def test_unpublished_release_and_invalid_version_do_not_install(self):
         self.fixture.files.pop("/repos/sam-ruff/shep.so/releases/latest")
+        self.args.release_only = True
         with self.assertRaisesRegex(installer.InstallError, "No published"):
             self.install()
         with self.assertRaisesRegex(installer.InstallError, "Use a version"):
             installer.release_asset("../../main", "linux", "x86_64", self.fixture.fetch)
         self.assertFalse((self.root / "prefix").exists())
+
+    def source_run(self, command, **options):
+        if command[0] == "cargo":
+            self.assertEqual(command[1], "build")
+            for flag in ("--release", "--locked", "--no-default-features"):
+                self.assertIn(flag, command)
+            self.assertEqual(command[command.index("--jobs") + 1], "4")
+            binary = Path(command[command.index("--target-dir") + 1]) / "x86_64-unknown-linux-gnu/release/shep"
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"fictional source build")
+            self.assertEqual(Path(command[command.index("--manifest-path") + 1]).parent, options["cwd"])
+            artifact = {"reason": "compiler-artifact", "target": {"name": "shep", "kind": ["bin"]},
+                        "executable": str(binary)}
+            return subprocess.CompletedProcess(command, 0, json.dumps(artifact))
+        return subprocess.run(command, **options)
+
+    def test_missing_latest_builds_pinned_source_and_installs_real_artifacts(self):
+        commit = self.fixture.seed_source()
+        self.fixture.files.pop("/repos/sam-ruff/shep.so/releases/latest")
+        with patch.object(installer.shutil, "which", return_value="cargo"):
+            self.install(run=self.source_run)
+        self.assertIn(f"/sam-ruff/shep.so/tar.gz/{commit}", self.fixture.requests)
+        self.assertEqual((self.root / "prefix/bin/shep").read_bytes(), b"fictional source build")
+        for name in ("so.shep.Shep.svg", "so.shep.Shep-tray.svg", "so.shep.Shep-symbolic.svg"):
+            self.assertTrue((self.root / "data/icons/hicolor/scalable/apps" / name).is_file())
+
+    def test_explicit_source_skips_release_and_build_failure_preserves_install(self):
+        self.install()
+        self.fixture.seed_source()
+        self.fixture.requests.clear()
+        self.args.source = True
+        run = Mock(side_effect=subprocess.CalledProcessError(1, "cargo"))
+        with patch.object(installer.shutil, "which", return_value="cargo"):
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.install(run=run)
+        self.assertFalse(any("/releases/" in request for request in self.fixture.requests))
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual((self.root / "prefix/bin/shep").read_bytes(), b"fictional release one")
+
+    def test_version_and_checksum_failure_never_fall_back_to_source(self):
+        self.fixture.seed_source()
+        self.args.version = "9.9.9"
+        run = Mock()
+        with self.assertRaises(installer.NoPublishedRelease):
+            self.install(run=run)
+        self.args.version = None
+        self.fixture.seed(checksum="0" * 64)
+        with self.assertRaisesRegex(installer.InstallError, "checksum mismatch"):
+            self.install(run=run)
+        run.assert_not_called()
+        self.assertNotIn("/repos/sam-ruff/shep.so/commits/main", self.fixture.requests)
+
+    def test_invalid_source_revision_and_archive_fail_before_build(self):
+        self.args.source = True
+        run = Mock()
+        self.fixture.seed_source()
+        with patch.object(installer.shutil, "which", return_value="cargo"):
+            self.fixture.files["/repos/sam-ruff/shep.so/commits/main"] = b'{"sha":"../../main"}'
+            with self.assertRaisesRegex(installer.InstallError, "exact source revision"):
+                self.install(run=run)
+            self.fixture.seed_source(entries=[("../../escaped", b"bad")])
+            with self.assertRaisesRegex(installer.InstallError, "unsafe or duplicate"):
+                self.install(run=run)
+        run.assert_not_called()
+        self.assertFalse((self.root / "escaped").exists())
+
+    def test_source_all_user_builds_unprivileged_and_elevates_only_final_copy(self):
+        self.fixture.seed_source()
+        self.args = installer.parser().parse_args(["--source", "--system"])
+        commands = []
+        def run(command, **options):
+            commands.append(command)
+            if command[0] == "cargo":
+                return self.source_run(command, **options)
+            return subprocess.CompletedProcess(command, 0)
+        with patch.object(installer.os, "geteuid", return_value=1000), \
+                patch.object(installer.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"):
+            self.install(run=run)
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(commands[0][0], "cargo")
+        self.assertEqual(commands[1][:3], ["/usr/bin/sudo", "--", sys.executable])
+
+    def test_invalid_system_scope_fails_before_network_or_build(self):
+        args = installer.parser().parse_args(["--source", "--system", "--pin"])
+        fetch, run = Mock(), Mock()
+        with self.assertRaisesRegex(installer.InstallError, "cannot combine"):
+            installer.install(args, fetch=fetch, run=run)
+        fetch.assert_not_called()
+        run.assert_not_called()
+
+    def test_readme_pipeline_installs_source_outside_checkout(self):
+        commit = self.fixture.seed_source()
+        self.fixture.files.pop("/repos/sam-ruff/shep.so/releases/latest")
+        tools = self.root / "tools"
+        tools.mkdir()
+        temporary = self.root / "temporary"
+        temporary.mkdir()
+        adapter = self.root / "fixture-transport.py"
+        adapter.write_text(f'''import importlib.util,sys,urllib.parse,urllib.request
+spec=importlib.util.spec_from_file_location("installer",{str(ROOT / "scripts/install_release.py")!r})
+installer=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(installer)
+def fetch(url):
+ return urllib.request.urlopen("http://127.0.0.1:{self.fixture.server.server_port}"+urllib.parse.urlsplit(url).path,timeout=3)
+installer.install(installer.parser().parse_args(),fetch=fetch,machine="x86_64")
+''')
+        curl = tools / "curl"
+        curl.write_text(f"#!{sys.executable}\n" + f'''import pathlib,sys
+url=next(value for value in sys.argv if value.startswith("https://"))
+if url=="https://raw.githubusercontent.com/sam-ruff/shep.so/main/scripts/install-release-linux.sh":
+ sys.stdout.buffer.write(pathlib.Path({str(ROOT / "scripts/install-release-linux.sh")!r}).read_bytes())
+else:
+ assert url=="https://raw.githubusercontent.com/sam-ruff/shep.so/main/scripts/install_release.py"
+ assert "=https" in sys.argv
+ pathlib.Path(sys.argv[sys.argv.index("--output")+1]).write_bytes(pathlib.Path({str(adapter)!r}).read_bytes())
+''')
+        cargo = tools / "cargo"
+        cargo.write_text(f"#!{sys.executable}\n" + '''import json,pathlib,sys
+assert "--locked" in sys.argv and "--no-default-features" in sys.argv
+assert sys.argv[sys.argv.index("--jobs")+1]=="4"
+target=pathlib.Path(sys.argv[sys.argv.index("--target-dir")+1])/"configured-target/release/shep"
+target.parent.mkdir(parents=True)
+target.write_bytes(b"fictional pipeline source build")
+print(json.dumps({"reason":"compiler-artifact","target":{"name":"shep","kind":["bin"]},"executable":str(target)}))
+''')
+        curl.chmod(0o755)
+        cargo.chmod(0o755)
+        home = self.root / "home"
+        env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"], HOME=str(home),
+                   XDG_DATA_HOME=str(home / ".local/share"), TMPDIR=str(temporary))
+        readme = (ROOT / "README.md").read_text()
+        command = readme.split("```sh\n", 1)[1].split("```", 1)[0].strip()
+        result = subprocess.run(["bash", "-o", "pipefail", "-c", command], cwd=self.root,
+                                env=env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        binary = home / ".local/bin/shep"
+        self.assertEqual(binary.read_bytes(), b"fictional pipeline source build")
+        self.assertTrue(os.access(binary, os.X_OK))
+        launcher = home / ".local/share/applications/so.shep.Shep.desktop"
+        self.assertIn('StartupNotify=false', launcher.read_text())
+        self.assertIn(str(binary), launcher.read_text())
+        self.assertIn(f"/sam-ruff/shep.so/tar.gz/{commit}", self.fixture.requests)
+        self.assertEqual(list(temporary.iterdir()), [])
 
     def test_scope_defaults_to_user_and_cancel_happens_before_network(self):
         args = installer.parser().parse_args([])
