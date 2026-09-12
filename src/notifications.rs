@@ -3,8 +3,10 @@
 use futures::{SinkExt, Stream};
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, oneshot, watch};
 
+#[cfg(target_os = "linux")]
+mod connection;
 mod native;
 #[cfg(test)]
 mod tests;
@@ -112,10 +114,98 @@ impl Delivery {
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    Ready(watch::Sender<State>),
+    Ready(watch::Sender<State>, SystemSender),
     Sent(Delivery),
     Failed(Delivery, String),
     Skipped(u64),
+}
+
+#[derive(Debug, Clone)]
+pub struct SystemSender(mpsc::Sender<SystemRequest>);
+
+#[derive(Debug)]
+struct SystemRequest {
+    delivery: Delivery,
+    receipt: oneshot::Sender<Result<(), String>>,
+    cancellation: watch::Receiver<()>,
+}
+
+impl SystemSender {
+    pub(crate) async fn saving_notification(
+        self,
+        mut cancellation: watch::Receiver<()>,
+    ) -> Result<(), String> {
+        let (receipt, result) = oneshot::channel();
+        let request = SystemRequest {
+            delivery: saving_delivery(),
+            receipt,
+            cancellation: cancellation.clone(),
+        };
+        let delivery = async move {
+            self.0
+                .send(request)
+                .await
+                .map_err(|_| "The desktop notification worker stopped".to_owned())?;
+            result
+                .await
+                .map_err(|_| "The desktop notification worker stopped".to_owned())?
+        };
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            tokio::select! {
+                biased;
+                _ = cancellation.changed() => Err("Saving notification cancelled".to_owned()),
+                result = delivery => result,
+            }
+        })
+        .await
+        .map_err(|_| "The desktop notification worker did not respond".to_owned())?
+    }
+}
+
+#[async_trait::async_trait]
+trait Backend: Send {
+    async fn deliver(&mut self, delivery: Delivery) -> anyhow::Result<()>;
+}
+
+#[async_trait::async_trait]
+impl<F, Fut> Backend for F
+where
+    F: FnMut(Delivery) -> Fut + Send,
+    Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+{
+    async fn deliver(&mut self, delivery: Delivery) -> anyhow::Result<()> {
+        self(delivery).await
+    }
+}
+
+struct DesktopBackend {
+    demo: bool,
+    attempt: u64,
+    #[cfg(target_os = "linux")]
+    client: connection::Client<connection::SessionBus>,
+}
+
+#[async_trait::async_trait]
+impl Backend for DesktopBackend {
+    async fn deliver(&mut self, delivery: Delivery) -> anyhow::Result<()> {
+        self.attempt = self.attempt.saturating_add(1);
+        if self.demo {
+            let saving = delivery.through == 0 && crate::desktop_tray::fixture_permitted();
+            // Ordinary previews never use a desktop service or an audio device.
+            #[cfg(feature = "test-support")]
+            if !saving && !crate::test_support::native_notifications_permitted()? {
+                return crate::test_support::notification_delivery(self.attempt).await;
+            }
+            #[cfg(not(feature = "test-support"))]
+            if !saving {
+                return Ok(());
+            }
+        }
+        #[cfg(target_os = "linux")]
+        return self.client.deliver(delivery).await;
+        #[cfg(not(target_os = "linux"))]
+        native::deliver(delivery).await
+    }
 }
 
 pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
@@ -124,40 +214,53 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
         8,
         move |mut output: futures::channel::mpsc::Sender<Event>| async move {
             let (tx, rx) = watch::channel(State::default());
-            if output.send(Event::Ready(tx)).await.is_err() {
+            let (system, requests) = mpsc::channel(1);
+            if output
+                .send(Event::Ready(tx, SystemSender(system)))
+                .await
+                .is_err()
+            {
                 return;
             }
-            let mut attempt = 0u64;
-            drive(rx, output, move |delivery| {
-                attempt = attempt.saturating_add(1);
-                let _attempt = attempt;
-                async move {
-                    // The harness can observe its policy/requests but never notify or
-                    // play sound on the person's real desktop from a fixture workspace.
-                    if demo {
-                        #[cfg(feature = "test-support")]
-                        crate::test_support::notification_delivery(_attempt).await?;
-                        Ok(())
-                    } else {
-                        native::deliver(delivery).await
-                    }
-                }
-            })
+            drive(
+                rx,
+                requests,
+                output,
+                DesktopBackend {
+                    demo,
+                    attempt: 0,
+                    #[cfg(target_os = "linux")]
+                    client: connection::Client::new(connection::SessionBus),
+                },
+            )
             .await;
         },
     )
 }
 
-async fn drive<F, Fut>(
+async fn drive(
     mut input: watch::Receiver<State>,
+    mut requests: mpsc::Receiver<SystemRequest>,
     mut output: futures::channel::mpsc::Sender<Event>,
-    mut deliver: F,
-) where
-    F: FnMut(Delivery) -> Fut,
-    Fut: std::future::Future<Output = anyhow::Result<()>>,
-{
+    mut backend: impl Backend,
+) {
     let mut processed = 0;
-    while input.changed().await.is_ok() {
+    let mut system_closed = false;
+    loop {
+        tokio::select! {
+            changed = input.changed() => if changed.is_err() { break; },
+            request = requests.recv(), if !system_closed => {
+                if let Some(request) = request {
+                    if !request.receipt.is_closed() && request.cancellation.has_changed().is_ok() {
+                        let result = backend.deliver(request.delivery).await.map_err(|error| format!("{error:#}"));
+                        let _ = request.receipt.send(result);
+                    }
+                } else {
+                    system_closed = true;
+                }
+                continue;
+            }
+        }
         // A fixed burst window does not postpone notifications indefinitely
         // during continuous arrivals. Settings are sampled after that window.
         tokio::time::sleep(Duration::from_millis(150)).await;
@@ -170,7 +273,7 @@ async fn drive<F, Fut>(
             }
             continue;
         };
-        let event = match deliver(delivery.clone()).await {
+        let event = match backend.deliver(delivery.clone()).await {
             Ok(()) => Event::Sent(delivery),
             Err(error) => Event::Failed(delivery, format!("{error:#}")),
         };
@@ -180,8 +283,8 @@ async fn drive<F, Fut>(
     }
 }
 
-pub(crate) async fn saving_notification() -> anyhow::Result<()> {
-    native::deliver(Delivery {
+fn saving_delivery() -> Delivery {
+    Delivery {
         through: 0,
         count: 0,
         popups: true,
@@ -189,6 +292,5 @@ pub(crate) async fn saving_notification() -> anyhow::Result<()> {
         title: "Shep is finishing your changes".into(),
         body: "Shep will quit when your changes are saved. Open Shep from the tray to keep working, or choose Quit Shep to leave now; journaled uploads resume next time."
             .into(),
-    })
-    .await
+    }
 }

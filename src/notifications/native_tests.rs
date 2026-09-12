@@ -182,3 +182,81 @@ async fn notification_missing_desktop_and_sound_helper_failure_are_errors() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn notification_sender_stays_on_bus_between_arrivals_until_worker_is_dropped()
+-> anyhow::Result<()> {
+    use crate::notifications::connection::{Client, Transport};
+    struct OwnedBus {
+        address: String,
+        names: mpsc::Sender<String>,
+    }
+    #[async_trait::async_trait]
+    impl Transport for OwnedBus {
+        type Connection = Connection;
+
+        fn is_closed(&self, connection: Connection) -> bool {
+            connection.is_closed()
+        }
+
+        async fn connect(&self) -> anyhow::Result<Connection> {
+            let connection = Builder::address(self.address.as_str())?.build().await?;
+            let name = connection
+                .unique_name()
+                .context("Expected a bus identity")?
+                .to_string();
+            self.names.send(name).await?;
+            Ok(connection)
+        }
+
+        async fn popup(&self, connection: Connection, delivery: Delivery) -> anyhow::Result<()> {
+            linux_popup(&connection, &delivery).await
+        }
+
+        async fn sound(&self) -> anyhow::Result<()> {
+            anyhow::bail!("The popup lifetime test must not play sound")
+        }
+    }
+    let (_bus, address, observer) = private_bus().await;
+    let (requests, mut received) = mpsc::channel(4);
+    let _service = Builder::address(address.as_str())?
+        .name("org.freedesktop.Notifications")?
+        .serve_at(
+            "/org/freedesktop/Notifications",
+            Desktop {
+                requests,
+                reject: Arc::new(AtomicBool::new(false)),
+            },
+        )?
+        .build()
+        .await?;
+    let (names, mut connected) = mpsc::channel(4);
+    let mut client = Client::new(OwnedBus { address, names });
+    client.deliver(delivery(false)).await?;
+    received
+        .recv()
+        .await
+        .context("First notification missing")?;
+    let name = connected.recv().await.context("Sender missing")?;
+    let proxy = zbus::fdo::DBusProxy::new(&observer).await?;
+    assert!(proxy.name_has_owner(name.as_str().try_into()?).await?);
+    client.deliver(delivery(false)).await?;
+    received
+        .recv()
+        .await
+        .context("Second notification missing")?;
+    assert!(
+        connected.try_recv().is_err(),
+        "Each arrival must reuse its sender"
+    );
+    assert!(proxy.name_has_owner(name.as_str().try_into()?).await?);
+    drop(client);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while proxy.name_has_owner(name.as_str().try_into()?).await? {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
+    Ok(())
+}

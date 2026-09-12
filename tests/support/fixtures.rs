@@ -818,6 +818,17 @@ pub async fn notification_delivery(attempt: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn native_notifications_permitted() -> anyhow::Result<bool> {
+    if !std::env::args().any(|arg| arg == "--notification-delivery=native") {
+        return Ok(false);
+    }
+    anyhow::ensure!(
+        crate::desktop_tray::fixture_permitted(),
+        "Native notification fixtures require their owned tray bus and state path"
+    );
+    Ok(true)
+}
+
 async fn seed_profile_google(store: &Store) -> anyhow::Result<()> {
     store
         .update_preferences(|p| {

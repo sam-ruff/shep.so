@@ -3,6 +3,13 @@
   "reference": "Rust iced desktop committed 10d8569; merged-worktree verification and gaps in docs/CLIENT_PARITY.md",
   "scenarios": [
     {
+      "id": "native-incoming-mail-notifications",
+      "contract": "Notify for new Inbox arrivals after the initial import, coalescing bursts without retaining an unbounded queue. Honour popup, sound and details preferences. Native notification sender lifetime must keep accepted banners/history visible while Shep runs. Reconnect after failed delivery only for new work, without replaying an uncertain request. Temporary-saving notices preserve their bounded acknowledgment and fallback behaviour.",
+      "desktop": "Linux worker connection reuse, failure/reconnect, policy and bounded saving-request tests; real GNOME notification service and visible banner/centre review are required alongside the native mail-arrival controls. Ordinary demo runs must never notify the user's desktop. Exact evidence and remaining Windows/macOS/sound verification belong in COMPLETION and R82.",
+      "mobile": "OPEN: Android/iOS native arrival notification, permission, sound/details and task restoration parity under R67/R80/R82. OS notification lifecycle follows the platform rather than GNOME D-Bus ownership.",
+      "browser": "OPEN: reviewed browser notification permission, new-arrival policy and privacy controls; no native D-Bus sender. Existing multiple-tab ownership must prevent duplicate notification dispatch."
+    },
+    {
       "id": "native-launch-activation",
       "contract": "Acquire one application owner per canonical profile catalogue root before starting mail or a tray. Subsequent launches restore that owner's visible, minimised or hidden window without replacing its draft or creating another tray. Preserve pending saves; terminal shutdown rejects activation until ownership is released. Independent data roots remain independent.",
       "desktop": "Activation lock/IPC and UI lifecycle regressions plus an owned actual GNOME launcher, dock mouse/keyboard, minimise and retained-draft scenario. Verification and platform limitations must be recorded in COMPLETION before claiming delivery; Windows/macOS and Wayland shell execution remain open.",

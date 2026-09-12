@@ -8,11 +8,15 @@ is pushed on main as `86d5ca1`; the other branch references are deleted locally
 and remotely. Preserve its parser/control/client parity gaps.
 The older unselected-demo notes below are comparison history.
 
-Next fix repeated taskbar launches creating duplicate tray processes. Ownership
-must be established before opening mail or creating a tray, with later launches
-restoring the existing window. Tray implementation and native launcher tests
-run in isolated `tray-activation` and `tray-activation-tests` worktrees. Do not
-force-kill personal instances or discard pending saves during the handover.
+Duplicate taskbar launches and GNOME dock/minimise restoration are fixed and
+pushed as `7ef9d74`, with the verified production build and current launcher/tray
+icons installed. Existing old copies require a normal Quit; do not force-kill
+personal instances or discard pending saves.
+
+Sam's next follow-up is missing GNOME incoming-mail notifications. The active
+`gnome-notifications` worktree fixes the short-lived D-Bus sender, which causes
+GNOME to remove the notification immediately. Preserve initial-sync suppression,
+content preferences, bounded delivery and the temporary-saving notice path.
 
 ## Search demo delivery, 12 September 2026
 

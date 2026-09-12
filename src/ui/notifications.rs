@@ -20,6 +20,7 @@ pub enum Message {
 pub(super) struct State {
     request: crate::notifications::State,
     sender: Option<tokio::sync::watch::Sender<crate::notifications::State>>,
+    system: Option<crate::notifications::SystemSender>,
     testing: Option<u64>,
     error: Option<String>,
     sent: u64,
@@ -27,6 +28,19 @@ pub(super) struct State {
 }
 
 impl App {
+    pub(super) fn saving_notification(
+        &self,
+        cancellation: tokio::sync::watch::Receiver<()>,
+    ) -> impl Future<Output = Result<(), String>> + use<> {
+        let sender = self.notifications.system.clone();
+        async move {
+            sender
+                .ok_or_else(|| "The desktop notification worker is not ready".to_owned())?
+                .saving_notification(cancellation)
+                .await
+        }
+    }
+
     pub(super) fn notification_arrived(&mut self, arrival: Arc<Arrival>) {
         if !self
             .workspace
@@ -81,7 +95,10 @@ impl App {
                 self.notifications.error = None;
                 self.save_preferences();
             }
-            Message::Backend(Event::Ready(sender)) => self.notifications.sender = Some(sender),
+            Message::Backend(Event::Ready(sender, system)) => {
+                self.notifications.sender = Some(sender);
+                self.notifications.system = Some(system);
+            }
             Message::Backend(Event::Skipped(through)) => {
                 if self
                     .notifications

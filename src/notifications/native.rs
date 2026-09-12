@@ -10,26 +10,10 @@ mod tests;
 const APP_ID: &str = "so.shep.Shep";
 
 #[cfg(target_os = "linux")]
-pub(super) async fn deliver(delivery: Delivery) -> anyhow::Result<()> {
-    if delivery.popups {
-        let connection = tokio::time::timeout(Duration::from_secs(2), zbus::Connection::session())
-            .await
-            .context("Connecting to desktop notifications timed out")?
-            .context(
-                "Desktop notifications are unavailable. Check your desktop notification service",
-            )?;
-        linux_popup(&connection, &delivery).await?;
-    } else if delivery.sound {
-        // The desktop notification service owns popup sounds (and Do Not
-        // Disturb). Sound-only mode uses the native sound-theme helper.
-        sound_helper("canberra-gtk-play", &["--id=message-new-email", "--description=Shep new email"]).await
-            .context("Could not play the mail sound. Install libcanberra-gtk3-bin and check your sound settings")?;
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-async fn linux_popup(connection: &zbus::Connection, delivery: &Delivery) -> anyhow::Result<()> {
+pub(super) async fn linux_popup(
+    connection: &zbus::Connection,
+    delivery: &Delivery,
+) -> anyhow::Result<()> {
     use std::collections::HashMap;
     use zbus::zvariant::Value;
     fn escape(value: &str) -> String {
@@ -79,7 +63,7 @@ async fn linux_popup(connection: &zbus::Connection, delivery: &Delivery) -> anyh
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-async fn sound_helper(program: &str, arguments: &[&str]) -> anyhow::Result<()> {
+pub(super) async fn sound_helper(program: &str, arguments: &[&str]) -> anyhow::Result<()> {
     let mut child = tokio::process::Command::new(program)
         .args(arguments)
         .stdin(std::process::Stdio::null())
