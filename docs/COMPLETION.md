@@ -1,5 +1,57 @@
 # Completion audit
 
+## 12 September: abbreviation demo search performance (R18/R44/R99)
+
+The demo's bounded vocabulary lookup now excludes the exact token from both
+candidate pools. SQLite's vocabulary cursor counts postings even when an SQL
+filter later excludes its boundary, so the two inclusive ranges stop before
+and resume after that token. Cached bound JSON statements and an OSA batch
+comparator also avoid repeated query parsing and matcher setup. Candidate
+budgets now count typo neighbours, which can admit one additional valid term at
+the old exact-token boundary; literal, numeric, phrase and body priorities are
+unchanged. No whole-mailbox array, extra returned rows or higher budget is used.
+
+Complete bounded prefix scans now skip impossible variants only within a proved
+exhausted range; other prefixes and full-cap scans retain their checks. A fresh
+query-transaction proof avoids prefix merging when no longer word exists.
+Search totals and unread counts share the full ranked-key query, with metadata
+read only for the final 50 rows. One ranking helper preserves the exact-body,
+phrase, literal and expanded tiers across pages and captured selection, and
+omits redundant literal ranking only when the generated query proves equality.
+
+All 65 focused checks pass: 53 search/selection/bulk/move integration tests,
+seven folder-projection tests, four vocabulary regressions and a query-plan
+guard. These include a 2,000-occurrence exact word, candidates outside a full
+256-term scan, Unicode suffix insertion/removal/reopen, an exact Unicode body
+that is not a normalised literal match, numeric phrases with selected-folder
+bindings, total/unread counts at empty offsets and projected bulk destinations
+sorted by relevance. Logs use the `artifacts/logs/search-c-filter-*` prefix.
+
+The final quiet benchmark passes on 100,000 messages and four accounts, with
+60 samples and 4,132 asserted matches for each search query. P95 is 7.28 ms for
+Inbox, 3.61 ms for one account, 19.87 ms for ordinary search, 22.83 ms for a
+transposition and 31.25 ms for the four-term query, all below 50 ms. Cached-body
+p95 is 0.045 ms below 10 ms. The optimised `test-ui` profile and fixture are the
+same across demos; see `artifacts/performance/backend.json` and
+`artifacts/logs/search-c-backend-filter.log`. Earlier failures remain recorded:
+the initial four-term p95 was 79.26 ms, vocabulary exclusion alone 68.09 ms,
+prefix/literal-page work 53.22 ms and counted keys before absence filtering
+58.89 ms. No timeout or budget was relaxed.
+
+All twelve final native search/Preferences/Move scenarios pass in 46.290 seconds
+(`artifacts/logs/search-c-final-native.log`). Reviewed light `ntfctns` results,
+compact-dark Profiles destination and phrase-first mail are in `e7c793909fad`
+and `0ba52ad0c352`; common catalogue/no-results evidence is in `1f2897b04ae6`,
+`60e75854d755` and `7a7d22d5f90e`. Native SHA-256 is
+`8e765ea554f7457196ca6cc98069ab41c0734792a7f4e50f486af7c39e388d9f`.
+The final source also checks an unrepresentable offset before SQL conversion;
+the focused `usize::MAX` regression preserves full totals and an empty page.
+That guard does not change the measured ordinary offsets or ranking.
+Strict pinned Zensical, formatting and all 43 parity contracts pass. Main's
+`e14f3d6` shipping receipt is included; normal hooks and authorised branch push
+remain pending. These are cached backend and warm catalogue measurements,
+not native input latency or live-provider performance.
+
 ## 11 September: abbreviation demo catalogue and native review (R18/R44/R99)
 
 `demo/search-abbreviations` now includes the shared catalogue (`1f6c93c`), shared
@@ -27,8 +79,19 @@ existing persistent fictional fixture and verifies loaded profile metadata.
 The final native SHA-256 is
 `e1a12cbc6020546c858fa3aa67ea26e7cc9e95f592aa29ea33ed000b8f3543b4`.
 
-The shared parity registry validates all 43 contracts. Quiet benchmark results,
-final mandatory hooks and authorised branch shipping remain pending. No default
+The shared parity registry validates all 43 contracts. Checkpoint `ec03a45` passes
+normal hooks. The quiet, optimised catalogue benchmark passes all eight queries
+at 60 samples each: p95 ranges from 0.023 to 0.045 ms against the 8 ms budget.
+This measures warm complete catalogue ranking, excluding native input and drawing;
+the report is `artifacts/performance/settings-search.json`.
+
+The initial mailbox run exposed an incorrect expected count in the new benchmark:
+the numeric token can match sender or subject as well as body, giving 4,132
+matches across the unchanged 100,000-message fixture. After correcting that
+assertion, ordinary and transposed search pass at p95 42.29 and 32.10 ms, but
+the four-term query fails at 79.26 ms against the unchanged 50 ms budget.
+The failed receipt is `artifacts/logs/search-c-backend-timing.log`; the subsequent
+optimisation and passing quiet measurement are recorded above. No default
 algorithm, full R99 completion, client parity, native input latency or personal
 installation is claimed. [Demo notes](agents/search-abbreviations.md) record the
 mail token limit, mixed identifier prefix behaviour and bounded corrections.

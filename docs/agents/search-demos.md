@@ -13,10 +13,14 @@ icon fixes from main. No alternative is the selected production default yet.
 From a demo branch, open an isolated fictional workspace:
 
 ```sh
-cargo run --profile test-ui --features test-support -- --demo --search-mail
+shep_demo_dir=$(mktemp -d "${TMPDIR:-/tmp}/shep-search-demo.XXXXXX")
+cargo run --profile test-ui --features test-support -- \
+  --demo --search-mail --persist-demo --test-state "$shep_demo_dir/state.json"
 ```
 
 This does not use personal accounts or change the installed application.
+Run both lines for each branch to start fresh. Reusing the directory preserves
+that demo's preferences, mail changes and profiles.
 The comparison replaces twelve generic fixture rows, preserving their cache
 identities and row counts. The original exact `test` examples remain present.
 

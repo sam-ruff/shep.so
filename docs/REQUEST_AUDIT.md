@@ -13,7 +13,14 @@ The `demo/search-abbreviations` algorithm checkpoint implements Nucleo/OSA label
 matching and phrase-aware indexed mail ranking, with search/selection regressions.
 Its shared catalogue and twelve native search/Move/control scenarios now pass,
 including real abbreviation result clicks and phrase priority in both themes.
-Quiet benchmarks, final hooks and branch push remain pending; see the
+The 12 September optimisation excludes exact tokens from bounded typo pools,
+proves absent variants from complete prefix scans and shares counts with ranked
+keys. All 65 focused query/selection/bulk/vocabulary checks pass. Quiet cached
+search p95 is 19.87 ms ordinary, 22.83 ms transposed and 31.25 ms for four terms
+on 100,000 messages, below the unchanged 50 ms limit; the earlier failures are
+retained. Warm catalogue ranking passes at p95 0.023–0.045 ms. All twelve final
+native search/control scenarios and reviewed light/compact-dark captures pass;
+strict docs and parity checks pass. Normal hooks and branch push remain pending; see the
 [algorithm notes](agents/search-abbreviations.md) and completion log.
 
 **11 September R64 GNOME correction:** Sam's faint dark dog and undersized tray

@@ -8,6 +8,19 @@ const MATCH_SCORE: &str =
     "COALESCE(phrase_matches.rank,exact_matches.rank,bm25(mail_search.mail_search,0.3,2.0,1.0))";
 const MATCH_JOINS: &str = " LEFT JOIN exact_matches ON exact_matches.rowid=messages.rowid LEFT JOIN phrase_matches ON phrase_matches.rowid=messages.rowid";
 
+type PageRow = (String, bool, bool, String, String, bool);
+type CountedPage = (Vec<PageRow>, usize, usize);
+
+const RANK_ORDER: &str = "priority,tier,score,timestamp DESC,id";
+
+struct Ranking {
+    prefix: String,
+    value_index: usize,
+    joins: &'static str,
+    tier: &'static str,
+    score: &'static str,
+}
+
 pub(super) struct Plan {
     prefix: &'static str,
     from: String,
@@ -15,6 +28,7 @@ pub(super) struct Plan {
     values: Vec<Value>,
     query: MailQuery,
     search: String,
+    source: &'static str,
 }
 
 impl Plan {
@@ -100,6 +114,7 @@ impl Plan {
             values,
             query: query.clone(),
             search,
+            source,
         })
     }
 
@@ -124,6 +139,105 @@ impl Plan {
                 ))
             },
         )?)
+    }
+
+    pub fn counted_page(
+        &self,
+        c: &Connection,
+        columns: &str,
+    ) -> anyhow::Result<Option<CountedPage>> {
+        if self.query.sort != MailSort::Relevance || self.search.is_empty() {
+            return Ok(None);
+        }
+        let Ok(offset) = i64::try_from(self.query.offset) else {
+            return Ok(None);
+        };
+        let mut values = self.values.clone();
+        let ranking = self.relevance_relations(&mut values);
+        values.splice(
+            ranking.value_index..ranking.value_index,
+            [
+                (self.query.search.trim().len().saturating_add(8) as i64).into(),
+                self.query.search.trim().to_owned().into(),
+            ],
+        );
+        values.push((PAGE_SIZE as i64).into());
+        values.push(offset.into());
+        let prefix = if ranking.prefix.is_empty() {
+            "WITH ".to_owned()
+        } else {
+            format!("{}, ", ranking.prefix.trim_end())
+        };
+        let Ranking {
+            joins, tier, score, ..
+        } = ranking;
+        // Rank inside the FTS cursor before window aggregation. Only keys are
+        // materialised; message metadata is read after the bounded page.
+        let sql = format!(
+            "{prefix}ranked_matches AS MATERIALIZED (
+                SELECT messages.rowid AS rowid,messages.unread AS unread,
+                    {EXACT_BODY_PRIORITY} AS priority,{tier} AS tier,
+                    {score} AS score,timestamp,messages.id AS id
+                FROM {}{joins} WHERE {}
+            ), counted_matches AS (
+                SELECT rowid,priority,tier,score,timestamp,id,
+                    COUNT(*) OVER() AS total,COALESCE(SUM(unread) OVER(),0) AS unread_total
+                FROM ranked_matches
+                ORDER BY {RANK_ORDER} LIMIT ? OFFSET ?
+            )
+            SELECT {columns},page.total,page.unread_total
+            FROM {} AS messages JOIN counted_matches AS page ON page.rowid=messages.rowid
+            ORDER BY page.priority,page.tier,page.score,page.timestamp DESC,page.id",
+            self.from, self.condition, self.source
+        );
+        let mut statement = c.prepare(&sql)?;
+        let mut cursor = statement.query(rusqlite::params_from_iter(&values))?;
+        let mut rows = Vec::with_capacity(PAGE_SIZE);
+        let mut counts = None;
+        while let Some(row) = cursor.next()? {
+            counts = Some((
+                usize::try_from(row.get::<_, i64>(6)?)?,
+                usize::try_from(row.get::<_, i64>(7)?)?,
+            ));
+            rows.push((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ));
+        }
+        Ok(counts.map(|(total, unread)| (rows, total, unread)))
+    }
+
+    pub fn page(
+        &self,
+        c: &Connection,
+        columns: &str,
+        total: usize,
+    ) -> anyhow::Result<Vec<PageRow>> {
+        let expected = total.saturating_sub(self.query.offset).min(PAGE_SIZE);
+        if expected == 0 {
+            return Ok(Vec::new());
+        }
+        let read = |(sql, mut values): (String, Vec<Value>)| -> anyhow::Result<Vec<PageRow>> {
+            values.push((PAGE_SIZE as i64).into());
+            values.push((self.query.offset as i64).into());
+            Ok(c.prepare(&format!("{sql} LIMIT ? OFFSET ?"))?
+                .query_map(rusqlite::params_from_iter(&values), |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?)
+        };
+        read(self.ordered(columns))
     }
 
     pub(super) fn affected_query(&self, token: &str) -> (String, Vec<Value>) {
@@ -159,17 +273,17 @@ impl Plan {
         let mut prefix = self.prefix.to_owned();
         let (priority, missing, score) =
             if self.query.sort == MailSort::Relevance && !self.search.is_empty() {
-                let (rank_prefix, index) = self.relevance_relations(&mut values);
-                prefix = rank_prefix;
-                from.push_str(MATCH_JOINS);
+                let ranking = self.relevance_relations(&mut values);
+                prefix = ranking.prefix;
+                from.push_str(ranking.joins);
                 values.splice(
-                    index..index,
+                    ranking.value_index..ranking.value_index,
                     [
                         (self.query.search.trim().len().saturating_add(8) as i64).into(),
                         self.query.search.trim().to_owned().into(),
                     ],
                 );
-                (EXACT_BODY_PRIORITY, MATCH_TIER, MATCH_SCORE)
+                (EXACT_BODY_PRIORITY, ranking.tier, ranking.score)
             } else {
                 ("0", "0", "0")
             };
@@ -188,9 +302,39 @@ impl Plan {
         )
     }
 
-    fn relevance_relations(&self, values: &mut Vec<Value>) -> (String, usize) {
+    fn relevance_relations(&self, values: &mut Vec<Value>) -> Ranking {
         let literal = crate::fuzzy::literal_query(&self.query.search);
         let phrase = crate::fuzzy::phrase_query(&self.query.search);
+        let literal_grouped = literal
+            .split(" AND ")
+            .map(|term| format!("({term})"))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let index = usize::from(!self.prefix.is_empty());
+        if self.search == literal_grouped {
+            if literal == phrase {
+                return Ranking {
+                    prefix: self.prefix.to_owned(),
+                    value_index: index,
+                    joins: "",
+                    tier: "0",
+                    score: "bm25(mail_search.mail_search,0.3,2.0,1.0)",
+                };
+            }
+            let relation = "phrase_matches AS MATERIALIZED (SELECT rowid,rank FROM mail_search(?, 'bm25(0.3, 2.0, 1.0)')) ";
+            values.insert(index, phrase.into());
+            return Ranking {
+                prefix: if self.prefix.is_empty() {
+                    format!("WITH {relation}")
+                } else {
+                    format!("{}, {relation}", self.prefix.trim_end())
+                },
+                value_index: index + 1,
+                joins: " LEFT JOIN phrase_matches ON phrase_matches.rowid=messages.rowid",
+                tier: "CASE WHEN phrase_matches.rowid IS NULL THEN 1 ELSE 0 END",
+                score: "COALESCE(phrase_matches.rank,bm25(mail_search.mail_search,0.3,2.0,1.0))",
+            };
+        }
         let mut bindings = vec![literal.clone().into()];
         // Materialise each FTS relation once, avoiding a full ranked scan per
         // candidate. A single term shares its literal relation with the phrase.
@@ -208,10 +352,15 @@ impl Plan {
         } else {
             format!("{}, {relations}", self.prefix.trim_end())
         };
-        let index = usize::from(!self.prefix.is_empty());
         let select_index = index + bindings.len();
         values.splice(index..index, bindings);
-        (prefix, select_index)
+        Ranking {
+            prefix,
+            value_index: select_index,
+            joins: MATCH_JOINS,
+            tier: MATCH_TIER,
+            score: MATCH_SCORE,
+        }
     }
 
     /// `columns` is a static projection supplied by our store methods, not input.
@@ -221,13 +370,17 @@ impl Plan {
         let mut prefix = self.prefix.to_owned();
         let order = match self.query.sort {
             MailSort::Relevance if !self.search.is_empty() => {
-                prefix = self.relevance_relations(&mut values).0;
-                from.push_str(MATCH_JOINS);
+                let ranking = self.relevance_relations(&mut values);
+                prefix = ranking.prefix;
+                from.push_str(ranking.joins);
                 // octet_length checks stored size without loading long bodies.
                 // Whole-body equality makes a short exact reply rank first.
                 values.push((self.query.search.trim().len().saturating_add(8) as i64).into());
                 values.push(self.query.search.trim().to_owned().into());
-                format!("{EXACT_BODY_PRIORITY},{MATCH_TIER},{MATCH_SCORE},timestamp DESC,id")
+                format!(
+                    "{EXACT_BODY_PRIORITY},{},{},timestamp DESC,id",
+                    ranking.tier, ranking.score
+                )
             }
             MailSort::Relevance | MailSort::Newest => "timestamp DESC,id".into(),
             MailSort::Oldest => "timestamp ASC,id".into(),
@@ -251,6 +404,20 @@ mod tests {
     #[tokio::test]
     async fn relevance_does_not_rescan_a_literal_fts_relation_per_candidate() {
         let store = Store::memory().unwrap();
+        store
+            .upsert(vec![
+                parse_mail(
+                    "fixture",
+                    "1",
+                    "INBOX",
+                    b"Subject: Milestones\r\n\r\n17".to_vec(),
+                    false,
+                    false,
+                )
+                .unwrap(),
+            ])
+            .await
+            .unwrap();
         store
             .run(|c| {
                 for folders in [
