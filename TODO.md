@@ -6,8 +6,6 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
 
 ## Top priority — OAuth and shared profiles
 
-- [ ] **12 September README scripts and installation:** installer fixes pass 124 Python tests (seven Windows skips), strict docs and a real production build/isolated installation. The current production binary and approved icons are installed; existing processes need normal Quit/reopen. Finish normal shipping hooks and push the installer source/receipt. Windows/macOS assets and execution remain tracked platform gaps.
-
 - [ ] **12 September text-menu parity:** verify Flutter/browser equivalents for editable fields, selectable readers, password restrictions, clipboard/focus ownership and keyboard context-menu access; retain platform-native controls where they fulfil the shared contract.
 
 **12 September current execution order:** completed search, tray, notification
@@ -18,7 +16,12 @@ review. Nineteen native scenarios and 1,263 hook test executions pass; completio
 records the source and evidence. Sidebar New folder is pushed as `842c570`, with
 thirteen native scenarios and 1,277 normal-hook executions passing. Standard text
 menus are pushed as `bc9ca09`, with 27 distinct native scenarios and 1,287 hook
-executions passing. Finish the README installer fixes and production install next.
+executions passing. README installer fixes are pushed as `c3296ce`, with 124
+Python tests (seven unavailable Windows skips), strict docs and 1,287 hook
+executions passing. The verified production binary and approved launcher/icons
+are installed; existing processes require normal Quit/reopen. Completion records
+the exact binary hash and platform/configuration limits. This requested desktop
+sequence is delivered; the wider TODO remains active.
 Flutter/browser missing-folder creation, sidebar creation controls and automatic
 proof-based move recovery remain explicit active parity gaps.
 Automatic creation for other provider write paths, including Sent-copy

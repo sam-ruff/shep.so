@@ -7,8 +7,11 @@ and nineteen relevant native scenarios passing. Missing destinations are created
 before mail submission; exact proof enables automatic recovery and direct Retry.
 Sidebar New folder is pushed as `842c570`, with thirteen native scenarios and
 1,277 normal-hook executions passing. Text menus are pushed as `bc9ca09`, with
-27 distinct native scenarios and 1,287 hook executions passing. Finish the README
-installers and install the production update. Keep uncertain outcomes protected and preserve the
+27 distinct native scenarios and 1,287 hook executions passing. README installer
+fixes are pushed as `c3296ce`; the verified production update and approved icons
+are installed. Existing processes require normal Quit/reopen. This requested
+desktop sequence is delivered; continue the wider authoritative TODO, retaining
+platform and client gaps. Keep uncertain outcomes protected and preserve the
 retarget identity, Undo and late-page count regressions. Completion records
 the native hash and reviewed evidence; isolated UI lanes started at `0abec9f`.
 
