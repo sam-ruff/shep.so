@@ -2,6 +2,24 @@
 
 ## Mail recovery, standard selection, large receipt and Spam, 13 September 2026
 
+Source is pushed as [`12e6e2d`](https://github.com/sam-ruff/shep.so/commit/12e6e2d2f52a2db43443c4bd8ad65fcf3325cbab), rebased onto the concurrent self-hosted documentation and
+website delivery without changes to the verified desktop source. Normal hooks
+pass formatting, both Clippy configurations and 1,305 Rust test executions
+(four ignored). The Python suite passes 125 tests with seven unavailable Windows
+skips; 50 parity contracts and the pinned strict docs build pass. Final native
+selection and reader-column scenarios pass again after the mode-return fix in
+`final-selection-native.log`. Source hook evidence is
+`mail-fixes-source-commit.log`; production installation is recorded below.
+
+The final no-feature production build and installed binary match SHA-256
+`f1c373a19bd05b31b0fe73ba24c249ae3b326965bf9b9e775b1380d4e7acbdc2`.
+The normal Linux installer updated the binary and launcher atomically without
+stopping personal processes or changing account data. Quit/reopen is required
+for existing processes. Evidence: `final-selection-production-build.log`,
+`mail-fixes-production-install.log` and `mail-fixes-shipping-docs.log`.
+Google Desktop client configuration remains unsupplied. Quality/release CI stays
+disabled; documentation uses the authorised self-hosted runner pool.
+
 The reported original message was blocked by a completed kept-copy recovery
 reservation. Fresh Move/Delete now retires only that finished source lookup
 inside the new preparation transaction. The old receipt and retained local copy
