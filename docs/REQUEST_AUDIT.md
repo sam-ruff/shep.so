@@ -1046,4 +1046,9 @@ normal hooks and shipping remain pending.
 
 ## Merge record
 
+Website migration follow-up, 13 September 2026: R94 now has source checks for
+full-SHA image identity, local-only CI, non-publishing pull requests, restricted
+build context and cache revalidation. Live registry publication and infrastructure
+deployment remain tracked in TODO; application release workflows stay disabled.
+
 2026-09-09: `main` (`c414227`) was merged into `feat/mobile-web-clients` (`724f764`). The desktop profile sync implementation from `main` replaced the client branch's own desktop implementation under the "main wins for root code" rule; the shared profile-core crate became a superset of both sides, main's `a81d767`/`5eabb52` provider changes were ported into `shared/mail-core`, and the pre-commit hook became the union of both branches' gates. From this point desktop changes reach the client branch through `main` rather than through ports, and every unfinished requirement from both sides remains in [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md). See the matching [completion entry](COMPLETION.md) for gate results.

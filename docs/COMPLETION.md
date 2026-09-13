@@ -7099,3 +7099,18 @@ lines, sender pictures and quoted history are the browser's portable set).
 Browser storage is keyed by the beta identity hash with the Drive principal
 bound in every journal binding; a name row counts inside its account
 application.
+
+## Promotional image migration checks, 13 September 2026
+
+The website publisher now uses a full commit-SHA image tag and matching OCI
+source/revision/version labels, separate from application releases. Pull requests
+validate without registry publication; every job remains on the local pool.
+Pinned build inputs, a restricted Docker context and cache revalidation for
+unversioned assets prepare the image for infrastructure-managed deployment.
+
+Four deployment-contract tests and all 21 Chromium scenarios pass. A local
+Docker build transfers 131.56 kB of context; its running nginx returns 200 for
+the page and script with the intended cache headers, and 404 for `/beta`.
+The owned test container was stopped. Strict pinned Zensical builds pass.
+These checks do not establish registry publication, live staging, production
+hosting or beta availability; infrastructure must verify and promote the digest.

@@ -85,6 +85,8 @@ Next add OS background scheduling, subscriptions seeded from a first publication
 
 ## Mobile, web and website (same monorepo)
 
+- [ ] **Website migration hardening:** publish the tested full-SHA promotional image with OCI source identity, validate pull requests without registry publication, retain local-only CI, constrain its Docker context and revalidate unversioned assets. Infrastructure must verify the successful Website workflow and pin its image digest before staging and production promotion. Keep application release workflows disabled and record live deployment separately from source checks.
+
 Client request numbers R67 to R80 in this section are the client session's own numbers.
 
 - [ ] **R67 (client) — Flutter parity:** Keep Rust desktop at the root, Android/iOS in `flutter/`, the separate iced-style browser in `web/`, and promo in `website/`; the separate `shep.flutter` repository and hosted Flutter layout are superseded. Preserve the shadcn theme, approved logo, configurability and complete mail/calendar/provider/backup behavior. Shared MIME, drafts, attachments, Forward/Print, account removal, native credential handover, Sent identity and optimistic action foundations have recorded host/Android/browser evidence. **Remaining:** full composition/multiple editors, native/browser Sent labels/history, browser Outbox paging, bounded body/cache/large-MIME work, account editing with reviewed identity migration and browser credential handover, calendar/Google/backups, latest desktop defaults, native keymaps, complete lifecycle/accessibility/performance audit and Apple/live-provider execution. SQLite is still unencrypted. See the completion log and parity matrix; fixture success is not full parity.

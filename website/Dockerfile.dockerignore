@@ -1,0 +1,17 @@
+**
+!website/
+!website/Dockerfile
+!website/package.json
+!website/package-lock.json
+!website/nginx.conf
+!website/public/
+!website/public/**
+!website/scripts/
+!website/scripts/build.mjs
+!assets/
+!assets/logo-light.webp
+!assets/logo-dark.webp
+!docs/
+!docs/images/
+!docs/images/mail-light.webp
+!docs/images/calendar-dark.webp
