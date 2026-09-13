@@ -1,5 +1,17 @@
 # Shep handover
 
+## Current delivery, 13 September
+
+Mail recovery, standard HTML/title selection, ordinary-cache large receipt and
+Spam are pushed as `12e6e2d`, with the production build installed. Completion
+records 1,305 normal-hook Rust executions, 51 distinct native scenarios, final
+selection reruns and the binary hash. Existing processes need normal Quit/reopen.
+The next requested step is discussion of cross-device email/folder state, before
+implementing a new sync design. Encrypted large staging, full streaming/search,
+Spam aliases beyond Junk, live-provider confirmation and Flutter/browser parity
+remain explicit gaps. Preserve the unrelated Google client configuration request
+and the wider authoritative TODO.
+
 ## Current decision, 12 September
 
 Moving-mail source is committed on main as `b614b8d`, with 1,263 hook executions

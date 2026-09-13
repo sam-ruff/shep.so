@@ -6,11 +6,17 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
 
 ## Top priority — OAuth and shared profiles
 
-- [ ] **13 September large mail and Spam:** stop skipping messages larger than 25 MB and remove the corresponding skipped-message bar notice. Keep receiving large mail safe and responsive rather than hiding an incomplete download. Make Spam available alongside Trash, Archive and Sent, with matching folder navigation/actions and explicit client parity tracking.
+**13 September desktop delivery:** `12e6e2d` is pushed and its production build
+installed. Recovered originals accept fresh Move/Delete, HTML uses library-backed
+selection, titles are selectable, ordinary-cache receiving stages large messages
+without the skipped-size bar, and Spam opens Junk beside Trash. Normal hooks
+pass 1,305 Rust test executions; 51 distinct native scenarios and the final
+selection rerun pass. Completion records the binary hash, evidence and limits.
+Running copies need normal Quit/reopen. Wider R23 and client gaps remain below.
 
 - [ ] **13 September client and folder-role parity:** verify Flutter/browser equivalents for the recovered-original action fix, standard HTML/subject selection, large-message receipt and Spam controls. Desktop's initial Spam shortcut targets the reported server's `Junk` folder; discover other providers' special-use aliases without guessing or renaming physical folders.
 
-- [ ] **13 September domain-expiry actions and reader selection:** diagnose and fix the Technesci account domain-expiry message refusing Delete/Move. Replace or adapt the formatted reader to established text-selection behaviour, including double-click word selection; make the message title selectable and copyable. Verify backend and real native controls, track client equivalents, then discuss cross-device email/folder-state synchronisation with Sam. Do not treat the prior selection-paint fix as satisfying this request.
+- [ ] **13 September cross-device mail/folder discussion:** following the installed desktop fixes, discuss shared email/folder state with Sam, including read/flag state, moves/deletes, physical folder identities, offline conflicts and which Shep-only state should follow the user. Do not start implementing a new synchronisation design before this discussion.
 
 - [ ] **12 September real Google login configuration:** guide the owner through creating or reusing Shep's Google Cloud project and Desktop OAuth client, then verify a production login build. **Owner correction:** store the public Desktop client ID and accompanying installed-app client secret in this repository and embed them in the app. Personal access/refresh tokens stay in secure credential storage; confidential future web-server credentials belong in the infrastructure vault. Preserve the same-project requirement for future clients. Client configuration has not been supplied yet.
 

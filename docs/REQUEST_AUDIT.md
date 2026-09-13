@@ -3,12 +3,22 @@
 **13 September large messages and Spam:** Sam requests receiving messages larger
 than 25 MB, removing the skipped-message bar notice, and exposing Spam alongside
 Trash, Archive and Sent. This overrides the earlier 25 MB skip behaviour.
+Desktop delivery is pushed as `12e6e2d` and its production build is installed:
+ordinary caches stage large mail, the skipped-size notice is removed and Spam
+opens the reported server's Junk folder. Encrypted staging, full streaming,
+other Spam aliases and client equivalents remain explicit TODO gaps.
 
 **13 September mail actions and ordinary reader selection:** Sam reports that the
 Technesci domain-expiry email cannot be deleted or moved, requests standard HTML
 selection including double-click and a selectable/copyable title, and wants a
 discussion of cross-device email/folder state after these fixes are verified.
 The previous visible-selection implementation does not fulfil this correction.
+Delivered in `12e6e2d`: completed kept-copy reservations no longer block a fresh
+original-message action; cosmic-text supplies word/line selection, iced titles
+are selectable, and stale mode preparation cannot reset selection. Completion
+records 1,305 normal-hook executions, 51 distinct native scenarios, final
+regressions and the installed production hash. Cross-device state discussion is
+the next requested step; personal mail was not mutated during verification.
 
 **12 September Google login and infrastructure vault:** Sam requests a guided
 Google OAuth setup for the installed desktop application, with sensitive
