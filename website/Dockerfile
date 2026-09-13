@@ -17,7 +17,7 @@ COPY docs/images/mail-light.webp docs/images/calendar-dark.webp /app/docs/images
 RUN npm run build
 
 # Chainguard nginx pinned by digest, matching the other images on the estate.
-FROM cgr.dev/chainguard/nginx@sha256:fe77a7f4da2ed98d5629bab3f4f2a0cc40ab18b341cb46a62f05acce7a760c82
+FROM cgr.dev/chainguard/nginx@sha256:7b3bbe97d6ba4be0a00719e08abd483b7d18ae46b65f5c20b83a681691d9e691
 
 ARG GIT_SHA
 ARG VERSION
