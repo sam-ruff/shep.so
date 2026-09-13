@@ -31,4 +31,7 @@ The Documentation workflow builds pull requests and publishes docs changes on `m
 
 GitHub Pages must use **GitHub Actions** as its source. Private repositories need a GitHub plan that supports Pages.
 
-Quality and release workflows remain disabled. Re-enable those when the self-hosted runners are ready.
+Desktop quality and release workflows use the self-hosted Linux and Windows
+pools. A release requires both platforms to pass on the same source revision;
+the [release contract](agents/releases.md) explains the artifact checks.
+Coordinated mobile/browser publication and Apple execution remain unfinished.

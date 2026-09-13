@@ -49,11 +49,13 @@ def open_url(url):
 
 def release_asset(version, system, machine, fetch=open_url):
     suffix = "/latest"
+    requested_version = None
     if version:
         match = VERSION.fullmatch(version)
         if not match:
             raise InstallError("Use a version such as 1.2.3 or v1.2.3")
         suffix = "/tags/v" + match[1]
+        requested_version = match[1]
     try:
         with fetch(API + suffix) as response:
             payload = response.read(2 * 1024 * 1024 + 1)
@@ -69,6 +71,8 @@ def release_asset(version, system, machine, fetch=open_url):
     match = VERSION.fullmatch(str(release.get("tag_name", "")))
     if not match or release.get("draft"):
         raise InstallError("GitHub did not return a usable published release")
+    if requested_version and match[1] != requested_version:
+        raise InstallError("GitHub returned a different release from the requested version; nothing was installed")
     architecture = {"amd64": "x86_64", "x86_64": "x86_64", "arm64": "aarch64", "aarch64": "aarch64"}.get(machine.lower())
     assets = release.get("assets", [])
     if not isinstance(assets, list):
@@ -79,7 +83,8 @@ def release_asset(version, system, machine, fetch=open_url):
         if isinstance(asset, dict) and asset.get("name") in (name, "SHA256SUMS"):
             asset_name = asset["name"]
             url = asset.get("browser_download_url", "")
-            if asset_name in selected or not isinstance(url, str) or not url.startswith(DOWNLOADS):
+            expected_url = f"{DOWNLOADS}{release['tag_name']}/{asset_name}"
+            if asset_name in selected or url != expected_url:
                 raise InstallError("The release has duplicate or unexpected download URLs")
             selected[asset_name] = url
     if not architecture or name not in selected:

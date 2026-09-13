@@ -106,21 +106,33 @@ Keep the restrained shadcn-inspired design: clear hierarchy, comfortable spacing
 
 The user says the Dungeonwalk tools repository contains AI vectoriser and remove.bg API credentials that may be used when editing existing icons. Locate that repository and its own instructions when needed; preserve the approved Shepherd design. Keep credentials in their original secret configuration or process environment, never in Shep source, documentation, shell history, logs or tool output. This is a discovery pointer, not a request to copy credentials into this repository.
 
-## Documentation CI is enabled; quality and release are DISABLED
+## Self-hosted CI and desktop releases
 
 **The user authorized the public repository and automatic Zensical documentation publishing to GitHub Pages.** Repository: `sam-ruff/shep.so`, public, default branch `main`. Direct pushes to `main` are currently authorized. `.github/workflows/docs.yml` builds and deploys documentation on the local `[self-hosted, sophie]` pool; pull requests only build and changes from `main` deploy to GitHub Pages. All CI must remain self-hosted; missing capacity is not permission to use GitHub-hosted runners. Repository Actions must be enabled for this workflow. Before pushing documentation changes, run the pinned Zensical builder with `zensical build --clean --strict`, matching CI. Links from published docs to files outside `docs/` (such as root TODO.md and AGENTS.md) must use their GitHub URLs; relative links cannot escape the published site.
 
 Use `Sam R <sam@technesci.co.uk>` for this owner's Git author/committer identity. Do not add the owner's private contact details or exact workstation hardware to public documentation. Keep old private history backups and audit reports under ignored `artifacts/`.
 
-Quality and release workflow definitions remain deliberately named `.github/workflows/ci.yml.disabled` and `release.yml.disabled`. Do not enable them as a side effect of ordinary development or docs publishing. Remind Sam to re-enable them when the self-hosted runners are ready.
+On 13 September Sam requested release CI so the install scripts can use published
+binaries. This supersedes the dormant desktop quality/release instruction.
+`.github/workflows/ci.yml` tests Linux and Windows and prepares desktop archives;
+`release.yml` publishes only artifacts from the successful current-main push.
+Linux uses `[self-hosted, sophie]`, Windows `[self-hosted, Windows, X64]`. The
+existing pool registers ephemeral runners when jobs start, so an empty runner
+list does not establish missing capacity. Fork pull requests cannot run on these
+runners. Never dispatch an old workflow revision that chooses hosted runners.
 
-To enable when Sam asks:
+Linux quality runs inside the owned Ubuntu 24.04 image with pinned Rust, Node
+and sandboxed Chrome, matching the runner UID/GID. Preserve the restricted
+seccomp profile, namespace/browser preflight, four Cargo jobs and native timing
+budgets. Windows uses the provisioned MSVC/Python toolchain. Documentation uses
+the installed Python in a private virtual environment because setup-python has
+no matching Debian 13 Python build. Keep the CI image free of profile data and
+checkout credentials.
 
-1. Provision trusted self-hosted runner labels from the CI matrix: `[self-hosted, Linux, X64]`, `[self-hosted, Windows, X64]`, `[self-hosted, macOS, ARM64]`. Adjust labels to the actual machines first. Do not run untrusted fork code on persistent self-hosted runners.
-2. Install Rust with `rustfmt` and `clippy`, CMake and a C++ compiler for vendored litehtml, Python 3.11+, Node 24, and platform development libraries. The Linux GUI harness additionally needs `Xvfb`, `xdotool`, `zenity`, `xclip`, `dbus-daemon`, `busctl`, and ImageMagick `import` with WebP support. Print flows need Chrome/Chromium, Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and ImageMagick `convert`. Linux needs OpenSSL/dbus/X11/Wayland development packages and a Secret Service for real credentials.
-3. Rename both `.yml.disabled` files to `.yml`.
-4. `gh api --method PUT repos/sam-ruff/shep.so/actions/permissions -F enabled=true`
-5. Run the quality workflow manually, inspect results, then let the release workflow run only after a successful push build on `main`.
+`.github/workflows/clients.yml.disabled` retains the unfinished coordinated
+mobile/browser quality lanes. Apple runner capacity and mobile distribution
+remain unavailable/unverified. `shared/release-readiness.json` stays false; a
+desktop release does not assert client parity, signing or VPS readiness.
 
 ## Build and quality gates
 
@@ -140,7 +152,7 @@ python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html
 bash scripts/check.sh                      # all of the above
 ```
 
-The pre-commit hook runs formatting, Clippy, `cargo test --all-features`, the `shep-html-pixbuf` tests and `scripts/test_profile_core.py`. The commit-msg hook requires Conventional Commits. `core.hooksPath` is the relative `.githooks` (set by `scripts/install-hooks.sh` from the checkout root); keep it relative so every worktree runs its own checkout's hooks rather than another checkout's, and re-run `git config core.hooksPath .githooks` if `git config --show-origin core.hooksPath` shows an absolute path. Do not skip failing hooks or weaken a budget just to get a commit through. `SHEP_SKIP_E2E=1 bash scripts/check.sh` runs the non-GUI checks on machines without Linux/X11; report that omission. CI repeats the checks; Rust compiles/tests run on all three platform runners, native E2E currently runs on Linux.
+The pre-commit hook runs formatting, Clippy, `cargo test --all-features`, the `shep-html-pixbuf` tests and `scripts/test_profile_core.py`. The commit-msg hook requires Conventional Commits. `core.hooksPath` is the relative `.githooks` (set by `scripts/install-hooks.sh` from the checkout root); keep it relative so every worktree runs its own checkout's hooks rather than another checkout's, and re-run `git config core.hooksPath .githooks` if `git config --show-origin core.hooksPath` shows an absolute path. Do not skip failing hooks or weaken a budget just to get a commit through. `SHEP_SKIP_E2E=1 bash scripts/check.sh` runs the non-GUI checks on machines without Linux/X11; report that omission. CI repeats the checks on Linux and Windows; Apple execution remains open. Native E2E runs on Linux.
 
 Defer performance measurements while the PC is saturated with other work; run them at the end on an otherwise idle machine. `python3 scripts/e2e.py --functional-only` runs correctness flows without the latency benchmark. Never weaken thresholds based on a loaded-host result.
 
@@ -276,9 +288,27 @@ Current practical limits and unsupported behavior must remain explicit in README
 
 Use Conventional Commits: `fix:`/`perf:` patch, `feat:` minor, `!` or `BREAKING CHANGE:` major. `main` is the only release branch. The root desktop application remains Rust. Node builds/tests/releases the browser and promotional site; Flutter builds the mobile app; the hosted beta service is Rust.
 
-`npm ci` installs the locked release tooling. `.releaserc.json` runs commit analysis, notes/changelog, `scripts/release.py` (updates Cargo version and lockfile and creates a native archive/checksums), commits the version files, then publishes a GitHub tag/release. Release definitions remain dormant while the release workflow is disabled. `npm run release:dry` inspects the intended release with authenticated GitHub access but does not publish.
+`npm ci` installs the locked release tooling. `scripts/release_plan.mjs` uses
+semantic-release analysis with publishing plugins excluded and produces an
+explicit version/source/desktop-target plan. `npm run release:dry` uses this
+non-publishing path. Quality stamps the same planned version before platform
+checks. `scripts/release.py` builds an explicit locked package/bin/target, reads
+Cargo's executable path and packages deterministic archives with source metadata
+and individual checksum sidecars. It rejects source changes beyond owned version
+fields and the generated changelog. Keep desktop/shared manifests and consuming
+locks together. Windows uses target-specific static CRT and verifies native
+DLL imports; do not infer GUI startup or signing from those checks.
 
-The release workflow waits for a successful full quality workflow and checks that `main` still equals the tested SHA before publishing. Current automated release packaging produces a Linux archive on the Linux runner; Windows/macOS compilation is covered by the CI matrix, but signed installers and distribution builds for those platforms need additional packaging jobs. Do not call unsigned development binaries signed/notarized.
+The release workflow accepts only a successful own-repository main push and
+checks that current main equals its tested SHA. Download artifacts by that exact
+run ID and explicit platform names. Validate the plan, both archive sidecars and
+contained source/version before combining `SHA256SUMS`. Semantic-release must
+recompute the same version before committing version files and publishing.
+The tag points at that version/changelog commit; archive provenance identifies
+its tested source parent. Missing/failed platforms never produce a partial
+release. Desktop Linux/Windows archives do not satisfy the separate coordinated
+client gate or assert signed/notarised distribution. See
+[the release contract](docs/agents/releases.md).
 
 
 ## Linux user installation

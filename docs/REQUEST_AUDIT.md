@@ -1,5 +1,14 @@
 # Conversation request audit
 
+**13 September release CI and installers:** Sam requests CI releases so the
+installation scripts can reliably use published binaries. This explicitly
+supersedes disabled desktop quality/release CI. Linux and Windows are supported
+by the existing ephemeral self-hosted pool; Apple capacity and coordinated client
+publication remain separate gaps. Track exact-source quality, both archives,
+checksums, publication and installation of a real released asset before marking
+this request complete. The email/folder synchronisation discussion follows this
+additional delivery request.
+
 **13 September large messages and Spam:** Sam requests receiving messages larger
 than 25 MB, removing the skipped-message bar notice, and exposing Spam alongside
 Trash, Archive and Sent. This overrides the earlier 25 MB skip behaviour.

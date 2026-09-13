@@ -5,9 +5,12 @@
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
     ["@semantic-release/changelog", {"changelogFile": "CHANGELOG.md"}],
-    ["@semantic-release/exec", {"prepareCmd": "python3 scripts/release.py ${nextRelease.version}"}],
+    ["@semantic-release/exec", {
+      "verifyReleaseCmd": "python3 scripts/release_ci.py version ${nextRelease.version}",
+      "prepareCmd": "python3 scripts/release.py ${nextRelease.version} --stamp-only --source $SHEP_RELEASE_SOURCE && python3 scripts/release.py ${nextRelease.version} --assemble --source $SHEP_RELEASE_SOURCE"
+    }],
     ["@semantic-release/git", {
-      "assets": ["Cargo.toml", "Cargo.lock", "CHANGELOG.md"],
+      "assets": ["Cargo.toml", "Cargo.lock", "shared/mail-core/Cargo.toml", "shared/mail-content/Cargo.toml", "shared/profile-core/Cargo.toml", "backend/Cargo.lock", "flutter/rust/Cargo.lock", "CHANGELOG.md"],
       "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
     }],
     ["@semantic-release/github", {

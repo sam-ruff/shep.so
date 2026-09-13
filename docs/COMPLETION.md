@@ -1,5 +1,22 @@
 # Completion audit
 
+## Desktop release CI preparation, 13 September 2026
+
+The requested desktop release pipeline now gates Linux and Windows archives on
+quality checks using the existing self-hosted pools. Publication checks the
+successful source revision, planned version, both platform archives and their
+checksums. Installer metadata must identify the exact requested release.
+Apple and coordinated client publication remain disabled pending capacity and
+their separate readiness requirements.
+
+Local verification passes 157 Python tests (nine Windows-only skips), workflow
+linting, the Windows linkage regression on Linux and strict documentation.
+The Ubuntu build image builds successfully; its owned browser preflight renders
+HTML and PDF with namespace and seccomp sandboxing enabled. Reviewed evidence
+is under `artifacts/logs/browser-smoke/`; packaging and full Python results are
+in `desktop-release-all-python.log`. Actual platform CI, publication and the
+published installer path remain required before this request is complete.
+
 ## Mail recovery, standard selection, large receipt and Spam, 13 September 2026
 
 Source is pushed as [`12e6e2d`](https://github.com/sam-ruff/shep.so/commit/12e6e2d2f52a2db43443c4bd8ad65fcf3325cbab), rebased onto the concurrent self-hosted documentation and
