@@ -5,6 +5,12 @@ mod notification_tests;
 pub mod receipts;
 pub mod recovery;
 pub mod sent;
+#[cfg(feature = "staged-receive")]
+pub mod staging;
+#[cfg(all(test, feature = "staged-receive"))]
+mod staging_tests;
+#[cfg(any(test, feature = "staged-receive"))]
+mod streaming;
 mod sync_queries;
 use super::MailProvider;
 use crate::model::*;
@@ -21,6 +27,13 @@ use tokio::{
 
 pub struct Imap;
 pub struct Pop3;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReceiveMode {
+    Legacy,
+    #[cfg(feature = "staged-receive")]
+    Staged,
+    Protected,
+}
 pub fn provider(protocol: Protocol) -> Box<dyn MailProvider> {
     match protocol {
         Protocol::Imap => Box::new(Imap),
@@ -185,12 +198,34 @@ async fn pop_routed(
 pub async fn sync_imap_session<
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
 >(
-    mut session: async_imap::Session<T>,
+    session: async_imap::Session<T>,
     account: &Account,
     known: &HashSet<String>,
     output: Sender<MailSyncItem>,
     only_folder: Option<&str>,
 ) -> anyhow::Result<Vec<String>> {
+    sync_imap_session_mode(
+        session,
+        account,
+        known,
+        output,
+        only_folder,
+        ReceiveMode::Legacy,
+    )
+    .await
+}
+
+async fn sync_imap_session_mode<
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
+>(
+    mut session: async_imap::Session<T>,
+    account: &Account,
+    known: &HashSet<String>,
+    output: Sender<MailSyncItem>,
+    only_folder: Option<&str>,
+    mode: ReceiveMode,
+) -> anyhow::Result<Vec<String>> {
+    let mut deferred = Vec::new();
     let capabilities = session.capabilities().await?;
     let pattern = if capabilities.has_str("SPECIAL-USE") {
         "\"*\" RETURN (SPECIAL-USE)"
@@ -246,7 +281,7 @@ pub async fn sync_imap_session<
                 })
                 .await?;
         }
-        // Fetch bounded metadata batches first. Oversized bodies are never requested.
+        // Fetch bounded metadata batches before requesting message bodies.
         let mut uids: Vec<_> = sync_queries::search(&mut session)
             .await?
             .into_iter()
@@ -280,7 +315,18 @@ pub async fn sync_imap_session<
                 if known.contains(&id) {
                     flags.push((id, fetch.unread, fetch.starred));
                 } else if fetch.size.unwrap_or(u32::MAX) as usize > MAX_MESSAGE_BYTES {
-                    output.send(MailSyncItem::SkippedLarge).await?;
+                    if mode != ReceiveMode::Legacy {
+                        deferred.push((
+                            folder.clone(),
+                            validity,
+                            uid,
+                            fetch.size.context("The message size is missing.")?,
+                            fetch.unread,
+                            fetch.starred,
+                        ));
+                    } else {
+                        output.send(MailSyncItem::SkippedLarge).await?;
+                    }
                 } else {
                     pending.push((uid, remote, fetch.size.unwrap_or(0) as usize));
                 }
@@ -347,7 +393,11 @@ pub async fn sync_imap_session<
                 live_ids,
             })
             .await?;
-        if folder.eq_ignore_ascii_case("INBOX") {
+        if folder.eq_ignore_ascii_case("INBOX")
+            && !deferred
+                .iter()
+                .any(|(name, ..)| name.eq_ignore_ascii_case("INBOX"))
+        {
             output
                 .send(MailSyncItem::InboxSyncFinished {
                     account: account.id.clone(),
@@ -356,12 +406,78 @@ pub async fn sync_imap_session<
                 .await?;
         }
     }
+    anyhow::ensure!(
+        mode != ReceiveMode::Protected || deferred.is_empty(),
+        "Large-message downloads need encrypted staging for this encrypted profile. Smaller messages were downloaded; the originals remain on the server."
+    );
+    #[cfg(feature = "staged-receive")]
+    for (folder, validity, uid, size, unread, starred) in &deferred {
+        anyhow::ensure!(
+            session.select(folder).await?.uid_validity == Some(*validity),
+            "The mailbox changed during download. Refresh and retry."
+        );
+        let source = tempfile::NamedTempFile::new()?;
+        let mut writer = tokio::fs::File::from_std(source.reopen()?);
+        streaming::download_reporting(&mut session, *uid, *size, &mut writer, Some(&output))
+            .await?;
+        drop(writer);
+        let (account, folder, remote, unread, starred) = (
+            account.id.clone(),
+            folder.clone(),
+            format!("{validity}.{uid}"),
+            *unread,
+            *starred,
+        );
+        let message = tokio::task::spawn_blocking(move || {
+            staging::prepare(source, &account, &remote, &folder, unread, starred)
+        })
+        .await??;
+        output
+            .send(MailSyncItem::StagedMessage(message))
+            .await
+            .context("Sync was cancelled")?;
+    }
+    if let Some((_, validity, ..)) = deferred
+        .iter()
+        .find(|(folder, ..)| folder.eq_ignore_ascii_case("INBOX"))
+    {
+        output
+            .send(MailSyncItem::InboxSyncFinished {
+                account: account.id.clone(),
+                epoch: format!("imap:{validity}"),
+            })
+            .await?;
+    }
     session.logout().await?;
     Ok(folders)
 }
 
 #[async_trait]
 impl MailProvider for Imap {
+    #[cfg(feature = "staged-receive")]
+    async fn sync_staged(
+        &self,
+        account: &Account,
+        password: &SecretString,
+        known: &HashSet<String>,
+        output: Sender<MailSyncItem>,
+        plaintext_staging: bool,
+    ) -> anyhow::Result<Vec<String>> {
+        let mode = if plaintext_staging {
+            ReceiveMode::Staged
+        } else {
+            ReceiveMode::Protected
+        };
+        sync_imap_session_mode(
+            imap(account, password).await?,
+            account,
+            known,
+            output,
+            None,
+            mode,
+        )
+        .await
+    }
     async fn sync(
         &self,
         account: &Account,
@@ -510,11 +626,22 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> PopConnection<S> {
 }
 
 async fn sync_pop_session<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
-    mut conn: PopConnection<S>,
+    conn: PopConnection<S>,
     account: &Account,
     known: &HashSet<String>,
     output: Sender<MailSyncItem>,
 ) -> anyhow::Result<Vec<String>> {
+    sync_pop_session_mode(conn, account, known, output, ReceiveMode::Legacy).await
+}
+
+async fn sync_pop_session_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    mut conn: PopConnection<S>,
+    account: &Account,
+    known: &HashSet<String>,
+    output: Sender<MailSyncItem>,
+    mode: ReceiveMode,
+) -> anyhow::Result<Vec<String>> {
+    let mut deferred = Vec::new();
     conn.command("UIDL")
         .await
         .context("A POP3 server with stable UIDL identifiers is required")?;
@@ -545,7 +672,11 @@ async fn sync_pop_session<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpi
             .and_then(|s| s.parse::<usize>().ok())
             .context("Invalid POP3 message size")?;
         if size > MAX_MESSAGE_BYTES {
-            output.send(MailSyncItem::SkippedLarge).await?;
+            if mode != ReceiveMode::Legacy {
+                deferred.push((number, uid, size));
+            } else {
+                output.send(MailSyncItem::SkippedLarge).await?;
+            }
             continue;
         }
         conn.command(&format!("RETR {number}")).await?;
@@ -556,6 +687,27 @@ async fn sync_pop_session<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpi
                 .await??;
         output
             .send(MailSyncItem::Message(parsed))
+            .await
+            .context("Sync was cancelled")?;
+    }
+    anyhow::ensure!(
+        mode != ReceiveMode::Protected || deferred.is_empty(),
+        "Large-message downloads need encrypted staging for this encrypted profile. Smaller messages were downloaded; the originals remain on the server."
+    );
+    #[cfg(feature = "staged-receive")]
+    for (number, uid, size) in deferred {
+        conn.command(&format!("RETR {number}")).await?;
+        let source = tempfile::NamedTempFile::new()?;
+        let mut writer = tokio::fs::File::from_std(source.reopen()?);
+        streaming::pop_body(&mut conn.0, size as u64, &mut writer, Some(&output)).await?;
+        drop(writer);
+        let id = account.id.clone();
+        let message = tokio::task::spawn_blocking(move || {
+            staging::prepare(source, &id, &uid, "INBOX", true, false)
+        })
+        .await??;
+        output
+            .send(MailSyncItem::StagedMessage(message))
             .await
             .context("Sync was cancelled")?;
     }
@@ -572,6 +724,22 @@ async fn sync_pop_session<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpi
 
 #[async_trait]
 impl MailProvider for Pop3 {
+    #[cfg(feature = "staged-receive")]
+    async fn sync_staged(
+        &self,
+        account: &Account,
+        password: &SecretString,
+        known: &HashSet<String>,
+        output: Sender<MailSyncItem>,
+        plaintext_staging: bool,
+    ) -> anyhow::Result<Vec<String>> {
+        let mode = if plaintext_staging {
+            ReceiveMode::Staged
+        } else {
+            ReceiveMode::Protected
+        };
+        sync_pop_session_mode(pop(account, password).await?, account, known, output, mode).await
+    }
     async fn sync(
         &self,
         account: &Account,

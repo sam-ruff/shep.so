@@ -1,5 +1,8 @@
 //! Owned visible text geometry. No DOM pointers outlive a layout, and hidden
 //! quotations/preheaders cannot leak into a selection or clipboard operation.
+use cosmic_text::{
+    Attrs, AttrsList, Buffer, BufferLine, Cursor, Edit, Editor, LineEnding, Metrics, Shaping,
+};
 use litehtml::{Document, FontHandle, Position};
 use std::hash::{Hash, Hasher};
 type Measure<'a> = dyn Fn(&str, FontHandle) -> f32 + 'a;
@@ -26,8 +29,8 @@ pub(super) struct Selection {
     runs: Vec<Run>,
     spatial: Vec<usize>,
     max_height: f32,
-    start: Option<(usize, usize)>,
-    end: Option<(usize, usize)>,
+    editor: Option<Editor<'static>>,
+    lines: Vec<usize>,
     index: crate::message_find::TextIndex,
 }
 impl Selection {
@@ -121,6 +124,19 @@ impl Selection {
             last = Some(run.bounds);
         }
         self.index = crate::message_find::TextIndex::new(&text);
+        let mut buffer = Buffer::new_empty(Metrics::new(16., 20.));
+        let mut offset = 0;
+        for line in text.split('\n') {
+            self.lines.push(offset);
+            offset += line.len() + 1;
+            buffer.lines.push(BufferLine::new(
+                line,
+                LineEnding::Lf,
+                AttrsList::new(&Attrs::new()),
+                Shaping::Advanced,
+            ));
+        }
+        self.editor = Some(Editor::new(buffer));
     }
     pub fn find(
         &self,
@@ -198,49 +214,72 @@ impl Selection {
         Some((index, run.boundaries[lo]))
     }
     pub fn start(&mut self, measure: &Measure<'_>, x: f32, y: f32) {
-        self.start = self.hit(measure, x, y);
-        self.end = self.start;
+        self.begin(measure, x, y, 1);
+    }
+    pub fn begin(&mut self, measure: &Measure<'_>, x: f32, y: f32, clicks: u8) {
+        let Some(cursor) = self.cursor_at(measure, x, y) else {
+            return;
+        };
+        if let Some(editor) = &mut self.editor {
+            editor.set_cursor(cursor);
+            editor.set_selection(match clicks {
+                2 => cosmic_text::Selection::Word(cursor),
+                3 => cosmic_text::Selection::Line(cursor),
+                _ => cosmic_text::Selection::Normal(cursor),
+            });
+        }
+    }
+    fn cursor_at(&self, measure: &Measure<'_>, x: f32, y: f32) -> Option<Cursor> {
+        let (run, index) = self.hit(measure, x, y)?;
+        let offset = self.runs[run].offset.start + index;
+        let line = self
+            .lines
+            .partition_point(|&start| start <= offset)
+            .saturating_sub(1);
+        Some(Cursor::new(line, offset - self.lines[line]))
     }
     pub fn extend(&mut self, measure: &Measure<'_>, x: f32, y: f32) {
-        if self.start.is_some() {
-            self.end = self.hit(measure, x, y);
+        if let Some(cursor) = self.cursor_at(measure, x, y)
+            && let Some(editor) = &mut self.editor
+        {
+            editor.set_cursor(cursor);
         }
     }
     pub fn all(&mut self) {
-        if let Some(last) = self.runs.last() {
-            self.start = Some((0, 0));
-            self.end = Some((self.runs.len() - 1, last.text.len()));
+        if let Some(editor) = &mut self.editor {
+            let end = editor.with_buffer(|buffer| {
+                buffer
+                    .lines
+                    .last()
+                    .map(|line| Cursor::new(buffer.lines.len() - 1, line.text().len()))
+            });
+            if let Some(end) = end {
+                editor.set_selection(cosmic_text::Selection::Normal(Cursor::new(0, 0)));
+                editor.set_cursor(end);
+            }
         }
     }
     pub fn result(&self, measure: &Measure<'_>) -> (String, Vec<[f32; 4]>) {
-        let (Some(a), Some(b)) = (self.start, self.end) else {
+        let Some(editor) = &self.editor else {
             return (String::new(), Vec::new());
         };
-        let (start, end) = if a <= b { (a, b) } else { (b, a) };
-        let mut text = String::new();
+        let Some((start, end)) = editor.selection_bounds() else {
+            return (String::new(), Vec::new());
+        };
+        let start = self.lines[start.line] + start.index;
+        let end = self.lines[end.line] + end.index;
+        let text = editor.copy_selection().unwrap_or_default();
         let mut rectangles = Vec::new();
-        let mut last: Option<Position> = None;
-        for i in start.0..=end.0 {
-            let run = &self.runs[i];
-            let from = if i == start.0 { start.1 } else { 0 };
-            let to = if i == end.0 { end.1 } else { run.text.len() };
+        for run in self
+            .runs
+            .iter()
+            .filter(|run| run.offset.end > start && run.offset.start < end)
+        {
+            let from = start.saturating_sub(run.offset.start);
+            let to = end.min(run.offset.end) - run.offset.start;
             if from == to {
                 continue;
             }
-            if let Some(last) = last {
-                if run.bounds.y >= last.y + last.height * 0.8
-                    || run.bounds.y + run.bounds.height <= last.y
-                {
-                    if !text.ends_with('\n') {
-                        text.push('\n');
-                    }
-                } else if run.bounds.x > last.x + last.width + 2.
-                    && !text.ends_with(char::is_whitespace)
-                {
-                    text.push('\t');
-                }
-            }
-            text.push_str(&run.text[from..to]);
             let x = measure(&run.text[..from], run.font);
             let width = measure(&run.text[..to], run.font) - x;
             rectangles.push([
@@ -249,7 +288,6 @@ impl Selection {
                 width.max(0.),
                 run.bounds.height,
             ]);
-            last = Some(run.bounds);
         }
         (text, rectangles)
     }

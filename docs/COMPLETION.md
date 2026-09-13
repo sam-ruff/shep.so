@@ -1,5 +1,60 @@
 # Completion audit
 
+## Mail recovery, standard selection, large receipt and Spam, 13 September 2026
+
+The reported original message was blocked by a completed kept-copy recovery
+reservation. Fresh Move/Delete now retires only that finished source lookup
+inside the new preparation transaction. The old receipt and retained local copy
+survive; failed preparation rolls back. Read-only diagnosis used the reported
+account, while all mutations and regressions used fictional isolated mail.
+
+HTML selection now delegates ranges and word/line semantics to cosmic-text,
+with iced double/triple-click classification. The raster renderer retains its
+hit-testing and highlight geometry. Subjects use read-only iced text editors,
+including compact and conversation readers. Formatted mode prepares title
+buffers independently of the plain body. Spam sits beside Trash and opens the
+reported server's existing Junk folder through ordinary folder controls.
+Rapid mode changes also cancel stale background preparation when reusing an
+existing reader, preserving title/body selection. Its regression fails before
+the fix and passes afterward in both directions, including refreshed details.
+
+Incoming large messages in ordinary native caches use partial IMAP FETCH or
+streamed POP3 into owned temporary storage after the smaller-message pass.
+Validated exact bytes publish through incremental SQLite blobs atomically.
+Progress resets the inactivity deadline, and the skipped-size notice is removed.
+Large text opens in successive previews; requested page budgets survive refresh
+and late results even when initial HTML consists mostly of invisible markup.
+
+Verification includes mocked move/recovery and staged receive contracts,
+26 MiB protocol/cache/reader fixtures, encoded-source and HTML paging
+regressions, plus real native pointer/keyboard actions. Fifty-one distinct
+native scenarios pass across selection, recovery, Spam, affected sidebar/folder
+controls and large messages. Saved coordinates were updated for the added Spam
+row without weakening assertions or timeouts. Large attachment Move/Undo/restart
+and plain-body Show more captures were reviewed, alongside light/compact-dark
+selection and Spam views. These are isolated correctness tests, not live-provider
+or latency measurements. Final gates and installation receipts follow below.
+
+Evidence is under ignored `artifacts/logs/`: `all-fixes-integrated-rust.log`,
+`all-fixes-python.log`, `integrated-recovery-native-rerun.log`,
+`integrated-spam-recovery-native.log`, `reader-standard-selection-native.log`,
+`reader-standard-selection-corrected-native.log`,
+`reader-standard-selection-wide-native.log`,
+`spam-sidebar-corrected-native.log`, `spam-sidebar-keyboard-corrected-native.log`,
+`spam-folder-controls-corrected-native.log`, `large-incoming-native.log`,
+`final-paging-regression.log` and `final-encoded-preview.log`.
+The final paging build passes all seven combined new-feature native scenarios
+in `final-native-regressions.log`. The mode-return regression is recorded in
+`reader-mode-return-before.log` and `reader-mode-return-after.log`.
+
+Remaining scope is explicit: encrypted profiles reject unsupported large staging
+before plaintext creation; reader opening still loads raw/attachment bytes and
+full-body search is not established. Cumulative decoding, hostile IMAP literal
+allocation, SQLite blob capacity, outgoing/transfer and snapshot limits remain
+R23 work. Flutter/browser equivalents and Spam aliases beyond Junk remain active
+parity gaps. No personal mail was moved or deleted during verification. The
+requested cross-device email/folder-state discussion follows this desktop fix.
+
 ## README installers and production installation, 12 September 2026
 
 Installer source is pushed as [`c3296ce`](https://github.com/sam-ruff/shep.so/commit/c3296ceeb6b3ab970a5699d6d1d991e0e6e87c64),

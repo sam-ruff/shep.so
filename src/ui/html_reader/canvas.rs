@@ -18,6 +18,7 @@ struct NativeState {
     presentation: Option<([f32; 4], Option<[f32; 4]>)>,
     focused: bool,
     dragging: bool,
+    last_click: Option<mouse::Click>,
     pan_grab: Option<f32>,
     modifiers: iced::keyboard::Modifiers,
 }
@@ -206,7 +207,21 @@ impl Widget<Message, Theme, Renderer> for Canvas<'_> {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 state.focused = over;
                 state.dragging = over;
-                over.then_some(Pointer::Down)
+                if over {
+                    let click = mouse::Click::new(
+                        Point::new(position.x, position.y),
+                        mouse::Button::Left,
+                        state.last_click,
+                    );
+                    state.last_click = Some(click);
+                    Some(match click.kind() {
+                        mouse::click::Kind::Single => Pointer::Down,
+                        mouse::click::Kind::Double => Pointer::Double,
+                        mouse::click::Kind::Triple => Pointer::Triple,
+                    })
+                } else {
+                    None
+                }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) if over || state.dragging => {
                 Some(Pointer::Move)

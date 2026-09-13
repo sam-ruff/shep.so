@@ -74,6 +74,8 @@ pub enum Input {
 #[derive(Debug, Clone, Copy)]
 pub enum Pointer {
     Down,
+    Double,
+    Triple,
     Move,
     Up,
     Leave,
@@ -494,10 +496,14 @@ fn document(
                 if id == generation && x.is_finite() && y.is_finite() =>
             {
                 match kind {
-                    Pointer::Down => {
+                    Pointer::Down | Pointer::Double | Pointer::Triple => {
                         dragging = true;
                         drag_origin = (x, y);
-                        selection.start(&measure, x, y);
+                        match kind {
+                            Pointer::Double => selection.begin(&measure, x, y, 2),
+                            Pointer::Triple => selection.begin(&measure, x, y, 3),
+                            _ => selection.start(&measure, x, y),
+                        }
                         document.on_lbutton_down(x, y, x - pan, y - scroll);
                     }
                     Pointer::Move => {

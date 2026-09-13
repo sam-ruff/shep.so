@@ -334,6 +334,167 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn rediscovered_original_can_move_after_keeping_a_local_copy() {
+        for destination in ["Archive", "Trash"] {
+            for rejected in [false, true] {
+                let directory = tempfile::tempdir().expect("temporary cache");
+                let path = directory.path().join("mail.sqlite");
+                let store = Store::open(&path).expect("cache");
+                let original = crate::model::parse_mail(
+                    "work",
+                    "42.7",
+                    "INBOX",
+                    b"Subject: Domain expiry\r\n\r\nRenew the fictional domain".to_vec(),
+                    true,
+                    false,
+                )
+                .expect("fixture message");
+                store
+                    .upsert(vec![original.clone()])
+                    .await
+                    .expect("cache original");
+                let mut receipt = MoveReceipt::server(
+                    &original.summary,
+                    "work",
+                    "Archive",
+                    None,
+                    crate::mail_actions::Fingerprint::of(&original.raw),
+                );
+                receipt.connections = vec![("work".into(), "mock".into())];
+                let previous = MoveRecord::new(original.summary.clone(), receipt.clone());
+                store
+                    .prepare_mail_move(previous.clone())
+                    .await
+                    .expect("old move");
+                let kept = store
+                    .keep_mail_move(previous, true)
+                    .await
+                    .expect("keep local");
+                let local = kept.retained.as_ref().expect("retained copy").clone();
+                let saved = serde_json::to_string(&kept).expect("old receipt");
+                drop(store);
+                let store = Store::open(&path).expect("reopened cache");
+                store
+                    .upsert(vec![original.clone()])
+                    .await
+                    .expect("server rediscovery");
+                let page = store
+                    .query(crate::model::MailQuery {
+                        observe: vec![original.summary.id.clone()],
+                        ..Default::default()
+                    })
+                    .await
+                    .expect("mailbox page");
+                assert!(!page.relocated.contains_key(&original.summary.id));
+                assert_eq!(
+                    store
+                        .detail(original.summary.id.clone())
+                        .await
+                        .expect("original reader")
+                        .summary
+                        .id,
+                    original.summary.id
+                );
+                assert!(
+                    store
+                        .mail_move_for_source(original.summary.id.clone())
+                        .await
+                        .expect("active move")
+                        .is_none()
+                );
+
+                receipt.folder = destination.into();
+                let next = MoveRecord::new(original.summary.clone(), receipt);
+                let mut collision = next.clone();
+                collision.token = kept.token.clone();
+                collision.receipt.recovery = Some(collision.token.clone());
+                assert!(store.prepare_mail_move(collision).await.is_err());
+                store
+                    .remove(original.summary.id.clone())
+                    .await
+                    .expect("remove rediscovered fixture");
+                assert_eq!(
+                    store
+                        .detail(original.summary.id.clone())
+                        .await
+                        .expect("rolled back reader alias")
+                        .summary
+                        .id,
+                    local.id
+                );
+                store
+                    .upsert(vec![original.clone()])
+                    .await
+                    .expect("restore rediscovered fixture");
+                let mut connection = MockConnection::new();
+                connection
+                    .expect_identities()
+                    .returning(|| vec![("work".into(), "mock".into())]);
+                connection.expect_prepare().times(1).returning(|_| Ok(()));
+                connection.expect_inspect().times(0);
+                connection.expect_finish_source().times(0);
+                connection.expect_locate().times(0);
+                connection.expect_submit().times(1).returning(move |_, _| {
+                    if rejected {
+                        return Err(SubmissionError::NotApplied(
+                            "Rejected before mutation".into(),
+                        ));
+                    }
+                    Ok(Some("91.38".into()))
+                });
+                let result = start(&store, &mut connection, next).await;
+                if rejected {
+                    assert!(result.is_err());
+                    assert_eq!(
+                        store
+                            .raw_message(original.summary.id.clone())
+                            .await
+                            .expect("source retained"),
+                        original.raw
+                    );
+                    assert!(
+                        store
+                            .mail_move_for_source(original.summary.id.clone())
+                            .await
+                            .expect("released rejection")
+                            .is_none()
+                    );
+                } else {
+                    let moved = result.expect("new move");
+                    assert_eq!(moved.stage, MoveStage::Located);
+                    let current = moved.receipt.current.expect("new physical destination");
+                    assert_eq!(current.folder, destination);
+                    assert_eq!(current.remote_id, "91.38");
+                    assert_eq!(
+                        store
+                            .raw_message(current.id)
+                            .await
+                            .expect("moved source bytes"),
+                        original.raw
+                    );
+                }
+                assert_eq!(
+                    store
+                        .raw_message(local.id)
+                        .await
+                        .expect("independent local copy"),
+                    original.raw
+                );
+                assert_eq!(
+                    serde_json::to_string(
+                        &store
+                            .mail_move(kept.token)
+                            .await
+                            .expect("old receipt retained")
+                    )
+                    .expect("receipt"),
+                    saved
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn mocked_inspection_failure_and_ambiguous_result_never_submit() {
         for rejected in [false, true] {
             let store = Store::memory().unwrap();

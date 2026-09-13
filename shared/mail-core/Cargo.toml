@@ -9,6 +9,7 @@ license = "MIT"
 [features]
 default = []
 test-support = []
+staged-receive = ["dep:tempfile", "dep:memmap2"]
 
 [dependencies]
 shep-mail-content = { path = "../mail-content" }
@@ -26,10 +27,12 @@ secrecy = { version = "0.10", features = ["serde"] }
 serde_json = "1"
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "sync", "time", "fs"] }
 tokio-native-tls = "0.3"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
+tempfile = { version = "3.27.0", optional = true }
+memmap2 = { version = "0.9.11", optional = true }
 
 [dev-dependencies]
 mockall = "0.15.0"

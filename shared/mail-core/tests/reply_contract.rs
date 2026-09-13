@@ -25,6 +25,7 @@ fn cached_envelope_and_reply_match_shared_browser_fixtures() {
             body: c["text"].as_str().unwrap().into(),
             latest_body: String::new(),
             body_truncated: false,
+            body_limit: c["text"].as_str().unwrap().chars().count(),
             remote_images: Vec::new(),
             replies: Vec::new(),
             attachments: Default::default(),

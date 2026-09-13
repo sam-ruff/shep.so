@@ -11,6 +11,12 @@ pub fn parse(raw: &[u8]) -> Result<ParsedMail<'_>> {
         raw.len() <= crate::MAX_MESSAGE_BYTES,
         "This message exceeds the current 25 MiB limit."
     );
+    parse_paged(raw)
+}
+
+/// Accept a file-backed source without imposing an incoming message-size cap.
+/// Header/tree budgets apply before the recursive parser allocates its tree.
+pub fn parse_paged(raw: &[u8]) -> Result<ParsedMail<'_>> {
     validate(raw)?;
     mailparse::parse_mail(raw)
         .map_err(|_| anyhow::anyhow!("Could not read this cached message. Refresh it and retry."))
@@ -20,6 +26,8 @@ pub fn parse(raw: &[u8]) -> Result<ParsedMail<'_>> {
 /// wide multipart does not allocate a second vector containing every child.
 fn validate(raw: &[u8]) -> Result<()> {
     let mut stack = vec![(raw, 0, None)];
+    let mut nodes = 0;
+    let mut header_bytes = 0;
     while let Some((raw, depth, cursor)) = stack.pop() {
         ensure!(
             depth <= MAX_DEPTH,
@@ -28,8 +36,26 @@ fn validate(raw: &[u8]) -> Result<()> {
         let mut cursor = match cursor {
             Some(cursor) => cursor,
             None => {
-                let (headers, start) = mailparse::parse_headers(raw)
+                nodes += 1;
+                ensure!(
+                    nodes <= 4096,
+                    "This message has too many MIME parts to read safely."
+                );
+                let prefix = &raw[..raw.len().min(64 * 1024)];
+                let (headers, start) = mailparse::parse_headers(prefix)
                     .map_err(|_| anyhow::anyhow!("Could not read this message's MIME headers."))?;
+                ensure!(
+                    start < prefix.len()
+                        || raw.len() == prefix.len()
+                        || prefix.ends_with(b"\r\n\r\n")
+                        || prefix.ends_with(b"\n\n"),
+                    "This message has oversized MIME headers."
+                );
+                header_bytes += start;
+                ensure!(
+                    header_bytes <= 4 * 1024 * 1024,
+                    "This message has too many MIME headers to read safely."
+                );
                 let Some(value) = headers.get_first_value("Content-Type") else {
                     continue;
                 };
@@ -126,4 +152,32 @@ pub(crate) fn decoded(total: &mut usize, amount: usize) -> Result<()> {
         "The decoded message exceeds the current 25 MiB limit."
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_a_header_terminator_at_the_preflight_window_boundary() -> Result<()> {
+        let mut raw = b"Subject: ".to_vec();
+        raw.resize(64 * 1024 - 4, b'x');
+        raw.extend_from_slice(b"\r\n\r\nBody");
+        assert_eq!(parse_paged(&raw)?.get_body()?, "Body");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_oversized_headers_and_wide_mime_trees_before_recursive_parse() {
+        let mut headers = b"Subject: ".to_vec();
+        headers.resize(64 * 1024 + 1, b'x');
+        headers.extend_from_slice(b"\r\n\r\nBody");
+        assert!(parse_paged(&headers).is_err());
+        let mut wide = b"Content-Type: multipart/mixed; boundary=part\r\n\r\n".to_vec();
+        for _ in 0..4097 {
+            wide.extend_from_slice(b"--part\r\nContent-Type: text/plain\r\n\r\nBody\r\n");
+        }
+        wide.extend_from_slice(b"--part--\r\n");
+        assert!(parse_paged(&wide).is_err());
+    }
 }

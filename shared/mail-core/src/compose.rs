@@ -397,6 +397,7 @@ pub fn reply_from_raw(
         summary,
         body: body.clone(),
         body_truncated: false,
+        body_limit: body.chars().count(),
         remote_images: Vec::new(),
         latest_body: body,
         replies: Vec::new(),

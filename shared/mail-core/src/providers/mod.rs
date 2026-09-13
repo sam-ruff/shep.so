@@ -6,6 +6,18 @@ use secrecy::SecretString;
 
 #[async_trait]
 pub trait MailProvider: Send + Sync {
+    #[cfg(feature = "staged-receive")]
+    async fn sync_staged(
+        &self,
+        account: &Account,
+        password: &SecretString,
+        known: &std::collections::HashSet<String>,
+        output: tokio::sync::mpsc::Sender<MailSyncItem>,
+        plaintext_staging: bool,
+    ) -> anyhow::Result<Vec<String>> {
+        let _ = plaintext_staging;
+        self.sync(account, password, known, output).await
+    }
     async fn sync(
         &self,
         account: &Account,

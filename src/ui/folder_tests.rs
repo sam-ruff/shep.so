@@ -44,6 +44,49 @@ fn index(app: &App, account: &str, path: &str) -> usize {
     app.sidebar_items().iter().position(|item|matches!(&item.action,Message::AccountFolder(a,p)|Message::ToggleFolderGroup(a,p) if a==account && p==path)).unwrap()
 }
 #[tokio::test]
+async fn spam_shortcut_uses_existing_junk_folder_and_preserves_children() {
+    let (mut app, store, _commands) = fixture().await;
+    store
+        .save_folder_catalog(
+            "a".into(),
+            vec![Mailbox::flat("INBOX".into()), Mailbox::flat("Junk".into())],
+        )
+        .await
+        .unwrap();
+    app.workspace = Arc::new(store.workspace().await.unwrap());
+    app.preferences.unified_inbox = true;
+    app.query.account = Some("a".into());
+    let items = app.sidebar_items();
+    let spam = items.iter().find(|item| item.label == "Spam").unwrap();
+    assert!(matches!(&spam.action, Message::Folder(folder) if folder == "Junk"));
+    let target = app.sidebar_folder(&spam.action).unwrap();
+    assert_eq!(target.account.as_deref(), Some("a"));
+    assert_eq!(target.folder, "Junk");
+    assert!(app.sidebar_drop_target(&spam.action).is_some());
+    assert!(!items.iter().any(|item| item.label == "Junk"));
+    let _ = app.handle(Message::Folder("Junk".into()));
+    assert_eq!(app.query.folder, "Junk");
+    assert!(
+        app.sidebar_items()
+            .iter()
+            .any(|item| item.label == "Spam" && item.active)
+    );
+
+    store
+        .save_folder_catalog(
+            "a".into(),
+            vec![Mailbox {
+                name: "Junk/Review".into(),
+                delimiter: Some('/'),
+                ..Mailbox::flat("Junk/Review".into())
+            }],
+        )
+        .await
+        .unwrap();
+    app.workspace = Arc::new(store.workspace().await.unwrap());
+    assert!(app.sidebar_items().iter().any(|item| item.label == "Junk"));
+}
+#[tokio::test]
 async fn duplicate_address_sidebar_names_preserve_account_navigation_and_collapse() {
     for unified in [true, false] {
         let (mut app, _, _commands) = fixture().await;

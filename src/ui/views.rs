@@ -721,13 +721,7 @@ impl App {
         ]
         .spacing(gap);
         if subject {
-            reading = column![
-                text(&detail.summary.subject)
-                    .size(if compact { 21 } else { 25 })
-                    .font(BOLD),
-                reading
-            ]
-            .spacing(gap);
+            reading = column![self.selectable_title(detail), reading].spacing(gap);
         }
         if self.page.move_recovery.contains_key(&detail.summary.id) {
             reading = column![self.move_recovery_bar(&detail.summary.id), reading].spacing(gap);
