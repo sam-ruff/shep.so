@@ -251,6 +251,8 @@ pub struct MailDetail<Html = ()> {
     pub summary: Mail,
     pub body: String,
     pub body_truncated: bool,
+    /// Requested character budget, independent of visible text in encoded pages.
+    pub body_limit: usize,
     pub remote_images: Vec<RemoteImage>,
     pub latest_body: String,
     pub replies: Vec<crate::replies::ReplySection>,
@@ -269,6 +271,8 @@ pub enum MailSyncItem {
         epoch: String,
     },
     Message(StoredMail),
+    #[cfg(feature = "staged-receive")]
+    StagedMessage(crate::providers::mail::staging::Message),
     Flags(Vec<(String, bool, bool)>),
     Reconcile {
         account: String,
@@ -276,6 +280,8 @@ pub enum MailSyncItem {
         live_ids: std::collections::HashSet<String>,
     },
     SkippedLarge,
+    #[cfg(feature = "staged-receive")]
+    DownloadProgress,
     /// The complete listing, including unselectable containers, so clients can
     /// build the mailbox hierarchy. Selectable names are the sync folders.
     Folders(String, Vec<crate::folders::Mailbox>),

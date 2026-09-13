@@ -18,7 +18,7 @@ pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn identity(raw: &[u8]) -> (String, Option<String>) {
+pub(super) fn identity(raw: &[u8]) -> (String, Option<String>) {
     let headers = mailparse::parse_headers(&raw[..raw.len().min(64 * 1024)])
         .map(|(headers, _)| headers)
         .unwrap_or_default();

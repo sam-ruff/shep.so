@@ -186,6 +186,12 @@ fn prepare(c: &Connection, record: &MoveRecord) -> anyhow::Result<()> {
                 .is_some_and(|f| f.matches(&raw)),
         "The cached message changed before moving. Refresh its folder."
     );
+    // A kept local copy does not own a subsequently downloaded server original.
+    // Preserve its token receipt while releasing only its finished source lookup.
+    c.execute(
+        "UPDATE mail_moves SET source_id='retired:' || token WHERE source_id=? AND stage='kept' AND cache_id IS NULL",
+        [&record.original.id],
+    )?;
     c.execute("INSERT INTO mail_moves(token,source_id,source_account,destination_account,cache_id,stage,data) VALUES(?,?,?,?,?,?,?)",
                 params![record.token,record.original.id,record.original.account_id,record.receipt.account,record.original.id,record.stage.key(),serde_json::to_string(&record)?])
                 .context("This message already has a move record. Review its recovery before moving again.")?;
@@ -395,9 +401,11 @@ impl Store {
     }
     pub async fn mail_move_for_source(&self, id: String) -> anyhow::Result<Option<MoveRecord>> {
         self.run(move |c| {
-            c.query_row("SELECT data FROM mail_moves WHERE source_id=?", [id], |r| {
-                r.get::<_, String>(0)
-            })
+            c.query_row(
+                "SELECT data FROM mail_moves WHERE source_id=? AND stage!='kept'",
+                [id],
+                |r| r.get::<_, String>(0),
+            )
             .optional()?
             .map(|s| serde_json::from_str(&s).map_err(Into::into))
             .transpose()

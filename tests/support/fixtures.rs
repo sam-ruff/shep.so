@@ -3,6 +3,7 @@ pub mod backups;
 mod bulk_history;
 #[path = "html_mail.rs"]
 mod html_mail;
+mod large_incoming;
 mod move_recovery;
 pub mod passwords;
 mod reading_mail;
@@ -15,6 +16,9 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
         return Ok(());
     }
     seed_demo_contents(store).await?;
+    if std::env::args().any(|arg| arg == "--large-incoming") {
+        large_incoming::seed(store).await?;
+    }
     if std::env::args().any(|a| a == "--bulk-history") {
         bulk_history::seed(store).await?;
     }
@@ -267,6 +271,7 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
                     "Projects".into(),
                     "Sent".into(),
                     "Trash".into(),
+                    "Junk".into(),
                 ],
             )
             .await?;

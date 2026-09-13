@@ -9,6 +9,7 @@ mod mail_query;
 mod move_journal;
 mod notifications;
 mod read_moves;
+mod staged_mail;
 use crate::model::*;
 mod connections;
 mod conversations;
@@ -556,10 +557,12 @@ impl Store {
             summary.starred = starred;
             summary.folder = folder;
             move_journal::project_detail(c, &mut summary)?;
-            let parsed = shep_mail_core::mime::parse(&raw)?;
+            let mut parsed = shep_mail_core::mime::parse_paged(&raw)?;
+            let source_truncated = raw.len() > crate::model::MAX_MESSAGE_BYTES
+                && shep_mail_core::providers::mail::staging::bound_reader_preview(&mut parsed, body_chars)?;
             let content = crate::email_content::extract(&parsed)?;
             let (body, attachments) = (content.text, content.attachments);
-            let body_truncated = body.chars().nth(body_chars).is_some();
+            let body_truncated = source_truncated || body.chars().nth(body_chars).is_some();
             let body: String = body.chars().take(body_chars).collect();
             let (latest_body, replies) = crate::replies::split(&body);
             let remote_images = content
@@ -574,6 +577,7 @@ impl Store {
                 summary,
                 body,
                 body_truncated,
+                body_limit: body_chars,
                 remote_images,
                 attachments: Arc::new(attachments),
                 reply: crate::compose::ReplyHeaders::parse(&parsed),
@@ -736,6 +740,7 @@ impl Store {
                 self.finish_notification_sync(account, epoch).await
             }
             MailSyncItem::Message(mail) => self.upsert(vec![mail]).await,
+            MailSyncItem::StagedMessage(mail) => self.sync_staged_message(mail).await.map(|_| ()),
             MailSyncItem::Flags(flags) => {
                 self.run(move |c| {
                     let tx = c.transaction()?;
@@ -790,6 +795,7 @@ impl Store {
                 tx.commit()?; Ok(())
             }).await,
             MailSyncItem::SkippedLarge => Ok(()),
+            MailSyncItem::DownloadProgress => Ok(()),
         }
     }
     pub async fn save_source(&self, source: CalendarSource) -> anyhow::Result<()> {

@@ -3,6 +3,27 @@
   "reference": "Rust iced desktop committed 10d8569; merged-worktree verification and gaps in docs/CLIENT_PARITY.md",
   "scenarios": [
     {
+      "id": "large-incoming-receipt",
+      "contract": "Do not skip incoming mail solely because it exceeds 25 MiB. Receive smaller mail first, validate complete downloads before atomic cache publication, retain exact raw source, and open large-attachment and large-text messages. Inactivity deadlines reset on real download progress. Never stage plaintext for an encrypted profile.",
+      "desktop": "Staged IMAP partial FETCH and POP3 receipt, native incremental SQLite blobs and paged text previews. Owned 26 MiB protocol/cache/reader tests and native fixture. OPEN: encrypted staging, complete streaming reader/attachments and complete body search.",
+      "mobile": "OPEN: platform-owned large-message staging, durable cache publication and native reader verification.",
+      "browser": "OPEN: bounded authenticated transport, IndexedDB large-source publication and browser reader verification."
+    },
+    {
+      "id": "reader-selection-and-recovered-mail-actions",
+      "contract": "Double-click selects a word, triple-click selects a line and drag selects across HTML markup using established text-selection semantics. Subjects are selectable and copyable. A rediscovered provider original can receive a fresh Move/Delete after a retained local recovery copy, without removing the local copy or replaying uncertain work.",
+      "desktop": "cosmic-text word/line selection and iced selectable subjects; transactional fresh recovery reservations preserve original/local copies. Rust regressions and real native selection, copy, Move/Delete and recovery controls pass; exact evidence belongs in COMPLETION.",
+      "mobile": "OPEN: verify native subject selection and recovered-original actions alongside platform HTML selection.",
+      "browser": "OPEN: verify subject selection and recovered-original actions alongside browser HTML selection."
+    },
+    {
+      "id": "standard-spam-folder",
+      "contract": "Expose Spam beside Sent, Archive and Trash, with mouse/keyboard navigation, normal message actions and Undo. Preserve actual provider folder names and keep nested folders accessible.",
+      "desktop": "Spam opens the existing Junk mailbox through standard folder controls. Rust hierarchy tests and native mouse/keyboard, Move/Undo and compact dark menu scenarios pass. OPEN: provider special-use aliases beyond Junk.",
+      "mobile": "Existing standard Spam navigation in workspace.dart; OPEN: Junk/special-use alias resolution and equivalent native controls verification.",
+      "browser": "Existing standard Spam navigation in ui.ts; OPEN: Junk/special-use alias resolution and equivalent browser controls verification."
+    },
+    {
       "id": "native-incoming-mail-notifications",
       "contract": "Notify for new Inbox arrivals after the initial import, coalescing bursts without retaining an unbounded queue. Honour popup, sound and details preferences. Native notification sender lifetime must keep accepted banners/history visible while Shep runs. Reconnect after failed delivery only for new work, without replaying an uncertain request. Temporary-saving notices preserve their bounded acknowledgment and fallback behaviour.",
       "desktop": "Linux worker connection reuse, failure/reconnect, policy and bounded saving-request tests; real GNOME notification service and visible banner/centre review are required alongside the native mail-arrival controls. Ordinary demo runs must never notify the user's desktop. Exact evidence and remaining Windows/macOS/sound verification belong in COMPLETION and R82.",

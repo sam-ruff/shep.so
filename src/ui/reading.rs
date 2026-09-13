@@ -10,7 +10,7 @@ impl App {
         self.detail
             .as_ref()
             .filter(|detail| detail.summary.id == id)
-            .map_or(0, |detail| detail.body.chars().count())
+            .map_or(0, |detail| detail.body_limit)
             .max(crate::store::READER_BODY_PAGE)
     }
     pub(super) fn document_background(&self, detail: &MailDetail) -> Option<iced::Color> {

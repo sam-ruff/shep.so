@@ -1,6 +1,64 @@
 use super::*;
 use tokio::sync::oneshot;
 
+#[tokio::test(start_paused = true)]
+async fn continuing_large_download_progress_can_exceed_the_account_idle_budget()
+-> anyhow::Result<()> {
+    let engine = super::super::calendar_tests::engine();
+    let started = tokio::time::Instant::now();
+    engine
+        .account_work
+        .sync("fixture", |stop| async move {
+            let result = download(
+                stop,
+                |tx| async move {
+                    for _ in 0..3 {
+                        tokio::time::sleep(Duration::from_secs(400)).await;
+                        tx.send(MailSyncItem::DownloadProgress).await?;
+                    }
+                    Ok(vec!["INBOX".into()])
+                },
+                |mut rx| async move {
+                    assert!(rx.recv().await.is_none());
+                    Ok(())
+                },
+            )
+            .await?;
+            assert_eq!(result, Some(vec!["INBOX".into()]));
+            Ok(())
+        })
+        .await?;
+    assert!(started.elapsed() >= Duration::from_secs(1200));
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn closed_cache_receiver_does_not_spin_on_the_closed_progress_watch() -> anyhow::Result<()> {
+    let engine = super::super::calendar_tests::engine();
+    let result = engine
+        .account_work
+        .sync("fixture", |stop| async move {
+            download(
+                stop,
+                |tx| async move {
+                    tx.send(MailSyncItem::Flags(vec![])).await?;
+                    std::future::pending::<anyhow::Result<Vec<String>>>().await
+                },
+                |_rx| async move { anyhow::bail!("fixture cache rejected incoming mail") },
+            )
+            .await?;
+            Ok(())
+        })
+        .await;
+    assert!(
+        result
+            .expect_err("cache failure must be observed")
+            .to_string()
+            .contains("cache rejected")
+    );
+    Ok(())
+}
+
 struct ProviderActive(Option<oneshot::Sender<()>>);
 impl Drop for ProviderActive {
     fn drop(&mut self) {

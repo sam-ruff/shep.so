@@ -1,5 +1,24 @@
 # Client parity
 
+13 September desktop follow-up: verify fresh Move/Delete after a kept recovery
+copy's original reappears, library-backed HTML word/line selection, selectable
+subjects, large-message receipt and the standard Spam shortcut. Browser and
+Flutter retain their native selection controls. Browser subjects are native `h1`
+text; Flutter subjects still use `Text` and need selectable controls. Both clients
+already list `Spam`, but mapping the reported server's `Junk` folder and equivalent
+recovery/large-mail controls require explicit verification. Desktop Spam opens
+the existing `Junk` mailbox, including the reported account; discovery of other
+providers' specially named spam mailboxes remains an active gap.
+
+Desktop ordinary-cache receiving now stages incoming IMAP/POP3 messages above
+25 MiB, after smaller mail, and publishes the exact source atomically. Shared
+providers retain the existing client path unless `staged-receive` is enabled;
+Flutter/browser need their own reviewed staging and cache publication. Native
+encrypted profiles reject unsupported large-message staging before creating
+plaintext files. Large native plain bodies use successive reader previews;
+complete raw export remains available. Full streaming reading/attachments,
+full-body search indexing and encrypted staging remain R23 gaps.
+
 12 September move/folder follow-up: desktop work adds missing-destination
 creation before mail submission and server-verified automatic recovery, with
 direct Retry instead of a mandatory review for routine cases. Flutter/browser

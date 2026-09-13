@@ -74,15 +74,16 @@ impl Engine {
         let store = self.store.clone();
         let receive = move |mut rx: mpsc::Receiver<MailSyncItem>| async move {
             let mut last = Instant::now();
-            let mut skipped = 0;
             while let Some(mail) = rx.recv().await {
-                if matches!(mail, MailSyncItem::SkippedLarge) {
-                    skipped += 1;
-                }
                 let folders_changed = matches!(&mail, MailSyncItem::Folders(..));
                 match mail {
                     MailSyncItem::Message(mail) => {
                         if let Some(arrival) = store.sync_message(mail).await? {
+                            output.send(Event::MailArrived(Arc::new(arrival))).await?;
+                        }
+                    }
+                    MailSyncItem::StagedMessage(mail) => {
+                        if let Some(arrival) = store.sync_staged_message(mail).await? {
                             output.send(Event::MailArrived(Arc::new(arrival))).await?;
                         }
                     }
@@ -98,19 +99,20 @@ impl Engine {
                     last = Instant::now();
                 }
             }
-            if skipped > 0 {
-                output
-                    .send(Event::Notice(format!(
-                        "Skipped {skipped} messages larger than the 25 MiB download limit."
-                    )))
-                    .await?;
-            }
             Ok::<_, anyhow::Error>(())
         };
         let provider = providers::mail::provider(account.protocol);
         let Some(folders) = download(
             stop,
-            |tx| provider.sync(&account, &password, &known, tx),
+            |tx| {
+                provider.sync_staged(
+                    &account,
+                    &password,
+                    &known,
+                    tx,
+                    self.store.connection_key().is_none(),
+                )
+            },
             receive,
         )
         .await?
@@ -158,19 +160,37 @@ where
     R: FnOnce(mpsc::Receiver<MailSyncItem>) -> RF,
     RF: std::future::Future<Output = anyhow::Result<()>>,
 {
-    let (tx, rx) = mpsc::channel(8);
+    let (tx, mut rx) = mpsc::channel(8);
+    let (forward, messages) = mpsc::channel(8);
+    let (progress, mut changed) = tokio::sync::watch::channel(());
+    let relay = async move {
+        while let Some(item) = rx.recv().await {
+            progress.send_replace(());
+            if matches!(item, MailSyncItem::DownloadProgress) {
+                continue;
+            }
+            if forward.send(item).await.is_err() {
+                break;
+            }
+        }
+    };
     let fetch = async move {
-        tokio::select! {
-            biased;
-            _ = stop.cancelled() => Ok(None),
-            result = tokio::time::timeout(Duration::from_secs(480), provider(tx)) => {
-                result.context("Account sync timed out")?.map(Some)
-            },
+        let result = provider(tx);
+        tokio::pin!(result);
+        let mut progress_open = true;
+        loop {
+            tokio::select! {
+                biased;
+                _ = stop.cancelled() => break Ok(None),
+                result = &mut result => break result.map(Some),
+                _ = tokio::time::sleep(Duration::from_secs(480)) => break Err(anyhow::anyhow!("Account sync timed out without download progress")),
+                result = changed.changed(), if progress_open => { progress_open = result.is_ok(); },
+            }
         }
     };
     // try_join! would drop the receiver on provider error, detaching an active
     // SQLite spawn_blocking write and releasing the account too early.
-    let (fetched, received) = tokio::join!(fetch, receive(rx));
+    let (fetched, received, ()) = tokio::join!(fetch, receive(messages), relay);
     received?;
     fetched
 }

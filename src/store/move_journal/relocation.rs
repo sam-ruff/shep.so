@@ -29,7 +29,8 @@ fn linked(previous: &MoveRecord, next: &MoveRecord) -> bool {
 fn completed_for_source(c: &Connection, id: &str) -> anyhow::Result<Option<MoveRecord>> {
     let data: Option<String> = c
         .query_row(
-            "SELECT data FROM mail_moves WHERE source_id=? AND stage IN ('located','kept')",
+            "SELECT data FROM mail_moves WHERE source_id=?1 AND stage IN ('located','kept')
+             AND (stage!='kept' OR NOT EXISTS(SELECT 1 FROM messages WHERE id=?1))",
             [id],
             |row| row.get(0),
         )

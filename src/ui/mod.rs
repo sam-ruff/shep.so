@@ -362,7 +362,7 @@ pub struct App {
     html_reader: html_reader::State,
     find_message: find_message::State,
     remote_bytes: VecDeque<(String, Arc<[u8]>)>,
-    pending_reader_selection: Option<Arc<MailDetail>>,
+    pending_reader_selection: Option<(Arc<MailDetail>, bool)>,
     reader_selection_generation: u64,
     reader_preparation: Option<iced::task::Handle>,
     inbox_scroll: f32,
@@ -1427,6 +1427,17 @@ impl App {
                     self.pending_details.remove(&id);
                     match result {
                         Ok(detail) => {
+                            if self
+                                .detail
+                                .iter()
+                                .chain(self.detail_cache.iter())
+                                .any(|current| {
+                                    current.summary.id == detail.summary.id
+                                        && current.body_limit > detail.body_limit
+                                })
+                            {
+                                return Task::none();
+                            }
                             if self.reader_id() == Some(&id) {
                                 let mut visible = detail.clone();
                                 if self.page.is_placeholder(&id)
@@ -3196,7 +3207,9 @@ impl App {
                     .map(|detail| {
                         (
                             detail.summary.id.clone(),
-                            detail.body.chars().count() + crate::store::READER_BODY_PAGE,
+                            detail
+                                .body_limit
+                                .saturating_add(crate::store::READER_BODY_PAGE),
                         )
                     });
                 if let Some((id, body_chars)) = next {
@@ -4343,6 +4356,14 @@ impl App {
         data["html_link"] = serde_json::json!(self.html_reader.last_link);
         data["reader_text_ready"] =
             serde_json::json!(self.reader_selection.as_ref().is_some_and(|c| {
+                c.plain
+                    && self
+                        .detail
+                        .as_ref()
+                        .is_some_and(|d| Arc::ptr_eq(d, &c.source))
+            }));
+        data["reader_title_ready"] =
+            serde_json::json!(self.reader_selection.as_ref().is_some_and(|c| {
                 self.detail
                     .as_ref()
                     .is_some_and(|d| Arc::ptr_eq(d, &c.source))
@@ -4351,6 +4372,11 @@ impl App {
             self.reader_selection
                 .as_ref()
                 .and_then(|c| c.blocks.iter().find_map(|b| b.selection()))
+        );
+        data["reader_selected_title"] = serde_json::json!(
+            self.reader_selection
+                .as_ref()
+                .and_then(|c| c.title.selection())
         );
         data["context_menu"] = serde_json::json!(self.context_menu.as_ref().map(|m| &m.mail.id));
         data["context_subject"] =

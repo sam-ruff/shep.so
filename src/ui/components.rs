@@ -480,6 +480,7 @@ fn icon_color<'a>(
         ("file",r#"<path d="M14 2H5v20h14V7l-5-5ZM14 2v6h5M8 13h8M8 17h6"/>"#),
         ("archive",r#"<rect x="3" y="3" width="18" height="4" rx="1"/><path d="M5 7v14h14V7M10 11h4"/>"#),
         ("trash",r#"<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>"#),
+        ("spam",r#"<path d="m8 3-5 5v8l5 5h8l5-5V8l-5-5H8ZM12 7v6M12 16v1"/>"#),
         ("folder",r#"<path d="M3 7V4h6l2 3h10v13H3V7Z"/>"#),
         ("move",r#"<path d="M3 7V4h6l2 3h10v13H3V7ZM8 14h8m-3-3 3 3-3 3"/>"#),
         ("plus",r#"<path d="M12 5v14M5 12h14"/>"#),

@@ -39,8 +39,13 @@ pub async fn seed(store: &Store) -> anyhow::Result<()> {
         .filter(|a| a.id == "preview-work" || a.id == destination)
         .map(|a| (a.id.clone(), connection_key(a)))
         .collect();
-    let record = MoveRecord::new(original.summary, receipt);
+    let record = MoveRecord::new(original.summary.clone(), receipt);
     store.prepare_mail_move(record.clone()).await?;
+    if mode == "kept-rediscovered" {
+        store.keep_mail_move(record, true).await?;
+        store.upsert(vec![original]).await?;
+        return Ok(());
+    }
     if !matches!(mode.as_str(), "unconfirmed" | "missing-destination") {
         let mut receipt = record.receipt.clone();
         if mode == "copied" {

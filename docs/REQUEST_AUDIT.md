@@ -1,5 +1,24 @@
 # Conversation request audit
 
+**13 September large messages and Spam:** Sam requests receiving messages larger
+than 25 MB, removing the skipped-message bar notice, and exposing Spam alongside
+Trash, Archive and Sent. This overrides the earlier 25 MB skip behaviour.
+
+**13 September mail actions and ordinary reader selection:** Sam reports that the
+Technesci domain-expiry email cannot be deleted or moved, requests standard HTML
+selection including double-click and a selectable/copyable title, and wants a
+discussion of cross-device email/folder state after these fixes are verified.
+The previous visible-selection implementation does not fulfil this correction.
+
+**12 September Google login and infrastructure vault:** Sam requests a guided
+Google OAuth setup for the installed desktop application, with sensitive
+application configuration kept in the existing infrastructure Ansible vault.
+**Correction:** after learning that installed-app clients are public, Sam directs
+the Desktop client ID and accompanying client secret to be stored in Shep's
+repository and embedded. Keep personal OAuth tokens private and reserve the vault
+for confidential application credentials. Track project/client creation and live
+consent verification. No client configuration has been supplied.
+
 **12 September README scripts and installation:** Sam requests fixing the README
 scripts so they work and installing the application after the current features.
 Track the advertised commands, applicable regression/installer checks, an isolated

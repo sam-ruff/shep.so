@@ -5,7 +5,7 @@ Shep is still in development. Fastmail authentication and Inbox sync have been v
 | Area | Limit today |
 | --- | --- |
 | Reading | Static HTML layout with selectable text and a plain-text option. External images follow your privacy settings and are blocked by default. Advanced browser CSS and animations are not fully supported. |
-| Incoming mail | 25 MiB per message; larger messages are skipped with a notice. |
+| Incoming mail | Native ordinary caches stage messages above 25 MiB after smaller mail. Encrypted staging and mobile/browser equivalents remain unfinished. |
 | Attachments | Up to 32 files, 18 MiB total, within a 25 MiB outgoing message. |
 | Backups | Up to 256 MiB of original mail per snapshot. |
 | Gmail | Requires an app password and compatible account settings; Gmail OAuth is not supported. |

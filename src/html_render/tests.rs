@@ -403,6 +403,77 @@ async fn resources_are_reported_without_fetching_and_rejected_documents_can_be_r
 }
 
 #[tokio::test]
+async fn standard_selection_selects_words_lines_and_extends_across_inline_markup() {
+    let (tx, mut rx, thread) = start();
+    let source = HtmlBody::new("<p>Café <b>highlight</b> words here.</p><p>Another line.</p><blockquote>Hidden quotation</blockquote>".into(), HashMap::new());
+    tx.send(Input::Load {
+        generation: 1,
+        body: Arc::new(source),
+        viewport: viewport(),
+        font_size: 14,
+        hide_quotes: true,
+        images: Vec::new(),
+    })
+    .await
+    .expect("load");
+    assert!(matches!(next(&mut rx).await, Event::Frame(_)));
+    tx.send(Input::SelectAll(1)).await.expect("select all");
+    let Event::Selection(_, all, rectangles, _) = next(&mut rx).await else {
+        panic!("selection");
+    };
+    assert!(!all.contains("Hidden"));
+    let [x, y, width, height] = rectangles[0];
+    let x = x + width * 0.4;
+    let y = y + height * 0.5;
+    tx.send(Input::Pointer(1, Pointer::Double, x, y))
+        .await
+        .expect("double click");
+    let Event::Selection(_, word, selected, _) = next(&mut rx).await else {
+        panic!("word selection");
+    };
+    assert_eq!(word, "Café");
+    assert!(!selected.is_empty());
+    tx.send(Input::Pointer(1, Pointer::Up, x, y))
+        .await
+        .expect("release");
+    assert!(matches!(next(&mut rx).await, Event::Selection(_, text, _, _) if text == "Café"));
+    tx.send(Input::Copy(1)).await.expect("copy");
+    assert!(matches!(next(&mut rx).await, Event::Copy(_, text) if text == "Café"));
+    tx.send(Input::Pointer(1, Pointer::Triple, x, y))
+        .await
+        .expect("triple click");
+    assert!(
+        matches!(next(&mut rx).await, Event::Selection(_, text, _, _) if text == "Café highlight words here.")
+    );
+    tx.send(Input::Pointer(1, Pointer::Double, x, y))
+        .await
+        .expect("double click");
+    let _ = next(&mut rx).await;
+    let target = rectangles
+        .iter()
+        .find(|rect| rect[1] > y)
+        .expect("next line");
+    tx.send(Input::Pointer(
+        1,
+        Pointer::Move,
+        target[0] + target[2] * 0.4,
+        target[1] + target[3] * 0.5,
+    ))
+    .await
+    .expect("word drag");
+    let Event::Selection(_, dragged, _, _) = next(&mut rx).await else {
+        panic!("drag selection");
+    };
+    assert!(
+        dragged.starts_with("Café highlight words here.\nAnother"),
+        "{dragged:?}"
+    );
+    assert!(!dragged.contains("Hidden"));
+    drop(tx);
+    thread.join().expect("renderer stopped");
+}
+
+#[tokio::test]
 async fn selection_copy_inline_images_quotes_and_links_share_the_actual_html_layout() {
     let (tx, mut rx, thread) = start();
     let mut source = HtmlBody::new("<html><body><div style=\"height:40px\"><a href=\"https://example.test/help\">Helpful link</a> and <b>bold text</b>.</div><img src=\"cid:logo\" width=30 height=30><blockquote>Hidden quotation</blockquote><p>Last visible line.</p></body></html>".into(), HashMap::from([("logo".into(), Arc::from(include_bytes!("../../assets/logo-light.webp").as_slice()))]));

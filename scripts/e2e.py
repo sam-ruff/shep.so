@@ -86,6 +86,29 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch({"type":"hover","x":source_x,"y":source_y},{"type":"mouse_down"},
                        {"type":"hover","x":target_x,"y":target_y},check("mail_drag.active",True))
 
+    def test_spam_shortcut_mouse_keyboard_move_and_undo(self):
+        self.mcp.batch(click(85, 482), check("folder", "Junk"), check("total", 0),
+                       check("sidebar_focus", True), shot("spam-empty-light"),
+                       key("Up"), key("Return"), check("folder", "Trash"),
+                       key("Down"), key("Return"), check("folder", "Junk"),
+                       key("ctrl+1"), check("folder", "INBOX"), check("total", 120),
+                       click(400, mail_row_y(0)), key("m"), check("dialog", "Move"),
+                       check("focused_input", "folder-search"), type_text("Junk"),
+                       key("Return"), check("dialog", None), check("total", 119),
+                       click(85, 482), check("folder", "Junk"), check("total", 1),
+                       shot("spam-moved-message"), click(1308, 874), check("total", 0),
+                       key("ctrl+1"), check("total", 120))
+
+    def test_spam_shortcut_compact_dark_context_menu(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(690, 366), check("dark", True), key("ctrl+1"),
+                       {"type": "resize", "width": 900, "height": 640}, wait(180),
+                       click(85, 482), check("folder", "Junk"), check("total", 0),
+                       shot("spam-empty-compact-dark"), key("shift+F10"),
+                       check("folder_changes.menu.source", "Junk"),
+                       shot("spam-context-compact-dark"), key("Escape"),
+                       check("folder_changes.menu", None))
+
     def test_text_context_input_keyboard_cut_paste_and_focus(self):
         self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("alpha bravo"),
                        key("ctrl+a"),key("shift+F10"),check("text_menu.clipboard_ready",True),
@@ -173,6 +196,10 @@ class NativeFlows(unittest.TestCase):
                        shot("new-folder-sidebar-keyboard"), key("Return"),
                        check("dialog", "FolderCreation"), check("focused_input", "new-folder-name"))
 
+    def new_folder_mouse_actions(self):
+        return ({"type": "hover", "x": 100, "y": 700},
+                {"type": "scroll", "amount": 30}, wait(120), click(85, 808))
+
     def test_new_folder_keyboard_root_validation_and_restart(self):
         result = self.mcp.call("desktop.start", nested_folders=True, persistent=True)
         print(f"New folder evidence: {result['artifacts']}", flush=True)
@@ -198,7 +225,7 @@ class NativeFlows(unittest.TestCase):
     def test_new_folder_mouse_nested_unicode(self):
         result = self.mcp.call("desktop.start", nested_folders=True, persistent=True)
         print(f"New nested folder evidence: {result['artifacts']}", flush=True)
-        self.mcp.batch(click(85, 808), check("dialog", "FolderCreation"),
+        self.mcp.batch(*self.new_folder_mouse_actions(), check("dialog", "FolderCreation"),
                        check("folder_creation.account", "preview-work"),
                        click(720, 492), shot("new-folder-parent-choices"), click(650, 307),
                        check("folder_creation.parent", "Projects/Design/&ZeVnLIqe-"),
@@ -212,7 +239,7 @@ class NativeFlows(unittest.TestCase):
     def test_new_folder_nonselectable_parent_retains_exact_wire_path(self):
         result = self.mcp.call("desktop.start", nested_folders=True, persistent=True)
         print(f"New container child evidence: {result['artifacts']}", flush=True)
-        self.mcp.batch(click(85, 808), check("dialog", "FolderCreation"), click(720, 492),
+        self.mcp.batch(*self.new_folder_mouse_actions(), check("dialog", "FolderCreation"), click(720, 492),
                        click(650, 389), check("folder_creation.parent", "Teams/"),
                        click(650, 568), type_text("Planning"), shot("new-folder-container-request"),
                        key("Return"), check("dialog", None), check("sidebar_labels", "Planning", "contains"),
@@ -238,13 +265,13 @@ class NativeFlows(unittest.TestCase):
     def test_new_folder_failed_request_resumes_after_restart(self):
         result = self.mcp.call("desktop.start", nested_folders=True, persistent=True, folder_actions="fail")
         print(f"New folder retry evidence: {result['artifacts']}", flush=True)
-        self.mcp.batch(click(85, 808), check("dialog", "FolderCreation"),
+        self.mcp.batch(*self.new_folder_mouse_actions(), check("dialog", "FolderCreation"),
                        check("focused_input", "new-folder-name"),
                        type_text("Reports"), key("Return"), check("folder_creation.busy", True),
                        check("folder_creation.busy", False), check("folder_creation.error", "refused", "contains"),
                        check("folder_creation.saved.0.name", "Reports"), check("focused_input", "new-folder-name"), shot("new-folder-rejected"),
                        key("Escape"), {"type": "restart"},
-                       click(85, 808), check("dialog", "FolderCreation"),
+                       *self.new_folder_mouse_actions(), check("dialog", "FolderCreation"),
                        check("focused_input", "new-folder-name"),
                        check("folder_creation.name", "Reports"), check("folder_creation.account", "preview-work"),
                        check("folder_creation.error", "unfinished", "contains"),
@@ -252,7 +279,7 @@ class NativeFlows(unittest.TestCase):
                        shot("new-folder-previous-request-visible"),
                        click(945, 596), check("folder_creation.name", "Reports"),
                        check("focused_input", "new-folder-name"), shot("new-folder-resume-control"),
-                       key("Escape"), {"type": "restart"}, click(85, 808),
+                       key("Escape"), {"type": "restart"}, *self.new_folder_mouse_actions(),
                        check("focused_input", "new-folder-name"),
                        check("folder_creation.name", "Reports"), shot("new-folder-restored-request"),
                        key("Return"), check("folder_creation.busy", True), check("dialog", None),
@@ -263,7 +290,7 @@ class NativeFlows(unittest.TestCase):
     def test_new_folder_lost_reply_completes_while_mail_navigation_remains_available(self):
         result = self.mcp.call("desktop.start", nested_folders=True, persistent=True, folder_actions="uncertain")
         print(f"New folder acknowledgement evidence: {result['artifacts']}", flush=True)
-        self.mcp.batch(click(85, 808), check("dialog", "FolderCreation"), check("focused_input", "new-folder-name"), type_text("Receipts"),
+        self.mcp.batch(*self.new_folder_mouse_actions(), check("dialog", "FolderCreation"), check("focused_input", "new-folder-name"), type_text("Receipts"),
                        key("Return"), check("folder_creation.busy", True), shot("new-folder-pending"),
                        key("Escape"), key("ctrl+2"), check("tab", "Calendar"),
                        check("folder_creation.busy", False), check("folder_creation.error", None),
@@ -276,7 +303,7 @@ class NativeFlows(unittest.TestCase):
     def test_new_folder_graceful_close_waits_for_accepted_creation(self):
         result = self.mcp.call("desktop.start", nested_folders=True, persistent=True, folder_actions="slow")
         print(f"New folder close evidence: {result['artifacts']}", flush=True)
-        self.mcp.batch(click(85, 808), check("dialog", "FolderCreation"), check("focused_input", "new-folder-name"), type_text("Before closing"),
+        self.mcp.batch(*self.new_folder_mouse_actions(), check("dialog", "FolderCreation"), check("focused_input", "new-folder-name"), type_text("Before closing"),
                        key("Return"), check("folder_creation.busy", True),
                        {"type": "restart"}, check("sidebar_labels", "Before closing", "contains"),
                        check("folder_creation.saved", []), wait(150), shot("new-folder-close-confirmed"))
@@ -284,8 +311,8 @@ class NativeFlows(unittest.TestCase):
     def test_folder_controls_move_review(self):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True,folder_actions="slow")
         print(f"Folder controls evidence: {result['artifacts']}",flush=True)
-        self.mcp.batch(click(95,540),check("folder","Projects"),check("selected","Project overview"),
-                       {"type":"click","x":95,"y":540,"button":3},check("folder_changes.menu.source","Projects"),
+        self.mcp.batch(click(95,580),check("folder","Projects"),check("selected","Project overview"),
+                       {"type":"click","x":95,"y":580,"button":3},check("folder_changes.menu.source","Projects"),
                        shot("folder-context-menu"),key("Return"),check("dialog","FolderChange"),
                        check("folder_changes.loading",False),check("focused_input","folder-parent-search"),shot("folder-destinations"),
                        type_text("Archive"),key("Return"),check("folder_changes.review.folders",4),
@@ -293,7 +320,7 @@ class NativeFlows(unittest.TestCase):
                        check("dialog",None),check("folder_changes.pending",1),check("folder","Projects"),
                        shot("folder-move-pending"),key("ctrl+2"),check("tab","Calendar"),
                        check("folder_changes.pending",0),check("folder_changes.jobs.0.status","Completed"),
-                       key("ctrl+1"),check("tab","Mail"),click(85,624),check("folder","Archive/Projects"),
+                       key("ctrl+1"),check("tab","Mail"),click(85,664),check("folder","Archive/Projects"),
                        check("selected","Project overview"),shot("folder-move-complete"),
                        {"type":"restart"},check("folder_changes.jobs.0.status","Completed"),shot("folder-move-restarted"))
 
@@ -301,21 +328,21 @@ class NativeFlows(unittest.TestCase):
         for mode in ("slow", "fail"):
             result = self.mcp.call("desktop.start", nested_folders=True, folder_actions=mode)
             print(f"Combined folder evidence: {result['artifacts']}", flush=True)
-            self.mcp.batch(click(95, 540), check("selected", "Project overview"),
-                           click(188, 540), check("sidebar_labels", "Design", "contains"),
-                           {**click(95, 584), "modifiers": ["ctrl"]}, check("total", 2),
-                           {**click(95, 540), "button": 3}, check("folder_changes.menu.source", "Projects"),
+            self.mcp.batch(click(95, 580), check("selected", "Project overview"),
+                           click(176, 580), check("sidebar_labels", "Design", "contains"),
+                           {**click(95, 624), "modifiers": ["ctrl"]}, check("total", 2),
+                           {**click(95, 580), "button": 3}, check("folder_changes.menu.source", "Projects"),
                            key("Return"), check("dialog", "FolderChange"),
                            check("focused_input", "folder-parent-search"),
                            check("folder_changes.loading", False), type_text("Archive"), key("Return"),
                            check("folder_changes.review.folders", 4), key("Return"),
                            check("dialog", None), check("folder_changes.pending", 1), wait(80),
-                           {**click(95, 624), "modifiers": ["ctrl"]}, check("total", 1),
+                           {**click(95, 664), "modifiers": ["ctrl"]}, check("total", 1),
                            check("selected_folders", [{"account": "preview-work", "folder": "Projects/Design", "sent_only": False}]),
                            check("mail_rows.0.subject", "Design brief"),
                            {"type": "assert", "path": "folder_changes.pending", "value": 1},
                            shot(f"folder-combined-pending-{mode}"),
-                           {**click(95, 624), "modifiers": ["ctrl"]}, check("total", 2),
+                           {**click(95, 664), "modifiers": ["ctrl"]}, check("total", 2),
                            {"type": "assert", "path": "folder_changes.pending", "value": 1},
                            check("folder_changes.pending", 0))
             prefix = "Archive/Projects" if mode == "slow" else "Projects"
@@ -387,7 +414,7 @@ class NativeFlows(unittest.TestCase):
                        check("folder_changes.jobs.0.status", "Could not finish"), check("folder_changes.jobs.0.account", "preview-personal"),
                        check("folder", "INBOX"), check("total", 118), check("loaded_message_id", reader["id"]),
                        shot("aggregate-failure-keeps-newer-reader"), {"type": "resize", "width": 1440, "height": 920},
-                       click(90, 477), check("dialog", "FolderHistory"), check("folder_changes.loading", False),
+                       click(90, 517), check("dialog", "FolderHistory"), check("folder_changes.loading", False),
                        shot("aggregate-account-history-retry"), click(490, 541), check("folder_changes.jobs.0.status", "Completed"),
                        check("folder_changes.jobs.0.account", "preview-personal"), key("Escape"), check("dialog", None),
                        check("folder", "INBOX"), check("total", 118), {"type": "restart"},
@@ -411,8 +438,10 @@ class NativeFlows(unittest.TestCase):
                        shot("aggregate-other-account-remains-after-move"), {"type": "restart"},
                        check("folder_changes.jobs.0.status", "Completed"),
                        check("expanded_folders.preview-personal", "Home", "contains"),
-                       click(95, 807), check("folder", "Home.Archive"), check("account", "preview-personal"),
+                       {"type":"hover","x":100,"y":700},{"type":"scroll","amount":30},wait(120),
+                       shot("aggregate-personal-folders-after-restart"),click(95, 690), check("folder", "Home.Archive"), check("account", "preview-personal"),
                        check("selected", "Coffee next Thursday?"), shot("aggregate-personal-move-restarted"),
+                       {"type":"hover","x":100,"y":700},{"type":"scroll","amount":-30},wait(120),
                        {**click(95, 360), "button": 3}, key("Return"),
                        check("folder_changes.choosing_account", False), check("folder_changes.account", "preview-personal"),
                        check("folder_changes.source", "Sent"), check("focused_input", "folder-parent-search"),
@@ -434,16 +463,16 @@ class NativeFlows(unittest.TestCase):
         if dark:
             self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
                            click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"))
-        self.mcp.batch(click(95, 540), check("selected", "Project overview"),
-                       click(188, 540), check("sidebar_labels", "Design", "contains"),
-                       {**click(95, 584), "modifiers": ["ctrl"]}, check("total", 2),
+        self.mcp.batch(click(95, 580), check("selected", "Project overview"),
+                       click(176, 580), check("sidebar_labels", "Design", "contains"),
+                       {**click(95, 624), "modifiers": ["ctrl"]}, check("total", 2),
                        {**click(95, 278), "modifiers": ["ctrl"]}, check("total", 122))
         state = self.mcp.call("desktop.state")
         index, reader = next((index, mail) for index, mail in enumerate(state["mail_rows"])
                              if mail["folder"] == "INBOX" and not mail["unread"])
         self.mcp.batch(click(400, mail_row_y(index, state)), check("loaded_message_id", reader["id"]))
         before = self.mcp.call("desktop.state")
-        self.mcp.batch({**click(95, 540), "button": 3}, check("folder_changes.menu.source", "Projects"),
+        self.mcp.batch({**click(95, 580), "button": 3}, check("folder_changes.menu.source", "Projects"),
                        key("Down"), key("Return"), check("folder_changes.review.folders", 4),
                        check("folder_changes.review.messages", 4), key("Return"), check("dialog", None),
                        check("folder_changes.pending", 1), check("total", 120),
@@ -493,7 +522,7 @@ class NativeFlows(unittest.TestCase):
                            check("loaded_message_id", reader["id"]), check("notice", "needs attention", "contains"),
                            shot(f"folder-combined-delete-restored-{newer}"),
                            {"type": "restart"}, check("folder_changes.jobs.0.status", "Could not finish"),
-                           click(95, 580), check("folder", "Projects"), check("selected", "Project overview"),
+                           click(95, 620), check("folder", "Projects"), check("selected", "Project overview"),
                            shot(f"folder-combined-delete-rejected-restart-{newer}"))
 
     def test_folder_controls_combined_delete_uncertainty_keeps_cache_after_acceptance(self):
@@ -501,7 +530,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(check("folder_changes.pending", 0), check("folder_changes.jobs.0.status", "Needs review"),
                        check("selected_folders", before["selected_folders"]), check("total", 122),
                        check("page_unread", before["page_unread"]), check("loaded_message_id", reader["id"]),
-                       click(90, 477), check("dialog", "FolderHistory"), check("folder_changes.loading", False),
+                       click(90, 517), check("dialog", "FolderHistory"), check("folder_changes.loading", False),
                        shot("folder-combined-delete-uncertain-review"), click(610, 563),
                        check("folder_changes.jobs.0.status", "Needs review"), check("folder_changes.accepted", False),
                        click(470, 525), check("folder_changes.accepted", True), click(610, 563),
@@ -510,7 +539,7 @@ class NativeFlows(unittest.TestCase):
                        check("total", 122), check("loaded_message_id", reader["id"]),
                        shot("folder-combined-delete-accepted-cache-retained"),
                        {"type": "restart"}, check("folder_changes.jobs.0.status", "Stopped · unconfirmed"),
-                       click(95, 580), check("folder", "Projects"), check("selected", "Project overview"),
+                       click(95, 620), check("folder", "Projects"), check("selected", "Project overview"),
                        shot("folder-combined-delete-accepted-restart"))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
         database = Path(result["artifacts"]) / "fixture.sqlite"
@@ -520,16 +549,16 @@ class NativeFlows(unittest.TestCase):
     def test_folder_controls_delete_failure_review(self):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True,folder_actions="fail")
         print(f"Folder delete failure evidence: {result['artifacts']}",flush=True)
-        self.mcp.batch(click(95,540),check("folder","Projects"),
-                       {"type":"click","x":95,"y":540,"button":3},check("folder_changes.menu.source","Projects"),
+        self.mcp.batch(click(95,580),check("folder","Projects"),
+                       {"type":"click","x":95,"y":580,"button":3},check("folder_changes.menu.source","Projects"),
                        key("Down"),key("Return"),check("dialog","FolderChange"),
                        check("folder_changes.review.folders",4),shot("folder-delete-review"),
                        key("n"),check("dialog",None),check("folder","Projects"),
-                       {"type":"click","x":95,"y":540,"button":3},key("Down"),key("Return"),
+                       {"type":"click","x":95,"y":580,"button":3},key("Down"),key("Return"),
                        check("folder_changes.review.folders",4),key("y"),check("dialog",None),
                        check("folder","INBOX"),check("folder_changes.pending",1),shot("folder-delete-pending"),
                        check("folder_changes.pending",0),check("folder_changes.jobs.0.status","Could not finish"),
-                       check("folder","Projects"),click(90,477),check("dialog","FolderHistory"),
+                       check("folder","Projects"),click(90,517),check("dialog","FolderHistory"),
                        check("folder_changes.loading",False),shot("folder-delete-history"),
                        click(490,541),check("folder_changes.jobs.0.steps.0.status","Done"),
                        check("folder_changes.jobs.0.steps.1.status","Done"),
@@ -543,26 +572,26 @@ class NativeFlows(unittest.TestCase):
     def test_folder_controls_uncertain_move_requires_review(self):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True,folder_actions="uncertain")
         print(f"Folder uncertainty evidence: {result['artifacts']}",flush=True)
-        self.mcp.batch({"type":"click","x":95,"y":540,"button":3},key("Return"),
+        self.mcp.batch({"type":"click","x":95,"y":580,"button":3},key("Return"),
                        check("dialog","FolderChange"),check("focused_input","folder-parent-search"),
                        check("folder_changes.loading",False),type_text("Archive"),key("Return"),
                        check("folder_changes.review.folders",4),key("Return"),check("dialog",None),
                        check("folder_changes.jobs.0.status","Needs review"),
                        {"type":"restart"},check("folder_changes.jobs.0.status","Needs review"),
-                       click(90,477),check("dialog","FolderHistory"),check("folder_changes.loading",False),
+                       click(90,517),check("dialog","FolderHistory"),check("folder_changes.loading",False),
                        shot("folder-uncertain-history"),click(490,563),click(610,563),
                        check("folder_changes.jobs.0.status","Needs review"),check("folder_changes.accepted",False),
                        click(470,525),check("folder_changes.accepted",True),click(610,563),
                        check("folder_changes.jobs.0.status","Stopped · unconfirmed"),
                        check("folder_changes.jobs.0.closed",True),shot("folder-uncertain-accepted"),
-                       key("Escape"),check("dialog",None),click(95,580),check("folder","Projects"),
+                       key("Escape"),check("dialog",None),click(95,620),check("folder","Projects"),
                        check("selected","Project overview"),shot("folder-uncertain-cache-kept"),
                        {"type":"restart"},check("folder_changes.jobs.0.status","Stopped · unconfirmed"))
 
     def test_folder_controls_graceful_close_saves_receipt_and_resumes_remaining_deletes(self):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True,folder_actions="slow")
         print(f"Folder graceful close evidence: {result['artifacts']}",flush=True)
-        self.mcp.batch({"type":"click","x":95,"y":540,"button":3},key("Down"),key("Return"),
+        self.mcp.batch({"type":"click","x":95,"y":580,"button":3},key("Down"),key("Return"),
                        check("folder_changes.review.folders",4),key("Return"),check("dialog",None),
                        check("folder_changes.jobs.0.steps.0.status","Running"))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
@@ -579,7 +608,7 @@ class NativeFlows(unittest.TestCase):
     def test_folder_controls_failed_close_keeps_window_open_and_retry_can_close(self):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True,folder_actions="fail")
         print(f"Folder failed close evidence: {result['artifacts']}",flush=True)
-        self.mcp.batch({"type":"click","x":95,"y":540,"button":3},key("Return"),
+        self.mcp.batch({"type":"click","x":95,"y":580,"button":3},key("Return"),
                        check("dialog","FolderChange"),check("focused_input","folder-parent-search"),
                        check("folder_changes.loading",False),type_text("Archive"),key("Return"),
                        check("folder_changes.review.folders",4),key("Return"),check("dialog",None),
@@ -588,7 +617,7 @@ class NativeFlows(unittest.TestCase):
             self.mcp.call("desktop.close")
         self.mcp.batch(check("folder_changes.jobs.0.status","Could not finish"),
                        key("ctrl+2"),check("tab","Calendar"),key("ctrl+1"),check("tab","Mail"),
-                       click(90,477),check("dialog","FolderHistory"),check("folder_changes.loading",False),
+                       click(90,517),check("dialog","FolderHistory"),check("folder_changes.loading",False),
                        shot("folder-close-error-recovery"))
         # The review's Retry is an ordinary native button; close again while its
         # wire command is running, proving the cancelled barrier can be reused.
@@ -600,10 +629,10 @@ class NativeFlows(unittest.TestCase):
     def test_folder_controls_pop3_local_move_retains_mail_across_restart(self):
         result=self.mcp.call("desktop.start",pop3_account=True,persistent=True)
         print(f"POP3 folder controls evidence: {result['artifacts']}",flush=True)
-        self.hold_mail_over(402,mail_row_y(2),95,636)
+        self.hold_mail_over(402,mail_row_y(2),95,676)
         self.mcp.batch({"type":"mouse_up"},check("total",119),check("mail_pending",0),
-                       click(95,636),check("folder","Projects"),check("selected","Coffee next Thursday?"),
-                       {"type":"click","x":95,"y":636,"button":3},key("Return"),
+                       click(95,676),check("folder","Projects"),check("selected","Coffee next Thursday?"),
+                       {"type":"click","x":95,"y":676,"button":3},key("Return"),
                        check("dialog","FolderChange"),check("focused_input","folder-parent-search"),
                        check("folder_changes.loading",False),type_text("Archive"),key("Return"),
                        check("folder_changes.review.folders",1),check("folder_changes.review.messages",1),
@@ -620,7 +649,7 @@ class NativeFlows(unittest.TestCase):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True)
         print(f"Folder compact controls evidence: {result['artifacts']}",flush=True)
         self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),click(690,366),check("dark",True),
-                       key("ctrl+1"),check("tab","Mail"),click(95,540),check("folder","Projects"),
+                       key("ctrl+1"),check("tab","Mail"),click(95,580),check("folder","Projects"),
                        key("shift+F10"),check("folder_changes.menu.source","Projects"),key("Down"),key("Return"),
                        check("folder_changes.review.folders",4),{"type":"resize","width":900,"height":640},
                        shot("folder-delete-dark-compact"),key("n"),check("dialog",None),
@@ -676,51 +705,52 @@ class NativeFlows(unittest.TestCase):
         print(f"Nested folder persistence evidence: {result['artifacts']}",flush=True)
         self.mcp.batch(check("expanded_folders",{}),check("sidebar_labels","Projects","contains"),
                        check("sidebar_labels","Teams","contains"),check("sidebar_labels","Notes/flat.name","contains"),
-                       shot("nested-folder-roots"),click(85,540),check("folder","Projects"),
+                       shot("nested-folder-roots"),click(85,580),check("folder","Projects"),
                        check("selected","Project overview"),check("expanded_folders",{}),
-                       click(188,540),check("expanded_folders.preview-work","Projects","contains"),
+                       click(176,580),check("expanded_folders.preview-work","Projects","contains"),
                        check("sidebar_labels","Design","contains"),check("folder","Projects"),
-                       shot("nested-projects-expanded"),click(176,584),
+                       shot("nested-projects-expanded"),click(176,624),
                        check("expanded_folders.preview-work","Projects/Design","contains"),
-                       check("sidebar_labels","日本語","contains"),click(110,626),
+                       check("sidebar_labels","日本語","contains"),click(110,666),
                        check("folder","Projects/Design/&ZeVnLIqe-"),check("selected","Japanese folder note"),
-                       shot("nested-japanese-folder-open"),click(176,540),
+                       shot("nested-japanese-folder-open"),click(176,580),
                        check("expanded_folders.preview-work",["Projects/Design"]),
                        check("folder","Projects/Design/&ZeVnLIqe-"),check("preferences_saved",True),
                        check("saved_expanded_folders.preview-work",["Projects/Design"]),shot("nested-parent-collapsed"),
                        {"type":"restart"},check("expanded_folders.preview-work",["Projects/Design"]),
-                       click(188,540),check("sidebar_labels","日本語","contains"),
+                       click(176,580),check("sidebar_labels","日本語","contains"),
                        shot("nested-expansion-restored"))
 
     def test_nested_folder_keyboard_containers_and_literal_delimiters(self):
         result=self.mcp.call("desktop.start",nested_folders=True)
         print(f"Nested folder keyboard evidence: {result['artifacts']}",flush=True)
-        self.mcp.batch(click(85,584),check("expanded_folders.preview-work","Teams","contains"),
-                       check("folder","INBOX"),check("sidebar_index",7),key("Right"),check("sidebar_index",8),
+        self.mcp.batch(click(85,624),check("expanded_folders.preview-work","Teams","contains"),
+                       check("folder","INBOX"),check("sidebar_index",8),key("Right"),check("sidebar_index",9),
                        key("Return"),check("expanded_folders.preview-work","Teams/Remote","contains"),
-                       check("folder","INBOX"),key("Right"),check("sidebar_index",9),key("Return"),
+                       check("folder","INBOX"),key("Right"),check("sidebar_index",10),key("Return"),
                        check("folder","Teams/Remote/Meetings"),check("selected","Remote team agenda"),
-                       shot("nested-container-keyboard-open"),key("Left"),check("sidebar_index",8),key("Left"),
-                       check("expanded_folders.preview-work",["Teams"]),key("Left"),check("sidebar_index",7),key("Left"),
-                       check("expanded_folders.preview-work",[]),click(85,727),
-                       check("expanded_folders.preview-personal",["Home"]),key("Right"),check("sidebar_index",11),
+                       shot("nested-container-keyboard-open"),key("Left"),check("sidebar_index",9),key("Left"),
+                       check("expanded_folders.preview-work",["Teams"]),key("Left"),check("sidebar_index",8),key("Left"),
+                       check("expanded_folders.preview-work",[]),click(85,767),
+                       check("expanded_folders.preview-personal",["Home"]),key("Right"),check("sidebar_index",12),
                        key("Return"),check("folder","Home.Plans"),check("selected","Home plans"),
                        key("Right"),check("sidebar_labels","2026","contains"),key("Right"),key("Return"),
                        check("folder","Home.Plans.2026"),check("selected","Plans for 2026"),shot("nested-dot-delimiter"),
                        key("Left"),key("Left"),key("Left"),key("Left"),
-                       check("expanded_folders.preview-personal",[]),click(85,769),
+                       check("expanded_folders.preview-personal",[]),
+                       {"type":"hover","x":100,"y":700},{"type":"scroll","amount":-30},wait(120),click(85,809),
                        check("folder","Notes/flat.name"),check("selected","A flat folder"),
-                       click(85,626),check("folder","Notes/flat.name"),shot("nested-literal-flat-and-disabled-container"))
+                       click(85,666),check("folder","Notes/flat.name"),shot("nested-literal-flat-and-disabled-container"))
 
     def test_nested_folder_drag_reveals_containers_and_undo(self):
         result=self.mcp.call("desktop.start",nested_folders=True,mail_actions="slow")
         print(f"Nested folder drag evidence: {result['artifacts']}",flush=True)
-        self.hold_mail_over(402,mail_row_y(1),85,584)
+        self.hold_mail_over(402,mail_row_y(1),85,624)
         self.mcp.batch(check("expanded_folders.preview-work","Teams","contains"),
                        check("mail_drag.target",None),shot("nested-drag-container-expanded"),
-                       {"type":"hover","x":95,"y":626},
+                       {"type":"hover","x":95,"y":666},
                        check("expanded_folders.preview-work","Teams/Remote","contains"),
-                       check("mail_drag.target",None),{"type":"hover","x":110,"y":668},
+                       check("mail_drag.target",None),{"type":"hover","x":110,"y":708},
                        check("mail_drag.target","Teams/Remote/Meetings"),check("mail_drag.valid",True),
                        shot("nested-drag-leaf-target"),{"type":"mouse_up"},check("total",119),check("mail_pending",1),
                        check("action_toast.label","Moved 1 message to Teams/Remote/Meetings"),
@@ -741,23 +771,23 @@ class NativeFlows(unittest.TestCase):
                        check("move_enter_destination","Projects/Design/&ZeVnLIqe-"),key("Return"),
                        check("dialog","BulkReview"),check("bulk.action","Move to Projects/Design/日本語"),
                        shot("nested-unicode-bulk-review"),key("n"),check("dialog",None),check("total",120),
-                       click(85,540),check("folder","Projects"),click(188,540),
+                       click(85,580),check("folder","Projects"),click(176,580),
                        check("sidebar_labels","Design","contains"),
-                       {**click(95,584),"modifiers":["ctrl"]},check("total",2),
+                       {**click(95,624),"modifiers":["ctrl"]},check("total",2),
                        check("selected_folders",[{"account":"preview-work","folder":"Projects","sent_only":False},
                                                  {"account":"preview-work","folder":"Projects/Design","sent_only":False}]),
-                       {**click(95,668),"modifiers":["ctrl"]},check("expanded_folders.preview-work","Teams","contains"),
+                       {**click(95,708),"modifiers":["ctrl"]},check("expanded_folders.preview-work","Teams","contains"),
                        check("total",2),shot("nested-parent-child-combined-inbox"))
 
     def test_nested_folder_compact_dark_keyboard_reveal_and_saved_size(self):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True)
         print(f"Compact folder tree evidence: {result['artifacts']}",flush=True)
         self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),click(690,366),check("dark",True),
-                       key("ctrl+1"),check("tab","Mail"),click(188,540),check("sidebar_labels","Design","contains"),
-                       click(176,584),check("sidebar_labels","日本語","contains"),click(110,626),
+                       key("ctrl+1"),check("tab","Mail"),click(176,580),check("sidebar_labels","Design","contains"),
+                       click(176,624),check("sidebar_labels","日本語","contains"),click(110,666),
                        check("selected","Japanese folder note"),{"type":"resize","width":900,"height":640},
-                       check("window_size",[900,640]),key("Left"),check("sidebar_index",7),
-                       key("Right"),check("sidebar_index",8),key("Return"),check("selected","Japanese folder note"),
+                       check("window_size",[900,640]),key("Left"),check("sidebar_index",8),
+                       key("Right"),check("sidebar_index",9),key("Return"),check("selected","Japanese folder note"),
                        shot("nested-compact-dark-keyboard-revealed"),
                        click(100,529),check("folder","Projects/Design/&ZeVnLIqe-"),
                        check("saved_window_size",{"width":900.,"height":640.}),check("preferences_saved",True),
@@ -766,8 +796,8 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch({"type":"resize","width":1440,"height":920},key("ctrl+comma"),
                        check("tab","Preferences"),wait(120),click(1145,623),wait(80),click(1140,509),
                        check("interface_scale",120),check("preferences_saved",True),key("ctrl+1"),
-                       check("tab","Mail"),wait(120),click(105,648),check("folder","Projects"),
-                       key("Right"),check("sidebar_index",7),key("Right"),check("sidebar_index",8),
+                       check("tab","Mail"),wait(120),click(105,696),check("folder","Projects"),
+                       key("Right"),check("sidebar_index",8),key("Right"),check("sidebar_index",9),
                        key("Return"),check("selected","Japanese folder note"),shot("nested-dark-large-scale"))
 
     def test_drag_single_message_uses_the_source_row_and_immediate_undo(self):
@@ -832,7 +862,7 @@ class NativeFlows(unittest.TestCase):
                        {"type":"hover","x":85,"y":536},check("mail_drag.target","Projects"),
                        check("mail_drag.account","preview-work"),check("mail_drag.valid",True),
                        {"type":"mouse_up"},check("total",119),check("mail_pending",0),
-                       click(85,536),check("folder","Projects"),check("selected","A little more room to think"))
+                       click(85,576),check("folder","Projects"),check("selected","A little more room to think"))
         self.hold_mail_over(402,mail_row_y(0),85,278)
         self.mcp.batch(check("inbox_expanded",True),check("mail_drag.target","INBOX"),
                        check("mail_drag.valid",True),shot("drag-unified-expanded"),{"type":"mouse_up"},
@@ -1492,6 +1522,34 @@ class NativeFlows(unittest.TestCase):
         expected = x + max(0,(width-48*state["reader_size"])/2) + 20
         self.assertAlmostEqual(min(ink),expected,delta=4)
 
+    def test_reader_standard_word_selection_and_copyable_titles(self):
+        for dark in (False, True):
+            started = self.mcp.call("desktop.start", reading_mail=True)
+            print(f"Standard reader selection evidence: {started['artifacts']}", flush=True)
+            if dark:
+                self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                               click(690,366), check("dark", True), key("ctrl+1"), check("tab", "Mail"))
+            self.mcp.batch(double_click(400,mail_row_y(1)), check("selected", "Reading style HTML letter"),
+                           check("full_reader", True), check("html_view_current", True), check("reader_title_ready", True),
+                           double_click(80,175), check("reader_selected_title", "Reading"),
+                           key("ctrl+a"), check("reader_selected_title", "Reading style HTML letter"),
+                           shot(f"title-native-selection-full-{dark}"),
+                           key("ctrl+c"), key("ctrl+f"), check("focused_input", "find-message"),
+                           key("ctrl+v"), check("find_query", "Reading style HTML letter"),
+                           key("Escape"), check("find_open", False))
+            state = self.mcp.call("desktop.state")
+            x, y, width, _ = state["html_body_bounds"]
+            left = round(x + max(0, (width - 48 * state["reader_size"]) / 2) + 20)
+            top = round(y + 28)
+            self.mcp.batch(double_click(left+20,top), check("html_selected_text", "Column"),
+                           shot(f"html-native-word-{dark}"), key("ctrl+c"), key("ctrl+f"),
+                           check("focused_input", "find-message"), key("ctrl+a"), key("ctrl+v"),
+                           check("find_query", "Column"), key("Escape"), check("find_open", False),
+                           {"type":"resize", "width":900, "height":640}, check("html_view_current", True),
+                           double_click(80,151), check("reader_selected_title", "Reading"),
+                           key("ctrl+a"), check("reader_selected_title", "Reading style HTML letter"),
+                           shot(f"title-native-selection-compact-{dark}"))
+
     def test_reading_columns_plain_html_selection_find_and_resize(self):
         started=self.mcp.call("desktop.start",reading_mail=True)
         print(f"Reading column evidence: {started['artifacts']}",flush=True)
@@ -2101,7 +2159,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_html_wide_table_can_scroll_horizontally_and_select_its_right_column(self):
         self.mcp.call("desktop.start", html_mail=True)
-        self.mcp.batch(click(100, 536), check("folder", "Projects"), check("selected", "Wide HTML report"),
+        self.mcp.batch(click(100, 575), check("folder", "Projects"), check("selected", "Wide HTML report"),
                        check("html_view_current", True), check("html_width", 1000, "gte"), wait(100), shot("html-wide-table"))
         x, y, width, height = self.mcp.call("desktop.state")["html_body_visible"]
         self.mcp.batch(drag(int(x+150),int(y+height-8),int(x+width-4),int(y+height-8)),
@@ -2165,6 +2223,38 @@ class NativeFlows(unittest.TestCase):
         for _ in range(3):
             self.mcp.batch({"type": "hover", "x": 1000, "y": 500}, *[{"type": "scroll", "amount": 30}] * 95)
         self.mcp.batch(wait(150))
+
+    def test_large_incoming_attachment_opens_moves_and_undoes(self):
+        started = self.mcp.call("desktop.start", large_incoming=True, persistent=True)
+        print(f"Large attachment evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"),
+                       type_text("Large incoming attachment"), check("total", 1), key("Escape"),
+                       check("selected", "Large incoming attachment"), check("html_ready", True),
+                       check("html_error", None), check("attachment_count", 1),
+                       wait(150), shot("large-incoming-attachment"),
+                       key("m"), check("focused_input", "folder-search"), type_text("Archive"),
+                       key("Return"), check("dialog", None), check("mail_pending", 0),
+                       check("mail_rows.0.folder", "Archive"), shot("large-incoming-moved"),
+                       click(1308, 874), check("mail_pending", 0), check("mail_rows.0.folder", "INBOX"),
+                       {"type": "restart"}, key("ctrl+k"), check("focused_input", "search"),
+                       type_text("Large incoming attachment"), check("total", 1), key("Escape"),
+                       check("selected", "Large incoming attachment"), check("attachment_count", 1),
+                       check("html_ready", True), shot("large-incoming-restarted"))
+        with sqlite3.connect((Path(started["artifacts"]) / "fixture.sqlite").as_uri() + "?mode=ro", uri=True) as cache:
+            self.assertGreater(cache.execute("SELECT length(raw) FROM messages WHERE subject=?", ("Large incoming attachment",)).fetchone()[0], 25 * 1024 * 1024)
+
+    def test_large_incoming_plain_text_pages_without_size_error(self):
+        started = self.mcp.call("desktop.start", large_incoming=True)
+        print(f"Large plain message evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"),
+                       type_text("Large incoming plain text"), check("total", 1), key("Escape"),
+                       check("selected", "Large incoming plain text"), check("reader_text_ready", True),
+                       check("body_chars", 32000), check("body_truncated", True),
+                       shot("large-incoming-plain-first-page"))
+        self.scroll_reader_to_end()
+        self.mcp.batch(shot("large-incoming-show-more"), click(1008, 732),
+                       check("body_chars", 64000), check("body_truncated", True),
+                       check("reader_text_ready", True), shot("large-incoming-plain-next-page"))
 
     def test_long_message_show_more_loads_every_part(self):
         started = self.mcp.call("desktop.start", long_mail=True)
@@ -2674,7 +2764,7 @@ class NativeFlows(unittest.TestCase):
                        type_text("Projects"), key("Return"), check("dialog", None),
                        check("action_toast.label", "Moved 1 message to Projects"),
                        {**check("mail_pending", 0), "timeout_ms": 5000},
-                       click(95, 537), check("folder", "Projects"), check("total", 1),
+                       click(95, 577), check("folder", "Projects"), check("total", 1),
                        click(1340, 874), check("total", 0), check("mail_pending", 1),
                        check("action_toast.label", "Restored 1 message"),
                        {**check("mail_pending", 0), "timeout_ms": 5000}, check("total", 0), check("notice", None),
@@ -2799,7 +2889,7 @@ class NativeFlows(unittest.TestCase):
     def open_shared_profiles(self, search_x=1150):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
                        click(search_x, 88), key("ctrl+a"), type_text("shared profile"),
-                       check("settings_matches", ["Profiles and sync"]), click(480, 289),
+                       check("settings_matches.0", "Profiles and sync"), click(480, 289),
                        check("settings_group", "Profiles and sync"),
                        check("profile_sync.loaded", True), wait(100))
 
@@ -2867,10 +2957,10 @@ class NativeFlows(unittest.TestCase):
         current = self.mcp.call("desktop.state")["account"]
         self.mcp.batch(key("Up"), check("sidebar_index", 1), check("account", previous),
                        key("Down"), check("sidebar_index", 2), check("account", current),
-                       click(110, 626), check("collapsed_accounts", [previous]), check("sidebar_index", 7),
-                       click(110, 626), check("collapsed_accounts", []),
-                       key("Down"), check("sidebar_index", 8), key("Return"), check("collapsed_accounts", [current]),
-                       key("Return"), check("collapsed_accounts", []), key("Up"), check("sidebar_index", 7),
+                       click(110, 666), check("collapsed_accounts", [previous]), check("sidebar_index", 8),
+                       click(110, 666), check("collapsed_accounts", []),
+                       key("Down"), check("sidebar_index", 9), key("Return"), check("collapsed_accounts", [current]),
+                       key("Return"), check("collapsed_accounts", []), key("Up"), check("sidebar_index", 8),
                        key("Return"), check("collapsed_accounts", [previous]), shot("duplicate-address-keyboard-collapse"),
                        key("Return"), check("collapsed_accounts", []),
                        drag(222, 500, 100, 500), check("sidebar_width", 160), check("preferences_saved", True),
@@ -4271,7 +4361,7 @@ class NativeFlows(unittest.TestCase):
         self.assertEqual(moved["folder"],"Projects")
         self.mcp.batch(key("ctrl+k"),check("focused_input","search"),key("ctrl+a"),key("BackSpace"),
                        check("query",""),check("folder","INBOX"),check("total",120),key("Escape"),
-                       click(85,536),check("folder","Projects"),check("total",2),shot("search-cleared-browsing-restored"))
+                       click(85,576),check("folder","Projects"),check("total",2),shot("search-cleared-browsing-restored"))
         self.assertIn(subject,[row["subject"] for row in self.mcp.call("desktop.state")["mail_rows"]])
 
     def test_search_bulk_selection_includes_matches_in_all_result_folders(self):
@@ -4338,7 +4428,7 @@ class NativeFlows(unittest.TestCase):
             result=self.mcp.call("desktop.start",move_recovery=mode,persistent=True)
             print(f"Move review {mode}: {result['artifacts']}",flush=True)
             if mode=="committed":
-                self.mcp.batch(click(85,536),check("folder","Projects"))
+                self.mcp.batch(click(85,576),check("folder","Projects"))
             else:
                 self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("keepsake"),check("total",1),key("Escape"),check("focused_input",None))
             self.mcp.batch(check("selected","Recovered keepsake"),check("reader_text_ready",True),
@@ -4362,27 +4452,56 @@ class NativeFlows(unittest.TestCase):
             self.mcp.batch(key("y"),check("move_recovery.pending",1),shot("move-recovery-running"),
                            key("Escape"),check("dialog",None),key("ctrl+2"),check("tab","Calendar"),
                            check("move_recovery.pending",0),check("notice","Move completed.","contains"),
-                           key("ctrl+1"),check("tab","Mail"),click(85,636 if mode=="copied" else 536),
+                           key("ctrl+1"),check("tab","Mail"),click(85,676 if mode=="copied" else 576),
                            check("folder","Projects"),check("selected","Recovered keepsake"),check("reader_text_ready",True),
                            check("mail_rows.0.group_pending",False),check("move_recovery.total",0),
                            shot("move-recovery-finished"),{"type":"restart"},
-                           click(85,636 if mode=="copied" else 536),check("selected","Recovered keepsake"),
+                           click(85,676 if mode=="copied" else 576),check("selected","Recovered keepsake"),
                            check("reader_text_ready",True),check("mail_rows.0.group_pending",False),shot("move-recovery-finished-restarted"))
 
     def test_move_recovery_failure_keeps_cached_reader_and_can_retry(self):
         result=self.mcp.call("desktop.start",move_recovery="fail-once",persistent=True)
         print(f"Move recovery failure evidence: {result['artifacts']}",flush=True)
-        self.mcp.batch(click(85,536),check("selected","Recovered keepsake"),check("reader_text_ready",True),
+        self.mcp.batch(click(85,576),check("selected","Recovered keepsake"),check("reader_text_ready",True),
                        click(1340,192),check("dialog","MoveRecovery"),wait(100),click(920,588),
                        check("move_recovery.pending",1),key("Escape"),check("dialog",None),
                        key("ctrl+2"),check("tab","Calendar"),check("move_recovery.pending",0),
                        check("notice","temporarily unavailable","contains"),key("ctrl+1"),check("tab","Mail"),
-                       click(85,536),check("selected","Recovered keepsake"),check("reader_text_ready",True),
+                       click(85,576),check("selected","Recovered keepsake"),check("reader_text_ready",True),
                        check("mail_rows.0.group_pending",True),click(1340,192),check("dialog","MoveRecovery"),
                        wait(100),shot("move-recovery-retry-error"),key("Return"),check("move_recovery.pending",1),
                        check("move_recovery.pending",0),check("dialog",None),check("move_recovery.total",0),
                        check("selected","Recovered keepsake"),check("mail_rows.0.group_pending",False),
                        check("notice","Move completed.","contains"),shot("move-recovery-retry-complete"))
+
+    def test_move_recovery_rediscovered_original_moves_without_targeting_local_copy(self):
+        result = self.mcp.call("desktop.start", move_recovery="kept-rediscovered", persistent=True)
+        print(f"Rediscovered original controls: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("keepsake"),
+                       check("total", 2), key("Escape"), check("move_recovery.total", 0))
+        state = self.mcp.call("desktop.state")
+        original_index = next(i for i, mail in enumerate(state["mail_rows"]) if mail["remote_id"] == "42.700")
+        original_id = state["mail_rows"][original_index]["id"]
+        local_id = next(mail["id"] for mail in state["mail_rows"] if mail["remote_id"].startswith("local-recovered-"))
+        self.mcp.batch(click(400, mail_row_y(original_index, state)), check("selected_id", original_id),
+                       check("reader_text_ready", True), key("ctrl+r"), check("sync_round", 1),
+                       check("refreshing", False), check("selected_id", original_id),
+                       shot("rediscovered-original-reader"), key("m"), check("focused_input", "folder-search"),
+                       type_text("Archive"), key("Return"), check("dialog", None), check("mail_pending", 0),
+                       check("total", 2))
+        for destination in ("Archive", "Trash"):
+            self.mcp.batch(wait(100))
+            state = self.mcp.call("desktop.state")
+            moved_index = next(i for i, mail in enumerate(state["mail_rows"]) if mail["id"] != local_id)
+            moved = state["mail_rows"][moved_index]
+            self.assertEqual(moved["folder"], destination)
+            self.assertFalse(moved["remote_id"].startswith("local-recovered-"))
+            self.assertEqual(next(mail for mail in state["mail_rows"] if mail["id"] == local_id)["folder"], "INBOX")
+            self.mcp.batch(click(400, mail_row_y(moved_index, state)), check("selected_id", moved["id"]),
+                           check("reader_text_ready", True), shot(f"rediscovered-original-{destination.lower()}"))
+            if destination == "Archive":
+                self.mcp.batch(key("ctrl+d"), check("action_toast.label", "Deleted 1 message"),
+                               check("mail_pending", 0), check("total", 2))
 
     def test_move_recovery_local_copy_has_confirmation_and_survives_sync_restart(self):
         result=self.mcp.call("desktop.start",move_recovery="unconfirmed",persistent=True)
@@ -4437,17 +4556,17 @@ class NativeFlows(unittest.TestCase):
             self.assertEqual(receipt["current"]["remote_id"],"91.701")
             self.assertEqual(cache.execute("SELECT COUNT(*) FROM messages WHERE id=?",(receipt["current"]["id"],)).fetchone()[0],1)
         self.mcp.call("desktop.restart")
-        self.mcp.batch(click(85,636),check("folder","Projects"),check("selected","Recovered keepsake"),
+        self.mcp.batch(click(85,676),check("folder","Projects"),check("selected","Recovered keepsake"),
                        check("reader_text_ready",True),check("move_recovery.total",0),shot("move-recovery-after-graceful-close"))
 
     def test_moved_cache_is_readable_after_restart_and_refresh_rekeys_the_open_reader(self):
         result=self.mcp.call("desktop.start",move_recovery=True,persistent=True)
         print(f"Move recovery native evidence: {result['artifacts']}",flush=True)
-        self.mcp.batch(click(85,536),check("folder","Projects"),check("total",1),
+        self.mcp.batch(click(85,576),check("folder","Projects"),check("total",1),
                        check("selected","Recovered keepsake"),check("reader_text_ready",True),
                        check("mail_rows.0.group_pending",True),shot("move-recovery-cold-cache"))
         original=self.mcp.call("desktop.state")["selected_id"]
-        self.mcp.batch({"type":"restart"},click(85,536),check("folder","Projects"),
+        self.mcp.batch({"type":"restart"},click(85,576),check("folder","Projects"),
                        check("total",1),check("selected","Recovered keepsake"),
                        check("reader_text_ready",True),check("selected_id",original),
                        check("mail_rows.0.group_pending",True),shot("move-recovery-after-restart"),
@@ -4585,9 +4704,9 @@ class NativeFlows(unittest.TestCase):
 
     def test_sidebar_inbox_shortcut_and_highlighted_return_move(self):
         self.mcp.call("desktop.start", long_folders=True)
-        self.mcp.batch(click(100, 537), check("folder", "Projects"), check("sidebar_focus", True),
+        self.mcp.batch(click(100, 577), check("folder", "Projects"), check("sidebar_focus", True),
                        key("i"), check("folder", "INBOX"),
-                       click(100, 537), check("folder", "Projects"), click(420, 244), check("sidebar_focus", False),
+                       click(100, 577), check("folder", "Projects"), click(420, 244), check("sidebar_focus", False),
                        key("i"), check("folder", "Projects"), key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
                        type_text("inbox"), check("move_enter_destination", "INBOX"), shot("move-inbox-enter-highlight"),
                        key("Return"), check("dialog", None), check("total", 0),
@@ -4595,12 +4714,12 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+comma"), check("tab", "Preferences"), click(645, 156), check("settings_tab", "Shortcuts"),
                        {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(150), shot("sidebar-inbox-key-settings"),
                        click(988, 600), check("shortcuts.Inbox", ""), check("shortcuts.Delete", "Mod+D"), check("preferences_saved", True),
-                       key("ctrl+1"), check("tab", "Mail"), click(100, 537), check("folder", "Projects"),
+                       key("ctrl+1"), check("tab", "Mail"), click(100, 577), check("folder", "Projects"),
                        key("i"), wait(80), check("folder", "Projects"),
                        key("ctrl+comma"), check("tab", "Preferences"),
                        {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(120),
                        click(920, 600), key("alt+i"), check("shortcuts.Inbox", "Alt+I"), check("preferences_saved", True),
-                       key("ctrl+1"), check("tab", "Mail"), click(100, 537), check("folder", "Projects"), key("alt+i"), check("folder", "INBOX"))
+                       key("ctrl+1"), check("tab", "Mail"), click(100, 577), check("folder", "Projects"), key("alt+i"), check("folder", "INBOX"))
 
     def test_mail_navigation_clears_old_folder_highlight(self):
         for unified, appearance, dark in ((True, 399, False), (False, 690, True)):
@@ -5445,16 +5564,16 @@ class NativeFlows(unittest.TestCase):
     def test_sidebar_combined_folders_and_account_collapse(self):
         self.mcp.call("desktop.start", long_folders=True)
         long_folder = "Mailspring/Snoozed/Worldwide correspondence and scheduled delivery"
-        self.mcp.batch(shot("sidebar-long-labels-light"), click(100, 537), check("folder", "Projects"), check("total", 1),
-                       {"type": "click", "x": 100, "y": 576, "modifiers": ["ctrl"]}, check("total", 2),
+        self.mcp.batch(shot("sidebar-long-labels-light"), click(100, 577), check("folder", "Projects"), check("total", 1),
+                       {"type": "click", "x": 100, "y": 616, "modifiers": ["ctrl"]}, check("total", 2),
                        check("selected_folders.1.folder", long_folder), shot("sidebar-combined-folders"),
-                       {"type": "click", "x": 100, "y": 537, "modifiers": ["ctrl"]}, check("total", 1),
+                       {"type": "click", "x": 100, "y": 577, "modifiers": ["ctrl"]}, check("total", 1),
                        check("selected_folders.0.folder", long_folder),
-                       click(100, 615), check("folder", "WWW MMM WWW MMM WWW MMM WWW MMM"), check("selected_folders", None),
-                       {"type": "click", "x": 100, "y": 615, "modifiers": ["ctrl"]}, check("selected_folders", []), check("total", 0),
-                       click(100, 498), check("collapsed_accounts", ["preview-work"]), check("preferences_saved", True), shot("sidebar-account-collapsed"),
-                       click(100, 498), check("collapsed_accounts", []), check("preferences_saved", True),
-                       {"type": "hover", "x": 125, "y": 576}, wait(600), shot("sidebar-long-name-truncation"),
+                       click(100, 655), check("folder", "WWW MMM WWW MMM WWW MMM WWW MMM"), check("selected_folders", None),
+                       {"type": "click", "x": 100, "y": 655, "modifiers": ["ctrl"]}, check("selected_folders", []), check("total", 0),
+                       click(100, 538), check("collapsed_accounts", ["preview-work"]), check("preferences_saved", True), shot("sidebar-account-collapsed"),
+                       click(100, 538), check("collapsed_accounts", []), check("preferences_saved", True),
+                       {"type": "hover", "x": 125, "y": 616}, wait(600), shot("sidebar-long-name-truncation"),
                        click(78, 278), check("folder", "INBOX"), check("selected_folders", None), check("total", 120))
 
     def test_sidebar_long_labels_compact_dark(self):

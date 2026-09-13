@@ -56,6 +56,122 @@ fn recovered_mail_sync_clears_its_error_but_preserves_other_action_errors() {
 }
 
 #[tokio::test]
+async fn encoded_reader_pages_advance_and_survive_late_results_and_refresh() -> anyhow::Result<()> {
+    use std::io::Write;
+
+    let store = crate::store::Store::memory()?;
+    let mut source = tempfile::NamedTempFile::new()?;
+    source.write_all(b"Subject: Encoded reader progress\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<style>")?;
+    source.write_all(&vec![b' '; 270_000])?;
+    source.write_all(b"</style><p>Visible ending.</p><!--")?;
+    let block = [b'x'; 8192];
+    for _ in 0..26 * 1024 * 1024 / block.len() {
+        source.write_all(&block)?;
+    }
+    source.write_all(b"-->")?;
+    let prepared = shep_mail_core::providers::mail::staging::prepare(
+        source, "test", "42.9", "INBOX", true, false,
+    )?;
+    let id = prepared.summary.id.clone();
+    store.sync_staged_message(prepared).await?;
+    let page = crate::store::READER_BODY_PAGE;
+    let first = Arc::new(store.detail(id.clone()).await?);
+    assert!(first.body.is_empty());
+    assert!(first.body_truncated);
+    assert_eq!(first.body_limit, page);
+
+    let (mut app, _) = App::new();
+    let (sender, mut reads) = engine::CommandSender::foreground_test_channel();
+    app.tx = Some(sender);
+    app.selected = Some(id.clone());
+    app.detail = Some(first.clone());
+    let _ = app.handle(Message::MoreBody);
+    assert!(
+        matches!(reads.try_recv()?, Command::Detail { body_chars, .. } if body_chars == 2 * page)
+    );
+
+    let expanded = Arc::new(store.detail_limited(id.clone(), 2 * page).await?);
+    assert_eq!(expanded.body, "Visible ending.");
+    assert!(expanded.body_truncated);
+    let _ = app.handle(Message::Backend(Event::Detail {
+        revision: app.detail_revision,
+        id: id.clone(),
+        result: Ok(expanded.clone()),
+        prefetch: false,
+    }));
+    let _ = app.handle(Message::Backend(Event::Detail {
+        revision: app.detail_revision,
+        id: id.clone(),
+        result: Ok(first.clone()),
+        prefetch: true,
+    }));
+    assert_eq!(app.detail_body_chars(&id), 2 * page);
+    assert_eq!(
+        app.detail.as_ref().expect("expanded reader").body,
+        "Visible ending."
+    );
+    while reads.try_recv().is_ok() {}
+    let _ = app.handle(Message::MoreBody);
+    assert!(
+        matches!(reads.try_recv()?, Command::Detail { body_chars, .. } if body_chars == 3 * page)
+    );
+    let previous_revision = app.detail_revision;
+    let _ = app.handle(Message::Backend(Event::Changed));
+    let mut refresh = None;
+    while let Ok(command) = reads.try_recv() {
+        if let Command::Detail {
+            id: target,
+            body_chars,
+            prefetch: false,
+            ..
+        } = command
+            && target == id
+        {
+            refresh = Some(body_chars);
+        }
+    }
+    assert_eq!(refresh, Some(2 * page));
+    let _ = app.handle(Message::Backend(Event::Detail {
+        revision: previous_revision,
+        id: id.clone(),
+        result: Ok(first.clone()),
+        prefetch: false,
+    }));
+    assert_eq!(app.detail_body_chars(&id), 2 * page);
+
+    let other = crate::model::parse_mail(
+        "test",
+        "42.10",
+        "INBOX",
+        b"Subject: Other mail\r\n\r\nOther body".to_vec(),
+        false,
+        false,
+    )?;
+    let other_id = other.summary.id.clone();
+    store.upsert(vec![other]).await?;
+    app.selected = Some(other_id.clone());
+    app.detail = Some(Arc::new(store.detail(other_id.clone()).await?));
+    app.cache_detail(expanded);
+    let _ = app.handle(Message::Backend(Event::Detail {
+        revision: app.detail_revision,
+        id: id.clone(),
+        result: Ok(first),
+        prefetch: true,
+    }));
+    assert_eq!(
+        app.detail.as_ref().expect("other reader").summary.id,
+        other_id
+    );
+    assert_eq!(
+        app.cached_detail(&id)
+            .expect("expanded cached reader")
+            .body_limit,
+        2 * page
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn show_more_loads_the_next_page_and_refreshes_keep_the_expanded_length() {
     let store = crate::store::Store::memory().unwrap();
     let body: String = (0..5000)

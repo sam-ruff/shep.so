@@ -122,6 +122,7 @@ impl App {
             ("Sent", "send", "Sent"),
             ("Archive", "archive", "Archive"),
             ("Trash", "trash", "Trash"),
+            ("Spam", "spam", "Junk"),
         ] {
             items.push(SidebarItem {
                 account_email: None,
@@ -220,7 +221,10 @@ impl App {
             for (depth, node) in tree.visible(self.preferences.expanded_folders.get(&account.id)) {
                 let folder = &node.mailbox.name;
                 if self.preferences.unified_inbox
-                    && matches!(folder.as_str(), "INBOX" | "Sent" | "Archive" | "Trash")
+                    && matches!(
+                        folder.as_str(),
+                        "INBOX" | "Sent" | "Archive" | "Trash" | "Junk"
+                    )
                     && node.children.is_empty()
                 {
                     continue;

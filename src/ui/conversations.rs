@@ -387,7 +387,7 @@ impl App {
             Some(detail) => self.reader_toolbar(detail),
             None => container(muted("Opening message…")).height(36).into(),
         };
-        let mut heading = column![text(title).size(23).font(BOLD), controls].spacing(8);
+        let mut heading = column![self.selectable_conversation_title(title), controls].spacing(8);
         if self.conversation.error.is_some() {
             heading = heading.push(action(
                 "Reload related messages",
