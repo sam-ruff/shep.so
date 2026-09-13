@@ -45,7 +45,7 @@ if ! shep_download "$shep_endpoint" "$shep_stage/release.json"; then
 fi
 # JSON parsing uses the system JavaScript bridge. Output is validated single-line
 # fields, never shell code. Do not eval release metadata.
-osascript -l JavaScript - "$shep_stage/release.json" "$(uname -m)" > "$shep_stage/selection" <<'JXA'
+osascript -l JavaScript - "$shep_stage/release.json" "$(uname -m)" "$shep_version" > "$shep_stage/selection" <<'JXA'
 ObjC.import('Foundation');
 function run(args) {
     const raw = $.NSString.alloc.initWithContentsOfFileEncodingError(args[0], $.NSUTF8StringEncoding, null);
@@ -53,6 +53,7 @@ function run(args) {
     const release = JSON.parse(ObjC.unwrap(raw));
     const match = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(release.tag_name || '');
     if (!match || release.draft || !Array.isArray(release.assets)) throw new Error('Invalid published release');
+    if (args[2] && args[2] !== match[1]) throw new Error('GitHub returned a different release from the requested version; nothing was installed');
     const arch = args[1];
     const architectures = arch === 'arm64' ? ['arm64', 'aarch64'] : arch === 'x86_64' ? ['x86_64', 'amd64'] : [];
     const names = architectures.map(a => 'shep-' + match[1] + '-darwin-' + a + '.tar.gz');
@@ -60,7 +61,10 @@ function run(args) {
     const sums = release.assets.filter(a => a.name === 'SHA256SUMS');
     if (assets.length !== 1 || sums.length !== 1) throw new Error('No unique macOS/' + arch + ' archive and checksum are published; nothing was installed');
     const urls = [assets[0].browser_download_url, sums[0].browser_download_url];
-    urls.forEach(url => { if (typeof url !== 'string' || !/^https:\/\/github\.com\/sam-ruff\/shep\.so\/releases\/download\/[^\s]+$/.test(url)) throw new Error('Unexpected release URL'); });
+    [assets[0], sums[0]].forEach(asset => {
+        const expected = 'https://github.com/sam-ruff/shep.so/releases/download/' + release.tag_name + '/' + asset.name;
+        if (asset.browser_download_url !== expected) throw new Error('Unexpected release URL');
+    });
     return [match[1], assets[0].name].concat(urls).join('\n');
 }
 JXA

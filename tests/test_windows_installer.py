@@ -104,6 +104,32 @@ $env:SystemRoot = {literal(self.root / 'Fictional Windows')}
         self.assertEqual((self.app / 'shep.exe').read_bytes(), b'updated release\x00\x81')
         self.assertEqual(list(self.app.parent.glob('.shep-install-*')), [])
 
+    def test_requested_version_must_match_release_metadata(self):
+        self.execute()
+        endpoint = '/repos/sam-ruff/shep.so/releases/tags/v9.9.9'
+        self.fixture.files[endpoint] = self.fixture.files['/repos/sam-ruff/shep.so/releases/latest']
+        self.fixture.requests.clear()
+        self.assertIn('requested version', self.execute('Invoke-ShepInstall -User -Version 9.9.9', success=False).stderr)
+        self.assertEqual(self.fixture.requests, [endpoint])
+        self.assertEqual((self.app / 'shep.exe').read_bytes(), b'fictional windows binary\x00\xff\xfe\x01')
+
+    def test_archive_and_checksum_urls_must_belong_to_selected_release(self):
+        self.execute()
+        endpoint = '/repos/sam-ruff/shep.so/releases/latest'
+        for index in (0, 1):
+            with self.subTest(asset=index):
+                self.seed()
+                metadata = json.loads(self.fixture.files[endpoint])
+                asset = metadata['assets'][index]
+                original = asset['browser_download_url'].removeprefix('https://github.com')
+                asset['browser_download_url'] = asset['browser_download_url'].replace('/v1.2.3/', '/v9.9.9/')
+                self.fixture.files[original.replace('/v1.2.3/', '/v9.9.9/')] = self.fixture.files[original]
+                self.fixture.files[endpoint] = json.dumps(metadata).encode()
+                self.fixture.requests.clear()
+                self.assertIn('Unexpected release URL', self.execute(success=False).stderr)
+                self.assertEqual(self.fixture.requests, [endpoint])
+                self.assertEqual((self.app / 'shep.exe').read_bytes(), b'fictional windows binary\x00\xff\xfe\x01')
+
     def test_corrupt_download_and_archive_links_preserve_installation(self):
         self.execute()
         original = (self.app / 'shep.exe').read_bytes()

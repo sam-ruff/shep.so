@@ -20,9 +20,17 @@ The native MCP server is configured in `.mcp.json`. Read [the repository E2E ski
 
 All generated logs and evidence belong under ignored `artifacts/`; never leave logs in the repository root. Performance budgets, methodology and the validated Linux baseline are in [docs/PERFORMANCE.md](../PERFORMANCE.md). The [completion audit](../COMPLETION.md) distinguishes implemented behavior, remaining work and verification that still needs live services/platforms.
 
-**Documentation deploys automatically to GitHub Pages.** Quality and release workflows remain disabled as `.yml.disabled` files until the self-hosted Linux, Windows and macOS runners are ready. [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/AGENTS.md) records how to re-enable them when requested.
+**Documentation deploys automatically to GitHub Pages.** Desktop quality and
+release workflows use the self-hosted Linux and Windows pools. Coordinated
+mobile/browser jobs remain disabled and Apple execution needs runner capacity.
+[AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/AGENTS.md) records the
+operational rules; [the release contract](releases.md) describes publication.
 
-Conventional Commits drive semantic-release on `main`. Pre-commit runs fmt, Clippy and Rust tests; commit-msg validates the commit format. Release tooling uses Node 24 and `npm ci`. `npm run release:dry` checks the proposed release without publishing. The dormant release workflow runs only after a successful quality build, verifies the tested commit, prepares the Cargo version/archive/checksums, and publishes the GitHub release. Current release packaging produces Linux archives.
+Conventional Commits drive semantic-release on `main`. Pre-commit runs fmt,
+Clippy and Rust tests; commit-msg validates the commit format. Release tooling
+uses Node 24 and `npm ci`. `npm run release:dry` checks the proposed release
+without publishing. Publication requires both desktop platforms' verified
+archives, the tested current-main source and the same planned version.
 
 ## Extending Shep
 

@@ -6,6 +6,8 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
 
 ## Top priority — OAuth and shared profiles
 
+- [ ] **13 September release CI and installers:** enable and verify release CI so the install scripts reliably use published, versioned platform assets and checksums. Use only the authorised self-hosted runner pools, inspect actual platform capacity before enabling jobs, preserve installer failure/upgrade contracts, and verify the resulting release and install path. This request authorises enabling the previously disabled quality/release workflows; never fall back to GitHub-hosted runners.
+
 **13 September desktop delivery:** `12e6e2d` is pushed and its production build
 installed. Recovered originals accept fresh Move/Delete, HTML uses library-backed
 selection, titles are selectable, ordinary-cache receiving stages large messages

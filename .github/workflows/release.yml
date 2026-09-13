@@ -1,0 +1,77 @@
+name: Desktop release
+
+on:
+  workflow_run:
+    workflows: [Desktop quality and release artifacts]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: [self-hosted, sophie]
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          ref: main
+      - name: Require the successful current main revision
+        id: source
+        run: python3 scripts/release_ci.py source
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        with:
+          name: desktop-release-plan
+          path: artifacts/release-plan
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate the tested release plan
+        id: plan
+        run: python3 scripts/release_ci.py plan artifacts/release-plan/release-plan.json
+        env:
+          SHEP_RELEASE_SOURCE: ${{ steps.source.outputs.source }}
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        if: steps.plan.outputs.version != ''
+        with:
+          name: desktop-release-linux
+          path: dist
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        if: steps.plan.outputs.version != ''
+        with:
+          name: desktop-release-windows
+          path: dist
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        if: steps.plan.outputs.version != ''
+        with:
+          node-version: '24.21.0'
+      - name: Install pinned release tooling
+        if: steps.plan.outputs.version != ''
+        run: npm ci
+      - name: Publish verified desktop archives
+        if: steps.plan.outputs.version != ''
+        run: npm run release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHEP_RELEASE_SOURCE: ${{ steps.source.outputs.source }}
+          SHEP_EXPECTED_VERSION: ${{ steps.plan.outputs.version }}
+          GIT_AUTHOR_NAME: Sam R
+          GIT_AUTHOR_EMAIL: sam@technesci.co.uk
+          GIT_COMMITTER_NAME: Sam R
+          GIT_COMMITTER_EMAIL: sam@technesci.co.uk

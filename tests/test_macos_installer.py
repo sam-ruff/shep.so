@@ -76,6 +76,7 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_bytes(b'fictional icns outp
         self.fixture.files[root + 'SHA256SUMS'] = f'{checksum or hashlib.sha256(payload).hexdigest()}  {name}\n'.encode()
         metadata = {'tag_name':'v1.2.3', 'assets':[{'name':asset,'browser_download_url':'https://github.com'+root+asset} for asset in (name,'SHA256SUMS')]}
         self.fixture.files['/repos/sam-ruff/shep.so/releases/latest'] = json.dumps(metadata).encode()
+        self.fixture.files['/repos/sam-ruff/shep.so/releases/tags/v1.2.3'] = json.dumps(metadata).encode()
 
     def tool(self, name, body):
         file = self.tools / name
@@ -101,7 +102,9 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_bytes(b'fictional icns outp
         self.assertEqual(info['CFBundleShortVersionString'], '1.2.3')
         self.assertTrue((app / 'Contents/Resources/shep.icns').is_file())
         self.seed(binary=b'updated mac release')
-        self.run_installer()
+        self.fixture.requests.clear()
+        self.run_installer(arguments=self.arguments + ['--version', 'v1.2.3'])
+        self.assertEqual(self.fixture.requests[0], '/repos/sam-ruff/shep.so/releases/tags/v1.2.3')
         self.assertEqual((app / 'Contents/MacOS/shep').read_bytes(), b'updated mac release')
         self.assertEqual(list(app.parent.glob('.shep-install.*')), [])
 
@@ -113,6 +116,32 @@ pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_bytes(b'fictional icns outp
         self.seed(entries=[('shep',(tarfile.SYMTYPE,'/unrelated')),('assets/launcher.png',b'fixture')])
         self.assertIn('non-regular', self.run_installer(False).stderr)
         self.assertEqual(app.read_bytes(), b'fictional mac release')
+
+    def test_requested_version_must_match_release_metadata(self):
+        self.run_installer()
+        endpoint = '/repos/sam-ruff/shep.so/releases/tags/v9.9.9'
+        self.fixture.files[endpoint] = self.fixture.files['/repos/sam-ruff/shep.so/releases/latest']
+        self.fixture.requests.clear()
+        self.assertIn('requested version', self.run_installer(False, self.arguments + ['--version', '9.9.9']).stderr)
+        self.assertEqual(self.fixture.requests, [endpoint])
+        self.assertEqual((self.root / 'Applications with spaces/Shep.app/Contents/MacOS/shep').read_bytes(), b'fictional mac release')
+
+    def test_archive_and_checksum_urls_must_belong_to_selected_release(self):
+        self.run_installer()
+        endpoint = '/repos/sam-ruff/shep.so/releases/latest'
+        for index in (0, 1):
+            with self.subTest(asset=index):
+                self.seed()
+                metadata = json.loads(self.fixture.files[endpoint])
+                asset = metadata['assets'][index]
+                original = asset['browser_download_url'].removeprefix('https://github.com')
+                asset['browser_download_url'] = asset['browser_download_url'].replace('/v1.2.3/', '/v9.9.9/')
+                self.fixture.files[original.replace('/v1.2.3/', '/v9.9.9/')] = self.fixture.files[original]
+                self.fixture.files[endpoint] = json.dumps(metadata).encode()
+                self.fixture.requests.clear()
+                self.assertIn('Unexpected release URL', self.run_installer(False).stderr)
+                self.assertEqual(self.fixture.requests, [endpoint])
+                self.assertEqual((self.root / 'Applications with spaces/Shep.app/Contents/MacOS/shep').read_bytes(), b'fictional mac release')
 
     def test_failed_atomic_bundle_switch_restores_previous_application(self):
         self.run_installer()

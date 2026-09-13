@@ -21,8 +21,9 @@ The installer never stops an open Shep window; reopen it after an update.
 The launcher uses the approved full-colour Shepherd icon, with a scalable SVG
 and a PNG fallback for desktop compatibility.
 
-Release CI is paused and no binary releases are published yet, so the Linux
-command currently builds from source. `--source` always chooses source;
+Desktop release CI requires successful Linux and Windows builds before publishing
+both archives and their checksums. Until the first release passes those gates,
+the Linux command builds from source. `--source` always chooses source;
 `--release-only` requires a published binary. A requested `--version`, missing
 platform asset or checksum failure never falls back to a different build.
 Downloads and compilation finish before replacing installed files.

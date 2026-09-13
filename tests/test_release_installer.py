@@ -151,6 +151,35 @@ class ReleaseInstallerTests(unittest.TestCase):
             self.install()
         self.assertEqual((self.root / "prefix/bin/shep").read_bytes(), b"fictional release one")
 
+    def test_requested_version_must_match_release_metadata_without_source_fallback(self):
+        self.install()
+        endpoint = "/repos/sam-ruff/shep.so/releases/tags/v9.9.9"
+        self.fixture.files[endpoint] = self.fixture.files["/repos/sam-ruff/shep.so/releases/latest"]
+        self.fixture.requests.clear()
+        self.args.version = "9.9.9"
+        with self.assertRaisesRegex(installer.InstallError, "requested version"):
+            self.install()
+        self.assertEqual(self.fixture.requests, [endpoint])
+        self.assertEqual((self.root / "prefix/bin/shep").read_bytes(), b"fictional release one")
+
+    def test_archive_and_checksum_urls_must_belong_to_selected_release(self):
+        self.install()
+        endpoint = "/repos/sam-ruff/shep.so/releases/latest"
+        for name in (self.fixture.name, "SHA256SUMS"):
+            with self.subTest(asset=name):
+                self.fixture.seed()
+                metadata = json.loads(self.fixture.files[endpoint])
+                asset = next(asset for asset in metadata["assets"] if asset["name"] == name)
+                original = urllib.parse.urlsplit(asset["browser_download_url"]).path
+                asset["browser_download_url"] = asset["browser_download_url"].replace("/v1.2.3/", "/v9.9.9/")
+                self.fixture.files[original.replace("/v1.2.3/", "/v9.9.9/")] = self.fixture.files[original]
+                self.fixture.files[endpoint] = json.dumps(metadata).encode()
+                self.fixture.requests.clear()
+                with self.assertRaisesRegex(installer.InstallError, "unexpected download URLs"):
+                    self.install()
+                self.assertEqual(self.fixture.requests, [endpoint])
+                self.assertEqual((self.root / "prefix/bin/shep").read_bytes(), b"fictional release one")
+
     def test_unsafe_archives_never_write_outside_staging_or_install(self):
         cases = [
             [("../escaped", b"bad")], [(str(self.root / "outside"), b"bad")],

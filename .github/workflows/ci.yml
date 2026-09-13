@@ -1,0 +1,136 @@
+name: Desktop quality and release artifacts
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_BUILD_JOBS: '4'
+  RUSTUP_TOOLCHAIN: '1.96.0'
+
+jobs:
+  plan:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, sophie]
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24.21.0'
+      - run: npm ci
+      - name: Plan without publishing
+        id: plan
+        run: node scripts/release_plan.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: desktop-release-plan
+          path: artifacts/release-plan.json
+          if-no-files-found: error
+          retention-days: 7
+
+  native:
+    needs: plan
+    if: >-
+      always() && !cancelled() &&
+      (needs.plan.result == 'success' || needs.plan.result == 'skipped') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: [self-hosted, sophie]
+            target: x86_64-unknown-linux-gnu
+            python: python3
+          - platform: windows
+            runner: [self-hosted, Windows, X64]
+            target: x86_64-pc-windows-msvc
+            python: python
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_TARGET: ${{ matrix.target }}
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Linux quality, native controls and archives
+        if: matrix.platform == 'linux'
+        run: bash scripts/ci-desktop-linux.sh "$RELEASE_VERSION" "$GITHUB_SHA"
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          SHEP_GOOGLE_CLIENT_ID: ${{ vars.SHEP_GOOGLE_CLIENT_ID }}
+          SHEP_GOOGLE_CLIENT_SECRET: ${{ secrets.SHEP_GOOGLE_CLIENT_SECRET }}
+      - name: Install the verified Rust toolchain
+        if: matrix.platform == 'windows'
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        if: matrix.platform == 'windows'
+        with:
+          node-version: '24.21.0'
+      - name: Stamp the planned desktop version
+        if: matrix.platform == 'windows' && needs.plan.outputs.version != ''
+        run: ${{ matrix.python }} scripts/release.py "$RELEASE_VERSION" --stamp-only --source "$GITHUB_SHA"
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+      - name: Rust quality gates
+        if: matrix.platform == 'windows'
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --all-targets --all-features -- -D warnings
+          cargo clippy --locked --no-default-features -- -D warnings
+          cargo test --locked --all-features
+          cargo test --locked -p shep-html-pixbuf
+          ${{ matrix.python }} scripts/test_profile_core.py
+          cargo build --locked --release --no-default-features -p shep --bin shep
+      - name: Installer and harness contracts
+        if: matrix.platform == 'windows'
+        run: ${{ matrix.python }} -m unittest discover -s tests -p 'test_*.py'
+      - name: Package the tested source
+        if: matrix.platform == 'windows' && needs.plan.outputs.version != ''
+        run: ${{ matrix.python }} scripts/release.py "$RELEASE_VERSION" --no-stamp --target "$RELEASE_TARGET" --source "$GITHUB_SHA"
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE_TARGET: ${{ matrix.target }}
+          SHEP_GOOGLE_CLIENT_ID: ${{ vars.SHEP_GOOGLE_CLIENT_ID }}
+          SHEP_GOOGLE_CLIENT_SECRET: ${{ secrets.SHEP_GOOGLE_CLIENT_SECRET }}
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        if: needs.plan.outputs.version != ''
+        with:
+          name: desktop-release-${{ matrix.platform }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        if: always()
+        with:
+          name: desktop-evidence-${{ matrix.platform }}
+          path: |
+            artifacts/e2e/
+            artifacts/performance/
+            artifacts/logs/
+          retention-days: 7

@@ -11,3 +11,5 @@ Caption displacement applies once to the cells, without accumulating another shi
 Inline fragment elements retain only their relative offset; `line_box.cpp` resets it before each application. This prevents wrapped fragments and repeated table measurements from accumulating a superscript/span offset. Keep the exact 5px/2px selection-geometry and repeated-layout regressions.
 
 Windows MSVC builds follow upstream's CMake: Gumbo gets its `visualc/include` shim for the missing `<strings.h>`, and the C++ sources compile with `/utf-8 /permissive-`. The build script picks the C++ runtime from the target rather than the host: `c++` on macOS and iOS, none on MSVC, `stdc++` elsewhere.
+
+The stylesheet C bridge passes an owned string to the parser's existing template instantiation. Passing a C string requests a separate instantiation whose definition is unavailable to the bridge, causing an unresolved symbol on MSVC. The `litehtml_linkage` integration test links this entry point and checks its null-document guard.

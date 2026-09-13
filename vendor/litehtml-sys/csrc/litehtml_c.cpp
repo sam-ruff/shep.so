@@ -1304,7 +1304,7 @@ void lh_document_add_stylesheet(lh_document_t* doc,
             mq->add(mq_list);
         }
         stylesheet.parse_css_stylesheet(
-            css_text,
+            litehtml::string(css_text),
             baseurl ? baseurl : "",
             internal->doc,
             mq);

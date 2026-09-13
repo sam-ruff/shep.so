@@ -30,9 +30,10 @@ function Receive-ShepDownload {
 }
 
 function Select-ShepRelease {
-    param($Release, [string]$Architecture)
+    param($Release, [string]$Architecture, [string]$RequestedVersion = '')
     if ($Release.tag_name -notmatch '^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$' -or $Release.draft) { throw 'Invalid published release.' }
     $version = $Matches[1]
+    if ($RequestedVersion -and $RequestedVersion -cne $version) { throw 'GitHub returned a different release from the requested version; nothing was installed.' }
     $architectures = switch ($Architecture.ToLowerInvariant()) {
         'amd64' { @('amd64', 'x86_64') }; 'x86_64' { @('amd64', 'x86_64') }
         'arm64' { @('arm64', 'aarch64') }; 'aarch64' { @('arm64', 'aarch64') }
@@ -43,7 +44,8 @@ function Select-ShepRelease {
     $checksums = @($Release.assets | Where-Object { $_.name -eq 'SHA256SUMS' })
     if ($archives.Count -ne 1 -or $checksums.Count -ne 1) { throw "No unique Windows/$Architecture archive and checksum are published; nothing was installed." }
     foreach ($asset in @($archives[0], $checksums[0])) {
-        if ($asset.browser_download_url -notmatch '^https://github\.com/sam-ruff/shep\.so/releases/download/[^\s]+$') { throw 'Unexpected release URL.' }
+        $expected = 'https://github.com/sam-ruff/shep.so/releases/download/' + $Release.tag_name + '/' + $asset.name
+        if ($asset.browser_download_url -cne $expected) { throw 'Unexpected release URL.' }
     }
     [PSCustomObject]@{ Version = $version; Name = $archives[0].name; Archive = $archives[0].browser_download_url; Checksums = $checksums[0].browser_download_url }
 }
@@ -223,7 +225,7 @@ function Invoke-ShepInstall {
         $metadata = Join-Path $stage 'release.json'
         try { Receive-ShepDownload $endpoint $metadata }
         catch { throw 'No release could be downloaded. Check https://github.com/sam-ruff/shep.so/releases and try again.' }
-        $release = Select-ShepRelease (Get-Content -Raw -LiteralPath $metadata | ConvertFrom-Json) $environment.Architecture
+        $release = Select-ShepRelease (Get-Content -Raw -LiteralPath $metadata | ConvertFrom-Json) $environment.Architecture $Version
         $archive = Join-Path $stage 'release.tar.gz'; $checksums = Join-Path $stage 'SHA256SUMS'
         Write-Host "Downloading Shep $($release.Version) for Windows..."
         Receive-ShepDownload $release.Archive $archive
