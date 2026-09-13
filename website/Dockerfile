@@ -1,7 +1,7 @@
 # Build from the repository root: docker build -f website/Dockerfile .
 # scripts/build.mjs copies logos and screenshots from the repository root, so
 # the context is the root and only the paths it reads are copied in.
-FROM node:24-alpine AS build
+FROM node:24.17.0-alpine@sha256:156b55f92e98ccd5ef49578a8cea0df4679826564bad1c9d4ef04462b9f0ded6 AS build
 
 WORKDIR /app/website
 
@@ -18,6 +18,12 @@ RUN npm run build
 
 # Chainguard nginx pinned by digest, matching the other images on the estate.
 FROM cgr.dev/chainguard/nginx@sha256:fe77a7f4da2ed98d5629bab3f4f2a0cc40ab18b341cb46a62f05acce7a760c82
+
+ARG GIT_SHA
+ARG VERSION
+LABEL org.opencontainers.image.source="https://github.com/sam-ruff/shep.so" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.version="${VERSION}"
 
 COPY --from=build /app/website/dist /usr/share/nginx/html
 COPY website/nginx.conf /etc/nginx/conf.d/default.conf

@@ -8,6 +8,7 @@
     "build": "node scripts/build.mjs",
     "preview": "node scripts/serve.mjs",
     "test": "npm run build && playwright test --project=chromium",
+    "test:deployment": "node --test scripts/deployment.test.mjs",
     "test:all-browsers": "npm run build && playwright test"
   },
   "devDependencies": {
