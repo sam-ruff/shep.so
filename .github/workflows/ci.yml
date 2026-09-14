@@ -105,6 +105,25 @@ jobs:
           cargo test --locked -p shep-html-pixbuf
           ${{ matrix.python }} scripts/test_profile_core.py
           cargo build --locked --release --no-default-features -p shep --bin shep
+      - name: Windows loader diagnostics
+        if: failure() && matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          # STATUS_ENTRYPOINT_NOT_FOUND never names the DLL; list each binary's imports and which copy PATH resolves.
+          [System.Environment]::OSVersion.VersionString
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          foreach ($exe in Get-ChildItem "target\$env:RELEASE_TARGET\debug\deps\*.exe") {
+            "== $($exe.Name)"
+            $deps = & $dumpbin.FullName /nologo /dependents $exe.FullName | Where-Object { $_ -match '^\s+\S+\.dll$' } | ForEach-Object { $_.Trim() }
+            foreach ($dll in $deps) {
+              $found = (Get-Command $dll -ErrorAction SilentlyContinue).Source
+              "$dll -> $found"
+            }
+          }
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
       - name: Installer and harness contracts
         if: matrix.platform == 'windows'
         run: ${{ matrix.python }} -m unittest discover -s tests -p 'test_*.py'
