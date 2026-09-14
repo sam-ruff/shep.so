@@ -1,6 +1,9 @@
 pub mod folders;
 pub mod gateway;
 #[cfg(test)]
+mod lane_tests;
+mod lanes;
+#[cfg(test)]
 mod notification_tests;
 pub mod receipts;
 pub mod recovery;
@@ -225,7 +228,8 @@ async fn sync_imap_session_mode<
     only_folder: Option<&str>,
     mode: ReceiveMode,
 ) -> anyhow::Result<Vec<String>> {
-    let mut deferred = Vec::new();
+    let mut slow: Vec<lanes::Deferred> = Vec::new();
+    let mut staged: Vec<lanes::Deferred> = Vec::new();
     let capabilities = session.capabilities().await?;
     let pattern = if capabilities.has_str("SPECIAL-USE") {
         "\"*\" RETURN (SPECIAL-USE)"
@@ -310,82 +314,55 @@ async fn sync_imap_session_mode<
                 let Some(uid) = fetch.uid else {
                     continue;
                 };
-                let remote = format!("{validity}.{uid}");
-                let id = format!("{}:{folder}:{remote}", account.id);
+                let id = format!("{}:{folder}:{validity}.{uid}", account.id);
                 if known.contains(&id) {
                     flags.push((id, fetch.unread, fetch.starred));
-                } else if fetch.size.unwrap_or(u32::MAX) as usize > MAX_MESSAGE_BYTES {
-                    if mode != ReceiveMode::Legacy {
-                        deferred.push((
-                            folder.clone(),
-                            validity,
-                            uid,
-                            fetch.size.context("The message size is missing.")?,
-                            fetch.unread,
-                            fetch.starred,
-                        ));
-                    } else {
+                    continue;
+                }
+                let deferred = |size: u32| lanes::Deferred {
+                    folder_index: index,
+                    folder: folder.clone(),
+                    validity,
+                    uid,
+                    size,
+                    unread: fetch.unread,
+                    starred: fetch.starred,
+                };
+                match lanes::lane(fetch.size) {
+                    lanes::Lane::Inline => pending.push(lanes::Pending {
+                        uid,
+                        size: fetch.size.unwrap_or(0) as usize,
+                    }),
+                    lanes::Lane::Slow => slow.push(deferred(fetch.size.unwrap_or(0))),
+                    lanes::Lane::Staged if mode == ReceiveMode::Legacy => {
                         output.send(MailSyncItem::SkippedLarge).await?;
                     }
-                } else {
-                    pending.push((uid, remote, fetch.size.unwrap_or(0) as usize));
+                    lanes::Lane::Staged => {
+                        staged.push(deferred(
+                            fetch.size.context("The message size is missing.")?,
+                        ));
+                    }
                 }
             }
             if !flags.is_empty() {
                 output.send(MailSyncItem::Flags(flags)).await?;
             }
+            lanes::order_inline(&mut pending);
             tracing::info!(count = pending.len(), "IMAP metadata received");
-            let mut offset = 0;
-            while offset < pending.len() {
-                let start = offset;
-                let mut bytes = 0;
-                while offset < pending.len() && offset - start < 10 {
-                    let next = pending[offset].2;
-                    if offset > start && bytes + next > 4 * 1024 * 1024 {
-                        break;
-                    }
-                    bytes += next;
-                    offset += 1;
-                }
-                let batch = &pending[start..offset];
+            for range in lanes::batches(&pending) {
+                let batch: Vec<u32> = pending[range].iter().map(|item| item.uid).collect();
                 let set = batch
                     .iter()
-                    .map(|(uid, _, _)| uid.to_string())
+                    .map(u32::to_string)
                     .collect::<Vec<_>>()
                     .join(",");
                 let bodies =
                     sync_queries::fetch(&mut session, &set, "(UID FLAGS BODY.PEEK[])").await?;
-                for fetch in &bodies {
-                    let Some((_, remote, _)) =
-                        batch.iter().find(|(uid, _, _)| Some(*uid) == fetch.uid)
-                    else {
-                        continue;
-                    };
-                    if let Some(raw) = fetch.body.as_deref() {
-                        anyhow::ensure!(
-                            raw.len() <= MAX_MESSAGE_BYTES,
-                            "The server returned a message exceeding 25 MiB."
-                        );
-                        let unread = fetch.unread;
-                        let starred = fetch.starred;
-                        let (id, folder, remote, raw) = (
-                            account.id.clone(),
-                            folder.clone(),
-                            remote.clone(),
-                            raw.to_vec(),
-                        );
-                        let parsed = tokio::task::spawn_blocking(move || {
-                            parse_mail(&id, &remote, &folder, raw, unread, starred)
-                        })
-                        .await??;
-                        output
-                            .send(MailSyncItem::Message(parsed))
-                            .await
-                            .context("Sync was cancelled")?;
-                    }
-                }
+                deliver_bodies(account, folder, validity, &batch, &bodies, &output).await?;
             }
         }
+        // The complete listing: the store only removes cached rows absent from
+        // it, and a deferred body is not cached yet, so listing it is harmless.
         output
             .send(MailSyncItem::Reconcile {
                 account: account.id.clone(),
@@ -394,9 +371,7 @@ async fn sync_imap_session_mode<
             })
             .await?;
         if folder.eq_ignore_ascii_case("INBOX")
-            && !deferred
-                .iter()
-                .any(|(name, ..)| name.eq_ignore_ascii_case("INBOX"))
+            && lanes::inbox_finish(&slow, &staged) == lanes::InboxFinish::Inline
         {
             output
                 .send(MailSyncItem::InboxSyncFinished {
@@ -406,27 +381,73 @@ async fn sync_imap_session_mode<
                 .await?;
         }
     }
+    // Slow lane: one body per request, after every folder's small mail. A
+    // failure here leaves the earlier messages committed; the remaining
+    // deferred messages are still unknown and are fetched again next check.
+    lanes::order_slow(&mut slow);
+    let finish = lanes::inbox_finish(&slow, &staged);
+    let last_inbox_slow = slow.iter().rposition(lanes::Deferred::inbox);
+    let mut selected: Option<&str> = None;
+    for (position, item) in slow.iter().enumerate() {
+        if selected != Some(item.folder.as_str()) {
+            anyhow::ensure!(
+                session.select(&item.folder).await?.uid_validity == Some(item.validity),
+                "The mailbox changed during download. Refresh and retry."
+            );
+            selected = Some(item.folder.as_str());
+        }
+        tracing::info!(uid = item.uid, size = item.size, "IMAP slow-lane body");
+        let bodies = sync_queries::fetch(
+            &mut session,
+            &item.uid.to_string(),
+            "(UID FLAGS BODY.PEEK[])",
+        )
+        .await?;
+        deliver_bodies(
+            account,
+            &item.folder,
+            item.validity,
+            &[item.uid],
+            &bodies,
+            &output,
+        )
+        .await?;
+        if finish == lanes::InboxFinish::SlowLane && Some(position) == last_inbox_slow {
+            output
+                .send(MailSyncItem::InboxSyncFinished {
+                    account: account.id.clone(),
+                    epoch: format!("imap:{}", item.validity),
+                })
+                .await?;
+        }
+    }
     anyhow::ensure!(
-        mode != ReceiveMode::Protected || deferred.is_empty(),
+        mode != ReceiveMode::Protected || staged.is_empty(),
         "Large-message downloads need encrypted staging for this encrypted profile. Smaller messages were downloaded; the originals remain on the server."
     );
     #[cfg(feature = "staged-receive")]
-    for (folder, validity, uid, size, unread, starred) in &deferred {
+    for item in &staged {
         anyhow::ensure!(
-            session.select(folder).await?.uid_validity == Some(*validity),
+            session.select(&item.folder).await?.uid_validity == Some(item.validity),
             "The mailbox changed during download. Refresh and retry."
         );
         let source = tempfile::NamedTempFile::new()?;
         let mut writer = tokio::fs::File::from_std(source.reopen()?);
-        streaming::download_reporting(&mut session, *uid, *size, &mut writer, Some(&output))
-            .await?;
+        streaming::download_reporting(
+            &mut session,
+            item.uid,
+            item.size,
+            &mut writer,
+            Some(&output),
+        )
+        .await?;
         drop(writer);
         let (account, folder, remote, unread, starred) = (
             account.id.clone(),
-            folder.clone(),
-            format!("{validity}.{uid}"),
-            *unread,
-            *starred,
+            item.folder.clone(),
+            format!("{}.{}", item.validity, item.uid),
+            item.unread,
+            item.starred,
         );
         let message = tokio::task::spawn_blocking(move || {
             staging::prepare(source, &account, &remote, &folder, unread, starred)
@@ -437,19 +458,58 @@ async fn sync_imap_session_mode<
             .await
             .context("Sync was cancelled")?;
     }
-    if let Some((_, validity, ..)) = deferred
-        .iter()
-        .find(|(folder, ..)| folder.eq_ignore_ascii_case("INBOX"))
+    if finish == lanes::InboxFinish::Staged
+        && let Some(item) = staged.iter().find(|item| item.inbox())
     {
         output
             .send(MailSyncItem::InboxSyncFinished {
                 account: account.id.clone(),
-                epoch: format!("imap:{validity}"),
+                epoch: format!("imap:{}", item.validity),
             })
             .await?;
     }
     session.logout().await?;
     Ok(folders)
+}
+
+/// Parse and publish the requested bodies from one FETCH reply. A missing body
+/// means the message left the folder after listing; the next check notices.
+async fn deliver_bodies(
+    account: &Account,
+    folder: &str,
+    validity: u32,
+    requested: &[u32],
+    bodies: &[sync_queries::Fetch],
+    output: &Sender<MailSyncItem>,
+) -> anyhow::Result<()> {
+    for fetch in bodies {
+        let (Some(uid), Some(raw)) = (fetch.uid, fetch.body.as_deref()) else {
+            continue;
+        };
+        if !requested.contains(&uid) {
+            continue;
+        }
+        anyhow::ensure!(
+            raw.len() <= MAX_MESSAGE_BYTES,
+            "The server returned a message exceeding 25 MiB."
+        );
+        let (unread, starred) = (fetch.unread, fetch.starred);
+        let (id, folder, remote, raw) = (
+            account.id.clone(),
+            folder.to_owned(),
+            format!("{validity}.{uid}"),
+            raw.to_vec(),
+        );
+        let parsed = tokio::task::spawn_blocking(move || {
+            parse_mail(&id, &remote, &folder, raw, unread, starred)
+        })
+        .await??;
+        output
+            .send(MailSyncItem::Message(parsed))
+            .await
+            .context("Sync was cancelled")?;
+    }
+    Ok(())
 }
 
 #[async_trait]
